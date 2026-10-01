@@ -1,0 +1,67 @@
+{
+  "survey": "oh-my-pi-portability-assessment",
+  "date": "2026-09-30",
+  "subject": {
+    "project": "can1357/oh-my-pi",
+    "license": "MIT (Stencil Labs)",
+    "version_cli": "18.4.4 (built from the reviewed source for the ACP probe; locally built binary, no digest retained - rebuild from revision 9532eb39ca to reproduce)",
+    "revision_reviewed": "9532eb39ca (2026-09-30, full reference clone)",
+    "category": "batteries-included pi coding-agent fork: TypeScript/Bun monorepo plus Rust crates, differential TUI, 82-provider routing, ACP agent, subagents with advisor review, collab links"
+  },
+  "method": [
+    "8-domain fan-out survey: TUI rendering, wire/ACP/session, provider routing, subagent supervision, Rust crates, PTY/collab, memory/compaction, extensibility",
+    "code-level checks of load-bearing claims against lapis's own paths (session_service.cpp, pty_process.cpp, attention.hpp, alerts.cpp, Models.swift)",
+    "live ACP probe: omp acp driven as a JSON-RPC client over stdio with a loopback mock OpenAI-compatible provider, isolated HOME; real ~/.omp verified untouched by mtime snapshots"
+  ],
+  "acp_live_probe": {
+    "confirmed": [
+      "initialize echoes protocolVersion 1 unconditionally; capabilities advertise loadSession, sessionCapabilities list/fork/resume/close, promptCapabilities image+embeddedContext",
+      "session/new materializes on disk; session/list returns a flat array with _meta; session/load after respawn replays history as session/update notifications in 0.45 s",
+      "permission machine fail-closed: unknown optionId, malformed reply shape, reject and cancel all fail the tool call without execution",
+      "allow_always caches per tool name per session (blanket within a session, not across sessions)",
+      "fd1 strictly NDJSON across 211 frames and ~21 process lifetimes; clean stdin EOF exits 0 in 0.04 s",
+      "timings: prompt to first session/update ~50 ms against the loopback mock; permission round trip sub-millisecond"
+    ],
+    "edges_found": [
+      "one malformed stdin JSON line kills the server silently: exit code 0 in ~32 ms, no error frame, no log entry - a client must watchdog the child and never trust exit code 0",
+      "documented custom error codes (-32000/-32002/-32003) never surface; unknown method, unknown session and failed session/load all funnel to -32603 with data.details strings",
+      "no sessionBusy on the prompt path: a second same-session prompt cancels-and-replaces (in-flight resolves stopReason cancelled in 8 ms)",
+      "provider config schema stricter than its docs (cost.cacheRead/cacheWrite required); rejection is a log-file WARN only and turns silently reroute to discovery (an embedding model was selected as chat default on the probe machine)",
+      "no epochs or sequence numbers on the event stream; reconciliation is respawn plus session/load replay"
+    ]
+  },
+  "lapis_relevant_findings": {
+    "backpressure": "lapis already has the omp mechanics (append-then-pause reader, bounded drain with zero-timer re-arms, harvest-pressure pause); the 64 KiB overflow stop is a defensive invariant. Zero-compromises direction: raise transient budgets, harden the overflow branch to pause-and-wait, keep pause-reader only for genuine sink exhaustion.",
+    "tui_scheduling": "omp's scheduler independently derives the policy lapis codifies as the update-pacing contract (elapsed-time min-interval, newest-wins, burst coalescing), plus adaptive frame-cost floor, output-backlog gate, input grace scoped to interrupt keys, and demand-armed ticks for time-derived presentation.",
+    "attention": "lapis already has priority tiers with aging, revision dedupe, snooze/cooldown and fail-closed bounds; net-new is a 3-rule advisory-only emission guard (content-normalized suppression across IDs, per-window budget with reported overflow, escalation-only re-announcement) scoped to empty-choice notices.",
+    "crates": "pi-diff (zero-dep jsdiff-v9 parity), pi-vfs (provider-trait seam) and pi-walker vendor cleanly into Rust projects (ccr-rust candidates); the pi-edit hashline protocol is the top design-port. No lapis C++ dependency.",
+    "routing": "error/rate-limit taxonomy, fallback-chain grammar, wait-merge fail-fast and credential rotation are ccr-rust ports, not lapis."
+  },
+  "decisions": {
+    "adopted_as_directions": [
+      "raised transient output budgets riding the Q10 measured-allocation batch",
+      "overflow branch hardening (pause-and-wait, not session stop)",
+      "teardown drain discrimination (slow vs stuck consumer)",
+      "update-pacing augmentations after the two audit defects close",
+      "advisory emission guard scoped to observation-only notices, riding the triggers batch",
+      "web-surface consumption invariant in the W1 frame queues",
+      "ACP evidence bank for any future Milestone 5 adapter"
+    ],
+    "not_adopted": [
+      "frugal flow-control defaults (~4 MiB bounded queues tuned for single-session laptops; lapis raises budgets instead)",
+      "snapcompact/mnemopi/handoff/context-compaction (LLM-context economics owned by the supervised CLIs)",
+      "extension/marketplace surface (Bun in-process, unsandboxed)",
+      "auth broker/gateway (multi-host fleet problem)",
+      "per-turn advisor model (cost model a many-agent supervisor did not choose)",
+      "TUI resize/CPR and terminal-capability machinery (moot behind one pinned GPU-owned grid)",
+      "collab link-sharing design (comparator shelf; relevant only if a browser-guest surface is ever proposed)"
+    ]
+  },
+  "artifacts": "probe transcript, mock-provider request log, drivers and isolation proof were retained under a temporary directory and are gone; nothing in-repo materializes revision 9532eb39ca, and no per-claim file SHA-256 digests were recorded, so the file:line-precision entries below are reported results as of 2026-09-30, not independently auditable citations. Volatile probe artifacts are not recoverable; re-verification means rebuilding revision 9532eb39ca and re-running the probe.",
+  "verification_scope": "Survey-grade receipt, not an audited one: full reference clone at the pinned revision plus one live ACP probe, both on 2026-09-30. Per-claim file digests, probe transcript, driver and the built binary were not retained (see artifacts), so every load-bearing entry (protocolVersion 1, the 64 KiB overflow stop, the missing epochs/sequence numbers, permission-machine fail-closed, the ~50 ms timings) is a reported result rather than a reproducible artifact. docs/architecture.md owns the gates, supersessions and adoption traces for each entry in decisions.adopted_as_directions and decisions.not_adopted, so those arrays are directions bound to that plan, not free-standing decisions.",
+  "verification": [
+    "repo source read at the pinned revision across packages/ and crates/ by the fan-out workers; per-claim digests not retained",
+    "spot-checks of load-bearing claims (zero-dependency pi-diff, PROTOCOL_VERSION, fallback-chain grammar, throttle constants) against the clone; clone not retained",
+    "live omp acp probe including a full tool-call turn with permission allow/reject/allow_always rounds against a loopback mock provider; transcript and driver not retained"
+  ]
+}

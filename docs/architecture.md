@@ -3,8 +3,9 @@
 This is the single implementation plan for lapis. See the
 [current status](status.md) for what has been implemented and exercised.
 macOS is the active target, and the signed Mac app is now the working daily
-environment; the [pseudo-production section](#pseudo-production-direction-and-integration-spread-september-27)
-below owns the current work order and re-weights the remaining milestones.
+environment. The [production delivery order](#production-delivery-order-september-30)
+owns the next work and release exits; the dated feature surveys below are backlog
+and decision history, not competing priority lists.
 Milestones 1 and 2 are qualified for the recorded
 single-session scope: a persistent terminal and managed Codex attention with
 explicit desktop responses. The quality baseline from PR #6 remains in force.
@@ -2828,10 +2829,70 @@ Close the failure paths and qualify that assembled system before adding more
 supervision features; a redesign of the terminal or adapter stack is not the
 starting point.
 
-This is the current release work order. The September 27 integration spread
-below remains a feature backlog, not a prerequisite for this rollout. Milestone 4
+The September 30 order below supersedes the older feature sequencing. Milestone 4
 still owns the controlled 32-session experiment. Passing an old milestone or
 merging a feature does not qualify a new binary for distribution.
+
+#### Production delivery order (September 30)
+
+Optimize the next delivery for another person's first week with lapis: install,
+start the intended agent/account, retain work, update, recover and diagnose a
+failure. The source baseline checked for this reprioritization is main `c0f2037`.
+The live release inventory still lists v0.5.0 at `0ec13cb`; neither the published
+binary nor unmerged work can stand in for qualification of the next candidate.
+
+| Priority | Deliverable and dependency | Observable exit |
+| --- | --- | --- |
+| 0: one candidate | Consolidate the fixes needed for the declared local macOS slice into a reviewable, buildable head. Record which local branches are included, preserved separately or deferred. | One source revision and feature/default set, all integration findings dispositioned and a list of still-open R1–R5 gates. A merged PR is source progress, not a release qualification receipt. |
+| 1: durable launch and update | Implement R1 and R4 as one vertical slice: a launchd-owned supervisor starts one existing session service, GUI/CLI clients attach, and an upgrade replaces the GUI without replacing session ownership. Package provenance can be built in parallel with service birth. | A packaged local agent survives GUI close/crash/replacement with the same child and bytes; supervisor restart reconnects without duplicate children. Service death and login/reboot recover the correct conversation with a new epoch. The candidate's manifest binds its source, version, dependency inventory and artifact hashes; installation, update failure and migration recovery are exercised. |
+| 2: trustworthy operations | Close R3's remaining selected-account gap and validate the merged R2 paste contract on the candidate. Run these repairs alongside priority 1 using agreed identity/protocol contracts. | A missing selected credential refuses before changing a healthy session or acting as another account. Large paste, bracketed mode, cancellation, reconnect and optional submission preserve exact PTY bytes and destination ownership. Existing repaired reset/approval paths never replay an uncertain operation. Unsupported or unqualified paths are visibly unavailable or explicitly experimental in the artifact. |
+| 3: qualify and support the actual workload | R5 supplies resource bounds, runtime diagnostics and a redacted support export while the candidate is assembled. Start qualification with eight local sessions, one active stage plus seven previews, including bursty output, history paging and reconnects. Eight is a proposed test workload, not a measured capacity claim. | Record the workload, duration, output rates and warm/idle transitions before a sustained soak; record input/switch/frame tails, memory, descriptors, disk and idle use afterward. Include real Codex and Claude continuity checks separately from controlled replay load. No lost/misdirected input, duplicate recovery or unexplained resource growth; configured bounds and degraded states work. A fresh user environment can diagnose missing CLIs, registration/permission failures and service disconnects without developer tools. |
+| 4: controlled rollout, then scale | Release only the qualified local slice with its recovery instructions and limits. Run Milestone 4's controlled 32-session qualification on the durable architecture before widening the workload claim or resuming feature expansion. | The downloaded artifact matches the candidate receipt; an installed Sparkle update and recovery path are verified. Early-access reports identify the exact version/source and can be reproduced from sanitized diagnostics. The 32-session receipt remains separate from the smaller cohort's evidence and from daily-use anecdotes. |
+
+These are acceptance dependencies, not a requirement to serialize independent
+work. Keep one writer per shared contract and one build owner per preset. The
+first implementation batch is the one-session supervisor/package path and package-manifest enforcement,
+with local account validation and remote account refusal reviewed alongside it. Do not turn that into a new
+terminal engine, provider router or general plugin framework.
+
+Finish and preserve ongoing direct-context, Android and background-test work in
+their existing branches. Admit only the pieces needed by the candidate's stated
+surface. The attention journal can support durable operation evidence but does
+not replace process ownership or reconnect reconciliation. Background test tools
+can shorten iteration but do not replace native package qualification. A pending
+optional reviewer, changelog helper or companion feature is not a local-release
+dependency.
+
+Defer new web surfaces, additional adapters, Keychain-fill/Touch ID features,
+triggers, widgets, automatic carousel, multiple windows and Linux UI until this
+sequence is satisfied. Existing credential selection and native input/accessibility
+requirements are still part of the shipped surface; a missing capability must be
+stated honestly. Preserve implemented features and their separate qualification
+rows rather than deleting them to make the release checklist smaller.
+
+#### Release triage of new survey directions (September 30)
+
+The t3code and oh-my-pi findings are retained below with their original source
+receipts. They refine the release order rather than starting a second roadmap.
+Difficulty and release relevance are separate: use the
+[task-sizing procedure](../CONTRIBUTING.md#task-sizing-and-independent-prs) to
+dispatch independent work, and use R1–R5 to decide what enters the candidate.
+
+| Placement | Work from the surveys and current defects | Scope and finish line |
+| --- | --- | --- |
+| Release path, parallel repairs | R1/R4 independent process birth and artifact provenance; R3 selected-account refusal; desktop preview/attention pacing; preserving output through pressure and final drain | Keep the existing service owners and v6 compatibility. Prove byte order, child lifetime, bounded teardown and immediate eligible updates with focused real-PTY/background checks. Raise transient headroom with measured output and memory evidence rather than copying a comparator's small queue defaults. These patches can be separate PRs; the candidate still needs assembled/native acceptance. |
+| Independent polish PRs | Documentation consistency, diagnosable errors, runtime/version provenance, and companion-only scheduling fixes | A bounded D1/D2 task may be implemented, checked and opened as its own ready PR by a worker under the contributor procedure. It can wait for review independently. Include it in the release only if its scope and checks fit the candidate; an unrelated open PR is not a release blocker. |
+| Next adapter checkpoint | Claude's native control lane informed by the Agent SDK study, followed by the qualified per-session runtime modes and stage-inline decisions | Preserve authentication while owning the permission-rule layer, stable conversation identity and once-scoped decisions. The user-configurable full-access default is a recorded product direction, not a change applied to current hook-only sessions. Link the reported SDK probe to a durable version-pinned receipt before claiming the route is qualified. |
+| After reliability and scale | Ordered status presentation, project roll-ups, checkpoint diffs, computed git actions, advisory emission guards and adaptive rendering additions | Implement as separable features with their own acceptance. Advisory suppression cannot hide decision-capable requests; UI actions do not silently approve agent work. Measure the existing renderer before adding adaptive scheduling. |
+| Evidence bank, no current wiring | ACP candidate, service-owned web views, new provider-routing abstractions and comparator runtime/framework ports | ACP still needs explicit adoption and lifecycle/permission/replay qualification. Web remains behind service birth, package and engine gates. Provider fallback belongs to its owning router, not a duplicate lapis implementation. |
+
+The first release-polish batch therefore consists of account refusal, package
+provenance, update pacing and output retention, with a parallel supervisor
+contract investigation. The supervisor implementation depends on agreeing the
+single-writer and update-location contract; independent repairs do not wait for
+that investigation to finish. [Status](status.md) and the task/PR receipts record
+what actually lands. This table assigns work; it does not claim those patches
+or the surveys are implemented or qualified.
 
 #### Minimum supported slice
 
@@ -2854,34 +2915,28 @@ identity, logs and input behavior need their own reviewed contracts.
 
 #### Release blockers and accountable batches
 
-The evidence basis for this audit is main `61a87e5`, the complete review state of
-PRs #40, #43 and #44, and the live release inventory. Findings below distinguish
-source defects from missing acceptance. The owning module names are temporary
-write scopes; contributors still share feature ownership.
+The original audit used main `61a87e5`. The September 30 refresh checked main
+`c0f2037`, the merged state of PRs #40/#43/#44 and the live release inventory.
+R1–R5 identify contracts and acceptance, while the delivery table above owns
+execution order. Distinguish remaining source defects from repaired behavior
+that still needs qualification on a package. Module names are temporary write
+scopes; contributors continue to share feature ownership.
 
 | Order | Finding and current evidence | Required outcome | Acceptance before claiming readiness |
 | --- | --- | --- | --- |
 | R1, process lifetime | **Contract gap, reproduced platform failure.** `LiveConnection` starts services from the GUI. The [macOS 27 investigation](#macos-27-ends-a-quitting-apps-background-processes-september-28) shows that `setsid` and detached spawning do not escape its coalition; replacing the bundle or lacking BTM permission can kill every agent. | The platform launcher must make an independent launchd-owned service/broker responsible for process birth and supervision, with an explicit registration/disabled state. The GUI attaches to it. Keep service failure and reboot recovery distinct from GUI detach. Do not use an installer delay as the durability contract. | On a disposable qualified Mac installation: preserve child PID and terminal bytes through window close, GUI quit/crash and application replacement; exercise allowed/denied/unknown background permission, login item on/off, service crash and a real reboot. Reboot may resume a conversation; it must not be reported as same-process survival. Reuse the existing restore fixtures, then qualify the actual package. |
-| R2, input integrity | **Known current limit and pending repair.** Main accepts bounded single input frames. PR #43 prechecks the desktop socket queue then emits many frames; the service independently rejects a full PTY queue (`Service::write_input`). Socket acceptance cannot prove that the whole paste reached the child. | Agree a service-owned paste admission/completion contract before claiming large-paste atomicity. Keep encoding at the owner of the current terminal mode, reserve/check the service budget, bind a transfer to attachment/epoch, and distinguish rejection from delivery interrupted after admission. Old peers must refuse unsupported sizes visibly. A later implementation can use a bounded complete frame or a negotiated transfer; do not disguise a transfer as unacknowledged ordinary text. | Extend the existing live-connection and terminal-input fixtures: fill the service PTY queue before pasting, use a slow reader, disconnect after each chunk boundary, change bracketed-paste mode, switch focus during paste/IME, and repeat on the side shell. Compare actual PTY bytes and matching bracket markers; a refused paste sends no input, and interrupted delivery is explicit. PR #44 paste-plus-Return must use this same completion/ownership contract rather than a 150 ms guess. |
-| R3, account identity | **Shipped contract gap plus pending feature defects.** `withRemoteAccount` intentionally falls back to the machine sign-in if the selected plan file is absent, while `applyAccount` records the selected plan. PR #40 also resolves a reset by machine/CLI instead of the agent's selected plan and creates new consume IDs on retries. | Carry the chosen account identity through launch, usage and optional reset operations. Missing selected credentials must fail visibly before replacing a healthy agent or spending a reset. Never silently act as another plan. A reset needs a stable persisted operation ID, reconciliation after uncertain delivery, and a bounded retry record that survives helper/GUI failure. | Use disposable credential/provider stand-ins to check local/remote home and visiting plans, missing/unreadable setup tokens and Codex homes, malformed credit responses, all model-specific exhausted windows, reserve policy, wrong-CLI exclusion, timeout after server acceptance and restart before the reply is saved. Validate real read-only account identity separately; real consumption is not required for routine tests. |
+| R2, input integrity | **Implemented repair; candidate acceptance remains.** PR #43 and its integrated follow-ups provide negotiated service-owned paste admission and correlated results. Next-prompt submission uses that contract and presented-frame ownership. Existing source, real-PTY and background/sanitizer receipts remain revision-scoped. | Preserve the current implementation through consolidation; do not rebuild the old chunked, socket-only path. Keep mode-dependent encoding in the service, attachment/epoch checks, explicit refusal and interrupted-delivery reporting. | Reuse unaffected focused evidence, then exercise the assembled candidate with a full PTY queue, slow reader, disconnect, bracketed-mode change and focus/IME transitions, including the side shell. Compare actual PTY bytes and matching bracket markers. Native macOS presentation and package acceptance remain separate from background Qt results. |
+| R3, account identity | **Remaining remote launch defect; reset repairs merged.** Local `Workspace::applyAccount` refuses missing visiting-plan credentials. `withRemoteAccount` still permits a remote launch to use the machine sign-in when selected credentials are unavailable, while the registry records the chosen plan. PR #40 and follow-ups repaired reset identity/admission/reconciliation paths; their tests do not qualify real provider consumption. | Preserve chosen account identity through launch, usage and optional reset operations. Refuse the remote mismatch before replacing a healthy session, or keep that unqualified path outside the candidate. Retain stable durable operation identity and no replay after uncertain delivery. | Reuse existing credential/provider stand-ins for missing/unreadable credentials, malformed responses, exhausted model windows, timeout after acceptance and restart before reply persistence. Verify the actual selected account with a read-only operation on each advertised route. Real reset consumption is not a routine-test requirement or a prerequisite for the local-only slice. |
 | R4, release and upgrade provenance | **Acceptance and enforcement gaps.** `package_macos.py release` validates the DMG staple and checks that current HEAD exists on a remote; it does not bind the staged app/DMG to that HEAD, version and qualification result. The latest published v0.5.0 targets `0ec13cb`, a separate release tree from this audit's main. | Produce one immutable package manifest linking source tree/dirty status, app version, toolchain/dependency pins, bundled notices/SBOM, app and DMG hashes, appcast signature and validation. Refuse publishing stale/mismatched artifacts. Exercise installation and the Sparkle transition, including recoverable registry/history migration and a documented recovery/rollback path. Keep signing-key recovery outside the repository. | Run the existing `package_macos.py verify --notarized` on the exact staged artifact, then verify the downloaded asset and appcast. Qualify Finder launch in a fresh user environment without developer tools or pre-existing BTM state; install an update with live sessions; recover after a failed update/migration. Record source and artifact digests together. Do not relabel source tests or the old 0.2.0 signature receipt as v0.5.0 acceptance. |
-| R5, operational bounds and support | **Measured coverage gaps and source-level pressure risks.** The gateway uses `ThreadingHTTPServer`; listing can spend eight seconds waiting and then probe every service serially at up to 0.3 s each, while the iOS request timeout is 15 s. `followNewHistory` still defers by a full second. Native UI/Metal and full TSan qualification have retained failures in the current review receipts. | Bound gateway clients, listing work and cancellation, preserve the local terminal under remote/output pressure, and make degraded health actionable. Record session counts/rates, history/log budgets and error causes. Extend the existing CLI with package/runtime diagnostics and a user-controlled redacted support export; the current developer `doctor` only establishes dependency/build readiness. | Start with the advertised early-access workload and a long-running reconnect/output soak; inspect memory, file descriptors, disk use, idle CPU and input/switch tails. Then run Milestone 4's controlled 32-session workload. Include dead endpoints and disconnected long-poll clients. Resolve or accurately scope the retained native-render and sanitizer failures before reusing that evidence; background Qt success alone is not GPU acceptance. |
+| R5, operational bounds and support | **Coverage gaps and source-level pressure risks.** The configured gateway path waits up to eight seconds, then probes services serially at up to 0.3 seconds each, against the iOS list client's 15-second request timeout. These are source-configured bounds, not a measured latency distribution. `ThreadingHTTPServer` has no total client/listing budget. Desktop decode and attention pacing plus companion history catch-up remain tracked only in the [pacing audit](#update-pacing-audit-september-28). Older native UI/Metal and sanitizer receipts retain platform and scope limits. | Bound active clients, queued work, history/log retention and cancellation, protecting local input under output or optional remote pressure. Add package/runtime diagnostics and a user-controlled redacted support export to the existing CLI; developer `doctor` currently checks dependency/build readiness only. | Use the candidate workload and sustained soak defined above, then Milestone 4. Include dead endpoints/disconnected clients for any advertised gateway surface. Record limits, degradation and resource/input tails. Qualify native rendering on the candidate and assess existing sanitizer evidence against changed source; a background Qt pass alone is not GPU acceptance. |
 
-The R2 protocol repair landed in PR #43: one negotiated raw paste is encoded in
-the service's current terminal mode and admitted or refused as a whole. The
-next-prompt integration uses that receipt for both fill and paste-plus-Return,
-refuses known pending requests in the service, and bases submission on the last
-presented frame. Focused real-PTY admission, background Qt, ASan/UBSan and TSan
-checks are recorded with their source revisions; these do not close R1 or the
-remaining native GPU/package acceptance.
-
-R1 and R4 form the first complete delivery slice: install, start, detach, update,
-recover and uninstall without losing owned sessions or misidentifying an artifact.
-R2 and R3 can be implemented in parallel once their service/adaptor identity
-contracts are agreed. R5 supplies the rollout's operational limits and support
-procedure. A companion feature may remain experimental rather than delaying a
-local-only release, but an unqualified behavior must not remain an unconditional
-promise in the entry documentation.
+R2's source repair does not close R1, R3 or native GPU/package acceptance.
+Use the production delivery order above to combine these gates. A companion
+feature may remain experimental rather than delaying a local-only release, but
+an unqualified behavior must not remain an unconditional promise in the entry
+documentation or silently use a different account. Uninstall/explicit stop must
+have a documented disposition for owned sessions and must not trigger an
+unwanted supervisor restart.
 
 #### Persistent supervisor direction (September 29)
 
@@ -2941,38 +2996,22 @@ GUI replacement, disabled background permission, graceful shutdown and real
 login/reboot. Persistence is a desired architecture; it is not implemented by
 this documentation change.
 
-#### Current PR disposition
+#### Current implementation disposition (September 30)
 
-PR #41's artwork is on main. The remaining feature PRs already have substantive
-reviews; optional reviewer completion is not their blocker. Counts are a dated
-inventory, not severity scores: #40 has 33 unresolved threads, #43 has 15, and #44
-has 63. Several reports duplicate the same issue or question deliberate behavior.
-The complete snapshots and per-thread triage belong in the review work record;
-this document retains the architectural decisions and acceptance.
+PRs #40 (saved resets), #43 (long paste) and #44 (next-prompt suggestions) are
+merged, including subsequent repair batches through main `c0f2037`. Their former
+thread counts and pre-merge plans are not today's blocker list. Preserve the
+repaired operation identity, service paste admission and presented-frame
+submission contracts; source acceptance remains distinct from package/native
+qualification. Suggestions and automatic reset consumption remain optional.
 
-- **#40, saved resets:** repair the account/operation identity and response-shape
-  cluster before merge. Preserve every exhausted model window. Separate unknown
-  delivery from definite refusal, bound helper lifetime/output and persisted
-  attempts, and validate per-plan credential destinations. Do not count a clean
-  stylistic review as a counterexample to an observed wrong-account path.
-- **#43, long paste:** make R2's delivery semantics reviewable first. Normal and
-  slow-reader success on an empty queue are valuable evidence but do not cover a
-  prefilled service queue or partial transport failure. Preserve explicit size
-  refusal and the side-shell notice without treating display-unit preferences as
-  the core defect. It touches input surfaces shared with #44; land the input
-  contract first and rebase the dependent work.
-- **#44, next-prompt suggestions:** keep it optional and outside this release's
-  critical path. In addition to R2, fix offer-identity accounting (identical text
-  is not the same offer), retain ordinary Tab when no navigation destination
-  exists, and prevent unrelated typing/selection from being submitted by a delayed
-  Return. Bound and classify local logs, declare exactly which context goes to the
-  configured model, and qualify impression/acceptance denominators independently
-  of replay scores. QObject and renderer lifetime warnings require source/API
-  verification before treating every generated warning as a defect.
-
-Late feedback on merged #38 also identifies review-tool hardening work. Track
-that as developer tooling, separate from user-facing release readiness; a pending
-optional reviewer is not itself a production defect.
+Companion, direct-context and developer-tooling work can progress in independent
+PRs without holding up the local candidate. Journal and lifecycle changes join
+the release only when their required contracts and checks are complete. Keep their source and
+receipts attributable while consolidating; the candidate's feature set, not the
+number of unfinished branches or optional bot responses, determines inclusion.
+The live work record and GitHub own later review status, so do not retain another
+per-thread count or queue in this architecture document.
 
 #### Qualification without duplicate testing
 
@@ -2983,6 +3022,22 @@ an implementation. One build owner per preset keeps receipts coherent. Keep
 sanitizer, real-adapter, native input/GPU and package results distinct. Reuse
 unchanged source evidence with its original revision and platform; rerun the
 assembled integration gate once after dependent changes are combined.
+
+Before a costly run, inspect the combined diff, select the contracts it can
+change, confirm the target/case exists and that its build and runtime are ready,
+and state the failure the check must distinguish. This preflight can prevent a
+pointless build or GUI launch; it cannot prove behavior that needs execution.
+Use three stages: focused contract tests while editing, one assembled background
+integration pass, then native input/GPU, install/update/reboot and soak acceptance
+on the candidate. Run background checks without taking the user's focus where
+possible. Schedule intrusive OS checks separately rather than repeating them for
+each patch. Do not rerun identical suites for documentation-only follow-ups.
+
+Two cases are redundant only when they exercise the same contract, inputs,
+failure boundary, platform and oracle. Sanitizers, real CLI protocol behavior,
+native presentation and packaged process lifetime are different evidence even
+when they start from the same fixture. Keep one gate-to-case map in the candidate
+receipt and link to original results instead of copying tests or acceptance text.
 
 Each release candidate needs one dated receipt mapping these gates to exact
 source and artifact hashes, exercised OS/CLI versions, commands/results, review
@@ -3010,8 +3065,8 @@ observable finish line before it is claimed.
 
 #### Feature backlog after rollout reliability
 
-The [September 29 rollout gates](#broader-macos-rollout-readiness-september-29)
-take priority over these new capabilities. This table preserves the feature
+The [production delivery order](#production-delivery-order-september-30)
+takes priority over these new capabilities. This table preserves the feature
 ordering once the supported daily-use slice is reliable.
 
 | Order | Batch | Gate |
@@ -3134,7 +3189,7 @@ client-request methods and 84 server notifications around lapis's ten.
 
 | Order | Surface | What it adds | Gate before claiming it |
 | --- | --- | --- | --- |
-| 1 | Claude decision hooks | `PermissionRequest` accepts an answer: a `command` or `http` hook may return a `decision` object (`behavior` `allow`/`deny`, `updatedInput`, `updatedPermissions`, `interrupt`), confirmed by the installed binary's own validation strings and documented for print mode; exit code 2 alone does nothing for this event. The relay lapis already runs can therefore upgrade from advisory to authoritative without owning Claude's stdin. This changes that session's approval policy, so it is an explicit per-session opt-in mode, never a default, global or silent installation. | Live disposable-session qualification in the [Claude hook procedure](#claude-code-hooks-an-observation-only-extension) style: a real permission request answered through the relay, matching tool execution or denial, turn continuation, reconnect behavior, and the decision schema re-pinned against the installed version; then relax the adapter's observation-only declaration in the same reviewed change. |
+| 1 | Claude decision hooks | `PermissionRequest` accepts an answer: a `command` or `http` hook may return a `decision` object (`behavior` `allow`/`deny`, `updatedInput`, `updatedPermissions`, `interrupt`), confirmed by the installed binary's own validation strings and documented for print mode; exit code 2 alone does nothing for this event. The relay lapis already runs can therefore upgrade from advisory to authoritative without owning Claude's stdin. This changes that session's approval policy and needs an explicit runtime-mode contract. The [September 30 direction](#t3code-survey-outcomes-september-30) permits a user-configurable full-access default only on a qualified decision-capable route; it does not authorize a global or silent hook installation. | Live disposable-session qualification in the [Claude hook procedure](#claude-code-hooks-an-observation-only-extension) style: a real permission request answered through the relay, matching tool execution or denial, turn continuation, reconnect behavior, and the decision schema re-pinned against the installed version; then relax the adapter's observation-only declaration in the same reviewed change. |
 | 2 | Codex native hooks | The Claude-style hooks engine is upstream-stable and default-on: 12 events (`PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `SubagentStart`, `SubagentStop`, `Stop`, `Interrupt`), declared per config layer in `hooks.json` or inline `[hooks]`, with trust hashes and `command`/`mcp_tool` handlers. `PermissionRequest` handlers decide before the guardian and the user, with the resolution recorded as sourced from the hook, and `Stop` can force continuation under its own loop guard. Because the engine lives in core Session it covers ordinary TUI sessions, which have no structured attention today, and hook runs surface over app-server as `hook/started`/`hook/completed`. | Requalify a current binary by the [documented procedure](../CONTRIBUTING.md#codex-attention-qualification) first (the pin is 0.155.1; upstream stable is 0.157.1), then qualify dispatch, payload and return semantics live on disposable sessions, including the trust flow, before mapping events onto advisory or decision kinds. The investigation's "native hooks remain unqualified" stands until then. |
 | 3 | Claude background sessions | `claude --bg` keeps a session alive across GUI restarts, and `claude agents`, `attach`, `logs`, `stop\|kill`, `respawn` and `rm` manage those sessions; `--session-id` lets lapis own the identity, and `--resume` also accepts a transcript path. Transcripts and `sessions-index.json` under `~/.claude/projects/` make sessions enumerable without running Claude. | Moving the child from lapis's PTY into Claude's daemon conflicts with the service-owned process contract as written, so this needs its own reviewed contract, a distinct session mode like managed Codex, and live detach/reattach/stop evidence. Reading the transcript index for discovery is the safe first slice and needs no contract change. |
 | 4 | Codex app-server expansion | Around lapis's ten methods the registry now carries 170 client methods and 84 server notifications: `turn/steer` and `turn/interrupt`, `thread/queue/*`, `thread/tokenUsage/updated` and `account/rateLimits/updated`, item streaming with `item/commandExecution/outputDelta` and `terminalInteraction` (live preview content without a terminal resize), `thread/increment_elicitation`/`thread/decrement_elicitation` (pauses turn-timeout accounting while an approval UI holds a request), reasoning and plan deltas, `fs/watch`, and `command/exec` PTY sessions. The `error` notification now carries `will_retry`. `thread/rollback` was removed upstream (0.156.0); lapis never called it. | Same requalification gate as order 2, then adopt by capability cluster in separate reviewable slices with replay plus live evidence, preserving the exclusive-thread-queue reconciliation contract the resume/read boundary depends on. |
@@ -3188,10 +3243,10 @@ the owning adapter document.
 
 #### Working the priorities back through pseudo-production
 
-- Milestone 4 (32-session scale) stays the measurement exit for the assembled
-  architecture but moves behind batches 1 to 3. Daily multi-agent use is
-  longitudinal evidence and must not be conflated with the controlled
-  workload.
+- Milestone 4 (32-session scale) follows the durable R1/R4 architecture and
+  the declared early-access workload, ahead of the feature backlog.
+  Daily use remains longitudinal evidence and cannot substitute for controlled
+  input/switch/frame and resource measurements.
 - Milestone 5 (second independent adapter) narrows to what triggers cannot
   supply: response routing and reconciliation. A second adapter is chosen for
   a CLI whose decisions actually matter, not to fix blind cards, because
@@ -3209,10 +3264,136 @@ the owning adapter document.
   second, a full API as a strategic decision with its own review. Listing it
   here is not authorization to build it.
 
+### t3code survey outcomes (September 30)
+
+A September 30 survey read pingdotgg/t3code at revision `c2fa9fc9` (MIT,
+`t3` CLI 0.0.44) end to end. It is the same product category as lapis — a
+bring-your-own-subscription control surface for installed CLI agents — built
+on opposite bets: a TypeScript monorepo with one web UI served to Electron,
+browser and React Native, Codex via app-server, Claude Code via the Claude
+Agent SDK, three agents via Agent Client Protocol, and terminal VT parsing
+client-side in the same vendored Ghostty library lapis pins. Findings and
+cross-checks are retained in the [survey
+receipt](../evidence/t3code-survey.json). Nothing in this section is
+implemented by this survey; each row carries its gate and follows the
+[release triage](#release-triage-of-new-survey-directions-september-30).
+
+Not adopted, with reasons recorded so they are not re-litigated: the
+Electron/web-renderer path (it forgoes the native GPU terminal advantage that
+is lapis's differentiator); coupling to t3's server protocol (an unstable
+0.0.x contract under closed governance); nesting t3 under lapis (supervising
+a supervisor adds nothing); and the contents of t3's `AGENTS.md` (an ops
+manual grown by a repo whose contributors
+are agents around the clock; lapis's instruction file stays context and
+contracts). Agent Client Protocol is excluded by the same default —
+cross-tool protocol adapters churn and drop in practice, and lapis keeps
+independent, verified per-CLI adapters with PTY supervision — but that
+exclusion is under active re-examination (September 30, via the oh-my-pi
+investigation), and any adoption would still pass the full adapter
+qualification gate before a capability is claimed.
+
+Adopted as UX directions, each optional per surface and gated:
+
+| Feature | Direction | Gate |
+| --- | --- | --- |
+| Per-turn checkpoint diffs | Hidden-git-ref checkpoints captured at turn boundaries (never new commits), so a diff surface can scope to "latest turn" or "turn N" independent of the user's own edits; composes with adapter-sourced turn marks | Capture triggers only on adapter-declared turn boundaries; restore and diff verified against live sessions; no history rewrite; bounded refs per session with eviction |
+| Ordered status grammar | One severity order across strip, cards and Requests (pending approval, awaiting input, working, plan ready, completed-unseen), consistent colors, pulse only while active, duty-cycled stepped animation instead of per-vsync repaint | Deterministic mapping from existing attention kinds; animation budget honored (no continuously repainting effects); reduced-motion respected per the existing contracts |
+| Project roll-up grouping | Optional grouping of sessions within a category by working repository, with a worst-status roll-up indicator on the collapsed header answering "what needs me" at a glance | Category ownership and stable session positions unchanged; grouping is a presentation layer over existing session records |
+| Computed single git verb | One contextual card action computed from repository state (commit; commit and push; commit, push and open PR; pull; publish), with an explanatory disabled state instead of a menu | An explicit user action only; it never approves or answers an agent request; reuses the card menu's editor integration |
+| Stage-inline approvals | When the stage holds the requesting session, permission requests and free-form questions render with numbered-option answers (single keystroke) beside the transcript | Keyboard-ownership rules unchanged; decisions route through the originating adapter per the attention contract; options carry the source confidence already required of requests |
+
+Two product directions are recorded here because dependent work will branch
+from them. First, a per-session runtime mode (supervised, auto-accept-edits,
+auto, full-access) with a user-configurable default of full-access: it
+requires a decision-capable route to exist first — Codex app-server approval
+answering for structured sessions, and Claude through the Agent SDK route
+below. This supersedes the September 27 survey's unconditional default
+restriction; implementation must update the adapter capability declaration
+alongside the runtime policy. Where a decision-capable
+surface is shared, auto-approval must use once-scoped grants so it cannot
+widen stored permissions (t3's OpenCode adapter is the reference). Modes gate
+prompts, not capability, and adapters without a decision surface keep asking.
+Second, privacy stance: any future telemetry ships off by default with a
+persistent settable toggle, and an identity, if one is ever needed, is a
+random per-install value — never a hash of a provider account (t3's
+default-on PostHog with account-derived identifiers is the recorded
+counterexample).
+
+Two maintenance notes close the survey. The Ghostty pin comparison found
+lapis's existing discipline (hash-pinned source archive, pinned toolchain,
+configure-time receipt gate) already stronger than t3's commit pin plus
+drift test; the one borrow worth taking is embedding a version string in the
+built library so diagnostics self-report the exact VT revision. And the
+Claude Agent SDK evaluation completed its three streams on September 30
+(package contract, live probe on disposable sessions, integration map). The
+evidence supports a native route: the SDK is a thin spawn-plus-NDJSON
+control-protocol layer whose shipped types are the protocol spec, decisions
+flow through `can_use_tool` control requests whose answers are honored
+(allow against the real tool input; deny delivered to the model as an error
+result with the turn continuing unless `interrupt` is set), and
+`permission_suggestions` carry per-rule destinations (`session` for
+once-scoped grants). Two traps are recorded for the implementing change:
+the spawned session inherits user settings by default, so a user allow-rule
+silently bypasses the decision route entirely — the session service must own
+the permission-rule surface through the settings layer while preserving
+auth sources, since `settingSources: []` also drops `apiKeyHelper`
+credentials — and each query spawns a fresh CLI process whose conversation
+identity is stable only through `--session-id`/`--resume`. Adoption still
+requires the adapter qualification procedure and a prioritization decision;
+nothing here is implemented. The stored t3code receipt predates the reported
+completed SDK evaluation and still labels it in flight. Consolidate the
+version-pinned probe receipt before using that result as adapter acceptance.
+
+
+### oh-my-pi survey outcomes (September 30)
+
+A September 30 survey read can1357/oh-my-pi at revision `9532eb39ca` (MIT,
+omp 18.4.4) across eight subsystem areas, checked the load-bearing findings
+against lapis's own code paths, and drove a live `omp acp` process as a
+JSON-RPC client through a complete permission loop against a loopback mock
+provider. Findings, per-area verdicts and the probe results are retained in
+the [survey receipt](../evidence/oh-my-pi-survey.json). Nothing in this
+section is implemented by the survey; each row carries its gate and follows
+the [release triage](#release-triage-of-new-survey-directions-september-30).
+
+The survey's center of gravity is optimization under the zero-compromises
+posture: spend memory and machine so supervised agents never feel lapis,
+and bound only what must be bounded. Not adopted, with reasons recorded so
+they are not re-litigated: omp's frugal flow-control defaults (bounded
+reader queues sized for single-session laptops — lapis already has the
+pause-reader mechanics, and this section raises the budgets instead of
+lowering them); the snapcompact/mnemopi/handoff context stack (LLM-context
+economics owned by the supervised CLIs); the extension/marketplace surface
+(Bun in-process, unsandboxed); the auth broker/gateway (a multi-host fleet
+problem); the per-turn advisor model (a cost model a many-agent supervisor
+did not choose); the TUI resize/CPR and terminal-capability machinery (moot
+behind one pinned GPU-owned grid); and the collab link-sharing design (a
+comparator for any future browser-guest surface, not a current need).
+
+| Direction | What | Gate |
+| --- | --- | --- |
+| Raised transient output budgets | Raise the 64 KiB pending-output queue to MiB-class and re-time the per-pass parse chunking with a measurement, keeping the existing pause-reader path as the last resort for genuine sink exhaustion (history quota or disk full) | Rides the Q10 measured-allocation batch; sustained-output fixtures show no child-visible stall with bounded service memory |
+| Overflow-branch hardening | The pending-output overflow check stops the session today; make it pause-and-wait so an internal wiring surprise can never kill the agent | Regression fixture reaches the overflow path and observes recovery, not session death |
+| Teardown drain discrimination | Distinguish a slow consumer from a stuck one before abandoning the final PTY output drain (omp `await_pty_output_drain` is the reference) | Final-drain bounds preserved; a wedged consumer cannot hang teardown; fixtures cover both cases |
+| Update-pacing augmentations | After the applicable current pacing-audit gaps close: an adaptive frame-cost floor (next paint gated by last end plus last cost), an output-backlog gate (defer only while the consumer's write queue is full), input grace scoped to interrupt keys, and demand-armed ticks so time-derived presentation (pulses, chime repeats) arms timers only while something time-derived is painted | First-of-burst freshness unchanged — the update-pacing contract holds; injected-clock tests per mechanism; reduced-motion respected |
+| Advisory emission guard | With the triggers batch: content-normalized suppression across distinct request IDs, a per-window announcement budget with overflow reported, and escalation-only re-announcement, scoped strictly to observation-only notices (empty choice lists); decision-capable requests are never suppressed | Deterministic reducer tests with the injected clock; a distinct pending request is never hidden; trigger fixtures show bounded queue growth under repeated matches |
+| Web-surface consumption invariant | In the W1 frame queues: consume eagerly into bounded state and pause the source only when the durable sink is exhausted, never because the GUI is behind | The W1 check script gains a slow-GUI fixture that never stalls the engine beyond sink exhaustion; publishing follows the update-pacing contract |
+| ACP evidence bank | The live probe confirmed the server's happy path (fail-closed permissions, replay-based reconcile, strictly NDJSON stdio) and banked its edges: silent exit-0 death on one malformed stdin line; failures funnel to `-32603` with `data.details` strings; a second same-session prompt cancels-and-replaces; provider-config rejection is a log-only warning that silently reroutes to discovery; `allow_always` caches per tool name per session; no epochs or sequence numbers | Any future ACP adapter designs for these edges, keeps the service owning the child process in a managed-session shape, and passes the full adapter qualification gate before a capability is claimed; it remains the recorded Milestone 5 vehicle candidate behind the decision routes |
+
+Two corroborations close the survey. omp's render scheduler independently
+derived the policy this document codifies as the update-pacing contract,
+including the same first-of-burst failure mode addressed by the render
+throttle and snapshot publisher; preview decoding is a separate open gap; and both sibling surveys (oh-my-pi and t3code)
+pin Ghostty VT, keep hidden sessions consuming output, and route through
+verified per-CLI adapters — the haul is mostly refinements because the
+foundations were set early. The [pacing audit](#update-pacing-audit-september-28)
+owns the current gaps, including preview decoding, attention publication and
+companion history catch-up; this survey does not duplicate their completion state.
+
 ### Following milestones
 
-The [September 29 rollout gates](#broader-macos-rollout-readiness-september-29)
-order the near-term reliability batches; this table keeps the qualification exits. With
+The [production delivery order](#production-delivery-order-september-30)
+orders the reliability work; this table retains the later qualification exits. With
 the two-session workspace assembled, the remaining qualification stages are
 scale, another independent adapter, and platform completion. A later Linux port
 still needs actual input, rendering and lifecycle evidence. These stages remain
@@ -3220,8 +3401,8 @@ planned; they are not implied by Milestone 3 passing.
 
 | Milestone | Dependency and owner | Exit evidence |
 | --- | --- | --- |
-| 4: scale and responsiveness | Working multi-session desktop; verification owner | Controlled 32-session output/TUI workload, p50/p95/p99 input/switch/frame results, memory growth and idle CPU/GPU; distinguish synthetic replay from real agents |
-| 5: independent adapter and platform completion | Stable adapter capability contract; separate adapter/platform owners | Second CLI independently exercises observation/response/reconciliation; macOS and named Linux backends have actual lifecycle, native input and rendering evidence |
+| 4: scale and responsiveness | Durable R1/R4 multi-session candidate, after the initial workload and before new feature expansion; verification scope | Controlled 32-session output/TUI workload, p50/p95/p99 input/switch/frame results, memory growth and idle CPU/GPU; distinguish synthetic replay from real agents |
+| 5: independent adapter and platform completion | Stable adapter capability contract after rollout/scale; independent adapter/platform scopes | Second CLI exercises observation/response/reconciliation on macOS. A later Linux port has its own lifecycle, native input and rendering exit; it is not a macOS release dependency. |
 | 6: service-owned web surfaces | Design only; later work following the R1/R4 service-birth and release contracts | Headless CLI loop, GUI compositing, attention gating, import consent and 32-view load evidence per the [web-surface checkpoints](#web-surface-checkpoint-ladder) |
 
 Dependency notices, a complete bundled inventory/SBOM and redistribution obligations
@@ -3735,6 +3916,28 @@ impact (#25, #26, #27, #34, #42). Reviewed against how lapis starts Claude:
 Still open: the Claude qualification scripts pin `SUPPORTED_VERSION` 2.1.280
 and refuse newer CLIs. Their fixtures drive a GLM model through a local model
 router, so the bump waits for a run on a machine with that router.
+
+### Update pacing audit (September 28)
+
+The audit began September 28 and was rechecked against main `c0f2037` on
+September 30. [AGENTS.md](../AGENTS.md#responsiveness-and-resource-policy) owns the
+contributor rule; the [resource and pacing policy](#resource-and-pacing-policy)
+applies it to web surfaces. The service snapshot publisher's `schedule()` and
+`TerminalSurface::screenChanged` already measure the remaining interval. Preview
+decoding is a separate upstream stage and still delays delivery to that renderer.
+Preserve the conforming sites when older branches are consolidated.
+
+R5 refers here for the three remaining findings and their completion evidence:
+
+| Site | Current gap | Bounded follow-up and evidence |
+| --- | --- | --- |
+| `apps/desktop/src/live_connection.cpp`, `SessionPreview::offerSnapshot` | Arms the full smallest viewer interval when the decode timer is idle; preview cards request 250 ms. Newest bytes are retained, but the first screen after idle is still delayed before rendering. | Measure from the last decode and wait only the remainder, preserving hidden-view and foreground behavior. Extend the existing decode test to check immediate eligible idle delivery and newest-state burst coalescing, not only an upper bound on decode count. |
+| `services/session/src/session_service.cpp`, `schedule_attention()` | Arms a single-shot 16 ms timer when attention is dirty and no timer is active; observer changes call it directly. | Measure from the last attention publication and wait only the remainder; verify the first eligible update is published without the full-window delay and sustained changes retain the newest state. |
+| `apps/ios/Lapis/Models.swift`, `followNewHistory` | Waits one second after an eligible received frame before loading newer archived history; a frame after idle can trigger it. This is not a callback for every archive event. | Measure from the last newer-history attempt and retain generation/cancellation guards; extend the existing Foundation lifecycle probe to distinguish immediate idle recovery from bounded sustained catch-up. |
+
+These are source findings under the operational responsiveness work, not new
+latency measurements. Keep their completion evidence distinct from the earlier
+terminal echo measurements and the R1/R4 install and recovery qualification.
 
 ### Web surfaces (September 29)
 

@@ -75,6 +75,18 @@ platform qualification.
 
 </contributor_workflow>
 
+## Task sizing and independent PRs
+
+<task_sizing>
+Use [task sizing](CONTRIBUTING.md#task-sizing-and-independent-prs) to record
+difficulty separately from release relevance and dependencies. Delegate bounded
+D1/D2 work through implementation, scoped checks and its own ready PR when the
+task authorizes publication. D3/D4 work needs a shared contract or missing
+evidence resolved before dependent implementation. Inspect worker diffs and
+receipts; independent polish PRs can await review without blocking release work.
+This does not authorize merging, releasing or expanding a worker's permissions.
+</task_sizing>
+
 ## Architecture boundaries
 
 - Keep process/session ownership, terminal state, agent protocols, attention
@@ -199,6 +211,12 @@ platform-scoped.
 - Coalesce display updates while preserving approval, input, and lifecycle
   events. Report loss of synchronization on control-channel overflow. Budget
   per-session processing so one noisy agent cannot monopolize the service.
+- Rate-limit updates publish-to-publish: measure from the last processed
+  update, publish immediately once the interval has elapsed, and present the
+  newest state at the deadline. Never defer the first event of a burst by the
+  full interval, and keep visible updates on the frame clock rather than
+  wall-clock timer phase. Waiting for quiet is a deliberate debounce, a
+  different feature that re-arms per event.
 - Cache glyphs, redraw changed regions, throttle previews, and stop rendering
   hidden panels while still consuming their output. Animate at display refresh
   rate and let static scenes sleep. Scaled previews must not trigger continuous

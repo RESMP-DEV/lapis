@@ -111,6 +111,7 @@ plan/contracts, and this guide owns procedure. Avoid another tracked roadmap.
   <objective>Requested outcome, current milestone or maintenance batch, exclusions.</objective>
   <baseline>Checkout, branch, HEAD, dirty work to preserve, relevant PR head and overlap.</baseline>
   <scope>Temporary write allowlist, collaborators, shared-file and build owner.</scope>
+  <triage>Difficulty D1–D4, release relevance, dependencies, and the evidence needed to lower uncertainty.</triage>
   <contracts>State/resource owner, session or connection identity, interfaces and compatibility.</contracts>
   <checks>Supported commands and cases, platform, expected observations, build directory, reusable evidence.</checks>
   <validation>Fresh or reused result; command, source SHA/dirty state, scope, platform/tool versions, outcome and receipt.</validation>
@@ -127,6 +128,41 @@ acceptance gap. Transfer these dispositions into the PR/handoff; preserve concis
 sanitized evidence in `evidence/` and detailed logs under `build/`.
 For reused results, preserve their original revision and explain why their tested
 inputs still match; link the receipt instead of copying its full contents.
+
+### Task sizing and independent PRs
+
+Score the task's uncertainty and coupling, not its line count or the worker's
+self-reported confidence. Record **difficulty**, **release relevance** and
+**dependencies** in the existing work record. This is a routing judgment, not a
+new numerical quality gate or an automatic promise that a model can finish it.
+
+| Difficulty | Evidence before delegation | Default path |
+| --- | --- | --- |
+| D1: mechanical or explanatory | Exact desired result, small file allowlist, no behavioral contract change; text/format checks are sufficient | Worker completes and verifies one focused change, then opens an independent ready PR when publication is in scope. Do not invent behavior tests for wording. |
+| D2: bounded behavior | Known owner and failure, stable interfaces, deterministic focused checks, reversible implementation | Worker owns implementation, tests and the ready PR. Examples include a known scheduling defect or validation within an existing launch contract. A small authentication or persistence patch is not automatically D2; its full failure/side-effect boundary must be understood. |
+| D3: coupled change | Multiple owners, protocol/persistence or package lifecycle changes, material unknowns or dependent PRs | Coordinator agrees the shared contract and divides it into verifiable slices; workers implement and can publish the independent slices. Integration and cross-version checks remain explicit. |
+| D4: architectural or qualification uncertainty | Ownership is unsettled, or decisive evidence requires native/package/hardware/provider behavior not yet exercised | Delegate bounded investigation and probes first. Record the missing evidence, settle the contract, then rescore implementation slices. Do not mark the whole task complete because a source-only worker passed. |
+
+Release relevance is independently **release blocker**, **parallel polish** or
+**deferred feature**. A D1 defect can block release; a difficult feature can
+remain outside it. Dependencies name a concrete contract, source baseline or PR,
+not a person or a requirement to finish every other branch. Reassess difficulty
+when investigation reveals a new owner, side effect, migration or missing oracle.
+
+Give a worker the finish line, file scope, committed baseline, shared contracts,
+permitted tools/network use, exact affected checks and PR destination. Under an
+authorized PR task, a D1/D2 worker may commit only its verified scoped files,
+push its own branch to `RESMP-DEV/lapis`, and open or update one ready PR with the
+template, evidence and remaining limitations. Use the same branch for review
+repairs. No merge, release, unrelated staging or expanded production access is
+implied. If its harness cannot publish, hand off the checked commit/diff for
+publication without holding up other work.
+
+Reviewers inspect the actual diff and receipts; worker completion or a green
+provider label is not approval. These PRs can wait for review independently of
+the release track. Only included changes, actual dependencies and unresolved
+release blockers gate the candidate. Known required checks or acceptance still
+apply; do not label an unverified implementation ready simply to clear a queue.
 
 ### Quality review checkpoints
 
@@ -477,7 +513,7 @@ The committed `lapis.json` holds defaults only (see
   lapis keeps running, and the Dock icon brings it back; Command-M
   (`minimizeWindow`) minimizes. Command-Q quits the GUI. The intended service
   lifetime is independent, but macOS 27 can terminate GUI-spawned services with
-  the app's coalition; see the [current rollout blocker](docs/architecture.md#broader-macos-rollout-readiness-september-29).
+  the app's coalition; see the [production delivery order](docs/architecture.md#production-delivery-order-september-30).
   Do not promise quit/update survival until that platform gate is qualified.
   `detachWindow` still works when configured but has no default key.
 - Command-O (`resumeConversation`) lists past Claude Code and Codex

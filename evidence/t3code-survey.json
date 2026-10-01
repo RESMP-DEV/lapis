@@ -1,0 +1,51 @@
+{
+  "survey": "t3code-category-assessment",
+  "date": "2026-09-30",
+  "subject": {
+    "project": "pingdotgg/t3code",
+    "license": "MIT",
+    "version_cli": "0.0.44 (live npx t3@latest probe 2026-09-30; resolved artifact registry.npmjs.org/t3/-/t3-0.0.44.tgz, shasum 8fd79d68dd9502f0a1ae296f90a8e3aba7a86ae0)",
+    "revision_reviewed": "c2fa9fc9 (2026-09-30, shallow reference clone)",
+    "category": "agent harness control surface (web/Electron/mobile + local `t3` HTTP/WebSocket server) over installed CLI agents"
+  },
+  "agent_integration_mechanisms": {
+    "codex": "app-server JSON-RPC (packages/effect-codex-app-server)",
+    "claude_code": "@anthropic-ai/claude-agent-sdk query() streaming sessions (ClaudeAdapter.ts, SDK ^0.3.276); decision-capable, no hooks",
+    "cursor_grok_antigravity": "Agent Client Protocol via packages/effect-acp (Cursor CLI `agent acp`)",
+    "opencode": "own server protocol, one server per thread; full-access auto-replies use `once` grants so auto-approval cannot widen a shared server's stored permissions",
+    "terminals": "node-PTY server-side; VT parsed client-side in vendored libghostty-vt (WASM web, JNI Android, forked GhosttyKit iOS)"
+  },
+  "ghostty_pin_comparison": {
+    "t3": "raw-commit VERSION file, artifacts rebuilt from fresh clone, ABI drift test asserts artifact-embedded revision equals pin",
+    "lapis": "SHA-256-pinned source archive + pinned Zig toolchain per platform + configure-time receipt gate (cmake/Ghostty.cmake); already exceeds t3 discipline",
+    "micro_borrow_considered": "embed -Dlib-version-string so the built library self-reports its exact VT revision in diagnostics"
+  },
+  "telemetry_findings": {
+    "default": "on, env-var opt-out only",
+    "identity": "unsalted SHA-256 of first-match ~/.codex/auth.json tokens.account_id, then ~/.claude.json userID, then random UUID (Identify.ts) - pseudonymous, stable cross-machine",
+    "events": "client.connected, client.thread.started, client.turn.requested, provider.turn.{sent,attempted,completed,interrupted,rejected}, provider.request.responded, provider.runtime_mode.changed, provider.session.{started,stopped,recovered,stopped_all}, provider.thread.compacted, provider.conversation.rolled_back, server.boot.heartbeat"
+  },
+  "decisions": {
+    "ux_ports_adopted_as_directions": [
+      "per-turn checkpoint diffs via hidden git refs",
+      "ordered attention/status grammar with duty-cycled animation",
+      "project roll-up grouping within categories",
+      "computed single git verb card action",
+      "stage-inline approvals with numbered-key answers"
+    ],
+    "full_access_default": "user direction 2026-09-30: per-session runtime mode defaulting to full-access once decision-capable routes exist",
+    "telemetry_stance": "any future lapis telemetry off by default with persistent settable toggle; random per-install identity only",
+    "acp": "not adopted (user experience: cross-tool protocol adapters churn/drop; lapis keeps per-CLI verified adapters and PTY supervision)",
+    "t3_server_coupling": "rejected (Effect unstable RPC, 0.0.x, closed governance)",
+    "electron_renderer_path": "rejected (forsakes the native GPU terminal advantage)",
+    "claude_agent_sdk": "evaluation completed 2026-09-30 across all three streams (package contract, live probe on disposable sessions, integration map); evidence supports a native route, with the settings-inheritance and --session-id/--resume identity traps recorded in docs/architecture.md; adoption still requires the adapter qualification procedure and a prioritization decision",
+    "agents_md_content": "nothing adopted into lapis AGENTS.md (t3's file is an ops-manual monoculture artifact; AGENTS.md is context and contracts)"
+  },
+  "auth_assessment": "unusually strong: scoped sessions with monotone delegation, fail-closed DPoP, short-lived WS tickets, per-RPC scope table, creation-response-only secrets; identified a right-size slice for ccr-rust (per-route scopes, tickets, secret hygiene)",
+  "verification_scope": "Survey-grade receipt, not an audited one: shallow reference clone at the pinned revision plus one live CLI probe, both on 2026-09-30. Per-claim file SHA-256 digests, probe transcripts, drivers and the resolved npx binary were not retained, so claims are reported results as of the probe date; re-verification means re-running the source read and probe against revision c2fa9fc9 and the pinned tarball. docs/architecture.md (t3code survey outcomes and release triage) owns the gates, supersessions and adoption traces for every decision recorded here.",
+  "verification": [
+    "repo source read at pinned revision (adapters, packages, docs/internals, native/); per-claim digests not retained (see verification_scope)",
+    "live CLI probe: npx t3@latest --help/--version, resolved to 0.0.44 (tarball shasum above); raw output not retained",
+    "cross-checks docs vs code for permission modes, adapters, checkpoints, telemetry (all matched)"
+  ]
+}
