@@ -184,6 +184,15 @@ fun AgentStage(
     var composing by remember { mutableStateOf(false) }
     var draft by rememberSaveable { mutableStateOf("") }
     var stageSize by remember { mutableStateOf(IntSize.Zero) }
+    // Which bar visibility the current stageSize was measured under. The
+    // first layout paints the bar from commandBarEnabled's default before
+    // the DataStore read lands, so with the bar saved off that first
+    // measurement is short; opening on it means a resize the moment the
+    // saved value applies and the bar leaves the layout. fit() holds the
+    // open until the pair agrees. The initializer matches the bar's own,
+    // so a saved-on entry starts consistent and never waits on a
+    // relayout that will not come.
+    var laidOutBarEnabled by remember { mutableStateOf(commandBarOverride ?: true) }
     val keyboardShown = WindowInsets.isImeVisible
     val composerFocus = remember { FocusRequester() }
 
@@ -252,6 +261,11 @@ fun AgentStage(
         // Until the saved settings land, the geometry is the default's, not
         // the user's; opening now means a resize the moment they apply.
         if (!settingsLoaded) return
+        // Nor may a size measured under the bar's default visibility open
+        // the session: with the bar saved off, the first measurement is
+        // short, and only the relayout after the saved value applies
+        // carries the geometry the user configured.
+        if (laidOutBarEnabled != commandBarEnabled) return
         if (stageSize.width <= 0 || stageSize.height <= 0) return
         val grid = metrics.grid(stageSize.width.toFloat(), stageSize.height.toFloat())
         val current = session.size.value
@@ -273,8 +287,11 @@ fun AgentStage(
 
     // settingsLoaded is a key: the gate itself releases fit() when the
     // saved values have applied, including when the stage size never
-    // changed (saved state equal to the defaults).
-    LaunchedEffect(session, stageSize, settingsLoaded) { fit() }
+    // changed (saved state equal to the defaults). The bar pair is keyed
+    // the same way: a saved-off entry holds fit() through the bar's
+    // departure and releases it on the relayout, while a saved-on entry
+    // finds the pair already matching and fits immediately.
+    LaunchedEffect(session, stageSize, settingsLoaded, laidOutBarEnabled, commandBarEnabled) { fit() }
     LaunchedEffect(session, fontSize) { fit(force = true) }
 
     fun setFontSize(value: Float) {
@@ -355,7 +372,13 @@ fun AgentStage(
                 Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .onSizeChanged { stageSize = it }
+                    .onSizeChanged {
+                        stageSize = it
+                        // The size and the bar state that produced it must
+                        // move together, or fit() would compare a new size
+                        // against a stale provenance.
+                        laidOutBarEnabled = commandBarEnabled
+                    }
                     .pointerInput(Unit) {
                         detectTapGestures { composerFocus.requestFocus() }
                     },
