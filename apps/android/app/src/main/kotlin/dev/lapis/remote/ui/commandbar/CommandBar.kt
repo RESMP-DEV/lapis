@@ -189,10 +189,13 @@ private fun SnippetChip(
         modifier = Modifier
             .testTag("snippet-$index")
             .chipLook(enabled)
-            // Long-press opens the editor even while offline: editing the
-            // list is not a terminal operation.
+            // Offline the chip drops its dead click action too: TalkBack
+            // must not advertise an activation that would do nothing. The
+            // always-enabled "+" chip keeps editing reachable while
+            // offline, so the long-press entry point is not lost with it.
             .combinedClickable(
-                onClick = { if (enabled) onRun() },
+                enabled = enabled,
+                onClick = onRun,
                 onLongClick = onEdit,
             )
             .chipPadding(),

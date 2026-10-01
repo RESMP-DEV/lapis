@@ -75,6 +75,7 @@ import dev.lapis.remote.session.WorkspaceRepository
 import dev.lapis.remote.terminal.TerminalMetrics
 import dev.lapis.remote.terminal.TerminalScreen
 import dev.lapis.remote.ui.commandbar.CommandBar
+import dev.lapis.remote.ui.commandbar.SnippetListSaver
 import dev.lapis.remote.ui.commandbar.SnippetStore
 import kotlin.math.max
 import kotlin.math.min
@@ -134,7 +135,14 @@ fun AgentStage(
     // bar in a harness run is a regression, never a setting question.
     val snippetStore = remember(settings) { SnippetStore(settings) }
     var commandBarEnabled by rememberSaveable { mutableStateOf(commandBarOverride ?: true) }
-    var snippets by rememberSaveable { mutableStateOf(listOf<String>()) }
+    // The editor's Saver, not the default: rememberSaveable's default maps
+    // an empty list to Bundle-null and reads null as "no saved value", so a
+    // legitimately empty list would not survive a fold (documented at
+    // SnippetEditorDialog; internal visibility is module-wide, so the ui
+    // package reuses it without hoisting).
+    var snippets by rememberSaveable(stateSaver = SnippetListSaver) {
+        mutableStateOf(listOf<String>())
+    }
 
     // Saved settings land after first composition: DataStore reads are
     // async where iOS UserDefaults is synchronous. fit() must wait for
@@ -202,15 +210,22 @@ fun AgentStage(
     var composing by remember { mutableStateOf(false) }
     var draft by rememberSaveable { mutableStateOf("") }
     var stageSize by remember { mutableStateOf(IntSize.Zero) }
+    // The bar renders only once its visibility is settled: an override makes
+    // it final at first composition, and otherwise the DataStore read does.
+    // Rendering the default first would flash the bar (and its chips) at a
+    // user whose saved value is off. The same effect that settles the flag
+    // also assigns the loaded snippets, so the bar's first frame carries the
+    // real chip row, not an empty one.
+    val barShown = (commandBarOverride != null || settingsLoaded) && commandBarEnabled
     // Which bar visibility the current stageSize was measured under. The
-    // first layout paints the bar from commandBarEnabled's default before
-    // the DataStore read lands, so with the bar saved off that first
-    // measurement is short; opening on it means a resize the moment the
-    // saved value applies and the bar leaves the layout. fit() holds the
-    // open until the pair agrees. The initializer matches the bar's own,
-    // so a saved-on entry starts consistent and never waits on a
-    // relayout that will not come.
-    var laidOutBarEnabled by remember { mutableStateOf(commandBarOverride ?: true) }
+    // initializer mirrors the first frame's rendered state (only an override
+    // can show the bar before the read lands), so the pair starts agreeing
+    // in the no-bar cases and never waits on a relayout that will not come.
+    // With the bar saved on and no override, the first measurement is the
+    // short one but arrives only after the read settles the bar into the
+    // layout; fit() holds the open until the pair agrees, so the session
+    // opens once at the geometry the user configured.
+    var laidOutBarEnabled by remember { mutableStateOf(commandBarOverride == true) }
     val keyboardShown = WindowInsets.isImeVisible
     val composerFocus = remember { FocusRequester() }
 
@@ -321,11 +336,13 @@ fun AgentStage(
     // unchanged means the previous geometry is already the right one, so
     // releasing on it opens exactly what the user configured. The normal
     // path still wins the race: onSizeChanged fires during the first of
-    // those frames and writes the same value first.
-    LaunchedEffect(commandBarEnabled) {
+    // those frames and writes the same value first. Keyed on the rendered
+    // visibility, not the raw setting: the read settling the bar into the
+    // layout (barShown false→true) is exactly such a relayout.
+    LaunchedEffect(barShown) {
         withFrameNanos {}
         withFrameNanos {}
-        laidOutBarEnabled = commandBarEnabled
+        laidOutBarEnabled = barShown
     }
 
     fun setFontSize(value: Float) {
@@ -433,7 +450,7 @@ fun AgentStage(
                 )
             }
             Banner(state, agent.title, shared, reopenGrid, onReopen)
-            if (commandBarEnabled) {
+            if (barShown) {
                 CommandBar(
                     live = isLive,
                     snippets = snippets,

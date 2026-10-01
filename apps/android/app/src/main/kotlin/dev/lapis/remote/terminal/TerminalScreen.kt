@@ -397,7 +397,10 @@ fun TerminalScreen(
                 // live output the body does not show yet.
                 contentDescription = when {
                     stateSentence != null && screenText.isNotBlank() ->
-                        "$stateSentence $screenText"
+                        // Trimmed: leading whitespace in the frame text
+                        // would announce as a pause after the state
+                        // sentence instead of joining it.
+                        "$stateSentence ${screenText.trim()}"
                     stateSentence != null -> stateSentence
                     else -> screenText.ifBlank { "Agent screen" }
                 }

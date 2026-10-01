@@ -1,6 +1,7 @@
 package dev.lapis.remote.platform
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
@@ -49,7 +50,11 @@ class DataStoreSettings(context: Context) : KeyValueStore {
     override suspend fun putString(key: String, value: String) {
         try {
             store.edit { preferences -> preferences[stringPreferencesKey(key)] = value }
-        } catch (_: IOException) {
+        } catch (error: IOException) {
+            // Absorbed, not silent: a write that never lands looks like a
+            // setting that reverts on next launch, so leave a log line to
+            // debug from when that is reported.
+            Log.w("DataStoreSettings", "Failed to persist $key", error)
         }
     }
 

@@ -70,9 +70,11 @@ fun SettingsScreen(
     // Two flags with opposite lifetimes. loadedOnce is saveable: after a
     // recreation it restores to true and skips the read below, so a read
     // racing a just-made toggle's write can never assign the pre-write
-    // value over the restored (correct) switch state. readLanded is plain
-    // remember: it resets on recreation and keeps the Switch disabled
-    // until this composition's read actually finishes.
+    // value over the restored (correct) switch state, and it keeps the
+    // Switch enabled across that recreation — the restored value is the
+    // real one, so nothing can flash the default in. readLanded is plain
+    // remember: only the first-ever composition (loadedOnce still false)
+    // must hold the Switch disabled until its own read actually finishes.
     var loadedOnce by rememberSaveable { mutableStateOf(false) }
     var readLanded by remember { mutableStateOf(false) }
 
@@ -212,10 +214,13 @@ fun SettingsScreen(
                     )
                 }
                 Switch(
-                    // Disabled for the one frame before the DataStore read
-                    // lands, so the flash of the default cannot be flipped
-                    // and written back over a saved "off".
-                    enabled = readLanded,
+                    // Disabled only until the switch state is authoritative:
+                    // first composition waits for the DataStore read (so the
+                    // flash of the default cannot be flipped and written
+                    // back over a saved "off"); a recreation already holds
+                    // the restored true value via loadedOnce and stays
+                    // enabled, with no one-frame flicker.
+                    enabled = loadedOnce || readLanded,
                     checked = commandBar,
                     onCheckedChange = { value ->
                         commandBar = value

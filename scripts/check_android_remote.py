@@ -275,6 +275,7 @@ def reveal(device, target_id, max_swipes=8):
     of burning the whole budget on a row that is not responding."""
     reversed_once = False
     previous = None
+    row_y = None
     for _ in range(max_swipes):
         bar = device.find(id="command-bar")
         if bar is None:
@@ -314,8 +315,14 @@ def reveal(device, target_id, max_swipes=8):
                 time.sleep(0.4)
                 continue
         else:
-            _, bar_top, _, bar_bottom = bar["bounds"]
-            row_y = bar_top + (bar_bottom - bar_top) // 4
+            # The chip is absent from this dump entirely — a transient
+            # mid-swipe state. Keep swiping the row it was last seen in,
+            # honoring the docstring's own-bounds rule across the gap; only
+            # a chip never seen at all falls back to the bar's first row,
+            # which is where the only current caller's target lives.
+            if row_y is None:
+                _, bar_top, _, bar_bottom = bar["bounds"]
+                row_y = bar_top + (bar_bottom - bar_top) // 4
         device.swipe(bar_right - margin, row_y, margin, row_y, 250)
         time.sleep(0.4)
     return False
@@ -425,11 +432,16 @@ def fixture(run):
                 # so force it down the cannot-know-this-run's-ids path
                 # instead of crashing on a .get of a list or scalar.
                 listing = {}
+            # `or ()` and not a .get default: JSON null is a present key
+            # with value None, which .get returns as-is and `for` over None
+            # raises TypeError — outside the (OSError, ValueError) this
+            # block catches. With both null shapes coerced, no JSON the
+            # responder can emit raises from this comprehension at all.
             answered = [
                 item
-                for category in listing.get("categories", ())
+                for category in listing.get("categories") or ()
                 if isinstance(category, dict)
-                for item in category.get("agents", ())
+                for item in category.get("agents") or ()
                 if isinstance(item, dict)
             ]
         except (OSError, ValueError):
