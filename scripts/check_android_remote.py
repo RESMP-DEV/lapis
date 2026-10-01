@@ -857,6 +857,24 @@ def checks(device, mac, screens):
                 )
             return None
 
+        # set_switch's problems come in two shapes, and only one of them
+        # may ride under a SKIPPED when the body's assertions passed.
+        # Probe-shaped: the dump never established what to tap, or lost it
+        # mid-probe — the restore could not act, and the next run's
+        # ensure-on step re-aligns the stored setting. Effect-shaped (any
+        # other message, including "did not flip" and "Done never
+        # returned"): the restore acted and the product state did not
+        # follow — the same persistence behavior the body asserts, and on
+        # the body-passed path the only place it can still surface, so it
+        # fails the run instead of hiding under a skip.
+        PROBE_SHAPED = frozenset(
+            (
+                "the command bar switch never appeared",
+                "the settings switch vanished from the settings screen",
+                "the settings switch reported no checked state to the dump",
+            )
+        )
+
         device.launch(fresh=True, command_bar=None)
         if device.wait(text="echo agent", timeout=25) is None:
             return "the workspace list never came back"
@@ -892,12 +910,18 @@ def checks(device, mac, screens):
                 if device.find(id="terminal") is not None:
                     device.tap_node(id="back")
                     time.sleep(0.3)
-                # The settings screen is detected by the workspace list's
-                # settings button being gone, never by the switch node: the
-                # switch failing to appear is itself a failure mode above,
-                # and keying the restore on it makes exactly that path tap
-                # a node only the workspace list carries.
-                already_open = device.find(id="settings") is None
+                # Positive marker only: the settings screen owns its own
+                # tag, present whatever became of the switch inside it.
+                # Its absence means "not on the settings screen" — the
+                # stage, a dialog, or a wedged dump — which says nothing
+                # about the switch; on those screens the restore must
+                # navigate first instead of waiting on a switch that
+                # cannot appear there. The previous shape (the workspace
+                # list's settings button being gone) was true on every one
+                # of those screens too, so a wedged stage made the restore
+                # skip the navigation and report the wrong "switch never
+                # appeared" diagnosis.
+                already_open = device.find(id="settings-screen") is not None
                 restore_problem = set_switch(True, already_open=already_open)
             except Exception as error:
                 # The whole cleanup is guarded, not just set_switch: a
@@ -911,14 +935,21 @@ def checks(device, mac, screens):
             restore_note = (
                 f"the settings-toggle restore did not confirm: {restore_problem}"
             )
-            if problem is None:
-                # The product assertions passed; what follows is a harness
-                # condition, not a defect. The SKIPPED prefix keeps it in
-                # the receipt without failing the run — the file's existing
-                # convention for exactly this split — and the next run's
-                # ensure-on first step re-aligns the stored setting.
+            if problem is None and restore_problem in PROBE_SHAPED:
+                # The product assertions passed and the restore could not
+                # even act — a harness condition, not a defect verdict. The
+                # SKIPPED prefix keeps it in the receipt without failing
+                # the run, the file's convention for exactly this split,
+                # and the next run's ensure-on first step re-aligns the
+                # stored setting. Every other restore problem fails below:
+                # an unconfirmed effect (the switch did not flip, Done did
+                # not return) or a raise is a persistence signal this
+                # check owns, and the receipt's failed list is where a
+                # gate reads it.
                 return f"SKIPPED: {restore_note}"
-            return f"{problem}; also, {restore_note}"
+            return (
+                restore_note if problem is None else f"{problem}; also, {restore_note}"
+            )
         return problem
 
     def check_crash():

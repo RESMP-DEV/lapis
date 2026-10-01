@@ -100,6 +100,11 @@ fun SettingsScreen(
 
     Scaffold(
         containerColor = LapisColors.background,
+        // The screen's own positive marker: device automation keys on this
+        // tag to know the settings screen is showing whatever happened to
+        // the switch inside it, instead of inferring it from some other
+        // screen's nodes being absent.
+        modifier = Modifier.testTag("settings-screen"),
         topBar = {
             TopAppBar(
                 title = {

@@ -46,6 +46,7 @@ import dev.lapis.remote.ui.LapisColors
 fun CommandBar(
     live: Boolean,
     snippets: List<String>,
+    snippetsReady: Boolean,
     onInput: (Input) -> Unit,
     onSnippets: (List<String>) -> Unit,
     modifier: Modifier = Modifier,
@@ -67,7 +68,12 @@ fun CommandBar(
             live = live,
             snippets = snippets,
             onInput = onInput,
-            onEdit = { editing = true },
+            // The editor seeds its rows once from this list and ignores
+            // later parent updates, so it must never open against the
+            // pre-load placeholder: Done would commit the empty seed over
+            // the stored list. The first store read applies before any
+            // edit can begin.
+            onEdit = { if (snippetsReady) editing = true },
             wide = wide,
         )
     }

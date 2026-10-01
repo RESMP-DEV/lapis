@@ -42,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -142,6 +143,12 @@ fun AgentStage(
     // reads everything and flips the gate once, so the first open happens
     // at the geometry the user actually configured.
     var settingsLoaded by remember { mutableStateOf(false) }
+    // Saveable for the same reason as SettingsScreen's loadedOnce: a fold
+    // recreates the stage with the list the user just committed (snippets
+    // is saveable, and setSnippets marks this true with the commit), so a
+    // store read racing that save must not assign the pre-write list over
+    // the restored one.
+    var snippetsLoaded by rememberSaveable { mutableStateOf(false) }
     // Keyed on settings only: the override is a debug intent, and re-running
     // the store loads when it changes would revert a snippet save still in
     // flight back to the persisted list.
@@ -155,7 +162,15 @@ fun AgentStage(
             commandBarEnabled = commandBarOverride
                 ?: settings.getString(COMMAND_BAR_KEY)?.toBooleanStrictOrNull()
                 ?: true
-            snippets = snippetStore.load()
+            val loaded = snippetStore.load()
+            // A recreation re-runs this effect with the saveable list the
+            // user last saw (or committed) already restored; assigning the
+            // store's pre-write list over it would revert the screen and,
+            // once edited, drop the in-flight save underneath.
+            if (!snippetsLoaded) {
+                snippets = loaded
+                snippetsLoaded = true
+            }
         } finally {
             // A stage that never opens is a worse failure than one that
             // opens at default geometry: any unexpected throwable in the
@@ -170,6 +185,9 @@ fun AgentStage(
             // exactly what a restart restores.
             val bounded = SnippetStore.normalize(next)
             snippets = bounded
+            // The commit makes the live list authoritative: a store read
+            // still in flight must not overwrite it after a recreation.
+            snippetsLoaded = true
             // The application-lived scope: leaving the stage (or the editor
             // closing) must not cancel the persistence write.
             sessionScope.launch { snippetStore.save(bounded) }
@@ -293,6 +311,22 @@ fun AgentStage(
     // finds the pair already matching and fits immediately.
     LaunchedEffect(session, stageSize, settingsLoaded, laidOutBarEnabled, commandBarEnabled) { fit() }
     LaunchedEffect(session, fontSize) { fit(force = true) }
+    // Escape hatch for the provenance gate above: onSizeChanged releases it
+    // only when the bar's departure changes the box's height — the only case
+    // the gate exists for. If a future bar layout stops affecting the
+    // measured size (an overlay-drawn bar, a height absorbed elsewhere), no
+    // measurement would ever arrive and the gate would hold the open
+    // forever, silently. Two frames after a bar change the layout under the
+    // new state has certainly run, and a bar whose exit leaves the size
+    // unchanged means the previous geometry is already the right one, so
+    // releasing on it opens exactly what the user configured. The normal
+    // path still wins the race: onSizeChanged fires during the first of
+    // those frames and writes the same value first.
+    LaunchedEffect(commandBarEnabled) {
+        withFrameNanos {}
+        withFrameNanos {}
+        laidOutBarEnabled = commandBarEnabled
+    }
 
     fun setFontSize(value: Float) {
         fontSize = value
@@ -403,6 +437,7 @@ fun AgentStage(
                 CommandBar(
                     live = isLive,
                     snippets = snippets,
+                    snippetsReady = snippetsLoaded,
                     onInput = remember(session) {
                         { input: Input -> session.send(input) }
                     },
