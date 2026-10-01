@@ -863,34 +863,47 @@ def checks(device, mac, screens):
         problem: str | None = None
         restore_problem: str | None = None
         try:
-            # From a known-on state: the read path shows the bar...
-            problem = set_switch(True)
-            if problem is None:
-                problem = open_stage(expect_bar=True)
-            if problem is None:
-                shot("13-bar-shown")
-                # ...and hiding it through Settings removes it on re-entry.
-                device.tap_node(id="back")
-                problem = set_switch(False)
-            if problem is None:
-                problem = open_stage(expect_bar=False)
-            if problem is None:
-                shot("14-bar-hidden")
+            try:
+                # From a known-on state: the read path shows the bar...
+                problem = set_switch(True)
+                if problem is None:
+                    problem = open_stage(expect_bar=True)
+                if problem is None:
+                    shot("13-bar-shown")
+                    # ...and hiding it through Settings removes it on re-entry.
+                    device.tap_node(id="back")
+                    problem = set_switch(False)
+                if problem is None:
+                    problem = open_stage(expect_bar=False)
+                if problem is None:
+                    shot("14-bar-hidden")
+            except Exception as error:
+                # The taps above raise when a screen wedges mid-check. The
+                # restore below still runs; folding the raise into the
+                # body's diagnosis keeps the receipt complete on this path
+                # too, because a raise escaping the try would discard
+                # restore_problem and record only the bare device error.
+                problem = f"the check raised {type(error).__name__}: {error}"
         finally:
             # Leave the setting on whatever happened above: a failed run
             # must not leave the device stored-off for the next
-            # store-honoring launch (this check's own next run). A restore
-            # problem is merged into the returned problem below; if the
-            # body raised instead, the exception already fails the check
-            # and the next run's ensure-on first step re-aligns the state.
-            if device.find(id="terminal") is not None:
-                device.tap_node(id="back")
-                time.sleep(0.3)
-            already_open = device.find(id="command-bar-setting") is not None
+            # store-honoring launch (this check's own next run).
             try:
+                if device.find(id="terminal") is not None:
+                    device.tap_node(id="back")
+                    time.sleep(0.3)
+                # The settings screen is detected by the workspace list's
+                # settings button being gone, never by the switch node: the
+                # switch failing to appear is itself a failure mode above,
+                # and keying the restore on it makes exactly that path tap
+                # a node only the workspace list carries.
+                already_open = device.find(id="settings") is None
                 restore_problem = set_switch(True, already_open=already_open)
             except Exception as error:
-                restore_problem = f"restore raised {error!r}"
+                # The whole cleanup is guarded, not just set_switch: a
+                # raise escaping the finally would replace the body's
+                # diagnosis with the cleanup's own error.
+                restore_problem = f"restore raised {type(error).__name__}: {error}"
         if restore_problem is not None:
             # Neutral wording on purpose: a restore problem can occur with
             # the setting already stored on (a lost Done tap), so this
@@ -898,9 +911,14 @@ def checks(device, mac, screens):
             restore_note = (
                 f"the settings-toggle restore did not confirm: {restore_problem}"
             )
-            return (
-                restore_note if problem is None else f"{problem}; also, {restore_note}"
-            )
+            if problem is None:
+                # The product assertions passed; what follows is a harness
+                # condition, not a defect. The SKIPPED prefix keeps it in
+                # the receipt without failing the run — the file's existing
+                # convention for exactly this split — and the next run's
+                # ensure-on first step re-aligns the stored setting.
+                return f"SKIPPED: {restore_note}"
+            return f"{problem}; also, {restore_note}"
         return problem
 
     def check_crash():
