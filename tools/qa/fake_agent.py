@@ -118,15 +118,15 @@ def run(command, line):
                 say(f"busy {printed}")
                 time.sleep(1.5)
         except KeyboardInterrupt:
-            # Ignore a second ^C only for the report write itself: the
-            # line is what the device check greps for, but the write
-            # blocks on the PTY, and holding SIG_IGN across it would
-            # close the ^C escape hatch the suite's failure recovery
-            # uses when the phone side stops draining. (SIG_IGN also
-            # survives exec, so never spawn a child from this path.)
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            # Deliberately no SIG_IGN here: the report write blocks on
+            # the PTY, and only the raising handler can break that block
+            # — it is the ^C escape hatch the suite's failure recovery
+            # uses when the phone side stops draining. The cost is that
+            # a second ^C landing inside the report aborts it and loses
+            # the line, but the only sender of that second ^C is the
+            # already-failed recovery path, where unblocking is the
+            # point and the lost line is irrelevant.
             say(f"busy interrupted after {printed} lines")
-            signal.signal(signal.SIGINT, previous)
         finally:
             signal.signal(signal.SIGINT, previous)
     elif command == "flood":
