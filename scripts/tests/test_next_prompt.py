@@ -410,6 +410,41 @@ class AcceptanceTests(unittest.TestCase):
             with patch.object(next_prompt, "ask", return_value=(response, {})):
                 self.assertEqual(next_prompt_eval.judge([item], "stand-in"), {})
 
+    def test_a_log_report_without_judging_still_carries_grading_coverage(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "events.jsonl"
+            write_lines(
+                path,
+                [
+                    {
+                        "event": "predicted",
+                        "offer": "a",
+                        "shown": True,
+                        "conversation": "a",
+                        "candidates": [{"text": "go", "p": 0.8}],
+                    },
+                    {"event": "seen", "offer": "a"},
+                ],
+            )
+            report, rows = next_prompt_eval.log(
+                next_prompt.argparse.Namespace(
+                    log=str(path), judge=False, judge_model="stand-in"
+                )
+            )
+        self.assertEqual(rows, [])
+        self.assertEqual(
+            report["grading"],
+            {
+                "requested": 0,
+                "graded": 0,
+                "coverage": None,
+                "metrics_basis": "successfully graded predictions",
+            },
+        )
+
     def test_failed_stage_and_cli_category_are_bounded(self):
         sys.path.insert(0, str(ROOT / "scripts"))
         import next_prompt_eval

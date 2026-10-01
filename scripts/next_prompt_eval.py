@@ -405,6 +405,9 @@ def log(arguments):
             continue
     offers, report = acceptance(events)
     if not arguments.judge:
+        # Both report shapes carry the coverage field; without judging there
+        # is nothing graded, which is the honest zero, not a missing key.
+        report["grading"] = grading_coverage(0, 0)
         return report, []
     # Offers seen but not used, graded against what was typed instead.
     graded = []

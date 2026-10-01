@@ -1630,8 +1630,13 @@ void TerminalSurface::armSuggestionObservation() {
             bool newer = false;
             {
                 const std::lock_guard lock(handoff->mutex);
-                if (!handoff->active || handoff->epoch != epoch)
+                if (!handoff->active || handoff->epoch != epoch) {
+                    // This observation armed against a handoff generation that
+                    // is gone. Clear the pending flag or every later arm
+                    // returns at its guard and observation stays off forever.
+                    suggestion_watch_pending_ = false;
                     return;
+                }
                 newer = handoff->pending != watched;
             }
             suggestion_frame_connection_ = {};

@@ -907,15 +907,18 @@ void suggestions() {
             "The suggestion was not drawn on the cursor's row after the cursor");
     require(seen == 1, "The suggestion on screen was not reported seen");
 
-    // Rebinding invalidates the old window's evidence. Probe public Tab before
-    // a draw, then use a new offer's seen event to await actual presentation.
+    // Rebinding disconnects the old window's frame signal, so the emit below
+    // exercises that disconnect; the epoch guard inside the bridge covers only
+    // a callback already in flight across the rebind, which a single-threaded
+    // probe cannot reach. Probe public Tab before a draw, then use a new
+    // offer's seen event to await actual presentation.
     rebound.setGeometry(100, 100, 640, 360);
     rebound.show();
     lapis::desktop::test::activate_test_window(rebound);
     until([&] { return rebound.isActive() && rebound.isExposed(); });
     surface.setParentItem(rebound.contentItem());
     surface.forceActiveFocus();
-    emit window.frameSwapped(); // A stale sender must not authorize the new binding.
+    emit window.frameSwapped(); // The disconnected old window authorizes nothing.
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
     require(paste_is(typed[0], "go now", false),
