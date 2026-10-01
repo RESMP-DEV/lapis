@@ -485,6 +485,19 @@ def install_apk(device, allow_build):
     return True
 
 
+# set_switch's three probe-shaped messages, written once at module level and
+# returned by the producer itself: the classifier in check_settings_toggle
+# builds its set from these same names, so a wording change can never leave
+# it matching a string that nothing produces (which would silently reclassify
+# a probe failure as effect-shaped and fail runs on a harness condition). The
+# coupling was not hypothetical: the vanish message had already diverged
+# between producer ("command bar switch") and classifier ("settings switch")
+# before this constant existed.
+SETTINGS_SWITCH_NEVER_APPEARED = "the command bar switch never appeared"
+SETTINGS_SWITCH_VANISHED = "the settings switch vanished from the settings screen"
+SETTINGS_SWITCH_UNREPORTED = "the settings switch reported no checked state to the dump"
+
+
 def checks(device, mac, screens):
     """Each named check drives the phone and asserts on both sides."""
 
@@ -810,7 +823,7 @@ def checks(device, mac, screens):
                 device.tap_node(id="settings")
             switch = device.wait(id="command-bar-setting", timeout=10)
             if switch is None:
-                return "the command bar switch never appeared"
+                return SETTINGS_SWITCH_NEVER_APPEARED
             # The switch stays disabled until its stored-value read lands
             # (SettingsScreen gates it on readLanded), and a tap on a
             # disabled control is a silent no-op: poll for the node to
@@ -821,13 +834,13 @@ def checks(device, mac, screens):
                 time.sleep(0.2)
                 switch = device.find(id="command-bar-setting")
                 if switch is None:
-                    return "the command bar switch vanished from the settings screen"
+                    return SETTINGS_SWITCH_VANISHED
             checked = switch.get("checked")
             if checked is None:
                 # Without a reported state the tap would be blind and could
                 # invert an already-correct switch: fail as a harness-side
                 # probe gap, not a product defect.
-                return "the settings switch reported no checked state to the dump"
+                return SETTINGS_SWITCH_UNREPORTED
             if checked != on:
                 device.tap_node(id="command-bar-setting")
                 time.sleep(0.4)
@@ -869,9 +882,9 @@ def checks(device, mac, screens):
         # fails the run instead of hiding under a skip.
         PROBE_SHAPED = frozenset(
             (
-                "the command bar switch never appeared",
-                "the settings switch vanished from the settings screen",
-                "the settings switch reported no checked state to the dump",
+                SETTINGS_SWITCH_NEVER_APPEARED,
+                SETTINGS_SWITCH_VANISHED,
+                SETTINGS_SWITCH_UNREPORTED,
             )
         )
 
@@ -906,10 +919,7 @@ def checks(device, mac, screens):
             # Leave the setting on whatever happened above: a failed run
             # must not leave the device stored-off for the next
             # store-honoring launch (this check's own next run).
-            try:
-                if device.find(id="terminal") is not None:
-                    device.tap_node(id="back")
-                    time.sleep(0.3)
+            def restore() -> str | None:
                 # Positive marker only: the settings screen owns its own
                 # tag, present whatever became of the switch inside it.
                 # Its absence means "not on the settings screen" — the
@@ -921,12 +931,36 @@ def checks(device, mac, screens):
                 # of those screens too, so a wedged stage made the restore
                 # skip the navigation and report the wrong "switch never
                 # appeared" diagnosis.
-                already_open = device.find(id="settings-screen") is not None
-                restore_problem = set_switch(True, already_open=already_open)
+                if device.find(id="settings-screen") is None:
+                    if device.find(id="terminal") is not None:
+                        device.tap_node(id="back")
+                        time.sleep(0.3)
+                    already_open = device.find(id="settings-screen") is not None
+                else:
+                    already_open = True
+                return set_switch(True, already_open=already_open)
+
+            try:
+                try:
+                    restore_problem = restore()
+                except Exception:
+                    # Every navigation tap here is a single-dump tap_node,
+                    # and a dump taken while the back transition is still
+                    # settling misses its node and raises — a transport
+                    # race, not a persistence signal. One settle-and-retry
+                    # (which re-derives the screen marker under the
+                    # settled state) absorbs that race; a screen that is
+                    # genuinely wedged raises again and takes the verdict
+                    # below instead of hiding behind the retry.
+                    time.sleep(1.0)
+                    restore_problem = restore()
             except Exception as error:
                 # The whole cleanup is guarded, not just set_switch: a
                 # raise escaping the finally would replace the body's
-                # diagnosis with the cleanup's own error.
+                # diagnosis with the cleanup's own error. A raise still
+                # fails the run when the body passed, because the stored
+                # state it leaves behind is unknown — the next run's
+                # opening set_switch(True) realigns it either way.
                 restore_problem = f"restore raised {type(error).__name__}: {error}"
         if restore_problem is not None:
             # Neutral wording on purpose: a restore problem can occur with
