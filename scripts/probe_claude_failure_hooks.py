@@ -19,7 +19,7 @@ from probe_terminal import run_process
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SUPPORTED_VERSION = "2.1.280"
+SUPPORTED_VERSION = "2.1.286"
 MODEL = "claude-sonnet-4-5"
 SYNTHETIC_PREFIX = "LAPIS_SYNTHETIC_MODEL_REPLY"
 SYNTHETIC_TOOL_ID = "toolu_lapis_synthetic_read"

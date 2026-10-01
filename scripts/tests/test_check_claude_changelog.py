@@ -147,6 +147,25 @@ class ParseFeedTests(unittest.TestCase):
         entries = parse_feed(feed)
         self.assertEqual(entries[0].summary, "Line one Line two")
 
+    def test_tolerates_unknown_children(self) -> None:
+        feed = FEED.replace(
+            b"<title><![CDATA[2.1.284]]></title>",
+            b"<title>2.1.284</title>"
+            b"<unknown-channel-child>channel sentinel</unknown-channel-child>",
+        ).replace(
+            b'<guid isPermaLink="false">abc124</guid>',
+            b'<guid isPermaLink="false">abc124</guid>'
+            b"<unknown-item-child>item sentinel"
+            b"<unknown-nested-child>nested sentinel</unknown-nested-child>"
+            b"</unknown-item-child>",
+        )
+        entries = parse_feed(feed)
+        self.assertEqual([entry.guid for entry in entries], ["abc124", "abc123"])
+        self.assertEqual(entries[0].title, "2.1.284")
+        self.assertEqual(
+            entries[0].link, "https://code.claude.com/docs/en/changelog#2-1-284"
+        )
+
     def test_strips_c1_controls_from_feed_text(self) -> None:
         # expat admits C1 controls both as character references and as raw
         # bytes. The HTML entity path remaps &#155; to a printable glyph, so

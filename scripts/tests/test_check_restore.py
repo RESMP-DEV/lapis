@@ -47,6 +47,30 @@ class RestoreProbeTests(unittest.TestCase):
                         "codex", bad_arguments, bad_provenance, "saved"
                     )
 
+    def test_parallel_pending_fixture_requires_both_distinct_commands(self):
+        first, second = restore.PARALLEL_COMMANDS
+        restore.require_parallel_commands(f"approval {first}\napproval {second}")
+        for screen in (f"only {first}", f"only {second}", "no commands"):
+            with self.subTest(screen=screen):
+                with self.assertRaises(restore.Failure):
+                    restore.require_parallel_commands(screen)
+
+    def test_parallel_prompt_names_both_distinct_bash_commands(self):
+        lowered = restore.PARALLEL_PROMPT.lower()
+        self.assertIn("two distinct bash tool calls", lowered)
+        self.assertTrue(
+            all(
+                command in restore.PARALLEL_PROMPT
+                for command in restore.PARALLEL_COMMANDS
+            )
+        )
+
+    def test_claude_restore_fixture_requests_the_public_manual_mode(self):
+        self.assertEqual(
+            restore.CLAUDE_FIXTURE_SETTINGS,
+            {"permissions": {"defaultMode": "default"}},
+        )
+
     def test_fake_model_announces_its_bound_ephemeral_port(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

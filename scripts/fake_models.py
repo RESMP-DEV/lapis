@@ -24,6 +24,13 @@ import time
 from pathlib import Path
 
 COMMAND = "touch lapis-fake-approval.txt"
+PARALLEL_PROMPT = (
+    "Use exactly two distinct Bash tool calls now. The first command is "
+    "echo lapis-parallel-one and the second command is echo "
+    "lapis-parallel-two. Make both pending requests before waiting for "
+    "either result. Do not use any other tool."
+)
+PARALLEL_COMMANDS = ("echo lapis-parallel-one", "echo lapis-parallel-two")
 counter = itertools.count(1)
 
 
@@ -36,6 +43,14 @@ def sse(event, data):
 def plan(text, has_tool_result):
     """Pick a scripted reply for the latest user text."""
     lowered = text.lower()
+    if "two distinct bash tool calls" in lowered:
+        if has_tool_result:
+            return (
+                "parallel_done",
+                ["Fake model: both parallel commands finished."],
+                0.3,
+            )
+        return "parallel_tools", [], 0.5
     if has_tool_result:
         return "text", ["Fake model: the command finished."], 0.3
     if "fail" in lowered:
@@ -293,25 +308,25 @@ async def stream_responses(writer, body):
 
 
 def messages_input(body):
-    text, tool_result = "", False
+    text, tool_result_count = "", 0
     for item in body.get("messages", []):
         if not isinstance(item, dict) or item.get("role") != "user":
             continue
         content = item.get("content")
         if isinstance(content, str):
-            text, tool_result = content, False
+            text, tool_result_count = content, 0
             continue
         if not isinstance(content, list):
             continue
         blocks = [block for block in content if isinstance(block, dict)]
-        tool_result = any(block.get("type") == "tool_result" for block in blocks)
+        tool_result_count = sum(block.get("type") == "tool_result" for block in blocks)
         texts = [
             block.get("text", "") for block in blocks if block.get("type") == "text"
         ]
         # Claude Code prepends system reminders; the typed prompt is the last text block.
         if texts:
             text = texts[-1]
-    return text, tool_result
+    return text, tool_result_count
 
 
 def claude_message(serial, model, content):
@@ -330,12 +345,12 @@ def claude_message(serial, model, content):
 async def stream_messages(writer, body):
     serial = next(counter)
     model = body.get("model", "lapis-fake")
-    text, tool_result = messages_input(body)
+    text, tool_result_count = messages_input(body)
     tools = [
         tool.get("name") for tool in body.get("tools", []) if isinstance(tool, dict)
     ]
-    kind, chunks, delay = plan(text, tool_result)
-    if kind == "tool" and "Bash" not in tools:
+    kind, chunks, delay = plan(text, tool_result_count)
+    if kind in ("tool", "parallel_tools") and "Bash" not in tools:
         kind, chunks, delay = "text", ["Fake model: no Bash tool was offered."], 0.3
     if kind == "fail":
         return await http_error(writer, 500, "lapis fake model: intentional failure")
@@ -352,35 +367,51 @@ async def stream_messages(writer, body):
             {"type": "message_start", "message": claude_message(serial, model, [])},
         ),
     )
-    if kind == "tool":
+    blocks: list[tuple[dict[str, object], str]] = []
+    if kind in ("tool", "parallel_tools"):
         await asyncio.sleep(delay)
-        block = {
-            "type": "tool_use",
-            "id": f"toolu_lapis_{serial}",
-            "name": "Bash",
-            "input": {},
-        }
-        arguments = json.dumps(
-            {"command": COMMAND, "description": "lapis QA approval fixture"}
+        commands = (
+            [COMMAND]
+            if kind == "tool"
+            else ["echo lapis-parallel-one", "echo lapis-parallel-two"]
         )
-        await send(
-            writer,
-            sse(
-                "content_block_start",
-                {"type": "content_block_start", "index": 0, "content_block": block},
-            ),
-        )
-        await send(
-            writer,
-            sse(
-                "content_block_delta",
-                {
-                    "type": "content_block_delta",
-                    "index": 0,
-                    "delta": {"type": "input_json_delta", "partial_json": arguments},
-                },
-            ),
-        )
+        for index, command in enumerate(commands):
+            block = {
+                "type": "tool_use",
+                "id": f"toolu_lapis_{serial}_{index}",
+                "name": "Bash",
+                "input": {},
+            }
+            arguments = json.dumps(
+                {"command": command, "description": "lapis QA approval fixture"}
+            )
+            blocks.append((block, arguments))
+        for index, (block, arguments) in enumerate(blocks):
+            await send(
+                writer,
+                sse(
+                    "content_block_start",
+                    {
+                        "type": "content_block_start",
+                        "index": index,
+                        "content_block": block,
+                    },
+                ),
+            )
+            await send(
+                writer,
+                sse(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": index,
+                        "delta": {
+                            "type": "input_json_delta",
+                            "partial_json": arguments,
+                        },
+                    },
+                ),
+            )
         stop = "tool_use"
     else:
         await send(
@@ -408,9 +439,11 @@ async def stream_messages(writer, body):
                 ),
             )
         stop = "end_turn"
-    await send(
-        writer, sse("content_block_stop", {"type": "content_block_stop", "index": 0})
-    )
+    for index in range(len(blocks) if blocks else 1):
+        await send(
+            writer,
+            sse("content_block_stop", {"type": "content_block_stop", "index": index}),
+        )
     await send(
         writer,
         sse(
