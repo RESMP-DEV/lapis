@@ -195,6 +195,9 @@ if(BUILD_TESTING)
     target_compile_definitions(lapis_workspace_tests PRIVATE
         LAPIS_DESKTOP_PATH="$<TARGET_FILE:lapis_desktop>")
     add_test(NAME workspace COMMAND lapis_workspace_tests)
+    add_test(NAME workspace-remote-accounts COMMAND lapis_workspace_tests
+                                                   --case remote-accounts)
+    set_tests_properties(workspace-remote-accounts PROPERTIES TIMEOUT 60)
     if(APPLE)
         add_executable(lapis_sound_decode_tests tests/sound_decode_test.mm)
         target_link_libraries(lapis_sound_decode_tests PRIVATE lapis_project_options lapis_desktop_view)

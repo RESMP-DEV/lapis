@@ -744,6 +744,11 @@ class Workspace final : public QObject {
     [[nodiscard]] QString accountsRoot() const;
     [[nodiscard]] static QString accountCli(const QString& harness);
     [[nodiscard]] static QString agentMachine(const Agent& agent);
+    // Rejects a selected remote plan whose managed credential cannot be used.
+    // The reason names the plan, never credential contents or provider identity.
+    [[nodiscard]] static QString remoteAccountFailure(const AccountPool& accounts,
+                                                      const Agent& agent,
+                                                      const QString& accountsRoot);
     // Chooses the agent's plan and writes it where its start reads it: a
     // remote command's preamble, or the card's service environment.
     [[nodiscard]] bool applyAccount(Agent& agent, SessionPreview& item);
