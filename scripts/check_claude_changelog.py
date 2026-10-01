@@ -59,27 +59,43 @@ _BLOCK_TAGS = frozenset(
         "article",
         "blockquote",
         "br",
+        "caption",
         "dd",
+        "details",
         "div",
         "dl",
         "dt",
+        "figcaption",
+        "figure",
+        "form",
         "h1",
         "h2",
         "h3",
         "h4",
         "h5",
         "h6",
+        "hr",
         "li",
         "main",
         "ol",
+        "option",
         "p",
         "pre",
         "section",
+        "summary",
         "table",
+        "tbody",
+        "td",
+        "tfoot",
+        "th",
+        "thead",
         "tr",
         "ul",
     }
 )
+# Void elements never emit an end tag, so their boundary fires on the
+# start tag instead (a plain <br> never reaches handle_endtag).
+_VOID_SEPARATOR_TAGS = frozenset({"br", "hr"})
 
 
 def _clean(text: str) -> str:
@@ -116,6 +132,10 @@ class _TextExtractor(HTMLParser):
     def handle_data(self, data: str) -> None:
         self.chunks.append(data)
 
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in _VOID_SEPARATOR_TAGS:
+            self.chunks.append(" ")
+
     def handle_endtag(self, tag: str) -> None:
         if tag in _BLOCK_TAGS:
             self.chunks.append(" ")
@@ -150,6 +170,12 @@ class _SameHostRedirectPolicy(urllib.request.HTTPRedirectHandler):
         if target.hostname is None or target.hostname != origin.hostname:
             raise ChangelogError(
                 f"feed redirected to another host ({newurl}); refusing to follow"
+            )
+        # A same-host hop can still drop TLS (https -> http) or shift ports,
+        # either of which lets a network interceptor choose the baseline bytes.
+        if target.scheme != origin.scheme or target.port != origin.port:
+            raise ChangelogError(
+                f"feed redirected off its scheme or port ({newurl}); refusing to follow"
             )
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 

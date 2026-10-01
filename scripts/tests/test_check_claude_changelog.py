@@ -129,6 +129,24 @@ class ParseFeedTests(unittest.TestCase):
         entries = parse_feed(feed)
         self.assertEqual(entries[0].summary, "First item Second item")
 
+    def test_separates_adjacent_table_cells(self) -> None:
+        feed = FEED.replace(
+            b"<ul><li>Changed <code>stream-json</code> init events &amp; headers</li></ul>",
+            b"<table><tr><td>Left cell</td><td>Right cell</td></tr></table>",
+        )
+        entries = parse_feed(feed)
+        self.assertEqual(entries[0].summary, "Left cell Right cell")
+
+    def test_separates_on_a_plain_line_break(self) -> None:
+        # A bare <br> never emits an end tag, so the separator has to fire on
+        # the start tag.
+        feed = FEED.replace(
+            b"<ul><li>Changed <code>stream-json</code> init events &amp; headers</li></ul>",
+            b"Line one<br>Line two",
+        )
+        entries = parse_feed(feed)
+        self.assertEqual(entries[0].summary, "Line one Line two")
+
     def test_strips_c1_controls_from_feed_text(self) -> None:
         # expat admits C1 controls both as character references and as raw
         # bytes. The HTML entity path remaps &#155; to a printable glyph, so
@@ -234,6 +252,7 @@ class _FeedHTTPServer:
             ("127.0.0.1", 0), _feed_handler(redirect_to or "")
         )
         host, port = self._server.server_address[:2]
+        self.feed_url = f"http://{host}:{port}/feed"
         self.redirect_url = f"http://{host}:{port}/redirect"
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
@@ -275,6 +294,14 @@ class FetchFeedTests(unittest.TestCase):
         with _FeedHTTPServer(redirect_to=None) as server:
             payload = watcher.fetch_feed(server.redirect_url, 1.0)
         self.assertEqual(parse_feed(payload)[0].guid, "abc124")
+
+    def test_redirect_to_a_different_port_is_refused(self) -> None:
+        # Same host and scheme, but the hop lands on another local port: an
+        # interceptor who owns that port serves the baseline bytes.
+        with _FeedHTTPServer(redirect_to=None) as destination:
+            with _FeedHTTPServer(redirect_to=destination.feed_url) as origin:
+                with self.assertRaisesRegex(ChangelogError, "scheme or port"):
+                    watcher.fetch_feed(origin.redirect_url, 1.0)
 
 
 class NewEntriesTests(unittest.TestCase):
