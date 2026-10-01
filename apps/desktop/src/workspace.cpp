@@ -437,6 +437,17 @@ SessionPreview::SessionPreview(QString title, QString directory, QString activit
     connect(this, &SessionPreview::attentionChanged, this, &SessionPreview::statusChanged);
     decode_timer_.setSingleShot(true);
     connect(&decode_timer_, &QTimer::timeout, this, [this] {
+        // A decode outside the timer (history opening, viewer resume) keeps the
+        // rate limit: measure from that attempt and rearm for only the
+        // remaining interval rather than decoding at this now-stale deadline.
+        if (waiting_ && !viewers_.empty() && last_decode_attempt_.isValid()) {
+            const qint64 interval = *viewers_.begin();
+            const qint64 elapsed = last_decode_attempt_.elapsed();
+            if (elapsed < interval) {
+                decode_timer_.start(static_cast<int>(interval - elapsed));
+                return;
+            }
+        }
         if (decodeWaiting() && !history_active_)
             emit snapshotChanged();
     });

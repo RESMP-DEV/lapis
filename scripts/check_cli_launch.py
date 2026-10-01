@@ -748,6 +748,175 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             outcomes.append(name)
         return {"backend_exit_cases": outcomes, "raw_stderr_excluded": True}
 
+    def attention_publication_pacing():
+        """Real service IPC, with an unqualified disposable Codex source."""
+        from check_service_attention import decision as make_attention_decision
+
+        executable = runtime / "attention-pacing-codex"
+        executable.write_text(
+            f"#!{sys.executable}\n"
+            "import os,socket,sys,time\n"
+            "from pathlib import Path\n"
+            "if sys.argv[1]=='app-server':\n"
+            " time.sleep(.02)\n"
+            " endpoint=sys.argv[3].removeprefix('unix://')\n"
+            " server=socket.socket(socket.AF_UNIX)\n"
+            " server.bind(endpoint)\n"
+            " Path(endpoint+'.pid').write_text(str(os.getpid()))\n"
+            " Path(endpoint+'.bound').touch()\n"
+            " server.listen()\n"
+            " while True:\n"
+            "  connection,_=server.accept();connection.close()\n"
+            "else:\n"
+            " endpoint=sys.argv[2].removeprefix('unix://')\n"
+            " deadline=time.monotonic()+5\n"
+            " while not Path(endpoint).exists() and time.monotonic()<deadline:\n"
+            "  time.sleep(.01)\n"
+            " client=socket.socket(socket.AF_UNIX)\n"
+            " client.connect(endpoint);client.close()\n"
+            " print('READY',flush=True)\n"
+            " for line in sys.stdin: print('ECHO:'+line.strip(),flush=True)\n"
+        )
+        executable.chmod(0o700)
+        service = Service(
+            binary,
+            runtime,
+            artifacts,
+            "attention-pacing",
+            str(executable),
+            [],
+            runtime,
+            codex=True,
+        )
+
+        def read_attention(client, timeout=WAIT, predicate=lambda _: True):
+            deadline = time.monotonic() + timeout
+            publications = 0
+            while time.monotonic() < deadline:
+                try:
+                    kind, data = client.receive(max(0.01, deadline - time.monotonic()))
+                except (FrameDeadline, socket.timeout):
+                    continue
+                require(
+                    kind in (SNAPSHOT, ATTENTION_SNAPSHOT, ATTENTION_RETRY, STATUS),
+                    "Unexpected frame while reading attention pacing",
+                )
+                if kind == ATTENTION_SNAPSHOT:
+                    require(
+                        data[4:44] == client.attachment,
+                        f"Attention attachment mismatch: {client.attachment.hex()} != {data[4:44].hex()}",
+                    )
+                    require(
+                        struct.unpack_from(">I", data)[0] == VERSION,
+                        "Attention version mismatch",
+                    )
+                    offset = 44 + 3
+                    offset += 1
+                    epoch = struct.unpack_from(">Q", data, offset)[0]
+                    offset += 8
+                    length = struct.unpack_from(">I", data, offset)[0]
+                    offset += 4
+                    diagnostic = data[offset : offset + length].decode()
+                    offset += length
+                    count = struct.unpack_from(">I", data, offset)[0]
+                    snapshot = {
+                        "connected": bool(data[45]),
+                        "ready": bool(data[46]),
+                        "epoch": epoch,
+                        "diagnostic": diagnostic,
+                        "requests": count,
+                    }
+                    publications += 1
+                    if predicate(snapshot):
+                        return snapshot, publications
+            raise CheckError("Attention publication deadline expired")
+
+        def wait_marker(suffix):
+            deadline = time.monotonic() + WAIT
+            marker = Path(str(service.endpoint) + suffix)
+            while not marker.exists():
+                require(time.monotonic() < deadline, "Attention fixture marker missing")
+                time.sleep(0.01)
+            return marker
+
+        try:
+            wait_marker(".codex.bound")
+            pid = int(wait_marker(".codex.pid").read_text())
+            with service.connect() as client:
+                initial, _ = read_attention(client)
+                require(
+                    initial["requests"] == 0,
+                    "Unqualified source did not publish initial attention",
+                )
+                # Send one input batch without a Python scheduling gap between
+                # decisions: one write keeps the two revisions a single burst.
+                # The attachment prefix repeats WireClient.send's invariant, so
+                # a connection without a completed attach fails here as a
+                # check error instead of a bare TypeError.
+                require(
+                    client.attachment is not None,
+                    "No accepted attachment",
+                )
+                decisions = []
+                for revision in (1, 2):
+                    decisions.append(
+                        frame(
+                            ATTENTION_DECISION,
+                            client.attachment
+                            + make_attention_decision(
+                                {
+                                    "epoch": max(1, initial["epoch"]),
+                                    "id": 1,
+                                    "revision": revision,
+                                },
+                                "allow",
+                            ),
+                        )
+                    )
+                client.socket.sendall(b"".join(decisions))
+                # Writing the decisions does not prove the service consumed
+                # them. If exit were raced ahead of the decision publication,
+                # stop_codex() would clear decision_error_ and publish the
+                # exit diagnostic, and the late decisions would set
+                # decision_error_ again; publish_attention() prioritizes it
+                # over codex_error_, hiding the exit diagnostic from the wait
+                # below and leaking a decision publication into the quiet
+                # window. Observe the decision batch first, then treat source
+                # exit as its own publication phase.
+                _, decision_publications = read_attention(client)
+                require(
+                    decision_publications == 1,
+                    f"Decision batch produced {decision_publications} publications",
+                )
+                os.kill(pid, signal.SIGTERM)
+                latest, publications = read_attention(
+                    client,
+                    predicate=lambda snapshot: (
+                        "Codex server exited" in snapshot["diagnostic"]
+                    ),
+                )
+                require(
+                    publications == 1,
+                    f"Source exit produced {publications} publications",
+                )
+                deadline = time.monotonic() + 0.04
+                while (remaining := deadline - time.monotonic()) > 0:
+                    try:
+                        kind, _ = client.receive(remaining)
+                    except (FrameDeadline, socket.timeout):
+                        break
+                    require(
+                        kind != ATTENTION_SNAPSHOT,
+                        "Unchanged attention produced another publication",
+                    )
+            return {
+                "attention_decision_publications": decision_publications,
+                "attention_publications_through_exit": publications,
+                "newest_state": "source-exit",
+            }
+        finally:
+            service.stop()
+
     def delayed_codex_listener():
         # This disposable executable is deliberately unqualified: terminal startup
         # still works, while structured attention remains disabled.
@@ -1471,6 +1640,11 @@ with open(sys.argv[1], 'wb', buffering=0) as output:
         (
             "Codex backend exit diagnostics exclude private stderr",
             codex_backend_exit,
+            None,
+        ),
+        (
+            "attention bursts publish the newest state at the pacing deadline",
+            attention_publication_pacing,
             None,
         ),
         (
