@@ -498,6 +498,46 @@ SETTINGS_SWITCH_VANISHED = "the settings switch vanished from the settings scree
 SETTINGS_SWITCH_UNREPORTED = "the settings switch reported no checked state to the dump"
 
 
+def settings_restore_verdict(
+    problem: str | None,
+    restore_problem: str | None,
+    retried_after: str | None,
+) -> tuple[str | None, str | None]:
+    """Compose the settings-toggle verdict and any receipt-only note.
+
+    ``restore_problem`` stays pristine so PROBE_SHAPED membership remains a
+    producer-message test; retry provenance is only attached to returned text.
+    Returning ``(None, note)`` lets the clean pass preserve that it depended on
+    the settle-and-retry without turning that fact into a failure.
+    """
+
+    retried = (
+        f" (after a first restore attempt that raised {retried_after})"
+        if retried_after is not None
+        else ""
+    )
+    if restore_problem is None:
+        if retried_after is None:
+            return problem, None
+        return problem, (
+            f"settings_toggle: the restore's first attempt raised "
+            f"{retried_after}; the settle-and-retry then restored the switch"
+        )
+
+    restore_note = (
+        f"the settings-toggle restore did not confirm: {restore_problem}{retried}"
+    )
+    if problem is None and restore_problem in (
+        SETTINGS_SWITCH_NEVER_APPEARED,
+        SETTINGS_SWITCH_VANISHED,
+        SETTINGS_SWITCH_UNREPORTED,
+    ):
+        return f"SKIPPED: {restore_note}", None
+    return (
+        restore_note if problem is None else f"{problem}; also, {restore_note}"
+    ), None
+
+
 def checks(device, mac, screens):
     """Each named check drives the phone and asserts on both sides."""
 
@@ -878,21 +918,15 @@ def checks(device, mac, screens):
 
         # set_switch's problems come in two shapes, and only one of them
         # may ride under a SKIPPED when the body's assertions passed.
-        # Probe-shaped: the dump never established what to tap, or lost it
-        # mid-probe — the restore could not act, and the next run's
-        # ensure-on step re-aligns the stored setting. Effect-shaped (any
-        # other message, including "did not flip" and "Done never
-        # returned"): the restore acted and the product state did not
-        # follow — the same persistence behavior the body asserts, and on
-        # the body-passed path the only place it can still surface, so it
-        # fails the run instead of hiding under a skip.
-        PROBE_SHAPED = frozenset(
-            (
-                SETTINGS_SWITCH_NEVER_APPEARED,
-                SETTINGS_SWITCH_VANISHED,
-                SETTINGS_SWITCH_UNREPORTED,
-            )
-        )
+        # Probe-shaped (the three named producer messages checked by
+        # settings_restore_verdict): the dump never established what to
+        # tap, or lost it mid-probe — the restore could not act, and the
+        # next run's ensure-on step re-aligns the stored setting.
+        # Effect-shaped (any other message, including "did not flip" and
+        # "Done never returned"): the restore acted and the product state
+        # did not follow — the same persistence behavior the body asserts,
+        # and on the body-passed path the only place it can still surface,
+        # so it fails the run instead of hiding under a skip.
 
         device.launch(fresh=True, command_bar=None)
         if device.wait(text="echo agent", timeout=25) is None:
@@ -978,43 +1012,14 @@ def checks(device, mac, screens):
                 # state it leaves behind is unknown — the next run's
                 # opening set_switch(True) realigns it either way.
                 restore_problem = f"restore raised {type(error).__name__}: {error}"
-        # Attached where the verdict text is composed, never to
-        # restore_problem itself: the PROBE_SHAPED membership test below
-        # compares the pristine producer message.
-        retried = (
-            f" (after a first restore attempt that raised {retried_after})"
-            if retried_after is not None
-            else ""
+        # The helper keeps the retry provenance receipt-visible while
+        # preserving the pristine restore message for probe classification.
+        verdict, note = settings_restore_verdict(
+            problem, restore_problem, retried_after
         )
-        if restore_problem is not None:
-            # Neutral wording on purpose: a restore problem can occur with
-            # the setting already stored on (a lost Done tap), so this
-            # reports what went unconfirmed, never a state it cannot know.
-            restore_note = f"the settings-toggle restore did not confirm: {restore_problem}{retried}"
-            if problem is None and restore_problem in PROBE_SHAPED:
-                # The product assertions passed and the restore could not
-                # even act — a harness condition, not a defect verdict. The
-                # SKIPPED prefix keeps it in the receipt without failing
-                # the run, the file's convention for exactly this split,
-                # and the next run's ensure-on first step re-aligns the
-                # stored setting. Every other restore problem fails below:
-                # an unconfirmed effect (the switch did not flip, Done did
-                # not return) or a raise is a persistence signal this
-                # check owns, and the receipt's failed list is where a
-                # gate reads it.
-                return f"SKIPPED: {restore_note}"
-            return (
-                restore_note if problem is None else f"{problem}; also, {restore_note}"
-            )
-        if retried_after is not None:
-            # The only retry outcome no verdict string above can carry:
-            # everything passed. The receipt's notes list is where that
-            # pass says it needed the retry.
-            notes.append(
-                f"settings_toggle: the restore's first attempt raised "
-                f"{retried_after}; the settle-and-retry then restored the switch"
-            )
-        return problem
+        if note is not None:
+            notes.append(note)
+        return verdict
 
     def check_crash():
         crashes = device.crash_lines()
