@@ -35,6 +35,7 @@ import time
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from xml.parsers.expat import ExpatError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -864,10 +865,13 @@ def unchanged_release_source(manifest_path):
         recorded = manifest.get("source")
         current = source_snapshot(ROOT, capture)
     except ManifestError as error:
-        _unlink(manifest_path)
         raise PackageError(str(error)) from error
     if recorded != current:
-        _unlink(manifest_path)
+        # The old receipt cannot authorize a different source, but the
+        # recorded source and dependency provenance remains useful evidence.
+        manifest["notarized"] = {"app": False, "dmg": False}
+        manifest["verification"] = {"passed": False}
+        write_manifest(manifest_path, manifest)
         raise PackageError(
             "the release source changed after its snapshot was recorded; rebuild the app"
         )
@@ -1016,7 +1020,6 @@ def command_app(_arguments):
         manifest = new_manifest(source, dependencies)
         write_manifest(PACKAGE_MANIFEST, manifest)
     except ManifestError as error:
-        _unlink(PACKAGE_MANIFEST)
         raise PackageError(str(error)) from error
 
     deploy(built)
@@ -1025,7 +1028,6 @@ def command_app(_arguments):
     try:
         set_artifacts(PACKAGE_MANIFEST, {"app": artifact_digest(APP)})
     except ManifestError as error:
-        _unlink(PACKAGE_MANIFEST)
         raise PackageError(str(error)) from error
     print(f"Signed {APP.relative_to(ROOT)}", flush=True)
 
@@ -1067,16 +1069,22 @@ def command_dmg(_arguments):
     try:
         manifest = load_manifest(PACKAGE_MANIFEST)
         artifacts = manifest.get("artifacts", {})
+        states = manifest.get("notarized", {})
         expected = artifacts.get("app") if isinstance(artifacts, dict) else None
         if expected != artifact_digest(APP):
             raise ManifestError(
                 "the staged app does not match the manifest; rebuild package_macos.py app"
             )
     except ManifestError as error:
-        _unlink(PACKAGE_MANIFEST)
+        raise PackageError(str(error)) from error
+    # A new DMG cannot inherit a staple from the bytes it replaces, even when
+    # a deterministic-looking rebuild has the old digest.
+    app_was_notarized = isinstance(states, dict) and states.get("app") is True
+    try:
+        set_notarized(PACKAGE_MANIFEST, app_was_notarized, False)
+    except ManifestError as error:
         raise PackageError(str(error)) from error
     folder = RELEASE / "dmg"
-    source_app = artifact_digest(APP)
     shutil.rmtree(folder, ignore_errors=True)
     folder.mkdir(parents=True)
     run(["ditto", APP, folder / "lapis.app"])
@@ -1087,15 +1095,18 @@ def command_dmg(_arguments):
         + ["-fs", "HFS+", "-format", "UDZO", "-imagekey", "zlib-level=9", DMG]
     )
     run(["codesign", "--force", "--timestamp", "--sign", signing_identity(), DMG])
+    # Hash the copy staged inside the DMG, not the build output it came from,
+    # so the recorded provenance is an independent observation of the bytes
+    # that actually shipped.
+    shipped_app = artifact_digest(folder / "lapis.app")
     shutil.rmtree(folder)
     try:
         set_artifacts(
             PACKAGE_MANIFEST,
             {"app": artifact_digest(APP), "dmg": artifact_digest(DMG)},
-            provenance={"dmg_source_app_sha256": source_app},
+            provenance={"dmg_source_app_sha256": shipped_app},
         )
     except ManifestError as error:
-        _unlink(PACKAGE_MANIFEST)
         raise PackageError(str(error)) from error
     print(f"{DMG.relative_to(ROOT)}  sha256 {sha256(DMG)}", flush=True)
 
@@ -1106,7 +1117,6 @@ def command_notarize(arguments):
     try:
         manifest = load_manifest(PACKAGE_MANIFEST)
         artifacts = manifest.get("artifacts", {})
-        states = manifest.get("notarized", {})
         if not isinstance(artifacts, dict) or artifacts.get("app") != artifact_digest(
             APP
         ):
@@ -1121,17 +1131,16 @@ def command_notarize(arguments):
             raise ManifestError(
                 "the staged DMG does not match the manifest; rebuild package_macos.py dmg"
             )
-        app_was_notarized = isinstance(states, dict) and states.get("app") is True
     except ManifestError as error:
-        _unlink(PACKAGE_MANIFEST)
         raise PackageError(str(error)) from error
 
     notarize(APP, arguments.profile)
     try:
         set_artifacts(PACKAGE_MANIFEST, {"app": artifact_digest(APP)})
-        set_notarized(PACKAGE_MANIFEST, True, app_was_notarized)
+        # command_dmg rebuilds the DMG below, so its previous state can never
+        # be carried forward through this intermediate manifest.
+        set_notarized(PACKAGE_MANIFEST, True, False)
     except ManifestError as error:
-        _unlink(PACKAGE_MANIFEST)
         raise PackageError(str(error)) from error
     command_dmg(arguments)
     notarize(DMG, arguments.profile)
@@ -1143,7 +1152,6 @@ def command_notarize(arguments):
         )
         set_notarized(PACKAGE_MANIFEST, True, True)
     except ManifestError as error:
-        _unlink(PACKAGE_MANIFEST)
         raise PackageError(str(error)) from error
     print(f"{DMG.relative_to(ROOT)}  sha256 {sha256(DMG)}", flush=True)
 
@@ -1370,7 +1378,6 @@ def command_verify(arguments):
                     "the staged DMG does not match the manifest; rerun notarization"
                 )
     except ManifestError as error:
-        _unlink(PACKAGE_MANIFEST)
         raise PackageError(str(error)) from error
 
     problems = []
@@ -1410,7 +1417,6 @@ def command_verify(arguments):
             artifacts=qualified,
         )
     except ManifestError as error:
-        _unlink(PACKAGE_MANIFEST)
         raise PackageError(str(error)) from error
     print("The app passed every check", flush=True)
 
@@ -1419,14 +1425,20 @@ def check_release_version(problems, manifest):
     """The staged bundle must carry the source's CMake version."""
     try:
         info = plistlib.loads((APP / "Contents" / "Info.plist").read_bytes())
-        version = manifest.get("version")
-        if info.get("CFBundleShortVersionString") != version:
-            problems.append(
-                f"the app version {info.get('CFBundleShortVersionString')!r} "
-                f"does not match source version {version!r}"
-            )
-    except (OSError, plistlib.InvalidFileError) as error:
-        problems.append(f"cannot read the app version: {error}")
+    except (OSError, plistlib.InvalidFileException, ExpatError) as error:
+        # The bundle was built and signed moments ago, so an unreadable or
+        # malformed plist is a packaging defect rather than a finding the
+        # operator could act on.  Name the bundle, not the absolute path.
+        reason = error.strerror if isinstance(error, OSError) else error
+        raise PackageError(
+            f"cannot read the staged app's Contents/Info.plist: {reason}"
+        ) from error
+    version = manifest.get("version")
+    if info.get("CFBundleShortVersionString") != version:
+        problems.append(
+            f"the app version {info.get('CFBundleShortVersionString')!r} "
+            f"does not match source version {version!r}"
+        )
 
 
 def command_release(arguments):
@@ -1436,6 +1448,9 @@ def command_release(arguments):
     command_verify(arguments)
     try:
         ghostty = ghostty_prefix()
+    except SetupError as error:
+        raise PackageError(f"cannot verify release dependencies: {error}") from error
+    try:
         dependencies = release_dependencies(ghostty)
         version = project_version(ROOT)
         preflight_release(
@@ -1452,7 +1467,6 @@ def command_release(arguments):
             require_appcast=False,
         )
     except ManifestError as error:
-        _unlink(PACKAGE_MANIFEST)
         raise PackageError(str(error)) from error
     write_appcast(arguments.tag, version)
     try:
@@ -1478,7 +1492,6 @@ def command_release(arguments):
             require_appcast=True,
         )
     except ManifestError as error:
-        _unlink(PACKAGE_MANIFEST)
         raise PackageError(str(error)) from error
     commit = capture(["git", "-C", ROOT, "rev-parse", "HEAD"]).strip()
     if capture(["git", "-C", ROOT, "branch", "-r", "--contains", commit]).strip() == "":

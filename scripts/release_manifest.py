@@ -8,6 +8,7 @@ compares every mutable byte again immediately before publication.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -51,6 +52,8 @@ def project_version(root: Path) -> str:
         text = (root / "CMakeLists.txt").read_text(encoding="utf-8")
     except OSError as error:
         raise ManifestError(f"cannot read CMakeLists.txt: {error}") from error
+    except UnicodeDecodeError as error:
+        raise ManifestError(f"CMakeLists.txt is not UTF-8: {error}") from error
     found = re.search(
         r"^project\s*\(\s*lapis\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)\b",
         text,
@@ -146,20 +149,41 @@ def digest(path: Path) -> str:
     """Hash a file, or a bundle's files, links, modes, and paths."""
     path = Path(path)
     hasher = hashlib.sha256()
-    if path.is_file():
-        hasher.update(b"lapis-file\x00")
-        _hash_file(path, hasher)
+    try:
+        if path.is_file():
+            hasher.update(b"lapis-file\x00")
+            _hash_file(path, hasher)
+            return hasher.hexdigest()
+        if not path.is_dir():
+            raise ManifestError(f"cannot hash missing artifact: {path}")
+        hasher.update(b"lapis-tree\x00")
+        hasher.update(path.name.encode("utf-8") + b"\x00")
+        _hash_tree(path, "", hasher)
         return hasher.hexdigest()
-    if not path.is_dir():
-        raise ManifestError(f"cannot hash missing artifact: {path}")
-    hasher.update(b"lapis-tree\x00")
-    hasher.update(path.name.encode("utf-8") + b"\x00")
-    _hash_tree(path, "", hasher)
-    return hasher.hexdigest()
+    except OSError as error:
+        raise ManifestError(f"cannot read artifact: {path}: {error}") from error
+
+
+def content_sha256(path: Path) -> str:
+    """Return the standard SHA-256 of a file's bytes.
+
+    External archive pins are byte hashes.  Keep them separate from
+    ``digest`` because release artifacts also bind names, modes, and bundle
+    structure.
+    """
+    path = Path(path)
+    try:
+        if not path.is_file():
+            raise ManifestError(f"cannot hash missing artifact: {path}")
+        with path.open("rb") as stream:
+            return hashlib.file_digest(stream, "sha256").hexdigest()
+    except OSError as error:
+        raise ManifestError(f"cannot read artifact: {path}: {error}") from error
 
 
 def _hash_tree(root: Path, relative: str, hasher) -> None:
-    entries = sorted(os.scandir(root), key=lambda entry: entry.name)
+    with os.scandir(root) as scan:
+        entries = sorted(scan, key=lambda entry: entry.name)
     for entry in entries:
         entry_relative = f"{relative}/{entry.name}" if relative else entry.name
         hasher.update(entry_relative.encode("utf-8") + b"\x00")
@@ -203,7 +227,7 @@ def load_manifest(path: Path) -> dict[str, object]:
         value = json.loads(Path(path).read_text(encoding="utf-8"))
     except FileNotFoundError as error:
         raise ManifestError(f"package manifest is missing: {path}") from error
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ManifestError(f"package manifest is malformed: {error}") from error
     if not isinstance(value, dict):
         raise ManifestError("package manifest must be a JSON object")
@@ -216,6 +240,18 @@ def load_manifest(path: Path) -> dict[str, object]:
             f"wrong package manifest kind: {value.get('manifest_kind')!r}"
         )
     return value
+
+
+def _sync(descriptor: int) -> None:
+    """Flush one descriptor to stable storage.
+
+    APFS treats a plain ``fsync`` as a request to order writes, not to reach
+    the platter, so a manifest that must survive a power loss needs the
+    Darwin-specific full flush as well.
+    """
+    os.fsync(descriptor)
+    if hasattr(fcntl, "F_FULLFSYNC"):
+        fcntl.fcntl(descriptor, fcntl.F_FULLFSYNC)
 
 
 def write_manifest(path: Path, manifest: dict[str, object]) -> None:
@@ -231,16 +267,27 @@ def write_manifest(path: Path, manifest: dict[str, object]) -> None:
             json.dump(manifest, stream, indent=2, sort_keys=True)
             stream.write("\n")
             stream.flush()
-            os.fsync(stream.fileno())
+            _sync(stream.fileno())
         os.replace(temporary, path)
         directory_fd = os.open(path.parent, os.O_RDONLY)
         try:
-            os.fsync(directory_fd)
+            _sync(directory_fd)
         finally:
             os.close(directory_fd)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
+
+
+def _revoke_verification(manifest: dict[str, object]) -> None:
+    """Stop a recorded qualification receipt from authorizing anything.
+
+    The receipt is kept, including the artifacts it covered, because it is
+    evidence of what was qualified; only its verdict is withdrawn.
+    """
+    verification = manifest.get("verification")
+    if isinstance(verification, dict):
+        verification["passed"] = False
 
 
 def set_artifacts(
@@ -250,24 +297,48 @@ def set_artifacts(
     provenance: dict[str, object] | None = None,
 ) -> dict[str, object]:
     manifest = load_manifest(path)
-    if not isinstance(manifest.get("artifacts"), dict):
-        manifest["artifacts"] = {}
-    if not isinstance(manifest.get("provenance"), dict):
-        manifest["provenance"] = {}
-    manifest["artifacts"].update(artifacts)
+    recorded = manifest.get("artifacts")
+    if recorded is None:
+        recorded = {}
+        manifest["artifacts"] = recorded
+    elif not isinstance(recorded, dict):
+        raise ManifestError("manifest artifact bindings are malformed")
+    sources = manifest.get("provenance")
+    if sources is None:
+        sources = {}
+        manifest["provenance"] = sources
+    elif not isinstance(sources, dict):
+        raise ManifestError("manifest provenance bindings are malformed")
+    replaced = [
+        name for name, value in artifacts.items() if recorded.get(name) != value
+    ]
+    recorded.update(artifacts)
     if provenance is not None:
-        manifest["provenance"].update(provenance)
+        sources.update(provenance)
+    if replaced:
+        # Every approval covered the previous bytes, so it cannot outlive them.
+        states = manifest.get("notarized")
+        if isinstance(states, dict):
+            for name in replaced:
+                if states.get(name) is True:
+                    states[name] = False
+        _revoke_verification(manifest)
     write_manifest(path, manifest)
     return manifest
 
 
 def set_notarized(path: Path, app: bool, dmg: bool) -> dict[str, object]:
     manifest = load_manifest(path)
-    states = manifest.get("notarized", {})
+    states = manifest.get("notarized")
     if not isinstance(states, dict):
         states = {}
+    weakened = (states.get("app") is True and app is not True) or (
+        states.get("dmg") is True and dmg is not True
+    )
     states.update({"app": app, "dmg": dmg})
     manifest["notarized"] = states
+    if weakened:
+        _revoke_verification(manifest)
     write_manifest(path, manifest)
     return manifest
 
@@ -279,11 +350,11 @@ def set_verification(
     artifacts: dict[str, object],
 ) -> dict[str, object]:
     manifest = load_manifest(path)
-    manifest["verification"] = {
-        "scope": scope,
-        "passed": True,
-        "artifacts": artifacts,
-    }
+    verification = manifest.get("verification")
+    if not isinstance(verification, dict):
+        verification = {}
+    verification.update({"scope": scope, "passed": True, "artifacts": dict(artifacts)})
+    manifest["verification"] = verification
     write_manifest(path, manifest)
     return manifest
 
@@ -297,6 +368,14 @@ def bind_appcast(
     dmg: Path,
     release_url: str,
 ) -> dict[str, object]:
+    try:
+        appcast_digest = digest(appcast)
+        dmg_digest = digest(dmg)
+        dmg_length = dmg.stat().st_size
+    except ManifestError as error:
+        raise ManifestError(f"cannot bind release artifacts: {error}") from error
+    except OSError as error:
+        raise ManifestError(f"cannot bind release artifacts: {error}") from error
     try:
         root = ET.parse(appcast).getroot()
     except (OSError, ET.ParseError) as error:
@@ -313,9 +392,9 @@ def bind_appcast(
     binding = {
         "tag": tag,
         "version": version,
-        "sha256": digest(appcast),
-        "dmg_sha256": digest(dmg),
-        "dmg_length": dmg.stat().st_size,
+        "sha256": appcast_digest,
+        "dmg_sha256": dmg_digest,
+        "dmg_length": dmg_length,
         "ed_signature": enclosure.attrib.get(f"{{{SPARKLE_XMLNS}}}edSignature", ""),
         "url": enclosure.attrib.get("url", ""),
         "expected_url": expected_url,
@@ -349,7 +428,14 @@ def _validate_release_source(
         errors.append(str(error))
         return
     _equal("source", recorded, current, errors)
-    commit = str(recorded["commit"])
+    commit = recorded.get("commit")
+    if (
+        not isinstance(commit, str)
+        or len(commit) != 40
+        or any(character not in "0123456789abcdef" for character in commit)
+    ):
+        errors.append(f"manifest source has invalid commit: {commit!r}")
+        return
     try:
         remote_branches = capture(
             ["git", "-C", str(root), "branch", "-r", "--contains", commit]
@@ -416,6 +502,10 @@ def preflight_release(
         except ManifestError as error:
             errors.append(str(error))
 
+    dmg_path = artifacts.get("dmg")
+    if dmg_path is None:
+        errors.append("artifact 'dmg' is missing from artifacts")
+
     provenance = manifest.get("provenance", {})
     if not isinstance(provenance, dict):
         provenance = {}
@@ -455,19 +545,19 @@ def preflight_release(
     except ManifestError as error:
         errors.append(str(error))
 
-    if appcast is not None:
+    if appcast is not None and dmg_path is not None:
         try:
             validate_appcast(
                 manifest,
                 appcast=appcast,
                 tag=tag,
                 version=version,
-                dmg=digest(artifacts["dmg"]),
+                dmg=digest(dmg_path),
                 release_url=release_url,
             )
         except ManifestError as error:
             errors.append(str(error))
-    elif require_appcast:
+    elif require_appcast and dmg_path is not None:
         errors.append("release appcast is not bound")
 
     if errors:
@@ -488,15 +578,21 @@ def validate_downloads(manifest: dict[str, object], downloads: Path) -> None:
     downloads = Path(downloads)
     errors: list[str] = []
     for module, expected in qt["source_sha256"].items():
+        if not isinstance(expected, str) or _SHA256.fullmatch(expected) is None:
+            errors.append(f"Qt pin for {module} is not a SHA-256")
+            continue
         archive = downloads / f"{module}-everywhere-src-{qt.get('version')}.tar.xz"
         try:
-            if digest(archive) != expected:
+            if content_sha256(archive) != expected:
                 errors.append(f"{archive.name} differs from its pin")
         except ManifestError as error:
             errors.append(str(error))
     sparkle_archive = downloads / f"Sparkle-{sparkle.get('version')}.tar.xz"
     try:
-        if digest(sparkle_archive) != sparkle.get("archive_sha256"):
+        expected = sparkle.get("archive_sha256")
+        if not isinstance(expected, str) or _SHA256.fullmatch(expected) is None:
+            errors.append("Sparkle pin is not a SHA-256")
+        elif content_sha256(sparkle_archive) != expected:
             errors.append(f"{sparkle_archive.name} differs from its pin")
     except ManifestError as error:
         errors.append(str(error))
@@ -524,7 +620,8 @@ def validate_appcast(
             raise ManifestError("appcast must have one item and enclosure")
         item = items[0]
         enclosure = item.find("enclosure")
-        assert enclosure is not None
+        if enclosure is None:
+            raise ManifestError("appcast item has no enclosure")
         signature = enclosure.attrib.get(f"{{{SPARKLE_XMLNS}}}edSignature", "")
         length = enclosure.attrib.get("length", "")
         url = enclosure.attrib.get("url", "")
