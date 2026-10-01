@@ -118,6 +118,10 @@ def run(command, line):
                 say(f"busy {printed}")
                 time.sleep(1.5)
         except KeyboardInterrupt:
+            # A second ^C during the report would raise a nested
+            # KeyboardInterrupt and lose the line the device check greps
+            # for; the finally restores the real handler either way.
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
             say(f"busy interrupted after {printed} lines")
         finally:
             signal.signal(signal.SIGINT, previous)
