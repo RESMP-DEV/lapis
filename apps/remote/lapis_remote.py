@@ -133,9 +133,20 @@ class BoundedHTTPServer(ThreadingHTTPServer):
     """
 
     MAX_CONNECTIONS = MAX_HTTP_CONNECTIONS
-    # A full cap may arrive in a burst; accept it rather than dropping at the
-    # listen queue before the explicit busy reply can be sent.
+    # A full cap may arrive in a burst; ask the kernel for room for 32 queued
+    # connections. The OS may clamp this backlog. A client beyond the kernel's
+    # own queue is refused before lapis can send its busy JSON.
     request_queue_size = MAX_HTTP_CONNECTIONS + 16
+    # The accept thread stays bounded while it drains arrived request bytes
+    # and offers a small response. A stalled peer costs this budget, not the
+    # request handler timeout, and a response is abandoned rather than sent
+    # forever.
+    BUSY_CLOSE_TIMEOUT = 0.1
+    BUSY_DRAIN_LIMIT = 64 * 1024
+    # The drain polls for at most this long per quiet socket; the rest of the
+    # close budget is reserved for the reply so a peer that already sent its
+    # request still hears "busy" instead of a bare close.
+    BUSY_DRAIN_TIMEOUT = 0.02
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -144,17 +155,7 @@ class BoundedHTTPServer(ThreadingHTTPServer):
 
     def process_request(self, request, client_address):
         if not self.active_connections.acquire(blocking=False):
-            try:
-                body = json.dumps({"error": HTTP_BUSY_MESSAGE}).encode()
-                request.sendall(
-                    b"HTTP/1.1 503 Service Unavailable\r\n"
-                    b"Content-Type: application/json\r\n"
-                    b"Cache-Control: no-store\r\n"
-                    b"Connection: close\r\n"
-                    b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
-                )
-            except OSError:
-                pass  # A departing client does not need the busy notice.
+            self.send_busy_reply(request)
             self.shutdown_request(request)
             return
         self.active_requests.add(request)
@@ -167,12 +168,61 @@ class BoundedHTTPServer(ThreadingHTTPServer):
             self.active_connections.release()
         super().shutdown_request(request)
 
+    @classmethod
+    def send_busy_reply(cls, request):
+        """Offer a 503 within a bounded budget, then let the server close it.
+
+        A client can already have sent headers, or a larger POST body, when it
+        reaches the accept thread. Closing with unread data sends a reset that
+        can discard the response, so drain a bounded prefix first. This cannot
+        guarantee delivery to a peer that sends an unbounded body or never
+        reads: lapis abandons the close rather than blocking admissions.
+        """
+        deadline = time.monotonic() + cls.BUSY_CLOSE_TIMEOUT
+        try:
+            request.setblocking(False)
+            drained = bytearray()
+            while len(drained) < cls.BUSY_DRAIN_LIMIT:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                readable, _, _ = select.select(
+                    [request], [], [], min(remaining, cls.BUSY_DRAIN_TIMEOUT)
+                )
+                if not readable:
+                    break
+                chunk = request.recv(cls.BUSY_DRAIN_LIMIT - len(drained))
+                if not chunk:
+                    break
+                drained.extend(chunk)
+
+            body = json.dumps({"error": HTTP_BUSY_MESSAGE}).encode()
+            payload = (
+                b"HTTP/1.1 503 Service Unavailable\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Cache-Control: no-store\r\n"
+                b"Connection: close\r\n"
+                b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+            )
+            while payload:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return
+                _, writable, _ = select.select([], [request], [], remaining)
+                if not writable:
+                    return
+                sent = request.send(payload)
+                payload = payload[sent:]
+        except (OSError, ValueError):
+            pass  # A departing client does not need the busy notice.
+
 
 def run_bounded_probes(targets, *, deadline):
     """Probe every target in parallel, or return None when the operation is late.
 
-    A result is either complete or absent: a timed-out socket cannot be called
-    stopped, and a target past the batch limit is never silently dropped.
+    A result is either complete or absent: an unknown service state makes the
+    whole result unknown, and a target past the batch limit is never silently
+    dropped.
     """
     if len(targets) > MAX_LISTING_AGENTS:
         return None
@@ -181,10 +231,7 @@ def run_bounded_probes(targets, *, deadline):
         max_workers=worker_count, thread_name_prefix="lapis-service-probe"
     )
     try:
-        futures = [
-            pool.submit(service_answers, endpoint, timeout=SERVICE_PROBE_TIMEOUT)
-            for endpoint in targets
-        ]
+        futures = [pool.submit(listing_answers, endpoint) for endpoint in targets]
         answers = []
         for future in futures:
             remaining = deadline - time.monotonic()
@@ -193,6 +240,8 @@ def run_bounded_probes(targets, *, deadline):
             try:
                 answers.append(future.result(timeout=remaining))
             except concurrent.futures.TimeoutError:
+                return None
+            if answers[-1] is None:
                 return None
         return answers
     finally:
@@ -231,14 +280,16 @@ def fingerprint(program, arguments, directory, mode):
 # moved, say) reaches the phone at once rather than at its next poll.
 LISTING_WAIT = 8.0
 # The phone allows 15 seconds for a listing. Leave the rest for Tailscale and
-# the client. The 8-second long wait, the registry read, and a full batch of
-# bounded socket probes (0.3 seconds in at most two rounds) fit inside this.
+# the client. The 8-second long wait leaves about 2 seconds; a full desktop
+# batch (128 agents, the most the desktop allows) finishes in four 0.3-second
+# rounds with 32 workers (1.2 seconds), inside that remainder.
 LISTING_DEADLINE = 10.0
 SERVICE_PROBE_TIMEOUT = 0.3
 # Registry agents are desktop-owned local endpoints. A bounded batch avoids a
-# pathological registry turning every phone into an unbounded probe fan-out.
-MAX_LISTING_AGENTS = 64
-MAX_LISTING_WORKERS = 16
+# pathological registry turning every phone into an unbounded probe fan-out;
+# 128 is the desktop's supported workspace size.
+MAX_LISTING_AGENTS = 128
+MAX_LISTING_WORKERS = 32
 # Four listings may probe at once; further requests are told to try again.
 MAX_LISTINGS_IN_FLIGHT = 4
 LISTING_BUSY_MESSAGE = "Too many agents are being listed; try again"
@@ -1411,6 +1462,27 @@ def service_answers(endpoint, timeout=0.3):
     try:
         probe.connect(endpoint)
         return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
+def listing_answers(endpoint):
+    """True, false, or unknown when a listing probe times out.
+
+    The quick-command terminal list keeps service_answers's old down-on-
+    timeout result. A workspace listing owns the phone's complete inventory,
+    so an inconclusive connect must fail the batch instead of publishing a
+    valid agent as stopped.
+    """
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(SERVICE_PROBE_TIMEOUT)
+    try:
+        probe.connect(endpoint)
+        return True
+    except TimeoutError:
+        return None
     except OSError:
         return False
     finally:

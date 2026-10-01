@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps" / "remote"))
 import lapis_remote as remote  # noqa: E402
 
+SERVICE_TEST_TIMEOUT = 5.0
+
 
 class FakeClock:
     def __init__(self, now=1000.0):
@@ -38,52 +40,120 @@ class ServiceProbeBoundsTests(unittest.TestCase):
         targets = [str(live)] + [
             str(folder / f"dead-{number}.sock") for number in range(16)
         ]
-        original = remote.service_answers
+        original = remote.listing_answers
         release = threading.Event()
         calls = []
 
-        def slow_service_answers(endpoint, timeout=0.3):
+        def slow_listing_answers(endpoint):
             calls.append(endpoint)
-            if len(calls) == remote.MAX_LISTING_WORKERS:
+            # One full round of workers must overlap; targets beyond a round
+            # only start once these return, so a full-batch release would hang.
+            if len(calls) >= min(len(targets), remote.MAX_LISTING_WORKERS):
                 release.set()
-            release.wait(5)
-            return original(endpoint, timeout)
+            release.wait(SERVICE_TEST_TIMEOUT)
+            return original(endpoint)
 
-        with patch.object(remote, "service_answers", slow_service_answers):
+        with patch.object(remote, "listing_answers", slow_listing_answers):
             began = time.monotonic()
-            answers = remote.run_bounded_probes(targets, deadline=time.monotonic() + 5)
+            answers = remote.run_bounded_probes(
+                targets, deadline=time.monotonic() + SERVICE_TEST_TIMEOUT
+            )
             elapsed = time.monotonic() - began
 
         self.assertEqual(answers, [True] + [False] * 16)
         self.assertEqual(set(calls), set(targets))
-        # Sixteen workers make this two rounds; serial calls would need 0.8s.
+        # Thirty-two workers finish this batch in one round; serial calls lag.
         self.assertLess(elapsed, 0.55)
 
     def test_an_oversized_batch_fails_without_starting_any_probe(self):
-        targets = [f"/tmp/not-a-service-{number}.sock" for number in range(65)]
+        targets = [
+            f"/tmp/not-a-service-{number}.sock"
+            for number in range(remote.MAX_LISTING_AGENTS + 1)
+        ]
         calls = []
 
-        def observe(endpoint, timeout=0.3):
+        def observe(endpoint):
             calls.append(endpoint)
-            return remote.service_answers(endpoint, timeout)
+            return remote.listing_answers(endpoint)
 
-        with patch.object(remote, "service_answers", observe):
+        with patch.object(remote, "listing_answers", observe):
             self.assertIsNone(
-                remote.run_bounded_probes(targets, deadline=time.monotonic() + 5)
+                remote.run_bounded_probes(
+                    targets, deadline=time.monotonic() + SERVICE_TEST_TIMEOUT
+                )
             )
         self.assertEqual(calls, [])
+
+    def test_listing_connect_timeout_is_unknown_while_refusal_is_stopped(self):
+        folder = Path(tempfile.mkdtemp(prefix="lapis-probe-timeout-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        target = folder / "service.sock"
+        target.touch()
+        original_connect = socket.socket.connect
+
+        def timed_connect(self, address):
+            # macOS refuses a bound-but-unlistened AF_UNIX socket immediately,
+            # so exercise the real timeout type and timeout edge without a
+            # Linux-specific backlog-blocking fixture.
+            raise TimeoutError("connect timed out")
+
+        with patch.object(socket.socket, "connect", timed_connect):
+            self.assertIsNone(remote.listing_answers(str(target)))
+
+        with patch.object(
+            socket.socket,
+            "connect",
+            lambda client, address: original_connect(client, address),
+        ):
+            self.assertFalse(remote.listing_answers(str(target)))
+
+    def test_a_complete_desktop_inventory_is_probed_with_bounded_workers(self):
+        folder = Path(tempfile.mkdtemp(prefix="lapis-full-inventory-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        targets = [
+            str(folder / f"missing-{number}.sock")
+            for number in range(remote.MAX_LISTING_AGENTS)
+        ]
+        original = remote.listing_answers
+        calls = []
+        state = threading.Lock()
+        active = 0
+        peak = 0
+
+        def observe(endpoint):
+            # 128 targets run as several worker rounds; the bound is on
+            # overlap, so track the high-water in-flight count, not totals.
+            nonlocal active, peak
+            with state:
+                calls.append(endpoint)
+                active += 1
+                peak = max(peak, active)
+            try:
+                return original(endpoint)
+            finally:
+                with state:
+                    active -= 1
+
+        with patch.object(remote, "listing_answers", observe):
+            answers = remote.run_bounded_probes(
+                targets, deadline=time.monotonic() + SERVICE_TEST_TIMEOUT
+            )
+
+        self.assertEqual(answers, [False] * remote.MAX_LISTING_AGENTS)
+        self.assertEqual(len(calls), remote.MAX_LISTING_AGENTS)
+        self.assertLessEqual(peak, remote.MAX_LISTING_WORKERS)
 
     def test_a_slow_service_probe_returns_transient_not_stopped(self):
         folder = Path(tempfile.mkdtemp(prefix="lapis-slow-probe-"))
         self.addCleanup(shutil.rmtree, folder, True)
         target = folder / "slow.sock"
-        original = remote.service_answers
+        original = remote.listing_answers
 
-        def slow_service_answers(endpoint, timeout=0.3):
-            threading.Event().wait(timeout)
-            return original(endpoint, timeout)
+        def slow_listing_answers(endpoint):
+            threading.Event().wait(0.05)
+            return original(endpoint)
 
-        with patch.object(remote, "service_answers", slow_service_answers):
+        with patch.object(remote, "listing_answers", slow_listing_answers):
             self.assertIsNone(
                 remote.run_bounded_probes(
                     [str(target)], deadline=time.monotonic() + 0.02
@@ -138,15 +208,15 @@ class GatewayHTTPBoundsTests(unittest.TestCase):
 
     def test_a_late_service_probe_is_an_explicit_transient_failure(self):
         with LiveGateway() as server:
-            original = remote.service_answers
+            original = remote.listing_answers
 
-            def slow_service_answers(endpoint, timeout=0.3):
-                threading.Event().wait(timeout)
-                return original(endpoint, timeout)
+            def slow_listing_answers(endpoint):
+                threading.Event().wait(remote.SERVICE_PROBE_TIMEOUT)
+                return original(endpoint)
 
             with (
                 patch.object(remote, "LISTING_DEADLINE", 0.08),
-                patch.object(remote, "service_answers", slow_service_answers),
+                patch.object(remote, "listing_answers", slow_listing_answers),
             ):
                 began = time.monotonic()
                 status, refused = server.request("GET", "/api/agents")
@@ -155,6 +225,29 @@ class GatewayHTTPBoundsTests(unittest.TestCase):
         self.assertEqual(status, 503)
         self.assertEqual(refused, {"error": remote.LISTING_TIMEOUT_MESSAGE})
         self.assertLess(elapsed, 1.0)
+
+    def test_a_desktop_supported_inventory_is_listed_with_one_round_budget(self):
+        with LiveGateway() as server:
+            workspace_registry(server.directory, agents=128)
+            live = server.directory / "agent-0.sock"
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            listener.bind(str(live))
+            listener.listen()
+            self.addCleanup(listener.close)
+
+            began = time.monotonic()
+            status, listed = server.request("GET", "/api/agents")
+            elapsed = time.monotonic() - began
+
+        agents = listed["categories"][0]["agents"]
+        self.assertEqual(status, 200)
+        self.assertEqual(len(agents), remote.MAX_LISTING_AGENTS)
+        self.assertEqual(agents[0]["running"], True)
+        self.assertEqual(
+            [agent["running"] for agent in agents[1:]],
+            [False] * (remote.MAX_LISTING_AGENTS - 1),
+        )
+        self.assertLess(elapsed, 2.0)
 
     def test_connection_saturation_fails_promptly_with_bounded_threads(self):
         class BlockingHandler(remote.Handler):
@@ -210,6 +303,114 @@ class GatewayHTTPBoundsTests(unittest.TestCase):
             [response_status for response_status, _ in replies], [200] * limit
         )
         self.assertEqual(connection_count, limit)
+
+    def test_busy_close_is_orderly_and_the_accept_loop_stays_bounded(self):
+        class BlockingHandler(remote.Handler):
+            admitted_handlers = None
+            release = None
+
+            def admitted(self):
+                if not super().admitted():
+                    return False
+                self.admitted_handlers.release()
+                assert self.release.wait(SERVICE_TEST_TIMEOUT), (
+                    "fixture release timeout"
+                )
+                return True
+
+            def log_message(self, format, *args):
+                pass
+
+        limit = remote.BoundedHTTPServer.MAX_CONNECTIONS
+        BlockingHandler.admitted_handlers = threading.Semaphore(0)
+        BlockingHandler.release = threading.Event()
+        replies = []
+        request = (
+            b"GET /api/health HTTP/1.1\r\nHost: localhost\r\n"
+            b"X-Lapis-Client: ios\r\nConnection: close\r\n\r\n"
+        )
+
+        with LiveGateway(BlockingHandler) as server:
+            for _ in range(limit):
+                connection = server.connection()
+                connection.request(
+                    "GET", "/api/health", headers={"X-Lapis-Client": "ios"}
+                )
+
+                def collect(item=connection):
+                    response = item.getresponse()
+                    replies.append((response.status, response.read()))
+                    item.close()
+
+                threading.Thread(target=collect, daemon=True).start()
+            for _ in range(limit):
+                assert BlockingHandler.admitted_handlers.acquire(
+                    timeout=SERVICE_TEST_TIMEOUT
+                )
+
+            stalled = socket.create_connection(
+                server.httpd.server_address, timeout=SERVICE_TEST_TIMEOUT
+            )
+            stalled.sendall(request)
+            orderly = server.raw_busy_request(request)
+
+            self.assertEqual(orderly[0], "HTTP/1.1 503 Service Unavailable")
+            self.assertEqual(orderly[1].get("connection"), "close")
+            self.assertEqual(
+                json.loads(orderly[2]), {"error": remote.HTTP_BUSY_MESSAGE}
+            )
+            self.assertEqual(orderly[3], b"")
+
+            began = time.monotonic()
+            second = server.raw_busy_request(request)
+            accepted_elapsed = time.monotonic() - began
+            stalled.close()
+            BlockingHandler.release.set()
+            while len(replies) < limit:
+                self.assertLess(time.monotonic() - began, SERVICE_TEST_TIMEOUT)
+                time.sleep(0.01)
+
+        self.assertEqual(second[0], "HTTP/1.1 503 Service Unavailable")
+        self.assertEqual(json.loads(second[2]), {"error": remote.HTTP_BUSY_MESSAGE})
+        self.assertLess(accepted_elapsed, 1.0)
+        self.assertEqual(
+            [response_status for response_status, _ in replies], [200] * limit
+        )
+
+    def test_a_nonprogressing_busy_write_ends_at_its_budget(self):
+        server, client = socket.socketpair()
+        self.addCleanup(server.close)
+        self.addCleanup(client.close)
+
+        class StalledPeer:
+            """A real socket stand-in whose send never moves the payload.
+
+            socket objects reject attribute assignment, so the nonprogressing
+            write is delegated rather than patched.
+            """
+
+            def __init__(self, underlying):
+                self.underlying = underlying
+
+            def fileno(self):
+                return self.underlying.fileno()
+
+            def setblocking(self, flag):
+                self.underlying.setblocking(flag)
+
+            def recv(self, limit):
+                return self.underlying.recv(limit)
+
+            def send(self, payload):
+                assert payload[9:12] == b"503", payload[:16]
+                return 0
+
+        began = time.monotonic()
+        remote.BoundedHTTPServer.send_busy_reply(StalledPeer(server))
+        elapsed = time.monotonic() - began
+
+        self.assertGreaterEqual(elapsed, remote.BoundedHTTPServer.BUSY_CLOSE_TIMEOUT)
+        self.assertLess(elapsed, remote.BoundedHTTPServer.BUSY_CLOSE_TIMEOUT + 0.5)
 
     def test_a_disconnected_long_poll_releases_its_connection(self):
         with LiveGateway() as server:
@@ -328,6 +529,25 @@ class LiveGateway:
         body = response.read()
         connection.close()
         return response.status, json.loads(body) if body else None
+
+    def raw_busy_request(self, request, timeout=SERVICE_TEST_TIMEOUT):
+        """Send one request and retain the server's exact close evidence."""
+        client = socket.create_connection(self.httpd.server_address, timeout=timeout)
+        client.sendall(request)
+        reader = client.makefile("rb")
+        status = reader.readline().rstrip(b"\r\n").decode("ascii")
+        headers = {}
+        while True:
+            line = reader.readline()
+            if not line or line == b"\r\n":
+                break
+            name, value = line.rstrip(b"\r\n").split(b":", 1)
+            headers[name.decode("ascii").lower()] = value.strip().decode("ascii")
+        body = reader.read(int(headers["content-length"]))
+        eof = reader.read(64)
+        reader.close()
+        client.close()
+        return status, headers, body, eof
 
 
 def folder(machine, marker):
