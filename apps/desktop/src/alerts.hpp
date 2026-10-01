@@ -2,6 +2,8 @@
 #define LAPIS_DESKTOP_ALERTS_HPP
 #include "chime_sounds.hpp"
 #include <QElapsedTimer>
+#include <QHash>
+#include <QJsonObject>
 #include <QObject>
 #include <QPointer>
 #include <QString>
@@ -14,6 +16,35 @@ namespace lapis::desktop {
 class KeyMap;
 class SessionPreview;
 class Workspace;
+
+// What the person last saw of each agent: while the window is active, the
+// screen of the agent shown is sampled every second. A finished turn whose
+// screen is still what was seen there says nothing new, so it neither chimes
+// nor notifies. Claude Code's input box and status line (below its last
+// box-drawing rule) are left out, since a status line can tick on its own.
+class SeenScreens final : public QObject {
+    Q_OBJECT
+  public:
+    using Looking = std::function<bool(const SessionPreview*)>;
+    static constexpr int kSampleMs = 1000;
+    SeenScreens(Workspace& workspace, Looking looking, QObject* parent = nullptr);
+    // Whether `item` shows what the person last saw of it.
+    [[nodiscard]] bool unchanged(const SessionPreview* item) const;
+    // Records what is on `item`'s screen now as seen.
+    void see(const SessionPreview* item);
+    [[nodiscard]] static size_t fingerprint(const SessionPreview* item);
+
+  private:
+    void sample();
+    Workspace& workspace_;
+    Looking looking_;
+    QTimer timer_;
+    QHash<const SessionPreview*, size_t> seen_;
+};
+
+// One line per ping decision in an owner-only log, so a missed or extra ping
+// can be traced: the agent, the moment, and what was done and why.
+using AttentionLog = std::function<void(const QJsonObject&)>;
 
 // Production requests and completed turns share one finished cue. The legacy
 // explicit needsYou signal retains its repeat behavior for existing callers;
@@ -29,6 +60,10 @@ class Alerts final : public QObject {
 
     Alerts(Workspace& workspace, const KeyMap& config, Player play, Looking looking,
            QObject* parent = nullptr);
+    // A finished turn showing what was already seen stays quiet; every
+    // decision is logged.
+    void setSeen(SeenScreens* seen) { seen_ = seen; }
+    void setLog(AttentionLog log) { log_ = std::move(log); }
 
     // Plays a chime now, for the settings' Play buttons.
     Q_INVOKABLE void preview(bool needsYou);
@@ -50,9 +85,12 @@ class Alerts final : public QObject {
         QPointer<SessionPreview> item;
         int played{};
     };
+    void record(const SessionPreview* item, const char* event, const char* decision) const;
     const KeyMap& config_;
     Player play_;
     Looking looking_;
+    SeenScreens* seen_{};
+    AttentionLog log_;
     std::vector<Waiting> waiting_;
     QTimer repeat_;
     QElapsedTimer last_;
@@ -68,9 +106,13 @@ class Notifier final : public QObject {
     using Background = std::function<bool()>;
     Notifier(Workspace& workspace, const KeyMap& config, Post post, Background background,
              QObject* parent = nullptr);
+    void setSeen(const SeenScreens* seen) { seen_ = seen; }
+    void setLog(AttentionLog log) { log_ = std::move(log); }
 
   private:
     void notify(const SessionPreview* item, bool needsYou);
+    const SeenScreens* seen_{};
+    AttentionLog log_;
     const KeyMap& config_;
     Post post_;
     Background background_;

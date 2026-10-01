@@ -40,6 +40,13 @@ is enabled. Requests use the same cue and background notification; custom sound
 files do not restore repeating request chimes. Appearance has one switch and
 Play button for the shared cue, plus the background-notification switch.
 
+A turn that ends on what you already saw of that agent stays quiet: while lapis
+is in front, the screen of the agent you are looking at is noted every second,
+and a finished turn whose screen above Claude Code's input box is unchanged
+neither chimes nor notifies. Every decision (chimed, notified, or quiet and
+why) is logged, one JSON line each, to `runtime/attention.jsonl` in the lapis
+folder.
+
 Use `alerts.finishedFile` for your own sound. When it is unset, `alerts.soundFile`
 is used at half volume. An explicitly set but unavailable `finishedFile` falls
 back to the built-in finished cue rather than borrowing a different file.

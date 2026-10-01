@@ -31,6 +31,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QPointer>
 #include <QQmlEngine>
@@ -281,20 +282,43 @@ bool parsed_headless(const QCommandLineParser& parser, bool parsed) {
 // agent. A notification for the same moments while lapis is in the
 // background, clicking one brings the window to that agent. The downloaded app
 // also starts checking for updates here.
+// Every ping decision, one JSON line each, in the owner-only runtime folder;
+// past 2 MiB the log starts over beside its predecessor.
+lapis::desktop::AttentionLog attention_log() {
+    const auto path =
+        QDir(lapis::desktop::data_directory()).filePath(QStringLiteral("runtime/attention.jsonl"));
+    return [path](const QJsonObject& line) {
+        if (QFileInfo(path).size() > qint64{2} * 1024 * 1024) {
+            QFile::remove(path + QStringLiteral(".1"));
+            QFile::rename(path, path + QStringLiteral(".1"));
+        }
+        QFile file(path);
+        if (!file.open(QIODevice::Append | QIODevice::WriteOnly))
+            return;
+        file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
+        file.write(QJsonDocument(line).toJson(QJsonDocument::Compact) + '\n');
+    };
+}
 void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
                       std::optional<lapis::desktop::Notifier>& notifier,
+                      std::optional<lapis::desktop::SeenScreens>& seen,
                       lapis::desktop::Workspace& workspace, lapis::desktop::KeyMap& keymap,
                       QPointer<QQuickWindow>& shown) {
     namespace platform = lapis::desktop::platform;
     using lapis::desktop::Chime;
     auto sounds = std::make_shared<lapis::desktop::ChimeSounds>();
     sounds->configure(keymap);
+    const auto looking = [&workspace, &shown](const lapis::desktop::SessionPreview* item) {
+        return shown && shown->isActive() && workspace.focusedSession() == item;
+    };
+    seen.emplace(workspace, looking);
+    const auto log = attention_log();
     alerts.emplace(
         workspace, keymap,
         [&keymap, sounds](Chime chime) { sounds->play(chime, keymap, lapis::desktop::play_sound); },
-        [&workspace, &shown](const lapis::desktop::SessionPreview* item) {
-            return shown && shown->isActive() && workspace.focusedSession() == item;
-        });
+        looking);
+    alerts->setSeen(&*seen);
+    alerts->setLog(log);
     QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &*alerts,
                      [sounds, &keymap] { sounds->configure(keymap); });
     notifier.emplace(
@@ -303,6 +327,8 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
             platform::post_notification(id, title, body);
         },
         [] { return QGuiApplication::applicationState() != Qt::ApplicationActive; });
+    notifier->setSeen(&*seen);
+    notifier->setLog(log);
     platform::on_notification_opened([&workspace, &shown](const QString& id) {
         if (!workspace.selectSession(id) || !shown)
             return;
@@ -864,10 +890,11 @@ int main(int argc, char** argv) {
                           << (keymap.loaded() ? "loaded" : "defaults");
         register_qml_types();
         QPointer<QQuickWindow> shown;
+        std::optional<lapis::desktop::SeenScreens> seen; // outlives what reads it
         std::optional<Alerts> alerts;
         std::optional<Notifier> notifier;
         if (!isolated)
-            alert_for_agents(alerts, notifier, workspace, keymap, shown);
+            alert_for_agents(alerts, notifier, seen, workspace, keymap, shown);
         DesktopActions desktop(keymap);
         const bool hide_on_close = closes_to_dock(isolated, parser);
         AgentSearch agentSearch(&workspace);

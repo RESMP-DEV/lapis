@@ -3536,6 +3536,42 @@ void alertsChimeWhileAnAgentWaits() {
     emit workspace.turnFinished(&agent);
     require(played == std::vector{lapis::desktop::Chime::finished}, "a finished turn chimes once");
 
+    // A turn that ends on what the person already saw there says nothing new:
+    // no chime, whatever Claude Code's status line below its input box does.
+    // New output above the box chimes again. Every decision is logged.
+    {
+        lapis::session::Terminal screen({40, 8});
+        const auto show = [&screen, &agent](std::string_view text) {
+            screen.feed(text);
+            agent.applySnapshot(screen.snapshot());
+        };
+        const std::string line = "\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80";
+        show("\x1b[2J\x1b[Hdone: tests pass\r\n" + line + "\r\n> \r\n" + line + "\r\n5h 53%");
+        lapis::desktop::SeenScreens seen(workspace, [&looking](const auto*) { return looking; });
+        std::vector<QJsonObject> lines;
+        alerts.setSeen(&seen);
+        alerts.setLog([&lines](const QJsonObject& entry) { lines.push_back(entry); });
+        seen.see(&agent);
+        played.clear();
+        waitFor([] { return false; }, 60);
+        show("\x1b[5;1H5h 54%"); // the status line ticks
+        emit workspace.turnFinished(&agent);
+        require(played.empty() && !lines.empty() &&
+                    lines.back().value(QStringLiteral("chime")).toString() ==
+                        QStringLiteral("quiet: nothing new since you looked"),
+                "a turn ending on a screen already seen stays quiet");
+        show("\x1b[1;1Hnew: build failed");
+        emit workspace.turnFinished(&agent);
+        require(played == std::vector{lapis::desktop::Chime::finished} &&
+                    lines.back().value(QStringLiteral("chime")).toString() ==
+                        QStringLiteral("chimed") &&
+                    lines.back().value(QStringLiteral("agent")).toString() ==
+                        QStringLiteral("agent"),
+                "new output chimes, and the decision names the agent");
+        alerts.setSeen(nullptr);
+        alerts.setLog({});
+    }
+
     require(keymap.setAlertSound(false), "turn the sound off");
     played.clear();
     request(true);
