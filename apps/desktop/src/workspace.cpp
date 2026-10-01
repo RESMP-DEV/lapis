@@ -440,11 +440,9 @@ SessionPreview::SessionPreview(QString title, QString directory, QString activit
         // A decode outside the timer (history opening, viewer resume) keeps the
         // rate limit: measure from that attempt and rearm for only the
         // remaining interval rather than decoding at this now-stale deadline.
-        if (waiting_ && !viewers_.empty() && last_decode_attempt_.isValid()) {
-            const qint64 interval = *viewers_.begin();
-            const qint64 elapsed = last_decode_attempt_.elapsed();
-            if (elapsed < interval) {
-                decode_timer_.start(static_cast<int>(interval - elapsed));
+        if (waiting_ && !viewers_.empty()) {
+            if (const qint64 remaining = remainingDecodeDelay(); remaining > 0) {
+                decode_timer_.start(static_cast<int>(remaining));
                 return;
             }
         }

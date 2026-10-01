@@ -883,11 +883,30 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 # below and leaking a decision publication into the quiet
                 # window. Observe the decision batch first, then treat source
                 # exit as its own publication phase.
-                _, decision_publications = read_attention(client)
+                decision_snapshot, decision_publications = read_attention(client)
+                # The source has not been stopped yet, so this publication is
+                # the batch's; exit text here would mean the phases crossed.
                 require(
-                    decision_publications == 1,
-                    f"Decision batch produced {decision_publications} publications",
+                    "Codex server exited" not in decision_snapshot["diagnostic"],
+                    "Exit diagnostic arrived before the source was stopped",
                 )
+                require(
+                    decision_snapshot["requests"] == initial["requests"],
+                    "Decision batch changed the pending request count",
+                )
+                # A first-hit read always returns 1, so it cannot show the
+                # batch produced exactly one publication; a quiet window with
+                # no further attention frames can.
+                quiet = time.monotonic() + 0.04
+                while (remaining := quiet - time.monotonic()) > 0:
+                    try:
+                        kind, _ = client.receive(remaining)
+                    except (FrameDeadline, socket.timeout):
+                        break
+                    require(
+                        kind != ATTENTION_SNAPSHOT,
+                        "Decision batch produced more than one publication",
+                    )
                 os.kill(pid, signal.SIGTERM)
                 latest, publications = read_attention(
                     client,

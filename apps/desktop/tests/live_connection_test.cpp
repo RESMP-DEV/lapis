@@ -321,15 +321,18 @@ void preview_decode_failure_paces_retry() {
     require(published && first_row(*published) == "good", "Idle preview decoded the wrong screen");
 
     offer(encode("broken").left(4));
-    QElapsedTimer gate;
-    gate.start();
-    until([&] { return gate.elapsed() >= 300; });
+    // Synchronize on the failed attempt itself, not on elapsed time: only
+    // the attempt counter observes that the broken screen was decoded and
+    // rejected rather than still sitting in the timer.
+    until([&] { return f.document.decodeAttempts() == 2; });
     require(f.document.decodedScreens() == 1, "An undecodable screen was counted as decoded");
     require(published && first_row(*published) == "good",
             "An undecodable screen replaced the last good screen");
 
     offer(encode("next"));
-    settle();
+    // One event-loop turn proves the pacing: the failed attempt just ran, so
+    // almost the whole viewer interval remains and this turn cannot decode.
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
     require(f.document.decodedScreens() == 1,
             "A valid screen after a failed decode bypassed the viewer interval");
     until([&] { return f.document.decodedScreens() == 2; });

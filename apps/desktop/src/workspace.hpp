@@ -166,6 +166,8 @@ class SessionPreview final : public QObject {
     void removeViewer(int interval_ms);
     // Screens decoded so far, for tests.
     [[nodiscard]] quint64 decodedScreens() const { return decoded_screens_; }
+    // Decode attempts so far, failed or not, for tests.
+    [[nodiscard]] quint64 decodeAttempts() const { return decode_attempts_; }
     void setSnapshotTiming(const QVariantMap& timing) { snapshot_timing_ = timing; }
     [[nodiscard]] QVariantMap snapshotTiming() const { return snapshot_timing_; }
     void beginHistoryRequest();
@@ -268,6 +270,10 @@ class SessionPreview final : public QObject {
     void extendStrip();
     // Decodes the screen that waited, if any; true when there was one.
     bool decodeWaiting() const;
+    // Milliseconds until the next decode attempt is allowed under the
+    // fastest viewer's interval; the single rate-limit rule shared by the
+    // offer path and the decode timer.
+    [[nodiscard]] qint64 remainingDecodeDelay() const;
     std::vector<qint64> output_times_;
     bool output_active_{};
     bool output_quiet_{};
@@ -304,6 +310,7 @@ class SessionPreview final : public QObject {
     mutable session::TerminalSnapshot snapshot_;
     mutable std::optional<QByteArray> waiting_;
     mutable quint64 decoded_screens_{};
+    mutable quint64 decode_attempts_{};
     std::multiset<int> viewers_;
     mutable QElapsedTimer last_decode_attempt_;
     QTimer decode_timer_;

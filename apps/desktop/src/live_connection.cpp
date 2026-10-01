@@ -81,11 +81,18 @@ void SessionPreview::offerSnapshot(QByteArray encoded) {
         // The first eligible screen opens the window now; later screens share
         // the remaining part of the viewer interval. Replacing waiting_ keeps
         // only the newest state of a burst for that deadline.
-        const qint64 interval = *viewers_.begin();
-        const auto since = last_decode_attempt_.isValid() ? last_decode_attempt_.elapsed() : interval;
-        const int remaining = since >= interval ? 0 : static_cast<int>(interval - since);
-        decode_timer_.start(remaining);
+        decode_timer_.start(static_cast<int>(remainingDecodeDelay()));
     }
+}
+qint64 SessionPreview::remainingDecodeDelay() const {
+    // The fastest viewer's interval paces decodes, and a decode outside the
+    // timer (history opening, viewer resume) still counts against it, so the
+    // wait is only the remaining part. No attempt yet means no wait.
+    if (viewers_.empty() || !last_decode_attempt_.isValid())
+        return 0;
+    const qint64 interval = *viewers_.begin();
+    const qint64 since = last_decode_attempt_.elapsed();
+    return since >= interval ? 0 : interval - since;
 }
 bool SessionPreview::decodeWaiting() const {
     if (!waiting_)
@@ -95,6 +102,7 @@ bool SessionPreview::decodeWaiting() const {
     // deadline. Publication is separate: the timer suppresses its signal
     // while history owns the visible screen.
     last_decode_attempt_.start();
+    ++decode_attempts_;
     auto encoded = std::move(*waiting_);
     waiting_.reset();
     try {
