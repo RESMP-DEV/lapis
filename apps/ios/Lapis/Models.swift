@@ -593,15 +593,18 @@ func describe(_ error: Error) -> String {
 }
 
 protocol HistoryClock: Sendable {
-    func now() -> Date
-    func sleep(for interval: TimeInterval) async throws
+    // The instant and suspension must come from the same monotonic source.
+    func now() -> ContinuousClock.Instant
+    func sleep(for interval: Duration) async throws
 }
 
-struct WallHistoryClock: HistoryClock {
-    func now() -> Date { .now }
+struct ContinuousHistoryClock: HistoryClock {
+    private let clock = ContinuousClock()
 
-    func sleep(for interval: TimeInterval) async throws {
-        try await Task.sleep(for: .seconds(interval))
+    func now() -> ContinuousClock.Instant { clock.now }
+
+    func sleep(for interval: Duration) async throws {
+        try await clock.sleep(for: interval)
     }
 }
 
@@ -643,9 +646,10 @@ final class AgentSession {
     private var lastEmptyCheck = Date.distantPast
     private var newerTask: Task<Void, Never>?
     private var historyTask: Task<Void, Never>?
-    // The Foundation probe controls this seam; production stays on one clock.
-    var historyClock: any HistoryClock = WallHistoryClock()
-    private var lastNewerAttempt: Date?
+    // The Foundation probe installs its clock at creation; production stays
+    // on the monotonic clock and rendering never observes this seam.
+    @ObservationIgnored let historyClock: any HistoryClock
+    private var lastNewerAttempt: ContinuousClock.Instant?
     // One identity for the attachment that owns stream, input and history work.
     private var connectionGeneration = UUID()
     private(set) var lastFrameJSON: Data?
@@ -657,9 +661,14 @@ final class AgentSession {
 
     private var historyPrefetched = false
 
-    init(agent: Agent, gateway: Gateway?) {
+    init(
+        agent: Agent,
+        gateway: Gateway?,
+        historyClock: any HistoryClock = ContinuousHistoryClock()
+    ) {
         self.agent = agent
         self.gateway = gateway
+        self.historyClock = historyClock
         // The last screen seen shows at once while the live one connects.
         frame = ScreenCache.shared.frame(agent.id)
     }
@@ -848,14 +857,16 @@ final class AgentSession {
     private func waitForNewerHistory(generation: UUID) async {
         guard connectionGeneration == generation, !Task.isCancelled,
               let attempted = lastNewerAttempt else { return }
-        let remaining = 1 - historyClock.now().timeIntervalSince(attempted)
-        guard remaining > 0 else { return }
+        let remaining = Duration.seconds(1) - attempted.duration(to: historyClock.now())
+        guard remaining > .zero else { return }
         try? await historyClock.sleep(for: remaining)
     }
 
     private func loadNewer(generation: UUID) async {
         // A jump can land between scheduling this delayed load and its first
         // await. Intentionally skipped pages stay skipped until closeGap.
+        // Guards reject this work before it becomes an I/O attempt, so only
+        // the code after this guard starts a paced attempt.
         guard connectionGeneration == generation, self.gateway != nil, isLive,
               let newest = history.last?.page, !loadingHistory, !gapAfter else { return }
         lastNewerAttempt = historyClock.now()

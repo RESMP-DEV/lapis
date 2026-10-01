@@ -22,28 +22,44 @@ struct HistoryLifecycleProbe {
         let terminals: Int?
     }
 
-    // Advances from a zero reference while using ContinuousClock for the
-    // actual suspension, so timing assertions are deterministic and Task
-    // cancellation is exercised rather than simulated.
+    // Logical time advances only when the probe advances it, so loopback and
+    // scheduling latency cannot change pacing assertions. Suspension remains
+    // a real ContinuousClock sleep, so cancellation is exercised end to end.
+    // Every mutable value is guarded by `stateLock`; the lock is never held
+    // across suspension.
     final class ControlledHistoryClock: HistoryClock, @unchecked Sendable {
         private let clock = ContinuousClock()
-        private let started = ContinuousClock.Instant.now
-        private(set) var sleeps: [TimeInterval] = []
-        private(set) var cancellationObserved = false
+        private let origin = ContinuousClock.Instant.now
+        private let stateLock = NSLock()
+        private var logicalOffset: Duration = .zero
+        private var recordedSleeps: [Duration] = []
+        private var didObserveCancellation = false
 
-        func now() -> Date {
-            let elapsed = clock.now - started
-            let (seconds, attoseconds) = elapsed.components
-            return Date(timeIntervalSinceReferenceDate:
-                            Double(seconds) + Double(attoseconds) / 1e18)
+        var sleeps: [Duration] {
+            stateLock.withLock { recordedSleeps }
         }
 
-        func sleep(for interval: TimeInterval) async throws {
-            sleeps.append(interval)
+        var cancellationObserved: Bool {
+            stateLock.withLock { didObserveCancellation }
+        }
+
+        func advance(by interval: Duration) {
+            stateLock.withLock { logicalOffset += interval }
+        }
+
+        func now() -> ContinuousClock.Instant {
+            let offset = stateLock.withLock { logicalOffset }
+            return origin.advanced(by: offset)
+        }
+
+        func sleep(for interval: Duration) async throws {
+            stateLock.withLock { recordedSleeps.append(interval) }
             do {
-                try await clock.sleep(for: .seconds(interval))
+                try await clock.sleep(for: interval)
             } catch {
-                if error is CancellationError { cancellationObserved = true }
+                if error is CancellationError {
+                    stateLock.withLock { didObserveCancellation = true }
+                }
                 throw error
             }
         }
@@ -68,10 +84,10 @@ struct HistoryLifecycleProbe {
 
     static func waitCounts(_ host: String, _ key: String,
                            _ counter: KeyPath<Counts, Int>, atLeast minimum: Int) async throws {
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = ContinuousClock.now + .seconds(5)
         while true {
             if try await counts(host, key)[keyPath: counter] >= minimum { return }
-            guard Date() < deadline else {
+            guard ContinuousClock.now < deadline else {
                 throw NSError(domain: "history-lifecycle-probe", code: 3,
                               userInfo: [NSLocalizedDescriptionKey: "timeout waiting \(key) \(counter) >= \(minimum)"])
             }
@@ -85,9 +101,9 @@ struct HistoryLifecycleProbe {
 
     @MainActor
     static func waitModel(_ description: String, until condition: @MainActor () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = ContinuousClock.now + .seconds(5)
         while !condition() {
-            guard Date() < deadline else {
+            guard ContinuousClock.now < deadline else {
                 throw NSError(domain: "history-lifecycle-probe", code: 4,
                               userInfo: [NSLocalizedDescriptionKey: "timeout waiting \(description)"])
             }
@@ -103,10 +119,18 @@ struct HistoryLifecycleProbe {
     }
 
     @MainActor
-    static func session(_ id: String, host: String) throws -> AgentSession {
+    static func session(
+        _ id: String,
+        host: String,
+        historyClock: any HistoryClock = ContinuousHistoryClock()
+    ) throws -> AgentSession {
         let agent = Agent(id: id, title: id, harness: "fixture", directory: "",
                           running: true, onPhone: false, machine: nil, place: nil)
-        return AgentSession(agent: agent, gateway: try Gateway(host: host))
+        return AgentSession(
+            agent: agent,
+            gateway: try Gateway(host: host),
+            historyClock: historyClock
+        )
     }
 
     @MainActor
@@ -359,8 +383,7 @@ struct HistoryLifecycleProbe {
         // The next frame in that interval waits exactly the remainder, and a
         // stale close cancels that pending request before it reaches the wire.
         let pacingClock = ControlledHistoryClock()
-        let pacing = try session("pacing", host: host)
-        pacing.historyClock = pacingClock
+        let pacing = try session("pacing", host: host, historyClock: pacingClock)
         try await openAttachment(pacing, host: host, key: "pacing", revision: 1)
         try await waitControl(host, "wait-history-done/pacing/1")
         try await waitControl(host, "frame/pacing/1")
@@ -375,14 +398,17 @@ struct HistoryLifecycleProbe {
                     "first eligible idle catch-up was delayed")
         let pacingIdleImmediate = pacingClock.sleeps.isEmpty
 
+        // Move logical time into the pacing interval before the frame arrives.
+        // The subsequent remainder is therefore exact despite HTTP scheduling.
+        pacingClock.advance(by: .milliseconds(400))
         try await waitControl(host, "frame/pacing/2")
         try await waitModel("remainder request observed") {
             pacing.frame?.revision == 3
         }
         try await waitModel("remainder timer armed") { pacingClock.sleeps.count == 1 }
-        try require((0.9...1).contains(pacingClock.sleeps[0]),
+        try require(pacingClock.sleeps[0] == .milliseconds(600),
                     "burst catch-up did not wait only the interval remainder")
-        try await waitControl(host, "wait-history-done/pacing/3")
+        try await waitControl(host, "wait-history-done/pacing/4")
         try await waitModel("bounded sustained catch-up loaded") {
             pageNumbers(pacing) == [10, 11, 12] && !pacing.loadingHistory
         }
@@ -395,10 +421,10 @@ struct HistoryLifecycleProbe {
             pacingClock.sleeps.count == 2
         }
         pacing.close()
-        try await Task.sleep(for: .milliseconds(50))
+        try await waitModel("stale-generation timer cancelled") {
+            pacingClock.cancellationObserved
+        }
         let pacingCounts = try await counts(host, "pacing")
-        try require(pacingClock.cancellationObserved,
-                    "closing did not cancel the pending newer-history timer")
         try require(pacingCounts.history == 5,
                     "cancelled newer timer issued a sixth history request")
         let pacingSustainedBounded = pageNumbers(pacing) == [10, 11, 12]
