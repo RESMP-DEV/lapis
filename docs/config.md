@@ -43,9 +43,16 @@ Play button for the shared cue, plus the background-notification switch.
 A turn that ends on what you already saw of that agent stays quiet: while lapis
 is in front, the screen of the agent you are looking at is noted every second,
 and a finished turn whose screen above Claude Code's input box is unchanged
-neither chimes nor notifies. Every decision (chimed, notified, or quiet and
-why) is logged, one JSON line each, to `runtime/attention.jsonl` in the lapis
-folder.
+neither chimes nor notifies. A request still chimes and notifies even then.
+
+Every decision — a chime or a notification, and each quiet reason — is logged,
+one JSON line each, to `runtime/attention.jsonl` in the lapis folder: the
+moment, the agent's conversation title, its CLI, the event (`needs you` or
+`finished`), a `kind` of chime or notification, and the `decision` (chimed,
+posted, or the quiet reason). The log is owner-only, and the title can be the
+conversation's first prompt, so the file is not for sharing. Before a line
+would cross 2 MiB the log rotates to `attention.jsonl.1` (one predecessor, the
+older one removed) and the fresh file opens with a `rotated` marker line.
 
 Use `alerts.finishedFile` for your own sound. When it is unset, `alerts.soundFile`
 is used at half volume. An explicitly set but unavailable `finishedFile` falls

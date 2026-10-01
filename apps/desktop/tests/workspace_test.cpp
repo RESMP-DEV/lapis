@@ -3570,28 +3570,85 @@ void alertsChimeWhileAnAgentWaits() {
         show("\x1b[5;1H5h 54%"); // the status line ticks
         emit workspace.turnFinished(&agent);
         require(played.empty() && !lines.empty() &&
-                    lines.back().value(QStringLiteral("chime")).toString() ==
+                    lines.back().value(QStringLiteral("kind")).toString() ==
+                        QStringLiteral("chime") &&
+                    lines.back().value(QStringLiteral("cli")).toString() ==
+                        QStringLiteral("Codex") &&
+                    lines.back().contains(QStringLiteral("at")) &&
+                    lines.back().value(QStringLiteral("decision")).toString() ==
                         QStringLiteral("quiet: nothing new since you looked"),
-                "a turn ending on a screen already seen stays quiet");
+                "a turn ending on a screen already seen stays quiet, logged in the shared shape");
         show("\x1b[1;1Hnew: build failed");
         emit workspace.turnFinished(&agent);
         require(played == std::vector{lapis::desktop::Chime::finished} &&
-                    lines.back().value(QStringLiteral("chime")).toString() ==
+                    lines.back().value(QStringLiteral("decision")).toString() ==
                         QStringLiteral("chimed") &&
                     lines.back().value(QStringLiteral("agent")).toString() ==
                         QStringLiteral("agent"),
                 "new output chimes, and the decision names the agent");
+        // The quiet paths of the request chime reach the log too.
+        waitFor([] { return false; }, 60);
+        looking = true;
+        played.clear();
+        emit workspace.agentNeedsYou(&agent);
+        require(played.empty() &&
+                    lines.back().value(QStringLiteral("event")).toString() ==
+                        QStringLiteral("needs you") &&
+                    lines.back().value(QStringLiteral("decision")).toString() ==
+                        QStringLiteral("quiet: you are looking at it"),
+                "a request for the agent being looked at stays quiet, and says so");
+        looking = false;
+        waitFor([] { return false; }, 60);
+        emit workspace.agentNeedsYou(&agent);
+        require(played == std::vector{lapis::desktop::Chime::needsYou} &&
+                    lines.back().value(QStringLiteral("event")).toString() ==
+                        QStringLiteral("needs you") &&
+                    lines.back().value(QStringLiteral("decision")).toString() ==
+                        QStringLiteral("chimed"),
+                "a request chimes even on an unchanged screen, and its decision is logged");
+        // A lone rule is a divider in the agent's output, not Claude Code's
+        // box: nothing is truncated, so output below it still counts as new.
+        show("\x1b[2J\x1b[Hnote\r\n" + line + "\r\nstill watching\r\n");
+        seen.see(&agent);
+        show("\x1b[3;1Hchanged below the lone rule");
+        played.clear();
+        waitFor([] { return false; }, 60);
+        emit workspace.turnFinished(&agent);
+        require(played == std::vector{lapis::desktop::Chime::finished},
+                "a lone rule truncates nothing: output below it still chimes");
+        // Claude Code's box may open with corner glyphs and heavier strokes;
+        // those borders are rules, and the status line below them is not new.
+        const std::string box_top = "\xe2\x95\xad" + line + "\xe2\x95\xae";  // ╭────╮
+        const std::string box_bottom = "\xe2\x95\xb0" + line + "\xe2\x95\xaf"; // ╰────╯
+        show("\x1b[2J\x1b[Hdone\r\n" + box_top + "\r\n> \r\n" + box_bottom + "\r\n5h 53%");
+        seen.see(&agent);
+        show("\x1b[5;1H5h 54%");
+        played.clear();
+        waitFor([] { return false; }, 60);
+        emit workspace.turnFinished(&agent);
+        require(played.empty() &&
+                    lines.back().value(QStringLiteral("decision")).toString() ==
+                        QStringLiteral("quiet: nothing new since you looked"),
+                "a box drawn with corners truncates, and a status line below it is not new");
         alerts.setSeen(nullptr);
         alerts.setLog({});
     }
 
     require(keymap.setAlertSound(false), "turn the sound off");
     played.clear();
+    std::vector<QJsonObject> quiet_lines;
+    alerts.setLog([&quiet_lines](const QJsonObject& entry) { quiet_lines.push_back(entry); });
     request(true);
     waitFor([] { return false; }, 60);
     emit workspace.agentNeedsYou(&agent);
     waitFor([] { return false; }, 300);
-    require(played.empty(), "no chimes with the sound off");
+    require(played.empty() && !quiet_lines.empty() &&
+                quiet_lines.back().value(QStringLiteral("kind")).toString() ==
+                    QStringLiteral("chime") &&
+                quiet_lines.back().value(QStringLiteral("decision")).toString() ==
+                    QStringLiteral("alert off"),
+            "no chimes with the sound off, and that decision is logged");
+    alerts.setLog({});
 
     // Notifications: the same moments, only while lapis is in the background,
     // and not with them turned off.
@@ -3603,33 +3660,61 @@ void alertsChimeWhileAnAgentWaits() {
             posted.push_back({id, title, body});
         },
         [&background] { return background; });
+    std::vector<QJsonObject> notes;
+    notifier.setLog([&notes](const QJsonObject& entry) { notes.push_back(entry); });
     request(true);
     emit workspace.agentNeedsYou(&agent);
-    require(posted.empty(), "no notification while lapis is in front");
+    require(posted.empty() && notes.back().value(QStringLiteral("decision")).toString() ==
+                                      QStringLiteral("none: lapis is in front"),
+            "no notification while lapis is in front, and that decision is logged");
     background = true;
     emit workspace.agentNeedsYou(&agent);
     require(posted.size() == 1 && posted[0][1] == QStringLiteral("agent") &&
-                posted[0][2] == QStringLiteral("Codex needs you: Approval"),
+                posted[0][2] == QStringLiteral("Codex needs you: Approval") &&
+                notes.back().value(QStringLiteral("kind")).toString() ==
+                    QStringLiteral("notification") &&
+                notes.back().value(QStringLiteral("event")).toString() ==
+                    QStringLiteral("needs you") &&
+                notes.back().value(QStringLiteral("decision")).toString() ==
+                    QStringLiteral("posted"),
             "a request in the background posts one notification naming the agent and its CLI");
     emit workspace.turnFinished(&agent);
-    require(posted.size() == 2 && posted[1][2] == QStringLiteral("Codex finished a turn"),
+    require(posted.size() == 2 && posted[1][2] == QStringLiteral("Codex finished a turn") &&
+                notes.back().value(QStringLiteral("decision")).toString() ==
+                    QStringLiteral("posted"),
             "a finished turn posts one too");
+    // A finished turn on an unchanged screen posts nothing; a request never
+    // holds back, whatever the screen says.
+    lapis::desktop::SeenScreens seen(workspace, [&looking](const auto*) { return looking; });
+    notifier.setSeen(&seen);
+    seen.see(&agent);
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 2 && notes.back().value(QStringLiteral("decision")).toString() ==
+                                      QStringLiteral("none: nothing new since you looked"),
+            "a finished turn on an unchanged screen posts nothing, and says why");
+    emit workspace.agentNeedsYou(&agent);
+    require(posted.size() == 3 && posted[2][2] == QStringLiteral("Codex needs you: Approval") &&
+                notes.back().value(QStringLiteral("decision")).toString() ==
+                    QStringLiteral("posted"),
+            "a request still notifies on an unchanged screen");
+    notifier.setSeen(nullptr);
+    notifier.setLog({});
     // A Claude agent whose conversation is about Codex is still Claude's.
     agent.setHarnessId(QStringLiteral("claude"));
     agent.rename(QStringLiteral("Codex resume"));
     emit workspace.turnFinished(&agent);
-    require(posted.size() == 3 && posted[2][1] == QStringLiteral("Codex resume") &&
-                posted[2][2] == QStringLiteral("Claude finished a turn"),
+    require(posted.size() == 4 && posted[3][1] == QStringLiteral("Codex resume") &&
+                posted[3][2] == QStringLiteral("Claude finished a turn"),
             "the body names the agent's CLI, whatever its title says");
     agent.setHarnessId({});
     emit workspace.turnFinished(&agent);
-    require(posted.size() == 4 && posted[3][2] == QStringLiteral("Agent finished a turn"),
+    require(posted.size() == 5 && posted[4][2] == QStringLiteral("Agent finished a turn"),
             "terminal-mode notifications retain a readable subject");
     agent.setHarnessId(QStringLiteral("codex"));
     agent.rename(QStringLiteral("agent"));
     require(keymap.setNotify(false), "turn notifications off");
     emit workspace.agentNeedsYou(&agent);
-    require(posted.size() == 4, "none with notifications off");
+    require(posted.size() == 5, "none with notifications off");
 
     const auto wav = lapis::desktop::chime_wav(lapis::desktop::Chime::needsYou);
     require(wav.startsWith("RIFF") && wav.mid(8, 8) == "WAVEfmt " && wav.size() == 44 + 27342 * 2,
@@ -3640,6 +3725,76 @@ void alertsChimeWhileAnAgentWaits() {
             peak, static_cast<qint16>(std::abs(qFromLittleEndian<qint16>(wav.constData() + i))));
     require(qFromLittleEndian<qint16>(wav.constData() + 44) == 0 && peak > 8000 && peak < 8500,
             "it starts from silence and peaks near -12 dBFS");
+}
+
+// The attention log's own behavior: owner-only however it starts, rotating
+// beside a single predecessor before a line would cross the cap, marking the
+// rotation, and stopping the write when the old file cannot move aside.
+void attentionLogStaysPrivateAndRotates() {
+    const qsizetype cap = qsizetype{2} * 1024 * 1024;
+    const auto owner_only = [](const QString& path) {
+        const QFileInfo info(path);
+        // On Unix Qt reports owner access under both the Owner and User bits,
+        // so the privacy property is that nothing outside the owner is set.
+        return info.exists() &&
+               (info.permissions() & (QFile::ReadGroup | QFile::WriteGroup | QFile::ExeGroup |
+                                      QFile::ReadOther | QFile::WriteOther | QFile::ExeOther)) ==
+                   QFile::Permissions{};
+    };
+    const auto lines_of = [](const QString& path) {
+        std::vector<QJsonObject> parsed;
+        QFile file(path);
+        require(file.open(QIODevice::ReadOnly), "read the attention log back");
+        for (const auto& raw : file.readAll().split('\n'))
+            if (!raw.isEmpty())
+                parsed.push_back(QJsonDocument::fromJson(raw).object());
+        return parsed;
+    };
+    QTemporaryDir directory;
+    require(directory.isValid(), "attention log directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = root.filePath(QStringLiteral("runtime/attention.jsonl"));
+    const auto log = lapis::desktop::attention_log(path);
+    log({{"event", QStringLiteral("chimed")}});
+    require(lines_of(path).size() == 1, "the log keeps the line it was given");
+    require(owner_only(path), "a log lapis creates is owner-only");
+
+    // A world-readable log is made private before anything is appended.
+    QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup |
+                                    QFile::ReadOther);
+    log({{"event", QStringLiteral("second")}});
+    require(owner_only(path) && lines_of(path).size() == 2,
+            "an existing open log is tightened, then written");
+
+    // Rotation moves the file beside one predecessor and opens the fresh one
+    // with a marker line, so a reader can tell a rotation from a gap.
+    log({{"pad", QString(cap - 60, QLatin1Char('x'))}});
+    const auto previous = path + QStringLiteral(".1");
+    require(lines_of(path).size() == 3 && QFile(path).size() <= cap && !QFile::exists(previous),
+            "a line that still fits crosses no cap");
+    log({{"event", QStringLiteral("after")}});
+    const auto rotated = lines_of(previous);
+    const auto fresh = lines_of(path);
+    require(owner_only(previous) && rotated.size() == 3,
+            "the rotated predecessor keeps the earlier lines");
+    require(owner_only(path) && fresh.size() == 2 &&
+                fresh[0].value(QStringLiteral("event")).toString() ==
+                    QStringLiteral("rotated") &&
+                fresh[0].contains(QStringLiteral("at")) &&
+                fresh[1].value(QStringLiteral("event")).toString() == QStringLiteral("after"),
+            "the fresh log opens with a rotation marker before the new line");
+
+    // A predecessor that cannot be removed stops the write instead of letting
+    // the file grow without bound.
+    const auto blocked = root.filePath(QStringLiteral("blocked/attention.jsonl"));
+    const auto blocked_log = lapis::desktop::attention_log(blocked);
+    blocked_log({{"event", QStringLiteral("first")},
+                 {"pad", QString(cap - 30, QLatin1Char('x'))}});
+    require(QDir().mkdir(blocked + QStringLiteral(".1")), "occupy the rotation target");
+    const qint64 before = QFile(blocked).size();
+    blocked_log({{"event", QStringLiteral("second")}});
+    require(QFile(blocked).size() == before && QFileInfo(blocked + QStringLiteral(".1")).isDir(),
+            "a failed rotation drops the line and keeps the cap");
 }
 
 // A chosen sound file replaces a chime and is read again when it changes; a
@@ -5198,6 +5353,7 @@ int main(int argc, char** argv) {
             } else if (selected == QStringLiteral("chimes")) {
                 alertsChimeWhileAnAgentWaits();
                 chimesPlayChosenFiles();
+                attentionLogStaysPrivateAndRotates();
             } else {
                 reloadStartsAgentsAgain();
                 reloadFailuresRemainRetryable();
@@ -5275,6 +5431,7 @@ int main(int argc, char** argv) {
         windowTakesTheWorkspaceFromTheHost();
         alertsChimeWhileAnAgentWaits();
         chimesPlayChosenFiles();
+        attentionLogStaysPrivateAndRotates();
         phoneSizeYieldsToTheDesktop();
         std::cout << "workspace categories, identity, persistence, status and closing passed\n";
         return 0;

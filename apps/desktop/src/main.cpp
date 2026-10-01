@@ -285,19 +285,8 @@ bool parsed_headless(const QCommandLineParser& parser, bool parsed) {
 // Every ping decision, one JSON line each, in the owner-only runtime folder;
 // past 2 MiB the log starts over beside its predecessor.
 lapis::desktop::AttentionLog attention_log() {
-    const auto path =
-        QDir(lapis::desktop::data_directory()).filePath(QStringLiteral("runtime/attention.jsonl"));
-    return [path](const QJsonObject& line) {
-        if (QFileInfo(path).size() > qint64{2} * 1024 * 1024) {
-            QFile::remove(path + QStringLiteral(".1"));
-            QFile::rename(path, path + QStringLiteral(".1"));
-        }
-        QFile file(path);
-        if (!file.open(QIODevice::Append | QIODevice::WriteOnly))
-            return;
-        file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
-        file.write(QJsonDocument(line).toJson(QJsonDocument::Compact) + '\n');
-    };
+    return lapis::desktop::attention_log(
+        QDir(lapis::desktop::data_directory()).filePath(QStringLiteral("runtime/attention.jsonl")));
 }
 void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
                       std::optional<lapis::desktop::Notifier>& notifier,

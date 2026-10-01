@@ -3,11 +3,31 @@
 #include "next_prompt.hpp"
 #include "workspace.hpp"
 #include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonDocument>
 #include <QStringList>
 #include <algorithm>
 #include <utility>
 
 namespace lapis::desktop {
+namespace {
+// One line per decision, chime or notification, in one shape: what was
+// decided and why, for the agent and CLI it was about.
+void record_decision(const AttentionLog& log, const SessionPreview* item, const char* kind,
+                     const char* event, const char* decision) {
+    if (!log || item == nullptr)
+        return;
+    log({{"at", QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
+         {"agent", item->title()},
+         {"cli", item->agentName()},
+         {"event", QLatin1String(event)},
+         {"kind", QLatin1String(kind)},
+         {"decision", QLatin1String(decision)}});
+}
+} // namespace
+
 SeenScreens::SeenScreens(Workspace& workspace, Looking looking, QObject* parent)
     : QObject(parent), workspace_(workspace), looking_(std::move(looking)) {
     timer_.setInterval(kSampleMs);
@@ -17,10 +37,20 @@ SeenScreens::SeenScreens(Workspace& workspace, Looking looking, QObject* parent)
 
 size_t SeenScreens::fingerprint(const SessionPreview* item) {
     auto lines = terminal_screen_text(item->snapshot()).split(QLatin1Char('\n'));
+    // Claude Code draws its input box between two rules of box-drawing
+    // characters; keep what is above. A border may open with a corner or
+    // junction glyph or use heavier strokes, so a rule is a line drawn
+    // entirely with box-drawing characters. A single rule is a divider in the
+    // agent's own output, not the box: only a found pair truncates.
+    static const QString drawing = QStringLiteral(
+        "\u2500\u2501\u2550\u250c\u2510\u2514\u2518\u251c\u2524\u252c\u2534\u253c\u256d\u256e\u2570\u256f\u255e\u255f\u2560\u2563\u2561\u2562\u256a\u256b\u254b\u254c\u254d\u2504\u2505\u2508\u2509\u2574\u2576\u257a\u257c\u257d\u257e\u257f");
     const auto rule = [&lines](qsizetype row) {
-        return lines.at(row).trimmed().startsWith(QStringLiteral("\u2500\u2500\u2500"));
+        const auto text = lines.at(row).trimmed();
+        return text.size() >= 3 &&
+               std::all_of(text.cbegin(), text.cend(), [](QChar glyph) {
+                   return drawing.contains(glyph);
+               });
     };
-    // Claude Code draws its input box between two rules; keep what is above.
     qsizetype top = -1;
     int rules = 0;
     for (auto row = lines.size() - 1; row >= 0 && rules < 2; --row)
@@ -28,7 +58,7 @@ size_t SeenScreens::fingerprint(const SessionPreview* item) {
             top = row;
             ++rules;
         }
-    if (top >= 0)
+    if (rules == 2)
         lines = lines.mid(0, top);
     return qHash(lines.join(QLatin1Char('\n')));
 }
@@ -82,8 +112,10 @@ bool Alerts::ring(Chime chime) {
 }
 
 void Alerts::needsYou(SessionPreview* item) {
-    if (!config_.alertSound() || looking_(item))
-        return;
+    if (!config_.alertSound())
+        return record(item, "needs you", "alert off");
+    if (looking_(item))
+        return record(item, "needs you", "quiet: you are looking at it");
     const auto found =
         std::find_if(waiting_.begin(), waiting_.end(),
                      [item](const Waiting& waiting) { return waiting.item == item; });
@@ -91,9 +123,11 @@ void Alerts::needsYou(SessionPreview* item) {
         waiting_.push_back({item, 0});
     else
         found->played = 0; // a new request starts its count again
-    if (ring(Chime::needsYou))
+    const bool chimed = ring(Chime::needsYou);
+    if (chimed)
         for (auto& waiting : waiting_)
             ++waiting.played;
+    record(item, "needs you", chimed ? "chimed" : "quiet: another chime just played");
     if (!repeat_.isActive())
         repeat_.start();
 }
@@ -110,9 +144,13 @@ void Alerts::tick() {
         return;
     }
     // One chime covers every agent still waiting.
-    if (ring(Chime::needsYou))
+    const bool chimed = ring(Chime::needsYou);
+    if (chimed)
         for (auto& waiting : waiting_)
             ++waiting.played;
+    for (const auto& waiting : waiting_)
+        record_decision(log_, waiting.item, "chime", "needs you",
+                        chimed ? "chimed" : "quiet: another chime just played");
 }
 
 void Alerts::finished(SessionPreview* item) {
@@ -129,13 +167,7 @@ void Alerts::finished(SessionPreview* item) {
 }
 
 void Alerts::record(const SessionPreview* item, const char* event, const char* decision) const {
-    if (!log_ || item == nullptr)
-        return;
-    log_({{"at", QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
-          {"agent", item->title()},
-          {"cli", item->agentName()},
-          {"event", QLatin1String(event)},
-          {"chime", QLatin1String(decision)}});
+    record_decision(log_, item, "chime", event, decision);
 }
 
 Notifier::Notifier(Workspace& workspace, const KeyMap& config, Post post, Background background,
@@ -160,12 +192,8 @@ void Notifier::notify(const SessionPreview* item, bool needsYou) {
         return nullptr;
     };
     const char* skipped = decide();
-    if (log_)
-        log_({{"at", QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
-              {"agent", item->title()},
-              {"cli", item->agentName()},
-              {"event", QLatin1String(needsYou ? "needs you" : "finished")},
-              {"notification", QLatin1String(skipped != nullptr ? skipped : "posted")}});
+    record_decision(log_, item, "notification", needsYou ? "needs you" : "finished",
+                    skipped != nullptr ? skipped : "posted");
     if (skipped != nullptr)
         return;
     // The CLI leads the body: a title is the conversation's, and one about
@@ -175,5 +203,55 @@ void Notifier::notify(const SessionPreview* item, bool needsYou) {
     if (needsYou && !item->attentionReason().isEmpty())
         body += QStringLiteral(": ") + item->attentionReason();
     post_(item->sessionId(), item->title(), body);
+}
+
+AttentionLog attention_log(const QString& path) {
+    return [path](const QJsonObject& line) {
+        const auto encoded = QJsonDocument(line).toJson(QJsonDocument::Compact) + '\n';
+        QFile file(path);
+        if (file.exists() && !file.setPermissions(QFile::ReadOwner | QFile::WriteOwner)) {
+            qWarning() << "Attention log: cannot make it private";
+            return;
+        }
+        // Rotate before the line that would cross the cap, so the file never
+        // overshoots it, and stop the write when the old log cannot move
+        // aside rather than grow without bound. The fresh file opens with a
+        // marker line so a reader can tell a rotation from a gap.
+        constexpr qint64 cap = qint64{2} * 1024 * 1024;
+        if (file.exists() && file.size() + encoded.size() > cap) {
+            const auto previous = path + QStringLiteral(".1");
+            QFile::remove(previous);
+            if (!file.rename(previous)) {
+                qWarning() << "Attention log: cannot rotate";
+                return;
+            }
+            file.setFileName(path);
+            if (file.open(QIODevice::WriteOnly, QFile::ReadOwner | QFile::WriteOwner)) {
+                file.write(QJsonDocument(QJsonObject{
+                                 {"at",
+                                  QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
+                                 {"event", QStringLiteral("rotated")},
+                             })
+                               .toJson(QJsonDocument::Compact) +
+                           '\n');
+                file.close();
+            }
+        }
+        const bool created = !file.exists();
+        if (created)
+            QDir().mkpath(QFileInfo(path).absolutePath(),
+                          QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        if (!file.open(QIODevice::Append | QIODevice::WriteOnly,
+                       QFile::ReadOwner | QFile::WriteOwner)) {
+            qWarning() << "Attention log: cannot write:" << file.errorString();
+            return;
+        }
+        // Owner-only however it was created: it holds conversation titles.
+        if (!file.setPermissions(QFile::ReadOwner | QFile::WriteOwner)) {
+            qWarning() << "Attention log: cannot make it private";
+            return;
+        }
+        file.write(encoded);
+    };
 }
 } // namespace lapis::desktop

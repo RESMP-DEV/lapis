@@ -46,6 +46,12 @@ class SeenScreens final : public QObject {
 // can be traced: the agent, the moment, and what was done and why.
 using AttentionLog = std::function<void(const QJsonObject&)>;
 
+// The writer for that log: one JSON line per call, owner-only at `path`.
+// It rotates beside its predecessor before a line would cross 2 MiB, opens
+// the fresh file with a marker line, and stops the write with a warning when
+// the log cannot be made private or the old file cannot move aside.
+[[nodiscard]] AttentionLog attention_log(const QString& path);
+
 // Production requests and completed turns share one finished cue. The legacy
 // explicit needsYou signal retains its repeat behavior for existing callers;
 // it is not re-enabled by custom sound files.
