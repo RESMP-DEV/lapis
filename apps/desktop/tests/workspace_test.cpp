@@ -2106,6 +2106,149 @@ exec sleep 600
     qputenv("PATH", path);
 }
 
+// A selected visiting plan is fail-closed on a remote route before lapis
+// launches or replaces anything. Saved-agent registries and explicit restart
+// exercise the apply seam, and a conservative running-service endpoint
+// exercises reload; a real healthy transport kept alive through termination
+// remains parent-owned.
+void remoteAccountsRefuseBeforeReplacement() {
+    QJsonArray claude_names{
+        QJsonObject{{"name", "safe.name-1"},
+                    {"email", "safe@example.test"},
+                    {"machines", QJsonArray{"box-1"}}},
+        QJsonObject{{"name", "; rm -rf ~"}, {"email", "semicolon@example.test"}},
+        QJsonObject{{"name", "$(danger)"}, {"email", "substitution@example.test"}},
+        QJsonObject{{"name", "`danger`"}, {"email", "backtick@example.test"}},
+        QJsonObject{{"name", "danger\nexit"}, {"email", "newline@example.test"}},
+        QJsonObject{{"name", "*"}, {"email", "glob@example.test"}},
+        QJsonObject{{"name", ".."}, {"email", "parent@example.test"}}};
+    QJsonArray codex_names{QJsonObject{{"name", "quote"}, {"email", "quoted@example.test"}},
+                           QJsonObject{{"name", "\"quote"}, {"email", "broken@example.test"}}};
+    const auto configured = lapis::desktop::parse_accounts(
+        QJsonObject{{"claude", claude_names}, {"codex", codex_names}});
+    static const QRegularExpression safe_name(QStringLiteral(R"(^[A-Za-z0-9._-]{1,64}$)"));
+    require(configured.accounts.size() == 2 &&
+                configured.accounts.front().name == QStringLiteral("safe.name-1") &&
+                configured.accounts.back().name == QStringLiteral("quote") &&
+                std::all_of(configured.accounts.cbegin(), configured.accounts.cend(),
+                            [](const lapis::desktop::Account& account) {
+                                return safe_name.match(account.name).hasMatch();
+                            }),
+            "configured plan names reject shell metacharacters, traversal, and length abuse");
+
+    QTemporaryDir directory;
+    require(directory.isValid(), "remote account registry directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    require(root.mkpath(QStringLiteral("project")) && root.mkpath(QStringLiteral("bin")) &&
+                root.mkpath(QStringLiteral("accounts/claude")) &&
+                root.mkpath(QStringLiteral("accounts/codex/spare")),
+            "create the remote-account fixture");
+    const auto ssh = root.filePath(QStringLiteral("bin/ssh"));
+    writeExecutable(ssh, "#!/bin/sh\nexit 0\n");
+    const auto token = root.filePath(QStringLiteral("accounts/claude/spare.token"));
+    const auto auth = root.filePath(QStringLiteral("accounts/codex/spare/auth.json"));
+    const auto writeToken = [&](const QByteArray& value) {
+        QFile file(token);
+        require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "write Claude token");
+        require(file.write(value) == value.size(), "write the Claude token body");
+    };
+    const auto writeAuth = [&](const QByteArray& value) {
+        QFile file(auth);
+        require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "write Codex login");
+        require(file.write(value) == value.size(), "write the Codex login body");
+    };
+    writeToken("token-for-spare\n");
+    writeAuth("{}\n");
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    options.accounts = lapis::desktop::parse_accounts(QJsonDocument::fromJson(R"({"claude": [
+        {"name": "dev", "email": "claude-dev@example.test", "home": "box"},
+        {"name": "spare", "email": "claude-spare@example.test", "machines": ["box"]}],
+        "codex": [{"name": "dev", "email": "codex-dev@example.test", "home": "box"},
+        {"name": "spare", "email": "codex-spare@example.test", "machines": ["box"]}]})")
+                                                          .object());
+    const auto reload_id = uuid();
+    const auto reload_endpoint = root.filePath(reload_id + QStringLiteral(".sock"));
+    const auto remoteAgent = [&](const QString& harness, const QString& command,
+                                 const QString& id) {
+        auto record = agentRecord(root.path(), id, "general");
+        record.insert(QStringLiteral("endpoint"), root.filePath(id + QStringLiteral(".sock")));
+        record.insert(QStringLiteral("program"), ssh);
+        record.insert(QStringLiteral("harness"), harness);
+        record.insert(QStringLiteral("account"), QStringLiteral("spare"));
+        record.insert(QStringLiteral("arguments"),
+                      QJsonArray{QStringLiteral("-t"), QStringLiteral("box"), command});
+        return record;
+    };
+    const auto registry = [&](const QString& name, const QJsonObject& agent) {
+        writeRegistry(
+            root.filePath(name),
+            {{"version", 2},
+             {"activeCategory", "general"},
+             {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+             {"agents", QJsonArray{agent}}});
+    };
+    const auto claude_command = QStringLiteral("cd %1 && s=%2 && exec claude")
+                                    .arg(root.filePath(QStringLiteral("project")), uuid());
+    const auto codex_command =
+        QStringLiteral("cd %1 && exec codex").arg(root.filePath(QStringLiteral("project")));
+
+    require(QFile::remove(token), "hide the Claude credential");
+    auto claude_registry = options;
+    claude_registry.storagePath = root.filePath(QStringLiteral("claude-workspace.json"));
+    registry(QStringLiteral("claude-workspace.json"),
+             remoteAgent(QStringLiteral("claude"), claude_command, uuid()));
+    {
+        Workspace workspace(WorkspaceMode::live, claude_registry);
+        workspace.setAccountsRootForTesting(root.filePath(QStringLiteral("accounts")));
+        auto* item = workspace.focusedSession();
+        const bool restarted = item == nullptr ? false : workspace.restartAgent(item->sessionId());
+        require(item != nullptr && !restarted && !item->closing() &&
+                    workspace.agentAccount(item->sessionId()) == QStringLiteral("spare") &&
+                    workspace.workspaceError() ==
+                        QStringLiteral("Claude Code plan spare has no usable token."),
+                "restart refuses a missing selected Claude credential before launch");
+    }
+
+    writeToken("token-for-spare\n");
+    require(QFile::remove(auth), "hide the Codex credential");
+    auto codex_registry = options;
+    codex_registry.storagePath = root.filePath(QStringLiteral("codex-workspace.json"));
+    registry(QStringLiteral("codex-workspace.json"),
+             remoteAgent(QStringLiteral("codex"), codex_command, uuid()));
+    {
+        Workspace workspace(WorkspaceMode::live, codex_registry);
+        workspace.setAccountsRootForTesting(root.filePath(QStringLiteral("accounts")));
+        auto* item = workspace.focusedSession();
+        require(item != nullptr && !workspace.restartAgent(item->sessionId()) && !item->closing() &&
+                    workspace.agentAccount(item->sessionId()) == QStringLiteral("spare") &&
+                    workspace.workspaceError() ==
+                        QStringLiteral("Codex plan spare has no usable login."),
+                "restart refuses a missing selected Codex credential before launch");
+    }
+
+    writeAuth("{}\n");
+    writeToken("first\nsecond\n");
+    auto reload_registry = claude_registry;
+    reload_registry.storagePath = root.filePath(QStringLiteral("reload-workspace.json"));
+    registry(QStringLiteral("reload-workspace.json"),
+             remoteAgent(QStringLiteral("claude"), claude_command, reload_id));
+    // A non-socket endpoint exercises Workspace's conservative running-service
+    // path without binding a Unix socket or introducing a remote transport.
+    writeExecutable(reload_endpoint, "#!/bin/sh\nexit 0\n");
+    {
+        Workspace workspace(WorkspaceMode::live, reload_registry);
+        workspace.setAccountsRootForTesting(root.filePath(QStringLiteral("accounts")));
+        auto* item = workspace.focusedSession();
+        require(item != nullptr && !item->closing() &&
+                    workspace.agentAccount(item->sessionId()) == QStringLiteral("spare"),
+                "the remote reload fixture loads");
+        require(workspace.reloadAgent(item->sessionId()) == 0 && !item->closing() &&
+                    workspace.workspaceError() ==
+                        QStringLiteral("Claude Code plan spare has no usable token."),
+                "reload refuses a malformed selected credential before contacting the session");
+    }
+}
 void incompleteCodexHomeNeverStartsAnAgent() {
     UpdaterFixture fixture("#!/bin/sh\necho started > \"${0%/*}/started\"\nexec sleep 600\n",
                            QStringLiteral("codex"));
@@ -5324,6 +5467,7 @@ int main(int argc, char** argv) {
                 argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--case") &&
                     (QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("accounts") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-accounts") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("launch-policy") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload") ||
@@ -5335,6 +5479,8 @@ int main(int argc, char** argv) {
             if (selected == QStringLiteral("accounts")) {
                 incompleteCodexHomeNeverStartsAnAgent();
                 plansFollowTheirLoad();
+            } else if (selected == QStringLiteral("remote-accounts")) {
+                remoteAccountsRefuseBeforeReplacement();
             } else if (selected == QStringLiteral("remote-options")) {
                 remoteOptionsRespectTheArgumentLimit();
                 remoteClaudeReconnectsToItsConversation();
