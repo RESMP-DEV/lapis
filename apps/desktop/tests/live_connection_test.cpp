@@ -299,6 +299,44 @@ void preview_decode_is_idle_first_and_burst_newest() {
             "A resumed preview did not show the newest suspended screen");
 }
 
+// A screen the service sent but lapis cannot decode fails closed: the bad
+// screen never counts as decoded and never replaces the last good one, and
+// the failed attempt itself re-arms the viewer interval, so a later valid
+// screen is still paced by the remaining interval instead of decoding at the
+// first event-loop turn.
+void preview_decode_failure_paces_retry() {
+    Fixture f;
+    std::optional<lapis::session::TerminalSnapshot> published;
+    QObject::connect(&f.document, &SessionPreview::snapshotChanged, &f.document,
+                     [&] { published = f.document.snapshot(); });
+    const auto encode = [](const char* text) {
+        lapis::session::Terminal terminal{{4, 2}};
+        terminal.feed(text);
+        return wire::encode_snapshot(terminal.snapshot());
+    };
+    const auto offer = [&](const QByteArray& encoded) { f.document.offerSnapshot(encoded); };
+    f.document.addViewer(250);
+    offer(encode("good"));
+    until([&] { return f.document.decodedScreens() == 1; });
+    require(published && first_row(*published) == "good", "Idle preview decoded the wrong screen");
+
+    offer(encode("broken").left(4));
+    QElapsedTimer gate;
+    gate.start();
+    until([&] { return gate.elapsed() >= 300; });
+    require(f.document.decodedScreens() == 1, "An undecodable screen was counted as decoded");
+    require(published && first_row(*published) == "good",
+            "An undecodable screen replaced the last good screen");
+
+    offer(encode("next"));
+    settle();
+    require(f.document.decodedScreens() == 1,
+            "A valid screen after a failed decode bypassed the viewer interval");
+    until([&] { return f.document.decodedScreens() == 2; });
+    require(published && first_row(*published) == "next",
+            "The gated valid screen did not publish after its interval");
+}
+
 void history_capability_tracks_current_page() {
     Fixture f;
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
@@ -935,6 +973,7 @@ int main(int argc, char** argv) {
     try {
         handshake_and_reconnect();
         preview_decode_is_idle_first_and_burst_newest();
+        preview_decode_failure_paces_retry();
         history_browsing_and_input_gating();
         stale_reconnect_and_history_errors();
         history_capability_tracks_current_page();

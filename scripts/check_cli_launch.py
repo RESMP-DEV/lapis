@@ -849,8 +849,14 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                     "Unqualified source did not publish initial attention",
                 )
                 # Send one input batch without a Python scheduling gap between
-                # decisions. Backend exit is a separate asynchronous state change;
-                # it may share this deadline or require the next publication.
+                # decisions: one write keeps the two revisions a single burst.
+                # The attachment prefix repeats WireClient.send's invariant, so
+                # a connection without a completed attach fails here as a
+                # check error instead of a bare TypeError.
+                require(
+                    client.attachment is not None,
+                    "No accepted attachment",
+                )
                 decisions = []
                 for revision in (1, 2):
                     decisions.append(
@@ -868,6 +874,20 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                         )
                     )
                 client.socket.sendall(b"".join(decisions))
+                # Writing the decisions does not prove the service consumed
+                # them. If exit were raced ahead of the decision publication,
+                # stop_codex() would clear decision_error_ and publish the
+                # exit diagnostic, and the late decisions would set
+                # decision_error_ again; publish_attention() prioritizes it
+                # over codex_error_, hiding the exit diagnostic from the wait
+                # below and leaking a decision publication into the quiet
+                # window. Observe the decision batch first, then treat source
+                # exit as its own publication phase.
+                _, decision_publications = read_attention(client)
+                require(
+                    decision_publications == 1,
+                    f"Decision batch produced {decision_publications} publications",
+                )
                 os.kill(pid, signal.SIGTERM)
                 latest, publications = read_attention(
                     client,
@@ -876,8 +896,8 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                     ),
                 )
                 require(
-                    publications <= 2,
-                    f"Decision batch and source exit produced {publications} publications",
+                    publications == 1,
+                    f"Source exit produced {publications} publications",
                 )
                 deadline = time.monotonic() + 0.04
                 while (remaining := deadline - time.monotonic()) > 0:
@@ -890,7 +910,8 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                         "Unchanged attention produced another publication",
                     )
             return {
-                "attention_publications_before_exit": publications,
+                "attention_decision_publications": decision_publications,
+                "attention_publications_through_exit": publications,
                 "newest_state": "source-exit",
             }
         finally:
