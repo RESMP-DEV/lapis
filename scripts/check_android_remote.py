@@ -893,6 +893,7 @@ def checks(device, mac, screens):
             return "the workspace list never came back"
         problem: str | None = None
         restore_problem: str | None = None
+        retried_after: str | None = None
         try:
             try:
                 # From a known-on state: the read path shows the bar...
@@ -943,15 +944,24 @@ def checks(device, mac, screens):
             try:
                 try:
                     restore_problem = restore()
-                except Exception:
+                except Exception as first_error:
                     # Every navigation tap here is a single-dump tap_node,
                     # and a dump taken while the back transition is still
                     # settling misses its node and raises — a transport
                     # race, not a persistence signal. One settle-and-retry
                     # (which re-derives the screen marker under the
-                    # settled state) absorbs that race; a screen that is
-                    # genuinely wedged raises again and takes the verdict
-                    # below instead of hiding behind the retry.
+                    # settled state) absorbs that race, and the absorbed
+                    # raise is announced so a run that needed the retry
+                    # stays distinguishable from an uneventful one; a
+                    # screen that is genuinely wedged raises again and
+                    # takes the verdict below instead of hiding behind the
+                    # retry.
+                    retried_after = f"{type(first_error).__name__}: {first_error}"
+                    print(
+                        f"[settings_toggle] note: the restore's first attempt "
+                        f"raised {retried_after}; retrying once after 1.0s",
+                        flush=True,
+                    )
                     time.sleep(1.0)
                     restore_problem = restore()
             except Exception as error:
@@ -962,6 +972,13 @@ def checks(device, mac, screens):
                 # state it leaves behind is unknown — the next run's
                 # opening set_switch(True) realigns it either way.
                 restore_problem = f"restore raised {type(error).__name__}: {error}"
+                if retried_after is not None:
+                    # Carry the retry into the receipt's failure text too,
+                    # not just the run log: "raised" alone would read as a
+                    # first-try raise rather than a wedged second one.
+                    restore_problem += (
+                        f" on the second attempt (the first had raised {retried_after})"
+                    )
         if restore_problem is not None:
             # Neutral wording on purpose: a restore problem can occur with
             # the setting already stored on (a lost Done tap), so this
