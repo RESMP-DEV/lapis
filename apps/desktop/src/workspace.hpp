@@ -305,7 +305,7 @@ class SessionPreview final : public QObject {
     mutable std::optional<QByteArray> waiting_;
     mutable quint64 decoded_screens_{};
     std::multiset<int> viewers_;
-    mutable QElapsedTimer last_decode_;
+    mutable QElapsedTimer last_decode_attempt_;
     QTimer decode_timer_;
 };
 

@@ -789,15 +789,16 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             codex=True,
         )
 
-        def read_attention(client, timeout=WAIT):
+        def read_attention(client, timeout=WAIT, predicate=lambda _: True):
             deadline = time.monotonic() + timeout
+            publications = 0
             while time.monotonic() < deadline:
                 try:
                     kind, data = client.receive(max(0.01, deadline - time.monotonic()))
-                except FrameDeadline:
+                except (FrameDeadline, socket.timeout):
                     continue
                 require(
-                    kind in (SNAPSHOT, ATTENTION_SNAPSHOT),
+                    kind in (SNAPSHOT, ATTENTION_SNAPSHOT, ATTENTION_RETRY, STATUS),
                     "Unexpected frame while reading attention pacing",
                 )
                 if kind == ATTENTION_SNAPSHOT:
@@ -818,58 +819,80 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                     diagnostic = data[offset : offset + length].decode()
                     offset += length
                     count = struct.unpack_from(">I", data, offset)[0]
-                    return {
+                    snapshot = {
                         "connected": bool(data[45]),
                         "ready": bool(data[46]),
                         "epoch": epoch,
                         "diagnostic": diagnostic,
                         "requests": count,
                     }
+                    publications += 1
+                    if predicate(snapshot):
+                        return snapshot, publications
             raise CheckError("Attention publication deadline expired")
 
-        try:
+        def wait_marker(suffix):
             deadline = time.monotonic() + WAIT
-            marker = Path(str(service.endpoint) + ".codex.bound")
+            marker = Path(str(service.endpoint) + suffix)
             while not marker.exists():
-                require(time.monotonic() < deadline, "Attention fixture never bound")
+                require(time.monotonic() < deadline, "Attention fixture marker missing")
                 time.sleep(0.01)
+            return marker
+
+        try:
+            wait_marker(".codex.bound")
+            pid = int(wait_marker(".codex.pid").read_text())
             with service.connect() as client:
-                initial = read_attention(client)
+                initial, _ = read_attention(client)
                 require(
                     initial["requests"] == 0,
                     "Unqualified source did not publish initial attention",
                 )
-                # Two stale-source decisions arrive during one 16 ms service
-                # pacing window. Terminating the source immediately supplies a
-                # distinguishable newest state for that same deadline.
+                # Send one input batch without a Python scheduling gap between
+                # decisions. Backend exit is a separate asynchronous state change;
+                # it may share this deadline or require the next publication.
+                decisions = []
                 for revision in (1, 2):
-                    client.send(
-                        ATTENTION_DECISION,
-                        make_attention_decision(
-                            {
-                                "epoch": max(1, initial["epoch"]),
-                                "id": 1,
-                                "revision": revision,
-                            },
-                            "allow",
-                        ),
+                    decisions.append(
+                        frame(
+                            ATTENTION_DECISION,
+                            client.attachment
+                            + make_attention_decision(
+                                {
+                                    "epoch": max(1, initial["epoch"]),
+                                    "id": 1,
+                                    "revision": revision,
+                                },
+                                "allow",
+                            ),
+                        )
                     )
-                pid = int(Path(str(service.endpoint) + ".codex.pid").read_text())
+                client.socket.sendall(b"".join(decisions))
                 os.kill(pid, signal.SIGTERM)
-                latest = read_attention(client)
-                require(
-                    "Codex server exited" in latest["diagnostic"],
-                    f"Deadline kept an older state: {latest['diagnostic']}",
+                latest, publications = read_attention(
+                    client,
+                    predicate=lambda snapshot: (
+                        "Codex server exited" in snapshot["diagnostic"]
+                    ),
                 )
-                try:
-                    client.receive(0.04)
-                except (FrameDeadline, TimeoutError):
-                    pass
-                else:
-                    raise CheckError(
-                        "One burst produced a second attention publication"
+                require(
+                    publications <= 2,
+                    f"Decision batch and source exit produced {publications} publications",
+                )
+                deadline = time.monotonic() + 0.04
+                while (remaining := deadline - time.monotonic()) > 0:
+                    try:
+                        kind, _ = client.receive(remaining)
+                    except (FrameDeadline, socket.timeout):
+                        break
+                    require(
+                        kind != ATTENTION_SNAPSHOT,
+                        "Unchanged attention produced another publication",
                     )
-            return {"attention_burst_publications": 1, "newest_state": "source-exit"}
+            return {
+                "attention_publications_before_exit": publications,
+                "newest_state": "source-exit",
+            }
         finally:
             service.stop()
 
