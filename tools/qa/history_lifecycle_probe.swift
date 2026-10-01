@@ -22,6 +22,49 @@ struct HistoryLifecycleProbe {
         let terminals: Int?
     }
 
+    // Logical time advances only when the probe advances it, so loopback and
+    // scheduling latency cannot change pacing assertions. Suspension remains
+    // a real ContinuousClock sleep, so cancellation is exercised end to end.
+    // Every mutable value is guarded by `stateLock`; the lock is never held
+    // across suspension.
+    final class ControlledHistoryClock: HistoryClock, @unchecked Sendable {
+        private let clock = ContinuousClock()
+        private let origin = ContinuousClock.Instant.now
+        private let stateLock = NSLock()
+        private var logicalOffset: Duration = .zero
+        private var recordedSleeps: [Duration] = []
+        private var didObserveCancellation = false
+
+        var sleeps: [Duration] {
+            stateLock.withLock { recordedSleeps }
+        }
+
+        var cancellationObserved: Bool {
+            stateLock.withLock { didObserveCancellation }
+        }
+
+        func advance(by interval: Duration) {
+            stateLock.withLock { logicalOffset += interval }
+        }
+
+        func now() -> ContinuousClock.Instant {
+            let offset = stateLock.withLock { logicalOffset }
+            return origin.advanced(by: offset)
+        }
+
+        func sleep(for interval: Duration) async throws {
+            stateLock.withLock { recordedSleeps.append(interval) }
+            do {
+                try await clock.sleep(for: interval)
+            } catch {
+                if error is CancellationError {
+                    stateLock.withLock { didObserveCancellation = true }
+                }
+                throw error
+            }
+        }
+    }
+
     static func request(_ host: String, _ path: String) async throws -> Data {
         var url = URL(string: "http://\(host)/\(path)")!
         url.append(queryItems: [URLQueryItem(name: "nonce", value: UUID().uuidString)])
@@ -41,10 +84,10 @@ struct HistoryLifecycleProbe {
 
     static func waitCounts(_ host: String, _ key: String,
                            _ counter: KeyPath<Counts, Int>, atLeast minimum: Int) async throws {
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = ContinuousClock.now + .seconds(5)
         while true {
             if try await counts(host, key)[keyPath: counter] >= minimum { return }
-            guard Date() < deadline else {
+            guard ContinuousClock.now < deadline else {
                 throw NSError(domain: "history-lifecycle-probe", code: 3,
                               userInfo: [NSLocalizedDescriptionKey: "timeout waiting \(key) \(counter) >= \(minimum)"])
             }
@@ -58,9 +101,9 @@ struct HistoryLifecycleProbe {
 
     @MainActor
     static func waitModel(_ description: String, until condition: @MainActor () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = ContinuousClock.now + .seconds(5)
         while !condition() {
-            guard Date() < deadline else {
+            guard ContinuousClock.now < deadline else {
                 throw NSError(domain: "history-lifecycle-probe", code: 4,
                               userInfo: [NSLocalizedDescriptionKey: "timeout waiting \(description)"])
             }
@@ -76,10 +119,18 @@ struct HistoryLifecycleProbe {
     }
 
     @MainActor
-    static func session(_ id: String, host: String) throws -> AgentSession {
+    static func session(
+        _ id: String,
+        host: String,
+        historyClock: any HistoryClock = ContinuousHistoryClock()
+    ) throws -> AgentSession {
         let agent = Agent(id: id, title: id, harness: "fixture", directory: "",
                           running: true, onPhone: false, machine: nil, place: nil)
-        return AgentSession(agent: agent, gateway: try Gateway(host: host))
+        return AgentSession(
+            agent: agent,
+            gateway: try Gateway(host: host),
+            historyClock: historyClock
+        )
     }
 
     @MainActor
@@ -141,7 +192,7 @@ struct HistoryLifecycleProbe {
                     "host change did not clear old workspace state")
         try await waitControl(host, "release-listing/held/1")
         try await waitControl(host, "wait-listing-done/held/1")
-        await refresh.value
+        _ = await refresh.value
         let rejected = model.listing?.activeCategory != "held"
         try require(rejected, "old-host listing survived an A-to-B-to-A host change")
 
@@ -178,7 +229,7 @@ struct HistoryLifecycleProbe {
         model.host = host
         try await waitControl(host, "release-terminals/terminals/\(terminalCall)")
         try await waitControl(host, "wait-terminals-done/terminals/\(terminalCall)")
-        await refresh.value
+        _ = await refresh.value
         try require(model.listing == nil && model.terminals.isEmpty,
                     "old terminal response changed replacement workspace state")
         let files = (try? FileManager.default.contentsOfDirectory(
@@ -203,7 +254,7 @@ struct HistoryLifecycleProbe {
         try await waitCounts(host, "machine-failure", \.machines, atLeast: 1)
         try await waitCounts(host, "machine-failure", \.folders, atLeast: 1)
         try await waitCounts(host, "machine-failure", \.frames, atLeast: 1)
-        await refresh.value
+        _ = await refresh.value
         try await waitModel("catalog and cached screen after machines failure") {
             model.catalogs[""]?.version == "machine-failure"
                 && ScreenCache.shared.frame("machine-failure")?.revision == 1
@@ -328,6 +379,56 @@ struct HistoryLifecycleProbe {
                     "old attachment's newer page 98 entered the replacement history")
         stale.close()
 
+        // The first eligible frame after quiet time catches up immediately.
+        // The next frame in that interval waits exactly the remainder, and a
+        // stale close cancels that pending request before it reaches the wire.
+        let pacingClock = ControlledHistoryClock()
+        let pacing = try session("pacing", host: host, historyClock: pacingClock)
+        try await openAttachment(pacing, host: host, key: "pacing", revision: 1)
+        try await waitControl(host, "wait-history-done/pacing/1")
+        try await waitControl(host, "frame/pacing/1")
+        try await waitModel("first eligible frame observed") {
+            pacing.frame?.revision == 2
+        }
+        try await waitControl(host, "wait-history-done/pacing/2")
+        try await waitModel("idle catch-up loaded") {
+            pageNumbers(pacing) == [10, 11] && !pacing.loadingHistory
+        }
+        try require(pacingClock.sleeps.isEmpty,
+                    "first eligible idle catch-up was delayed")
+        let pacingIdleImmediate = pacingClock.sleeps.isEmpty
+
+        // Move logical time into the pacing interval before the frame arrives.
+        // The subsequent remainder is therefore exact despite HTTP scheduling.
+        pacingClock.advance(by: .milliseconds(400))
+        try await waitControl(host, "frame/pacing/2")
+        try await waitModel("remainder request observed") {
+            pacing.frame?.revision == 3
+        }
+        try await waitModel("remainder timer armed") { pacingClock.sleeps.count == 1 }
+        try require(pacingClock.sleeps[0] == .milliseconds(600),
+                    "burst catch-up did not wait only the interval remainder")
+        try await waitControl(host, "wait-history-done/pacing/4")
+        try await waitModel("bounded sustained catch-up loaded") {
+            pageNumbers(pacing) == [10, 11, 12] && !pacing.loadingHistory
+        }
+
+        try await waitControl(host, "frame/pacing/3")
+        try await waitModel("cancellation request observed") {
+            pacing.frame?.revision == 4
+        }
+        try await waitModel("stale-generation timer armed") {
+            pacingClock.sleeps.count == 2
+        }
+        pacing.close()
+        try await waitModel("stale-generation timer cancelled") {
+            pacingClock.cancellationObserved
+        }
+        let pacingCounts = try await counts(host, "pacing")
+        try require(pacingCounts.history == 5,
+                    "cancelled newer timer issued a sixth history request")
+        let pacingSustainedBounded = pageNumbers(pacing) == [10, 11, 12]
+
         // A blocked first prefetch must not prevent a second acknowledged
         // attachment from prefetching. The old page remains excluded.
         let prefetch = try session("prefetch", host: host)
@@ -391,7 +492,10 @@ struct HistoryLifecycleProbe {
         "attachmentRevisions":\(staleCounts.revisions), \
         "replacementPrefetchRequests":\(prefetchCounts.history), \
         "pagingRequests":\(try await counts(host, "paging").history), \
-        "emptyRetryRequests":\(try await counts(host, "retry").history)}
+        "emptyRetryRequests":\(try await counts(host, "retry").history), \
+        "pacingIdleImmediate":\(pacingIdleImmediate), \
+        "pacingSustainedBounded":\(pacingSustainedBounded), \
+        "pacingStaleCancelled":\(pacingClock.cancellationObserved)}
         """)
     }
 }

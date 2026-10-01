@@ -68,6 +68,15 @@ def history_response(key: str, call: int) -> dict:
     elif key == "retry":
         held = {}
         ordinary = {1: (0, 0), 2: (10, 80), 3: (0, 0)}
+    elif key == "pacing":
+        held = {}
+        ordinary = {
+            1: (10, 80),
+            2: (11, 80),
+            3: (0, 0),
+            4: (12, 80),
+            5: (0, 0),
+        }
     else:  # Keep unknown fixture keys visibly bounded and inert.
         held = {}
         ordinary = {1: (0, 0)}
@@ -91,6 +100,9 @@ class LifecycleServer:
         self.active_workspace = "base"
         self.events: dict[tuple[str, str, int], threading.Event] = {}
         self.stream_releases: list[threading.Event] = []
+        # The stream handler blocks here while it waits for either the next
+        # paced frame or an explicit release. Signal setters must notify it.
+        self.stream_signal = threading.Condition()
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self.handler())
         self.server.daemon_threads = True
         self.thread = threading.Thread(
@@ -101,6 +113,29 @@ class LifecycleServer:
         with self.lock:
             identity = (key, name, index)
             return self.events.setdefault(identity, threading.Event())
+
+    def set_event(self, key: str, name: str, index: int) -> threading.Event:
+        event = self.event(key, name, index)
+        event.set()
+        with self.stream_signal:
+            self.stream_signal.notify_all()
+        return event
+
+    def stream_action(
+        self,
+        request_event: threading.Event,
+        release_event: threading.Event,
+    ) -> str:
+        """Wait without polling for the stream's next observable action."""
+        with self.stream_signal:
+            while True:
+                # Replacement ownership wins over an old request that may
+                # already have been queued, so release cannot emit late frames.
+                if release_event.is_set():
+                    return "release"
+                if request_event.is_set():
+                    return "frame"
+                self.stream_signal.wait()
 
     def wait(self, key: str, name: str, index: int, timeout: float = 5.0) -> None:
         if not self.event(key, name, index).wait(timeout):
@@ -307,15 +342,15 @@ class LifecycleServer:
                     "release-terminals",
                     "release-input",
                 }:
-                    server.event(
+                    server.set_event(
                         parts[1],
                         parts[0].removeprefix("release-") + "-release",
                         int(parts[2]),
-                    ).set()
+                    )
                     self.answer(server.counts_for(parts[1]))
                     return
                 if len(parts) == 3 and parts[0] == "frame":
-                    server.event(parts[1], "frame-request", int(parts[2])).set()
+                    server.set_event(parts[1], "frame-request", int(parts[2]))
                     server.wait(parts[1], "frame-done", int(parts[2]))
                     self.answer(server.counts_for(parts[1]))
                     return
@@ -414,16 +449,25 @@ class LifecycleServer:
                     with server.lock:
                         server.stream_releases.append(release)
                     try:
-                        if server.event(key, "frame-request", stream).wait():
+                        # A replacement owns the next stream index, while the
+                        # same stream can receive multiple paced frame requests.
+                        request = stream
+                        frame_request = server.event(key, "frame-request", request)
+                        while server.stream_action(frame_request, release) == "frame":
                             revision = server.increment(key, "frames")
                             self.wfile.write(server.frame(revision))
                             self.wfile.flush()
-                            server.event(key, "frame-done", stream).set()
-                        release.wait()
+                            server.set_event(key, "frame-done", request)
+                            request += 1
+                            frame_request = server.event(
+                                key,
+                                "frame-request",
+                                request,
+                            )
                     except (BrokenPipeError, ConnectionResetError):
                         pass
                     finally:
-                        server.event(key, "stream-done", stream).set()
+                        server.set_event(key, "stream-done", stream)
                     return
                 raise AssertionError(f"unexpected fixture path: {self.path}")
 
@@ -434,6 +478,8 @@ class LifecycleServer:
             pending = list(self.events.values())
         for event in pending:
             event.set()
+        with self.stream_signal:
+            self.stream_signal.notify_all()
 
     def start(self) -> None:
         self.thread.start()
@@ -452,6 +498,7 @@ class LifecycleServer:
                 "prefetch",
                 "paging",
                 "retry",
+                "pacing",
                 "input",
                 "terminals",
                 "machine-failure",
@@ -487,6 +534,40 @@ def compile_probe(output: Path, model_source: Path | None = None) -> None:
         output,
     ]
     subprocess.run(command, check=True, cwd=ROOT, capture_output=True, text=True)
+
+
+def remove_guard_after_call(model: str, call_prefix: str) -> str:
+    """Remove the ownership guard immediately following one awaited call."""
+    lines = model.splitlines(keepends=True)
+    matches = [
+        index
+        for index, line in enumerate(lines[:-1])
+        if line.lstrip().startswith(call_prefix)
+        and lines[index + 1].lstrip().startswith("guard hostGeneration ==")
+    ]
+    # The production refresh call carries `after:`; prefer it when legacy
+    # callers also have an adjacent ownership guard.
+    if any("after: after" in lines[index] for index in matches):
+        matches = [index for index in matches if "after: after" in lines[index]]
+    if len(matches) != 1:
+        raise AssertionError("negative-control refresh guard contract changed")
+    owner_guard = matches[0] + 1
+    return "".join(lines[:owner_guard] + lines[owner_guard + 1 :])
+
+
+def remove_guard_before_statement(model: str, statement: str) -> str:
+    """Remove the ownership guard immediately before one response write."""
+    lines = model.splitlines(keepends=True)
+    matches = [
+        index
+        for index, line in enumerate(lines[1:], start=1)
+        if line.lstrip().startswith(statement)
+        and lines[index - 1].lstrip().startswith("guard hostGeneration ==")
+    ]
+    if len(matches) != 1:
+        raise AssertionError("negative-control terminal guard contract changed")
+    owner_guard = matches[0] - 1
+    return "".join(lines[:owner_guard] + lines[owner_guard + 1 :])
 
 
 def control_evidence(
@@ -556,13 +637,11 @@ def main() -> int:
             if args.negative_control == "workspace":
                 negative_model = run / "Models-negative-control.swift"
                 model = SWIFT_SOURCES[0].read_text()
-                original = "let current = try await gateway.agents()\n            guard hostGeneration == generation else { return }"
-                replacement = "let current = try await gateway.agents()"
-                if model.count(original) != 1:
-                    raise AssertionError(
-                        "negative-control refresh guard contract changed"
+                negative_model.write_text(
+                    remove_guard_after_call(
+                        model, "let current = try await gateway.agents("
                     )
-                negative_model.write_text(model.replace(original, replacement))
+                )
                 receipt["control_source_sha256"] = hashlib.sha256(
                     negative_model.read_bytes()
                 ).hexdigest()
@@ -570,13 +649,9 @@ def main() -> int:
                 negative_model = run / "Models-negative-terminal-control.swift"
                 model = SWIFT_SOURCES[0].read_text()
                 # Remove just the terminal await's post-response ownership gate.
-                original = "guard hostGeneration == generation else { return }\n            if let currentTerminals {"
-                replacement = "if let currentTerminals {"
-                if model.count(original) != 1:
-                    raise AssertionError(
-                        "negative-control terminal guard contract changed"
-                    )
-                negative_model.write_text(model.replace(original, replacement))
+                negative_model.write_text(
+                    remove_guard_before_statement(model, "if let currentTerminals {")
+                )
                 receipt["control_source_sha256"] = hashlib.sha256(
                     negative_model.read_bytes()
                 ).hexdigest()

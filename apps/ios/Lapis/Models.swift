@@ -592,6 +592,22 @@ func describe(_ error: Error) -> String {
     return error.localizedDescription
 }
 
+protocol HistoryClock: Sendable {
+    // The instant and suspension must come from the same monotonic source.
+    func now() -> ContinuousClock.Instant
+    func sleep(for interval: Duration) async throws
+}
+
+struct ContinuousHistoryClock: HistoryClock {
+    private let clock = ContinuousClock()
+
+    func now() -> ContinuousClock.Instant { clock.now }
+
+    func sleep(for interval: Duration) async throws {
+        try await clock.sleep(for: interval)
+    }
+}
+
 // One agent shown on the phone. Showing it joins the agent's session beside
 // the Mac, so both stay in sync; a session started before joining existed is
 // taken from the Mac instead, until Reconnect agent there.
@@ -630,6 +646,10 @@ final class AgentSession {
     private var lastEmptyCheck = Date.distantPast
     private var newerTask: Task<Void, Never>?
     private var historyTask: Task<Void, Never>?
+    // The Foundation probe installs its clock at creation; production stays
+    // on the monotonic clock and rendering never observes this seam.
+    @ObservationIgnored let historyClock: any HistoryClock
+    private var lastNewerAttempt: ContinuousClock.Instant?
     // One identity for the attachment that owns stream, input and history work.
     private var connectionGeneration = UUID()
     private(set) var lastFrameJSON: Data?
@@ -641,9 +661,14 @@ final class AgentSession {
 
     private var historyPrefetched = false
 
-    init(agent: Agent, gateway: Gateway?) {
+    init(
+        agent: Agent,
+        gateway: Gateway?,
+        historyClock: any HistoryClock = ContinuousHistoryClock()
+    ) {
         self.agent = agent
         self.gateway = gateway
+        self.historyClock = historyClock
         // The last screen seen shows at once while the live one connects.
         frame = ScreenCache.shared.frame(agent.id)
     }
@@ -665,6 +690,7 @@ final class AgentSession {
         jumpedTo = nil
         pendingJumpFraction = nil
         lastEmptyCheck = .distantPast
+        lastNewerAttempt = nil
         let events = gateway.stream(agent: agent.id, columns: columns, rows: rows)
         task = Task { [weak self] in
             do {
@@ -741,6 +767,7 @@ final class AgentSession {
         historyTask = nil
         newerTask?.cancel()
         newerTask = nil
+        lastNewerAttempt = nil
         historyPrefetched = false
         loadingHistory = false
     }
@@ -815,19 +842,34 @@ final class AgentSession {
         guard connectionGeneration == generation, !history.isEmpty, !gapAfter,
               newerTask == nil else { return }
         newerTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1))
-            guard let self, self.connectionGeneration == generation, !Task.isCancelled else { return }
+            guard let self else { return }
+            await self.waitForNewerHistory(generation: generation)
+            guard self.connectionGeneration == generation, !Task.isCancelled else { return }
             await self.loadNewer(generation: generation)
             guard self.connectionGeneration == generation else { return }
             self.newerTask = nil
         }
     }
 
+    // Pace from the last actual attempt, not the newest frame: after a quiet
+    // interval a frame is immediately eligible, while a burst waits only the
+    // unused part of that same interval.
+    private func waitForNewerHistory(generation: UUID) async {
+        guard connectionGeneration == generation, !Task.isCancelled,
+              let attempted = lastNewerAttempt else { return }
+        let remaining = Duration.seconds(1) - attempted.duration(to: historyClock.now())
+        guard remaining > .zero else { return }
+        try? await historyClock.sleep(for: remaining)
+    }
+
     private func loadNewer(generation: UUID) async {
         // A jump can land between scheduling this delayed load and its first
         // await. Intentionally skipped pages stay skipped until closeGap.
+        // Guards reject this work before it becomes an I/O attempt, so only
+        // the code after this guard starts a paced attempt.
         guard connectionGeneration == generation, self.gateway != nil, isLive,
               let newest = history.last?.page, !loadingHistory, !gapAfter else { return }
+        lastNewerAttempt = historyClock.now()
         loadingHistory = true
         defer {
             if connectionGeneration == generation { loadingHistory = false }
