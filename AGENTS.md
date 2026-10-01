@@ -80,8 +80,8 @@ platform qualification.
 <task_sizing>
 Use [task sizing](CONTRIBUTING.md#task-sizing-and-independent-prs) to record
 difficulty separately from release relevance and dependencies. Delegate bounded
-D1/D2 work through implementation, scoped checks and its own ready PR when the
-task authorizes publication. D3/D4 work needs a shared contract or missing
+D1/D2 work through implementation, its pre-dispatch check plan and its own ready
+PR when the task authorizes publication. D3/D4 work needs a shared contract or missing
 evidence resolved before dependent implementation. Inspect worker diffs and
 receipts; independent polish PRs can await review without blocking release work.
 This does not authorize merging, releasing or expanding a worker's permissions.
