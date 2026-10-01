@@ -6,10 +6,11 @@ lapis is a Mac app for running many coding agents at once. Each agent (Claude
 Code, Codex, Grok, OpenCode, OMP, Kimi or Antigravity) gets its own live
 terminal. You group agents into categories, watch every agent's latest lines in
 a strip under the one you are working with, and jump straight to whichever needs
-you. Each agent runs in its own session service, so closing or updating lapis
-normally leaves it running (macOS 27 adds [conditions](docs/install.md#updates)),
-and one whose service is gone (after a crash or a power cut) starts again in its
-card when lapis next opens, resuming its conversation where its CLI can.
+you. Each agent runs in its own session service, so closing lapis normally
+leaves it running (macOS 27 adds [conditions](docs/install.md#updates)); if its
+service is gone, it starts again in its card when lapis next opens and resumes
+its conversation where its CLI can. [Install](docs/install.md#updates)
+distinguishes exercised reattachment from installed-update and reboot gates.
 
 It is built for speed first: switching agents and typing should feel instant on
 an Apple silicon Mac with a high-refresh display.
@@ -19,8 +20,8 @@ an Apple silicon Mac with a high-refresh display.
 Get `lapis-macos-arm64.dmg` from the
 [latest release](https://github.com/RESMP-DEV/lapis/releases/latest), open it
 and drag lapis to Applications. It needs an Apple silicon Mac with macOS 14 or
-later, uses the agent CLIs you already have installed, and offers updates as
-they are released. See
+later, uses the agent CLIs you already have installed, and checks for released
+updates. See
 [install](docs/install.md) for what it keeps where and how upgrades work.
 
 ## A quick tour

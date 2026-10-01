@@ -15,19 +15,24 @@ same tools and keys as in your terminal.
 
 The app keeps `lapis.json` and its runtime state in `~/.lapis` (or
 `$LAPIS_HOME`). Private workspace metadata and window placement live under
-`~/.lapis/runtime/`. Runtime state is not configuration: do not copy it between
-machines. A build from this repository keeps the same things under the
-checkout's ignored `runtime/`, and builds and captures under `build/`.
+`~/.lapis/runtime/`, as does the owner-only attention log. That log may contain
+conversation titles or first prompts, so it is not for sharing. Runtime state is
+not configuration: do not copy it between machines. A build from this repository
+keeps the same things under the checkout's ignored `runtime/`, and builds and
+captures under `build/`.
 
 ## Updates
 
 lapis checks the latest release once a day and installs an update after asking
-(Sparkle). Settings can also keep agents running at login.
+(Sparkle). Package provenance and updater checks are implemented on main, but no
+tracked evidence yet shows an installed Sparkle update on that source. Settings
+can also keep agents running at login.
 
-Upgrading lapis does not disturb running agents: quit the old build and open
-the new one, and it reattaches to the same processes. Launch fingerprints, the
-service protocol, the workspace registry and resume records stay compatible
-across builds, and a test pins the fingerprints.
+The intended quit-and-open upgrade path reattaches to the same agent processes.
+That same-child reattachment is exercised separately; it is not evidence of an
+installed Sparkle transition. Launch fingerprints, the service protocol, the
+workspace registry and resume records stay compatible across builds in the
+supported protocol, and a source test pins the fingerprints.
 
 On macOS 27 agents started from the window count as its background processes,
 so two conditions apply:
