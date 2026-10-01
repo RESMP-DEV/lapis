@@ -1,7 +1,10 @@
 package dev.lapis.remote.platform
 
 import android.content.Context
+import android.util.Log
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
@@ -18,15 +21,41 @@ interface KeyValueStore {
 
 /** DataStore-backed settings (the Android port of iOS UserDefaults). */
 class DataStoreSettings(context: Context) : KeyValueStore {
+    // Without the corruption handler, one unreadable file poisons the store
+    // forever: every later read and write throws CorruptionException, so
+    // persistence stays dead until the app's data is cleared. Replacing the
+    // corrupt file with empty preferences loses the stored settings once —
+    // the same defaults the absorption below already returns — and the next
+    // write recreates the file.
     private val store = PreferenceDataStoreFactory.create(
         produceFile = { context.preferencesDataStoreFile(FILE) },
+        corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
     )
 
-    override suspend fun getString(key: String): String? =
+    // UserDefaults is best-effort storage: reads fall back to defaults and
+    // writes either land or do not, but neither ever takes the app down.
+    // DataStore instead throws IOException/CorruptionException on file
+    // errors, and an uncaught exception in a Main-dispatcher coroutine is a
+    // process kill — so the seam absorbs storage failures here, once, for
+    // every key (host, font size, snippets, command bar).
+
+    override suspend fun getString(key: String): String? = try {
         store.data.first()[stringPreferencesKey(key)]
+    } catch (_: IOException) {
+        // CorruptionException is an IOException subclass, so this one catch
+        // covers both DataStore corruption and file read failures.
+        null
+    }
 
     override suspend fun putString(key: String, value: String) {
-        store.edit { preferences -> preferences[stringPreferencesKey(key)] = value }
+        try {
+            store.edit { preferences -> preferences[stringPreferencesKey(key)] = value }
+        } catch (error: IOException) {
+            // Absorbed, not silent: a write that never lands looks like a
+            // setting that reverts on next launch, so leave a log line to
+            // debug from when that is reported.
+            Log.w("DataStoreSettings", "Failed to persist $key", error)
+        }
     }
 
     companion object {

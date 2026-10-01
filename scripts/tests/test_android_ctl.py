@@ -16,14 +16,16 @@ DUMP = """<?xml version='1.0' encoding='UTF-8'?>
         clickable="false" />
   <node index="1" text="echo agent" resource-id="agent-echo agent"
         class="android.view.View" package="dev.lapis.remote" content-desc=""
-        bounds="[16,200][892,280]" clickable="true" />
+        bounds="[16,200][892,280]" clickable="true" checked="true"
+        enabled="true" />
   <node index="2" text="" resource-id="terminal" class="android.view.View"
         package="dev.lapis.remote"
         content-desc="&#8250; ping from phone&#10;echo: ping from phone"
         bounds="[0,120][908,2000]" clickable="false" />
   <node index="3" text="Settings" resource-id="settings"
         class="android.widget.TextView" package="dev.lapis.remote"
-        content-desc="" bounds="[700,80][860,140]" clickable="false" />
+        content-desc="" bounds="[700,80][860,140]" clickable="false"
+        checked="false" enabled="false" />
   <node index="4" text="echo agent" resource-id="" class="android.widget.TextView"
         package="dev.lapis.remote" content-desc="" bounds="[80,220][700,260]"
         clickable="false" />
@@ -60,6 +62,12 @@ class DumpTest(unittest.TestCase):
         self.assertNotIn("desc", by_id["settings"])
         self.assertEqual(by_id["settings"]["text"], "Settings")
         self.assertTrue(by_id["agent-echo agent"]["clickable"])
+        self.assertTrue(by_id["agent-echo agent"]["checked"])
+        self.assertTrue(by_id["agent-echo agent"]["enabled"])
+        self.assertFalse(by_id["settings"]["checked"])
+        self.assertFalse(by_id["settings"]["enabled"])
+        self.assertNotIn("checked", by_id["terminal"])
+        self.assertNotIn("enabled", by_id["terminal"])
 
     def test_select_by_exact_id_text_and_desc(self):
         self.assertEqual(len(android_ctl.select(self.nodes, id="terminal")), 1)
@@ -102,6 +110,183 @@ class KeycodeTest(unittest.TestCase):
         self.assertEqual(android_ctl.keycode("BACK"), "4")
         self.assertEqual(android_ctl.keycode("KEYCODE_DPAD_UP"), "KEYCODE_DPAD_UP")
         self.assertEqual(android_ctl.keycode("187"), "187")
+
+
+def canned_device(window_dump, activities_dump, ime_dump=None):
+    """A Device whose shell() answers canned dumpsys output, so the
+    lock/IME probes run against build-variant dumps without hardware.
+    Missing dumps coerce to the empty string (a None reply would turn a
+    later locked() call into a TypeError), and the stub keeps shell()'s
+    real signature so production call sites may pass timeout=."""
+    device = android_ctl.Device.__new__(android_ctl.Device)
+    replies = {
+        "dumpsys window": window_dump or "",
+        "dumpsys activity activities": activities_dump or "",
+    }
+    if ime_dump is not None:
+        replies["dumpsys input_method"] = ime_dump
+    device.shell = lambda command, timeout=30: replies.get(command, "")
+    return device
+
+
+class LockedTest(unittest.TestCase):
+    # Rounds 7-9 made locked() a chain of build-specific string probes;
+    # these cases pin each signal shape the parser is known to meet.
+    def test_keyguard_flag_alone_means_locked(self):
+        device = canned_device("isKeyguardShowing=true", "irrelevant")
+        self.assertTrue(device.locked())
+
+    def test_dream_flag_alone_means_locked(self):
+        device = canned_device("mDreamingLockscreen=true", "irrelevant")
+        self.assertTrue(device.locked())
+
+    def test_aosp_resumed_marker_catches_camel_case_dialer(self):
+        device = canned_device(
+            "isKeyguardShowing=false mDreamingLockscreen=false",
+            "  topResumedActivity=ActivityRecord{1f u0 "
+            "com.android.phone/.EmergencyCallActivity t9}",
+        )
+        self.assertTrue(device.locked())
+
+    def test_one_ui_resumed_lines_catch_the_dialer(self):
+        device = canned_device(
+            "isKeyguardShowing=false",
+            "  Resumed activities in task display areas (from top to bottom):\n"
+            "    Resumed: ActivityRecord{565 u0 com.sec.android.app."
+            "emergencydialer/emergencydialer.view.EmergencyDialerActivity t7}\n"
+            "  ResumedActivity: ActivityRecord{565 u0 com.sec.android.app."
+            "emergencydialer/emergencydialer.view.EmergencyDialerActivity t7}",
+        )
+        self.assertTrue(device.locked())
+
+    def test_emergency_text_outside_resumed_lines_reads_unlocked(self):
+        # The 300-char slice after a bare marker substring used to spill
+        # into per-task sections; a line-anchored match must not.
+        device = canned_device(
+            "isKeyguardShowing=false mDreamingLockscreen=false",
+            "  topResumedActivity=ActivityRecord{2 u0 dev.lapis.remote/.MainActivity t3}\n"
+            "  ...permission android.permission.FOREGROUND_EMERGENCY unrelated",
+        )
+        self.assertFalse(device.locked())
+
+    def test_systemui_keyguard_component_reads_locked(self):
+        # The package/class pair rules catch a SystemUI keyguard activity
+        # reported as resumed instead of a dialer — including the
+        # shorthand component form, where the class name alone carries
+        # the keyguard identity.
+        device = canned_device(
+            "isKeyguardShowing=false",
+            "  ResumedActivity: ActivityRecord{7 u0 com.android.systemui/"
+            ".keyguard.ui.KeyguardService t2}",
+        )
+        self.assertTrue(device.locked())
+
+    def test_systemui_shorthand_keyguard_component_reads_locked(self):
+        # AOSP shipped this root-package shorthand before the
+        # com.android.systemui.keyguard move: no "keyguard." segment
+        # exists to substring, so only the pair rule (systemui package +
+        # keyguard class name) can read it as locked.
+        device = canned_device(
+            "isKeyguardShowing=false",
+            "  ResumedActivity: ActivityRecord{7 u0 com.android.systemui/"
+            ".KeyguardService t2}",
+        )
+        self.assertTrue(device.locked())
+
+    def test_phone_package_emergency_info_reads_locked(self):
+        # AOSP's com.android.phone/.EmergencyInfoActivity is reached from
+        # the dialer and composes over the keyguard like the dialer does;
+        # the class-name rule must catch it while Settings' same-named
+        # screen stays unlocked below.
+        device = canned_device(
+            "isKeyguardShowing=false mDreamingLockscreen=false",
+            "  topResumedActivity=ActivityRecord{9 u0 com.android.phone/"
+            ".EmergencyInfoActivity t6}",
+        )
+        self.assertTrue(device.locked())
+
+    def test_standalone_emergency_app_reads_locked(self):
+        # The standalone AOSP emergency app: the package rule covers any
+        # activity it reports, whatever its class is named.
+        device = canned_device(
+            "isKeyguardShowing=false mDreamingLockscreen=false",
+            "  topResumedActivity=ActivityRecord{9 u0 com.android.emergency/"
+            ".EmergencyInfoActivity t6}",
+        )
+        self.assertTrue(device.locked())
+
+    def test_keyguard_settings_activity_reads_unlocked(self):
+        # Component-granular, not a bare substring: Settings screens named
+        # Keyguard…Activity / EmergencyInfo…Activity are foreground apps
+        # on an unlocked phone; matching them would refuse every run
+        # opened from there with "the phone is locked".
+        device = canned_device(
+            "isKeyguardShowing=false mDreamingLockscreen=false",
+            "  topResumedActivity=ActivityRecord{4 u0 com.android.settings/"
+            ".KeyguardSettingsActivity t5}",
+        )
+        self.assertFalse(device.locked())
+
+    def test_emergency_info_activity_reads_unlocked(self):
+        device = canned_device(
+            "isKeyguardShowing=false mDreamingLockscreen=false",
+            "  topResumedActivity=ActivityRecord{4 u0 com.android.settings/"
+            ".EmergencyInfoActivity t5}",
+        )
+        self.assertFalse(device.locked())
+
+    def test_unlocked_app_and_missing_fields_read_unlocked(self):
+        device = canned_device(
+            "isKeyguardShowing=false mDreamingLockscreen=false",
+            "  topResumedActivity=ActivityRecord{2 u0 dev.lapis.remote/.MainActivity t3}",
+        )
+        self.assertFalse(device.locked())
+        stripped = canned_device("some other output", "short")
+        self.assertFalse(stripped.locked())
+
+
+class ImeShownTest(unittest.TestCase):
+    def test_shown_and_hidden_read_from_the_field(self):
+        shown = canned_device(None, None, "mInputShown=true mInputView=null")
+        self.assertTrue(shown.ime_shown())
+        hidden = canned_device(None, None, "mInputShown=false")
+        self.assertFalse(hidden.ime_shown())
+
+    def test_missing_field_raises_skipped_not_device_error(self):
+        # The runner classifies Skipped before DeviceError and uses the
+        # bare message; the prefix contract is what routes the check into
+        # the receipt's skipped bucket instead of its failed bucket.
+        device = canned_device(None, None, "no ime state here")
+        with self.assertRaises(android_ctl.Skipped) as raised:
+            device.ime_shown()
+        self.assertTrue(str(raised.exception).startswith("SKIPPED:"))
+        self.assertIsInstance(raised.exception, android_ctl.DeviceError)
+
+
+class LaunchExtrasTest(unittest.TestCase):
+    def test_launch_forces_the_command_bar_on_by_default(self):
+        # The harness must never depend on the stored setting: every launch
+        # pins the bar on, so a missing command-bar node in a run is a
+        # product regression rather than a runnable-state question.
+        device = android_ctl.Device.__new__(android_ctl.Device)
+        device.package = "dev.lapis.remote"
+        sent: list[str] = []
+
+        def record(command, timeout=30):
+            sent.append(command)
+            return ""
+
+        device.shell = record
+        device.launch(host="127.0.0.1:7351", font=12, fresh=True)
+        self.assertEqual(len(sent), 2)  # fresh's force-stop, then the start
+        self.assertIn("--es gatewayHost '127.0.0.1:7351'", sent[1])
+        self.assertIn("--es terminalFontSize 12", sent[1])
+        self.assertIn("--es commandBarEnabled true", sent[1])
+        device.launch(command_bar=False)
+        self.assertIn("--es commandBarEnabled false", sent[2])
+        self.assertNotIn("gatewayHost", sent[2])
+        device.launch(command_bar=None)
+        self.assertNotIn("commandBarEnabled", sent[3])
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -39,6 +40,11 @@ ACTIVITY = "dev.lapis.remote/dev.lapis.remote.ui.MainActivity"
 
 DUMP_REMOTE = "/sdcard/lapis_ui_dump.xml"
 SHOT_REMOTE = "/sdcard/lapis_shot.png"
+
+# The package/class pair of a resumed ActivityRecord, e.g. "u0
+# com.android.phone/.EmergencyCallActivity". The class side accepts the
+# shorthand ".Foo" root form, a full dotted name, and nested "$" classes.
+RESUMED_COMPONENT = re.compile(r"u\d+ ([\w.]+)/([\w.$]+)")
 
 KEYCODES = {
     "ENTER": "66",
@@ -109,6 +115,16 @@ def parse_dump(xml_text: str) -> list[dict]:
         if bounds is None:
             continue
         node = {"bounds": list(bounds), "clickable": element.get("clickable") == "true"}
+        # Switches and checkables expose their state only here; the settings
+        # toggle check reads it to avoid tapping blind, and `enabled` tells
+        # the caller a disabled control (the settings switch stays disabled
+        # until its stored-value read lands) will ignore taps.
+        checked = element.get("checked")
+        if checked is not None:
+            node["checked"] = checked == "true"
+        enabled = element.get("enabled")
+        if enabled is not None:
+            node["enabled"] = enabled == "true"
         for key, attribute in (
             ("id", "resource-id"),
             ("text", "text"),
@@ -154,6 +170,15 @@ def keycode(name: str) -> str:
 
 
 class DeviceError(RuntimeError):
+    pass
+
+
+class Skipped(DeviceError):
+    """A harness condition, not a product failure: the check could not run
+    (unreadable device state), so the receipt must record it as skipped.
+    The runner catches this before DeviceError and uses the bare message,
+    which starts with "SKIPPED:" to fit its existing classification."""
+
     pass
 
 
@@ -281,6 +306,104 @@ class Device:
     def key(self, name: str) -> None:
         self.shell(f"input keyevent {keycode(name)}")
 
+    def locked(self) -> bool:
+        """Whether the keyguard (or its emergency dialer) is showing. A
+        locked phone still launches the app behind the keyguard, so every
+        UI check then fails with misleading messages (missing composer,
+        "command bar disabled") instead of the real cause. Two window
+        flags drive the decision: isKeyguardShowing is the purpose-built
+        keyguard signal, and the dreaming flag additionally catches
+        keyguard-adjacent overlays (both verified true on the target
+        build with the display on and off). The emergency dialer is a
+        real activity composing over the keyguard and can clear those
+        flags while the phone stays locked, so the resumed activity is
+        inspected too: each "Resumed:"/"ResumedActivity:"/
+        "topResumedActivity=" line (the 300-char slice after a marker
+        substring could spill into unrelated sections; this build reports
+        the former two where AOSP logs the latter) is parsed into its
+        package/class pair and case-folded, so the match is
+        component-granular rather than a bare substring — a foreground
+        Settings screen named KeyguardSettingsActivity or
+        EmergencyInfoActivity sits on an unlocked phone, and a bare
+        "emergency"/"keyguard" match would refuse every run opened from
+        there. What reads as locked: any package carrying "keyguard"
+        (SystemUI's com.android.systemui.keyguard), SystemUI itself with
+        a keyguard class (the shorthand root form
+        com.android.systemui/.KeyguardService predates that move and
+        carries no keyguard segment to substring), the AOSP emergency
+        app family (com.android.emergency), and an emergency dialer,
+        call, or info class name outside Settings — AOSP's
+        com.android.phone/.EmergencyInfoActivity composes over the
+        keyguard exactly like the dialer, while Settings' own
+        EmergencyInfoActivity is a plain foreground screen. Build-specific
+        fields that vanish read as unlocked, preserving the pre-guard
+        behavior."""
+        window = self.shell("dumpsys window")
+        if "isKeyguardShowing=true" in window or "mDreamingLockscreen=true" in window:
+            return True
+        for line in self.shell("dumpsys activity activities").splitlines():
+            stripped = line.strip()
+            if not stripped.startswith(
+                ("topResumedActivity=", "ResumedActivity:", "Resumed:")
+            ):
+                continue
+            match = RESUMED_COMPONENT.search(stripped)
+            if match is None:
+                continue
+            package, activity = match.groups()
+            package = package.lower()
+            activity = activity.rsplit(".", 1)[-1].lower()
+            if "keyguard" in package:
+                return True
+            if package == "com.android.systemui" and activity.startswith("keyguard"):
+                return True
+            if package.startswith("com.android.emergency"):
+                return True
+            if activity.startswith(
+                ("emergencydialer", "emergencycall", "emergencyinfo")
+            ) and not package.startswith("com.android.settings"):
+                return True
+        return False
+
+    def ime_shown(self) -> bool:
+        """Whether the on-screen keyboard is currently covering the stage.
+
+        Fails closed: `mInputShown` is a build-specific dumpsys field, so a
+        dump that carries no IME state at all raises instead of silently
+        reporting "hidden" — a renamed or trimmed field would otherwise skip
+        the BACK press, leave the keyboard up, and blame the app for the
+        harness's blind scroll. Raised as Skipped with a "SKIPPED:" message:
+        the app was never exercised when the harness cannot read IME state,
+        so the receipt records a skipped check, not a product failure.
+        """
+        dump = self.shell("dumpsys input_method")
+        if "mInputShown=" not in dump:
+            raise Skipped(
+                "SKIPPED: dumpsys input_method reported no IME state; "
+                "the keyboard state is unreadable, so the scroll cannot "
+                "be attempted"
+            )
+        return "mInputShown=true" in dump
+
+    def dismiss_ime(self) -> None:
+        """Drop the on-screen keyboard a previous composer use left open.
+
+        The stage's imePadding shrinks the terminal to the strip above the
+        keyboard, so scroll gestures aimed at screen center land on the
+        keyboard and never reach the list. BACK dismisses only the keyboard
+        while it is shown; it is sent only under that condition and only
+        after dumpsys confirms, because a BACK with the keyboard already
+        down would navigate out of the stage.
+        """
+        if not self.ime_shown():
+            return
+        self.key("BACK")
+        for _ in range(10):
+            if not self.ime_shown():
+                return
+            time.sleep(0.3)
+        raise DeviceError("the on-screen keyboard did not dismiss")
+
     def swipe(self, x1: int, y1: int, x2: int, y2: int, ms: int = 300) -> None:
         self.shell(f"input swipe {x1} {y1} {x2} {y2} {ms}")
 
@@ -340,6 +463,7 @@ class Device:
         font: float | None = None,
         reset_cache: bool = False,
         fresh: bool = False,
+        command_bar: bool | None = True,
     ) -> None:
         if fresh:
             self.stop()
@@ -350,6 +474,12 @@ class Device:
             command += f" --es terminalFontSize {font}"
         if reset_cache:
             command += " --ez resetCache true"
+        # A string extra, matching the app's getString seam (a --ez boolean
+        # extra reads back null through getString). None honors the stored
+        # setting; True/False force the bar's visibility for the whole
+        # process, so a harness run never depends on device state.
+        if command_bar is not None:
+            command += f" --es commandBarEnabled {'true' if command_bar else 'false'}"
         self.shell(command)
 
     def stop(self) -> None:
@@ -453,6 +583,12 @@ def build_parser() -> argparse.ArgumentParser:
     launch.add_argument("--font", type=float)
     launch.add_argument("--reset-cache", action="store_true")
     launch.add_argument("--fresh", action="store_true", help="force-stop first")
+    launch.add_argument(
+        "--command-bar",
+        choices=["on", "off", "store"],
+        default="on",
+        help="force the command bar on or off for this launch, or honor the stored setting",
+    )
 
     sub.add_parser("stop", help="force-stop the app")
 
@@ -536,6 +672,7 @@ def main(argv: list[str] | None = None) -> int:
                 font=args.font,
                 reset_cache=args.reset_cache,
                 fresh=args.fresh,
+                command_bar={"on": True, "off": False, "store": None}[args.command_bar],
             )
         elif args.verb == "stop":
             device.stop()

@@ -17,6 +17,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -25,29 +26,38 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.lapis.remote.platform.KeyValueStore
 import dev.lapis.remote.platform.describe
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * Host settings: the port of SettingsView. "Done" saves the trimmed host and
  * refreshes the workspace against it; "Check connection" answers without
  * changing anything. The gateway runs its transport on the IO dispatcher, so
- * the check never blocks composition.
+ * the check never blocks composition. The command-bar switch writes through
+ * the passed application-lived scope so Done dismissing the screen cannot
+ * cancel the persistence write.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     currentHost: String,
+    settings: KeyValueStore,
+    scope: CoroutineScope,
     onDone: (String) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -56,6 +66,25 @@ fun SettingsScreen(
     var host by rememberSaveable(currentHost) { mutableStateOf(currentHost) }
     var checking by rememberSaveable { mutableStateOf(false) }
     var result by rememberSaveable { mutableStateOf<String?>(null) }
+    var commandBar by rememberSaveable { mutableStateOf(true) }
+    // Two flags with opposite lifetimes. loadedOnce is saveable: after a
+    // recreation it restores to true and skips the read below, so a read
+    // racing a just-made toggle's write can never assign the pre-write
+    // value over the restored (correct) switch state, and it keeps the
+    // Switch enabled across that recreation — the restored value is the
+    // real one, so nothing can flash the default in. readLanded is plain
+    // remember: only the first-ever composition (loadedOnce still false)
+    // must hold the Switch disabled until its own read actually finishes.
+    var loadedOnce by rememberSaveable { mutableStateOf(false) }
+    var readLanded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(settings) {
+        if (!loadedOnce) {
+            commandBar = settings.getString(COMMAND_BAR_KEY)?.toBooleanStrictOrNull() ?: true
+            loadedOnce = true
+        }
+        readLanded = true
+    }
 
     LaunchedEffect(checking) {
         if (!checking) return@LaunchedEffect
@@ -73,6 +102,11 @@ fun SettingsScreen(
 
     Scaffold(
         containerColor = LapisColors.background,
+        // The screen's own positive marker: device automation keys on this
+        // tag to know the settings screen is showing whatever happened to
+        // the switch inside it, instead of inferring it from some other
+        // screen's nodes being absent.
+        modifier = Modifier.testTag("settings-screen"),
         topBar = {
             TopAppBar(
                 title = {
@@ -163,6 +197,37 @@ fun SettingsScreen(
             result?.let {
                 Spacer(Modifier.height(8.dp))
                 Text(it, color = LapisColors.quiet, style = TextStyle(fontSize = 12.5.sp))
+            }
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider(color = LapisColors.edge)
+            Spacer(Modifier.height(16.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Command bar", color = Color.White, style = TextStyle(fontSize = 16.sp))
+                    Text(
+                        "Show the fixed keys and snippet row under the terminal.",
+                        color = LapisColors.quiet,
+                        style = TextStyle(fontSize = 12.5.sp),
+                    )
+                }
+                Switch(
+                    // Disabled only until the switch state is authoritative:
+                    // first composition waits for the DataStore read (so the
+                    // flash of the default cannot be flipped and written
+                    // back over a saved "off"); a recreation already holds
+                    // the restored true value via loadedOnce and stays
+                    // enabled, with no one-frame flicker.
+                    enabled = loadedOnce || readLanded,
+                    checked = commandBar,
+                    onCheckedChange = { value ->
+                        commandBar = value
+                        scope.launch { settings.putString(COMMAND_BAR_KEY, value.toString()) }
+                    },
+                    modifier = Modifier.testTag("command-bar-setting"),
+                )
             }
         }
     }

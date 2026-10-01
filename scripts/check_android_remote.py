@@ -20,8 +20,10 @@ client (lapis_remote.WireSession) attached the way the desktop is, which
 must see the phone's input, answer it, and never be closed by it.
 
 Checks: list, open, sync, draft (type without Enter), scrollback, resize
-(`wm size`), wheel (drag reaches a full-screen program), background (home
-and return), crash scan. Screenshots land
+(`wm size`), wheel (drag reaches a full-screen program), interrupt (^C chip
+stops a running program), background (home and return), snippets (add, run,
+survive a process restart), settings_toggle (hide and show the bar through
+the stored Settings switch, on a plain launch), crash scan. Screenshots land
 under build/android/remote-screens/<stamp>/ and a JSON receipt under
 build/android/.
 
@@ -251,6 +253,82 @@ def send_line(device, text):
     device.tap_node(id="send")
 
 
+def reveal(device, target_id, max_swipes=8):
+    """Swipe the chip's own row left until the target chip is actually on
+    screen. Rows in the compact bar compose every chip, so the dump reports
+    off-screen bounds; tapping those coordinates taps nothing.
+
+    Containment is judged against the bar's own right edge, not the panel
+    size: on a foldable `wm size` can report the unfolded panel while the
+    cover display is in use, and a chip past the visible edge would then
+    pass a `right <= panel_width` check and get tapped out of the window.
+    The swipe row comes from the chip's own bounds, so a snippet chip
+    swipes the snippet row, not the key row above it. Returns None when the
+    bar itself is absent, so callers can name that failure instead of
+    blaming the chip.
+
+    Overshoot is terminal, not retryable: a fling can carry the chip past
+    either edge the containment test measures, and repeating the same
+    direction only pushes it farther out. The loop reverses at most once —
+    a second reversal means this swipe length cannot settle the chip inside
+    the bar's window, which a retry of the same gesture will not fix — and
+    gives up as soon as a swipe leaves the chip's bounds unmoved, instead
+    of burning the whole budget on a row that is not responding."""
+    reversed_once = False
+    previous = None
+    row_y = None
+    for _ in range(max_swipes):
+        bar = device.find(id="command-bar")
+        if bar is None:
+            return None
+        bar_right = bar["bounds"][2]
+        # A bar narrower than twice the margin would turn
+        # `bar_right - margin -> margin` into a zero-width or backwards
+        # gesture; a bar that narrow also cannot hide a chip off-window,
+        # so treat it as unrevealable rather than flinging a degenerate
+        # swipe.
+        margin = min(80, (bar_right - 16) // 2)
+        if margin < 16:
+            return False
+        node = device.find(id=target_id)
+        if node is not None:
+            left, top, right, bottom = node["bounds"]
+            if left >= 0 and right <= bar_right:
+                return True
+            if previous is not None and all(
+                abs(current - seen) <= 1
+                for current, seen in zip((left, right), previous)
+            ):
+                # The last swipe moved the chip nothing measurable.
+                return False
+            previous = (left, right)
+            row_y = (top + bottom) // 2
+            if left < 0:
+                if reversed_once:
+                    return False
+                reversed_once = True
+                # The chip was carried past the row's left edge (the swipe
+                # ends with fling momentum), and a further leftward swipe
+                # only pushes it farther out — the containment test then
+                # can never pass again and the loop exhausts. Swipe back
+                # toward the row start instead, once.
+                device.swipe(margin, row_y, bar_right - margin, row_y, 250)
+                time.sleep(0.4)
+                continue
+        else:
+            # The chip is absent from this dump entirely — a transient
+            # mid-swipe state. Keep swiping the row it was last seen in,
+            # honoring the docstring's own-bounds rule across the gap; only
+            # a chip never seen at all falls back to the bar's first row,
+            # which is where the only current caller's target lives.
+            if row_y is None:
+                _, bar_top, _, bar_bottom = bar["bounds"]
+                row_y = bar_top + (bar_bottom - bar_top) // 4
+        device.swipe(bar_right - margin, row_y, margin, row_y, 250)
+        time.sleep(0.4)
+    return False
+
+
 def fixture(run):
     """The registry, services, and loopback gateway; returns (agents, gateway
     process) with the listing already answering."""
@@ -330,6 +408,16 @@ def fixture(run):
             str(tailscale),
         ],
     )
+    # serve() — apps/remote/lapis_remote.py, the bind loop at the bottom of
+    # the file — retries its bind forever (EADDRINUSE is caught like a
+    # missing Tailscale, logged as "waiting to serve", and retried after
+    # 5s; also reproduced locally in the round-8 review), so a stale --keep
+    # gateway holding the port never surfaces through gateway.poll(): this
+    # run's gateway stays alive waiting to bind. The only reliable
+    # stale-owner test is whether the responder knows this run's freshly
+    # minted agent ids — a stale fixture can echo the fixture titles but
+    # never this run's uuids.
+    run_ids = {agent["id"] for agent in agents}
     deadline = time.monotonic() + 10
     while True:
         try:
@@ -339,17 +427,48 @@ def fixture(run):
             )
             with urllib.request.urlopen(request, timeout=1) as response:
                 listing = json.load(response)
-            if any(
-                item["title"] == "echo agent"
-                for category in listing["categories"]
-                for item in category["agents"]
-            ):
+            if not isinstance(listing, dict):
+                # Whatever answered is not this repo's gateway (the stale
+                # check exists precisely for a foreign owner on the port),
+                # so force it down the cannot-know-this-run's-ids path
+                # instead of crashing on a .get of a list or scalar.
+                listing = {}
+            # `or ()` and not a .get default: JSON null is a present key
+            # with value None, which .get returns as-is and `for` over None
+            # raises TypeError — outside the (OSError, ValueError) this
+            # block catches. With both null shapes coerced, no JSON the
+            # responder can emit raises from this comprehension at all.
+            answered = [
+                item
+                for category in listing.get("categories") or ()
+                if isinstance(category, dict)
+                for item in category.get("agents") or ()
+                if isinstance(item, dict)
+            ]
+        except (OSError, ValueError):
+            answered = None
+        if answered is not None:
+            if not any(item.get("id") in run_ids for item in answered):
+                # The phone would drive the stale fixture's agents while the
+                # Mac client watches this run's silent ones, and every
+                # Mac-side check would fail against the wrong session;
+                # refuse before any check runs.
+                raise SystemExit(
+                    f"a stale gateway owns 127.0.0.1:{PORT} (this run's is "
+                    f"alive but cannot bind while it holds the port); stop "
+                    f"it and rerun; see {run.logs / 'gateway.log'}"
+                )
+            if any(item.get("title") == "echo agent" for item in answered):
                 # The gateway's own normalization of the registry, with the
                 # mode field WireSession needs.
                 return lapis_remote.load_workspace(str(registry))["agents"], gateway
-        except (OSError, ValueError, KeyError):
-            pass
-        if gateway.poll() is not None or time.monotonic() >= deadline:
+        exit_code = gateway.poll()
+        if exit_code is not None:
+            raise SystemExit(
+                f"the fixture gateway exited early with {exit_code}; "
+                f"see {run.logs / 'gateway.log'}"
+            )
+        if time.monotonic() >= deadline:
             raise SystemExit(
                 f"fixture gateway did not start; see {run.logs / 'gateway.log'}"
             )
@@ -379,11 +498,90 @@ def install_apk(device, allow_build):
     return True
 
 
+# set_switch's three probe-shaped messages, written once at module level and
+# returned by the producer itself: the classifier in check_settings_toggle
+# builds its set from these same names, so a wording change can never leave
+# it matching a string that nothing produces (which would silently reclassify
+# a probe failure as effect-shaped and fail runs on a harness condition). The
+# coupling was not hypothetical: the vanish message had already diverged
+# between producer ("command bar switch") and classifier ("settings switch")
+# before this constant existed.
+SETTINGS_SWITCH_NEVER_APPEARED = "the command bar switch never appeared"
+SETTINGS_SWITCH_VANISHED = "the settings switch vanished from the settings screen"
+SETTINGS_SWITCH_UNREPORTED = "the settings switch reported no checked state to the dump"
+
+
+def settings_restore_verdict(
+    problem: str | None,
+    restore_problem: str | None,
+    retried_after: str | None,
+) -> tuple[str | None, str | None]:
+    """Compose the settings-toggle verdict and any receipt-only note.
+
+    ``restore_problem`` stays pristine so PROBE_SHAPED membership remains a
+    producer-message test; retry provenance is only attached to returned text.
+    Returning ``(None, note)`` lets the clean pass preserve that it depended on
+    the settle-and-retry without turning that fact into a failure.
+    """
+
+    retried = (
+        f" (after a first restore attempt that raised {retried_after})"
+        if retried_after is not None
+        else ""
+    )
+    if restore_problem is None:
+        if retried_after is None:
+            return problem, None
+        return problem, (
+            f"settings_toggle: the restore's first attempt raised "
+            f"{retried_after}; the settle-and-retry then restored the switch"
+        )
+
+    restore_note = (
+        f"the settings-toggle restore did not confirm: {restore_problem}{retried}"
+    )
+    if problem is None and restore_problem in (
+        SETTINGS_SWITCH_NEVER_APPEARED,
+        SETTINGS_SWITCH_VANISHED,
+        SETTINGS_SWITCH_UNREPORTED,
+    ):
+        return f"SKIPPED: {restore_note}", None
+    return (
+        restore_note if problem is None else f"{problem}; also, {restore_note}"
+    ), None
+
+
 def checks(device, mac, screens):
     """Each named check drives the phone and asserts on both sides."""
 
+    # Set when a check may have left the busy program owning the PTY: the
+    # later checks that type into the terminal report SKIPPED instead of
+    # failing with messages that blame the wrong interaction.
+    wedged = {"busy": False}
+
+    # Observations a check wants preserved in the receipt without failing
+    # anything: settings_toggle notes the restore's absorbed retry here, so
+    # a retry-dependent pass stays distinguishable from an uneventful one
+    # in remote-check.json rather than only on the terminal.
+    notes: list[str] = []
+
     def shot(name):
         device.screenshot(screens / f"{name}.png")
+
+    def bar_absent():
+        # The harness launch forces the bar on (the commandBarEnabled
+        # extra overrides the stored setting, like the font-size extra), so
+        # a missing bar is a product regression, not a runnable-state
+        # precondition: fail it; there is no skip case.
+        if device.find(id="command-bar") is None:
+            return (
+                "the command bar did not compose although the launch extra forced it on"
+            )
+        return None
+
+    def long_press(device, node):
+        x, y = android_ctl.bounds_center(tuple(node["bounds"]))
+        device.swipe(x, y, x, y, 600)
 
     def check_list():
         device.launch(host=f"127.0.0.1:{PORT}", font=12, reset_cache=True, fresh=True)
@@ -451,14 +649,40 @@ def checks(device, mac, screens):
         send_line(device, "count")
         if not wait_terminal(device, "count 120", timeout=30):
             return "the count output never finished"
+        # The composer submit leaves the keyboard open, and the stage's
+        # imePadding then shrinks the terminal to the strip above it —
+        # screen-center scroll gestures would land on the keyboard and
+        # never reach the list. A reader drops the keyboard to read.
+        device.dismiss_ime()
+        # The drag that scrolled older must surrender the terminal's
+        # follow-bottom anchor (correct app behavior: output must not yank
+        # the view out from under the reader). The accessibility text is a
+        # scroll-independent concatenation of history plus live frame, so
+        # no text anchor can observe scroll position; the real observable
+        # is the follow state the app speaks at the head of the terminal's
+        # description, which flips to "reading" only when the drag ends
+        # with the live bottom out of view.
         found = False
         for _ in range(16):
             device.scroll("older", 4)
-            if "echo: marker before count" in device.terminal_text():
+            if "Reading earlier output." in device.terminal_text():
                 found = True
                 break
         if not found:
-            return "scrolling never reached the archived marker"
+            return "scrolling older never surrendered the follow-bottom anchor"
+        # Scroll back down so later checks see new output. The same state
+        # line is the anchor in reverse: the app reports following only
+        # when the last visible row is the live bottom — "count 120" one
+        # row above the prompt does not qualify, so the drag must land on
+        # the prompt itself.
+        restored = False
+        for _ in range(16):
+            device.scroll("newer", 4)
+            if "Following live output." in device.terminal_text():
+                restored = True
+                break
+        if not restored:
+            return "scrolling never returned to the live bottom"
         shot("05-scrollback")
         return None
 
@@ -519,7 +743,62 @@ def checks(device, mac, screens):
         shot("08-wheel-delivered")
         return None
 
+    def check_interrupt():
+        # The milestone C finish line: ^C through the bar's chord chip must
+        # interrupt a running program (the PTY turns the byte into SIGINT),
+        # not just be assumed to. The busy loop reports how far it got, and
+        # the agent must still answer afterwards. On any failure the busy
+        # loop still owns the foreground PTY (it survives the app's process
+        # death; the agent lives on the gateway side), so the exit paths
+        # best-effort-interrupt it and the checks that type into the
+        # terminal afterwards skip, rather than reporting misleading
+        # failures about their own interactions.
+        absent = bar_absent()
+        if absent is not None:
+            return absent
+        send_line(device, "busy")
+        interrupted = False
+        try:
+            if not wait_terminal(device, "busy 3", timeout=20):
+                return "the busy program never started (busy may still own the PTY)"
+            revealed = reveal(device, "key-ctrl-c")
+            if revealed is None:
+                return "the command bar vanished mid-check"
+            if not revealed:
+                return (
+                    "the ^C chip never scrolled into view (busy may still own the PTY)"
+                )
+            device.tap_node(id="key-ctrl-c")
+            if not wait_terminal(device, "busy interrupted after", timeout=15):
+                return "the ^C chord never interrupted the busy program"
+            interrupted = True
+        finally:
+            if not interrupted:
+                wedged["busy"] = True
+                # Best effort, and never at the cost of the real failure
+                # above. find() returns the chip even when its bounds are
+                # off-screen (uiautomator dumps every composed chip), and
+                # tapping off-screen coordinates is silently dropped — so
+                # re-reveal first; that is the branch that actually runs
+                # when the failure was the reveal itself.
+                try:
+                    if reveal(device, "key-ctrl-c"):
+                        device.tap_node(id="key-ctrl-c")
+                        time.sleep(1.5)
+                except Exception:
+                    # Best effort: any failure here (adb hung, device
+                    # pulled, subprocess timeout) must not replace the
+                    # real failure already recorded above.
+                    pass
+        send_line(device, "after interrupt")
+        if not wait_terminal(device, "echo: after interrupt"):
+            return "the agent did not answer after the interrupt"
+        shot("09-interrupt")
+        return None
+
     def check_background():
+        if wedged["busy"]:
+            return "SKIPPED: the busy program may still own the PTY after the interrupt failure"
         device.key("HOME")
         time.sleep(1.0)
         device.launch()  # the same task comes forward and reattaches
@@ -530,8 +809,251 @@ def checks(device, mac, screens):
             return "typing after returning from the background failed"
         if mac.closed is not None:
             return f"backgrounding closed the Mac client: {mac.closed}"
-        shot("09-background")
+        shot("10-background")
         return None
+
+    def check_snippets():
+        # Snippet lifecycle: added through the editor, sent as paste+Enter
+        # (the fake agent echoes the line back), and still there after
+        # process death (DataStore) — no gateway sync involved anywhere.
+        # The store survives everything this harness resets (resetCache
+        # wipes only caches; the fixture rebuilds only agents), so the
+        # precondition must be established here: clear the list through the
+        # editor and assert on a run-unique text, so stale entries from
+        # earlier runs can neither crowd the 24-snippet cap nor occupy
+        # index 0 under this check's feet.
+        if wedged["busy"]:
+            return "SKIPPED: the busy program may still own the PTY after the interrupt failure"
+        absent = bar_absent()
+        if absent is not None:
+            return absent
+        snippet_text = f"git status {time.strftime('%H%M%S')}"
+        # The + chip is the snippet row's rightmost child, off-screen once
+        # any snippet persists; the leftmost chip is always visible and its
+        # long-press opens the same editor.
+        first = device.find(id="snippet-0")
+        if first is not None:
+            long_press(device, first)
+        # The chip's long-press disables with its send action while the
+        # attachment is not live (combinedClickable carries the enabled
+        # flag), so a dead long-press must fall through to the
+        # always-enabled + chip rather than fail the check: both open the
+        # same editor.
+        if device.find(id="snippet-new") is None:
+            device.tap_node(id="snippets-add")
+        if device.wait(id="snippet-new", timeout=10) is None:
+            return "the snippet editor never opened"
+        for _ in range(25):
+            if device.find(id="snippet-0-delete") is None:
+                break
+            device.tap_node(id="snippet-0-delete")
+            time.sleep(0.3)
+        else:
+            return "existing snippets never cleared"
+        device.tap_node(id="snippet-new")
+        device.type_text(snippet_text)
+        device.tap_node(id="snippet-add")
+        device.tap_node(id="snippet-done")
+        chip = device.wait(text=snippet_text, timeout=10)
+        if chip is None:
+            return "the added snippet chip never appeared"
+        shot("11-snippet-added")
+        device.tap_node(text=snippet_text)
+        if not wait_terminal(device, f"echo: {snippet_text}"):
+            return "tapping the snippet never ran it"
+        # Process death must not lose the list: force-stop and a plain
+        # relaunch (no resetCache) restores it from DataStore.
+        device.stop()
+        time.sleep(1.0)
+        device.launch()
+        if device.wait(text="echo agent", timeout=25) is None:
+            return "the workspace never came back after the restart"
+        device.tap_node(text="echo agent")
+        if device.wait(id="terminal", timeout=15) is None:
+            return "the stage did not reopen after the restart"
+        chip = device.wait(text=snippet_text, timeout=10)
+        if chip is None:
+            return "the snippet did not survive the restart"
+        shot("12-snippet-restored")
+        return None
+
+    def check_settings_toggle():
+        # The Settings switch's one device-visible effect: hide and show
+        # the bar through the stored setting. Runs on a plain launch (no
+        # commandBarEnabled extra) so no override masks the setting — every
+        # other launch in this suite forces the bar on.
+        def set_switch(on, already_open=False):
+            if not already_open:
+                device.tap_node(id="settings")
+            switch = device.wait(id="command-bar-setting", timeout=10)
+            if switch is None:
+                return SETTINGS_SWITCH_NEVER_APPEARED
+            # The switch stays disabled until its stored-value read lands
+            # (SettingsScreen gates it on readLanded), and a tap on a
+            # disabled control is a silent no-op: poll for the node to
+            # report itself enabled first. Dumps that never carry the
+            # attribute fall through after the poll instead of wedging.
+            deadline = time.monotonic() + 5
+            while switch.get("enabled") is not True and time.monotonic() < deadline:
+                time.sleep(0.2)
+                switch = device.find(id="command-bar-setting")
+                if switch is None:
+                    return SETTINGS_SWITCH_VANISHED
+            checked = switch.get("checked")
+            if checked is None:
+                # Without a reported state the tap would be blind and could
+                # invert an already-correct switch: fail as a harness-side
+                # probe gap, not a product defect.
+                return SETTINGS_SWITCH_UNREPORTED
+            if checked != on:
+                device.tap_node(id="command-bar-setting")
+                time.sleep(0.4)
+                after = device.find(id="command-bar-setting")
+                if after is None or after.get("checked") != on:
+                    return "the settings switch did not flip after the tap"
+            device.tap_node(text="Done")
+            if device.wait(id="settings", timeout=10) is None:
+                return "Done never returned to the workspace list"
+            return None
+
+        def open_stage(expect_bar):
+            device.tap_node(text="echo agent")
+            if device.wait(id="terminal", timeout=15) is None:
+                return "the stage did not open"
+
+            # The terminal node exists from the first composition, so it
+            # cannot distinguish a stage whose session never opened (a
+            # wedged fit gate leaves the banner on "Opening…" forever)
+            # from a live one. The composer's send button is enabled only
+            # while the attachment is live, so require that before
+            # judging the bar.
+            def send_live():
+                node = device.find(id="send")
+                return node is not None and node.get("enabled") is True
+
+            deadline = time.monotonic() + 10
+            while not send_live() and time.monotonic() < deadline:
+                time.sleep(0.2)
+            if not send_live():
+                return "the session never went live after opening the stage"
+            # The setting read lands a moment after composition, so poll
+            # for the bar to settle rather than sampling once.
+            deadline = time.monotonic() + 3
+            present = device.find(id="command-bar") is not None
+            while present != expect_bar and time.monotonic() < deadline:
+                time.sleep(0.2)
+                present = device.find(id="command-bar") is not None
+            if present != expect_bar:
+                return (
+                    f"the command bar is {'visible' if present else 'absent'} "
+                    f"but the setting says {'on' if expect_bar else 'off'}"
+                )
+            return None
+
+        # set_switch's problems come in two shapes, and only one of them
+        # may ride under a SKIPPED when the body's assertions passed.
+        # Probe-shaped (the three named producer messages checked by
+        # settings_restore_verdict): the dump never established what to
+        # tap, or lost it mid-probe — the restore could not act, and the
+        # next run's ensure-on step re-aligns the stored setting.
+        # Effect-shaped (any other message, including "did not flip" and
+        # "Done never returned"): the restore acted and the product state
+        # did not follow — the same persistence behavior the body asserts,
+        # and on the body-passed path the only place it can still surface,
+        # so it fails the run instead of hiding under a skip.
+
+        device.launch(fresh=True, command_bar=None)
+        if device.wait(text="echo agent", timeout=25) is None:
+            return "the workspace list never came back"
+        problem: str | None = None
+        restore_problem: str | None = None
+        retried_after: str | None = None
+        try:
+            try:
+                # From a known-on state: the read path shows the bar...
+                problem = set_switch(True)
+                if problem is None:
+                    problem = open_stage(expect_bar=True)
+                if problem is None:
+                    shot("13-bar-shown")
+                    # ...and hiding it through Settings removes it on re-entry.
+                    device.tap_node(id="back")
+                    problem = set_switch(False)
+                if problem is None:
+                    problem = open_stage(expect_bar=False)
+                if problem is None:
+                    shot("14-bar-hidden")
+            except Exception as error:
+                # The taps above raise when a screen wedges mid-check. The
+                # restore below still runs; folding the raise into the
+                # body's diagnosis keeps the receipt complete on this path
+                # too, because a raise escaping the try would discard
+                # restore_problem and record only the bare device error.
+                problem = f"the check raised {type(error).__name__}: {error}"
+        finally:
+            # Leave the setting on whatever happened above: a failed run
+            # must not leave the device stored-off for the next
+            # store-honoring launch (this check's own next run).
+            def restore() -> str | None:
+                # Positive marker only: the settings screen owns its own
+                # tag, present whatever became of the switch inside it.
+                # Its absence means "not on the settings screen" — the
+                # stage, a dialog, or a wedged dump — which says nothing
+                # about the switch; on those screens the restore must
+                # navigate first instead of waiting on a switch that
+                # cannot appear there. The previous shape (the workspace
+                # list's settings button being gone) was true on every one
+                # of those screens too, so a wedged stage made the restore
+                # skip the navigation and report the wrong "switch never
+                # appeared" diagnosis.
+                if device.find(id="settings-screen") is None:
+                    if device.find(id="terminal") is not None:
+                        device.tap_node(id="back")
+                        time.sleep(0.3)
+                    already_open = device.find(id="settings-screen") is not None
+                else:
+                    already_open = True
+                return set_switch(True, already_open=already_open)
+
+            try:
+                try:
+                    restore_problem = restore()
+                except Exception as first_error:
+                    # Every navigation tap here is a single-dump tap_node,
+                    # and a dump taken while the back transition is still
+                    # settling misses its node and raises — a transport
+                    # race, not a persistence signal. One settle-and-retry
+                    # (which re-derives the screen marker under the
+                    # settled state) absorbs that race, and the absorbed
+                    # raise is announced so a run that needed the retry
+                    # stays distinguishable from an uneventful one; a
+                    # screen that is genuinely wedged raises again and
+                    # takes the verdict below instead of hiding behind the
+                    # retry.
+                    retried_after = f"{type(first_error).__name__}: {first_error}"
+                    print(
+                        f"[settings_toggle] note: the restore's first attempt "
+                        f"raised {retried_after}; retrying once after 1.0s",
+                        flush=True,
+                    )
+                    time.sleep(1.0)
+                    restore_problem = restore()
+            except Exception as error:
+                # The whole cleanup is guarded, not just set_switch: a
+                # raise escaping the finally would replace the body's
+                # diagnosis with the cleanup's own error. A raise still
+                # fails the run when the body passed, because the stored
+                # state it leaves behind is unknown — the next run's
+                # opening set_switch(True) realigns it either way.
+                restore_problem = f"restore raised {type(error).__name__}: {error}"
+        # The helper keeps the retry provenance receipt-visible while
+        # preserving the pristine restore message for probe classification.
+        verdict, note = settings_restore_verdict(
+            problem, restore_problem, retried_after
+        )
+        if note is not None:
+            notes.append(note)
+        return verdict
 
     def check_crash():
         crashes = device.crash_lines()
@@ -547,14 +1069,22 @@ def checks(device, mac, screens):
         "scrollback": check_scrollback,
         "resize": check_resize,
         "wheel": check_wheel,
+        "interrupt": check_interrupt,
         "background": check_background,
+        "snippets": check_snippets,
+        "settings_toggle": check_settings_toggle,
         "crash": check_crash,
-    }
+    }, notes
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--only", action="append", help="check name; repeat several")
+    parser.add_argument(
+        "--serial",
+        help="adb serial to drive; required when more than one device is "
+        "attached, so an unexpected emulator cannot steal the run",
+    )
     parser.add_argument(
         "--no-install", action="store_true", help="reuse the installed APK"
     )
@@ -589,7 +1119,44 @@ def main():
     if not attached:
         print("no adb device attached; connect one and rerun", file=sys.stderr)
         return 1
-    device = android_ctl.Device(serial=attached[0])
+    serial = arguments.serial
+    if serial is not None and serial not in attached:
+        print(f"--serial {serial} is not an attached device", file=sys.stderr)
+        return 1
+    if serial is None and len(attached) > 1:
+        # The default only ever picks the sole attached device; with several
+        # attached, an unexpected emulator could silently steal the run.
+        print(
+            "more than one adb device attached ("
+            + ", ".join(attached)
+            + "); name one with --serial",
+            file=sys.stderr,
+        )
+        return 1
+    device = android_ctl.Device(serial=serial or attached[0])
+    try:
+        phone_locked = device.locked()
+    except (android_ctl.DeviceError, subprocess.TimeoutExpired) as error:
+        # Mirror the adb-devices timeout handling above: this probe has no
+        # fixture to clean up, but a hung or failing adb should still report
+        # a named condition instead of a raw traceback.
+        print(
+            f"could not read the lock state ({type(error).__name__}: {error}); "
+            "restart the adb server and rerun",
+            file=sys.stderr,
+        )
+        return 1
+    if phone_locked:
+        # The app launches behind the keyguard and its networking still
+        # works, so a locked phone produces a full run of misleading
+        # failures (missing composer, "command bar disabled in settings")
+        # instead of the real cause. Fail before spawning any fixture.
+        print(
+            "the phone is locked; unlock it and rerun — UI checks cannot "
+            "see behind the keyguard",
+            file=sys.stderr,
+        )
+        return 1
 
     if not arguments.no_install or not device.state().get("app_version"):
         if not install_apk(device, allow_build=not arguments.no_install):
@@ -601,6 +1168,7 @@ def main():
     screens.mkdir(parents=True, exist_ok=True)
     mac = None
     failed = []
+    skipped = []
     try:
         agents, gateway = fixture(run)
         device.reverse(PORT)
@@ -608,7 +1176,7 @@ def main():
         mac = MacClient(echo)
         mac.start()
 
-        available = checks(device, mac, screens)
+        available, notes = checks(device, mac, screens)
         chosen = arguments.only or list(available)
         for name in chosen:
             if name not in available:
@@ -617,12 +1185,22 @@ def main():
             print(f"[{name}]", flush=True)
             try:
                 problem = available[name]()
+            except android_ctl.Skipped as skip:
+                # A harness condition the check cannot run through (not a
+                # product failure): keep the bare "SKIPPED:" message so the
+                # classifier below records it as skipped instead of failed.
+                problem = str(skip)
             except Exception as error:
                 # A check that dies mid-gesture (device pulled, adb hung) is a
                 # failed check, not a lost receipt: record it and keep going.
                 problem = f"{type(error).__name__}: {error}"
             if problem is None:
                 print(f"[{name}] ok", flush=True)
+            elif problem.startswith("SKIPPED:"):
+                # A check that cannot run meaningfully (wedged PTY) is not a
+                # failure of what it tests; record it so the receipt says so.
+                print(f"[{name}] {problem}", file=sys.stderr)
+                skipped.append(name)
             else:
                 print(f"[{name}] FAILED: {problem}", file=sys.stderr)
                 failed.append((name, problem))
@@ -636,10 +1214,14 @@ def main():
             "checks": chosen,
             "failed": [name for name, _ in failed],
             "failures": {name: problem for name, problem in failed},
+            "skipped": skipped,
+            "notes": notes,
             "mac_saw_phone": saw_phone,
             "mac_closed_by": closed_by,
             "grids": grids,
         }
+        for note in notes:
+            print(f"[note] {note}", flush=True)
         print(f"screens {screens}")
         print(f"Mac grids seen: {grids}")
         # Written before the Mac client stops: teardown problems must not

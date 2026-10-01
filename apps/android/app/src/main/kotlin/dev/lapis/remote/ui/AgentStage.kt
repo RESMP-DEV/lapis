@@ -42,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -73,6 +74,9 @@ import dev.lapis.remote.session.AgentSession
 import dev.lapis.remote.session.WorkspaceRepository
 import dev.lapis.remote.terminal.TerminalMetrics
 import dev.lapis.remote.terminal.TerminalScreen
+import dev.lapis.remote.ui.commandbar.CommandBar
+import dev.lapis.remote.ui.commandbar.SnippetListSaver
+import dev.lapis.remote.ui.commandbar.SnippetStore
 import kotlin.math.max
 import kotlin.math.min
 import kotlinx.coroutines.CoroutineScope
@@ -96,6 +100,7 @@ fun AgentStage(
     settings: KeyValueStore,
     sessionScope: CoroutineScope,
     fontSizeOverride: Float?,
+    commandBarOverride: Boolean? = null,
     onBack: () -> Unit,
 ) {
     val host by repository.host.collectAsStateWithLifecycle()
@@ -120,12 +125,83 @@ fun AgentStage(
     val sessionSize by session.size.collectAsStateWithLifecycle()
 
     var fontSize by remember { mutableStateOf(fontSizeOverride ?: DEFAULT_FONT_SIZE) }
-    LaunchedEffect(settings, fontSizeOverride) {
-        if (fontSizeOverride == null) {
-            fontSize = settings.getString(FONT_SIZE_KEY)?.toFloatOrNull()
-                ?.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE) ?: DEFAULT_FONT_SIZE
+
+    // The command bar's visibility and snippet list are phone-local state
+    // under the same settings seam; the bar is on until turned off. Both
+    // are saveable so a fold/unfold (activity recreation) shows the saved
+    // values immediately instead of flashing defaults until the DataStore
+    // read completes. A debug launch may override the bar's visibility in
+    // memory: the device harness always forces the bar on, so a missing
+    // bar in a harness run is a regression, never a setting question.
+    val snippetStore = remember(settings) { SnippetStore(settings) }
+    var commandBarEnabled by rememberSaveable { mutableStateOf(commandBarOverride ?: true) }
+    // The editor's Saver, not the default: rememberSaveable's default maps
+    // an empty list to Bundle-null and reads null as "no saved value", so a
+    // legitimately empty list would not survive a fold (documented at
+    // SnippetEditorDialog; internal visibility is module-wide, so the ui
+    // package reuses it without hoisting).
+    var snippets by rememberSaveable(stateSaver = SnippetListSaver) {
+        mutableStateOf(listOf<String>())
+    }
+
+    // Saved settings land after first composition: DataStore reads are
+    // async where iOS UserDefaults is synchronous. fit() must wait for
+    // them, or the session opens at the default font and bar visibility
+    // and resizes a moment later when the saved values apply. One effect
+    // reads everything and flips the gate once, so the first open happens
+    // at the geometry the user actually configured.
+    var settingsLoaded by remember { mutableStateOf(false) }
+    // Saveable for the same reason as SettingsScreen's loadedOnce: a fold
+    // recreates the stage with the list the user just committed (snippets
+    // is saveable, and setSnippets marks this true with the commit), so a
+    // store read racing that save must not assign the pre-write list over
+    // the restored one.
+    var snippetsLoaded by rememberSaveable { mutableStateOf(false) }
+    // Keyed on settings only: the override is a debug intent, and re-running
+    // the store loads when it changes would revert a snippet save still in
+    // flight back to the persisted list.
+    val currentFontOverride by rememberUpdatedState(fontSizeOverride)
+    LaunchedEffect(settings) {
+        try {
+            if (currentFontOverride == null) {
+                fontSize = settings.getString(FONT_SIZE_KEY)?.toFloatOrNull()
+                    ?.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE) ?: DEFAULT_FONT_SIZE
+            }
+            commandBarEnabled = commandBarOverride
+                ?: settings.getString(COMMAND_BAR_KEY)?.toBooleanStrictOrNull()
+                ?: true
+            val loaded = snippetStore.load()
+            // A recreation re-runs this effect with the saveable list the
+            // user last saw (or committed) already restored; assigning the
+            // store's pre-write list over it would revert the screen and,
+            // once edited, drop the in-flight save underneath.
+            if (!snippetsLoaded) {
+                snippets = loaded
+                snippetsLoaded = true
+            }
+        } finally {
+            // A stage that never opens is a worse failure than one that
+            // opens at default geometry: any unexpected throwable in the
+            // reads still releases the fit() gate.
+            settingsLoaded = true
         }
     }
+
+    val setSnippets: (List<String>) -> Unit = remember(sessionScope, snippetStore) {
+        { next: List<String> ->
+            // The store's bounds apply to the live list too, so the bar shows
+            // exactly what a restart restores.
+            val bounded = SnippetStore.normalize(next)
+            snippets = bounded
+            // The commit makes the live list authoritative: a store read
+            // still in flight must not overwrite it after a recreation.
+            snippetsLoaded = true
+            // The application-lived scope: leaving the stage (or the editor
+            // closing) must not cancel the persistence write.
+            sessionScope.launch { snippetStore.save(bounded) }
+        }
+    }
+
     val density = LocalDensity.current
     val metrics = remember(fontSize, density) {
         TerminalMetrics.system(with(density) { fontSize.sp.toPx() })
@@ -134,6 +210,25 @@ fun AgentStage(
     var composing by remember { mutableStateOf(false) }
     var draft by rememberSaveable { mutableStateOf("") }
     var stageSize by remember { mutableStateOf(IntSize.Zero) }
+    // The bar renders only once its visibility is settled: an override makes
+    // it final at first composition, and otherwise the DataStore read does.
+    // Rendering the default first would flash the bar (and its chips) at a
+    // user whose saved value is off. The same effect that settles the flag
+    // also assigns the loaded snippets, so the bar's first frame carries the
+    // real chip row, not an empty one.
+    val barShown = (commandBarOverride != null || settingsLoaded) && commandBarEnabled
+    // Which bar visibility the current stageSize was measured under — the
+    // RENDERED visibility (barShown), not the raw setting. Until the read
+    // settles, no bar renders, so every pre-read measurement is a tall
+    // one taken under bar-off; recording the raw (default-on) setting
+    // here would pair that measurement with a with-bar provenance: a
+    // saved-on entry would open tall and resize once the bar lands, and a
+    // saved-off entry would never agree (nothing re-measures when the bar
+    // never renders), wedging the session closed forever. The initializer
+    // mirrors the first frame's rendered state, so the pair starts
+    // agreeing in the override cases and never waits on a relayout that
+    // will not come.
+    var laidOutBarEnabled by remember { mutableStateOf(commandBarOverride == true) }
     val keyboardShown = WindowInsets.isImeVisible
     val composerFocus = remember { FocusRequester() }
 
@@ -199,6 +294,19 @@ fun AgentStage(
     }
 
     fun fit(force: Boolean = false) {
+        // Until the saved settings land, the geometry is the default's, not
+        // the user's; opening now means a resize the moment they apply.
+        if (!settingsLoaded) return
+        // Nor may a size measured under a bar visibility other than the
+        // configured one open the session. The provenance flag records
+        // the visibility the bar was rendered under at measurement time:
+        // with the bar saved on, the pre-read measurement is tall (no bar
+        // renders until the read settles), so the pair disagrees until
+        // the bar's own relayout delivers the short geometry — one open,
+        // at the configured size. With the bar saved off, the tall
+        // pre-read measurement already matches and the session opens as
+        // soon as the read lands.
+        if (laidOutBarEnabled != commandBarEnabled) return
         if (stageSize.width <= 0 || stageSize.height <= 0) return
         val grid = metrics.grid(stageSize.width.toFloat(), stageSize.height.toFloat())
         val current = session.size.value
@@ -218,8 +326,33 @@ fun AgentStage(
         }
     }
 
-    LaunchedEffect(session, stageSize) { fit() }
+    // settingsLoaded is a key: the gate itself releases fit() when the
+    // saved values have applied, including when the stage size never
+    // changed (saved state equal to the defaults). The bar pair is keyed
+    // the same way: a saved-on entry holds fit() from the read until the
+    // bar's relayout records the short geometry, while a saved-off entry
+    // agrees at the read itself — its tall pre-read measurement was
+    // taken under bar-off.
+    LaunchedEffect(session, stageSize, settingsLoaded, laidOutBarEnabled, commandBarEnabled) { fit() }
     LaunchedEffect(session, fontSize) { fit(force = true) }
+    // Escape hatch for the provenance gate above: onSizeChanged releases it
+    // only when the bar's departure changes the box's height — the only case
+    // the gate exists for. If a future bar layout stops affecting the
+    // measured size (an overlay-drawn bar, a height absorbed elsewhere), no
+    // measurement would ever arrive and the gate would hold the open
+    // forever, silently. Two frames after a bar change the layout under the
+    // new state has certainly run, and a bar whose exit leaves the size
+    // unchanged means the previous geometry is already the right one, so
+    // releasing on it opens exactly what the user configured. The normal
+    // path still wins the race: onSizeChanged fires during the first of
+    // those frames and writes the same value first. Keyed on the rendered
+    // visibility, not the raw setting: the read settling the bar into the
+    // layout (barShown false→true) is exactly such a relayout.
+    LaunchedEffect(barShown) {
+        withFrameNanos {}
+        withFrameNanos {}
+        laidOutBarEnabled = barShown
+    }
 
     fun setFontSize(value: Float) {
         fontSize = value
@@ -299,7 +432,19 @@ fun AgentStage(
                 Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .onSizeChanged { stageSize = it }
+                    .onSizeChanged {
+                        stageSize = it
+                        // The size and the bar visibility that produced it
+                        // must move together, or fit() would compare a new
+                        // size against a stale provenance. barShown, not
+                        // commandBarEnabled: this callback runs during the
+                        // layout of the composition that installed it, and
+                        // that composition's barShown is the visibility the
+                        // measurement was actually taken under — the raw
+                        // setting can disagree with it for the whole
+                        // pre-read window.
+                        laidOutBarEnabled = barShown
+                    }
                     .pointerInput(Unit) {
                         detectTapGestures { composerFocus.requestFocus() }
                     },
@@ -320,6 +465,17 @@ fun AgentStage(
                 )
             }
             Banner(state, agent.title, shared, reopenGrid, onReopen)
+            if (barShown) {
+                CommandBar(
+                    live = isLive,
+                    snippets = snippets,
+                    snippetsReady = snippetsLoaded,
+                    onInput = remember(session) {
+                        { input: Input -> session.send(input) }
+                    },
+                    onSnippets = setSnippets,
+                )
+            }
             Composer(
                 draft = draft,
                 onDraft = { draft = it },
@@ -487,6 +643,9 @@ private val KeyboardGlyph by lazy {
 
 /** DataStore key for the terminal font size, matching iOS "terminalFontSize". */
 internal const val FONT_SIZE_KEY = "terminalFontSize"
+
+/** DataStore key for the command bar's visibility, matching iOS "commandBarEnabled". */
+internal const val COMMAND_BAR_KEY = "commandBarEnabled"
 
 private const val DEFAULT_FONT_SIZE = 12f
 internal const val MIN_FONT_SIZE = 8f

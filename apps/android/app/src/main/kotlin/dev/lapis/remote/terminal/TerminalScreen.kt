@@ -367,10 +367,43 @@ fun TerminalScreen(
                 // iOS accessibilityValue: TalkBack reads the screen and
                 // uiautomator (text and content-desc only) exposes it to
                 // device automation. A wheel-taking program hides the
-                // archive, so only its screen is read then.
-                contentDescription = (
+                // archive, so only its screen is read then. The
+                // concatenated text is scroll-position-independent, so the
+                // description leads with the follow state — the one
+                // scroll-dependent fact — as a short spoken sentence:
+                // TalkBack announces whether the reader is at the live
+                // bottom, and the device harness gets a real anchor for
+                // "the drag surrendered follow" and "scrolling returned
+                // to the live bottom".
+                val screenText = (
                     if (fullScreen) frame?.text.orEmpty() else cache.accessibleText
-                    ).ifBlank { "Agent screen" }
+                    )
+                // The state stays in contentDescription (not a separate
+                // stateDescription): uiautomator's XML dump — the harness's
+                // only window into the accessibility tree — exposes text and
+                // content-desc only, and carrying the sentence in both
+                // properties would make TalkBack announce it twice per
+                // focus. Revisit only with a measured dump showing
+                // state-desc visible, moving the anchor with it.
+                val stateSentence = when {
+                    fullScreen -> null
+                    followBottom -> "Following live output."
+                    else -> "Reading earlier output."
+                }
+                // A blank screen reads as the state sentence alone, never
+                // the state bolted onto the "Agent screen" placeholder: the
+                // first non-fullscreen frame (the cache seeds empty and its
+                // read lands after composition) would otherwise announce
+                // live output the body does not show yet.
+                contentDescription = when {
+                    stateSentence != null && screenText.isNotBlank() ->
+                        // Trimmed: leading whitespace in the frame text
+                        // would announce as a pause after the state
+                        // sentence instead of joining it.
+                        "$stateSentence ${screenText.trim()}"
+                    stateSentence != null -> stateSentence
+                    else -> screenText.ifBlank { "Agent screen" }
+                }
             }
             .pointerInput(fullScreen, metrics.cellWidth, metrics.lineHeight, fitColumns, viewportWidth, onWheel) {
                 if (!fullScreen || onWheel == null) return@pointerInput
