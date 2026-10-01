@@ -861,6 +861,7 @@ def checks(device, mac, screens):
         if device.wait(text="echo agent", timeout=25) is None:
             return "the workspace list never came back"
         problem: str | None = None
+        restore_problem: str | None = None
         try:
             # From a known-on state: the read path shows the bar...
             problem = set_switch(True)
@@ -875,13 +876,12 @@ def checks(device, mac, screens):
                 problem = open_stage(expect_bar=False)
             if problem is None:
                 shot("14-bar-hidden")
-            return problem
         finally:
             # Leave the setting on whatever happened above: a failed run
             # must not leave the device stored-off for the next
             # store-honoring launch (this check's own next run). Best
-            # effort — a device wedged hard enough to break the restore
-            # too will surface that in its own right.
+            # effort — any restore problem joins the receipt after the
+            # finally instead of vanishing with the terminal scroll.
             if device.find(id="terminal") is not None:
                 device.tap_node(id="back")
                 time.sleep(0.3)
@@ -890,14 +890,17 @@ def checks(device, mac, screens):
                 restore_problem = set_switch(True, already_open=already_open)
             except Exception as error:
                 restore_problem = f"restore raised {error!r}"
-            if restore_problem is not None:
-                # The original failure still owns the receipt; say the
-                # restore failed too so the leftover off state is
-                # diagnosable from the run log instead of silent.
-                print(
-                    f"restore left the setting off: {restore_problem}",
-                    file=sys.stderr,
-                )
+        if restore_problem is not None:
+            # Neutral wording on purpose: a restore problem can occur with
+            # the setting already stored on (a lost Done tap), so this
+            # reports what went unconfirmed, never a state it cannot know.
+            restore_note = (
+                f"the settings-toggle restore did not confirm: {restore_problem}"
+            )
+            return (
+                restore_note if problem is None else f"{problem}; also, {restore_note}"
+            )
+        return problem
 
     def check_crash():
         crashes = device.crash_lines()
