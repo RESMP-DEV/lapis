@@ -834,7 +834,12 @@ def checks(device, mac, screens):
         first = device.find(id="snippet-0")
         if first is not None:
             long_press(device, first)
-        else:
+        # The chip's long-press disables with its send action while the
+        # attachment is not live (combinedClickable carries the enabled
+        # flag), so a dead long-press must fall through to the
+        # always-enabled + chip rather than fail the check: both open the
+        # same editor.
+        if device.find(id="snippet-new") is None:
             device.tap_node(id="snippets-add")
         if device.wait(id="snippet-new", timeout=10) is None:
             return "the snippet editor never opened"
@@ -915,6 +920,22 @@ def checks(device, mac, screens):
             device.tap_node(text="echo agent")
             if device.wait(id="terminal", timeout=15) is None:
                 return "the stage did not open"
+
+            # The terminal node exists from the first composition, so it
+            # cannot distinguish a stage whose session never opened (a
+            # wedged fit gate leaves the banner on "Opening…" forever)
+            # from a live one. The composer's send button is enabled only
+            # while the attachment is live, so require that before
+            # judging the bar.
+            def send_live():
+                node = device.find(id="send")
+                return node is not None and node.get("enabled") is True
+
+            deadline = time.monotonic() + 10
+            while not send_live() and time.monotonic() < deadline:
+                time.sleep(0.2)
+            if not send_live():
+                return "the session never went live after opening the stage"
             # The setting read lands a moment after composition, so poll
             # for the bar to settle rather than sampling once.
             deadline = time.monotonic() + 3

@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -39,6 +40,11 @@ ACTIVITY = "dev.lapis.remote/dev.lapis.remote.ui.MainActivity"
 
 DUMP_REMOTE = "/sdcard/lapis_ui_dump.xml"
 SHOT_REMOTE = "/sdcard/lapis_shot.png"
+
+# The package/class pair of a resumed ActivityRecord, e.g. "u0
+# com.android.phone/.EmergencyCallActivity". The class side accepts the
+# shorthand ".Foo" root form, a full dotted name, and nested "$" classes.
+RESUMED_COMPONENT = re.compile(r"u\d+ ([\w.]+)/([\w.$]+)")
 
 KEYCODES = {
     "ENTER": "66",
@@ -311,24 +317,27 @@ class Device:
         build with the display on and off). The emergency dialer is a
         real activity composing over the keyguard and can clear those
         flags while the phone stays locked, so the resumed activity is
-        inspected too — matched per line (the 300-char slice after a
-        marker substring could spill into unrelated sections) and
-        case-insensitively (the components are CamelCase; this build
-        reports "Resumed:"/"ResumedActivity:" lines where AOSP logs
-        "topResumedActivity="). The activity match is component-granular,
-        not a bare substring: a foreground Settings screen named
-        KeyguardSettingsActivity or EmergencyInfoActivity sits on an
-        unlocked phone, and a bare "emergency"/"keyguard" match would
-        refuse every run opened from there. What actually rides a locked
-        phone: dialer/call classes ending in EmergencyDialer or
-        EmergencyCall (AOSP's com.android.phone, the standalone
-        com.android.emergency app, and vendor builds like Samsung's
-        emergencydialer package), and the keyguard's own packages, whose
-        class path carries a "keyguard." segment (SystemUI's
-        KeyguardService) — a class named merely Keyguard…Activity inside
-        another app does not match.
-        Build-specific fields that vanish read as unlocked, preserving
-        the pre-guard behavior."""
+        inspected too: each "Resumed:"/"ResumedActivity:"/
+        "topResumedActivity=" line (the 300-char slice after a marker
+        substring could spill into unrelated sections; this build reports
+        the former two where AOSP logs the latter) is parsed into its
+        package/class pair and case-folded, so the match is
+        component-granular rather than a bare substring — a foreground
+        Settings screen named KeyguardSettingsActivity or
+        EmergencyInfoActivity sits on an unlocked phone, and a bare
+        "emergency"/"keyguard" match would refuse every run opened from
+        there. What reads as locked: any package carrying "keyguard"
+        (SystemUI's com.android.systemui.keyguard), SystemUI itself with
+        a keyguard class (the shorthand root form
+        com.android.systemui/.KeyguardService predates that move and
+        carries no keyguard segment to substring), the AOSP emergency
+        app family (com.android.emergency), and an emergency dialer,
+        call, or info class name outside Settings — AOSP's
+        com.android.phone/.EmergencyInfoActivity composes over the
+        keyguard exactly like the dialer, while Settings' own
+        EmergencyInfoActivity is a plain foreground screen. Build-specific
+        fields that vanish read as unlocked, preserving the pre-guard
+        behavior."""
         window = self.shell("dumpsys window")
         if "isKeyguardShowing=true" in window or "mDreamingLockscreen=true" in window:
             return True
@@ -338,13 +347,21 @@ class Device:
                 ("topResumedActivity=", "ResumedActivity:", "Resumed:")
             ):
                 continue
-            lowered = stripped.lower()
-            if (
-                "emergencydialer" in lowered
-                or "emergencycall" in lowered
-                or "com.android.emergency" in lowered
-                or "keyguard." in lowered
-            ):
+            match = RESUMED_COMPONENT.search(stripped)
+            if match is None:
+                continue
+            package, activity = match.groups()
+            package = package.lower()
+            activity = activity.rsplit(".", 1)[-1].lower()
+            if "keyguard" in package:
+                return True
+            if package == "com.android.systemui" and activity.startswith("keyguard"):
+                return True
+            if package.startswith("com.android.emergency"):
+                return True
+            if activity.startswith(
+                ("emergencydialer", "emergencycall", "emergencyinfo")
+            ) and not package.startswith("com.android.settings"):
                 return True
         return False
 

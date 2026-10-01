@@ -170,14 +170,48 @@ class LockedTest(unittest.TestCase):
         self.assertFalse(device.locked())
 
     def test_systemui_keyguard_component_reads_locked(self):
-        # The keyguard-package segment ("keyguard.") catches a SystemUI
-        # keyguard activity reported as resumed instead of a dialer —
-        # including the shorthand component form, where the segment is
-        # all that distinguishes it from any other service.
+        # The package/class pair rules catch a SystemUI keyguard activity
+        # reported as resumed instead of a dialer — including the
+        # shorthand component form, where the class name alone carries
+        # the keyguard identity.
         device = canned_device(
             "isKeyguardShowing=false",
             "  ResumedActivity: ActivityRecord{7 u0 com.android.systemui/"
             ".keyguard.ui.KeyguardService t2}",
+        )
+        self.assertTrue(device.locked())
+
+    def test_systemui_shorthand_keyguard_component_reads_locked(self):
+        # AOSP shipped this root-package shorthand before the
+        # com.android.systemui.keyguard move: no "keyguard." segment
+        # exists to substring, so only the pair rule (systemui package +
+        # keyguard class name) can read it as locked.
+        device = canned_device(
+            "isKeyguardShowing=false",
+            "  ResumedActivity: ActivityRecord{7 u0 com.android.systemui/"
+            ".KeyguardService t2}",
+        )
+        self.assertTrue(device.locked())
+
+    def test_phone_package_emergency_info_reads_locked(self):
+        # AOSP's com.android.phone/.EmergencyInfoActivity is reached from
+        # the dialer and composes over the keyguard like the dialer does;
+        # the class-name rule must catch it while Settings' same-named
+        # screen stays unlocked below.
+        device = canned_device(
+            "isKeyguardShowing=false mDreamingLockscreen=false",
+            "  topResumedActivity=ActivityRecord{9 u0 com.android.phone/"
+            ".EmergencyInfoActivity t6}",
+        )
+        self.assertTrue(device.locked())
+
+    def test_standalone_emergency_app_reads_locked(self):
+        # The standalone AOSP emergency app: the package rule covers any
+        # activity it reports, whatever its class is named.
+        device = canned_device(
+            "isKeyguardShowing=false mDreamingLockscreen=false",
+            "  topResumedActivity=ActivityRecord{9 u0 com.android.emergency/"
+            ".EmergencyInfoActivity t6}",
         )
         self.assertTrue(device.locked())
 

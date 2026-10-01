@@ -217,14 +217,17 @@ fun AgentStage(
     // also assigns the loaded snippets, so the bar's first frame carries the
     // real chip row, not an empty one.
     val barShown = (commandBarOverride != null || settingsLoaded) && commandBarEnabled
-    // Which bar visibility the current stageSize was measured under. The
-    // initializer mirrors the first frame's rendered state (only an override
-    // can show the bar before the read lands), so the pair starts agreeing
-    // in the no-bar cases and never waits on a relayout that will not come.
-    // With the bar saved on and no override, the first measurement is the
-    // short one but arrives only after the read settles the bar into the
-    // layout; fit() holds the open until the pair agrees, so the session
-    // opens once at the geometry the user configured.
+    // Which bar visibility the current stageSize was measured under — the
+    // RENDERED visibility (barShown), not the raw setting. Until the read
+    // settles, no bar renders, so every pre-read measurement is a tall
+    // one taken under bar-off; recording the raw (default-on) setting
+    // here would pair that measurement with a with-bar provenance: a
+    // saved-on entry would open tall and resize once the bar lands, and a
+    // saved-off entry would never agree (nothing re-measures when the bar
+    // never renders), wedging the session closed forever. The initializer
+    // mirrors the first frame's rendered state, so the pair starts
+    // agreeing in the override cases and never waits on a relayout that
+    // will not come.
     var laidOutBarEnabled by remember { mutableStateOf(commandBarOverride == true) }
     val keyboardShown = WindowInsets.isImeVisible
     val composerFocus = remember { FocusRequester() }
@@ -294,10 +297,15 @@ fun AgentStage(
         // Until the saved settings land, the geometry is the default's, not
         // the user's; opening now means a resize the moment they apply.
         if (!settingsLoaded) return
-        // Nor may a size measured under the bar's default visibility open
-        // the session: with the bar saved off, the first measurement is
-        // short, and only the relayout after the saved value applies
-        // carries the geometry the user configured.
+        // Nor may a size measured under a bar visibility other than the
+        // configured one open the session. The provenance flag records
+        // the visibility the bar was rendered under at measurement time:
+        // with the bar saved on, the pre-read measurement is tall (no bar
+        // renders until the read settles), so the pair disagrees until
+        // the bar's own relayout delivers the short geometry — one open,
+        // at the configured size. With the bar saved off, the tall
+        // pre-read measurement already matches and the session opens as
+        // soon as the read lands.
         if (laidOutBarEnabled != commandBarEnabled) return
         if (stageSize.width <= 0 || stageSize.height <= 0) return
         val grid = metrics.grid(stageSize.width.toFloat(), stageSize.height.toFloat())
@@ -321,9 +329,10 @@ fun AgentStage(
     // settingsLoaded is a key: the gate itself releases fit() when the
     // saved values have applied, including when the stage size never
     // changed (saved state equal to the defaults). The bar pair is keyed
-    // the same way: a saved-off entry holds fit() through the bar's
-    // departure and releases it on the relayout, while a saved-on entry
-    // finds the pair already matching and fits immediately.
+    // the same way: a saved-on entry holds fit() from the read until the
+    // bar's relayout records the short geometry, while a saved-off entry
+    // agrees at the read itself — its tall pre-read measurement was
+    // taken under bar-off.
     LaunchedEffect(session, stageSize, settingsLoaded, laidOutBarEnabled, commandBarEnabled) { fit() }
     LaunchedEffect(session, fontSize) { fit(force = true) }
     // Escape hatch for the provenance gate above: onSizeChanged releases it
@@ -425,10 +434,16 @@ fun AgentStage(
                     .fillMaxWidth()
                     .onSizeChanged {
                         stageSize = it
-                        // The size and the bar state that produced it must
-                        // move together, or fit() would compare a new size
-                        // against a stale provenance.
-                        laidOutBarEnabled = commandBarEnabled
+                        // The size and the bar visibility that produced it
+                        // must move together, or fit() would compare a new
+                        // size against a stale provenance. barShown, not
+                        // commandBarEnabled: this callback runs during the
+                        // layout of the composition that installed it, and
+                        // that composition's barShown is the visibility the
+                        // measurement was actually taken under — the raw
+                        // setting can disagree with it for the whole
+                        // pre-read window.
+                        laidOutBarEnabled = barShown
                     }
                     .pointerInput(Unit) {
                         detectTapGestures { composerFocus.requestFocus() }

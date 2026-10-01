@@ -38,8 +38,12 @@ import dev.lapis.remote.ui.LapisColors
  * The permanent command bar below the stage: the fixed key row and the
  * user's snippet row. Compact widths scroll each row horizontally;
  * expanded widths (840dp and wider) wrap the same chips into fuller
- * rows. Chips are inert while the attachment is not live; long-pressing
- * a snippet (or tapping +) opens the editor, which works offline.
+ * rows. Chips are inert while the attachment is not live — the tap and
+ * the long-press disable together with the send action, so TalkBack
+ * never announces a dead activation; the + chip stays enabled and opens
+ * the same editor, which is pure phone state, so editing the list
+ * (adding, rewriting, reordering, deleting) still works offline
+ * through it.
  */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
