@@ -887,9 +887,17 @@ def checks(device, mac, screens):
                 time.sleep(0.3)
             already_open = device.find(id="command-bar-setting") is not None
             try:
-                set_switch(True, already_open=already_open)
-            except Exception:
-                pass
+                restore_problem = set_switch(True, already_open=already_open)
+            except Exception as error:
+                restore_problem = f"restore raised {error!r}"
+            if restore_problem is not None:
+                # The original failure still owns the receipt; say the
+                # restore failed too so the leftover off state is
+                # diagnosable from the run log instead of silent.
+                print(
+                    f"restore left the setting off: {restore_problem}",
+                    file=sys.stderr,
+                )
 
     def check_crash():
         crashes = device.crash_lines()
