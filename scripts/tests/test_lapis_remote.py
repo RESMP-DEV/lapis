@@ -699,6 +699,53 @@ class ListingTests(unittest.TestCase):
             }
         )
 
+    def test_running_follows_the_agent_not_the_listing_order(self):
+        """Probes answer in registry order while the listing groups by
+        category; an agents array that interleaves categories must not let a
+        running answer land on the neighbouring agent."""
+        runtime = Path(tempfile.mkdtemp(prefix="lr-", dir="/tmp"))
+        self.addCleanup(shutil.rmtree, runtime, True)
+        registry = json.dumps(
+            {
+                "version": 2,
+                "activeCategory": "one",
+                "categories": [
+                    {"id": "one", "name": "one"},
+                    {"id": "two", "name": "two"},
+                ],
+                "agents": [
+                    {
+                        "id": "later",
+                        "title": "later",
+                        "category": "two",
+                        "endpoint": str(runtime / "later.sock"),
+                    },
+                    {
+                        "id": "first",
+                        "title": "first",
+                        "category": "one",
+                        "endpoint": str(runtime / "first.sock"),
+                    },
+                ],
+            }
+        )
+
+        def probes(targets, *, deadline):
+            return [target.endswith("first.sock") for target in targets]
+
+        real_probes = remote.run_bounded_probes
+        remote.run_bounded_probes = probes
+        self.addCleanup(setattr, remote, "run_bounded_probes", real_probes)
+        with Server(self, registry, runtime=runtime) as server:
+            status, listed = server.request("GET", "/api/agents")
+            self.assertEqual(status, 200)
+            running = {
+                agent["id"]: agent["running"]
+                for category in listed["categories"]
+                for agent in category["agents"]
+            }
+            self.assertEqual(running, {"first": True, "later": False})
+
     def test_a_change_on_the_mac_answers_a_waiting_phone(self):
         wait = remote.LISTING_WAIT
         remote.LISTING_WAIT = 1.5

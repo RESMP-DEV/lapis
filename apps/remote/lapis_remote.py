@@ -2344,7 +2344,11 @@ class Handler(BaseHTTPRequestHandler):
         if probes is None:
             self.fail(HTTPStatus.SERVICE_UNAVAILABLE, LISTING_TIMEOUT_MESSAGE)
             return
-        probe = iter(probes)
+        # Probes answer in registry order; the listing groups by category, so
+        # pair each answer with its agent before any regrouping.
+        running = {
+            agent["id"]: answer for agent, answer in zip(workspace["agents"], probes)
+        }
         for category in workspace["categories"]:
             agents = [
                 {
@@ -2354,7 +2358,7 @@ class Handler(BaseHTTPRequestHandler):
                     "directory": agent["directory"],
                     "machine": display_place(agent)[0],
                     "place": display_place(agent)[1],
-                    "running": next(probe),
+                    "running": running[agent["id"]],
                     "onPhone": self.gateway.session(agent["id"]) is not None,
                 }
                 for agent in workspace["agents"]
