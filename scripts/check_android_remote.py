@@ -506,6 +506,12 @@ def checks(device, mac, screens):
     # failing with messages that blame the wrong interaction.
     wedged = {"busy": False}
 
+    # Observations a check wants preserved in the receipt without failing
+    # anything: settings_toggle notes the restore's absorbed retry here, so
+    # a retry-dependent pass stays distinguishable from an uneventful one
+    # in remote-check.json rather than only on the terminal.
+    notes: list[str] = []
+
     def shot(name):
         device.screenshot(screens / f"{name}.png")
 
@@ -972,20 +978,19 @@ def checks(device, mac, screens):
                 # state it leaves behind is unknown — the next run's
                 # opening set_switch(True) realigns it either way.
                 restore_problem = f"restore raised {type(error).__name__}: {error}"
-                if retried_after is not None:
-                    # Carry the retry into the receipt's failure text too,
-                    # not just the run log: "raised" alone would read as a
-                    # first-try raise rather than a wedged second one.
-                    restore_problem += (
-                        f" on the second attempt (the first had raised {retried_after})"
-                    )
+        # Attached where the verdict text is composed, never to
+        # restore_problem itself: the PROBE_SHAPED membership test below
+        # compares the pristine producer message.
+        retried = (
+            f" (after a first restore attempt that raised {retried_after})"
+            if retried_after is not None
+            else ""
+        )
         if restore_problem is not None:
             # Neutral wording on purpose: a restore problem can occur with
             # the setting already stored on (a lost Done tap), so this
             # reports what went unconfirmed, never a state it cannot know.
-            restore_note = (
-                f"the settings-toggle restore did not confirm: {restore_problem}"
-            )
+            restore_note = f"the settings-toggle restore did not confirm: {restore_problem}{retried}"
             if problem is None and restore_problem in PROBE_SHAPED:
                 # The product assertions passed and the restore could not
                 # even act — a harness condition, not a defect verdict. The
@@ -1000,6 +1005,14 @@ def checks(device, mac, screens):
                 return f"SKIPPED: {restore_note}"
             return (
                 restore_note if problem is None else f"{problem}; also, {restore_note}"
+            )
+        if retried_after is not None:
+            # The only retry outcome no verdict string above can carry:
+            # everything passed. The receipt's notes list is where that
+            # pass says it needed the retry.
+            notes.append(
+                f"settings_toggle: the restore's first attempt raised "
+                f"{retried_after}; the settle-and-retry then restored the switch"
             )
         return problem
 
@@ -1022,7 +1035,7 @@ def checks(device, mac, screens):
         "snippets": check_snippets,
         "settings_toggle": check_settings_toggle,
         "crash": check_crash,
-    }
+    }, notes
 
 
 def main():
@@ -1124,7 +1137,7 @@ def main():
         mac = MacClient(echo)
         mac.start()
 
-        available = checks(device, mac, screens)
+        available, notes = checks(device, mac, screens)
         chosen = arguments.only or list(available)
         for name in chosen:
             if name not in available:
@@ -1163,10 +1176,13 @@ def main():
             "failed": [name for name, _ in failed],
             "failures": {name: problem for name, problem in failed},
             "skipped": skipped,
+            "notes": notes,
             "mac_saw_phone": saw_phone,
             "mac_closed_by": closed_by,
             "grids": grids,
         }
+        for note in notes:
+            print(f"[note] {note}", flush=True)
         print(f"screens {screens}")
         print(f"Mac grids seen: {grids}")
         # Written before the Mac client stops: teardown problems must not
