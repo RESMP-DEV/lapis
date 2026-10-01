@@ -3400,7 +3400,9 @@ token or Codex home. The workspace supplies the exact credential location throug
 `agentPlanCredential()`, including custom roots, rather than deriving a second
 path in the reset controller. Missing credentials or a changed provider identity
 refuse the operation. Local Claude keychain data travels on stdin and never silently falls
-back to a different credential file.
+back to a different credential file. Automatic sweeps skip that target: Claude Code
+rewrites the keychain item on each sign-in refresh, dropping "Always Allow", so in use
+every five-minute read raised the login-password prompt. Only an asked reset reads it.
 
 The helper retains the restore/salvage policy from OMP: restore when a window is
 at least 99.9% used, remains blocked for `minBlockedMinutes`, and the selected

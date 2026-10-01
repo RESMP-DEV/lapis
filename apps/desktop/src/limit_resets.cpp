@@ -44,6 +44,13 @@ QString quoted(const QString& word) {
     return QLatin1Char('\'') + QString(word).replace(QLatin1Char('\''), QStringLiteral("'\\''")) +
            QLatin1Char('\'');
 }
+// This Mac's own Claude Code sign-in lives in the keychain. Claude Code
+// rewrites that item whenever it refreshes the sign-in, which drops any
+// "Always Allow", so every read can ask for the login password.
+bool readsKeychain(const LimitResets::AgentTarget& t) {
+    return t.credential.isEmpty() && t.machine.isEmpty() && t.cli == QLatin1String("claude") &&
+           (t.account.isEmpty() || (t.hasHome && t.home.isEmpty()));
+}
 QString targetKey(const LimitResets::AgentTarget& target) {
     const QJsonArray identity{target.machine, target.cli, target.account, target.home,
                               target.hasHome};
@@ -177,7 +184,8 @@ void LimitResets::sweep() {
     QSet<QString> seen;
     for (const auto& target : agents_()) {
         const auto key = targetKey(target);
-        if (!supported(target.cli) || seen.contains(key))
+        // Only a reset the person asks for may raise the keychain prompt.
+        if (!supported(target.cli) || seen.contains(key) || readsKeychain(target))
             continue;
         seen.insert(key);
         run(target, false);
@@ -250,11 +258,7 @@ bool LimitResets::loadState(const std::shared_ptr<Run>& pending) {
     return true;
 }
 void LimitResets::readCredentials(const std::shared_ptr<Run>& pending) {
-    const auto& t = pending->target;
-    const bool ownClaude = t.credential.isEmpty() && t.machine.isEmpty() &&
-                           t.cli == QLatin1String("claude") &&
-                           (t.account.isEmpty() || (t.hasHome && t.home.isEmpty()));
-    if (!ownClaude || !credentials_) {
+    if (!readsKeychain(pending->target) || !credentials_) {
         start(pending);
         return;
     }
