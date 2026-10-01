@@ -118,11 +118,15 @@ def run(command, line):
                 say(f"busy {printed}")
                 time.sleep(1.5)
         except KeyboardInterrupt:
-            # A second ^C during the report would raise a nested
-            # KeyboardInterrupt and lose the line the device check greps
-            # for; the finally restores the real handler either way.
+            # Ignore a second ^C only for the report write itself: the
+            # line is what the device check greps for, but the write
+            # blocks on the PTY, and holding SIG_IGN across it would
+            # close the ^C escape hatch the suite's failure recovery
+            # uses when the phone side stops draining. (SIG_IGN also
+            # survives exec, so never spawn a child from this path.)
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             say(f"busy interrupted after {printed} lines")
+            signal.signal(signal.SIGINT, previous)
         finally:
             signal.signal(signal.SIGINT, previous)
     elif command == "flood":
