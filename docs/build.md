@@ -78,7 +78,9 @@ the baseline unchanged; a missing baseline is reported explicitly and older
 releases are not all marked new. `--state` selects an isolated baseline,
 `--timeout` bounds each network wait, and response bytes are capped at 2 MiB.
 Read/write or feed errors exit 1, invalid arguments exit 2, and successful checks
-exit 0. Recording replaces the baseline atomically. The CLI creates no scheduled
+exit 0. Recording replaces the baseline atomically, refuses a feed that parsed to
+no entries, replaces an unreadable baseline instead of failing, and follows
+redirects only within the feed's own host. The CLI creates no scheduled
 job. Release notes suggest what to probe; they do not qualify the installed
 adapter's runtime behavior.
 

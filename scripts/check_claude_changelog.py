@@ -4,20 +4,25 @@ Fetches the feed, diffs entries against the high-water state in
 runtime/changelog-watch/claude-code.json, and reports new releases. The
 default run is read-only; --record writes the fetched entries as the new
 baseline. The first run on a missing state file reports nothing as new,
-and says that no baseline exists unless --record creates one. Exit codes:
-0 on success (including "no new releases"), 1 when the feed or state
-cannot be read or written. Feed responses are capped at MAX_FEED_BYTES.
+and says that no baseline exists unless --record creates one. A recording
+run also replaces a malformed baseline, and refuses to record a feed that
+parsed to no entries. Exit codes: 0 on success (including "no new
+releases"), 1 when the feed or state cannot be read or written. Feed
+responses are capped at MAX_FEED_BYTES, and redirects are followed only
+while they stay on the feed's own host.
 
     uv run --no-project python scripts/check_claude_changelog.py --json
     uv run --no-project python scripts/check_claude_changelog.py --record
 """
 
 import argparse
+import http.client
 import json
 import math
 import os
 import sys
 import tempfile
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -36,6 +41,49 @@ SUMMARY_CHARS = 1600
 USER_AGENT = "lapis-changelog-watcher/1.0"
 ATOM = "{http://www.w3.org/2005/Atom}"
 CONTENT_ENCODED = "{http://purl.org/rss/1.0/modules/content/}encoded"
+# expat rejects C0 controls, but XML character references can still smuggle
+# C1 controls (for example the one-byte CSI 0x9b) into element text. Strip
+# every C0/C1 control except tab/LF/CR from feed-controlled text before it
+# is stored or printed.
+_FEED_CONTROL_CHARS = "".join(
+    chr(code)
+    for code in (*range(0x20), *range(0x7F, 0xA0))
+    if code not in (0x09, 0x0A, 0x0D)
+)
+_STRIP_FEED_CONTROLS = str.maketrans("", "", _FEED_CONTROL_CHARS)
+# Closing one of these tags separates words; without it html_text glues
+# adjacent blocks together ("First itemSecond item").
+_BLOCK_TAGS = frozenset(
+    {
+        "address",
+        "article",
+        "blockquote",
+        "br",
+        "dd",
+        "div",
+        "dl",
+        "dt",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "li",
+        "main",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "tr",
+        "ul",
+    }
+)
+
+
+def _clean(text: str) -> str:
+    return text.translate(_STRIP_FEED_CONTROLS)
 
 
 class ChangelogError(Exception):
@@ -68,12 +116,45 @@ class _TextExtractor(HTMLParser):
     def handle_data(self, data: str) -> None:
         self.chunks.append(data)
 
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _BLOCK_TAGS:
+            self.chunks.append(" ")
+
 
 def html_text(markup: str) -> str:
     """Return the visible text of an HTML fragment as one collapsed line."""
     extractor = _TextExtractor()
     extractor.feed(markup)
     return " ".join("".join(extractor.chunks).split())
+
+
+class _SameHostRedirectPolicy(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only while they stay on the feed's own host.
+
+    A feed URL is operator-supplied, but the feed's content is not trusted:
+    without this, a compromised or spoofed feed endpoint could redirect the
+    fetch to an unrelated host.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        target = urllib.parse.urlsplit(newurl)
+        origin = urllib.parse.urlsplit(req.full_url)
+        if target.hostname is None or target.hostname != origin.hostname:
+            raise ChangelogError(
+                f"feed redirected to another host ({newurl}); refusing to follow"
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_FEED_OPENER = urllib.request.build_opener(_SameHostRedirectPolicy)
 
 
 def fetch_feed(url: str, timeout: float) -> bytes:
@@ -85,9 +166,11 @@ def fetch_feed(url: str, timeout: float) -> bytes:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _FEED_OPENER.open(request, timeout=timeout) as response:
             payload = response.read(MAX_FEED_BYTES + 1)
-    except OSError as error:
+    except (OSError, http.client.HTTPException, ValueError) as error:
+        # ValueError covers an unsupported URL scheme; HTTPException covers
+        # a peer that answers with something that is not HTTP.
         raise ChangelogError(f"could not fetch {url}: {error}") from error
     if len(payload) > MAX_FEED_BYTES:
         raise ChangelogError(f"feed response exceeds the {MAX_FEED_BYTES}-byte limit")
@@ -104,7 +187,7 @@ def _child(item: ET.Element, *names: str) -> ET.Element | None:
 
 def _text(item: ET.Element, *names: str) -> str:
     node = _child(item, *names)
-    return (node.text or "").strip() if node is not None else ""
+    return _clean((node.text or "").strip()) if node is not None else ""
 
 
 def _iso(date_text: str) -> str | None:
@@ -119,35 +202,63 @@ def _iso(date_text: str) -> str | None:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _names(namespace: str, *names: str) -> list[str]:
+    """Candidate child tags in lookup order, each kept once.
+
+    Plain names also get the document's namespace prefix, so a feed that
+    declares a default namespace still parses; already-qualified names are
+    used as given.
+    """
+    candidates: list[str] = []
+    for name in names:
+        if namespace and not name.startswith("{"):
+            candidates.append(f"{namespace}{name}")
+        candidates.append(name)
+    return list(dict.fromkeys(candidates))
+
+
 def parse_feed(data: bytes) -> list[Entry]:
     """Parse RSS 2.0 or Atom entries, newest first as delivered."""
     try:
         root = ET.fromstring(data)
     except ET.ParseError as error:
         raise ChangelogError(f"feed is not valid XML: {error}") from error
-    if root.tag == "rss" and root.find("channel") is not None:
-        items = root.findall("./channel/item")
-    elif root.tag == f"{ATOM}feed":
-        items = root.findall(f"./{ATOM}entry")
+    local_name = root.tag.rsplit("}", 1)[-1]
+    namespace = root.tag[: len(root.tag) - len(local_name)]
+    if local_name == "rss" and root.find(f"{namespace}channel") is not None:
+        items = root.findall(f"./{namespace}channel/{namespace}item")
+    elif local_name == "feed":
+        items = root.findall(f"./{namespace}entry")
     else:
         raise ChangelogError("response is not an RSS or Atom feed")
+    title_names = _names(namespace, "title", f"{ATOM}title")
+    link_names = _names(namespace, "link", f"{ATOM}link")
+    guid_names = _names(namespace, "guid", f"{ATOM}id")
+    date_names = _names(namespace, "pubDate", f"{ATOM}published", f"{ATOM}updated")
+    # content:encoded carries the full entry body; description is the fallback.
+    body_names = list(
+        dict.fromkeys(
+            [CONTENT_ENCODED, *_names(namespace, "description", f"{ATOM}content")]
+        )
+    )
     entries = []
     for item in items:
-        title = _text(item, "title", f"{ATOM}title") or "untitled"
-        link_node = _child(item, "link", f"{ATOM}link")
+        title = _text(item, *title_names) or "untitled"
+        link_node = _child(item, *link_names)
         link = ""
         if link_node is not None:
-            link = (link_node.text or "").strip() or link_node.get("href", "")
-        guid = _text(item, "guid", f"{ATOM}id") or link or title
-        published = _iso(
-            _text(item, "pubDate")
-            or _text(item, f"{ATOM}published")
-            or _text(item, f"{ATOM}updated")
-        )
-        body = _child(item, CONTENT_ENCODED, "description", f"{ATOM}content")
-        summary = (
-            html_text(body.text or "")[:SUMMARY_CHARS] if body is not None else None
-        )
+            link = _clean((link_node.text or "").strip() or link_node.get("href", ""))
+        guid = _text(item, *guid_names) or link or title
+        published = _iso(_text(item, *date_names))
+        body = _child(item, *body_names)
+        summary = None
+        if body is not None:
+            visible = _clean(html_text(body.text or ""))
+            summary = (
+                visible
+                if len(visible) <= SUMMARY_CHARS
+                else visible[:SUMMARY_CHARS] + "…"
+            )
         entries.append(
             Entry(
                 guid=guid,
@@ -195,11 +306,31 @@ def new_entries(entries: list[Entry], state: dict[str, Any] | None) -> list[Entr
     return [entry for entry in entries if entry.guid not in seen]
 
 
+def _fsync_directory(directory: Path) -> None:
+    """Best-effort directory sync so a replace survives a crash."""
+    try:
+        descriptor = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)
+
+
 def record_state(path: Path, feed_url: str, entries: list[Entry]) -> dict[str, Any]:
+    # Every guid is kept, so an entry that falls out of the detailed window
+    # is never re-reported as new; only the newest KEEP_ENTRIES keep their
+    # full record (title, link, date, summary).
     payload = {
         "feed": feed_url,
         "updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "entries": [entry.as_dict() for entry in entries[:KEEP_ENTRIES]],
+        "entries": [
+            entry.as_dict() if index < KEEP_ENTRIES else {"guid": entry.guid}
+            for index, entry in enumerate(entries)
+        ],
     }
     body = json.dumps(payload, indent=2) + "\n"
     temporary: Path | None = None
@@ -218,21 +349,34 @@ def record_state(path: Path, feed_url: str, entries: list[Entry]) -> dict[str, A
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+        _fsync_directory(path.parent)
     except OSError as error:
         if temporary is not None:
             try:
                 temporary.unlink(missing_ok=True)
             except OSError as cleanup_error:
-                raise ChangelogError(
-                    f"could not record state file {path}: {error}; "
-                    f"temporary cleanup failed: {cleanup_error}"
-                ) from error
+                # A second attempt covers a transient failure; if it also
+                # fails, name the orphaned file so it can be removed by hand.
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    raise ChangelogError(
+                        f"could not record state file {path}: {error}; "
+                        f"temporary {temporary} left behind: {cleanup_error}"
+                    ) from error
         raise ChangelogError(f"could not record state file {path}: {error}") from error
     return payload
 
 
 def collect(args: argparse.Namespace) -> dict[str, Any]:
-    state = load_state(args.state)
+    try:
+        state = load_state(args.state)
+    except ChangelogError:
+        # --record replaces the baseline, so an unreadable one does not have
+        # to be repaired by hand first.
+        if not args.record:
+            raise
+        state = None
     entries = parse_feed(fetch_feed(args.feed, args.timeout))
     first_run = state is None
     fresh = new_entries(entries, state)
@@ -247,6 +391,10 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         "recorded": False,
     }
     if args.record:
+        if not entries:
+            raise ChangelogError(
+                "feed parsed but held no entries; refusing to record an empty baseline"
+            )
         record_state(args.state, args.feed, entries)
         result["recorded"] = True
     return result
@@ -267,7 +415,9 @@ def report(result: dict[str, Any]) -> None:
     for entry in result["new_entries"]:
         when = f" ({entry['published']})" if entry["published"] else ""
         print(f"NEW {entry['title']}{when} {entry['link']}")
-    if not result["initialized"] and not result["new_entries"] and latest:
+    # A first run has nothing to compare against, so it must not claim the
+    # baseline is up to date.
+    if not result["first_run"] and not result["new_entries"] and latest:
         print(f"No new releases since {latest['title']}.")
     if result.get("recorded"):
         print(f"Recorded baseline in {result['state']}.")

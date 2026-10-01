@@ -1,14 +1,17 @@
 """Unit coverage for the Claude Code changelog watcher."""
 
-import json
+import http.client
+import http.server
 import io
+import json
 import sys
 import tempfile
+import threading
 import unittest
 from collections.abc import Sequence
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
-from contextlib import redirect_stderr, redirect_stdout
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_claude_changelog as watcher
@@ -35,6 +38,43 @@ FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
   </channel>
 </rss>
 """
+
+
+ATOM_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Claude Code changelog</title>
+  <entry>
+    <title>2.1.286</title>
+    <link rel="alternate" href="https://code.claude.com/docs/en/changelog#2-1-286"/>
+    <id>tag:claude,2026:2.1.286</id>
+    <published>2026-09-27T11:00:00Z</published>
+    <content type="html">&lt;p&gt;Atom entry body&lt;/p&gt;</content>
+  </entry>
+</feed>
+"""
+
+NAMESPACED_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns="http://example.invalid/rss">
+  <channel>
+    <item>
+      <title>2.1.287</title>
+      <link>https://code.claude.com/docs/en/changelog#2-1-287</link>
+      <guid>abc127</guid>
+      <pubDate>Sun, 27 Sep 2026 12:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>
+"""
+
+
+def items_feed(count: int) -> bytes:
+    items = "".join(
+        f"<item><title>2.1.{280 + index}</title><guid>g{index}</guid></item>"
+        for index in range(count)
+    )
+    return (
+        f'<?xml version="1.0"?><rss version="2.0"><channel>{items}</channel></rss>'
+    ).encode()
 
 
 def recorded_state(path: Path, guids: list[str]) -> None:
@@ -64,6 +104,50 @@ class ParseFeedTests(unittest.TestCase):
     def test_summary_uses_description_when_content_encoded_is_missing(self) -> None:
         entries = parse_feed(FEED)
         self.assertEqual(entries[1].summary, "Added and removed things")
+
+    def test_parses_atom_entries(self) -> None:
+        entries = parse_feed(ATOM_FEED)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].guid, "tag:claude,2026:2.1.286")
+        self.assertEqual(
+            entries[0].link, "https://code.claude.com/docs/en/changelog#2-1-286"
+        )
+        self.assertEqual(entries[0].published, "2026-09-27T11:00:00Z")
+        self.assertEqual(entries[0].summary, "Atom entry body")
+
+    def test_parses_rss_that_declares_a_default_namespace(self) -> None:
+        entries = parse_feed(NAMESPACED_FEED)
+        self.assertEqual([entry.guid for entry in entries], ["abc127"])
+        self.assertEqual(entries[0].title, "2.1.287")
+        self.assertEqual(entries[0].published, "2026-09-27T12:00:00Z")
+
+    def test_separates_adjacent_block_elements(self) -> None:
+        feed = FEED.replace(
+            b"<ul><li>Changed <code>stream-json</code> init events &amp; headers</li></ul>",
+            b"<ul><li>First item</li><li>Second item</li></ul>",
+        )
+        entries = parse_feed(feed)
+        self.assertEqual(entries[0].summary, "First item Second item")
+
+    def test_strips_c1_controls_from_feed_text(self) -> None:
+        # expat admits C1 controls both as character references and as raw
+        # bytes. The HTML entity path remaps &#155; to a printable glyph, so
+        # a raw CSI byte is what reaches the summary.
+        feed = FEED.replace(
+            b"<title><![CDATA[2.1.284]]></title>",
+            b"<title>2.1.284&#155;31m</title>",
+        ).replace(
+            b"<li>Changed <code>stream-json</code> init events &amp; headers</li>",
+            b"<li>Changed \xc2\x9b31mthings</li>",
+        )
+        entries = parse_feed(feed)
+        self.assertEqual(entries[0].title, "2.1.28431m")
+        self.assertEqual(entries[0].summary, "Changed 31mthings")
+
+    def test_marks_a_truncated_summary(self) -> None:
+        with patch.object(watcher, "SUMMARY_CHARS", 10):
+            entries = parse_feed(FEED)
+        self.assertEqual(entries[0].summary, "Changed st…")
 
     def test_rejects_invalid_xml(self) -> None:
         with self.assertRaises(ChangelogError):
@@ -107,16 +191,90 @@ class _FeedResponse:
         return self.payload[:size]
 
 
+class _StubOpener:
+    def __init__(self, response: object = None, error: Exception | None = None) -> None:
+        self.response = response
+        self.error = error
+
+    def open(self, request: object, timeout: float | None = None) -> object:
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+
+def _feed_handler(redirect_to: str) -> type[http.server.BaseHTTPRequestHandler]:
+    class FeedHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - http.server dispatch name
+            if self.path == "/redirect":
+                host, port = self.server.server_address[:2]
+                self.send_response(302)
+                self.send_header(
+                    "Location", redirect_to or f"http://{host}:{port}/feed"
+                )
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/rss+xml")
+            self.send_header("Content-Length", str(len(FEED)))
+            self.end_headers()
+            self.wfile.write(FEED)
+
+        def log_message(self, format: str, *args: object) -> None:
+            """Keep the test output free of per-request lines."""
+
+    return FeedHandler
+
+
+class _FeedHTTPServer:
+    """Serves FEED at /feed and a 302 at /redirect from a daemon thread."""
+
+    def __init__(self, redirect_to: str | None) -> None:
+        self._server = http.server.ThreadingHTTPServer(
+            ("127.0.0.1", 0), _feed_handler(redirect_to or "")
+        )
+        host, port = self._server.server_address[:2]
+        self.redirect_url = f"http://{host}:{port}/redirect"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    def __enter__(self) -> "_FeedHTTPServer":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=5)
+        return None
+
+
 class FetchFeedTests(unittest.TestCase):
     def test_rejects_body_over_named_limit_before_parsing(self) -> None:
         response = _FeedResponse(b"<rss>too-large</rss>")
         with (
             patch.object(watcher, "MAX_FEED_BYTES", 4),
-            patch.object(watcher.urllib.request, "urlopen", return_value=response),
+            patch.object(watcher, "_FEED_OPENER", _StubOpener(response)),
         ):
             with self.assertRaisesRegex(ChangelogError, "4-byte limit"):
                 watcher.fetch_feed("https://example.invalid/feed", 0.1)
         self.assertEqual(response.read_size, 5)
+
+    def test_non_http_and_value_errors_become_changelog_errors(self) -> None:
+        for error in (http.client.BadStatusLine("nonsense"), ValueError("unknown url")):
+            with self.subTest(error=error):
+                with patch.object(watcher, "_FEED_OPENER", _StubOpener(error=error)):
+                    with self.assertRaisesRegex(ChangelogError, "could not fetch"):
+                        watcher.fetch_feed("https://example.invalid/feed", 0.1)
+
+    def test_redirect_to_another_host_is_refused(self) -> None:
+        with _FeedHTTPServer(redirect_to="http://example.invalid/feed") as server:
+            with self.assertRaisesRegex(ChangelogError, "another host"):
+                watcher.fetch_feed(server.redirect_url, 1.0)
+
+    def test_redirect_on_the_same_host_is_followed(self) -> None:
+        with _FeedHTTPServer(redirect_to=None) as server:
+            payload = watcher.fetch_feed(server.redirect_url, 1.0)
+        self.assertEqual(parse_feed(payload)[0].guid, "abc124")
 
 
 class NewEntriesTests(unittest.TestCase):
@@ -182,6 +340,65 @@ class CollectTests(unittest.TestCase):
             self.assertFalse(result["initialized"])
             self.assertFalse(result["first_run"])
             self.assertEqual(result["new_entries"], [])
+
+    def test_keeps_every_guid_beyond_the_detailed_window(self) -> None:
+        feed = items_feed(4)
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(watcher, "KEEP_ENTRIES", 3):
+                _, state_path = self.run_collect(
+                    directory, feed=feed, argv=("--record",)
+                )
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    [entry["guid"] for entry in state["entries"]],
+                    ["g0", "g1", "g2", "g3"],
+                )
+                self.assertEqual(state["entries"][3], {"guid": "g3"})
+                result, _ = self.run_collect(directory, feed=feed)
+            self.assertEqual(result["new_entries"], [])
+            self.assertFalse(result["first_run"])
+
+    def test_first_run_does_not_claim_the_baseline_is_current(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "claude-code.json"
+            output = io.StringIO()
+            with patch.object(watcher, "fetch_feed", return_value=FEED):
+                with redirect_stdout(output):
+                    self.assertEqual(watcher.main(["--state", str(state_path)]), 0)
+            self.assertIn("No baseline found", output.getvalue())
+            self.assertNotIn("No new releases since", output.getvalue())
+
+    def test_record_recovers_from_a_malformed_state_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "claude-code.json"
+            state_path.write_text('{"entries": [{"guid": 123}]}', encoding="utf-8")
+            output = io.StringIO()
+            with patch.object(watcher, "fetch_feed", return_value=FEED):
+                with redirect_stdout(output):
+                    self.assertEqual(
+                        watcher.main(["--state", str(state_path), "--record"]), 0
+                    )
+            self.assertIn("Initialized baseline", output.getvalue())
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [entry["guid"] for entry in state["entries"]], ["abc124", "abc123"]
+            )
+
+    def test_record_refuses_an_empty_feed(self) -> None:
+        empty = b'<rss version="2.0"><channel><title>empty</title></channel></rss>'
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "claude-code.json"
+            errors = io.StringIO()
+            with patch.object(watcher, "fetch_feed", return_value=empty):
+                with redirect_stderr(errors):
+                    self.assertEqual(
+                        watcher.main(["--state", str(state_path), "--record"]), 1
+                    )
+            self.assertIn("no entries", errors.getvalue())
+            self.assertFalse(state_path.exists())
+
+    def test_directory_sync_tolerates_an_unopenable_directory(self) -> None:
+        watcher._fsync_directory(Path("/nonexistent-lapis-directory"))
 
     def test_new_release_is_reported_then_cleared_by_record(self) -> None:
         newer = FEED.replace(
@@ -258,7 +475,7 @@ class CollectTests(unittest.TestCase):
                     with redirect_stderr(errors):
                         self.assertEqual(watcher.main(argv), 1)
             self.assertIn("simulated disk-full", errors.getvalue())
-            self.assertIn("temporary cleanup failed: cleanup denied", errors.getvalue())
+            self.assertIn("left behind: cleanup denied", errors.getvalue())
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual([entry["guid"] for entry in state["entries"]], ["abc123"])
 
