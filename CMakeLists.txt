@@ -13,10 +13,19 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(cmake/ProjectOptions.cmake)
 
 option(LAPIS_BUILD_DESKTOP "Build the live desktop preview and local session service" OFF)
+option(LAPIS_BUILD_SESSION "Build the existing session service and its terminal dependency" ON)
 option(LAPIS_PACKAGE "Build the desktop as the downloadable app (see scripts/package_macos.py)" OFF)
+option(LAPIS_BUILD_SUPERVISOR_STATE "Build the focused supervisor state-core test target" OFF)
 
 include(CTest)
-add_subdirectory(services/session)
+
+if(LAPIS_BUILD_SESSION)
+    add_subdirectory(services/session)
+endif()
+
+if(LAPIS_BUILD_SUPERVISOR_STATE)
+    add_subdirectory(services/supervisor)
+endif()
 
 if(BUILD_TESTING)
     # Keep the dependency-free replay contract checked as C++20. Engine adapters
