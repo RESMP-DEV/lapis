@@ -1,7 +1,6 @@
 #include "lapis/supervisor/state.hpp"
 
 #include <algorithm>
-#include <array>
 #include <stdexcept>
 #include <utility>
 
@@ -167,13 +166,12 @@ SupervisorState SupervisorRegistry::disable() {
 ControlOutcome SupervisorRegistry::control(const ControlRequest& request) {
     if (request.instance_epoch != state_.instance_epoch)
         return {ControlStatus::stale_epoch, state_};
-    // A fresh registry has no token, so it admits no authenticated control
-    // request. Local authoritative initialization must create the first slot.
-    static constexpr std::array<unsigned char, spawn_token_hex_bytes> dummy{};
-    const auto trusted = state_.session && !state_.session->spawn_token.empty()
-                             ? state_.session->spawn_token
-                             : std::string(dummy.size(), '0');
-    if (!constant_time_equal(trusted, request.token))
+    // A fresh or disabled registry has no authenticated control capability.
+    // Local authoritative initialization must create the first slot; a
+    // predictable sentinel would instead create a bypass token.
+    if (!state_.session || state_.session->spawn_token.empty())
+        return {ControlStatus::unauthorized, state_};
+    if (!constant_time_equal(state_.session->spawn_token, request.token))
         return {ControlStatus::unauthorized, state_};
     switch (request.action) {
     case ControlAction::start:

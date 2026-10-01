@@ -513,10 +513,9 @@ class FocusedRunnerTests(unittest.TestCase):
         self.assertIn("boom", receipt["checks"][0]["diagnostic"])
         self.assertIn("not full-suite coverage", receipt["scope"])
 
-    def test_invalid_selection_is_rejected_before_any_check_runs(self):
+    def test_invalid_selection_replaces_stale_receipt_with_failure(self):
         self.receipt.parent.mkdir(parents=True)
-        sentinel = '{"passed": true}\n'
-        self.receipt.write_text(sentinel, encoding="utf-8")
+        self.receipt.write_text('{"passed": true}\n', encoding="utf-8")
         with contextlib.redirect_stderr(io.StringIO()) as stderr:
             with self.assertRaises(SystemExit) as raised:
                 self._run_main(
@@ -527,7 +526,12 @@ class FocusedRunnerTests(unittest.TestCase):
                 )
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("does not map to an existing Python file", stderr.getvalue())
-        self.assertEqual(self.receipt.read_text(encoding="utf-8"), sentinel)
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        self.assertFalse(receipt["passed"])
+        self.assertEqual(
+            receipt["selection"], {"tests": ["scripts.tests.missing"], "paths": []}
+        )
+        self.assertIn("does not map to an existing Python file", receipt["scope"])
 
     def test_selectors_without_focused_flag_are_rejected(self):
         with contextlib.redirect_stderr(io.StringIO()):
@@ -538,6 +542,17 @@ class FocusedRunnerTests(unittest.TestCase):
                     patches=self._patches(),
                 )
         self.assertEqual(raised.exception.code, 2)
+
+    def test_missing_selection_replaces_stale_receipt_with_failure(self):
+        self.receipt.parent.mkdir(parents=True)
+        self.receipt.write_text('{"passed": true}\n', encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                self._run_main("--focused", patches=self._patches())
+        self.assertEqual(raised.exception.code, 2)
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        self.assertFalse(receipt["passed"])
+        self.assertIn("requires at least one", receipt["scope"])
 
     def test_focused_without_selectors_is_rejected(self):
         with contextlib.redirect_stderr(io.StringIO()):

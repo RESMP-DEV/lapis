@@ -414,21 +414,28 @@ def main():
 
 
 def _run_focused(parser, arguments):
+    report_dir = ROOT / "build" / "reports" / FOCUSED_REPORT_DIRNAME
+    receipt_path = report_dir / "receipt.json"
+    # Invalidate first, including selector validation failures: a rejected run
+    # must never leave an earlier focused PASS looking current.
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt_path.unlink(missing_ok=True)
     try:
         test_modules = parse_test_selectors(ROOT, arguments.tests)
         source_paths = parse_source_selectors(ROOT, arguments.paths)
     except SelectionError as error:
+        _write_focused_argument_failure(receipt_path, arguments, error)
         parser.error(str(error))
     if not test_modules and not source_paths:
-        parser.error("--focused requires at least one --test or --path selector")
+        error = SelectionError(
+            "--focused requires at least one --test or --path selector"
+        )
+        _write_focused_argument_failure(receipt_path, arguments, error)
+        parser.error(str(error))
 
-    report_dir = ROOT / "build" / "reports" / FOCUSED_REPORT_DIRNAME
-    receipt_path = report_dir / "receipt.json"
     selection = {"tests": test_modules, "paths": source_paths}
     scope = focused_scope(test_modules, source_paths)
     try:
-        # Never leave a prior PASS receipt after an interrupted or failed startup.
-        receipt_path.unlink(missing_ok=True)
         tools = {"git": shutil.which("git"), "ruff": shutil.which("ruff")}
         source_revision, revision_result = find_source_revision(
             ROOT, report_dir, tools["git"]
@@ -474,6 +481,12 @@ def _run_focused(parser, arguments):
         return 1
 
 
+def _write_focused_argument_failure(path, arguments, error):
+    selection = {"tests": list(arguments.tests), "paths": list(arguments.paths)}
+    scope = focused_scope(selection["tests"], selection["paths"])
+    _write_failure_receipt(path, scope, selection, error)
+
+
 def _write_failure_receipt(path, scope, selection, error):
     result = {
         "check": "focused-startup",
@@ -481,12 +494,17 @@ def _write_failure_receipt(path, scope, selection, error):
         "passed": False,
         "diagnostic": f"Focused quality run failed before checks completed: {error}",
     }
+    failure_scope = (
+        f"{scope} Argument validation failed: {error}. No selected checks ran."
+        if isinstance(error, SelectionError)
+        else f"{scope} Startup failed, so the selected checks did not complete."
+    )
     try:
         write_receipt(
             path,
             None,
             [result],
-            f"{scope} Startup failed, so the selected checks did not complete.",
+            failure_scope,
             selection=selection,
         )
     except OSError:

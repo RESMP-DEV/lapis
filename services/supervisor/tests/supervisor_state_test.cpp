@@ -233,6 +233,20 @@ void posix_private_atomic_storage() {
     });
 }
 
+void fresh_registry_rejects_every_control_token() {
+    auto storage = std::make_shared<MemoryStateStorage>();
+    auto owner = registry(storage);
+    const auto epoch = owner->state().instance_epoch;
+    const auto zero = repeat('0', spawn_token_hex_bytes);
+    for (const auto action : {ControlAction::start, ControlAction::stop, ControlAction::disable}) {
+        const ControlRequest request{
+            .instance_epoch = epoch, .token = zero, .action = action, .session = std::nullopt};
+        require(owner->control(request).status == ControlStatus::unauthorized,
+                "A fresh registry accepted the all-zero token");
+    }
+    owner.reset();
+}
+
 void control_parsing_and_authentication() {
     const JsonStateCodec codec;
     const auto epoch = repeat('4', epoch_hex_bytes);
@@ -320,6 +334,7 @@ int main() {
     try {
         schema_and_codec();
         transitions_and_persistence();
+        fresh_registry_rejects_every_control_token();
         posix_private_atomic_storage();
         control_parsing_and_authentication();
         std::cout << "Supervisor schema, storage, transitions and control passed\n";

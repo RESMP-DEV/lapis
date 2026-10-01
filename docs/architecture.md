@@ -2994,7 +2994,11 @@ reconnecting clients, then the existing workspace, login registration and upgrad
 path. Qualification must include supervisor crash/restart, simultaneous clients,
 GUI replacement, disabled background permission, graceful shutdown and real
 login/reboot. Persistence is a desired architecture; it is not implemented by
-this documentation change.
+this documentation change. One state-only primitive is now implemented behind
+`LAPIS_BUILD_SUPERVISOR_STATE`: schema-v1 desired state, strict bounded control
+parsing, token checks, singleton locking and owner-only atomic persistence. It
+is not the supervisor itself and adds no daemon, launchd registration, control
+socket, process launcher, restart/reconciliation or production GUI/CLI route.
 
 #### Current implementation disposition (September 30)
 
