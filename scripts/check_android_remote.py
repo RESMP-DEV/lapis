@@ -879,9 +879,10 @@ def checks(device, mac, screens):
         finally:
             # Leave the setting on whatever happened above: a failed run
             # must not leave the device stored-off for the next
-            # store-honoring launch (this check's own next run). Best
-            # effort — any restore problem joins the receipt after the
-            # finally instead of vanishing with the terminal scroll.
+            # store-honoring launch (this check's own next run). A restore
+            # problem is merged into the returned problem below; if the
+            # body raised instead, the exception already fails the check
+            # and the next run's ensure-on first step re-aligns the state.
             if device.find(id="terminal") is not None:
                 device.tap_node(id="back")
                 time.sleep(0.3)
