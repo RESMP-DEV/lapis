@@ -66,11 +66,14 @@ LAUNCHD_KEPT = (
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
     "LAPIS_HISTORY_ROOT",
 )
+CLAUDE_FIXTURE_SETTINGS = {"permissions": {"defaultMode": "default"}}
 
 if __package__:
     from . import check_cli_launch as wire
+    from .fake_models import PARALLEL_COMMANDS, PARALLEL_PROMPT
 else:
     import check_cli_launch as wire
+    from fake_models import PARALLEL_COMMANDS, PARALLEL_PROMPT
 
 CODEX_CONFIG = """model = "lapis-fake"
 model_provider = "lapis_fake"
@@ -187,6 +190,14 @@ def require_managed_resume(name, arguments, provenance, conversation):
     require(
         provenance == {"index": index, "identity": conversation},
         f"{name} managed resume provenance {provenance}",
+    )
+
+
+def require_parallel_commands(screen):
+    """Assert that both distinct commands are pending, not one collapsed call."""
+    require(
+        all(command in screen for command in PARALLEL_COMMANDS),
+        "Claude did not show both distinct parallel Bash commands",
     )
 
 
@@ -376,6 +387,11 @@ def main():
                 }
             )
         )
+        claude_project_settings = work["claude"] / ".claude"
+        claude_project_settings.mkdir(mode=0o700)
+        (claude_project_settings / "settings.local.json").write_text(
+            json.dumps(CLAUDE_FIXTURE_SETTINGS)
+        )
         # Outside the workspace folder, so a power loss spares the fake model.
         fake_models_log = logs / "fake-models.jsonl"
         fake_models_log.unlink(missing_ok=True)
@@ -502,6 +518,11 @@ def main():
             session.send(wire.KEY, bytes([10, 0]))
             wait_screen(session, f"Fake model reply to: {text}")
 
+        def send_prompt(session, text):
+            session.send(wire.PASTE, text.encode())
+            time.sleep(0.3)
+            session.send(wire.KEY, bytes([10, 0]))
+
         for name in ("codex", "claude"):
             session = attach(name)
             wait_screen(session, "codex" if name == "codex" else "Claude Code")
@@ -530,6 +551,18 @@ def main():
             wait_screen(session, f"echo: note from {name}")
             session.close()
             print(f"  {name}: conversation {conversations[name]}")
+        parallel_session = attach("claude")
+        send_prompt(parallel_session, PARALLEL_PROMPT)
+        parallel_screen = wait_screen(
+            parallel_session, PARALLEL_COMMANDS[-1], timeout=90
+        )
+        require_parallel_commands(parallel_screen)
+        require(
+            record(endpoint["claude"])["session_id"] == conversations["claude"],
+            "parallel prompt left the Claude conversation",
+        )
+        parallel_session.close()
+        print("  claude: two distinct Bash tool calls left pending")
         first_context = {
             "codex": max(
                 (
@@ -580,12 +613,6 @@ def main():
                     f"Fake model reply to: {prompt[name]}" in shown,
                     f"{name} lost the earlier reply",
                 )
-                follow_up = f"{name} after power loss {round_number}"
-                session.send(wire.PASTE, follow_up.encode())
-                time.sleep(0.3)
-                session.send(wire.KEY, bytes([10, 0]))
-                wait_screen(session, f"Fake model reply to: {follow_up}")
-                session.close()
                 require(
                     record(endpoint[name])["session_id"] == conversations[name],
                     f"{name} changed conversation",
@@ -594,6 +621,19 @@ def main():
                     record(endpoint[name])["source"] == "observer",
                     f"{name} lost observer provenance",
                 )
+                if round_number == 1:
+                    follow_up = f"{name} after power loss {round_number}"
+                    session.send(wire.PASTE, follow_up.encode())
+                    time.sleep(0.3)
+                    session.send(wire.KEY, bytes([10, 0]))
+                    wait_screen(session, f"Fake model reply to: {follow_up}")
+                elif name == "claude":
+                    # The pre-loss state was two pending Bash approvals. This
+                    # slice proves only that they survive with their
+                    # conversation; an automated answer would change the
+                    # approval contract.
+                    require_parallel_commands(shown)
+                session.close()
             for name in STAND_INS:
                 require_managed_resume(
                     name,
