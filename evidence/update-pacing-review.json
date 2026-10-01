@@ -1,0 +1,70 @@
+{
+  "scope": "Focused pacing review repairs; not native GPU, foreground input or packaged release qualification.",
+  "source_revision": "8debe7ae623c5e9750c822feaff18f3e11d75f95",
+  "source_files_sha256": {
+    "apps/desktop/src/live_connection.cpp": "a37ffbf299e4082968536b334a9a06eb26e2742ba36e483c202ef238f5f326b5",
+    "apps/desktop/src/workspace.hpp": "3c2a8451365cdaccdf06f320a792903117ccfe6655937c15b452804f77b8e3f9",
+    "apps/desktop/tests/live_connection_test.cpp": "6c87e9e0237624a17f1ab81019feebae907c8b10385d09935d90ee1d5db46fdf",
+    "scripts/check_cli_launch.py": "b3f69ae69f3e2e8abcb0733f1ca58e572a55c6544ab66987b9e50b238e7d37cf",
+    "services/session/src/session_service.cpp": "a1f4a4576b6b8f0e7ccfdbd9bd9a53da9991757995c7e3cf8fe91eb665b09e1e"
+  },
+  "checks": {
+    "normal_cpp": {
+      "passed": true,
+      "cases": [
+        "attention-state",
+        "live-connection"
+      ],
+      "count": 2
+    },
+    "asan_cpp": {
+      "passed": true,
+      "cases": [
+        "attention-state",
+        "live-connection"
+      ],
+      "count": 2
+    },
+    "tsan_cpp": {
+      "passed": true,
+      "cases": [
+        "attention-state",
+        "live-connection"
+      ],
+      "count": 2
+    },
+    "service_ipc": [
+      {
+        "mode": "normal",
+        "passed": true,
+        "receipt_sha256": "5b19316d674abab007e29a72797ff8c143718f751e824308aaf90e4fbfd27a0c",
+        "case": "attention-publication-pacing"
+      },
+      {
+        "mode": "asan",
+        "passed": true,
+        "receipt_sha256": "f2d9b53974f42dd5b4784d812c343c9472309f2adf8b1ac0626cc976900b8ed5",
+        "case": "attention-publication-pacing"
+      },
+      {
+        "mode": "tsan",
+        "passed": true,
+        "receipt_sha256": "22f24e29cbdaa057b6dbc926d21d9359708ae4684b8bb9e14123944cee5bacb4",
+        "case": "attention-publication-pacing"
+      }
+    ],
+    "quality": {
+      "passed": true,
+      "python_tests": 337,
+      "scope": "Before final fixture-marker ordering refinement; no later production or C++ test changes. All three affected IPC fixtures rerun after the refinement."
+    }
+  },
+  "review_threads_addressed": 12,
+  "notes": [
+    "Remaining interval is computed in qint64 before narrowing.",
+    "Decode-attempt pacing is distinct from visible publication.",
+    "Fixture decisions are one input batch; exit is a separate asynchronous event.",
+    "PID metadata is complete before readiness is published.",
+    "Receipts count observed attention publications and ignore unrelated frames."
+  ]
+}
