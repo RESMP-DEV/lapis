@@ -1,0 +1,823 @@
+"""Release manifests must fail closed before stale packages can publish."""
+
+import contextlib
+import plistlib
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from scripts import package_macos as package
+from scripts import release_manifest as manifest
+
+COMMIT = "a" * 40
+TREE = "b" * 40
+REMOTE_COMMIT = "c" * 40
+
+
+class SourceSnapshotTests(unittest.TestCase):
+    def test_snapshot_records_commit_tree_dirty_state_and_version(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "CMakeLists.txt").write_text(
+                "project(lapis VERSION 0.5.0 LANGUAGES CXX)\n"
+            )
+            commands = []
+
+            def capture(command):
+                commands.append([str(part) for part in command])
+                if command[3:] == ["rev-parse", "HEAD"]:
+                    return COMMIT + "\n"
+                if command[3:] == ["rev-parse", "HEAD^{tree}"]:
+                    return TREE + "\n"
+                if command[3:] == ["status", "--porcelain=v1"]:
+                    return " M apps/desktop/main.cpp\n?? new.txt\n"
+                raise AssertionError(command)
+
+            snapshot = manifest.source_snapshot(root, capture)
+        self.assertEqual(snapshot["commit"], COMMIT)
+        self.assertEqual(snapshot["tree"], TREE)
+        self.assertEqual(snapshot["version"], "0.5.0")
+        self.assertFalse(snapshot["clean"])
+        self.assertEqual(snapshot["status"], [" M apps/desktop/main.cpp", "?? new.txt"])
+        self.assertEqual(len(commands), 3)
+
+
+class ManifestBindingTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.release = self.root / "build/release"
+        self.manifest_path = self.release / "package-manifest.json"
+        self.app = self.release / "stage/lapis.app"
+        self.dmg = self.release / "lapis-macos-arm64.dmg"
+        (self.root / "CMakeLists.txt").write_text(
+            "project(lapis VERSION 0.5.0 LANGUAGES CXX)\n"
+        )
+        self.app.mkdir(parents=True)
+        (self.app / "Contents").mkdir()
+        (self.app / "Contents/lapis").write_bytes(b"app")
+        self.dmg.write_bytes(b"dmg")
+        self.dependencies = {
+            "qt": {"version": "6", "source_sha256": {}},
+            "sparkle": {"version": "1", "archive_sha256": "0" * 64},
+        }
+
+    def write_manifest(self):
+        value = manifest.new_manifest(
+            {
+                "commit": COMMIT,
+                "tree": TREE,
+                "clean": True,
+                "status": [],
+                "version": "0.5.0",
+            },
+            self.dependencies,
+        )
+        manifest.write_manifest(self.manifest_path, value)
+        return value
+
+    def test_missing_and_malformed_manifests_are_rejected(self):
+        with self.assertRaisesRegex(manifest.ManifestError, "manifest is missing"):
+            manifest.load_manifest(self.manifest_path)
+        self.manifest_path.write_text("{not json")
+        with self.assertRaisesRegex(manifest.ManifestError, "manifest is malformed"):
+            manifest.load_manifest(self.manifest_path)
+        self.manifest_path.write_text("[]")
+        with self.assertRaisesRegex(manifest.ManifestError, "JSON object"):
+            manifest.load_manifest(self.manifest_path)
+
+    def test_release_preflight_requires_exact_source_tag_and_bytes(self):
+        self.write_manifest()
+        manifest.set_artifacts(
+            self.manifest_path,
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            provenance={"dmg_source_app_sha256": manifest.digest(self.app)},
+        )
+        manifest.set_notarized(self.manifest_path, True, True)
+        manifest.set_verification(
+            self.manifest_path,
+            scope="notarized",
+            artifacts={
+                "app": manifest.digest(self.app),
+                "dmg": manifest.digest(self.dmg),
+            },
+        )
+        dependencies = {
+            "qt": {
+                "version": "6",
+                "source_sha256": {
+                    "qtbase": manifest.content_sha256(self.qtbase_archive())
+                },
+            },
+            "sparkle": {
+                "version": "1",
+                "archive_sha256": manifest.content_sha256(self.sparkle_archive()),
+            },
+        }
+        recorded = manifest.load_manifest(self.manifest_path)
+        recorded["dependencies"] = dependencies
+        manifest.write_manifest(self.manifest_path, recorded)
+        self.assertEqual(
+            manifest.preflight_release(
+                self.manifest_path,
+                root=self.root,
+                tag="v0.5.0",
+                version="0.5.0",
+                artifacts={"app": self.app, "dmg": self.dmg},
+                dependencies=dependencies,
+                downloads=self.root / "downloads",
+                appcast=None,
+                release_url="https://example.test/releases",
+                capture=self.capture,
+                require_appcast=False,
+            )["version"],
+            "0.5.0",
+        )
+
+        with self.assertRaisesRegex(manifest.ManifestError, "source mismatch"):
+            manifest.preflight_release(
+                self.manifest_path,
+                root=self.root,
+                tag="v0.5.0",
+                version="0.5.0",
+                artifacts={"app": self.app, "dmg": self.dmg},
+                dependencies=dependencies,
+                downloads=self.root / "downloads",
+                appcast=None,
+                release_url="https://example.test/releases",
+                capture=lambda command: self.capture(command, dirty=True),
+                require_appcast=False,
+            )
+        self.dmg.write_bytes(b"changed DMG")
+        with self.assertRaisesRegex(manifest.ManifestError, "artifact dmg mismatch"):
+            manifest.preflight_release(
+                self.manifest_path,
+                root=self.root,
+                tag="v0.5.0",
+                version="0.5.0",
+                artifacts={"app": self.app, "dmg": self.dmg},
+                dependencies=dependencies,
+                downloads=self.root / "downloads",
+                appcast=None,
+                release_url="https://example.test/releases",
+                capture=self.capture,
+                require_appcast=False,
+            )
+
+    def test_preflight_rejects_wrong_tag_and_stale_qualification(self):
+        recorded = self.write_manifest()
+        recorded["artifacts"] = {
+            "app": manifest.digest(self.app),
+            "dmg": manifest.digest(self.dmg),
+        }
+        recorded["provenance"] = {"dmg_source_app_sha256": manifest.digest(self.app)}
+        recorded["notarized"] = {"app": True, "dmg": True}
+        recorded["verification"] = {
+            "scope": "signed",
+            "passed": True,
+            "artifacts": {
+                "app": manifest.digest(self.app),
+                "dmg": manifest.digest(self.dmg),
+            },
+        }
+        manifest.write_manifest(self.manifest_path, recorded)
+        arguments = {
+            "root": self.root,
+            "version": "0.5.0",
+            "artifacts": {"app": self.app, "dmg": self.dmg},
+            "dependencies": self.dependencies,
+            "downloads": self.root / "downloads",
+            "appcast": None,
+            "release_url": "https://example.test/releases",
+            "capture": self.capture,
+            "require_appcast": False,
+        }
+        with self.assertRaisesRegex(manifest.ManifestError, "qualification was not"):
+            manifest.preflight_release(self.manifest_path, tag="v0.5.0", **arguments)
+        with self.assertRaisesRegex(manifest.ManifestError, "tag 'v9.0.0' is not"):
+            manifest.preflight_release(self.manifest_path, tag="v9.0.0", **arguments)
+
+    def test_failed_remote_branch_probe_is_not_treated_as_a_missing_tag(self):
+        self.write_manifest()
+        manifest.set_artifacts(
+            self.manifest_path,
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            provenance={"dmg_source_app_sha256": manifest.digest(self.app)},
+        )
+        manifest.set_notarized(self.manifest_path, True, True)
+        manifest.set_verification(
+            self.manifest_path,
+            scope="notarized",
+            artifacts={
+                "app": manifest.digest(self.app),
+                "dmg": manifest.digest(self.dmg),
+            },
+        )
+        sparkle_archive = self.sparkle_archive()
+        recorded = manifest.load_manifest(self.manifest_path)
+        self.dependencies["sparkle"]["archive_sha256"] = manifest.content_sha256(
+            sparkle_archive
+        )
+        recorded["dependencies"] = self.dependencies
+        manifest.write_manifest(self.manifest_path, recorded)
+
+        def failed_git_probe(command):
+            if command[-4:] == ["branch", "-r", "--contains", COMMIT]:
+                raise subprocess.CalledProcessError(128, command)
+            return self.capture(command)
+
+        with self.assertRaisesRegex(
+            manifest.ManifestError, "cannot inspect remote branches"
+        ):
+            manifest.preflight_release(
+                self.manifest_path,
+                root=self.root,
+                tag="v0.5.0",
+                version="0.5.0",
+                artifacts={"app": self.app, "dmg": self.dmg},
+                dependencies=self.dependencies,
+                downloads=self.root / "downloads",
+                appcast=None,
+                release_url="https://example.test/releases",
+                capture=failed_git_probe,
+                require_appcast=False,
+            )
+
+    def test_replacing_one_artifact_withdraws_only_its_approval(self):
+        self.write_manifest()
+        qualified = {
+            "app": manifest.digest(self.app),
+            "dmg": manifest.digest(self.dmg),
+        }
+        manifest.set_artifacts(
+            self.manifest_path,
+            qualified,
+            provenance={"dmg_source_app_sha256": qualified["app"]},
+        )
+        manifest.set_notarized(self.manifest_path, True, True)
+        manifest.set_verification(
+            self.manifest_path, scope="notarized", artifacts=qualified
+        )
+        self.dmg.write_bytes(b"rebuilt dmg")
+        manifest.set_artifacts(
+            self.manifest_path,
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+        )
+        recorded = manifest.load_manifest(self.manifest_path)
+        self.assertEqual(recorded["notarized"], {"app": True, "dmg": False})
+        self.assertIs(recorded["verification"]["passed"], False)
+        self.assertEqual(recorded["verification"]["scope"], "notarized")
+        # The receipt still names the bytes it qualified, which is the fixed
+        # dmg, not the replacement that withdrew the approval.
+        self.assertEqual(recorded["verification"]["artifacts"], qualified)
+
+    def test_set_verification_merges_into_the_existing_receipt(self):
+        self.write_manifest()
+        recorded = manifest.load_manifest(self.manifest_path)
+        recorded["verification"] = {"runner": "packaging host"}
+        manifest.write_manifest(self.manifest_path, recorded)
+        manifest.set_verification(
+            self.manifest_path, scope="notarized", artifacts={"app": "2" * 64}
+        )
+        receipt = manifest.load_manifest(self.manifest_path)["verification"]
+        self.assertEqual(receipt["runner"], "packaging host")
+        self.assertIs(receipt["passed"], True)
+        self.assertEqual(receipt["artifacts"], {"app": "2" * 64})
+
+    def test_weakening_notarization_revokes_the_qualification_receipt(self):
+        self.write_manifest()
+        manifest.set_notarized(self.manifest_path, True, True)
+        manifest.set_verification(
+            self.manifest_path, scope="notarized", artifacts={"app": "2" * 64}
+        )
+        manifest.set_notarized(self.manifest_path, True, False)
+        receipt = manifest.load_manifest(self.manifest_path)["verification"]
+        self.assertIs(receipt["passed"], False)
+        self.assertEqual(receipt["artifacts"], {"app": "2" * 64})
+
+    def test_preflight_without_a_dmg_binding_fails_instead_of_crashing(self):
+        recorded = self.write_manifest()
+        recorded["artifacts"] = {"app": manifest.digest(self.app)}
+        recorded["provenance"] = {"dmg_source_app_sha256": manifest.digest(self.app)}
+        recorded["notarized"] = {"app": True, "dmg": True}
+        recorded["verification"] = {
+            "scope": "notarized",
+            "passed": True,
+            "artifacts": {"app": manifest.digest(self.app)},
+        }
+        manifest.write_manifest(self.manifest_path, recorded)
+        appcast = self.release / "appcast.xml"
+        appcast.write_text("<rss/>")
+        with self.assertRaisesRegex(
+            manifest.ManifestError, "artifact 'dmg' is missing from artifacts"
+        ):
+            manifest.preflight_release(
+                self.manifest_path,
+                root=self.root,
+                tag="v0.5.0",
+                version="0.5.0",
+                artifacts={"app": self.app},
+                dependencies=self.dependencies,
+                downloads=self.root / "downloads",
+                appcast=appcast,
+                release_url="https://example.test/releases",
+                capture=self.capture,
+                require_appcast=True,
+            )
+
+    def qtbase_archive(self):
+        downloads = self.root / "downloads"
+        downloads.mkdir(exist_ok=True)
+        archive = downloads / "qtbase-everywhere-src-6.tar.xz"
+        archive.write_bytes(b"qt")
+        return archive
+
+    def sparkle_archive(self):
+        downloads = self.root / "downloads"
+        downloads.mkdir(exist_ok=True)
+        archive = downloads / "Sparkle-1.tar.xz"
+        archive.write_bytes(b"sparkle")
+        return archive
+
+    def capture(self, command, *, dirty=False):
+        command = [str(part) for part in command]
+        arguments = command[3:]
+        if arguments == ["rev-parse", "HEAD"]:
+            return COMMIT + "\n"
+        if arguments == ["rev-parse", "HEAD^{tree}"]:
+            return TREE + "\n"
+        if arguments == ["status", "--porcelain=v1"]:
+            return " M source.cpp\n" if dirty else ""
+        if arguments == ["branch", "-r", "--contains", COMMIT]:
+            return "origin/main\n"
+        if arguments == [
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            "v0.5.0^{commit}",
+        ]:
+            return COMMIT + "\n"
+        if arguments == [
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            "v9.0.0^{commit}",
+        ]:
+            raise subprocess.CalledProcessError(128, command)
+        raise AssertionError(command)
+
+
+class ReleaseCommandTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.root.joinpath("CMakeLists.txt").write_text(
+            "project(lapis VERSION 0.5.0 LANGUAGES CXX)\n"
+        )
+        self.release = self.root / "build/release"
+        self.app = self.release / "stage/lapis.app"
+        self.dmg = self.release / "lapis-macos-arm64.dmg"
+        self.app.mkdir(parents=True)
+        (self.app / "Contents").mkdir()
+        (self.app / "Contents/lapis").write_bytes(b"final app")
+        (self.app / "Contents/Info.plist").write_bytes(
+            plistlib.dumps({"CFBundleShortVersionString": "0.5.0"})
+        )
+        self.dmg.write_bytes(b"final dmg")
+        self.appcast = self.release / "appcast.xml"
+        self.downloads = self.release / "downloads"
+        self.downloads.mkdir(parents=True)
+        (self.downloads / "qtbase-everywhere-src-6.tar.xz").write_bytes(b"qt")
+        (self.downloads / "Sparkle-1.tar.xz").write_bytes(b"sparkle")
+        self.dependencies = {
+            "qt": {
+                "version": "6",
+                "source_sha256": {
+                    "qtbase": manifest.content_sha256(
+                        self.downloads / "qtbase-everywhere-src-6.tar.xz"
+                    )
+                },
+            },
+            "sparkle": {
+                "version": "1",
+                "archive_sha256": manifest.content_sha256(
+                    self.downloads / "Sparkle-1.tar.xz"
+                ),
+            },
+        }
+        self.manifest_path = self.release / "package-manifest.json"
+        recorded = manifest.new_manifest(
+            {
+                "commit": COMMIT,
+                "tree": TREE,
+                "clean": True,
+                "status": [],
+                "version": "0.5.0",
+            },
+            self.dependencies,
+        )
+        manifest.write_manifest(self.manifest_path, recorded)
+        manifest.set_artifacts(
+            self.manifest_path,
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            provenance={"dmg_source_app_sha256": manifest.digest(self.app)},
+        )
+        manifest.set_notarized(self.manifest_path, True, True)
+        self.command_log = []
+        self.verify_commands = []
+        self.published = False
+        self.qualification_observer = None
+
+    def write_appcast(self):
+        signature = "ed" * 64
+        length = str(self.dmg.stat().st_size)
+        self.appcast.write_text(
+            f'''<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel><item>
+    <title>lapis 0.5.0</title>
+    <sparkle:version>0.5.0</sparkle:version>
+    <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
+    <enclosure url="https://example.test/releases/download/v0.5.0/{self.dmg.name}"
+               type="application/octet-stream"
+               sparkle:edSignature="{signature}" length="{length}"/>
+  </item></channel>
+</rss>
+'''
+        )
+
+    def qualify(self, arguments):
+        self.verify_commands.append(arguments)
+        if arguments.get("fail"):
+            raise package.PackageError("injected qualification failure")
+        try:
+            qualified = {"app": manifest.digest(self.app)}
+            if arguments.get("notarized"):
+                qualified["dmg"] = manifest.digest(self.dmg)
+                manifest.set_notarized(self.manifest_path, True, True)
+            manifest.set_verification(
+                self.manifest_path,
+                scope="notarized",
+                artifacts=qualified,
+            )
+        except manifest.ManifestError as error:
+            raise package.PackageError(str(error)) from error
+        if self.qualification_observer is not None:
+            self.qualification_observer()
+
+    def run_command(self, command, **_kwargs):
+        command = [str(part) for part in command]
+        self.command_log.append(command)
+        if command[:2] == ["xcrun", "stapler"]:
+            return None
+        if command[0] == "gh":
+            self.published = True
+            return None
+        raise AssertionError(command)
+
+    def capture(self, command):
+        command = [str(part) for part in command]
+        arguments = command[3:]
+        if arguments == ["rev-parse", "HEAD"]:
+            return COMMIT + "\n"
+        if arguments == ["rev-parse", "HEAD^{tree}"]:
+            return TREE + "\n"
+        if arguments == ["status", "--porcelain=v1"]:
+            return ""
+        if arguments == ["branch", "-r", "--contains", COMMIT]:
+            return "origin/main\n"
+        if arguments == [
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            "v0.5.0^{commit}",
+        ]:
+            return COMMIT + "\n"
+        raise AssertionError(command)
+
+    def invoke_release(self, *, verify_failure=False, real_verify=False):
+        arguments = type("Arguments", (), {})()
+        arguments.tag = "v0.5.0"
+        arguments.draft = True
+        arguments.notarized = False
+
+        def release_dependencies(_ghostty):
+            return self.dependencies
+
+        def write_appcast(_tag, _version):
+            self.write_appcast()
+
+        patches = [
+            patch.object(package, "ROOT", self.root),
+            patch.object(package, "RELEASE", self.release),
+            patch.object(package, "APP", self.app),
+            patch.object(package, "DMG", self.dmg),
+            patch.object(package, "APPCAST", self.appcast),
+            patch.object(package, "PACKAGE_MANIFEST", self.manifest_path),
+            patch.object(package, "DOWNLOADS", self.downloads),
+            patch.object(package, "RELEASES", "https://example.test/releases"),
+            patch.object(package, "run", side_effect=self.run_command),
+            patch.object(package, "capture", side_effect=self.capture),
+            patch.object(package, "ghostty_prefix", return_value=self.root / "ghostty"),
+            patch.object(package, "release_dependencies", release_dependencies),
+            patch.object(package, "write_appcast", side_effect=write_appcast),
+        ]
+        if not real_verify:
+            patches.append(
+                patch.object(
+                    package,
+                    "command_verify",
+                    side_effect=lambda value: self.qualify(
+                        {
+                            "notarized": value.notarized,
+                            "fail": verify_failure,
+                        }
+                    ),
+                )
+            )
+        with contextlib.ExitStack() as stack:
+            for patcher in patches:
+                stack.enter_context(patcher)
+            package.command_release(arguments)
+
+    def test_failed_qualification_refuses_publication(self):
+        with self.assertRaisesRegex(package.PackageError, "qualification failure"):
+            self.invoke_release(verify_failure=True)
+        self.assertFalse(self.published)
+        self.assertEqual([command[0] for command in self.command_log], ["xcrun"])
+        self.assertFalse(self.appcast.exists())
+        self.assertFalse(
+            manifest.load_manifest(self.manifest_path)
+            .get("verification", {})
+            .get("passed")
+        )
+
+    def test_exact_match_qualifies_binds_appcast_then_publishes(self):
+        self.invoke_release()
+        self.assertTrue(self.published)
+        self.assertEqual([command[0] for command in self.command_log], ["xcrun", "gh"])
+        self.assertEqual(len(self.verify_commands), 1)
+        self.assertTrue(self.verify_commands[0]["notarized"])
+        binding = manifest.load_manifest(self.manifest_path)["release"]["appcast"]
+        self.assertEqual(binding["tag"], "v0.5.0")
+        self.assertEqual(binding["version"], "0.5.0")
+        self.assertEqual(binding["sha256"], manifest.digest(self.appcast))
+        self.assertEqual(binding["dmg_sha256"], manifest.digest(self.dmg))
+
+    def test_changed_bytes_before_appcast_binding_refuses_publication(self):
+        def mutate_after_qualification():
+            self.dmg.write_bytes(b"stale replacement")
+
+        self.qualification_observer = mutate_after_qualification
+        with self.assertRaisesRegex(package.PackageError, "artifact dmg mismatch"):
+            self.invoke_release()
+        self.assertFalse(self.published)
+        self.assertFalse(self.appcast.exists())
+
+    def test_malformed_manifest_stops_before_staple_validation_writes(self):
+        self.manifest_path.write_text("{}")
+        with self.assertRaisesRegex(package.PackageError, "schema"):
+            self.invoke_release(real_verify=True)
+        # The unreadable manifest is the only record of this build, so it must
+        # survive the rejection exactly as it was.
+        self.assertEqual(self.manifest_path.read_text(), "{}")
+        self.assertEqual(
+            self.command_log, [["xcrun", "stapler", "validate", str(self.dmg)]]
+        )
+        self.assertFalse(self.published)
+
+
+class DependencySnapshotTests(unittest.TestCase):
+    """The dependency recorder is the only check that the release inputs exist."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        (self.root / "CMakeLists.txt").write_text(
+            "project(lapis VERSION 0.5.0 LANGUAGES CXX)\n"
+        )
+        self.ghostty = self.root / "ghostty"
+        self.sources = self.root / "tools/terminal_probe/ghostty/sources.json"
+        self.receipt = self.root / "reports/receipt.json"
+        self.header = self.ghostty / "include/ghostty/vt.h"
+        self.library = self.ghostty / "lib/libghostty-vt.a"
+        self.moltenvk = self.root / "moltenvk/libMoltenVK.dylib"
+        self.notices = {"Qt": self.root / "notices/qt.txt"}
+        for path in (
+            self.sources,
+            self.receipt,
+            self.header,
+            self.library,
+            self.moltenvk,
+            *self.notices.values(),
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(path.name.encode())
+
+    def snapshot(self):
+        return manifest.dependency_snapshot(
+            self.root,
+            qt_version="6.11.2",
+            qt_modules={"qtbase": "0" * 64},
+            sparkle_version="2.10.0",
+            sparkle_sha256="1" * 64,
+            notices=self.notices,
+            ghostty_prefix=self.ghostty,
+            moltenvk_library=self.moltenvk,
+        )
+
+    def test_every_dependency_input_is_hashed(self):
+        recorded = self.snapshot()
+        self.assertEqual(
+            recorded["qt"], {"version": "6.11.2", "source_sha256": {"qtbase": "0" * 64}}
+        )
+        self.assertEqual(
+            recorded["sparkle"], {"version": "2.10.0", "archive_sha256": "1" * 64}
+        )
+        self.assertEqual(
+            recorded["ghostty"],
+            {
+                "sources_sha256": manifest.digest(self.sources),
+                "receipt_sha256": manifest.digest(self.receipt),
+                "header_sha256": manifest.digest(self.header),
+                "library_sha256": manifest.digest(self.library),
+            },
+        )
+        self.assertEqual(
+            recorded["moltenvk"], {"library_sha256": manifest.digest(self.moltenvk)}
+        )
+        self.assertEqual(
+            recorded["notices"], {"Qt": manifest.digest(self.notices["Qt"])}
+        )
+
+    def test_missing_inputs_are_all_named(self):
+        self.sources.unlink()
+        self.moltenvk.unlink()
+        with self.assertRaisesRegex(
+            manifest.ManifestError, "missing dependency or notice input"
+        ) as caught:
+            self.snapshot()
+        self.assertIn("sources.json", str(caught.exception))
+        self.assertIn("libMoltenVK.dylib", str(caught.exception))
+
+    def test_a_missing_notice_is_named(self):
+        self.notices["Qt"].unlink()
+        with self.assertRaisesRegex(
+            manifest.ManifestError, "missing dependency or notice input"
+        ) as caught:
+            self.snapshot()
+        self.assertIn("qt.txt", str(caught.exception))
+
+
+class VerifyCommandTests(unittest.TestCase):
+    """Verify's manifest gates, driven through the real command_verify."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        (self.root / "CMakeLists.txt").write_text(
+            "project(lapis VERSION 0.5.0 LANGUAGES CXX)\n"
+        )
+        self.release = self.root / "build/release"
+        self.app = self.release / "stage/lapis.app"
+        self.dmg = self.release / "lapis-macos-arm64.dmg"
+        (self.app / "Contents").mkdir(parents=True)
+        (self.app / "Contents/lapis").write_bytes(b"final app")
+        self.dmg.write_bytes(b"final dmg")
+        self.manifest_path = self.release / "package-manifest.json"
+        self.write_version("0.5.0")
+        manifest.write_manifest(
+            self.manifest_path,
+            manifest.new_manifest(
+                {
+                    "commit": COMMIT,
+                    "tree": TREE,
+                    "clean": True,
+                    "status": [],
+                    "version": "0.5.0",
+                },
+                self.dependencies(),
+            ),
+        )
+        self.arguments = type("Arguments", (), {})()
+        self.arguments.notarized = True
+        self.commands = []
+        self.checks = []
+
+    def dependencies(self):
+        return {"qt": {"version": "6", "source_sha256": {}}, "sparkle": {}}
+
+    def write_version(self, version):
+        (self.app / "Contents/Info.plist").write_bytes(
+            plistlib.dumps({"CFBundleShortVersionString": version})
+        )
+
+    def bind(self, *, notarized=True):
+        manifest.set_artifacts(
+            self.manifest_path,
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            provenance={"dmg_source_app_sha256": manifest.digest(self.app)},
+        )
+        manifest.set_notarized(self.manifest_path, notarized, notarized)
+
+    def invoke(self):
+        def capture(command):
+            command = [str(part) for part in command]
+            arguments = command[3:]
+            if arguments == ["rev-parse", "HEAD"]:
+                return COMMIT + "\n"
+            if arguments == ["rev-parse", "HEAD^{tree}"]:
+                return TREE + "\n"
+            if arguments == ["status", "--porcelain=v1"]:
+                return ""
+            raise AssertionError(command)
+
+        def run(command, **_kwargs):
+            self.commands.append([str(part) for part in command])
+            return None
+
+        def probe(name):
+            def check(_problems):
+                self.checks.append(name)
+
+            return check
+
+        external = (
+            "check_binaries",
+            "check_identifying_strings",
+            "check_moltenvk",
+            "check_headless_host",
+            "check_launchd_start",
+            "check_updates",
+        )
+        patches = [
+            patch.object(package, "ROOT", self.root),
+            patch.object(package, "APP", self.app),
+            patch.object(package, "DMG", self.dmg),
+            patch.object(package, "PACKAGE_MANIFEST", self.manifest_path),
+            patch.object(package, "capture", side_effect=capture),
+            patch.object(package, "run", side_effect=run),
+        ]
+        patches.extend(patch.object(package, name, probe(name)) for name in external)
+        with contextlib.ExitStack() as stack:
+            for patcher in patches:
+                stack.enter_context(patcher)
+            package.command_verify(self.arguments)
+
+    def test_a_notarized_bundle_records_its_qualification(self):
+        self.bind()
+        self.invoke()
+        receipt = manifest.load_manifest(self.manifest_path)["verification"]
+        self.assertEqual(receipt["scope"], "notarized")
+        self.assertIs(receipt["passed"], True)
+        self.assertEqual(
+            receipt["artifacts"],
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+        )
+        self.assertIn(["xcrun", "stapler", "validate", str(self.dmg)], self.commands)
+        self.assertIn("check_binaries", self.checks)
+
+    def test_drifted_app_bytes_fail_verification_and_keep_the_manifest(self):
+        self.bind()
+        recorded = manifest.load_manifest(self.manifest_path)["artifacts"]
+        (self.app / "Contents/lapis").write_bytes(b"tampered")
+        with self.assertRaisesRegex(
+            package.PackageError, "does not match the manifest"
+        ):
+            self.invoke()
+        surviving = manifest.load_manifest(self.manifest_path)
+        self.assertEqual(surviving["artifacts"], recorded)
+        self.assertNotIn("verification", surviving)
+
+    def test_verifying_before_notarizing_names_the_step_and_keeps_the_manifest(self):
+        self.bind(notarized=False)
+        with self.assertRaisesRegex(
+            package.PackageError, "run package_macos.py notarize before"
+        ):
+            self.invoke()
+        surviving = manifest.load_manifest(self.manifest_path)
+        self.assertEqual(surviving["artifacts"]["app"], manifest.digest(self.app))
+        self.assertEqual(surviving["notarized"], {"app": False, "dmg": False})
+
+    def test_a_stale_version_is_reported_as_a_problem(self):
+        self.write_version("0.4.9")
+        self.bind()
+        with self.assertRaisesRegex(
+            package.PackageError, "does not match source version"
+        ):
+            self.invoke()
+
+    def test_an_unreadable_plist_raises_without_the_build_path(self):
+        (self.app / "Contents/Info.plist").unlink()
+        self.bind()
+        with self.assertRaisesRegex(
+            package.PackageError, "cannot read the staged app's Contents/Info.plist"
+        ) as caught:
+            self.invoke()
+        self.assertNotIn(str(self.temporary.name), str(caught.exception))
