@@ -4,7 +4,7 @@
   "subject": {
     "project": "pingdotgg/t3code",
     "license": "MIT",
-    "version_cli": "0.0.44 (live `npx t3@latest --help` probe)",
+    "version_cli": "0.0.44 (live npx t3@latest probe 2026-09-30; resolved artifact registry.npmjs.org/t3/-/t3-0.0.44.tgz, shasum 8fd79d68dd9502f0a1ae296f90a8e3aba7a86ae0)",
     "revision_reviewed": "c2fa9fc9 (2026-09-30, shallow reference clone)",
     "category": "agent harness control surface (web/Electron/mobile + local `t3` HTTP/WebSocket server) over installed CLI agents"
   },
@@ -38,13 +38,14 @@
     "acp": "not adopted (user experience: cross-tool protocol adapters churn/drop; lapis keeps per-CLI verified adapters and PTY supervision)",
     "t3_server_coupling": "rejected (Effect unstable RPC, 0.0.x, closed governance)",
     "electron_renderer_path": "rejected (forsakes the native GPU terminal advantage)",
-    "claude_agent_sdk": "evaluation in flight (package contract, live probe, lapis integration map)",
+    "claude_agent_sdk": "evaluation completed 2026-09-30 across all three streams (package contract, live probe on disposable sessions, integration map); evidence supports a native route, with the settings-inheritance and --session-id/--resume identity traps recorded in docs/architecture.md; adoption still requires the adapter qualification procedure and a prioritization decision",
     "agents_md_content": "nothing adopted into lapis AGENTS.md (t3's file is an ops-manual monoculture artifact; AGENTS.md is context and contracts)"
   },
   "auth_assessment": "unusually strong: scoped sessions with monotone delegation, fail-closed DPoP, short-lived WS tickets, per-RPC scope table, creation-response-only secrets; identified a right-size slice for ccr-rust (per-route scopes, tickets, secret hygiene)",
+  "verification_scope": "Survey-grade receipt, not an audited one: shallow reference clone at the pinned revision plus one live CLI probe, both on 2026-09-30. Per-claim file SHA-256 digests, probe transcripts, drivers and the resolved npx binary were not retained, so claims are reported results as of the probe date; re-verification means re-running the source read and probe against revision c2fa9fc9 and the pinned tarball. docs/architecture.md (t3code survey outcomes and release triage) owns the gates, supersessions and adoption traces for every decision recorded here.",
   "verification": [
-    "repo source read at pinned revision (adapters, packages, docs/internals, native/)",
-    "live CLI probe: npx t3@latest --help/--version",
+    "repo source read at pinned revision (adapters, packages, docs/internals, native/); per-claim digests not retained (see verification_scope)",
+    "live CLI probe: npx t3@latest --help/--version, resolved to 0.0.44 (tarball shasum above); raw output not retained",
     "cross-checks docs vs code for permission modes, adapters, checkpoints, telemetry (all matched)"
   ]
 }

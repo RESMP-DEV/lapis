@@ -4,7 +4,7 @@
   "subject": {
     "project": "can1357/oh-my-pi",
     "license": "MIT (Stencil Labs)",
-    "version_cli": "18.4.4 (built from the reviewed source for the ACP probe)",
+    "version_cli": "18.4.4 (built from the reviewed source for the ACP probe; locally built binary, no digest retained - rebuild from revision 9532eb39ca to reproduce)",
     "revision_reviewed": "9532eb39ca (2026-09-30, full reference clone)",
     "category": "batteries-included pi coding-agent fork: TypeScript/Bun monorepo plus Rust crates, differential TUI, 82-provider routing, ACP agent, subagents with advisor review, collab links"
   },
@@ -57,10 +57,11 @@
       "collab link-sharing design (comparator shelf; relevant only if a browser-guest surface is ever proposed)"
     ]
   },
-  "artifacts": "probe transcript, mock-provider request log, drivers and isolation proof retained under a temporary directory (volatile); this receipt carries the sanitized results",
+  "artifacts": "probe transcript, mock-provider request log, drivers and isolation proof were retained under a temporary directory and are gone; nothing in-repo materializes revision 9532eb39ca, and no per-claim file SHA-256 digests were recorded, so the file:line-precision entries below are reported results as of 2026-09-30, not independently auditable citations. Volatile probe artifacts are not recoverable; re-verification means rebuilding revision 9532eb39ca and re-running the probe.",
+  "verification_scope": "Survey-grade receipt, not an audited one: full reference clone at the pinned revision plus one live ACP probe, both on 2026-09-30. Per-claim file digests, probe transcript, driver and the built binary were not retained (see artifacts), so every load-bearing entry (protocolVersion 1, the 64 KiB overflow stop, the missing epochs/sequence numbers, permission-machine fail-closed, the ~50 ms timings) is a reported result rather than a reproducible artifact. docs/architecture.md owns the gates, supersessions and adoption traces for each entry in decisions.adopted_as_directions and decisions.not_adopted, so those arrays are directions bound to that plan, not free-standing decisions.",
   "verification": [
-    "repo source read at the pinned revision across packages/ and crates/ by the fan-out workers",
-    "spot-checks of load-bearing claims (zero-dependency pi-diff, PROTOCOL_VERSION, fallback-chain grammar, throttle constants) against the clone",
-    "live omp acp probe including a full tool-call turn with permission allow/reject/allow_always rounds against a loopback mock provider"
+    "repo source read at the pinned revision across packages/ and crates/ by the fan-out workers; per-claim digests not retained",
+    "spot-checks of load-bearing claims (zero-dependency pi-diff, PROTOCOL_VERSION, fallback-chain grammar, throttle constants) against the clone; clone not retained",
+    "live omp acp probe including a full tool-call turn with permission allow/reject/allow_always rounds against a loopback mock provider; transcript and driver not retained"
   ]
 }
