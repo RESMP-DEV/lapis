@@ -71,7 +71,9 @@ worker scopes prevent collisions; separate worktrees are useful when independent
 changes need isolated builds.
 
 Before a worker writes, use the [shared work record](#work-records-and-review-checkpoints)
-as its brief. Keep the contract and acceptance criteria with the assignment.
+as its brief. Record the coordinator's pre-dispatch check plan there: the exact
+allowlisted commands/cases, their platform/build scope and the reusable receipt
+paths. Keep the contract and acceptance criteria with the assignment.
 
 Review the diff and completion receipt before integration; a worker's completed
 turn is not proof that its assignment or tests finished. Reuse the same scoped
@@ -150,13 +152,17 @@ not a person or a requirement to finish every other branch. Reassess difficulty
 when investigation reveals a new owner, side effect, migration or missing oracle.
 
 Give a worker the finish line, file scope, committed baseline, shared contracts,
-permitted tools/network use, exact affected checks and PR destination. Under an
+permitted tools/network use, the pre-dispatch check plan and PR destination. Under an
 authorized PR task, a D1/D2 worker may commit only its verified scoped files,
 push its own branch to `RESMP-DEV/lapis`, and open or update one ready PR with the
 template, evidence and remaining limitations. Use the same branch for review
-repairs. No merge, release, unrelated staging or expanded production access is
-implied. If its harness cannot publish, hand off the checked commit/diff for
-publication without holding up other work.
+repairs. The worker runs the allowlisted cases and a follow-up only when an exact
+failure diagnostic identifies a case inside the assignment; it does not expand to
+unrequested full discovery, desktop, sanitizer, GUI, simulator, package, provider,
+credential, signing or release gates. An out-of-scope review repair returns to the
+coordinator for rescoping. No merge, release, unrelated staging or expanded
+production access is implied. If its harness cannot publish, hand off the checked
+commit/diff for publication without holding up other work.
 
 Reviewers inspect the actual diff and receipts; worker completion or a green
 provider label is not approval. These PRs can wait for review independently of
@@ -853,7 +859,7 @@ union of the relevant checks; a check satisfying two rows runs once:
 | Test cases or other test harnesses | `just quality` for Python; affected build/CTest cases for C++; exercise the affected runtime probe when its harness behavior changes |
 | Session restore, resume records or the registry lock | `uv run --no-project python scripts/check_restore.py` on macOS with the installed Codex and Claude Code; it uses the fake model and leaves nothing running |
 | Disk history | `python3 scripts/check_history.py --disk-full` on macOS, plus desktop-enabled ASan/TSan; the disk-full fixture creates and removes its own 32 MiB disk image |
-| Python tooling | `just quality` (includes Ruff and Python unit tests), plus relevant runtime probes |
+| Python tooling | Focused iteration selects affected Ruff and unittest cases; an assembled integration/release handoff establishes `just quality` (includes Ruff and Python unit tests) unless unchanged assembled-source results are reusable, plus relevant runtime probes |
 | iPhone app or gateway (`apps/ios`, `apps/remote`) | `just quality` (includes the gateway suite, with a live service when the desktop is built) and `uv run --no-project python scripts/check_ios_remote.py --codex --claude` on macOS with an iOS Simulator runtime |
 | Before a release (Mac and iPhone together) | The macOS desktop/native gates above, `just quality` and `just ios-check`, whose Mac-side client stays attached through every UI test and must see and answer the phone. Linux UI qualification remains deferred; run its gate when that port is explicitly selected. |
 | Mac app packaging (`scripts/package_macos.py`, `apps/desktop/macos`, `LAPIS_PACKAGE`) | `just quality`, then `package_macos.py app` and `verify` on the Mac; `verify --notarized` for a release |
@@ -975,9 +981,11 @@ Select the required commands before running them:
   and integration rows above when their behavior changes. Do not run the same
   binaries manually again after this command passes.
 
-- `just quality` includes Python lint, format checks and unit discovery. Separate
-  Ruff or unittest commands are useful for focused diagnosis, but need not follow
-  a passing quality run on the same inputs.
+- `just quality` includes Python lint, format checks and unit discovery. For
+  delegated iteration, run only the exact affected Ruff and unittest cases in the
+  pre-dispatch check plan; discovery and unrelated suites are not substitutes.
+  The integration/release boundary owns the assembled-source quality run. Shared
+  check/config/instruction changes require affected quality coverage again.
 - `just desktop` includes all four core CTest suites and the C++ static checks.
   For desktop/service-only changes it satisfies normal C++ validation. Keep
   `just check` for shared-core changes and headless/build-configuration coverage;
