@@ -118,15 +118,18 @@ def run(command, line):
                 say(f"busy {printed}")
                 time.sleep(1.5)
         except KeyboardInterrupt:
-            # Deliberately no SIG_IGN here: the report write blocks on
-            # the PTY, and only the raising handler can break that block
-            # — it is the ^C escape hatch the suite's failure recovery
-            # uses when the phone side stops draining. The cost is that
-            # a second ^C landing inside the report aborts it and loses
-            # the line, but the only sender of that second ^C is the
-            # already-failed recovery path, where unblocking is the
-            # point and the lost line is irrelevant.
-            say(f"busy interrupted after {printed} lines")
+            # The report write blocks on the PTY, and only a raised ^C
+            # can break that block — so the handler stays raising — but
+            # the raise must not escape this command: the main loop's ^C
+            # net covers only the idle prompt, so a nested interrupt here
+            # would kill the fixture and cascade into later checks
+            # failing against a dead agent. Catch it at the site: the
+            # recovery ^C abandons the report (the check has already
+            # failed) and the busy command exits normally.
+            try:
+                say(f"busy interrupted after {printed} lines")
+            except KeyboardInterrupt:
+                pass
         finally:
             signal.signal(signal.SIGINT, previous)
     elif command == "flood":
