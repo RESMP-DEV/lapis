@@ -1,7 +1,9 @@
 package dev.lapis.remote.ui.commandbar
 
 import dev.lapis.remote.platform.KeyValueStore
-import kotlinx.serialization.encodeToString
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 
 /**
@@ -14,16 +16,23 @@ class SnippetStore(private val store: KeyValueStore) {
 
     suspend fun load(): List<String> {
         val raw = store.getString(KEY) ?: return emptyList()
+        // SerializationException is the decode failure this store can hit
+        // (malformed JSON, wrong element shapes); naming it instead of its
+        // IllegalArgumentException supertype keeps the catch from also
+        // absorbing an unrelated argument bug as "corrupt data".
         val decoded = try {
-            json.decodeFromString<List<String>>(raw)
-        } catch (_: IllegalArgumentException) {
+            json.decodeFromString(ListSerializer(String.serializer()), raw)
+        } catch (_: SerializationException) {
             return emptyList()
         }
         return normalize(decoded)
     }
 
     suspend fun save(snippets: List<String>) {
-        store.putString(KEY, json.encodeToString(normalize(snippets)))
+        store.putString(
+            KEY,
+            json.encodeToString(ListSerializer(String.serializer()), normalize(snippets)),
+        )
     }
 
     companion object {

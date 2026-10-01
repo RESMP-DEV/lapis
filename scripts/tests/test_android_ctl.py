@@ -170,14 +170,36 @@ class LockedTest(unittest.TestCase):
         self.assertFalse(device.locked())
 
     def test_systemui_keyguard_component_reads_locked(self):
-        # The "keyguard" half of the keyword match catches a SystemUI
-        # keyguard activity reported as resumed instead of a dialer.
+        # The keyguard-package segment ("keyguard.") catches a SystemUI
+        # keyguard activity reported as resumed instead of a dialer —
+        # including the shorthand component form, where the segment is
+        # all that distinguishes it from any other service.
         device = canned_device(
             "isKeyguardShowing=false",
             "  ResumedActivity: ActivityRecord{7 u0 com.android.systemui/"
             ".keyguard.ui.KeyguardService t2}",
         )
         self.assertTrue(device.locked())
+
+    def test_keyguard_settings_activity_reads_unlocked(self):
+        # Component-granular, not a bare substring: Settings screens named
+        # Keyguard…Activity / EmergencyInfo…Activity are foreground apps
+        # on an unlocked phone; matching them would refuse every run
+        # opened from there with "the phone is locked".
+        device = canned_device(
+            "isKeyguardShowing=false mDreamingLockscreen=false",
+            "  topResumedActivity=ActivityRecord{4 u0 com.android.settings/"
+            ".KeyguardSettingsActivity t5}",
+        )
+        self.assertFalse(device.locked())
+
+    def test_emergency_info_activity_reads_unlocked(self):
+        device = canned_device(
+            "isKeyguardShowing=false mDreamingLockscreen=false",
+            "  topResumedActivity=ActivityRecord{4 u0 com.android.settings/"
+            ".EmergencyInfoActivity t5}",
+        )
+        self.assertFalse(device.locked())
 
     def test_unlocked_app_and_missing_fields_read_unlocked(self):
         device = canned_device(

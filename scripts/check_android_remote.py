@@ -22,7 +22,8 @@ must see the phone's input, answer it, and never be closed by it.
 Checks: list, open, sync, draft (type without Enter), scrollback, resize
 (`wm size`), wheel (drag reaches a full-screen program), interrupt (^C chip
 stops a running program), background (home and return), snippets (add, run,
-survive a process restart), crash scan. Screenshots land
+survive a process restart), settings_toggle (hide and show the bar through
+the stored Settings switch, on a plain launch), crash scan. Screenshots land
 under build/android/remote-screens/<stamp>/ and a JSON receipt under
 build/android/.
 

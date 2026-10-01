@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -190,8 +189,12 @@ fun SnippetEditorDialog(
                             draft = ""
                         },
                         // The count bound surfaces here instead of as a
-                        // silent drop when the list is saved.
-                        enabled = draft.isNotBlank() && rows.size < SnippetStore.MAX_SNIPPETS,
+                        // silent drop when the list is saved. Non-blank
+                        // rows only: an edited-to-blank row is already
+                        // gone as far as normalize() is concerned, so it
+                        // must not consume a slot the Add button guards.
+                        enabled = draft.isNotBlank() &&
+                            rows.count { it.isNotBlank() } < SnippetStore.MAX_SNIPPETS,
                         modifier = Modifier.testTag("snippet-add"),
                     ) { Text("Add") }
                 }

@@ -315,8 +315,20 @@ class Device:
         marker substring could spill into unrelated sections) and
         case-insensitively (the components are CamelCase; this build
         reports "Resumed:"/"ResumedActivity:" lines where AOSP logs
-        "topResumedActivity="). Build-specific fields that vanish read
-        as unlocked, preserving the pre-guard behavior."""
+        "topResumedActivity="). The activity match is component-granular,
+        not a bare substring: a foreground Settings screen named
+        KeyguardSettingsActivity or EmergencyInfoActivity sits on an
+        unlocked phone, and a bare "emergency"/"keyguard" match would
+        refuse every run opened from there. What actually rides a locked
+        phone: dialer/call classes ending in EmergencyDialer or
+        EmergencyCall (AOSP's com.android.phone, the standalone
+        com.android.emergency app, and vendor builds like Samsung's
+        emergencydialer package), and the keyguard's own packages, whose
+        class path carries a "keyguard." segment (SystemUI's
+        KeyguardService) — a class named merely Keyguard…Activity inside
+        another app does not match.
+        Build-specific fields that vanish read as unlocked, preserving
+        the pre-guard behavior."""
         window = self.shell("dumpsys window")
         if "isKeyguardShowing=true" in window or "mDreamingLockscreen=true" in window:
             return True
@@ -327,7 +339,12 @@ class Device:
             ):
                 continue
             lowered = stripped.lower()
-            if "emergency" in lowered or "keyguard" in lowered:
+            if (
+                "emergencydialer" in lowered
+                or "emergencycall" in lowered
+                or "com.android.emergency" in lowered
+                or "keyguard." in lowered
+            ):
                 return True
         return False
 
