@@ -3340,9 +3340,10 @@ auth sources, since `settingSources: []` also drops `apiKeyHelper`
 credentials — and each query spawns a fresh CLI process whose conversation
 identity is stable only through `--session-id`/`--resume`. Adoption still
 requires the adapter qualification procedure and a prioritization decision;
-nothing here is implemented. The stored t3code receipt predates the reported
-completed SDK evaluation and still labels it in flight. Consolidate the
-version-pinned probe receipt before using that result as adapter acceptance.
+nothing here is implemented. The stored t3code receipt pins the probe
+(`subject.version_cli` names the resolved artifact and shasum) and records
+the completed SDK evaluation, so the remaining gate before any adapter
+acceptance is the qualification procedure itself.
 
 
 ### oh-my-pi survey outcomes (September 30)
