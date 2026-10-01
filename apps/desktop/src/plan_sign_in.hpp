@@ -109,7 +109,8 @@ class PlanSignIn final : public QObject {
         QString email;
         QString plan;
         QString machine;
-        QByteArray output;
+        QByteArray output_head;
+        QByteArray output_tail;
         std::uint64_t attempt{};
     };
     QHash<QString, Copy> copying_; // by machine, for one finished sign-in

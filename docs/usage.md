@@ -43,9 +43,10 @@ entry never receives the credential. Each replacement is atomic; incomplete
 remote copies preserve the previous token. The panel distinguishes a failed copy
 from a token that arrived but could not be recorded in the plan configuration.
 If saving the local configuration fails after storing the token, it says so and
-retains that credential for recovery. Existing credential directories must be
-private and owned by the current user; lapis reports incompatible permissions
-without changing them. Escape
+retains that credential for recovery. Directories lapis itself creates for a
+credential are owner-only; the credential directory itself must be private and
+owned by the current user, and lapis reports incompatible permissions without
+changing them (pre-existing parent directories are left as they are). Escape
 ends an unfinished sign-in, and a new attempt retires older copies. Codex plans are
 still added with the script below.
 

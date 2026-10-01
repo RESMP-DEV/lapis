@@ -120,6 +120,9 @@ if host in {"noisy", "overflow"}:
                   else b"sk-ant-oat01-" + b"B" * 20000)
     sys.stderr.buffer.write(diagnostic + b"\n")
     raise SystemExit(255)
+if host == "verbose":
+    sys.stderr.buffer.write(b"chatter line\n" * 2600 + b"fixture permission denied\n")
+    raise SystemExit(255)
 if host == "devbox":
     (root / "ssh.args").write_text("\n".join(sys.argv[1:]))
     (root / "ssh.stdin").write_bytes(data)
@@ -156,7 +159,7 @@ raise SystemExit(subprocess.run(["/bin/sh", "-c", command], input=data).returnco
                  if (prepare && !prepare(QStringLiteral("work"), reason))
                      return QString();
                  if (machine == QLatin1String("unrecorded")) {
-                     *reason = QStringLiteral("config busy");
+                     *reason = QStringLiteral("remote write failed\nconfig busy");
                      return QString();
                  }
                  recorded << email + QLatin1Char('@') +
@@ -167,7 +170,8 @@ raise SystemExit(subprocess.run(["/bin/sh", "-c", command], input=data).returnco
              [](const QString&) {
                  return QStringList{QStringLiteral("devbox"), QStringLiteral("gone"),
                                     QStringLiteral("short"),  QStringLiteral("unrecorded"),
-                                    QStringLiteral("noisy"),  QStringLiteral("overflow")};
+                                    QStringLiteral("noisy"),  QStringLiteral("overflow"),
+                                    QStringLiteral("verbose")};
              }},
         {.helper = root.filePath(QStringLiteral("runtime/plan_sign_in.py")),
          .accounts = root.filePath(QStringLiteral("accounts"))});
@@ -205,6 +209,9 @@ raise SystemExit(subprocess.run(["/bin/sh", "-c", command], input=data).returnco
     require(signIn.message().contains(QStringLiteral("Copy failed:")) &&
                 signIn.message().contains(QStringLiteral("gone")),
             "a machine whose transfer failed is named");
+    require(signIn.message().contains(QStringLiteral("verbose (fixture permission denied)")) &&
+                !signIn.message().contains(QStringLiteral("chatter line")),
+            "the diagnostic line at the end of a long copy output survives bounding");
     require(signIn.message().contains(QStringLiteral("[token]")) &&
                 !signIn.message().contains(QString(16, QLatin1Char('B'))),
             "bounded copy diagnostics cannot expose a token suffix after truncation");
@@ -212,6 +219,9 @@ raise SystemExit(subprocess.run(["/bin/sh", "-c", command], input=data).returnco
                 read(root.filePath(QStringLiteral(
                     "remote/unrecorded/accounts/claude/work.token"))) == token() + '\n',
             "a successful transfer with failed config registration is reported honestly");
+    require(signIn.message().contains(QStringLiteral("unrecorded (config busy)")) &&
+                !signIn.message().contains(QStringLiteral("remote write failed")),
+            "a machine's summary carries one bounded reason line, not the whole context");
     require(QDir(root.filePath(QStringLiteral("accounts/claude")))
                 .entryList({QStringLiteral(".signing-in-*.token")}, QDir::Files | QDir::Hidden)
                 .isEmpty(),

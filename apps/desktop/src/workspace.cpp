@@ -189,12 +189,18 @@ QString launch_mode(const AgentRequest& request, const QStringList& configured,
                     const QString& fallback) {
     if (!request.mode.isEmpty())
         return request.mode;
-    for (const auto& argument : configured) {
-        if (argument == QLatin1String("--"))
+    for (auto argument = configured.cbegin(); argument != configured.cend(); ++argument) {
+        if (*argument == QLatin1String("--"))
             break;
-        const auto option = argument.section(QLatin1Char('='), 0, 0);
+        const auto option = argument->section(QLatin1Char('='), 0, 0);
         if (configuredModeOption(request.harness, option))
             return {};
+        // A bare option token may take the next argument as its value; that
+        // value must not be mistaken for a configured mode option however it
+        // is spelled (--label --sandbox, --model -a).
+        if (argument->startsWith(QLatin1Char('-')) && !argument->contains(QLatin1Char('=')))
+            if (++argument == configured.cend())
+                break;
     }
     // Modeless requests may use a supported lower mode, but must not gain
     // more access than the configured preference just because a mode is absent.

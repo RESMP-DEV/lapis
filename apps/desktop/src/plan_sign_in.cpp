@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
@@ -64,21 +65,45 @@ constexpr qint64 kMaximumTokenBytes = qint64{64} * 1024;
     return text.trimmed().left(2048);
 }
 
-// Copy output may echo a token on a hostile or misconfigured host. Keep only
-// a short diagnostic, with any credential shape masked.
-[[nodiscard]] QString copyReason(const QByteArray& output, const QString& fallback) {
+// Copy output may echo a token on a hostile or misconfigured host. Keep a
+// bounded head and tail of the raw stream: the head holds an echoed
+// credential's identifying prefix, the tail holds the failure diagnostic that
+// ends the stream. The tail starts at a line boundary so whatever the cut
+// split (a credential body, half a sentence) is dropped whole, and everything
+// retained is masked before a diagnostic line is selected.
+[[nodiscard]] QString copyReason(const QByteArray& head, const QByteArray& tail,
+                                 const QString& fallback) {
     static const QRegularExpression token(QStringLiteral("sk-ant-oat01-[A-Za-z0-9_-]+"));
-    // Mask the complete retained prefix before selecting a diagnostic line;
-    // taking a tail first can strip the identifying prefix off a credential.
-    auto text = QString::fromUtf8(output);
+    QByteArray retained = head;
+    if (!tail.isEmpty()) {
+        retained += "\n[...]\n";
+        // Bytes before the tail's first newline are the back half of a line the
+        // cut split; a tail with no newline at all is one such line.
+        if (const auto newline = tail.indexOf('\n'); newline >= 0)
+            retained += tail.mid(newline + 1);
+    }
+    auto text = QString::fromUtf8(retained);
     text.replace(token, QStringLiteral("[token]"));
     const auto lines = text.split(QRegularExpression(R"(\r?\n)"), Qt::SkipEmptyParts);
+    for (auto line = lines.rbegin(); line != lines.rend(); ++line) {
+        const auto trimmed = line->trimmed();
+        if (!trimmed.isEmpty() && trimmed != QLatin1String("[...]"))
+            return trimmed.left(300);
+    }
+    return fallback;
+}
+
+// A registration reason can be multi-line; the per-machine summary has room
+// for one bounded line, so the log keeps the rest.
+[[nodiscard]] QString reasonLine(const QString& reason) {
+    const auto masked = safeReason(reason);
+    const auto lines = masked.split(QRegularExpression(R"(\r?\n)"), Qt::SkipEmptyParts);
     for (auto line = lines.rbegin(); line != lines.rend(); ++line) {
         const auto trimmed = line->trimmed();
         if (!trimmed.isEmpty())
             return trimmed.left(300);
     }
-    return fallback;
+    return {};
 }
 } // namespace
 
@@ -271,7 +296,7 @@ void PlanSignIn::ended() {
     read();
     process_ = nullptr;
     if (state_ == QLatin1String("starting") || state_ == QLatin1String("waiting"))
-        fail(copyReason(helper_error_, tr("The sign-in ended before any account signed in.")));
+        fail(copyReason(helper_error_, {}, tr("The sign-in ended before any account signed in.")));
 }
 
 void PlanSignIn::setEmail(const QString& email) {
@@ -390,7 +415,8 @@ void PlanSignIn::copyTo(const CopyLaunch& launch) {
                               .email = email_,
                               .plan = plan_,
                               .machine = machine,
-                              .output = {},
+                              .output_head = {},
+                              .output_tail = {},
                               .attempt = attempt_});
     process->setProgram(ssh);
     process->setArguments({QStringLiteral("-o"), QStringLiteral("BatchMode=yes"),
@@ -401,8 +427,15 @@ void PlanSignIn::copyTo(const CopyLaunch& launch) {
     connect(process, &QProcess::readyReadStandardOutput, this, [this, machine, process] {
         const auto bytes = process->readAllStandardOutput();
         auto copy = copying_.find(machine);
-        if (copy != copying_.end() && copy->process == process && copy->attempt == attempt_)
-            copy->output = (copy->output + bytes).left(qsizetype{16} * 1024);
+        if (copy != copying_.end() && copy->process == process && copy->attempt == attempt_) {
+            constexpr qsizetype side = qsizetype{8} * 1024;
+            // The tail may overlap the head on streams under twice the bound;
+            // keeping both ends from the concatenation still yields the true
+            // head and the true tail of whatever has arrived so far.
+            const QByteArray joined = copy->output_head + copy->output_tail + bytes;
+            copy->output_head = joined.left(side);
+            copy->output_tail = joined.size() > side ? joined.right(side) : QByteArray();
+        }
     });
     const auto done = [this, machine, process](bool ok) {
         const auto copy = copying_.value(machine);
@@ -416,12 +449,18 @@ void PlanSignIn::copyTo(const CopyLaunch& launch) {
                 reached_ << machine;
             else {
                 copied_unregistered_ << machine;
+                // The panel summary carries one bounded line per machine; the
+                // full masked context stays diagnosable in the log.
+                qWarning().noquote() << "Plan sign-in: recording" << machine
+                                     << "failed:" << safeReason(reason);
+                const auto line = reasonLine(reason);
                 copyReasons_[machine] =
-                    reason.isEmpty() ? tr("configuration could not be saved") : safeReason(reason);
+                    line.isEmpty() ? tr("configuration could not be saved") : line;
             }
         } else {
             copy_failed_ << machine;
-            copyReasons_[machine] = copyReason(copy.output, tr("ssh exited unsuccessfully"));
+            copyReasons_[machine] =
+                copyReason(copy.output_head, copy.output_tail, tr("ssh exited unsuccessfully"));
         }
         report();
     };

@@ -125,6 +125,34 @@ class SignInTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0)
         self.assertEqual(stat.S_IMODE(token.stat().st_mode), 0o600)
 
+    def test_missing_parent_directories_are_created_owner_only(self):
+        folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        token = folder / "accounts" / "claude" / ".signing-in.token"
+        claude = stand_in(folder, f"printf '{TOKEN}\\n'\n")
+        process = self.start_helper(token, claude)
+        process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 0)
+        for created in (token.parent.parent, token.parent):
+            self.assertEqual(
+                stat.S_IMODE(created.stat().st_mode),
+                0o700,
+                f"{created} was not created owner-only",
+            )
+        self.assertEqual(stat.S_IMODE(token.stat().st_mode), 0o600)
+
+    def test_pre_existing_parents_pass_through_unchanged(self):
+        folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        shared = folder / "shared"
+        shared.mkdir(mode=0o755)
+        token = shared / "accounts" / "claude" / ".signing-in.token"
+        claude = stand_in(folder, f"printf '{TOKEN}\\n'\n")
+        process = self.start_helper(token, claude)
+        stdout, _ = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 0, stdout)
+        self.assertEqual(stat.S_IMODE(shared.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(token.parent.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(token.stat().st_mode), 0o600)
+
     def test_a_sign_in_that_stops_says_why_without_a_token(self):
         result, lines, token = self.run_helper(
             f"open \"{LINK}\"\nprintf 'OAuth error: denied\\r\\n'\nexit 1\n"

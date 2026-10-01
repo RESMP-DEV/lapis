@@ -722,6 +722,16 @@ void modelessAgentsGetTheDefaultMode() {
                         {QStringLiteral("--label"), QStringLiteral("workspace-write")},
                         QStringLiteral("edits")) == QLatin1String("edits"),
             "an ordinary value is not mistaken for an emitted option");
+    require(launch_mode(asked("codex"),
+                        {QStringLiteral("--model"), QStringLiteral("-a"), QStringLiteral("-s"),
+                         QStringLiteral("read-only")},
+                        QStringLiteral("edits"))
+                .isEmpty(),
+            "a value that spells a mode option still cannot suppress mode flags");
+    require(launch_mode(asked("codex"),
+                        {QStringLiteral("--label"), QStringLiteral("--sandbox")},
+                        QStringLiteral("edits")) == QLatin1String("edits"),
+            "an option spelled as another option's value is consumed, not scanned");
     for (const auto* configured :
          {"--permission-mode=acceptEdits", "--permission-mode", "--dangerously-skip-permissions"})
         require(launch_mode(asked("claude"), {QString::fromLatin1(configured)}, {}).isEmpty(),

@@ -48,7 +48,23 @@ def say(**message):
 
 def keep(token: bytes, path: str) -> None:
     folder = os.path.dirname(os.path.abspath(path))
-    os.makedirs(folder, mode=0o700, exist_ok=True)
+    # makedirs only applies its mode to the deepest directory it creates, so
+    # walk the missing chain explicitly: every directory this sign-in creates
+    # is owner-only from the first moment it exists, while pre-existing
+    # directories (however permissive) are left exactly as found.
+    missing: list[str] = []
+    unfound = folder
+    while not os.path.exists(unfound):
+        missing.append(unfound)
+        parent = os.path.dirname(unfound)
+        if parent == unfound:
+            break
+        unfound = parent
+    for directory in reversed(missing):
+        try:
+            os.mkdir(directory, 0o700)
+        except FileExistsError:
+            pass
     info = os.stat(folder, follow_symlinks=False)
     if (
         not stat.S_ISDIR(info.st_mode)

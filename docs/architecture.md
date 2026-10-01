@@ -3595,8 +3595,11 @@ existing credential and config intact. A later config-write failure may leave a
 valid unregistered credential, but cannot advertise a missing one. The panel
 names that partial outcome without rolling back a potentially valid credential.
 Malformed account collections are preserved with a diagnostic. The local helper
-creates new credential directories with owner-only permissions and refuses an
-existing symlink, wrong owner or group/other access without changing permissions.
+creates every credential directory it has to add owner-only, and refuses an
+existing credential directory that is a symlink, owned by another user, or open
+to group/other — without changing permissions. Pre-existing parent directories
+pass through unchanged; the privacy gate applies to the directory that holds
+the token itself.
 
 New plans start locally. Existing plans copy only to their explicitly configured
 `machines`, not every ssh-config entry, with a 64-destination bound. Each copy
@@ -3605,10 +3608,13 @@ complete byte count in a private temporary file, then atomically replaces the
 remote token. Completion records a machine only if the current plan still matches
 the captured identity. A successful transfer with failed registration is reported
 separately from a copy failure; the copy-limit message is not a destination name.
-The first 16 KiB of copy output is retained, so truncation cannot discard a
-credential's identifying prefix. Credential shapes are masked before selecting
-the last retained diagnostic line and its display bound. Local registration
-errors retain their bounded multi-line context.
+Copy output is bounded to a 8 KiB head and tail, so an echoed credential keeps
+its identifying prefix for masking while the failure diagnostic that ends the
+stream survives; the tail starts at a line boundary so anything the cut split
+is dropped whole. Credential shapes are masked before selecting the last
+retained diagnostic line and its display bound. A failed local registration
+shows its last bounded line in the panel and keeps its full bounded context in
+the log.
 Cancellation or a new attempt retires the prior helpers and callbacks. The
 Python guardian is forked inside the PTY child's session before exec; helper
 death closes its pipe and makes it signal its own anchored process group.
