@@ -133,6 +133,17 @@ void observation_only_requests() {
     require(s.resolve({1, 2}, a.id) == Outcome::applied);
     require(s.pending().empty());
 }
+// Claude Code's idle notice is pending but does not block a sent prompt; a
+// permission prompt beside it still does.
+void idle_notices_do_not_block() {
+    auto s = state();
+    auto idle = request(std::string("idle:prompt"));
+    idle.reason = "idle";
+    require(s.request({1, 1}, idle, 0) == Outcome::applied);
+    require(!s.pending().empty() && !s.blocking());
+    require(s.request({1, 2}, request(), 0) == Outcome::applied);
+    require(s.blocking());
+}
 void malformed_and_bounds() {
     auto s = state({2, 2, 100, 10});
     auto a = request();
@@ -228,6 +239,7 @@ int main() {
         recovery();
         replay_tokens_and_local_eligibility();
         observation_only_requests();
+        idle_notices_do_not_block();
         malformed_and_bounds();
         ordering();
         recovery_watermark();

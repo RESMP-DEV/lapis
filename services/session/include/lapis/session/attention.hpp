@@ -92,6 +92,9 @@ class State {
     [[nodiscard]] bool acknowledge(const RequestId& id, Tick now);
     [[nodiscard]] std::vector<RequestId> ordered(Tick now) const;
     [[nodiscard]] const std::map<RequestId, Pending>& pending() const { return pending_; }
+    // Whether a pending request must be answered before new input: any but
+    // an "idle" notice, which says the agent waits for exactly that input.
+    [[nodiscard]] bool blocking() const;
     [[nodiscard]] bool ready() const { return connected_ && synchronized_; }
     [[nodiscard]] bool connected() const { return connected_; }
     [[nodiscard]] Activity activity() const { return activity_; }
