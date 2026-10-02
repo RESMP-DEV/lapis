@@ -12,6 +12,7 @@
 #include <limits>
 #include <stdexcept>
 #include <sys/ioctl.h>
+#include <sys/wait.h>
 #include <system_error>
 #include <unistd.h>
 
@@ -37,7 +38,7 @@ PtyProcess::PtyProcess(QObject* parent) : QObject(parent) {
     connect(&process_, &QProcess::started, this, [this] {
         slave_.reset();
         guard_read_.reset();
-        reader_->setEnabled(!output_paused_);
+        reader_->setEnabled(!output_paused_ && !final_leader_exited_);
         emit started();
         writeReady();
     });
@@ -45,6 +46,12 @@ PtyProcess::PtyProcess(QObject* parent) : QObject(parent) {
         guard_control_.reset();
         if (reader_)
             reader_->setEnabled(false);
+        if (!final_leader_exited_)
+            recordLeaderExit(code, status);
+        if (!final_drain_active_) {
+            final_drain_active_ = true;
+            final_drain_clock_.start();
+        }
         finishWhenDrained(code, status, 256);
     });
     connect(&process_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
@@ -248,40 +255,145 @@ void PtyProcess::pauseOutput(bool paused) {
     output_paused_ = paused;
     if (reader_)
         reader_->setEnabled(!paused);
+    if (!paused) {
+        // Once the leader is known to have exited, output is in final drain.
+        // Resuming the sink lets already-emitted bytes drain, but it must not
+        // restart the bounded final-drain deadline for a wedge.
+        if (!final_leader_exited_)
+            final_drain_active_ = false;
+        return;
+    }
+    schedulePausedLeaderWatchdog();
+}
+
+void PtyProcess::recordLeaderExit(int exit_code, QProcess::ExitStatus exit_status) {
+    final_leader_exited_ = true;
+    leader_exit_code_ = exit_code;
+    leader_exit_status_ = exit_status;
+}
+
+void PtyProcess::schedulePausedLeaderWatchdog() {
+    if (!output_paused_ || final_leader_exited_ || paused_leader_watchdog_ ||
+        process_.state() != QProcess::Running)
+        return;
+    paused_leader_watchdog_ = true;
+    QTimer::singleShot(20, this, [this] {
+        paused_leader_watchdog_ = false;
+        checkPausedLeader();
+    });
+}
+
+// QProcess delays `finished` until every inherited PTY writer closes. A paused
+// reader must therefore probe the owned leader independently. macOS waitid
+// WNOWAIT returned success with si_code=0 before and after exit in this exact
+// fixture; waitpid is authoritative. Consuming here is intentional because
+// this class owns the final status and suppresses its later duplicate finish.
+bool PtyProcess::leaderExitStatus(int& exit_code, QProcess::ExitStatus& exit_status) {
+    if (final_leader_exited_ || process_.state() != QProcess::Running)
+        return final_leader_exited_;
+    const auto process_id = process_.processId();
+    if (process_id <= 0) {
+        recordLeaderExit(process_.exitCode(), process_.exitStatus());
+        exit_code = leader_exit_code_;
+        exit_status = leader_exit_status_;
+        return true;
+    }
+    const auto child = static_cast<pid_t>(process_id);
+    int wait_status = 0;
+    const auto waited = ::waitpid(child, &wait_status, WNOHANG);
+    if (waited == child) {
+        if (WIFEXITED(wait_status))
+            recordLeaderExit(WEXITSTATUS(wait_status), QProcess::NormalExit);
+        else if (WIFSIGNALED(wait_status))
+            recordLeaderExit(WTERMSIG(wait_status), QProcess::CrashExit);
+        else
+            return false;
+    } else if (waited < 0 && errno == ECHILD) {
+        // Qt consumed the child while withholding finished for PTY drain.
+        recordLeaderExit(process_.exitCode(), process_.exitStatus());
+    } else {
+        return false;
+    }
+    exit_code = leader_exit_code_;
+    exit_status = leader_exit_status_;
+    return final_leader_exited_;
+}
+
+void PtyProcess::checkPausedLeader() {
+    paused_leader_watchdog_ = false;
+    if (!output_paused_ || final_drain_emitted_ || process_.state() != QProcess::Running)
+        return;
+    int exit_code = 0;
+    QProcess::ExitStatus exit_status = QProcess::NormalExit;
+    if (!leaderExitStatus(exit_code, exit_status)) {
+        schedulePausedLeaderWatchdog();
+        return;
+    }
+    if (!final_drain_active_) {
+        final_drain_active_ = true;
+        final_drain_clock_.start();
+    }
+    QTimer::singleShot(10, this,
+                       [this] { finishWhenDrained(leader_exit_code_, leader_exit_status_, 256); });
 }
 bool PtyProcess::readReady() {
     if (!master_)
         return true;
-    std::array<char, 16384> bytes{};
-    std::size_t consumed{};
-    while (consumed < 65536U && !output_paused_) {
-        const auto count = ::read(master_.get(), bytes.data(), bytes.size());
+    QByteArray bytes;
+    bytes.reserve(max_read_batch);
+    while (bytes.size() < max_read_batch && !output_paused_) {
+        std::array<char, 16384> chunk{};
+        const auto wanted = std::min(static_cast<std::size_t>(chunk.size()),
+                                     static_cast<std::size_t>(max_read_batch - bytes.size()));
+        const auto count = ::read(master_.get(), chunk.data(), wanted);
         if (count > 0) {
-            consumed += static_cast<std::size_t>(count);
-            emit output(QByteArray(bytes.data(), static_cast<qsizetype>(count)));
+            bytes.append(chunk.data(), static_cast<qsizetype>(count));
             continue;
         }
         if (count < 0 && errno == EINTR)
             continue;
         if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-            return true;
+            break;
         reader_->setEnabled(false);
         if (count < 0 && errno != EIO)
             emit failure(system_error("PTY read"));
+        if (!bytes.isEmpty())
+            emit output(std::move(bytes));
         return true;
     }
-    return false;
+    if (!bytes.isEmpty())
+        emit output(std::move(bytes));
+    return !output_paused_;
 }
 void PtyProcess::finishWhenDrained(int exit_code, QProcess::ExitStatus exit_status,
                                    int drain_budget) {
-    if (output_paused_) {
-        QTimer::singleShot(10, this, [this, exit_code, exit_status, drain_budget] {
-            finishWhenDrained(exit_code, exit_status, drain_budget);
-        });
-        return;
+    // The existing byte budget bounds a sustained producer. A sink paused for
+    // backpressure cannot be allowed to suspend teardown forever, so the wall
+    // clock is the second, independent stuck-drain bound.
+    constexpr int drain_deadline_ms = 3000;
+    const bool deadline_reached =
+        final_drain_active_ && final_drain_clock_.elapsed() >= drain_deadline_ms;
+    if (output_paused_ && !final_drain_closed_) {
+        if (deadline_reached) {
+            qWarning("PTY final output sink stayed paused for 3 seconds; "
+                     "closing the terminal");
+            if (reader_)
+                reader_->setEnabled(false);
+            if (writer_)
+                writer_->setEnabled(false);
+            master_.reset();
+            slave_.reset();
+            clearPendingWrite();
+            final_drain_closed_ = true;
+        } else {
+            QTimer::singleShot(10, this, [this, exit_code, exit_status, drain_budget] {
+                finishWhenDrained(exit_code, exit_status, drain_budget);
+            });
+            return;
+        }
     }
     if (!readReady()) {
-        if (drain_budget > 1) {
+        if (drain_budget > 1 && !deadline_reached) {
             QTimer::singleShot(0, this, [this, exit_code, exit_status, drain_budget] {
                 finishWhenDrained(exit_code, exit_status, drain_budget - 1);
             });
@@ -289,7 +401,13 @@ void PtyProcess::finishWhenDrained(int exit_code, QProcess::ExitStatus exit_stat
         }
         // QProcess has already reaped the leader. Its numeric PID is no longer
         // an owned signaling target; bound the tail and close the terminal.
-        qWarning("PTY final output exceeded the 16 MiB drain budget; closing the terminal");
+        if (drain_budget <= 1) {
+            qWarning("PTY final output exceeded the 16 MiB drain budget; "
+                     "closing the terminal");
+        } else {
+            qWarning("PTY final output remained readable for 3 seconds; "
+                     "closing the terminal");
+        }
     }
     if (reader_)
         reader_->setEnabled(false);
@@ -298,6 +416,10 @@ void PtyProcess::finishWhenDrained(int exit_code, QProcess::ExitStatus exit_stat
     master_.reset();
     slave_.reset();
     clearPendingWrite();
+    guard_control_.reset(); // Bound guarded descendants even if QProcess is still draining.
+    if (final_drain_emitted_)
+        return;
+    final_drain_emitted_ = true;
     emit finished(exit_code, exit_status);
 }
 } // namespace lapis::session::posix

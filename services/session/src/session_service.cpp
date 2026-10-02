@@ -42,6 +42,10 @@ constexpr int codex_sync_timeout_ms = 15000;
 constexpr int terminal_sync_timeout_ms = 3000;
 constexpr int backend_probe_interval_ms = 25;
 constexpr int backend_probe_attempts = 400;
+// Admission is batch-atomic: the consumer sees the complete PTY read batch,
+// then may pause before that batch is parsed. The retained queue therefore has
+// a hard bound of one admission limit plus one maximum PTY batch.
+constexpr qsizetype output_admission_limit = qsizetype{64} * 1024;
 quint64 monotonic_ns() {
     return static_cast<quint64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                     std::chrono::steady_clock::now().time_since_epoch())
@@ -144,6 +148,8 @@ class SessionService final : public QObject {
             }
         });
         connect(&server_, &QLocalServer::newConnection, this, [this] { attach(); });
+        output_admission_timer_.setSingleShot(true);
+        connect(&output_admission_timer_, &QTimer::timeout, this, [this] { process_output(); });
         connect(&pty_, &posix::PtyProcess::started, this, [this] {
             process_started_ = true;
             hello();
@@ -210,16 +216,50 @@ class SessionService final : public QObject {
     }
     void receive_output(const QByteArray& bytes) {
         timing_.pty_read_ns = monotonic_ns();
-        if (pending_output_.size() + bytes.size() > qsizetype{64} * 1024) {
-            stop(QStringLiteral("PTY output queue overflow"));
-            return;
-        }
+        // Hold every notification until the admission decision. Otherwise a
+        // short read batch can be parsed before the producer's next read, and
+        // the 64 KiB service boundary becomes dependent on scheduler timing.
+        pty_.pauseOutput(true);
         pending_output_ += bytes;
+        if (pending_output_.size() >= output_admission_limit) {
+            output_admission_timer_.stop();
+            if (!output_pressure_) {
+                output_pressure_ = true;
+                qWarning().noquote() << "PTY output retention paused at" << output_admission_limit
+                                     << "bytes; the child remains alive and output stays ordered";
+            }
+        } else if (!output_admission_timer_.isActive()) {
+            // This is a bounded admission window, not a per-event debounce: it
+            // starts at the first unadmitted byte and cannot be extended by a
+            // burst. Quiet partial batches still process after one frame.
+            output_admission_timer_.start(static_cast<int>(frame_ms));
+        }
+        schedule_output_admission();
         if (const auto found = checkpoint_scanner_.scan(bytes);
             found && found->agent == checkpoint_agent_)
             note_conversation(found->agent, found->session_id, ResumeSource::terminal);
-        pty_.pauseOutput(true);
-        process_output();
+        if (pending_output_.size() >= output_admission_limit)
+            schedule_output_processing();
+    }
+    void schedule_output_admission() {
+        if (output_admission_scheduled_)
+            return;
+        output_admission_scheduled_ = true;
+        QTimer::singleShot(0, this, [this] {
+            output_admission_scheduled_ = false;
+            if (stopping_ || output_waiting_ || pending_output_.size() >= output_admission_limit)
+                return;
+            pty_.pauseOutput(false);
+        });
+    }
+    void schedule_output_processing() {
+        if (output_processing_scheduled_)
+            return;
+        output_processing_scheduled_ = true;
+        QTimer::singleShot(0, this, [this] {
+            output_processing_scheduled_ = false;
+            process_output();
+        });
     }
     // The conversation to resume if this service stops without the agent being
     // closed (see agent_checkpoint.hpp). Failure to save is not fatal.
@@ -589,6 +629,7 @@ class SessionService final : public QObject {
         if (stopping_ || processing_output_)
             return;
         processing_output_ = true;
+        output_admission_timer_.stop();
         try {
             if (harvest_offset_ && !archive_history(true)) {
                 processing_output_ = false;
@@ -623,10 +664,15 @@ class SessionService final : public QObject {
                 throw std::runtime_error("PTY reply queue overflow");
             schedule();
             if (!output_waiting_) {
-                if (pending_output_.isEmpty())
+                if (pending_output_.isEmpty()) {
+                    if (output_pressure_) {
+                        output_pressure_ = false;
+                        qInfo().noquote() << "PTY output retention drained; output resumed";
+                    }
                     pty_.pauseOutput(false);
-                else
+                } else {
                     QTimer::singleShot(0, this, [this] { process_output(); });
+                }
             }
         } catch (const std::exception& error) {
             stop(QString::fromUtf8(error.what()));
@@ -708,6 +754,7 @@ class SessionService final : public QObject {
         if (stopping_)
             return;
         stopping_ = true;
+        output_admission_timer_.stop();
         stop_codex();
         if (claude_observer_)
             claude_observer_->stop();
@@ -1449,6 +1496,7 @@ class SessionService final : public QObject {
     wire::Attachment attachment_;
     QByteArray buffer_;
     QTimer timer_;
+    QTimer output_admission_timer_;
     QElapsedTimer last_publish_;
     static constexpr qint64 frame_ms = 16;
     QElapsedTimer last_attention_publish_;
@@ -1469,7 +1517,10 @@ class SessionService final : public QObject {
     QByteArray pending_output_;
     QString history_error_;
     bool processing_output_{};
+    bool output_admission_scheduled_{};
+    bool output_processing_scheduled_{};
     bool output_waiting_{};
+    bool output_pressure_{};
     bool history_failed_{};
     std::optional<std::pair<wire::Attachment, wire::HistoryRequest>> pending_history_;
     std::optional<std::size_t> harvest_offset_;

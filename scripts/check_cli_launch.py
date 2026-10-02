@@ -431,7 +431,8 @@ class Service:
         self.codex = codex
         self.claude = claude
         self.attachment = None
-        self.log = (artifacts / (name + ".service.log")).open("wb")
+        self.log_path = artifacts / (name + ".service.log")
+        self.log = self.log_path.open("wb")
         self.process = subprocess.Popen(
             [str(binary)]
             + (["--codex"] if codex else ["--claude"] if claude else [])
@@ -492,7 +493,8 @@ class Service:
             self.log.close()
 
     def log_text(self):
-        return self.log.read_text(errors="replace")
+        self.log.flush()
+        return self.log_path.read_text(errors="replace")
 
 
 FIXTURE = r"""
@@ -506,6 +508,15 @@ for line in sys.stdin:
     if command=='quit': sys.exit(7)
     if command=='pause':
         tty.setraw(0); print('PAUSED',flush=True); os.kill(os.getpid(),signal.SIGSTOP)
+    elif command=='overflow':
+        print('ORDER_START',flush=True)
+        burst=b'\x1b[H'*44000
+        while burst:
+            count=os.write(1,burst)
+            burst=burst[count:]
+        print('\x1b[5;1HORDER_END',flush=True)
+        print('OVERFLOW_WRITTEN',flush=True)
+        os.kill(os.getpid(),signal.SIGSTOP)
     elif command=='burst':
         time.sleep(.3)
         for i in range(12000): print('0123456789abcdef')
@@ -1395,24 +1406,62 @@ with open(sys.argv[1], 'wb', buffering=0) as output:
             service.stop()
 
     def backpressure():
-        with session("backpressure") as service, service.connect() as client:
-            client.snapshot(lambda screen: "READY" in screen["text"])
-            client.send(TEXT, b"pause\n")
-            client.snapshot(lambda screen: "PAUSED" in screen["text"])
-            try:
-                # Stop the reader, then exceed the bounded PTY queue with whole messages.
-                packet = frame(TEXT, client.attachment + b"q" * 65536)
+        with session("input-backpressure") as service:
+            with service.connect() as client:
+                client.snapshot(lambda screen: "READY" in screen["text"])
+                client.send(TEXT, b"pause\n")
+                client.snapshot(lambda screen: "PAUSED" in screen["text"])
                 try:
-                    client.socket.sendall(packet * 24)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
-                require(
-                    "PTY input queue full" in client.status(),
-                    "Queue overflow was silent",
-                )
-                require(service.process.poll() is None, "Queue overflow killed service")
-            finally:
+                    # Stop the reader, then exceed the bounded PTY queue with whole messages.
+                    packet = frame(TEXT, client.attachment + b"q" * 65536)
+                    try:
+                        client.socket.sendall(packet * 24)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+                    require(
+                        "PTY input queue full" in client.status(),
+                        "Queue overflow was silent",
+                    )
+                    require(
+                        service.process.poll() is None, "Queue overflow killed service"
+                    )
+                finally:
+                    os.kill(service.child_pid, signal.SIGCONT)
+            # A fresh child isolates output retention from the preceding input
+            # queue overflow. A fresh viewer consumes snapshots while the child
+            # produces more than the 64 KiB PTY admission bound.
+        with session("output-overflow") as service:
+            slow = service.connect()
+            slow.snapshot(lambda screen: "READY" in screen["text"])
+            slow.send(TEXT, b"overflow\n")
+            # The service pauses inside the first admission batch once retained
+            # output reaches its boundary. The child then blocks in the PTY on
+            # this fixed burst; recovery does not depend on an enormous write.
+            deadline = time.monotonic() + WAIT
+            while "PTY output retention paused" not in service.log_text():
+                if time.monotonic() >= deadline:
+                    raise CheckError("Output retention deadline expired")
+                time.sleep(0.01)
+            slow.close()
+            with service.connect() as recovered:
                 os.kill(service.child_pid, signal.SIGCONT)
+                recovered.snapshot(
+                    lambda screen: (
+                        "ORDER_START" in screen["text"]
+                        and "ORDER_END" in screen["text"]
+                        and "OVERFLOW_WRITTEN" in screen["text"]
+                    )
+                )
+                diagnostic = service.log_text()
+                require(
+                    "PTY output retention drained" in diagnostic,
+                    "Output retention did not report recovery",
+                )
+                os.kill(service.child_pid, signal.SIGCONT)
+                recovered.send(TEXT, b"after-output-overflow\n")
+                recovered.snapshot(
+                    lambda screen: "ECHO:after-output-overflow" in screen["text"]
+                )
         with session("nonreading") as service:
             wait_socket(service.endpoint, service.process)
             with WireClient(service.endpoint) as blocked:
@@ -1439,6 +1488,12 @@ with open(sys.argv[1], 'wb', buffering=0) as output:
                 restored.snapshot(
                     lambda screen: "ECHO:after-nonreader" in screen["text"]
                 )
+        return {
+            "input_queue_whole_refusal": True,
+            "output_overflow_recovery": True,
+            "output_retention_recovery": True,
+            "bounded_non_reader_disconnect": True,
+        }
 
     def history_backpressure_receive_batch():
         with session("history-backpressure") as service:
