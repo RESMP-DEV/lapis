@@ -53,8 +53,9 @@ updates. See
   [Phone](docs/phone.md)
 - **Suggestions** can guess your next prompt for Claude Code or Codex only after
   you enable `nextPrompt.auto`; they are optional and experimental. With a dim
-  guess showing, Tab sends it and then moves to the next agent that needs you.
-  With suggestions disabled, Tab keeps its usual meaning in the terminal.
+  guess showing, Tab sends it and then moves to the next agent that needs you;
+  a guess too long to show whole or spanning several lines is only typed. With
+  suggestions disabled, Tab keeps its usual meaning in the terminal.
   [Suggestions](docs/suggestions.md)
 - Every shortcut is in [keys](docs/keys.md) and every setting in
   [config](docs/config.md).
