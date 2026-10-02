@@ -206,8 +206,12 @@ remote task"); a new thread accepts them. The session service therefore gives
 the dedicated app-server `-a`, `-s`, `--full-auto` and
 `--dangerously-bypass-approvals-and-sandbox` as `approval_policy` and
 `sandbox_mode` config, and leaves them off the TUI's command line when it
-resumes or forks. A resumed thread then reports the chosen permissions in
-`/status`.
+resumes or forks. `--full-auto` translates specifically to
+`approval_policy="on-request"` and `sandbox_mode="workspace-write"`; multiple
+permission options emit their config pairs in argument order, so a later option
+wins. A recognized permission option with a missing or non-Codex value is a
+launch error rather than a silently mismatched TUI/server policy. A resumed
+thread then reports the chosen permissions in `/status`.
 
 The inspected `codex-rs/hooks/src/lib.rs` lists `PermissionRequest`,
 `UserPromptSubmit`, `Stop`, `Interrupt`, `SessionStart`, `SessionEnd`, and tool,

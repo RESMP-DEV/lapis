@@ -830,6 +830,11 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 full,
                 ["--dangerously-bypass-approvals-and-sandbox"],
             ),
+            (
+                ["--full-auto"],
+                ['approval_policy="on-request"', 'sandbox_mode="workspace-write"'],
+                ["--full-auto"],
+            ),
             # "resume" as an option's value is not the subcommand.
             (["-m", "resume", "-a", "never"], ['approval_policy="never"'], None),
             # After the literal separator, every token belongs to the TUI.
@@ -880,6 +885,7 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             (
                 ["-s", 'x" y', "resume", thread],
                 ["-s", "read-only\n", "resume", thread],
+                ["-sandbox", "resume", thread],
                 ["-a"],
                 ["--sandbox="],
             )

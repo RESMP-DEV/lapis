@@ -21,7 +21,6 @@
 #include <QLocalSocket>
 #include <QLockFile>
 #include <QPointer>
-#include <QRegularExpression>
 #include <QSet>
 #include <QTimer>
 
@@ -126,26 +125,36 @@ bool codex_option_takes_value(const QString& argument) {
 struct CodexPermission {
     QStringList config; // key=value pairs
     qsizetype consumed = 0;
+    bool recognized = false;
+    QString error;
 };
 CodexPermission codex_permission(const QStringList& arguments, qsizetype index) {
     const auto& argument = arguments.at(index);
     if (argument == QStringLiteral("--dangerously-bypass-approvals-and-sandbox"))
         return {{QStringLiteral("approval_policy=\"never\""),
                  QStringLiteral("sandbox_mode=\"danger-full-access\"")},
-                1};
+                1,
+                true,
+                {}};
     if (argument == QStringLiteral("--full-auto"))
         return {{QStringLiteral("approval_policy=\"on-request\""),
                  QStringLiteral("sandbox_mode=\"workspace-write\"")},
-                1};
+                1,
+                true,
+                {}};
     static const std::array<std::array<const char*, 3>, 2> valued{
         {{"-a", "--ask-for-approval", "approval_policy"}, {"-s", "--sandbox", "sandbox_mode"}}};
-    static const QRegularExpression word(QStringLiteral("^[a-z][a-z-]*\\z"));
+    static const QSet<QString> approval_values{QStringLiteral("on-request"),
+                                               QStringLiteral("never")};
+    static const QSet<QString> sandbox_values{QStringLiteral("read-only"),
+                                              QStringLiteral("workspace-write"),
+                                              QStringLiteral("danger-full-access")};
     for (const auto& [short_name, long_name, key] : valued) {
         QString value;
         qsizetype consumed = 0;
         if (argument == QLatin1String(short_name) || argument == QLatin1String(long_name)) {
             if (index + 1 == arguments.size())
-                throw std::invalid_argument("Codex permission option requires a value");
+                return {{}, 1, true, QStringLiteral("Codex permission option requires a value")};
             value = arguments.at(index + 1);
             consumed = 2;
         } else if (argument.startsWith(QLatin1String(long_name) + QLatin1Char('=')) ||
@@ -162,10 +171,16 @@ CodexPermission codex_permission(const QStringList& arguments, qsizetype index) 
         } else {
             continue;
         }
-        if (!word.match(value).hasMatch())
-            throw std::invalid_argument(
-                QStringLiteral("Codex permission value is invalid: %1").arg(value).toStdString());
-        return {{QStringLiteral("%1=\"%2\"").arg(QLatin1String(key), value)}, consumed};
+        const auto& accepted = QLatin1String(key) == QLatin1String("approval_policy")
+                                   ? approval_values
+                                   : sandbox_values;
+        if (!accepted.contains(value))
+            return {
+                {},
+                consumed,
+                true,
+                QStringLiteral("Codex permission value is invalid for %1").arg(QLatin1String(key))};
+        return {{QStringLiteral("%1=\"%2\"").arg(QLatin1String(key), value)}, consumed, true, {}};
     }
     return {};
 }
@@ -502,6 +517,8 @@ class SessionService final : public QObject {
                 break;
             if (const auto permission = codex_permission(launch.arguments, index);
                 permission.consumed > 0) {
+                if (permission.recognized && !permission.error.isEmpty())
+                    throw std::invalid_argument(permission.error.toStdString());
                 for (const auto& pair : permission.config)
                     arguments << QStringLiteral("-c") << pair;
                 index += permission.consumed - 1;
