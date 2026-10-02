@@ -59,7 +59,7 @@ class DeterministicIdentity final : public IdentityProvider {
     [[nodiscard]] std::string session_id() override { return repeat('5', identity_hex_bytes); }
     [[nodiscard]] std::string session_epoch() override { return repeat('6', identity_hex_bytes); }
     [[nodiscard]] std::string spawn_token() override {
-        const auto value = static_cast<char>('7' + token_serial_++ % 10);
+        const auto value = static_cast<char>('0' + token_serial_++ % 10);
         return repeat(value, spawn_token_hex_bytes);
     }
 
@@ -193,6 +193,11 @@ void posix_private_atomic_storage() {
     QTemporaryDir directory;
     require(directory.isValid(), "temporary state directory");
     const auto root = directory.path().toStdString();
+    {
+        auto unlocked = std::make_shared<PosixStateStorage>(root);
+        rejects("an unlocked POSIX load", [&] { static_cast<void>(unlocked->load()); });
+        rejects("an unlocked POSIX store", [&] { unlocked->store("{\"version\":1}"); });
+    }
     SupervisorState saved;
     {
         auto storage = std::make_shared<PosixStateStorage>(root);

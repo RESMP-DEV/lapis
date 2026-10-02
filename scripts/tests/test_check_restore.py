@@ -8,7 +8,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, sentinel
 
 from scripts import check_restore as restore
 
@@ -47,9 +47,7 @@ class RestoreProbeTests(unittest.TestCase):
                         "codex", bad_arguments, bad_provenance, "saved"
                     )
 
-    def test_parallel_pending_fixture_requires_both_distinct_commands(self):
-        first, second = restore.PARALLEL_COMMANDS
-
+    def test_parallel_approvals_ready_requires_both_distinct_requests(self):
         def request(identifier, submitted=False):
             return {
                 "id": identifier,
@@ -74,6 +72,37 @@ class RestoreProbeTests(unittest.TestCase):
                 {"requests": [request("one"), request("two")]}
             )
         )
+
+    def test_screen_caches_only_matching_attention_snapshots(self):
+        attachment = b"a" * 40
+        state = {"attachment": attachment}
+        client = Mock(attachment=attachment, cached_snapshot={"text": ""})
+        seen_snapshot = False
+
+        def receive(_timeout):
+            nonlocal seen_snapshot
+            if not seen_snapshot:
+                seen_snapshot = True
+                return restore.wire.ATTENTION_SNAPSHOT, attachment
+            raise socket.timeout
+
+        client.receive.side_effect = receive
+        with patch.object(restore, "attention_snapshot", return_value=state):
+            self.assertEqual(restore.screen(client, 0.001), "")
+        self.assertEqual(client.attention, state)
+
+    def test_screen_rejects_attention_from_another_attachment(self):
+        client = Mock(attachment=b"a" * 40, cached_snapshot={"text": ""})
+        client.attention = sentinel.cached
+        client.receive.side_effect = [
+            (restore.wire.ATTENTION_SNAPSHOT, b"b" * 40),
+            socket.timeout(),
+        ]
+        state = {"attachment": b"b" * 40}
+        with patch.object(restore, "attention_snapshot", return_value=state):
+            with self.assertRaises(restore.Failure):
+                restore.screen(client, 0.001)
+        self.assertIs(client.attention, sentinel.cached)
 
     def test_parallel_prompt_names_both_distinct_bash_commands(self):
         lowered = restore.PARALLEL_PROMPT.lower()

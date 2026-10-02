@@ -9,18 +9,61 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fake_models import Server, messages_input, plan, stream_messages
+from fake_models import (
+    PARALLEL_COMMANDS,
+    Server,
+    messages_input,
+    plan,
+    stream_messages,
+    stream_responses,
+)
 
 
 class ProtocolDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
     def test_parallel_scenario_uses_two_bash_calls_then_completes(self):
         prompt = "Use exactly two distinct Bash tool calls now."
-        self.assertEqual(plan(prompt, False), ("parallel_tools", [], 0.5))
         self.assertEqual(
-            plan(prompt, True),
+            plan(prompt, 0, claude_messages=True), ("parallel_tools", [], 0.5)
+        )
+        self.assertEqual(
+            plan(prompt, 1, claude_messages=True), ("parallel_tools", [], 0.5)
+        )
+        self.assertEqual(
+            plan(prompt, 2, claude_messages=True),
             ("parallel_done", ["Fake model: both parallel commands finished."], 0.3),
         )
         self.assertEqual(messages_input({"messages": []}), ("", 0))
+
+    async def test_parallel_scenario_is_rejected_on_responses(self):
+        class Writer:
+            def __init__(self):
+                self.chunks = []
+
+            def write(self, data):
+                self.chunks.append(data)
+
+            async def drain(self):
+                return None
+
+        writer = Writer()
+        await stream_responses(
+            writer,
+            {
+                "model": "lapis-fake",
+                "input": [
+                    {
+                        "role": "user",
+                        "content": "Use exactly two distinct Bash tool calls now.",
+                    }
+                ],
+            },
+        )
+        stream = b"".join(writer.chunks)
+        self.assertIn(
+            b"parallel tools are Claude Messages only",
+            stream,
+        )
+        self.assertNotIn(b"parallel_tools", stream)
 
     async def test_parallel_stream_has_distinct_bash_blocks_then_completion(self):
         class FakeWriter:
@@ -84,7 +127,7 @@ class ProtocolDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(
             [item["command"] for item in arguments],
-            ["echo lapis-parallel-one", "echo lapis-parallel-two"],
+            list(PARALLEL_COMMANDS),
         )
         self.assertEqual(events[-2][1]["delta"]["stop_reason"], "tool_use")
         self.assertEqual(events[-1][0], "message_stop")

@@ -6,13 +6,14 @@
     "revision": "18bf34166d7c10c2bbce577526be894eb7052336",
     "baseline_clean": true,
     "working_tree_dirty": true,
+    "project_version": "0.5.0",
     "dirty_scope": [
       "README.md",
       "docs/install.md",
       "docs/status.md",
       "evidence/release-manifest.json"
     ],
-    "project_version": "0.5.0"
+    "dirty_scope_note": "The named files were the working-tree changes at the recorded revision 18bf341. The delivery carrying this receipt also contains code changes outside that snapshot (desktop workspace, supervisor state core, check and fixture scripts), so this list is a generation-time snapshot, not the scope of the merged change."
   },
   "method": [
     "Read the PR 65 merged source and current implementation.",
@@ -114,7 +115,7 @@
   ],
   "limits": [
     "This is a sanitized documentation reconciliation, not a machine check receipt.",
-    "The working tree is dirty only by the named documentation and receipt patch.",
+    "The documentation-only dirty scope held at the recorded revision; this delivery additionally carries code changes outside that snapshot, as its dirty_scope_note says.",
     "The September 30 architecture audit remains valid as a dated observation; PR 65 supersedes only its source-provenance finding."
   ]
 }

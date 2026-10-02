@@ -292,6 +292,8 @@ const QRegularExpression& remoteAccountPreamble() {
         QStringLiteral(R"(\{ a=[A-Za-z0-9._-]+; .*?; true; \} && )"));
     return preamble;
 }
+constexpr int maximum_remote_token_bytes = 8192;
+
 QString withRemoteAccount(QString command, const Account* account) {
     command.remove(remoteAccountPreamble());
     const auto folder_end = command.indexOf(QStringLiteral(" && "));
@@ -1979,12 +1981,15 @@ QString Workspace::remoteAccountFailure(const AccountPool& accounts, const Agent
         const QFileInfo token(
             QDir(accountsRoot).filePath(QStringLiteral("claude/%1.token").arg(account->name)));
         QFile file(token.absoluteFilePath());
-        const auto text = token.isFile() && token.isReadable() && file.open(QIODevice::ReadOnly)
-                              ? QString::fromUtf8(file.read(8193))
-                              : QString();
+        const auto bytes = token.isFile() && token.isReadable() && file.open(QIODevice::ReadOnly)
+                               ? file.read(maximum_remote_token_bytes + 1)
+                               : QByteArray();
+        if (bytes.size() > maximum_remote_token_bytes)
+            return QStringLiteral("Claude Code plan %1 has no usable token.").arg(account->name);
+        const auto text = QString::fromUtf8(bytes);
         const auto first_line = text.section(QLatin1Char('\n'), 0, 0);
-        if (first_line.isEmpty() || first_line != first_line.trimmed() ||
-            text.count(QLatin1Char('\n')) > 1 || first_line.contains(QChar::Null))
+        if (first_line.isEmpty() || first_line != first_line.trimmed() || bytes.count('\n') > 1 ||
+            bytes.contains('\0'))
             return QStringLiteral("Claude Code plan %1 has no usable token.").arg(account->name);
         return {};
     }

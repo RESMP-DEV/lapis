@@ -6,6 +6,7 @@
 #include <QFile>
 
 #include <cerrno>
+#include <cstdio>
 #include <fcntl.h>
 #include <stdexcept>
 #include <string>
@@ -100,6 +101,8 @@ void PosixStateStorage::acquire() {
 void PosixStateStorage::release() { state_->lock.reset(); }
 
 std::optional<std::string> PosixStateStorage::load() const {
+    if (!state_->lock)
+        failed("Cannot load supervisor state without the singleton lock");
     const auto path = path_of(state_->directory, "supervisor.json");
     struct stat before{};
     if (::lstat(path.c_str(), &before) != 0) {

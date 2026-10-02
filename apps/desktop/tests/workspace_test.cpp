@@ -2167,7 +2167,9 @@ void remoteAccountsRefuseBeforeReplacement() {
         {"name": "spare", "email": "codex-spare@example.test", "machines": ["box"]}]})")
                                                           .object());
     const auto reload_id = uuid();
-    const auto reload_endpoint = root.filePath(reload_id + QStringLiteral(".sock"));
+    // Keep this filename short: QLocalServer rejects Unix paths over the
+    // platform sockaddr limit, while a saved agent ID remains a UUID.
+    const auto reload_endpoint = root.filePath(QStringLiteral("reload.sock"));
     const auto remoteAgent = [&](const QString& harness, const QString& command,
                                  const QString& id) {
         auto record = agentRecord(root.path(), id, "general");
@@ -2227,14 +2229,14 @@ void remoteAccountsRefuseBeforeReplacement() {
     }
 
     writeAuth("{}\n");
-    writeToken("\ntoken-for-spare\n");
     auto reload_registry = claude_registry;
     reload_registry.storagePath = root.filePath(QStringLiteral("reload-workspace.json"));
     registry(QStringLiteral("reload-workspace.json"),
              remoteAgent(QStringLiteral("claude"), claude_command, reload_id));
-    // A non-socket endpoint exercises Workspace's conservative running-service
-    // path without binding a Unix socket or introducing a remote transport.
-    writeExecutable(reload_endpoint, "#!/bin/sh\nexit 0\n");
+    QLocalServer::removeServer(reload_endpoint);
+    QLocalServer reload_peer;
+    reload_peer.setSocketOptions(QLocalServer::UserAccessOption);
+    require(reload_peer.listen(reload_endpoint), "reload endpoint listens as a service");
     {
         Workspace workspace(WorkspaceMode::live, reload_registry);
         workspace.setAccountsRootForTesting(root.filePath(QStringLiteral("accounts")));
@@ -2242,10 +2244,22 @@ void remoteAccountsRefuseBeforeReplacement() {
         require(item != nullptr && !item->closing() &&
                     workspace.agentAccount(item->sessionId()) == QStringLiteral("spare"),
                 "the remote reload fixture loads");
-        require(workspace.reloadAgent(item->sessionId()) == 0 && !item->closing() &&
-                    workspace.workspaceError() ==
-                        QStringLiteral("Claude Code plan spare has no usable token."),
-                "reload refuses a malformed selected credential before contacting the session");
+        for (const auto& token_body : {
+                 QByteArrayLiteral("\ntoken-for-spare\n"),
+                 QByteArrayLiteral(" token-for-spare\n"),
+                 QByteArrayLiteral("token-for-spare\nsecond\n"),
+                 QByteArrayLiteral("token-for-spare\nsecond\nthird"),
+                 QByteArray(8192, 'a') + '\n',
+                 QByteArray(8193, 'a'),
+             }) {
+            writeToken(token_body);
+            require(workspace.reloadAgent(item->sessionId()) == 0 && !item->closing() &&
+                        workspace.workspaceError() ==
+                            QStringLiteral("Claude Code plan spare has no usable token."),
+                    "reload rejects a token the remote shell would reject");
+            require(!reload_peer.hasPendingConnections(),
+                    "credential preflight contacted the healthy session");
+        }
     }
 }
 void incompleteCodexHomeNeverStartsAnAgent() {

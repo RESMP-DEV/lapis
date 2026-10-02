@@ -175,6 +175,8 @@ class SupervisorRegistry final {
     SupervisorRegistry(std::shared_ptr<StateStorage> storage, std::shared_ptr<StateCodec> codec,
                        std::shared_ptr<IdentityProvider> identities);
     ~SupervisorRegistry();
+    SupervisorRegistry(const SupervisorRegistry&) = delete;
+    SupervisorRegistry& operator=(const SupervisorRegistry&) = delete;
 
     [[nodiscard]] const SupervisorState& state() const noexcept { return state_; }
     // Direct authoritative transitions are local operations. Remote requests

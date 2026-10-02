@@ -8,6 +8,8 @@ from the latest user message:
 - "slow": stream text for about 25 seconds (working state, finish pulse).
 - "approve" or "run": request a shell command that needs approval.
 - "ask" or "question": ask a structured multiple-choice question (Codex).
+- The two-pending-Bash scenario belongs only to the Anthropic Messages
+  endpoint; Responses receives a plain rejection for that prompt.
 - "flood": a long reply of many lines.
 - "fail": an HTTP 500 for this turn.
 - anything else: a short reply after one second.
@@ -40,18 +42,24 @@ def sse(event, data):
     )
 
 
-def plan(text, has_tool_result):
+def plan(text, completed_tool_results=0, *, claude_messages=False):
     """Pick a scripted reply for the latest user text."""
     lowered = text.lower()
     if "two distinct bash tool calls" in lowered:
-        if has_tool_result:
+        if not claude_messages:
+            return (
+                "text",
+                ["Fake model: parallel tools are Claude Messages only."],
+                0.3,
+            )
+        if completed_tool_results == len(PARALLEL_COMMANDS):
             return (
                 "parallel_done",
                 ["Fake model: both parallel commands finished."],
                 0.3,
             )
         return "parallel_tools", [], 0.5
-    if has_tool_result:
+    if completed_tool_results:
         return "text", ["Fake model: the command finished."], 0.3
     if "fail" in lowered:
         return "fail", [], 0
@@ -349,13 +357,13 @@ async def stream_messages(writer, body):
     tools = [
         tool.get("name") for tool in body.get("tools", []) if isinstance(tool, dict)
     ]
-    kind, chunks, delay = plan(text, tool_result_count)
+    kind, chunks, delay = plan(text, tool_result_count, claude_messages=True)
     if kind in ("tool", "parallel_tools") and "Bash" not in tools:
         kind, chunks, delay = "text", ["Fake model: no Bash tool was offered."], 0.3
     if kind == "fail":
         return await http_error(writer, 500, "lapis fake model: intentional failure")
     if not body.get("stream"):
-        reply = "".join(chunks) if kind == "text" else "Fake model."
+        reply = "".join(chunks) if kind in ("text", "parallel_done") else "Fake model."
         message = claude_message(serial, model, [{"type": "text", "text": reply}])
         message["stop_reason"] = "end_turn"
         return await http_json(writer, message)
@@ -370,11 +378,7 @@ async def stream_messages(writer, body):
     blocks: list[tuple[dict[str, object], str]] = []
     if kind in ("tool", "parallel_tools"):
         await asyncio.sleep(delay)
-        commands = (
-            [COMMAND]
-            if kind == "tool"
-            else ["echo lapis-parallel-one", "echo lapis-parallel-two"]
-        )
+        commands = [COMMAND] if kind == "tool" else list(PARALLEL_COMMANDS)
         for index, command in enumerate(commands):
             block = {
                 "type": "tool_use",

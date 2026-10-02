@@ -17,6 +17,10 @@ option(LAPIS_BUILD_SESSION "Build the existing session service and its terminal 
 option(LAPIS_PACKAGE "Build the desktop as the downloadable app (see scripts/package_macos.py)" OFF)
 option(LAPIS_BUILD_SUPERVISOR_STATE "Build the focused supervisor state-core test target" OFF)
 
+if(LAPIS_BUILD_DESKTOP AND NOT LAPIS_BUILD_SESSION)
+    message(FATAL_ERROR "LAPIS_BUILD_DESKTOP requires LAPIS_BUILD_SESSION")
+endif()
+
 include(CTest)
 
 if(LAPIS_BUILD_SESSION)

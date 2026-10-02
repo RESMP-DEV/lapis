@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -529,9 +530,9 @@ class FocusedRunnerTests(unittest.TestCase):
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         self.assertFalse(receipt["passed"])
         self.assertEqual(
-            receipt["selection"], {"tests": ["scripts.tests.missing"], "paths": []}
+            receipt["selection"], {"tests": ["rejected-test-0"], "paths": []}
         )
-        self.assertIn("does not map to an existing Python file", receipt["scope"])
+        self.assertIn("Focused selector validation failed", receipt["scope"])
 
     def test_selectors_without_focused_flag_are_rejected(self):
         with contextlib.redirect_stderr(io.StringIO()):
@@ -552,7 +553,7 @@ class FocusedRunnerTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         self.assertFalse(receipt["passed"])
-        self.assertIn("requires at least one", receipt["scope"])
+        self.assertIn("Focused selector validation failed", receipt["scope"])
 
     def test_focused_without_selectors_is_rejected(self):
         with contextlib.redirect_stderr(io.StringIO()):
@@ -564,10 +565,22 @@ class FocusedRunnerTests(unittest.TestCase):
 class FocusedInvocationTests(unittest.TestCase):
     def test_cli_rejects_unknown_test_module_without_running_checks(self):
         with tempfile.TemporaryDirectory() as root:
+            checkout = Path(root)
+            (checkout / "scripts").mkdir()
+            script = checkout / "scripts" / "check_quality.py"
+            shutil.copyfile(check_quality.__file__, script)
+            shutil.copyfile(
+                Path(check_quality.__file__).with_name("check_cpp.py"),
+                checkout / "scripts" / "check_cpp.py",
+            )
+            shutil.copyfile(
+                Path(check_quality.__file__).with_name("probe_terminal.py"),
+                checkout / "scripts" / "probe_terminal.py",
+            )
             result = subprocess.run(
                 [
                     sys.executable,
-                    check_quality.__file__,
+                    script,
                     "--focused",
                     "--test",
                     "scripts.tests.does_not_exist",

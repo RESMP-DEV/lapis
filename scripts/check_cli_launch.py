@@ -140,6 +140,65 @@ def decode_snapshot(payload):
     }
 
 
+class AttentionReader:
+    def __init__(self, data):
+        require(len(data) <= 1024 * 1024, "Oversized attention snapshot")
+        self.data = data
+        self.offset = 0
+
+    def take(self, size):
+        require(0 <= size <= len(self.data) - self.offset, "Truncated attention field")
+        result = self.data[self.offset : self.offset + size]
+        self.offset += size
+        return result
+
+    def number(self, fmt):
+        return struct.unpack(fmt, self.take(struct.calcsize(fmt)))[0]
+
+    def string(self, limit=32768):
+        size = self.number(">I")
+        require(size <= limit, "Oversized attention string")
+        return self.take(size).decode("utf-8")
+
+    def request_id(self):
+        kind = self.number(">B")
+        require(kind in (0, 1), "Invalid request ID tag")
+        return self.number(">q") if kind == 0 else self.string(1024)
+
+
+def decode_attention_snapshot(data):
+    """Decode the versioned service attention frame shared by QA probes."""
+    reader = AttentionReader(data)
+    require(reader.number(">I") == VERSION, "Attention version mismatch")
+    result = {"attachment": reader.take(40)}
+    for key in ("available", "connected", "ready"):
+        value = reader.number(">B")
+        require(value in (0, 1), "Invalid readiness flag")
+        result[key] = bool(value)
+    result["activity"] = reader.number(">B")
+    result["epoch"] = reader.number(">Q")
+    result["diagnostic"] = reader.string(4096)
+    count = reader.number(">I")
+    require(count <= 128, "Oversized attention list")
+    result["requests"] = []
+    for _ in range(count):
+        request = {"id": reader.request_id()}
+        for key in ("thread", "turn", "item", "reason", "summary"):
+            request[key] = reader.string(4096)
+        choices = reader.number(">I")
+        require(choices <= 32, "Oversized choices")
+        request["choices"] = [reader.string(256) for _ in range(choices)]
+        request["priority"] = reader.number(">B")
+        request["details"] = json.loads(reader.string())
+        request["status"] = reader.number(">B")
+        for key in ("revision", "arrived", "not_before", "epoch"):
+            request[key] = reader.number(">Q")
+        request["submitted"] = bool(reader.number(">B"))
+        result["requests"].append(request)
+    require(reader.offset == len(data), "Trailing attention bytes")
+    return result
+
+
 def default_shell() -> str:
     """Mirror the session service: $SHELL, then the account's login shell.
 

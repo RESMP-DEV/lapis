@@ -152,65 +152,23 @@ def screen(session, timeout=2.0):
                 kind in (wire.ATTENTION_SNAPSHOT, wire.ATTENTION_RETRY),
                 "Unexpected frame while reading a restore fixture",
             )
+            # A snapshot consumed here would otherwise be lost, because the
+            # service republishes attention only when its state is dirty.
+            if kind == wire.ATTENTION_SNAPSHOT:
+                state = attention_snapshot(data)
+                require(
+                    state["attachment"] == session.attachment,
+                    "Attention attachment mismatch",
+                )
+                session.attention = state
     return text
 
 
-class _AttentionReader:
-    def __init__(self, data):
-        require(len(data) <= 1024 * 1024, "Oversized attention snapshot")
-        self.data = data
-        self.offset = 0
-
-    def take(self, size):
-        require(0 <= size <= len(self.data) - self.offset, "Truncated attention field")
-        result = self.data[self.offset : self.offset + size]
-        self.offset += size
-        return result
-
-    def number(self, fmt):
-        return struct.unpack(fmt, self.take(struct.calcsize(fmt)))[0]
-
-    def string(self, limit=32768):
-        size = self.number(">I")
-        require(size <= limit, "Oversized attention string")
-        return self.take(size).decode("utf-8")
-
-    def request_id(self):
-        kind = self.number(">B")
-        require(kind in (0, 1), "Invalid request ID tag")
-        return self.number(">q") if kind == 0 else self.string(1024)
-
-
 def attention_snapshot(data):
-    reader = _AttentionReader(data)
-    require(reader.number(">I") == wire.VERSION, "Attention version mismatch")
-    result = {"attachment": reader.take(40)}
-    for key in ("available", "connected", "ready"):
-        value = reader.number(">B")
-        require(value in (0, 1), "Invalid readiness flag")
-        result[key] = bool(value)
-    result["activity"] = reader.number(">B")
-    result["epoch"] = reader.number(">Q")
-    result["diagnostic"] = reader.string(4096)
-    count = reader.number(">I")
-    require(count <= 128, "Oversized attention list")
-    result["requests"] = []
-    for _ in range(count):
-        request = {"id": reader.request_id()}
-        for key in ("thread", "turn", "item", "reason", "summary"):
-            request[key] = reader.string(4096)
-        choices = reader.number(">I")
-        require(choices <= 32, "Oversized choices")
-        request["choices"] = [reader.string(256) for _ in range(choices)]
-        request["priority"] = reader.number(">B")
-        request["details"] = json.loads(reader.string())
-        request["status"] = reader.number(">B")
-        for key in ("revision", "arrived", "not_before", "epoch"):
-            request[key] = reader.number(">Q")
-        request["submitted"] = bool(reader.number(">B"))
-        result["requests"].append(request)
-    require(reader.offset == len(data), "Trailing attention bytes")
-    return result
+    try:
+        return wire.decode_attention_snapshot(data)
+    except wire.CheckError as error:
+        raise Failure(str(error)) from error
 
 
 def attention(session):
@@ -233,6 +191,11 @@ def attention(session):
         )
         if kind == wire.ATTENTION_SNAPSHOT:
             state = attention_snapshot(data)
+            require(
+                state["attachment"] == session.attachment,
+                "Attention attachment mismatch",
+            )
+            session.attention = state
         elif kind != wire.ATTENTION_RETRY:
             require(kind == wire.SNAPSHOT, "Unexpected frame reading attention")
     return state
@@ -676,8 +639,20 @@ def main():
             parallel_attention.get("diagnostic", "").find("Claude") >= 0,
             "Parallel approvals were not observed through the Claude adapter",
         )
+        pending = parallel_attention.get("requests", [])
         require(
-            record(endpoint["claude"])["session_id"] == conversations["claude"],
+            bool(pending)
+            and all(
+                request.get("details", {}).get("adapter") == "claude-code"
+                and request.get("details", {}).get("responseLocation") == "terminal"
+                for request in pending
+            ),
+            "Parallel approvals lacked Claude adapter terminal-response provenance",
+        )
+        parallel_record = record(endpoint["claude"])
+        require(
+            parallel_record
+            and parallel_record.get("session_id") == conversations["claude"],
             "parallel prompt left the Claude conversation",
         )
         parallel_session.close()
@@ -732,12 +707,14 @@ def main():
                     f"Fake model reply to: {prompt[name]}" in shown,
                     f"{name} lost the earlier reply",
                 )
+                restored_record = record(endpoint[name])
                 require(
-                    record(endpoint[name])["session_id"] == conversations[name],
+                    restored_record
+                    and restored_record.get("session_id") == conversations[name],
                     f"{name} changed conversation",
                 )
                 require(
-                    record(endpoint[name])["source"] == "observer",
+                    restored_record.get("source") == "observer",
                     f"{name} lost observer provenance",
                 )
                 if round_number == 1:
@@ -781,7 +758,7 @@ def main():
                 wait_screen(session, f"echo: {follow_up}")
                 session.close()
                 require(
-                    record(endpoint[name])
+                    (record(endpoint[name]) or {})
                     == {
                         "version": 2,
                         "agent": name,

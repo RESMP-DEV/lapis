@@ -416,16 +416,24 @@ def main():
 def _run_focused(parser, arguments):
     report_dir = ROOT / "build" / "reports" / FOCUSED_REPORT_DIRNAME
     receipt_path = report_dir / "receipt.json"
-    # Invalidate first, including selector validation failures: a rejected run
-    # must never leave an earlier focused PASS looking current.
-    receipt_path.parent.mkdir(parents=True, exist_ok=True)
-    receipt_path.unlink(missing_ok=True)
     try:
-        test_modules = parse_test_selectors(ROOT, arguments.tests)
-        source_paths = parse_source_selectors(ROOT, arguments.paths)
-    except SelectionError as error:
-        _write_focused_argument_failure(receipt_path, arguments, error)
-        parser.error(str(error))
+        # Invalidate first, including selector validation failures: a rejected
+        # run must never leave an earlier focused PASS looking current.
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        receipt_path.unlink(missing_ok=True)
+        try:
+            test_modules = parse_test_selectors(ROOT, arguments.tests)
+            source_paths = parse_source_selectors(ROOT, arguments.paths)
+        except SelectionError as error:
+            try:
+                _write_focused_argument_failure(receipt_path, arguments, error)
+            except OSError:
+                # Validation still fails, even if the failure receipt is unwritable.
+                pass
+            parser.error(str(error))
+    except (OSError, RuntimeError) as error:
+        print(f"FAIL focused quality: {error}", file=sys.stderr, flush=True)
+        return 1
     if not test_modules and not source_paths:
         error = SelectionError(
             "--focused requires at least one --test or --path selector"
@@ -482,20 +490,29 @@ def _run_focused(parser, arguments):
 
 
 def _write_focused_argument_failure(path, arguments, error):
-    selection = {"tests": list(arguments.tests), "paths": list(arguments.paths)}
+    selection = {
+        "tests": [f"rejected-test-{index}" for index in range(len(arguments.tests))],
+        "paths": [f"rejected-path-{index}" for index in range(len(arguments.paths))],
+    }
     scope = focused_scope(selection["tests"], selection["paths"])
-    _write_failure_receipt(path, scope, selection, error)
+    diagnostic = "Focused selector validation failed"
+    _write_failure_receipt(path, scope, selection, error, diagnostic=diagnostic)
 
 
-def _write_failure_receipt(path, scope, selection, error):
+def _write_failure_receipt(path, scope, selection, error, *, diagnostic=None):
+    validation_failure = diagnostic if diagnostic is not None else error
     result = {
         "check": "focused-startup",
         "kind": "contract",
         "passed": False,
-        "diagnostic": f"Focused quality run failed before checks completed: {error}",
+        "diagnostic": (
+            f"Focused quality run failed before checks completed: "
+            f"{diagnostic if diagnostic is not None else error}"
+        ),
     }
     failure_scope = (
-        f"{scope} Argument validation failed: {error}. No selected checks ran."
+        f"{scope} Argument validation failed: {validation_failure}. "
+        "No selected checks ran."
         if isinstance(error, SelectionError)
         else f"{scope} Startup failed, so the selected checks did not complete."
     )
