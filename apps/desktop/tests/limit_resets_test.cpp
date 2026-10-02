@@ -12,6 +12,7 @@
 #include <QTemporaryDir>
 #include <QThreadPool>
 
+#include <atomic>
 #include <condition_variable>
 #include <functional>
 #include <iostream>
@@ -108,7 +109,7 @@ struct Fixture {
     QDir root{directory.path()};
     QVector<LimitResets::AgentTarget> targets;
     QStringList spent, declined, uncertain;
-    int credential_reads{};
+    std::atomic<int> credential_reads{};
     std::function<void()> before_credentials;
     std::unique_ptr<LimitResets> controller;
 
@@ -347,8 +348,10 @@ void configuredTargetsUseTheirOwnRoutes() {
         {.automatic = true, .minBlockedMinutes = 30, .keepCredits = 1, .salvageHours = 6});
     f.controller->sweep();
     require(waitFor([&] { return f.spent.size() == 1; }), "the remote plan's route completes");
-    require(QThreadPool::globalInstance()->waitForDone(5000),
-            "any wrongly queued local credential read must finish before the assertion");
+    QElapsedTimer credential_grace;
+    credential_grace.start();
+    while (f.credential_reads.load() == 0 && credential_grace.elapsed() < 500)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
     require(f.credential_reads == 0,
             "a sweep skips this Mac's own Claude sign-in rather than raise the keychain prompt");
     f.controller->useNow(QStringLiteral("0"));

@@ -199,16 +199,18 @@ void LimitResets::setSettings(const LimitResetSettings& settings) {
 }
 void LimitResets::sweep() {
     QSet<QString> seen;
-    bool prompt_skip_logged = false;
     for (const auto& target : agents_()) {
         const auto key = targetKey(target);
         if (!supported(target.cli) || seen.contains(key))
             continue;
-        if (automaticResetWouldPrompt(target)) {
-            if (!prompt_skip_logged) {
+        // Only the macOS keychain reader can raise the login-password prompt.
+        if (credentials_ && automaticResetWouldPrompt(target)) {
+            if (!keychain_skip_logged_) {
                 qInfo().noquote()
-                    << "Limit reset check: skipping this Mac's Claude keychain sign-in";
-                prompt_skip_logged = true;
+                    << "Limit reset check: skipping automatic reset for this Mac's Claude "
+                       "keychain sign-in"
+                    << (target.account.isEmpty() ? QStringLiteral("<default>") : target.account);
+                keychain_skip_logged_ = true;
             }
             continue;
         }
