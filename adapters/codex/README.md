@@ -203,10 +203,11 @@ Do not start/stop the user's shared daemon or install global hooks for a probe.
 A TUI on `--remote` that resumes or forks a thread refuses approval and sandbox
 options (Codex 0.157.1: "Permission overrides are not supported when resuming a
 remote task"); a new thread accepts them. The session service therefore gives
-the dedicated app-server `-a`, `-s` and `--dangerously-bypass-approvals-and-sandbox`
-as `approval_policy` and `sandbox_mode` config, and leaves them off the TUI's
-command line when it resumes or forks. A resumed thread then reports the chosen
-permissions in `/status`.
+the dedicated app-server `-a`, `-s`, `--full-auto` and
+`--dangerously-bypass-approvals-and-sandbox` as `approval_policy` and
+`sandbox_mode` config, and leaves them off the TUI's command line when it
+resumes or forks. A resumed thread then reports the chosen permissions in
+`/status`.
 
 The inspected `codex-rs/hooks/src/lib.rs` lists `PermissionRequest`,
 `UserPromptSubmit`, `Stop`, `Interrupt`, `SessionStart`, `SessionEnd`, and tool,

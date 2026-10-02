@@ -95,7 +95,8 @@ void remove_dead_codex_link(const QString& path) {
     if (!QFile::remove(path))
         throw std::runtime_error("Cannot remove stale Codex endpoint");
 }
-// Codex options before the subcommand that take the next argument as a value.
+// Codex root options before the subcommand that take the next argument as a
+// value. Keep this synchronized with the installed `codex --help` surface.
 bool codex_option_takes_value(const QString& argument) {
     static const QSet<QString> options{QStringLiteral("-c"),
                                        QStringLiteral("--config"),
@@ -132,6 +133,10 @@ CodexPermission codex_permission(const QStringList& arguments, qsizetype index) 
         return {{QStringLiteral("approval_policy=\"never\""),
                  QStringLiteral("sandbox_mode=\"danger-full-access\"")},
                 1};
+    if (argument == QStringLiteral("--full-auto"))
+        return {{QStringLiteral("approval_policy=\"never\""),
+                 QStringLiteral("sandbox_mode=\"danger-full-access\"")},
+                1};
     static const std::array<std::array<const char*, 3>, 2> valued{
         {{"-a", "--ask-for-approval", "approval_policy"}, {"-s", "--sandbox", "sandbox_mode"}}};
     static const QRegularExpression word(QStringLiteral("^[a-z][a-z-]*$"));
@@ -140,17 +145,26 @@ CodexPermission codex_permission(const QStringList& arguments, qsizetype index) 
         qsizetype consumed = 0;
         if (argument == QLatin1String(short_name) || argument == QLatin1String(long_name)) {
             if (index + 1 == arguments.size())
-                return {};
+                throw std::invalid_argument("Codex permission option requires a value");
             value = arguments.at(index + 1);
             consumed = 2;
-        } else if (argument.startsWith(QLatin1String(long_name) + QLatin1Char('='))) {
-            value = argument.mid(qsizetype(std::strlen(long_name)) + 1);
+        } else if (argument.startsWith(QLatin1String(long_name) + QLatin1Char('=')) ||
+                   argument.startsWith(QLatin1String(short_name) + QLatin1Char('=')) ||
+                   (argument.startsWith(QLatin1String(short_name)) &&
+                    argument.size() > QLatin1String(short_name).size())) {
+            const auto prefix = argument.startsWith(QLatin1String(long_name) + QLatin1Char('='))
+                                    ? qsizetype(std::strlen(long_name)) + 1
+                                : argument.startsWith(QLatin1String(short_name) + QLatin1Char('='))
+                                    ? qsizetype(std::strlen(short_name)) + 1
+                                    : qsizetype(std::strlen(short_name));
+            value = argument.mid(prefix);
             consumed = 1;
         } else {
             continue;
         }
         if (!word.match(value).hasMatch())
-            return {};
+            throw std::invalid_argument(
+                QStringLiteral("Codex permission value is invalid: %1").arg(value).toStdString());
         return {{QStringLiteral("%1=\"%2\"").arg(QLatin1String(key), value)}, consumed};
     }
     return {};

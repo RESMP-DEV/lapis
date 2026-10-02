@@ -774,7 +774,7 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
         # a thread; the dedicated server takes them as config instead.
         executable = runtime / "permission-codex"
         executable.write_text(
-            f"#!{sys.executable}\n"
+            f"#!{program}\n"
             "import json,socket,sys\n"
             "from pathlib import Path\n"
             "if sys.argv[1]=='app-server':\n"
@@ -800,9 +800,24 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 ["resume", thread],
             ),
             (
+                ["--full-auto", "resume", thread],
+                full,
+                ["resume", thread],
+            ),
+            (
                 ["-a", "never", "-s", "workspace-write", "fork", thread],
                 ['approval_policy="never"', 'sandbox_mode="workspace-write"'],
                 ["fork", thread],
+            ),
+            (
+                ["-s=read-only", "resume", thread],
+                ['sandbox_mode="read-only"'],
+                ["resume", thread],
+            ),
+            (
+                ["-sread-only", "resume", thread],
+                ['sandbox_mode="read-only"'],
+                ["resume", thread],
             ),
             (
                 ["resume", thread, "--sandbox=read-only"],
@@ -817,8 +832,12 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             ),
             # "resume" as an option's value is not the subcommand.
             (["-m", "resume", "-a", "never"], ['approval_policy="never"'], None),
-            # Anything but a plain word stays with the TUI for Codex to judge.
-            (["-s", 'x" y', "resume", thread], [], ["-s", 'x" y', "resume", thread]),
+            # After the literal separator, every token belongs to the TUI.
+            (
+                ["--", "-a", "never", "resume", thread],
+                [],
+                ["--", "-a", "never", "resume", thread],
+            ),
         ]
         for index, (arguments, backend, tui) in enumerate(cases):
             if tui is None:
@@ -857,6 +876,32 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 )
             finally:
                 service.stop()
+        for index, arguments in enumerate(
+            (["-s", 'x" y', "resume", thread], ["-a"], ["--sandbox="])
+        ):
+            name = f"codex-permissions-invalid-{index}"
+            service = Service(
+                binary,
+                runtime,
+                artifacts,
+                name,
+                str(executable),
+                arguments,
+                runtime,
+                codex=True,
+            )
+            try:
+                code = service.process.wait(timeout=WAIT)
+                require(
+                    code != 0, f"Invalid permission value launched service: {arguments}"
+                )
+            finally:
+                service.stop()
+            diagnostic = (artifacts / (name + ".service.log")).read_text()
+            require(
+                "Codex permission" in diagnostic,
+                f"Missing permission diagnostic: {arguments}",
+            )
         return {"permission_cases": len(cases), "live_codex_used": False}
 
     def codex_backend_exit():
