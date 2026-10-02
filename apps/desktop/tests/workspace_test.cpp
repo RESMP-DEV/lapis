@@ -2110,6 +2110,59 @@ exec sleep 600
 // exercise the apply seam, and a conservative running-service endpoint
 // exercises reload; a real healthy transport kept alive through termination
 // remains parent-owned.
+void remoteAccountsDropPreambleWithoutConfiguration() {
+    // Reuses the saved-record restart seam from remote-account refusals while
+    // avoiding the later live reload listener.
+    QTemporaryDir directory(QCoreApplication::applicationDirPath() +
+                            QStringLiteral("/../../ra-XXXXXX"));
+    require(directory.isValid(), "remote account registry directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    require(root.mkpath(QStringLiteral("project")) && root.mkpath(QStringLiteral("bin")),
+            "create the stale-plan fixture");
+    const auto ssh = root.filePath(QStringLiteral("bin/ssh"));
+    writeExecutable(ssh, "#!/bin/sh\nexit 0\n");
+    const auto project = root.filePath(QStringLiteral("project"));
+    const auto preamble = QStringLiteral("{ a=spare; t=\"$HOME/.lapis/accounts/claude/$a.token\"; "
+                                         "export CLAUDE_CODE_OAUTH_TOKEN; true; } && ");
+    const auto conversation = uuid();
+    const auto base_command =
+        QStringLiteral("cd %1 && s=%2 && exec claude").arg(project, conversation);
+    const auto saved_command =
+        QStringLiteral("cd %1 && %2s=%3 && exec claude").arg(project, preamble, conversation);
+    const auto id = uuid();
+    auto record = agentRecord(root.path(), id, "general");
+    record.insert(QStringLiteral("endpoint"), root.filePath(id + QStringLiteral(".sock")));
+    record.insert(QStringLiteral("program"), ssh);
+    record.insert(QStringLiteral("harness"), QStringLiteral("claude"));
+    record.insert(QStringLiteral("account"), QStringLiteral("spare"));
+    record.insert(QStringLiteral("arguments"),
+                  QJsonArray{QStringLiteral("-t"), QStringLiteral("box"), saved_command});
+    writeRegistry(root.filePath(QStringLiteral("workspace.json")),
+                  {{"version", 2},
+                   {"activeCategory", "general"},
+                   {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                   {"agents", QJsonArray{record}}});
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    options.accounts = {};
+    Workspace workspace(WorkspaceMode::live, options);
+    auto* item = workspace.focusedSession();
+    require(item != nullptr && !item->closing(), "the unconfigured workspace loads its agent");
+    require(workspace.restartAgent(id), "restart proceeds with no plan configured");
+    const auto saved_record = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                  .object()
+                                  .value(QStringLiteral("agents"))
+                                  .toArray()
+                                  .first()
+                                  .toObject();
+    require(workspace.agentAccount(id).isEmpty() &&
+                saved_record.value(QStringLiteral("account")).toString().isEmpty() &&
+                saved_record.value(QStringLiteral("arguments")).toArray().last().toString() ==
+                    base_command &&
+                !QJsonDocument(saved_record).toJson(QJsonDocument::Compact).contains("{ a=spare"),
+            "a restart without configured plans drops the saved remote preamble and plan");
+}
+
 void remoteAccountsRefuseBeforeReplacement() {
     QJsonArray claude_names{
         QJsonObject{{"name", "safe.name-1"},
@@ -2193,7 +2246,6 @@ void remoteAccountsRefuseBeforeReplacement() {
                                     .arg(root.filePath(QStringLiteral("project")), uuid());
     const auto codex_command =
         QStringLiteral("cd %1 && exec codex").arg(root.filePath(QStringLiteral("project")));
-
     require(QFile::remove(token), "hide the Claude credential");
     auto claude_registry = options;
     claude_registry.storagePath = root.filePath(QStringLiteral("claude-workspace.json"));
@@ -5476,19 +5528,23 @@ int main(int argc, char** argv) {
                     (QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("accounts") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-accounts") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-account-reset") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("launch-policy") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes")),
                 "Usage: lapis_workspace_tests [--case "
-                "remote-options|accounts|reload|updater|startup-defaults|launch-policy|chimes]");
+                "remote-options|accounts|remote-account-reset|reload|updater|"
+                "startup-defaults|launch-policy|chimes]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("accounts")) {
                 incompleteCodexHomeNeverStartsAnAgent();
                 plansFollowTheirLoad();
             } else if (selected == QStringLiteral("remote-accounts")) {
                 remoteAccountsRefuseBeforeReplacement();
+            } else if (selected == QStringLiteral("remote-account-reset")) {
+                remoteAccountsDropPreambleWithoutConfiguration();
             } else if (selected == QStringLiteral("remote-options")) {
                 remoteOptionsRespectTheArgumentLimit();
                 remoteClaudeReconnectsToItsConversation();

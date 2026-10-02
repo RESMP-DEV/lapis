@@ -170,6 +170,12 @@ class IdentityProvider {
 
 // Single-threaded authoritative state owner. Storage owns the singleton lock;
 // blocking filesystem work belongs to that owner's I/O context.
+//
+// A failed persistence commit poisons the registry: it keeps the last known
+// in-memory state and refuses every later transition or control request. A
+// commit can rename the state file and then fail its directory fsync, so what
+// is on disk is unknown from inside the process; only a new registry, built
+// after this one released the lock, may decide from storage again.
 class SupervisorRegistry final {
   public:
     SupervisorRegistry(std::shared_ptr<StateStorage> storage, std::shared_ptr<StateCodec> codec,
@@ -194,6 +200,7 @@ class SupervisorRegistry final {
     std::shared_ptr<StateCodec> codec_;
     std::shared_ptr<IdentityProvider> identities_;
     SupervisorState state_;
+    bool poisoned_{false};
 };
 
 } // namespace lapis::supervisor

@@ -4339,6 +4339,15 @@ passes headless, and no checkpoint's passing claim extends to the next.
 - Qt WebEngine and WKWebView remain alternatives needing their own service,
   frame and input qualification. Neither silently substitutes for a failed CEF gate.
 
+### Claude fixture-pin reconciliation (October 1)
+
+The source fixtures now pin `SUPPORTED_VERSION` to 2.1.286 in
+`scripts/check_claude_hooks.py` and `scripts/probe_claude_failure_hooks.py`.
+This corrects the stale sentence above without converting the recorded
+qualification evidence: the existing runtime receipts and dated observations
+remain Claude 2.1.280. A run on 2.1.286 is still required before claiming the
+newer fixture as qualified.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal

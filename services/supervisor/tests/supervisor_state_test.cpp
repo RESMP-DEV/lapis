@@ -239,6 +239,74 @@ void posix_private_atomic_storage() {
     });
 }
 
+// POSIX store can rename the state file and then fail its directory fsync, so
+// a throwing commit leaves the process unable to say which side is current.
+// The registry must fail closed until a later registry reads the file again.
+void post_persistence_failure_poisons_registry() {
+    // Delegates to the real POSIX storage, so the write really does pass
+    // through its rename, and only then reports the fsync failure.
+    struct FsyncFailureStorage final : StateStorage {
+        explicit FsyncFailureStorage(std::string directory)
+            : inner{std::make_shared<PosixStateStorage>(std::move(directory))} {}
+
+        void acquire() override { inner->acquire(); }
+        void release() override { inner->release(); }
+        [[nodiscard]] std::optional<std::string> load() const override { return inner->load(); }
+        void store(const std::string& bytes) override {
+            inner->store(bytes);
+            ++writes;
+            throw std::runtime_error("directory fsync failed after rename");
+        }
+
+        unsigned writes{0};
+
+      private:
+        std::shared_ptr<PosixStateStorage> inner;
+    };
+
+    QTemporaryDir directory;
+    require(directory.isValid(), "post-persistence state directory");
+    const auto root = directory.path().toStdString();
+    SupervisorState started;
+    {
+        auto owner = registry(std::make_shared<PosixStateStorage>(root));
+        started = owner->start(record());
+    }
+    const auto epoch = started.instance_epoch;
+    const auto token = started.session->spawn_token;
+
+    auto storage = std::make_shared<FsyncFailureStorage>(root);
+    auto owner = registry(storage);
+    require(owner->state() == started, "the failure fixture reloads the saved state");
+    rejects("a stop whose persistence outcome is unknown",
+            [&] { static_cast<void>(owner->stop()); });
+    require(storage->writes == 1, "the failing commit reached the rename");
+    require(owner->state() == started && owner->state().enabled &&
+                owner->state().session->desired_state == DesiredState::started,
+            "a failed commit keeps the last known state and does not claim the stop");
+    rejects("a start after uncertain persistence",
+            [&] { static_cast<void>(owner->start(record())); });
+    rejects("a stop after uncertain persistence", [&] { static_cast<void>(owner->stop()); });
+    rejects("a disable after uncertain persistence", [&] { static_cast<void>(owner->disable()); });
+    ControlRequest stop_request;
+    stop_request.instance_epoch = epoch;
+    stop_request.token = token;
+    stop_request.action = ControlAction::stop;
+    stop_request.session = std::nullopt;
+    rejects("an authenticated control after uncertain persistence",
+            [&] { static_cast<void>(owner->control(stop_request)); });
+    require(owner->state() == started, "refused transitions leave the state untouched");
+    owner.reset();
+
+    // The rename did reach the directory, so the file now describes the stop
+    // that memory never accepted. Reading it again is the only way out.
+    auto reloaded = registry(std::make_shared<PosixStateStorage>(root));
+    require(reloaded->state().session.has_value() &&
+                reloaded->state().session->desired_state == DesiredState::stopped &&
+                reloaded->state().instance_epoch == epoch,
+            "a fresh registry reloads the persisted state and takes the lock back");
+}
+
 void fresh_registry_rejects_every_control_token() {
     auto storage = std::make_shared<MemoryStateStorage>();
     auto owner = registry(storage);
@@ -342,6 +410,7 @@ int main() {
         transitions_and_persistence();
         fresh_registry_rejects_every_control_token();
         posix_private_atomic_storage();
+        post_persistence_failure_poisons_registry();
         control_parsing_and_authentication();
         std::cout << "Supervisor schema, storage, transitions and control passed\n";
         return 0;

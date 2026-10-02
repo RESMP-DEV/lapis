@@ -132,6 +132,7 @@ DesiredSession SupervisorRegistry::start_record(DesiredSession session) const {
 }
 
 SupervisorState SupervisorRegistry::start(DesiredSession session) {
+    check(!poisoned_, "Supervisor persistence failed; reload before transitioning");
     SupervisorState next = state_;
     session = start_record(std::move(session));
     check(valid_desired_session(session), "Invalid desired session");
@@ -142,6 +143,7 @@ SupervisorState SupervisorRegistry::start(DesiredSession session) {
 }
 
 SupervisorState SupervisorRegistry::stop() {
+    check(!poisoned_, "Supervisor persistence failed; reload before transitioning");
     check(state_.session.has_value(), "No desired session to stop");
     SupervisorState next = state_;
     next.session->desired_state = DesiredState::stopped;
@@ -152,6 +154,7 @@ SupervisorState SupervisorRegistry::stop() {
 }
 
 SupervisorState SupervisorRegistry::disable() {
+    check(!poisoned_, "Supervisor persistence failed; reload before transitioning");
     SupervisorState next = state_;
     next.enabled = false;
     if (next.session) {
@@ -164,6 +167,7 @@ SupervisorState SupervisorRegistry::disable() {
 }
 
 ControlOutcome SupervisorRegistry::control(const ControlRequest& request) {
+    check(!poisoned_, "Supervisor persistence failed; reload before controlling");
     if (request.instance_epoch != state_.instance_epoch)
         return {ControlStatus::stale_epoch, state_};
     // A fresh or disabled registry has no authenticated control capability.
@@ -192,8 +196,10 @@ void SupervisorRegistry::commit(SupervisorState next) {
     check(valid_state(next), "Supervisor transition produced invalid state");
     const auto bytes = codec_->encode(next);
     check(bytes.size() <= max_state_bytes, "Supervisor state exceeds its persistence bound");
+    poisoned_ = true;
     storage_->store(bytes);
     state_ = std::move(next);
+    poisoned_ = false;
 }
 
 } // namespace lapis::supervisor

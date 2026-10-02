@@ -2006,6 +2006,9 @@ QString Workspace::remoteAccountFailure(const AccountPool& accounts, const Agent
 bool Workspace::applyAccount(Agent& agent, SessionPreview& item) {
     const auto cli = accountCli(agent.harness);
     if (cli.isEmpty() || !accounts_.configured(cli)) {
+        if (remoteCommand(agent.launch))
+            agent.launch.arguments.last().remove(remoteAccountPreamble());
+        agent.account.clear();
         item.setServiceEnvironment({});
         return true;
     }
