@@ -138,10 +138,22 @@ void observation_only_requests() {
 void idle_notices_do_not_block() {
     auto s = state();
     auto idle = request(std::string("idle:prompt"));
-    idle.reason = "idle";
+    idle.reason = idle_reason;
+    idle.choices.clear();
     require(s.request({1, 1}, idle, 0) == Outcome::applied);
     require(!s.pending().empty() && !s.blocking());
-    require(s.request({1, 2}, request(), 0) == Outcome::applied);
+    auto choice = request(std::string("idle:choice"));
+    choice.reason = idle_reason;
+    require(s.request({1, 2}, choice, 0) == Outcome::applied);
+    require(s.blocking());
+    require(s.resolve({1, 3}, choice.id) == Outcome::applied);
+    auto prompt = request(std::string("permission:prompt"));
+    require(s.request({1, 4}, prompt, 0) == Outcome::applied);
+    require(s.blocking());
+    require(s.respond(1, prompt.id, s.pending().at(prompt.id).revision, "accept"));
+    require(s.pending().at(prompt.id).status == RequestStatus::responding);
+    require(s.blocking());
+    s.overflow();
     require(s.blocking());
 }
 void malformed_and_bounds() {

@@ -141,7 +141,7 @@ void SessionPreview::applyAttention(session::wire::AttentionSnapshot snapshot) {
     // the finished turn already marks the agent, so only actionable requests
     // count toward attention, the Requests list and the unseen mark.
     std::erase_if(snapshot.requests,
-                  [](const auto& item) { return item.pending.request.reason == "idle"; });
+                  [](const auto& item) { return idle_notice(item.pending.request); });
     bool arrived = false;
     QSet<QString> current;
     for (const auto& item : snapshot.requests) {

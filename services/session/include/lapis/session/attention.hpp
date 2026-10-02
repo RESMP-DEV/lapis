@@ -6,6 +6,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -55,6 +56,13 @@ struct Pending {
     bool submitted{};
 };
 
+// Claude Code uses this observation-only notice after a finished turn. Keep the
+// producer, desktop presentation, and input admission on one shared contract.
+inline constexpr std::string_view idle_reason{"idle"};
+[[nodiscard]] inline bool idle_notice(const Request& request) {
+    return request.reason == idle_reason && request.choices.empty();
+}
+
 // One service-owned source connection. Single-thread ownership; no I/O or focus policy.
 // Sequences order local delivery only. The adapter must separately establish source completeness.
 class State {
@@ -92,8 +100,8 @@ class State {
     [[nodiscard]] bool acknowledge(const RequestId& id, Tick now);
     [[nodiscard]] std::vector<RequestId> ordered(Tick now) const;
     [[nodiscard]] const std::map<RequestId, Pending>& pending() const { return pending_; }
-    // Whether a pending request must be answered before new input: any but
-    // an "idle" notice, which says the agent waits for exactly that input.
+    // Whether current evidence must be answered before new input. A synchronized
+    // observation-only idle notice is exempt; decision-capable and stale requests block.
     [[nodiscard]] bool blocking() const;
     [[nodiscard]] bool ready() const { return connected_ && synchronized_; }
     [[nodiscard]] bool connected() const { return connected_; }

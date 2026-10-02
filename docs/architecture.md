@@ -3800,14 +3800,16 @@ logs every guess to measure that threshold.
   priors.
 - **How it is offered.** `TerminalSurface.suggestion` draws the guess dim after
   the cursor, covering only what it draws, and only while the agent is finished
-  or idle: never over a pending request, since Return in a permission dialog
-  would answer it (the view also refuses to send one then). With `tabFlow` (a
+  or idle: never over a request that can answer a dialog or over stale evidence,
+  since Return in a permission dialog would answer it (the view also refuses
+  to send one then). With `tabFlow` (a
   Claude Code or Codex agent while guessing is on), Tab sends a guess that
   shows whole: one negotiated paste request with its Return included in the
   service's atomic queue admission. Later typing follows that operation; no
-  GUI timer submits it. The service refuses submission while a known request
-  is pending. A longer or multi-line guess is only typed, as Option-Tab always
-  does, so nothing unseen is submitted. Both suggestion actions require the
+  GUI timer submits it. The service refuses submission while a decision-capable
+  request is current; a synchronized observation-only idle notice is exempt,
+  and stale evidence fails closed. A longer or multi-line guess is only typed,
+  as Option-Tab always does, so nothing unseen is submitted. Both suggestion actions require the
   negotiated receipt; older services refuse visibly until upgraded/restarted. Typing does not withdraw a guess; keys typed first are counted.
   With nothing offered and nothing typed since arriving, Tab calls QML's
   `tabAway`, which asks `Workspace::nextPriorityAttention` for a guess not yet
@@ -4337,6 +4339,8 @@ activity change, attention requested/resolved and reconciled snapshots. Requests
 include reason, bounded summary and source confidence. Turn completion is not
 process exit or task completion; silence is unknown. Use monotonic time for
 scheduling, aging and cooldowns; wall-clock time for presentation/auditing.
+Only a current pending, observation-only idle notice may be treated as safe for
+automatic submission; decision-capable, responding and stale evidence blocks it.
 The current per-session desktop wire format is v6; extend it only through a
 reviewed contract change.
 

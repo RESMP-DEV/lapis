@@ -262,8 +262,10 @@ std::vector<RequestId> State::ordered(Tick now) const {
         ids.push_back(std::move(entry.id));
     return ids;
 }
+
 bool State::blocking() const {
-    return std::any_of(pending_.begin(), pending_.end(),
-                       [](const auto& item) { return item.second.request.reason != "idle"; });
+    return std::any_of(pending_.begin(), pending_.end(), [](const auto& item) {
+        return item.second.status != RequestStatus::pending || !idle_notice(item.second.request);
+    });
 }
 } // namespace lapis::session::attention

@@ -1335,6 +1335,117 @@ with open(sys.argv[1], 'wb', buffering=0) as output:
                     pass
             service.stop()
 
+    def claude_idle_paste_admission():
+        output = runtime / "claude-idle-paste.bin"
+        executable = runtime / "claude-idle-hooks"
+        executable.write_text(
+            f"#!{program}\n"
+            "import json, os, subprocess, sys\n"
+            "from pathlib import Path\n"
+            "settings = Path(sys.argv[sys.argv.index('--settings') + 1])\n"
+            "hooks = json.loads(settings.read_text())['hooks']\n"
+            "command = hooks['SessionStart'][0]['hooks'][0]['command']\n"
+            "def send(event):\n"
+            "    source = json.dumps(event) + '\\n'\n"
+            "    subprocess.run(command, shell=True, input=source.encode(), check=True)\n"
+            "send({'hook_event_name': 'SessionStart', 'session_id': 'idle-paste'})\n"
+            "send({'hook_event_name': 'UserPromptSubmit', 'session_id': 'idle-paste', 'prompt_id': 'turn-1'})\n"
+            "send({'hook_event_name': 'Notification', 'session_id': 'idle-paste', 'prompt_id': 'turn-1', 'notification_type': 'idle_prompt'})\n"
+            "print('READY', flush=True)\n"
+            "with open(sys.argv[-1], 'wb', buffering=0) as captured:\n"
+            "    buffered = b''\n"
+            "    while True:\n"
+            "        data = os.read(0, 65536)\n"
+            "        if not data:\n"
+            "            break\n"
+            "        captured.write(data)\n"
+            "        buffered += data\n"
+            "        if b'permission' in buffered:\n"
+            "            send({'hook_event_name': 'Notification', 'session_id': 'idle-paste', 'prompt_id': 'turn-1', 'notification_type': 'permission_prompt'})\n"
+            "            print('PERMISSION_READY', flush=True)\n"
+            "            break\n"
+        )
+        executable.chmod(0o700)
+        argv = ["--claude-fixture", str(output)]
+        service = Service(
+            binary,
+            runtime,
+            artifacts,
+            "claude-idle-paste",
+            str(executable),
+            argv,
+            runtime,
+            claude=True,
+        )
+
+        def wait_attention_requests(client, expected):
+            deadline = time.monotonic() + WAIT
+            while time.monotonic() < deadline:
+                kind, data = client.receive(max(0.01, deadline - time.monotonic()))
+                if kind != ATTENTION_SNAPSHOT:
+                    continue
+                require(
+                    data[4:44] == client.attachment,
+                    "Claude attention attachment mismatch",
+                )
+                diagnostic_length = struct.unpack_from(">I", data, 56)[0]
+                count = struct.unpack_from(">I", data, 60 + diagnostic_length)[0]
+                if count == expected:
+                    return count
+            raise CheckError("Managed Claude attention publication timed out")
+
+        def request(client, request_id, text, submit=False):
+            client.socket.sendall(
+                frame(
+                    PASTE_REQUEST,
+                    client.attachment
+                    + struct.pack(">QB", request_id, int(submit))
+                    + text,
+                )
+            )
+            deadline = time.monotonic() + WAIT
+            while time.monotonic() < deadline:
+                kind, payload = client.receive(max(0.01, deadline - time.monotonic()))
+                if kind in (SNAPSHOT, ATTENTION_SNAPSHOT):
+                    continue
+                require(
+                    kind == PASTE_RESULT and payload[:40] == client.attachment,
+                    "Wrong Claude paste receipt attachment",
+                )
+                require(
+                    struct.unpack_from(">Q", payload, 40)[0] == request_id,
+                    "Wrong Claude paste receipt ID",
+                )
+                return bool(payload[48]), payload[49:].decode()
+            raise CheckError("Claude paste receipt timed out")
+
+        try:
+            wait_socket(service.endpoint, service.process)
+            with WireClient(service.endpoint) as client:
+                service.child_pid = client.attach(
+                    str(executable), argv, runtime, paste_transactions=True, claude=True
+                )
+                wait_attention_requests(client, 1)
+                queued, _ = request(client, 1, b"idle-prompt", True)
+                require(
+                    queued, "Current observation-only idle notice blocked submission"
+                )
+                client.send(TEXT, b"permission\n")
+                wait_attention_requests(client, 2)
+                queued, message = request(client, 2, b"blocked", True)
+                require(
+                    not queued
+                    and message
+                    == "Agent has a pending request; automatic paste-plus-Return was refused",
+                    "Permission prompt did not block submission",
+                )
+                return {
+                    "idle_notice_admitted": True,
+                    "permission_notice_refused": True,
+                }
+        finally:
+            service.stop()
+
     def backpressure():
         with session("backpressure") as service, service.connect() as client:
             client.snapshot(lambda screen: "READY" in screen["text"])
@@ -1641,6 +1752,11 @@ with open(sys.argv[1], 'wb', buffering=0) as output:
         (
             "Atomic paste admission, service encoding and ordered submit",
             paste_admission,
+            None,
+        ),
+        (
+            "Managed Claude idle notices submit while permission prompts refuse",
+            claude_idle_paste_admission,
             None,
         ),
         ("PTY queue overflow and non-reading attachment", backpressure, None),
