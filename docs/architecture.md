@@ -3806,7 +3806,7 @@ person was, a pasted meeting, a new idea. The model also over-guessed approval
 (a one- or two-word first guess 12 times, right twice). So the design gates a
 guess on the model's stated `minConfidence` probability, as Cursor's retrained
 Tab shows fewer suggestions to be accepted more often, and it logs every guess
-to measure that threshold. A candidate with no usable probability is never
+to measure that threshold. A candidate without a numeric probability is never
 offered, whatever the threshold.
 
 - **Where it runs.** `NextPrompt` follows `Workspace::turnFinished`, which covers
@@ -3905,8 +3905,8 @@ with the right intent for 44%; at 0.5 almost nothing is offered. The default was
 0.4 at first. In live use from September 30 to October 2 it hid 159 of 179
 guesses (the top guess's probability was mostly 0.3 to 0.35, usually for "go"
 or "continue"), and Tab, finding nothing, moved to another agent instead. Of
-the 20 guesses shown, 6 were sent with Tab. The default is now 0, so the top
-guess shows whenever the model gave it a probability; `minConfidence` remains
+the 20 guesses shown, 6 were sent with Tab. The default is now 0, so a top
+guess the model scored, including a reported 0.0, shows; `minConfidence` remains
 for anyone who wants fewer.
 
 It is off by default: each prediction is a model call on the person's plan.

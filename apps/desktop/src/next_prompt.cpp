@@ -305,7 +305,9 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     const auto top = candidates.isEmpty() ? QJsonObject() : candidates.first().toObject();
     const auto text = top.value(QStringLiteral("text")).toString();
     const auto probability = top.value(QStringLiteral("p"));
-    const bool usable_probability = probability.isDouble() && probability.toDouble() > 0.0;
+    // The helper normalizes every candidate to a number, so any double is a
+    // model-reported probability; a reported 0.0 still counts at the default.
+    const bool usable_probability = probability.isDouble();
     const bool shown = !text.isEmpty() && usable_probability &&
                        probability.toDouble() >= settings_.minConfidence && settings_.automatic;
     const Offer made{QStringLiteral("%1:%2.%3").arg(id, run_).arg(++offers_made_), text,

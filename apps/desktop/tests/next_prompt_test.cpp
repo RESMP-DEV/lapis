@@ -146,13 +146,11 @@ void concurrentContextsRespectCap() {
     require(predicted == 1 && skipped == 1, "concurrent contexts must share the prediction cap");
 }
 
-void missingProbabilityIsNotOfferered() {
+void missingProbabilityIsNotOffered() {
     QTemporaryDir directory;
     const QDir root(directory.path());
     require(root.mkpath(QStringLiteral("bin")), "fixture bin");
     standIns(root);
-    write(root.filePath(QStringLiteral("context.reply")), R"({"conversation":"c"})");
-    write(root.filePath(QStringLiteral("predict.reply")), R"({"candidates":[{"text":"go"}]})");
     const auto log = root.filePath(QStringLiteral("next.jsonl"));
     NextPrompt next(
         [](const QString&) -> std::optional<NextPrompt::Agent> {
@@ -163,12 +161,29 @@ void missingProbabilityIsNotOfferered() {
         [] { return QJsonArray{}; },
         [&root](const QString& name) { return root.filePath(QStringLiteral("bin/") + name); },
         {root.path(), log});
-    next.setSettings(on());
+    next.setSettings(on(60));
+    // Absent and non-numeric probabilities are unknown; a reported zero is a
+    // real probability the model gave and is offered at the default.
+    for (const auto* reply :
+         {R"({"candidates":[{"text":"go"}]})", R"({"candidates":[{"text":"go","p":"0.9"}]})"}) {
+        write(root.filePath(QStringLiteral("context.reply")), R"({"conversation":"c"})");
+        write(root.filePath(QStringLiteral("predict.reply")), reply);
+        const auto before = events(log).size();
+        next.turnFinished(QStringLiteral("a"));
+        require(waitFor([&] { return events(log).size() > before; }), "the prediction is logged");
+        require(next.suggestion(QStringLiteral("a")).isEmpty() &&
+                    !events(log).last().value(QStringLiteral("shown")).toBool(),
+                "a missing or non-numeric probability is unknown, not an offer");
+    }
+    write(root.filePath(QStringLiteral("context.reply")), R"({"conversation":"c"})");
+    write(root.filePath(QStringLiteral("predict.reply")),
+          R"({"candidates":[{"text":"go","p":0.0}]})");
+    const auto before_zero = events(log).size();
     next.turnFinished(QStringLiteral("a"));
-    require(waitFor([&] { return events(log).size() == 1; }), "the prediction is logged");
-    require(next.suggestion(QStringLiteral("a")).isEmpty() &&
-                !events(log).last().value(QStringLiteral("shown")).toBool(),
-            "a missing or malformed probability is unknown, not a zero-confidence offer");
+    require(waitFor([&] { return events(log).size() > before_zero; }),
+            "the zero-probability prediction is logged");
+    require(next.suggestion(QStringLiteral("a")) == QLatin1String("go"),
+            "a model-reported zero is offered at the default threshold");
 }
 
 void predictsAndOffers() {
@@ -415,7 +430,7 @@ int main(int argc, char** argv) {
         settingsReadFromTheConfig();
         screensReadAsText();
         concurrentContextsRespectCap();
-        missingProbabilityIsNotOfferered();
+        missingProbabilityIsNotOffered();
         predictsAndOffers();
     } catch (const std::exception& error) {
         std::cerr << "next_prompt_test: " << error.what() << '\n';
