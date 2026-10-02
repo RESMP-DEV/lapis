@@ -3803,10 +3803,11 @@ for 17. Short replies were the predictable part: 5 of 7 prompts of four words or
 fewer, and all 4 approvals, against 2 of 33 longer prompts. Most longer prompts
 carried something the conversation did not: another agent's state, where the
 person was, a pasted meeting, a new idea. The model also over-guessed approval
-(a one- or two-word first guess 12 times, right twice). So the design offers a
-guess only when the model gives it at least `minConfidence` probability, as
-Cursor's retrained Tab shows fewer suggestions to be accepted more often, and it
-logs every guess to measure that threshold.
+(a one- or two-word first guess 12 times, right twice). So the design gates a
+guess on the model's stated `minConfidence` probability, as Cursor's retrained
+Tab shows fewer suggestions to be accepted more often, and it logs every guess
+to measure that threshold. A candidate with no usable probability is never
+offered, whatever the threshold.
 
 - **Where it runs.** `NextPrompt` follows `Workspace::turnFinished`, which covers
   Codex and Claude turns and requests but not terminal agents' output pauses.
@@ -3904,8 +3905,9 @@ with the right intent for 44%; at 0.5 almost nothing is offered. The default was
 0.4 at first. In live use from September 30 to October 2 it hid 159 of 179
 guesses (the top guess's probability was mostly 0.3 to 0.35, usually for "go"
 or "continue"), and Tab, finding nothing, moved to another agent instead. Of
-the 20 guesses shown, 6 were sent with Tab. The default is now 0: the top guess always
-shows, and `minConfidence` remains for anyone who wants fewer.
+the 20 guesses shown, 6 were sent with Tab. The default is now 0, so the top
+guess shows whenever the model gave it a probability; `minConfidence` remains
+for anyone who wants fewer.
 
 It is off by default: each prediction is a model call on the person's plan.
 Claude Code 2.1.285 has its own prompt suggestions (on unless

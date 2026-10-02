@@ -146,6 +146,31 @@ void concurrentContextsRespectCap() {
     require(predicted == 1 && skipped == 1, "concurrent contexts must share the prediction cap");
 }
 
+void missingProbabilityIsNotOfferered() {
+    QTemporaryDir directory;
+    const QDir root(directory.path());
+    require(root.mkpath(QStringLiteral("bin")), "fixture bin");
+    standIns(root);
+    write(root.filePath(QStringLiteral("context.reply")), R"({"conversation":"c"})");
+    write(root.filePath(QStringLiteral("predict.reply")), R"({"candidates":[{"text":"go"}]})");
+    const auto log = root.filePath(QStringLiteral("next.jsonl"));
+    NextPrompt next(
+        [](const QString&) -> std::optional<NextPrompt::Agent> {
+            NextPrompt::Agent agent;
+            agent.cli = QStringLiteral("claude");
+            return agent;
+        },
+        [] { return QJsonArray{}; },
+        [&root](const QString& name) { return root.filePath(QStringLiteral("bin/") + name); },
+        {root.path(), log});
+    next.setSettings(on());
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] { return events(log).size() == 1; }), "the prediction is logged");
+    require(next.suggestion(QStringLiteral("a")).isEmpty() &&
+                !events(log).last().value(QStringLiteral("shown")).toBool(),
+            "a missing or malformed probability is unknown, not a zero-confidence offer");
+}
+
 void predictsAndOffers() {
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-next-XXXXXX"));
     require(directory.isValid(), "fixture directory");
@@ -294,8 +319,10 @@ void predictsAndOffers() {
     require(next.suggestion(QStringLiteral("b")).isEmpty() &&
                 !events(log).last().value(QStringLiteral("shown")).toBool(),
             "below a chosen minConfidence, a guess is logged but not offered");
-    // By default every guess is offered, however unlikely.
-    next.setSettings(on(60, QStringLiteral("low")));
+    // Tie the offering behaviour to the parsed default, not only the struct.
+    const auto default_on = lapis::desktop::parse_next_prompt(QJsonObject{
+        {QStringLiteral("auto"), true}, {QStringLiteral("effort"), QStringLiteral("low")}});
+    next.setSettings(default_on);
     next.turnFinished(QStringLiteral("b"));
     require(waitFor([&] {
                 return next.suggestion(QStringLiteral("b")) == QLatin1String("rerun it on 8 GPUs");
@@ -388,6 +415,7 @@ int main(int argc, char** argv) {
         settingsReadFromTheConfig();
         screensReadAsText();
         concurrentContextsRespectCap();
+        missingProbabilityIsNotOfferered();
         predictsAndOffers();
     } catch (const std::exception& error) {
         std::cerr << "next_prompt_test: " << error.what() << '\n';
