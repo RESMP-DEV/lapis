@@ -801,7 +801,7 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             ),
             (
                 ["--full-auto", "resume", thread],
-                full,
+                ['approval_policy="on-request"', 'sandbox_mode="workspace-write"'],
                 ["resume", thread],
             ),
             (
@@ -877,7 +877,12 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             finally:
                 service.stop()
         for index, arguments in enumerate(
-            (["-s", 'x" y', "resume", thread], ["-a"], ["--sandbox="])
+            (
+                ["-s", 'x" y', "resume", thread],
+                ["-s", "read-only\n", "resume", thread],
+                ["-a"],
+                ["--sandbox="],
+            )
         ):
             name = f"codex-permissions-invalid-{index}"
             service = Service(

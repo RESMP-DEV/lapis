@@ -134,12 +134,12 @@ CodexPermission codex_permission(const QStringList& arguments, qsizetype index) 
                  QStringLiteral("sandbox_mode=\"danger-full-access\"")},
                 1};
     if (argument == QStringLiteral("--full-auto"))
-        return {{QStringLiteral("approval_policy=\"never\""),
-                 QStringLiteral("sandbox_mode=\"danger-full-access\"")},
+        return {{QStringLiteral("approval_policy=\"on-request\""),
+                 QStringLiteral("sandbox_mode=\"workspace-write\"")},
                 1};
     static const std::array<std::array<const char*, 3>, 2> valued{
         {{"-a", "--ask-for-approval", "approval_policy"}, {"-s", "--sandbox", "sandbox_mode"}}};
-    static const QRegularExpression word(QStringLiteral("^[a-z][a-z-]*$"));
+    static const QRegularExpression word(QStringLiteral("^[a-z][a-z-]*\\z"));
     for (const auto& [short_name, long_name, key] : valued) {
         QString value;
         qsizetype consumed = 0;
