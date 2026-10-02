@@ -21,12 +21,14 @@
 #include <QLocalSocket>
 #include <QLockFile>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QSet>
 #include <QTimer>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstring>
 #include <exception>
 #include <limits>
 #include <memory>
@@ -92,6 +94,81 @@ void remove_dead_codex_link(const QString& path) {
         throw std::runtime_error("Codex endpoint already in use");
     if (!QFile::remove(path))
         throw std::runtime_error("Cannot remove stale Codex endpoint");
+}
+// Codex options before the subcommand that take the next argument as a value.
+bool codex_option_takes_value(const QString& argument) {
+    static const QSet<QString> options{QStringLiteral("-c"),
+                                       QStringLiteral("--config"),
+                                       QStringLiteral("--enable"),
+                                       QStringLiteral("--disable"),
+                                       QStringLiteral("--remote"),
+                                       QStringLiteral("--remote-auth-token-env"),
+                                       QStringLiteral("-i"),
+                                       QStringLiteral("--image"),
+                                       QStringLiteral("-m"),
+                                       QStringLiteral("--model"),
+                                       QStringLiteral("--local-provider"),
+                                       QStringLiteral("-p"),
+                                       QStringLiteral("--profile"),
+                                       QStringLiteral("-s"),
+                                       QStringLiteral("--sandbox"),
+                                       QStringLiteral("-C"),
+                                       QStringLiteral("--cd"),
+                                       QStringLiteral("--add-dir"),
+                                       QStringLiteral("-a"),
+                                       QStringLiteral("--ask-for-approval")};
+    return options.contains(argument);
+}
+// A Codex approval or sandbox option: its config key and value, or nothing.
+// `consumed` is how many arguments it spans. Values are Codex's own words,
+// never anything that could break out of a TOML string.
+struct CodexPermission {
+    QStringList config; // key=value pairs
+    qsizetype consumed = 0;
+};
+CodexPermission codex_permission(const QStringList& arguments, qsizetype index) {
+    const auto& argument = arguments.at(index);
+    if (argument == QStringLiteral("--dangerously-bypass-approvals-and-sandbox"))
+        return {{QStringLiteral("approval_policy=\"never\""),
+                 QStringLiteral("sandbox_mode=\"danger-full-access\"")},
+                1};
+    static const std::array<std::array<const char*, 3>, 2> valued{
+        {{"-a", "--ask-for-approval", "approval_policy"}, {"-s", "--sandbox", "sandbox_mode"}}};
+    static const QRegularExpression word(QStringLiteral("^[a-z][a-z-]*$"));
+    for (const auto& [short_name, long_name, key] : valued) {
+        QString value;
+        qsizetype consumed = 0;
+        if (argument == QLatin1String(short_name) || argument == QLatin1String(long_name)) {
+            if (index + 1 == arguments.size())
+                return {};
+            value = arguments.at(index + 1);
+            consumed = 2;
+        } else if (argument.startsWith(QLatin1String(long_name) + QLatin1Char('='))) {
+            value = argument.mid(qsizetype(std::strlen(long_name)) + 1);
+            consumed = 1;
+        } else {
+            continue;
+        }
+        if (!word.match(value).hasMatch())
+            return {};
+        return {{QStringLiteral("%1=\"%2\"").arg(QLatin1String(key), value)}, consumed};
+    }
+    return {};
+}
+// Whether the arguments resume or fork a saved Codex thread.
+bool codex_continues_thread(const QStringList& arguments) {
+    for (qsizetype index = 0; index < arguments.size(); ++index) {
+        const auto& argument = arguments.at(index);
+        if (argument == QStringLiteral("--"))
+            return false;
+        if (codex_option_takes_value(argument)) {
+            ++index;
+            continue;
+        }
+        if (!argument.startsWith(QLatin1Char('-')))
+            return argument == QStringLiteral("resume") || argument == QStringLiteral("fork");
+    }
+    return false;
 }
 
 class SessionService final : public QObject {
@@ -370,6 +447,29 @@ class SessionService final : public QObject {
             return;
         auto tui = launch;
         tui.agent = AgentMode::terminal;
+        // Codex refuses approval and sandbox options when a remote TUI resumes
+        // or forks a thread ("Permission overrides are not supported when
+        // resuming a remote task"). The dedicated server already holds them as
+        // config, so the TUI goes without.
+        if (codex_continues_thread(tui.arguments)) {
+            QStringList kept;
+            for (qsizetype index = 0; index < tui.arguments.size(); ++index) {
+                if (tui.arguments.at(index) == QStringLiteral("--")) {
+                    kept += tui.arguments.mid(index);
+                    break;
+                }
+                if (const auto permission = codex_permission(tui.arguments, index);
+                    permission.consumed > 0) {
+                    index += permission.consumed - 1;
+                    continue;
+                }
+                kept << tui.arguments.at(index);
+                if (codex_option_takes_value(tui.arguments.at(index)) &&
+                    index + 1 < tui.arguments.size())
+                    kept << tui.arguments.at(++index);
+            }
+            tui.arguments = kept;
+        }
         tui.arguments.prepend(QStringLiteral("unix://") + backend_socket);
         tui.arguments.prepend(QStringLiteral("--remote"));
         pty_requested_ = true;
@@ -379,13 +479,21 @@ class SessionService final : public QObject {
         QStringList arguments{QStringLiteral("app-server"), QStringLiteral("--listen"),
                               QStringLiteral("unix://") + backend_socket};
         // Forward explicit provider/config definitions to the server as well as
-        // the TUI. Production otherwise inherits the user's ordinary Codex policy.
+        // the TUI, and approval/sandbox options as config, since a resumed
+        // thread takes them only from the server. Production otherwise inherits
+        // the user's ordinary Codex policy.
         for (qsizetype index = 0; index < launch.arguments.size(); ++index) {
             const auto& argument = launch.arguments.at(index);
             if (argument == QStringLiteral("--"))
                 break;
-            if (argument == QStringLiteral("-c") || argument == QStringLiteral("--config") ||
-                argument == QStringLiteral("--enable") || argument == QStringLiteral("--disable")) {
+            if (const auto permission = codex_permission(launch.arguments, index);
+                permission.consumed > 0) {
+                for (const auto& pair : permission.config)
+                    arguments << QStringLiteral("-c") << pair;
+                index += permission.consumed - 1;
+            } else if (argument == QStringLiteral("-c") || argument == QStringLiteral("--config") ||
+                       argument == QStringLiteral("--enable") ||
+                       argument == QStringLiteral("--disable")) {
                 ++index;
                 if (index == launch.arguments.size() ||
                     launch.arguments.at(index) == QStringLiteral("--"))
