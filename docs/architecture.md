@@ -2896,18 +2896,21 @@ or the surveys are implemented or qualified.
 
 #### October 1 repair disposition
 
-At the PR 70 validation head recorded by its receipt, selected remote account
+At the merged PR 70 source
+`d7db964b76c77e056573d19761c9e528f9413010`, selected remote account
 preflight, Claude 2.1.286 fixture preparation, focused quality tooling and the
 supervisor state core are implemented. Output retention is also implemented:
 ordinary partial batches parse immediately; sustained pressure begins when at
 least 16 KiB arrives within one frame, holds successive PTY batches until the
 service queue reaches 64 KiB, and uses the one-frame deadline only as the
 quiet-output bound in pressure mode. Recovery is FIFO on the same child, and
-ordinary pressure remains separate from bounded final teardown. The focused PTY
-suite and real service backpressure case prove pause/recovery, ordered sentinels
-and post-overflow input. This is not a sustained-output soak, memory
-measurement, MiB-budget promotion or native package qualification; those remain
-R5/Milestone 4 gates.
+ordinary pressure remains separate from bounded final teardown. Focused PTY and
+real-service backpressure test surfaces cover pause/recovery, ordered sentinels
+and post-overflow input, but the only tracked PR 70 release receipt is a
+documentation reconciliation that explicitly did not rerun behavior suites; no
+tracked receipt establishes their execution at this source. This is not a
+sustained-output soak, memory measurement, MiB-budget promotion or native
+package qualification; those remain R5/Milestone 4 gates.
 
 #### Minimum supported slice
 

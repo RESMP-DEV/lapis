@@ -20,14 +20,16 @@ and artifact actually exercised.
 
 ## Release reconciliation (2026-10-01)
 
-At main `18bf34166d7c10c2bbce577526be894eb7052336`, v0.5.0 remains the latest
-release and still targets `0ec13cb46491a4f63faa372dba7b58959426c7d6`. The
+At the documentation-reconciliation main
+`18bf34166d7c10c2bbce577526be894eb7052336` and the later PR70 merge
+`d7db964b76c77e056573d19761c9e528f9413010`, v0.5.0 remains the latest release
+and still targets `0ec13cb46491a4f63faa372dba7b58959426c7d6`. The
 following repairs are therefore not claims about that published package. This
 documentation-only reconciliation did not rerun behavior suites.
 
 Implemented means the code is present at the named source. Exercised means a
 dated receipt names its source and result. No tracked daily-use or measurement
-evidence covers these five batches. Unknown means no tracked receipt establishes
+evidence covers these six batches. Unknown means no tracked receipt establishes
 execution.
 
 | PR | Merged source | Evidence and non-claims |
@@ -37,6 +39,7 @@ execution.
 | #65 | `00474ef3eee3240e6a5fd0308de555f695ce76c4` | The current packaging source captures source/tree/version and clean/dirty state plus exact dependency inputs, atomically rebinds mutable app/DMG bytes, revokes stale approval/verification state, and release preflight requires a clean matching source, artifacts, notarization, notarized-scope qualification and appcast bindings. See the [manifest reconciliation receipt](../evidence/release-manifest.json); its check execution is unknown. This does not upgrade v0.5.0, produce an artifact, or qualify native install, Sparkle, GPU or reboot recovery. |
 | #66 | `31b716b648d2f68f6c8b8390584c6debb835da11` | The remote gateway bounds connection admission, listing fan-out and deadlines, and bounded reads/scans. The bounds are implemented in source with test surfaces, but no tracked receipt records their execution. This is not a measured load or latency qualification. |
 | #69 | `230cd2ee9bcebcfe2b3ee3a18d2204b0c5dff95c` | A finished turn that ends on what the user already saw stays quiet, and chime and notification decisions—quiet reasons included—are written to the owner-only `runtime/attention.jsonl`. [Config](config.md) records the private-title and rotation contract. Production and workspace-test code are present, but no tracked receipt records their execution; this is not native Mac or daily-use qualification. |
+| #70 | `d7db964b76c77e056573d19761c9e528f9413010` | Remote account preflight, Claude 2.1.286 fixture preparation, focused quality tooling, the opt-in supervisor state primitive and PTY output retention are implemented. The [release reconciliation receipt](../evidence/release-manifest.json) tracks PR65's implementation reconciliation and says that no behavior suite was rerun; it is not execution evidence for PR70. No tracked receipt establishes PR70 test execution. This is not a package, sustained-output, memory, provider-account or native qualification. |
 
 PR65 supersedes the source-provenance portion of the September 30 release
 audit: manifest enforcement is implemented on main. Its package, install,
@@ -57,7 +60,7 @@ acceptance are recorded in [the evidence](../evidence/agent-workspace.json) and
 | Component | Exercised | Remaining |
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
-| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; output-pressure admission pauses reads at 64 KiB, retains bounded FIFO output, recovers on the same child and separates bounded final teardown (focused PTY and real service backpressure cases); after two simulated power losses, the login helper resumes real Codex/Claude conversations and terminal-checkpoint stand-ins for four other CLIs with durable managed resume arguments ([check](../scripts/check_restore.py)) | Sustained-output soak and measured memory/headroom, an actual reboot through the login helper, native resume qualification for the four stand-in CLIs, and later Linux qualification; on macOS 27 services share the window's coalition, so surviving a window quit depends on macOS allowing lapis in the background |
+| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; after two simulated power losses, the login helper resumes real Codex/Claude conversations and terminal-checkpoint stand-ins for four other CLIs with durable managed resume arguments ([check](../scripts/check_restore.py)) | PR70's output-pressure admission is implemented to pause reads at 64 KiB, retain bounded FIFO output, recover on the same child and separate bounded final teardown; its focused PTY and real-service backpressure test surfaces have no tracked execution receipt. Sustained-output soak and measured memory/headroom, an actual reboot through the login helper, native resume qualification for the four stand-in CLIs, and later Linux qualification also remain; on macOS 27 services share the window's coalition, so surviving a window quit depends on macOS allowing lapis in the background |
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect; stale sockets left by a simulated power loss are replaced | Qualification across an actual reboot |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging, Command-hover destinations and Command-click opening of visible/OSC 8 links and local files; 14-pixel default and direct size controls (macOS background Qt tests, with URL dispatch intercepted) | Cross-cell contextual shaping, rectangular/multi-click selection and accessibility; opening a file at its line in an editor; native Mac selection not yet exercised; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, history scrolled by rows as one strip, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived rows keep their original width (cut or padded, not reflowed) |
