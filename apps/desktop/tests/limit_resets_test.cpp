@@ -347,6 +347,8 @@ void configuredTargetsUseTheirOwnRoutes() {
         {.automatic = true, .minBlockedMinutes = 30, .keepCredits = 1, .salvageHours = 6});
     f.controller->sweep();
     require(waitFor([&] { return f.spent.size() == 1; }), "the remote plan's route completes");
+    require(QThreadPool::globalInstance()->waitForDone(5000),
+            "any wrongly queued local credential read must finish before the assertion");
     require(f.credential_reads == 0,
             "a sweep skips this Mac's own Claude sign-in rather than raise the keychain prompt");
     f.controller->useNow(QStringLiteral("0"));

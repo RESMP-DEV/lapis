@@ -78,8 +78,9 @@ account; only asking for its reset reads the keychain.
 (0) and `salvageHours` (12). Set `{"limitResets": {"auto": false}}` for manual
 use only. Automatic restores require a sufficiently long block and coverage of
 every exhausted window; expiring credits can be salvaged when a covered weekly
-window is at least one-quarter used. A weekly session reset cannot clear an
-Opus/Sonnet weekly cap.
+window is at least one-quarter used. That automatic policy still excludes this
+Mac's own Claude Code keychain sign-in; only the saved-reset action above reads
+it. A weekly session reset cannot clear an Opus/Sonnet weekly cap.
 
 Missing plan credentials or provider IDs, or an account mismatch, stop the
 operation; email alone is not an account identity. A definite provider refusal

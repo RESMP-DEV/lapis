@@ -51,6 +51,10 @@ bool readsKeychain(const LimitResets::AgentTarget& t) {
     return t.credential.isEmpty() && t.machine.isEmpty() && t.cli == QLatin1String("claude") &&
            (t.account.isEmpty() || (t.hasHome && t.home.isEmpty()));
 }
+// Automation must never raise the interactive credential prompt. This policy
+// deliberately names that product rule instead of leaking the credential-source
+// predicate directly into scheduling.
+bool automaticResetWouldPrompt(const LimitResets::AgentTarget& t) { return readsKeychain(t); }
 QString targetKey(const LimitResets::AgentTarget& target) {
     const QJsonArray identity{target.machine, target.cli, target.account, target.home,
                               target.hasHome};
@@ -197,9 +201,12 @@ void LimitResets::sweep() {
     QSet<QString> seen;
     for (const auto& target : agents_()) {
         const auto key = targetKey(target);
-        // Only a reset the person asks for may raise the keychain prompt.
-        if (!supported(target.cli) || seen.contains(key) || readsKeychain(target))
+        if (!supported(target.cli) || seen.contains(key))
             continue;
+        if (automaticResetWouldPrompt(target)) {
+            qInfo().noquote() << "Limit reset check: skipping this Mac's Claude keychain sign-in";
+            continue;
+        }
         seen.insert(key);
         run(target, false);
     }
