@@ -1,5 +1,6 @@
 #include "lapis/supervisor/state.hpp"
 
+#include <QFile>
 #include <QIODevice>
 #include <QJsonDocument>
 #include <QJsonObject>

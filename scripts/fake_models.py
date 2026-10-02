@@ -412,6 +412,12 @@ async def stream_messages(writer, body):
                     },
                 ),
             )
+            await send(
+                writer,
+                sse(
+                    "content_block_stop", {"type": "content_block_stop", "index": index}
+                ),
+            )
         stop = "tool_use"
     else:
         await send(
@@ -439,10 +445,10 @@ async def stream_messages(writer, body):
                 ),
             )
         stop = "end_turn"
-    for index in range(len(blocks) if blocks else 1):
+    if not blocks:
         await send(
             writer,
-            sse("content_block_stop", {"type": "content_block_stop", "index": index}),
+            sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
         )
     await send(
         writer,

@@ -66,7 +66,15 @@ LAUNCHD_KEPT = (
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
     "LAPIS_HISTORY_ROOT",
 )
-CLAUDE_FIXTURE_SETTINGS = {"permissions": {"defaultMode": "default"}}
+CLAUDE_FIXTURE_SETTINGS = {
+    "permissions": {
+        "defaultMode": "default",
+        "ask": [
+            "Bash(echo lapis-parallel-one)",
+            "Bash(echo lapis-parallel-two)",
+        ],
+    }
+}
 
 if __package__:
     from . import check_cli_launch as wire
@@ -147,6 +155,117 @@ def screen(session, timeout=2.0):
     return text
 
 
+class _AttentionReader:
+    def __init__(self, data):
+        require(len(data) <= 1024 * 1024, "Oversized attention snapshot")
+        self.data = data
+        self.offset = 0
+
+    def take(self, size):
+        require(0 <= size <= len(self.data) - self.offset, "Truncated attention field")
+        result = self.data[self.offset : self.offset + size]
+        self.offset += size
+        return result
+
+    def number(self, fmt):
+        return struct.unpack(fmt, self.take(struct.calcsize(fmt)))[0]
+
+    def string(self, limit=32768):
+        size = self.number(">I")
+        require(size <= limit, "Oversized attention string")
+        return self.take(size).decode("utf-8")
+
+    def request_id(self):
+        kind = self.number(">B")
+        require(kind in (0, 1), "Invalid request ID tag")
+        return self.number(">q") if kind == 0 else self.string(1024)
+
+
+def attention_snapshot(data):
+    reader = _AttentionReader(data)
+    require(reader.number(">I") == wire.VERSION, "Attention version mismatch")
+    result = {"attachment": reader.take(40)}
+    for key in ("available", "connected", "ready"):
+        value = reader.number(">B")
+        require(value in (0, 1), "Invalid readiness flag")
+        result[key] = bool(value)
+    result["activity"] = reader.number(">B")
+    result["epoch"] = reader.number(">Q")
+    result["diagnostic"] = reader.string(4096)
+    count = reader.number(">I")
+    require(count <= 128, "Oversized attention list")
+    result["requests"] = []
+    for _ in range(count):
+        request = {"id": reader.request_id()}
+        for key in ("thread", "turn", "item", "reason", "summary"):
+            request[key] = reader.string(4096)
+        choices = reader.number(">I")
+        require(choices <= 32, "Oversized choices")
+        request["choices"] = [reader.string(256) for _ in range(choices)]
+        request["priority"] = reader.number(">B")
+        request["details"] = json.loads(reader.string())
+        request["status"] = reader.number(">B")
+        for key in ("revision", "arrived", "not_before", "epoch"):
+            request[key] = reader.number(">Q")
+        request["submitted"] = bool(reader.number(">B"))
+        result["requests"].append(request)
+    require(reader.offset == len(data), "Trailing attention bytes")
+    return result
+
+
+def attention(session):
+    """The latest attention state observed while reading terminal frames."""
+    state = getattr(session, "attention", None)
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        try:
+            kind, data = session.receive(
+                min(0.2, max(0.001, deadline - time.monotonic()))
+            )
+        except socket.timeout:
+            continue
+        except wire.CheckError as error:
+            if str(error) != "Frame deadline expired":
+                raise
+            continue
+        require(
+            kind != wire.STATUS, "Service status: " + data[1:].decode(errors="replace")
+        )
+        if kind == wire.ATTENTION_SNAPSHOT:
+            state = attention_snapshot(data)
+        elif kind != wire.ATTENTION_RETRY:
+            require(kind == wire.SNAPSHOT, "Unexpected frame reading attention")
+    return state
+
+
+def parallel_approvals_ready(state):
+    """Two distinct, unsubmitted Bash approval requests are pending."""
+    requests = [] if not state else state.get("requests", [])
+    pending = [
+        request
+        for request in requests
+        if not request.get("submitted")
+        and request.get("reason") == "approval"
+        and request.get("details", {}).get("toolName") == "Bash"
+    ]
+    identities = {request.get("id") for request in pending}
+    return (
+        len(pending) >= 2 and len(identities) == len(pending) and None not in identities
+    )
+
+
+def wait_parallel_approvals(session, timeout=120):
+    """Wait for two distinct, still-pending Claude Bash approval requests."""
+    deadline = time.monotonic() + timeout
+    latest = None
+    while time.monotonic() < deadline:
+        latest = attention(session)
+        if parallel_approvals_ready(latest):
+            return latest
+        time.sleep(0.05)
+    raise Failure(f"Claude never showed two pending parallel approvals: {latest}")
+
+
 def wait_screen(session, needle, timeout=40):
     deadline = time.monotonic() + timeout
     seen = ""
@@ -190,14 +309,6 @@ def require_managed_resume(name, arguments, provenance, conversation):
     require(
         provenance == {"index": index, "identity": conversation},
         f"{name} managed resume provenance {provenance}",
-    )
-
-
-def require_parallel_commands(screen):
-    """Assert that both distinct commands are pending, not one collapsed call."""
-    require(
-        all(command in screen for command in PARALLEL_COMMANDS),
-        "Claude did not show both distinct parallel Bash commands",
     )
 
 
@@ -556,7 +667,15 @@ def main():
         parallel_screen = wait_screen(
             parallel_session, PARALLEL_COMMANDS[-1], timeout=90
         )
-        require_parallel_commands(parallel_screen)
+        require(
+            all(command in parallel_screen for command in PARALLEL_COMMANDS),
+            "Claude did not show both distinct parallel Bash commands",
+        )
+        parallel_attention = wait_parallel_approvals(parallel_session)
+        require(
+            parallel_attention.get("diagnostic", "").find("Claude") >= 0,
+            "Parallel approvals were not observed through the Claude adapter",
+        )
         require(
             record(endpoint["claude"])["session_id"] == conversations["claude"],
             "parallel prompt left the Claude conversation",
@@ -632,7 +751,20 @@ def main():
                     # slice proves only that they survive with their
                     # conversation; an automated answer would change the
                     # approval contract.
-                    require_parallel_commands(shown)
+                    restored_screen = wait_screen(
+                        session, PARALLEL_COMMANDS[-1], timeout=90
+                    )
+                    require(
+                        all(
+                            command in restored_screen for command in PARALLEL_COMMANDS
+                        ),
+                        "Restored Claude screen lost one or both parallel commands",
+                    )
+                    restored_attention = wait_parallel_approvals(session)
+                    require(
+                        restored_attention.get("ready") is True,
+                        "Restored Claude attention state was not ready",
+                    )
                 session.close()
             for name in STAND_INS:
                 require_managed_resume(

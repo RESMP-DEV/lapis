@@ -304,7 +304,8 @@ QString withRemoteAccount(QString command, const Account* account) {
                   R"sh([ -f "$t" ] && [ -r "$t" ] && [ -s "$t" ] && )sh"
                   R"sh([ "$(wc -l < "$t")" -le 1 ] && [ "$(wc -c < "$t")" -le 8192 ] || exit 65; )sh"
                   R"sh(IFS= read -r CLAUDE_CODE_OAUTH_TOKEN < "$t" || )sh"
-                  R"sh([ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || exit 65; true; } && )sh")
+                  R"sh([ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || exit 65; )sh"
+                  R"sh(export CLAUDE_CODE_OAUTH_TOKEN; true; } && )sh")
             : QStringLiteral(
                   R"sh({ a=%1; h="$HOME/.lapis/accounts/codex/$a"; if [ -r "$h/auth.json" ]; then )sh"
                   R"sh(for n in $(ls -A "$HOME/.codex" 2>/dev/null); do [ "$n" = auth.json ] || )sh"
@@ -1979,9 +1980,11 @@ QString Workspace::remoteAccountFailure(const AccountPool& accounts, const Agent
             QDir(accountsRoot).filePath(QStringLiteral("claude/%1.token").arg(account->name)));
         QFile file(token.absoluteFilePath());
         const auto text = token.isFile() && token.isReadable() && file.open(QIODevice::ReadOnly)
-                              ? QString::fromUtf8(file.read(8193)).trimmed()
+                              ? QString::fromUtf8(file.read(8193))
                               : QString();
-        if (text.isEmpty() || text.contains(QLatin1Char('\n')) || text.contains(QChar::Null))
+        const auto first_line = text.section(QLatin1Char('\n'), 0, 0);
+        if (first_line.isEmpty() || first_line != first_line.trimmed() ||
+            text.count(QLatin1Char('\n')) > 1 || first_line.contains(QChar::Null))
             return QStringLiteral("Claude Code plan %1 has no usable token.").arg(account->name);
         return {};
     }

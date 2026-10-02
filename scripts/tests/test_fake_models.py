@@ -57,6 +57,19 @@ class ProtocolDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
                 ],
             }
         )
+        self.assertEqual(
+            [(event[0], event[1].get("index")) for event in events],
+            [
+                ("content_block_start", 0),
+                ("content_block_delta", 0),
+                ("content_block_stop", 0),
+                ("content_block_start", 1),
+                ("content_block_delta", 1),
+                ("content_block_stop", 1),
+                ("message_delta", None),
+                ("message_stop", None),
+            ],
+        )
         starts = [event[1] for event in events if event[0] == "content_block_start"]
         self.assertEqual([item["index"] for item in starts], [0, 1])
         self.assertEqual(

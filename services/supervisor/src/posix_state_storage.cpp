@@ -6,6 +6,7 @@
 #include <QFile>
 
 #include <cerrno>
+#include <fcntl.h>
 #include <stdexcept>
 #include <string>
 #include <sys/file.h>
