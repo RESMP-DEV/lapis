@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "date_utc": "2026-10-01",
+  "purpose": "Reconcile PR 65 package-manifest implementation with release and update claims without inventing check results.",
+  "source": {
+    "revision": "18bf34166d7c10c2bbce577526be894eb7052336",
+    "baseline_clean": true,
+    "working_tree_dirty": true,
+    "project_version": "0.5.0",
+    "dirty_scope": [
+      "README.md",
+      "docs/install.md",
+      "docs/status.md",
+      "evidence/release-manifest.json"
+    ],
+    "dirty_scope_note": "The named files were the working-tree changes at the recorded revision 18bf341. The delivery carrying this receipt also contains code changes outside that snapshot (desktop workspace, supervisor state core, check and fixture scripts), so this list is a generation-time snapshot, not the scope of the merged change."
+  },
+  "method": [
+    "Read the PR 65 merged source and current implementation.",
+    "Compared release v0.5.0 with current main by Git history.",
+    "Reconciled documentation only; no behavior suite, package, GUI, provider or network check was rerun."
+  ],
+  "release_context": {
+    "latest_release_tag": "v0.5.0",
+    "latest_release_revision": "0ec13cb46491a4f63faa372dba7b58959426c7d6",
+    "release_includes_pr65_manifest_enforcement": false
+  },
+  "pr65": {
+    "merge_revision": "00474ef3eee3240e6a5fd0308de555f695ce76c4",
+    "classification": "implemented; execution unknown",
+    "changed_files": [
+      "scripts/package_macos.py",
+      "scripts/release_manifest.py",
+      "scripts/tests/test_release_manifest.py"
+    ],
+    "implemented_at_recorded_revision": [
+      "Capture HEAD, tree, clean status, project version and dirty status before building.",
+      "Record exact Qt module sources, Sparkle archive, Ghostty sources/receipt/header/library, MoltenVK library and notice inputs by SHA-256.",
+      "Write the manifest atomically with fsync and Darwin F_FULLFSYNC where available.",
+      "Bind app and DMG digests after bytes change, including a DMG-to-source-app provenance digest.",
+      "Revoke prior notarization and verification when artifact bytes are replaced or approval weakens.",
+      "Require a clean source, exact source snapshot and dependencies, valid artifact bindings, notarized app and DMG, passing notarized-scope verification, matching downloads and a bound appcast before release preflight succeeds."
+    ],
+    "tracked_test_surface": "scripts/tests/test_release_manifest.py",
+    "tracked_execution_receipt": "none",
+    "check_execution": "unknown",
+    "non_claims": [
+      "No claim that PR 65 tests, packaging, notarization or release preflight ran.",
+      "No claim that v0.5.0 was produced or qualified by this manifest path.",
+      "No claim of a produced current app, DMG, appcast, installed update or reboot recovery.",
+      "No native macOS package, Finder, GPU, service-lifetime or update-survival claim."
+    ]
+  },
+  "related_release_repairs": [
+    {
+      "pr": 63,
+      "merge_revision": "90d6abf6c185aeb1e077b465ce64107055a9a122",
+      "classification": "implemented; focused checks recorded at an earlier source",
+      "evidence": "evidence/update-pacing-review.json",
+      "evidence_revision": "8debe7ae623c5e9750c822feaff18f3e11d75f95",
+      "non_claims": [
+        "No measured latency, throughput, GPU presentation or native-input claim.",
+        "No claim that the later reconciliation revision was rerun."
+      ]
+    },
+    {
+      "pr": 64,
+      "merge_revision": "6c255c8374704260b59c17b41abf03f5ecc6bfb8",
+      "classification": "implemented; execution unknown",
+      "non_claims": [
+        "No tracked execution receipt or installed-iPhone qualification claim."
+      ]
+    },
+    {
+      "pr": 66,
+      "merge_revision": "31b716b648d2f68f6c8b8390584c6debb835da11",
+      "classification": "implemented; execution unknown",
+      "non_claims": [
+        "No tracked execution receipt, load measurement or latency qualification claim."
+      ]
+    },
+    {
+      "pr": 69,
+      "merge_revision": "230cd2ee9bcebcfe2b3ee3a18d2204b0c5dff95c",
+      "classification": "implemented; execution unknown",
+      "non_claims": [
+        "No tracked execution receipt, native Mac qualification or daily-use claim."
+      ]
+    }
+  ],
+  "evidence_classes": {
+    "implemented": [
+      "PR 63 pacing behavior",
+      "PR 64 newer-history pacing behavior",
+      "PR 65 package manifest and release preflight",
+      "PR 66 gateway and listing bounds",
+      "PR 69 seen-screen quiet behavior and attention journal"
+    ],
+    "exercised": [
+      "PR 63 focused pacing checks at the revision named by its tracked receipt only"
+    ],
+    "daily_used": [],
+    "measured": [],
+    "unknown": [
+      "Execution of PR 64, PR 65, PR 66 and PR 69 from tracked evidence",
+      "Current-main execution of the PR 63 implementation"
+    ]
+  },
+  "remaining_package_and_update_gates": [
+    "Build one candidate through the package path and retain its package-manifest bindings.",
+    "Run and pass notarized-scope verification and release preflight on that exact app, DMG, source and dependency set.",
+    "Verify the downloaded asset, release metadata and bound appcast independently of the staging tree.",
+    "Install a Sparkle update with live agents, including the macOS 27 background-permission and old-bundle conditions.",
+    "Exercise update failure and recovery, fresh-host Finder launch, independent service birth and actual login/reboot recovery."
+  ],
+  "limits": [
+    "This is a sanitized documentation reconciliation, not a machine check receipt.",
+    "The documentation-only dirty scope held at the recorded revision; this delivery additionally carries code changes outside that snapshot, as its dirty_scope_note says.",
+    "The September 30 architecture audit remains valid as a dated observation; PR 65 supersedes only its source-provenance finding."
+  ]
+}

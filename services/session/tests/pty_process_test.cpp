@@ -48,7 +48,7 @@ void observe(PtyProcess& process, QEventLoop& loop, Result& result) {
                          result.exited = true;
                          loop.quit();
                      });
-    QTimer::singleShot(5000, &loop, &QEventLoop::quit);
+    QTimer::singleShot(8000, &loop, &QEventLoop::quit);
 }
 Result run(const LaunchSpec& launch) {
     PtyProcess process;
@@ -190,6 +190,85 @@ void bounded_descendant_drain(const QString& directory) {
                 elapsed.elapsed() < 5000,
             "Descendant held the final drain open");
 }
+
+void paused_final_drain_bound(const QString& directory) {
+    PtyProcess process;
+    QElapsedTimer elapsed;
+    elapsed.start();
+    QEventLoop loop;
+    Result result;
+    observe(process, loop, result);
+    QObject::connect(&process, &PtyProcess::output, &loop, [&](const QByteArray& bytes) {
+        if (bytes.contains('\n')) {
+            process.pauseOutput(true);
+            const auto leader = static_cast<pid_t>(process.processId());
+            require(leader > 0 && ::kill(leader, SIGKILL) == 0,
+                    "Could not terminate the paused PTY leader");
+        }
+    });
+    process.start({.program = QCoreApplication::applicationFilePath(),
+                   .arguments = {QStringLiteral("--group-child")},
+                   .directory = directory});
+    if (result.failure.isEmpty() && !result.exited)
+        loop.exec();
+    require(result.exited && result.code == SIGKILL && result.status == QProcess::CrashExit &&
+                result.failure.isEmpty(),
+            qPrintable(
+                QStringLiteral(
+                    "Paused final drain result: exited=%1 code=%2 status=%3 failure=%4 elapsed=%5")
+                    .arg(result.exited)
+                    .arg(result.code)
+                    .arg(int(result.status))
+                    .arg(result.failure)
+                    .arg(elapsed.elapsed())));
+    require(elapsed.elapsed() >= 2800 && elapsed.elapsed() < 7500,
+            "Paused final drain was unbounded or immediately abandoned");
+}
+// Admission contract: one `output` notification is one bounded batch, a
+// consumer that pauses inside that notification stops the PTY before another
+// read, and resuming replays the remainder in the original byte order.
+void bounded_admission(const QString& directory) {
+    PtyProcess process;
+    QEventLoop loop;
+    Result result;
+    observe(process, loop, result);
+    qsizetype retained{};
+    qsizetype maximum_retained{};
+    int batches{};
+    bool paused{};
+    QObject::connect(&process, &PtyProcess::output, &loop, [&](const QByteArray& bytes) {
+        require(bytes.size() <= PtyProcess::max_read_batch,
+                "PTY emitted a batch larger than the admission quantum");
+        require(!paused, "A paused admission consumer received another batch");
+        result.output += bytes;
+        ++batches;
+        retained += bytes.size();
+        maximum_retained = std::max(maximum_retained, retained);
+        paused = true;
+        process.pauseOutput(true);
+        require(retained <= PtyProcess::max_read_batch,
+                "Paused admission retained more than one batch");
+        QTimer::singleShot(0, &loop, [&] {
+            retained = 0;
+            paused = false;
+            process.pauseOutput(false);
+        });
+    });
+    process.start(
+        {.program = QStringLiteral("/bin/sh"),
+         .arguments = {QStringLiteral("-c"), QStringLiteral("i=0; while [ $i -lt 4096 ]; do "
+                                                            "printf '0123456789abcdef\\n'; "
+                                                            "i=$((i+1)); done; printf 'END\\n'")},
+         .directory = directory});
+    if (result.failure.isEmpty() && !result.exited)
+        loop.exec();
+    require(result.failure.isEmpty() && result.exited && result.code == 0 && batches > 1 &&
+                maximum_retained > 0 && maximum_retained <= PtyProcess::max_read_batch,
+            "Paused admission lost output or the exit status");
+    require(result.output.endsWith("END\r\n") &&
+                result.output.count("0123456789abcdef\r\n") >= 4096,
+            "Paused admission reordered or lost terminal bytes");
+}
 void cleanup_group(const QString& directory) {
     auto process = std::make_unique<PtyProcess>();
     QEventLoop loop;
@@ -300,6 +379,7 @@ int main(int argc, char** argv) {
         marker.close();
         exact_arguments(directory.path());
         burst(directory.path());
+        bounded_admission(directory.path());
         resize(directory.path());
         require(!run({.program = QStringLiteral("/nonexistent/lapis-program"),
                       .arguments = {},
@@ -315,10 +395,12 @@ int main(int argc, char** argv) {
         signal_exit();
         failed_start_reuse(directory.path());
         bounded_descendant_drain(directory.path());
+        paused_final_drain_bound(directory.path());
         cleanup_group(directory.path());
         cleanup_after_leader_exit(directory.path());
         std::cout << "Literal argv, cwd, output drain, resize, exit, signal status, "
-                     "restart, bounded drain and process-group cleanup passed\n";
+                     "restart, bounded and paused drain, bounded admission and "
+                     "process-group cleanup passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

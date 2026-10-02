@@ -66,11 +66,22 @@ LAUNCHD_KEPT = (
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
     "LAPIS_HISTORY_ROOT",
 )
+CLAUDE_FIXTURE_SETTINGS = {
+    "permissions": {
+        "defaultMode": "default",
+        "ask": [
+            "Bash(echo lapis-parallel-one)",
+            "Bash(echo lapis-parallel-two)",
+        ],
+    }
+}
 
 if __package__:
     from . import check_cli_launch as wire
+    from .fake_models import PARALLEL_COMMANDS, PARALLEL_PROMPT
 else:
     import check_cli_launch as wire
+    from fake_models import PARALLEL_COMMANDS, PARALLEL_PROMPT
 
 CODEX_CONFIG = """model = "lapis-fake"
 model_provider = "lapis_fake"
@@ -141,7 +152,81 @@ def screen(session, timeout=2.0):
                 kind in (wire.ATTENTION_SNAPSHOT, wire.ATTENTION_RETRY),
                 "Unexpected frame while reading a restore fixture",
             )
+            # A snapshot consumed here would otherwise be lost, because the
+            # service republishes attention only when its state is dirty.
+            if kind == wire.ATTENTION_SNAPSHOT:
+                state = attention_snapshot(data)
+                require(
+                    state["attachment"] == session.attachment,
+                    "Attention attachment mismatch",
+                )
+                session.attention = state
     return text
+
+
+def attention_snapshot(data):
+    try:
+        return wire.decode_attention_snapshot(data)
+    except wire.CheckError as error:
+        raise Failure(str(error)) from error
+
+
+def attention(session):
+    """The latest attention state observed while reading terminal frames."""
+    state = getattr(session, "attention", None)
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        try:
+            kind, data = session.receive(
+                min(0.2, max(0.001, deadline - time.monotonic()))
+            )
+        except socket.timeout:
+            continue
+        except wire.CheckError as error:
+            if str(error) != "Frame deadline expired":
+                raise
+            continue
+        require(
+            kind != wire.STATUS, "Service status: " + data[1:].decode(errors="replace")
+        )
+        if kind == wire.ATTENTION_SNAPSHOT:
+            state = attention_snapshot(data)
+            require(
+                state["attachment"] == session.attachment,
+                "Attention attachment mismatch",
+            )
+            session.attention = state
+        elif kind != wire.ATTENTION_RETRY:
+            require(kind == wire.SNAPSHOT, "Unexpected frame reading attention")
+    return state
+
+
+def parallel_approvals_ready(state):
+    """Two distinct, unsubmitted Bash approval requests are pending."""
+    requests = [] if not state else state.get("requests", [])
+    pending = [
+        request
+        for request in requests
+        if not request.get("submitted")
+        and request.get("reason") == "approval"
+        and request.get("details", {}).get("toolName") == "Bash"
+    ]
+    identities = {request.get("id") for request in pending}
+    return (
+        len(pending) >= 2 and len(identities) == len(pending) and None not in identities
+    )
+
+
+def wait_parallel_approvals(session, timeout=120):
+    """Wait for two distinct, still-pending Claude Bash approval requests."""
+    deadline = time.monotonic() + timeout
+    latest = None
+    while time.monotonic() < deadline:
+        latest = attention(session)
+        if parallel_approvals_ready(latest):
+            return latest
+        time.sleep(0.05)
+    raise Failure(f"Claude never showed two pending parallel approvals: {latest}")
 
 
 def wait_screen(session, needle, timeout=40):
@@ -376,6 +461,11 @@ def main():
                 }
             )
         )
+        claude_project_settings = work["claude"] / ".claude"
+        claude_project_settings.mkdir(mode=0o700)
+        (claude_project_settings / "settings.local.json").write_text(
+            json.dumps(CLAUDE_FIXTURE_SETTINGS)
+        )
         # Outside the workspace folder, so a power loss spares the fake model.
         fake_models_log = logs / "fake-models.jsonl"
         fake_models_log.unlink(missing_ok=True)
@@ -502,6 +592,11 @@ def main():
             session.send(wire.KEY, bytes([10, 0]))
             wait_screen(session, f"Fake model reply to: {text}")
 
+        def send_prompt(session, text):
+            session.send(wire.PASTE, text.encode())
+            time.sleep(0.3)
+            session.send(wire.KEY, bytes([10, 0]))
+
         for name in ("codex", "claude"):
             session = attach(name)
             wait_screen(session, "codex" if name == "codex" else "Claude Code")
@@ -530,6 +625,38 @@ def main():
             wait_screen(session, f"echo: note from {name}")
             session.close()
             print(f"  {name}: conversation {conversations[name]}")
+        parallel_session = attach("claude")
+        send_prompt(parallel_session, PARALLEL_PROMPT)
+        parallel_screen = wait_screen(
+            parallel_session, PARALLEL_COMMANDS[-1], timeout=90
+        )
+        require(
+            all(command in parallel_screen for command in PARALLEL_COMMANDS),
+            "Claude did not show both distinct parallel Bash commands",
+        )
+        parallel_attention = wait_parallel_approvals(parallel_session)
+        require(
+            parallel_attention.get("diagnostic", "").find("Claude") >= 0,
+            "Parallel approvals were not observed through the Claude adapter",
+        )
+        pending = parallel_attention.get("requests", [])
+        require(
+            bool(pending)
+            and all(
+                request.get("details", {}).get("adapter") == "claude-code"
+                and request.get("details", {}).get("responseLocation") == "terminal"
+                for request in pending
+            ),
+            "Parallel approvals lacked Claude adapter terminal-response provenance",
+        )
+        parallel_record = record(endpoint["claude"])
+        require(
+            parallel_record
+            and parallel_record.get("session_id") == conversations["claude"],
+            "parallel prompt left the Claude conversation",
+        )
+        parallel_session.close()
+        print("  claude: two distinct Bash tool calls left pending")
         first_context = {
             "codex": max(
                 (
@@ -580,20 +707,42 @@ def main():
                     f"Fake model reply to: {prompt[name]}" in shown,
                     f"{name} lost the earlier reply",
                 )
-                follow_up = f"{name} after power loss {round_number}"
-                session.send(wire.PASTE, follow_up.encode())
-                time.sleep(0.3)
-                session.send(wire.KEY, bytes([10, 0]))
-                wait_screen(session, f"Fake model reply to: {follow_up}")
-                session.close()
+                restored_record = record(endpoint[name])
                 require(
-                    record(endpoint[name])["session_id"] == conversations[name],
+                    restored_record
+                    and restored_record.get("session_id") == conversations[name],
                     f"{name} changed conversation",
                 )
                 require(
-                    record(endpoint[name])["source"] == "observer",
+                    restored_record.get("source") == "observer",
                     f"{name} lost observer provenance",
                 )
+                if round_number == 1:
+                    follow_up = f"{name} after power loss {round_number}"
+                    session.send(wire.PASTE, follow_up.encode())
+                    time.sleep(0.3)
+                    session.send(wire.KEY, bytes([10, 0]))
+                    wait_screen(session, f"Fake model reply to: {follow_up}")
+                elif name == "claude":
+                    # The pre-loss state was two pending Bash approvals. This
+                    # slice proves only that they survive with their
+                    # conversation; an automated answer would change the
+                    # approval contract.
+                    restored_screen = wait_screen(
+                        session, PARALLEL_COMMANDS[-1], timeout=90
+                    )
+                    require(
+                        all(
+                            command in restored_screen for command in PARALLEL_COMMANDS
+                        ),
+                        "Restored Claude screen lost one or both parallel commands",
+                    )
+                    restored_attention = wait_parallel_approvals(session)
+                    require(
+                        restored_attention.get("ready") is True,
+                        "Restored Claude attention state was not ready",
+                    )
+                session.close()
             for name in STAND_INS:
                 require_managed_resume(
                     name,
@@ -609,7 +758,7 @@ def main():
                 wait_screen(session, f"echo: {follow_up}")
                 session.close()
                 require(
-                    record(endpoint[name])
+                    (record(endpoint[name]) or {})
                     == {
                         "version": 2,
                         "agent": name,

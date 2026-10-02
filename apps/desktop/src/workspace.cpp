@@ -285,12 +285,15 @@ std::optional<std::pair<QString, QString>> remoteCommand(const session::LaunchSp
 }
 // A remote session's plan: a preamble after the command's `cd <folder> && `
 // that reads the credential lapis keeps on that machine, so it is never on a
-// command line. Missing, the machine's own sign-in is used.
+// command line. If that credential is unavailable, the shell stops rather
+// than silently using the machine's own sign-in.
 const QRegularExpression& remoteAccountPreamble() {
     static const QRegularExpression preamble(
         QStringLiteral(R"(\{ a=[A-Za-z0-9._-]+; .*?; true; \} && )"));
     return preamble;
 }
+constexpr int maximum_remote_token_bytes = 8192;
+
 QString withRemoteAccount(QString command, const Account* account) {
     command.remove(remoteAccountPreamble());
     const auto folder_end = command.indexOf(QStringLiteral(" && "));
@@ -300,12 +303,16 @@ QString withRemoteAccount(QString command, const Account* account) {
         account->cli == QLatin1String("claude")
             ? QStringLiteral(
                   R"sh({ a=%1; t="$HOME/.lapis/accounts/claude/$a.token"; )sh"
-                  R"sh([ -r "$t" ] && export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$t")"; true; } && )sh")
+                  R"sh([ -f "$t" ] && [ -r "$t" ] && [ -s "$t" ] && )sh"
+                  R"sh([ "$(wc -l < "$t")" -le 1 ] && [ "$(wc -c < "$t")" -le 8192 ] || exit 65; )sh"
+                  R"sh(IFS= read -r CLAUDE_CODE_OAUTH_TOKEN < "$t" || )sh"
+                  R"sh([ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || exit 65; )sh"
+                  R"sh(export CLAUDE_CODE_OAUTH_TOKEN; true; } && )sh")
             : QStringLiteral(
                   R"sh({ a=%1; h="$HOME/.lapis/accounts/codex/$a"; if [ -r "$h/auth.json" ]; then )sh"
                   R"sh(for n in $(ls -A "$HOME/.codex" 2>/dev/null); do [ "$n" = auth.json ] || )sh"
                   R"sh([ -e "$h/$n" ] || [ -L "$h/$n" ] || ln -s "$HOME/.codex/$n" "$h/$n"; done; )sh"
-                  R"sh(export CODEX_HOME="$h"; fi; true; } && )sh");
+                  R"sh(export CODEX_HOME="$h"; else exit 65; fi; true; } && )sh");
     command.insert(folder_end + 4, preamble.arg(account->name));
     return command;
 }
@@ -1836,12 +1843,19 @@ Workspace::ReloadResult Workspace::requestReload(const QString& id) {
     if (item->closing() || reloading_.contains(id))
         return {ReloadOutcome::failed,
                 QStringLiteral("%1 is already closing or reloading.").arg(item->title())};
-    if (const auto remote = remoteCommand(entry->launch);
-        remote && !remoteConversation().match(remote->second).hasMatch())
+    const auto remote = remoteCommand(entry->launch);
+    if (remote && !remoteConversation().match(remote->second).hasMatch())
         return {ReloadOutcome::kept, {}};
     if (!serviceRunning(entry->endpoint))
         return restartAgent(id) ? ReloadResult{ReloadOutcome::requested, {}}
                                 : ReloadResult{ReloadOutcome::failed, error_};
+    // Validate the plan this reload will use before ending a healthy remote
+    // session. A later restart cannot put back the session this call would end.
+    if (remote) {
+        const auto diagnostic = remoteAccountFailure(accounts_, *entry, accountsRoot());
+        if (!diagnostic.isEmpty())
+            return {ReloadOutcome::failed, diagnostic};
+    }
     if (!item->terminate())
         return {ReloadOutcome::failed,
                 QStringLiteral("Could not request a reload for %1. Reconnect its "
@@ -1947,9 +1961,54 @@ QString Workspace::agentMachine(const Agent& agent) {
     const auto remote = remoteCommand(agent.launch);
     return remote ? remote->first : QString();
 }
+// Credentials for a remote machine are provisioned beside the same configured
+// account root, then spread to that machine. Refuse a selected plan before an
+// apply or reload when the copy lapis can inspect is not usable. The diagnostic
+// names the selected plan, never its credential contents or provider identity.
+QString Workspace::remoteAccountFailure(const AccountPool& accounts, const Agent& agent,
+                                        const QString& accountsRoot) {
+    const auto cli = accountCli(agent.harness);
+    if (cli.isEmpty() || !accounts.configured(cli))
+        return {};
+    const auto machine = agentMachine(agent);
+    const auto chosen = accounts.choose(cli, machine, agent.account);
+    if (!agent.account.isEmpty() && chosen.isEmpty())
+        return QStringLiteral("Selected plan %1 is no longer configured.").arg(agent.account);
+    const auto* account = accounts.find(cli, chosen);
+    if (account == nullptr || (account->hasHome && account->home == machine))
+        return {};
+    if (cli == QLatin1String("claude")) {
+        const QFileInfo token(
+            QDir(accountsRoot).filePath(QStringLiteral("claude/%1.token").arg(account->name)));
+        QFile file(token.absoluteFilePath());
+        const auto bytes = token.isFile() && token.isReadable() && file.open(QIODevice::ReadOnly)
+                               ? file.read(maximum_remote_token_bytes + 1)
+                               : QByteArray();
+        if (bytes.size() > maximum_remote_token_bytes)
+            return QStringLiteral("Claude Code plan %1 has no usable token.").arg(account->name);
+        const auto text = QString::fromUtf8(bytes);
+        const auto first_line = text.section(QLatin1Char('\n'), 0, 0);
+        if (first_line.isEmpty() || first_line != first_line.trimmed() || bytes.count('\n') > 1 ||
+            bytes.contains('\0'))
+            return QStringLiteral("Claude Code plan %1 has no usable token.").arg(account->name);
+        return {};
+    }
+    const QFileInfo auth(
+        QDir(accountsRoot).filePath(QStringLiteral("codex/%1/auth.json").arg(account->name)));
+    if (!auth.isFile() || !auth.isReadable() || auth.size() > 1024 * 1024)
+        return QStringLiteral("Codex plan %1 has no usable login.").arg(account->name);
+    QFile file(auth.absoluteFilePath());
+    if (!file.open(QIODevice::ReadOnly) ||
+        !QJsonDocument::fromJson(file.read(1024 * 1024 + 1)).isObject())
+        return QStringLiteral("Codex plan %1 has no usable login.").arg(account->name);
+    return {};
+}
 bool Workspace::applyAccount(Agent& agent, SessionPreview& item) {
     const auto cli = accountCli(agent.harness);
     if (cli.isEmpty() || !accounts_.configured(cli)) {
+        if (remoteCommand(agent.launch))
+            agent.launch.arguments.last().remove(remoteAccountPreamble());
+        agent.account.clear();
         item.setServiceEnvironment({});
         return true;
     }
@@ -1959,6 +2018,9 @@ bool Workspace::applyAccount(Agent& agent, SessionPreview& item) {
     // On its home machine a plan is the machine's own sign-in.
     const bool kept = account != nullptr && !(account->hasHome && account->home == machine);
     if (remoteCommand(agent.launch)) {
+        if (const auto diagnostic = remoteAccountFailure(accounts_, agent, accountsRoot());
+            !diagnostic.isEmpty())
+            return fail(diagnostic);
         auto& command = agent.launch.arguments.last();
         command = withRemoteAccount(command, kept ? account : nullptr);
         agent.account = chosen;

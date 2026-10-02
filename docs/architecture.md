@@ -2894,6 +2894,21 @@ that investigation to finish. [Status](status.md) and the task/PR receipts recor
 what actually lands. This table assigns work; it does not claim those patches
 or the surveys are implemented or qualified.
 
+#### October 1 repair disposition
+
+At the PR 70 validation head recorded by its receipt, selected remote account
+preflight, Claude 2.1.286 fixture preparation, focused quality tooling and the
+supervisor state core are implemented. Output retention is also implemented:
+ordinary partial batches parse immediately; sustained pressure begins when at
+least 16 KiB arrives within one frame, holds successive PTY batches until the
+service queue reaches 64 KiB, and uses the one-frame deadline only as the
+quiet-output bound in pressure mode. Recovery is FIFO on the same child, and
+ordinary pressure remains separate from bounded final teardown. The focused PTY
+suite and real service backpressure case prove pause/recovery, ordered sentinels
+and post-overflow input. This is not a sustained-output soak, memory
+measurement, MiB-budget promotion or native package qualification; those remain
+R5/Milestone 4 gates.
+
 #### Minimum supported slice
 
 Start with an explicitly labelled macOS Apple Silicon early-access release:
@@ -2926,7 +2941,7 @@ scopes; contributors continue to share feature ownership.
 | --- | --- | --- | --- |
 | R1, process lifetime | **Contract gap, reproduced platform failure.** `LiveConnection` starts services from the GUI. The [macOS 27 investigation](#macos-27-ends-a-quitting-apps-background-processes-september-28) shows that `setsid` and detached spawning do not escape its coalition; replacing the bundle or lacking BTM permission can kill every agent. | The platform launcher must make an independent launchd-owned service/broker responsible for process birth and supervision, with an explicit registration/disabled state. The GUI attaches to it. Keep service failure and reboot recovery distinct from GUI detach. Do not use an installer delay as the durability contract. | On a disposable qualified Mac installation: preserve child PID and terminal bytes through window close, GUI quit/crash and application replacement; exercise allowed/denied/unknown background permission, login item on/off, service crash and a real reboot. Reboot may resume a conversation; it must not be reported as same-process survival. Reuse the existing restore fixtures, then qualify the actual package. |
 | R2, input integrity | **Implemented repair; candidate acceptance remains.** PR #43 and its integrated follow-ups provide negotiated service-owned paste admission and correlated results. Next-prompt submission uses that contract and presented-frame ownership. Existing source, real-PTY and background/sanitizer receipts remain revision-scoped. | Preserve the current implementation through consolidation; do not rebuild the old chunked, socket-only path. Keep mode-dependent encoding in the service, attachment/epoch checks, explicit refusal and interrupted-delivery reporting. | Reuse unaffected focused evidence, then exercise the assembled candidate with a full PTY queue, slow reader, disconnect, bracketed-mode change and focus/IME transitions, including the side shell. Compare actual PTY bytes and matching bracket markers. Native macOS presentation and package acceptance remain separate from background Qt results. |
-| R3, account identity | **Remaining remote launch defect; reset repairs merged.** Local `Workspace::applyAccount` refuses missing visiting-plan credentials. `withRemoteAccount` still permits a remote launch to use the machine sign-in when selected credentials are unavailable, while the registry records the chosen plan. PR #40 and follow-ups repaired reset identity/admission/reconciliation paths; their tests do not qualify real provider consumption. | Preserve chosen account identity through launch, usage and optional reset operations. Refuse the remote mismatch before replacing a healthy session, or keep that unqualified path outside the candidate. Retain stable durable operation identity and no replay after uncertain delivery. | Reuse existing credential/provider stand-ins for missing/unreadable credentials, malformed responses, exhausted model windows, timeout after acceptance and restart before reply persistence. Verify the actual selected account with a read-only operation on each advertised route. Real reset consumption is not a routine-test requirement or a prerequisite for the local-only slice. |
+| R3, account identity | **Remote source repair implemented; provider qualification remains.** `Workspace::applyAccount` and a live remote reload refuse a selected visiting plan whose managed credential is missing, unreadable, or malformed before replacing the session; the remote preamble exits instead of using the machine sign-in. Registry-seam tests cover remote apply and reload preflight, while refusal from a healthy real transport before termination remains parent-owned integration. PR #40 and follow-ups repaired reset identity/admission/reconciliation paths; those reset tests do not qualify real provider consumption. | Preserve chosen account identity through launch, usage and optional reset operations. Refuse the remote mismatch before replacing a healthy session, or keep that unqualified path outside the candidate. Retain stable durable operation identity and no replay after uncertain delivery. | Reuse existing credential/provider stand-ins for missing/unreadable credentials, malformed responses, exhausted model windows, timeout after acceptance and restart before reply persistence. Verify the actual selected account with a read-only operation on each advertised route. Real reset consumption is not a routine-test requirement or a prerequisite for the local-only slice. |
 | R4, release and upgrade provenance | **Acceptance and enforcement gaps.** `package_macos.py release` validates the DMG staple and checks that current HEAD exists on a remote; it does not bind the staged app/DMG to that HEAD, version and qualification result. The latest published v0.5.0 targets `0ec13cb`, a separate release tree from this audit's main. | Produce one immutable package manifest linking source tree/dirty status, app version, toolchain/dependency pins, bundled notices/SBOM, app and DMG hashes, appcast signature and validation. Refuse publishing stale/mismatched artifacts. Exercise installation and the Sparkle transition, including recoverable registry/history migration and a documented recovery/rollback path. Keep signing-key recovery outside the repository. | Run the existing `package_macos.py verify --notarized` on the exact staged artifact, then verify the downloaded asset and appcast. Qualify Finder launch in a fresh user environment without developer tools or pre-existing BTM state; install an update with live sessions; recover after a failed update/migration. Record source and artifact digests together. Do not relabel source tests or the old 0.2.0 signature receipt as v0.5.0 acceptance. |
 | R5, operational bounds and support | **Coverage gaps and source-level pressure risks.** The configured gateway path waits up to eight seconds, then probes services serially at up to 0.3 seconds each, against the iOS list client's 15-second request timeout. These are source-configured bounds, not a measured latency distribution. `ThreadingHTTPServer` has no total client/listing budget. Desktop decode and attention pacing plus companion history catch-up remain tracked only in the [pacing audit](#update-pacing-audit-september-28). Older native UI/Metal and sanitizer receipts retain platform and scope limits. | Bound active clients, queued work, history/log retention and cancellation, protecting local input under output or optional remote pressure. Add package/runtime diagnostics and a user-controlled redacted support export to the existing CLI; developer `doctor` currently checks dependency/build readiness only. | Use the candidate workload and sustained soak defined above, then Milestone 4. Include dead endpoints/disconnected clients for any advertised gateway surface. Record limits, degradation and resource/input tails. Qualify native rendering on the candidate and assess existing sanitizer evidence against changed source; a background Qt pass alone is not GPU acceptance. |
 
@@ -2994,7 +3009,11 @@ reconnecting clients, then the existing workspace, login registration and upgrad
 path. Qualification must include supervisor crash/restart, simultaneous clients,
 GUI replacement, disabled background permission, graceful shutdown and real
 login/reboot. Persistence is a desired architecture; it is not implemented by
-this documentation change.
+this documentation change. One state-only primitive is now implemented behind
+`LAPIS_BUILD_SUPERVISOR_STATE`: schema-v1 desired state, strict bounded control
+parsing, token checks, singleton locking and owner-only atomic persistence. It
+is not the supervisor itself and adds no daemon, launchd registration, control
+socket, process launcher, restart/reconciliation or production GUI/CLI route.
 
 #### Current implementation disposition (September 30)
 
@@ -3545,7 +3564,9 @@ plans need their own login.
   current plan and reports the failed entry. Tokens are kept 0600 under `~/.lapis/accounts`, never on a command
   line or in the workspace file: a local session's service gets the variable
   in its environment, and a remote session's command gains a preamble that
-  reads the file on that machine (missing, the machine's own sign-in is used).
+  reads the file on that machine. That preamble is fail-closed, and a remote
+  apply or reload preflights the managed credential before replacing a healthy
+  session.
 - **Loads.** From the usage probes lapis already runs: each machine's own
   sign-ins, known by the machine (a plan's `home`), and OMP's accounts by
   email. Usage keeps polling while plans are configured, dashboard or not.
@@ -4319,6 +4340,15 @@ passes headless, and no checkpoint's passing claim extends to the next.
   rate to measure in W4, not a guarantee to document.
 - Qt WebEngine and WKWebView remain alternatives needing their own service,
   frame and input qualification. Neither silently substitutes for a failed CEF gate.
+
+### Claude fixture-pin reconciliation (October 1)
+
+The source fixtures now pin `SUPPORTED_VERSION` to 2.1.286 in
+`scripts/check_claude_hooks.py` and `scripts/probe_claude_failure_hooks.py`.
+This corrects the stale sentence above without converting the recorded
+qualification evidence: the existing runtime receipts and dated observations
+remain Claude 2.1.280. A run on 2.1.286 is still required before claiming the
+newer fixture as qualified.
 
 ## Contracts to preserve
 
