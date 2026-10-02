@@ -34,6 +34,11 @@ sys.exit(not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful())
 class SelectionError(ValueError):
     """A focused test or source selector does not name a repository path."""
 
+    def __init__(self, message, validation_class):
+        super().__init__(message)
+        # Receipts record this safe class, never selector text or host paths.
+        self.validation_class = validation_class
+
 
 def parse_test_selectors(root, selectors):
     """Resolve focused test selectors to scripts/tests module names."""
@@ -48,7 +53,7 @@ def parse_test_selectors(root, selectors):
 def _test_module_name(root, selector):
     text = selector.strip()
     if not text:
-        raise SelectionError("test selector must not be empty")
+        raise SelectionError("test selector must not be empty", "invalid-test-selector")
     looks_like_path = (
         Path(text).is_absolute() or "/" in text or "\\" in text or text.endswith(".py")
     )
@@ -59,7 +64,8 @@ def _test_module_name(root, selector):
     parts = text.split(".")
     if not all(part.isidentifier() for part in parts):
         raise SelectionError(
-            f"test selector {text!r} must be a dotted module name or a .py path"
+            f"test selector {text!r} must be a dotted module name or a .py path",
+            "invalid-test-selector",
         )
     candidate = root.joinpath(*parts).with_suffix(".py")
     try:
@@ -67,7 +73,8 @@ def _test_module_name(root, selector):
         relative = resolved.relative_to(root.resolve())
     except (OSError, ValueError):
         raise SelectionError(
-            f"test module {text!r} does not map to a Python file inside the repository"
+            f"test module {text!r} does not map to a Python file inside the repository",
+            "invalid-test-selector",
         ) from None
     _require_focused_test_file(text, relative, resolved, dotted=True)
     return text
@@ -77,23 +84,30 @@ def _require_focused_test_file(selector, relative, resolved, *, dotted):
     if not resolved.is_file():
         if dotted:
             raise SelectionError(
-                f"test module {selector!r} does not map to an existing Python file"
+                f"test module {selector!r} does not map to an existing Python file",
+                "invalid-test-selector",
             )
         raise SelectionError(
-            f"test path {selector!r} must name an existing Python module file"
+            f"test path {selector!r} must name an existing Python module file",
+            "invalid-test-selector",
         )
     if resolved.suffix != ".py":
-        raise SelectionError(f"test path {selector!r} must name a Python module file")
+        raise SelectionError(
+            f"test path {selector!r} must name a Python module file",
+            "invalid-test-selector",
+        )
     parts = relative.parts
     if len(parts) < 3 or parts[:2] != ("scripts", "tests"):
         raise SelectionError(
             f"test selector {selector!r} must name a module under scripts/tests, "
-            f"got {relative.as_posix()!r}"
+            f"got {relative.as_posix()!r}",
+            "invalid-test-selector",
         )
     if not TEST_MODULE_PATTERN.fullmatch(resolved.name):
         raise SelectionError(
             f"test selector {selector!r} must name a test_*.py module, "
-            f"got {resolved.name!r}"
+            f"got {resolved.name!r}",
+            "invalid-test-selector",
         )
 
 
@@ -108,11 +122,13 @@ def parse_source_selectors(root, selectors):
             rendered = relative.as_posix()
         elif resolved.is_file():
             raise SelectionError(
-                f"path selector {selector!r} must name a Python file or a directory"
+                f"path selector {selector!r} must name a Python file or a directory",
+                "invalid-path-selector",
             )
         else:
             raise SelectionError(
-                f"path selector {selector!r} does not name an existing file or directory"
+                f"path selector {selector!r} does not name an existing file or directory",
+                "invalid-path-selector",
             )
         if rendered not in paths:
             paths.append(rendered)
@@ -122,7 +138,10 @@ def parse_source_selectors(root, selectors):
 def _resolve_selector(root, selector, kind):
     text = selector.strip()
     if not text:
-        raise SelectionError(f"{kind} selector must not be empty")
+        raise SelectionError(
+            f"{kind} selector must not be empty",
+            "invalid-test-selector" if kind == "test" else "invalid-path-selector",
+        )
     candidate = Path(text)
     if not candidate.is_absolute():
         candidate = root / candidate
@@ -131,7 +150,8 @@ def _resolve_selector(root, selector, kind):
         relative = resolved.relative_to(root.resolve())
     except (OSError, ValueError):
         raise SelectionError(
-            f"{kind} selector {selector!r} must name a path inside the repository"
+            f"{kind} selector {selector!r} must name a path inside the repository",
+            "invalid-test-selector" if kind == "test" else "invalid-path-selector",
         ) from None
     return relative, resolved
 
@@ -436,7 +456,8 @@ def _run_focused(parser, arguments):
         return 1
     if not test_modules and not source_paths:
         error = SelectionError(
-            "--focused requires at least one --test or --path selector"
+            "--focused requires at least one --test or --path selector",
+            "missing-selection",
         )
         _write_focused_argument_failure(receipt_path, arguments, error)
         parser.error(str(error))
@@ -495,7 +516,23 @@ def _write_focused_argument_failure(path, arguments, error):
         "paths": [f"rejected-path-{index}" for index in range(len(arguments.paths))],
     }
     scope = focused_scope(selection["tests"], selection["paths"])
-    diagnostic = "Focused selector validation failed"
+    validation_class = error.validation_class
+    if validation_class == "invalid-test-selector":
+        diagnostic = "A --test selector failed focused-quality validation."
+    elif validation_class == "invalid-path-selector":
+        diagnostic = "A --path selector failed focused-quality validation."
+    else:
+        diagnostic = "Focused quality requires at least one --test or --path selector."
+    selection["validation"] = {
+        "class": validation_class,
+        "diagnostic": diagnostic,
+        "counts": {
+            "test_selectors": len(arguments.tests),
+            "path_selectors": len(arguments.paths),
+            "invalid_test_selectors": int(validation_class == "invalid-test-selector"),
+            "invalid_path_selectors": int(validation_class == "invalid-path-selector"),
+        },
+    }
     _write_failure_receipt(path, scope, selection, error, diagnostic=diagnostic)
 
 

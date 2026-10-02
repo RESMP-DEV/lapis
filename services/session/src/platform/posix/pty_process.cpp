@@ -309,8 +309,10 @@ bool PtyProcess::leaderExitStatus(int& exit_code, QProcess::ExitStatus& exit_sta
         else
             return false;
     } else if (waited < 0 && errno == ECHILD) {
-        // Qt consumed the child while withholding finished for PTY drain.
-        recordLeaderExit(process_.exitCode(), process_.exitStatus());
+        // QProcess may have reaped the child but not yet published `finished`
+        // while PTY writers remain open. Its exitCode/exitStatus accessors can
+        // still hold constructor defaults, so an unknown owner must defer.
+        return false;
     } else {
         return false;
     }
@@ -341,6 +343,7 @@ bool PtyProcess::readReady() {
         return true;
     QByteArray bytes;
     bytes.reserve(max_read_batch);
+    bool drained = false;
     while (bytes.size() < max_read_batch && !output_paused_) {
         std::array<char, 16384> chunk{};
         const auto wanted = std::min(static_cast<std::size_t>(chunk.size()),
@@ -352,8 +355,11 @@ bool PtyProcess::readReady() {
         }
         if (count < 0 && errno == EINTR)
             continue;
-        if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            drained = true;
             break;
+        }
+        drained = true;
         reader_->setEnabled(false);
         if (count < 0 && errno != EIO)
             emit failure(system_error("PTY read"));
@@ -363,7 +369,10 @@ bool PtyProcess::readReady() {
     }
     if (!bytes.isEmpty())
         emit output(std::move(bytes));
-    return !output_paused_;
+    // A quota-full batch is not evidence of a drained PTY. It may have stopped
+    // only because this reader reached its admission quantum, and a consumer
+    // can also pause synchronously while receiving the emitted bytes.
+    return drained && !output_paused_;
 }
 void PtyProcess::finishWhenDrained(int exit_code, QProcess::ExitStatus exit_status,
                                    int drain_budget) {

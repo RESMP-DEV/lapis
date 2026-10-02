@@ -517,12 +517,13 @@ class FocusedRunnerTests(unittest.TestCase):
     def test_invalid_selection_replaces_stale_receipt_with_failure(self):
         self.receipt.parent.mkdir(parents=True)
         self.receipt.write_text('{"passed": true}\n', encoding="utf-8")
+        selector = "scripts.tests.missing_private_sentinel"
         with contextlib.redirect_stderr(io.StringIO()) as stderr:
             with self.assertRaises(SystemExit) as raised:
                 self._run_main(
                     "--focused",
                     "--test",
-                    "scripts.tests.missing",
+                    selector,
                     patches=self._patches(),
                 )
         self.assertEqual(raised.exception.code, 2)
@@ -530,9 +531,62 @@ class FocusedRunnerTests(unittest.TestCase):
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         self.assertFalse(receipt["passed"])
         self.assertEqual(
-            receipt["selection"], {"tests": ["rejected-test-0"], "paths": []}
+            receipt["selection"],
+            {
+                "tests": ["rejected-test-0"],
+                "paths": [],
+                "validation": {
+                    "class": "invalid-test-selector",
+                    "diagnostic": "A --test selector failed focused-quality validation.",
+                    "counts": {
+                        "test_selectors": 1,
+                        "path_selectors": 0,
+                        "invalid_test_selectors": 1,
+                        "invalid_path_selectors": 0,
+                    },
+                },
+            },
         )
-        self.assertIn("Focused selector validation failed", receipt["scope"])
+        self.assertIn(
+            "A --test selector failed focused-quality validation", receipt["scope"]
+        )
+        self.assertNotIn(selector, json.dumps(receipt))
+
+    def test_invalid_path_selection_records_only_safe_classes_and_counts(self):
+        selector = "/private/host/private-path-sentinel.py"
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                self._run_main(
+                    "--focused",
+                    "--test",
+                    "scripts.tests.test_example",
+                    "--path",
+                    selector,
+                    patches=self._patches(),
+                )
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        self.assertFalse(receipt["passed"])
+        self.assertEqual(
+            receipt["selection"],
+            {
+                "tests": ["rejected-test-0"],
+                "paths": ["rejected-path-0"],
+                "validation": {
+                    "class": "invalid-path-selector",
+                    "diagnostic": "A --path selector failed focused-quality validation.",
+                    "counts": {
+                        "test_selectors": 1,
+                        "path_selectors": 1,
+                        "invalid_test_selectors": 0,
+                        "invalid_path_selectors": 1,
+                    },
+                },
+            },
+        )
+        self.assertIn(
+            "A --path selector failed focused-quality validation", receipt["scope"]
+        )
+        self.assertNotIn(selector, json.dumps(receipt))
 
     def test_selectors_without_focused_flag_are_rejected(self):
         with contextlib.redirect_stderr(io.StringIO()):
@@ -553,7 +607,27 @@ class FocusedRunnerTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         self.assertFalse(receipt["passed"])
-        self.assertIn("Focused selector validation failed", receipt["scope"])
+        self.assertEqual(
+            receipt["selection"],
+            {
+                "tests": [],
+                "paths": [],
+                "validation": {
+                    "class": "missing-selection",
+                    "diagnostic": "Focused quality requires at least one --test or --path selector.",
+                    "counts": {
+                        "test_selectors": 0,
+                        "path_selectors": 0,
+                        "invalid_test_selectors": 0,
+                        "invalid_path_selectors": 0,
+                    },
+                },
+            },
+        )
+        self.assertIn(
+            "Focused quality requires at least one --test or --path selector",
+            receipt["scope"],
+        )
 
     def test_focused_without_selectors_is_rejected(self):
         with contextlib.redirect_stderr(io.StringIO()):

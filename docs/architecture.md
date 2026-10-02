@@ -2896,14 +2896,16 @@ or the surveys are implemented or qualified.
 
 #### October 1 repair disposition
 
-At PR 70 head `1d6f464`, selected remote account preflight, Claude 2.1.286
-fixture preparation, focused quality tooling and the supervisor state core are
-implemented. Output retention is also implemented at the PR repair head: the
-service uses a 64 KiB admission boundary with a one-frame partial-batch window,
-holds PTY reads during admission, recovers FIFO output on the same child, and
-keeps ordinary pressure separate from bounded final teardown. The focused
-PTY suite and real service backpressure case prove pause/recovery, ordered
-sentinels and post-overflow input. This is not a sustained-output soak, memory
+At the PR 70 validation head recorded by its receipt, selected remote account
+preflight, Claude 2.1.286 fixture preparation, focused quality tooling and the
+supervisor state core are implemented. Output retention is also implemented:
+ordinary partial batches parse immediately; sustained pressure begins when at
+least 16 KiB arrives within one frame, holds successive PTY batches until the
+service queue reaches 64 KiB, and uses the one-frame deadline only as the
+quiet-output bound in pressure mode. Recovery is FIFO on the same child, and
+ordinary pressure remains separate from bounded final teardown. The focused PTY
+suite and real service backpressure case prove pause/recovery, ordered sentinels
+and post-overflow input. This is not a sustained-output soak, memory
 measurement, MiB-budget promotion or native package qualification; those remain
 R5/Milestone 4 gates.
 

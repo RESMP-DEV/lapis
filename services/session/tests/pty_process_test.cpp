@@ -233,26 +233,26 @@ void bounded_admission(const QString& directory) {
     Result result;
     observe(process, loop, result);
     qsizetype retained{};
+    qsizetype maximum_retained{};
     int batches{};
+    bool paused{};
     QObject::connect(&process, &PtyProcess::output, &loop, [&](const QByteArray& bytes) {
         require(bytes.size() <= PtyProcess::max_read_batch,
                 "PTY emitted a batch larger than the admission quantum");
+        require(!paused, "A paused admission consumer received another batch");
         result.output += bytes;
         ++batches;
-        if (retained < 128 * 1024) {
-            // A paused consumer must stop the PTY before the next read, so only
-            // the single batch it is holding is retained. The clock is stopped
-            // when the child is still alive: that is ordinary output pressure,
-            // not final teardown.
-            retained += bytes.size();
-            process.pauseOutput(true);
-            require(retained <= PtyProcess::max_read_batch,
-                    "Paused admission retained more than one batch");
-            QTimer::singleShot(0, &loop, [&] {
-                retained = 0;
-                process.pauseOutput(false);
-            });
-        }
+        retained += bytes.size();
+        maximum_retained = std::max(maximum_retained, retained);
+        paused = true;
+        process.pauseOutput(true);
+        require(retained <= PtyProcess::max_read_batch,
+                "Paused admission retained more than one batch");
+        QTimer::singleShot(0, &loop, [&] {
+            retained = 0;
+            paused = false;
+            process.pauseOutput(false);
+        });
     });
     process.start(
         {.program = QStringLiteral("/bin/sh"),
@@ -262,7 +262,8 @@ void bounded_admission(const QString& directory) {
          .directory = directory});
     if (result.failure.isEmpty() && !result.exited)
         loop.exec();
-    require(result.failure.isEmpty() && result.exited && result.code == 0 && batches > 1,
+    require(result.failure.isEmpty() && result.exited && result.code == 0 && batches > 1 &&
+                maximum_retained > 0 && maximum_retained <= PtyProcess::max_read_batch,
             "Paused admission lost output or the exit status");
     require(result.output.endsWith("END\r\n") &&
                 result.output.count("0123456789abcdef\r\n") >= 4096,
