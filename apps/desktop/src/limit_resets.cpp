@@ -199,12 +199,17 @@ void LimitResets::setSettings(const LimitResetSettings& settings) {
 }
 void LimitResets::sweep() {
     QSet<QString> seen;
+    bool prompt_skip_logged = false;
     for (const auto& target : agents_()) {
         const auto key = targetKey(target);
         if (!supported(target.cli) || seen.contains(key))
             continue;
         if (automaticResetWouldPrompt(target)) {
-            qInfo().noquote() << "Limit reset check: skipping this Mac's Claude keychain sign-in";
+            if (!prompt_skip_logged) {
+                qInfo().noquote()
+                    << "Limit reset check: skipping this Mac's Claude keychain sign-in";
+                prompt_skip_logged = true;
+            }
             continue;
         }
         seen.insert(key);
