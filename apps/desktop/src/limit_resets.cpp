@@ -205,12 +205,12 @@ void LimitResets::sweep() {
             continue;
         // Only the macOS keychain reader can raise the login-password prompt.
         if (credentials_ && automaticResetWouldPrompt(target)) {
-            if (!keychain_skip_logged_) {
+            if (!keychain_skips_logged_.contains(key)) {
                 qInfo().noquote()
                     << "Limit reset check: skipping automatic reset for this Mac's Claude "
                        "keychain sign-in"
                     << (target.account.isEmpty() ? QStringLiteral("<default>") : target.account);
-                keychain_skip_logged_ = true;
+                keychain_skips_logged_.insert(key);
             }
             continue;
         }

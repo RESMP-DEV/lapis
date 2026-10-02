@@ -348,10 +348,13 @@ void configuredTargetsUseTheirOwnRoutes() {
         {.automatic = true, .minBlockedMinutes = 30, .keepCredits = 1, .salvageHours = 6});
     f.controller->sweep();
     require(waitFor([&] { return f.spent.size() == 1; }), "the remote plan's route completes");
-    QElapsedTimer credential_grace;
-    credential_grace.start();
-    while (f.credential_reads.load() == 0 && credential_grace.elapsed() < 500)
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    // Drain the shared pool deterministically: a sentinel queued after the sweep
+    // has finished every task queued before it, so a wrongly queued credential
+    // read is observed instead of inferred from elapsed time.
+    std::atomic<bool> sentinel_ran{false};
+    QThreadPool::globalInstance()->start([&sentinel_ran] { sentinel_ran = true; });
+    require(waitFor([&] { return sentinel_ran.load(); }),
+            "the credential queue is drained before the assertion");
     require(f.credential_reads == 0,
             "a sweep skips this Mac's own Claude sign-in rather than raise the keychain prompt");
     f.controller->useNow(QStringLiteral("0"));

@@ -94,7 +94,7 @@ class LimitResets final : public QObject {
     QTimer first_sweep_;
     QHash<QString, std::shared_ptr<Run>> running_;
     QSet<QString> uncertain_notified_;
-    bool keychain_skip_logged_{};
+    QSet<QString> keychain_skips_logged_;
 };
 } // namespace lapis::desktop
 #endif
