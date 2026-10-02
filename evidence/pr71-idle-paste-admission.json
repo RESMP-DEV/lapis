@@ -1,0 +1,39 @@
+{
+  "recorded_at": "2026-10-02T06:01:27.601204+00:00",
+  "source_revision": "a7efb95cd77a23db2b1791e92d8ebc8d5a05b218",
+  "scope": "The real session service admission guard with a disposable managed-Claude hook fixture. This proves wire-level paste-plus-Return behavior for a current observation-only idle notice and a permission notice.",
+  "source_sha256": {
+    "services/session/include/lapis/session/attention.hpp": "c3389c50e1c9051e67f160d027211292f5ec5ca784d47a219ad69d5f554540c9",
+    "services/session/src/attention.cpp": "02cdaf9754f7f2b622180ac0165e2f80871d53f41a4b871e4ae0754df374abec",
+    "services/session/src/session_service.cpp": "8f9cdd1769ff821d91bbd344824966bea93ca39123457fd866a5ed1959a62acc",
+    "adapters/claude/src/claude_observer.cpp": "0dd93225be42722631339a3501c3bdb3bcb767e17c18ace4190bda8505380325",
+    "apps/desktop/src/attention_view.cpp": "4a46624cff4f64bc4ab005b3c8d001d2377d58c63147ff11200a8829ab97c5cc",
+    "services/session/tests/attention_test.cpp": "3d4695b565d44c39834c8eb725b43d2e6e0c8d36f00990b2734b737aa04459a5",
+    "scripts/check_cli_launch.py": "1b565b6c5f3f938bb73a027fbb3c058bf9714a38185ae7da663baef4f8c04d2b",
+    "docs/architecture.md": "e5bea5fe08d832833d232647c1d6632b40000af208b7595dbbbf1039e453b6cd"
+  },
+  "checks": [
+    {
+      "command": "ctest --test-dir build/desktop -R '^(attention-state|claude-observer)$' --output-on-failure --no-tests=error",
+      "passed": true
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop --case claude-idle-paste-admission --output build/reports/pr71-cli-launch.json",
+      "passed": true,
+      "observed": {
+        "idle_notice_admitted": true,
+        "permission_notice_refused": true
+      }
+    },
+    {
+      "command": "just quality",
+      "passed": true
+    }
+  ],
+  "contract": "The service refuses automatic paste-plus-Return while any current decision-capable request is pending. A synchronized, pending, observation-only idle notice is exempt; stale, responding and decision-capable evidence fails closed. Blocking is derived from Pending::status, not from ledger emptiness.",
+  "limitations": [
+    "The disposable fixture drives exact Claude hook events through the real hook relay and session service; it does not spend a live model turn.",
+    "Native desktop input, GUI focus behavior and a production Claude version are outside this receipt.",
+    "ASan/UBSan and TSan reruns of the admission path are not included; the previous receipt evidence/pr43-paste-admission.json covers its own revision only."
+  ]
+}

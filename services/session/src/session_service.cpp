@@ -1184,7 +1184,7 @@ class SessionService final : public QObject {
         last_id = request.request_id;
         wire::PasteResult result{request.attachment, request.request_id, false, {}};
         try {
-            if (request.submit && attention_state() && !attention_state()->pending().empty())
+            if (request.submit && attention_state() && attention_state()->blocking())
                 throw std::runtime_error(
                     "Agent has a pending request; automatic paste-plus-Return was refused");
             auto bytes = input_bytes(wire::Kind::paste, request.text);

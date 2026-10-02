@@ -249,7 +249,7 @@ class Observer::Impl {
                                    .thread_id = pinned_.toStdString(),
                                    .turn_id = prompt_.toStdString(),
                                    .item_id = exact ? tool.toStdString() : std::string{},
-                                   .reason = idle    ? "idle"
+                                   .reason = idle    ? std::string(attention::idle_reason)
                                              : input ? "input"
                                                      : "approval",
                                    .summary = idle    ? "Claude is waiting for input"
