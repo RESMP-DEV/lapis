@@ -3900,8 +3900,12 @@ sendable, against 4% of the 51 longer ones, and none of the 22 questions or 11
 new tasks. Opus 5.5's stated probabilities for its first guess clustered at 0.3
 to 0.4 (one reached 0.5). At a 0.4 threshold 27% of turns got an offer and a
 quarter of those were sendable, Cursor's break-even for showing a suggestion,
-with the right intent for 44%; at 0.5 almost nothing is offered. The default is
-0.4; the log will show whether that holds with lapis's state in the prompt.
+with the right intent for 44%; at 0.5 almost nothing is offered. The default was
+0.4 at first. In live use from September 30 to October 2 it hid 159 of 179
+guesses (the top guess's probability was mostly 0.3 to 0.35, usually for "go"
+or "continue"), and Tab, finding nothing, moved to another agent instead. Of
+the 20 guesses shown, 6 were sent with Tab. The default is now 0: the top guess always
+shows, and `minConfidence` remains for anyone who wants fewer.
 
 It is off by default: each prediction is a model call on the person's plan.
 Claude Code 2.1.285 has its own prompt suggestions (on unless

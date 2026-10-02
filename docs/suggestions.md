@@ -12,7 +12,7 @@ Add this to `~/.lapis/lapis.json`:
 ```
 
 The other settings are `model` (`claude-opus-5-5`), `effort`, `minConfidence`
-(0.4) and `maxPerHour` (60). Each prediction attempt uses the Claude Code plan
+(0, so the top guess always shows) and `maxPerHour` (60). Each prediction attempt uses the Claude Code plan
 this Mac is signed in to: API keys, custom endpoints and cloud-provider
 variables are removed from the call. An attempt may retry a malformed answer
 once, so `maxPerHour` bounds attempts rather than individual provider requests.
@@ -26,8 +26,7 @@ lapis's.
 When a Claude Code or Codex agent finishes a turn, lapis reads its conversation
 where it runs (over ssh for another machine) and asks the model, on this Mac,
 with your `~/.claude/CLAUDE.md`, the agent's screen, every other agent's state
-and your latest prompts elsewhere. A guess the model gives at least
-`minConfidence` shows dim after the agent's cursor. None shows while an agent
+and your latest prompts elsewhere. The model's top guess shows dim after the agent's cursor. None shows while an agent
 waits on a request such as a permission prompt.
 
 ## Tab

@@ -88,8 +88,8 @@ void settingsReadFromTheConfig() {
     const auto defaults = lapis::desktop::parse_next_prompt(QJsonValue());
     require(defaults == NextPromptSettings{} && !defaults.automatic &&
                 defaults.model == QLatin1String("claude-opus-5-5") &&
-                defaults.minConfidence == 0.4 && defaults.maxPerHour == 60,
-            "off by default, Opus, 0.4, sixty an hour");
+                defaults.minConfidence == 0.0 && defaults.maxPerHour == 60,
+            "off by default, Opus, every guess offered, sixty an hour");
     const auto set = lapis::desktop::parse_next_prompt(
         QJsonDocument::fromJson(R"({"auto": true, "model": "claude-sonnet-5", "effort": "low",
                                     "minConfidence": 7, "maxPerHour": -3})")
@@ -277,6 +277,9 @@ void predictsAndOffers() {
     // Another machine: its conversation is read there, with the helper on stdin.
     write(root.filePath(QStringLiteral("predict.reply")),
           R"({"category": "new", "candidates": [{"text": "rerun it on 8 GPUs", "p": 0.2}]})");
+    auto cautious = on(60, QStringLiteral("low"));
+    cautious.minConfidence = 0.4;
+    next.setSettings(cautious);
     next.turnFinished(QStringLiteral("b"));
     require(waitFor([&] { return events(log).size() == 4; }), "the remote prediction is logged");
     const auto ssh =
@@ -290,7 +293,14 @@ void predictsAndOffers() {
             "and sends it on stdin");
     require(next.suggestion(QStringLiteral("b")).isEmpty() &&
                 !events(log).last().value(QStringLiteral("shown")).toBool(),
-            "an unlikely guess is logged but not offered");
+            "below a chosen minConfidence, a guess is logged but not offered");
+    // By default every guess is offered, however unlikely.
+    next.setSettings(on(60, QStringLiteral("low")));
+    next.turnFinished(QStringLiteral("b"));
+    require(waitFor([&] {
+                return next.suggestion(QStringLiteral("b")) == QLatin1String("rerun it on 8 GPUs");
+            }),
+            "an unlikely guess is still offered by default");
 
     // A new turn withdraws the old offer; the hourly cap stops more.
     write(root.filePath(QStringLiteral("predict.reply")),
@@ -311,7 +321,7 @@ void predictsAndOffers() {
     require(withdrawn.value(QStringLiteral("event")) == QLatin1String("withdrawn") &&
                 withdrawn.value(QStringLiteral("reason")) == QLatin1String("new_turn") &&
                 withdrawn.value(QStringLiteral("seen")).toBool() &&
-                withdrawn.value(QStringLiteral("offer")).toString().endsWith(QStringLiteral(".3")),
+                withdrawn.value(QStringLiteral("offer")).toString().endsWith(QStringLiteral(".4")),
             "an offer seen but not used is recorded as replaced");
     QFile::remove(root.filePath(QStringLiteral("context.args")));
     static_cast<void>(waitFor([] { return false; }, 300));
