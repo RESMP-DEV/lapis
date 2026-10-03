@@ -305,8 +305,10 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     const auto top = candidates.isEmpty() ? QJsonObject() : candidates.first().toObject();
     const auto text = top.value(QStringLiteral("text")).toString();
     const auto probability = top.value(QStringLiteral("p"));
-    // The helper normalizes every candidate to a number, so any double is a
-    // model-reported probability; a reported 0.0 still counts at the default.
+    // The helper always emits a numeric p (0.0 for unscored candidates, flagged
+    // `scored: false`), so isDouble() only rejects replies that skipped that
+    // normalization. A reported 0.0 still counts at the default; whether the
+    // model scored the top guess is recorded as top_scored below.
     const bool usable_probability = probability.isDouble();
     const bool shown = !text.isEmpty() && usable_probability &&
                        probability.toDouble() >= settings_.minConfidence && settings_.automatic;
