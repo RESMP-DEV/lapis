@@ -12,6 +12,7 @@
 #include <QTemporaryDir>
 #include <QThreadPool>
 
+#include <atomic>
 #include <condition_variable>
 #include <functional>
 #include <iostream>
@@ -108,7 +109,7 @@ struct Fixture {
     QDir root{directory.path()};
     QVector<LimitResets::AgentTarget> targets;
     QStringList spent, declined, uncertain;
-    int credential_reads{};
+    std::atomic<int> credential_reads{};
     std::function<void()> before_credentials;
     std::unique_ptr<LimitResets> controller;
 
@@ -346,10 +347,21 @@ void configuredTargetsUseTheirOwnRoutes() {
     f.controller->setSettings(
         {.automatic = true, .minBlockedMinutes = 30, .keepCredits = 1, .salvageHours = 6});
     f.controller->sweep();
-    require(waitFor([&] { return f.spent.size() == 2; }), "both selected account routes complete");
+    require(waitFor([&] { return f.spent.size() == 1; }), "the remote plan's route completes");
+    // Drain the shared pool deterministically: a sentinel queued after the sweep
+    // has finished every task queued before it, so a wrongly queued credential
+    // read is observed instead of inferred from elapsed time.
+    auto sentinel_ran = std::make_shared<std::atomic<bool>>(false);
+    QThreadPool::globalInstance()->start([sentinel_ran] { sentinel_ran->store(true); });
+    require(waitFor([&] { return sentinel_ran->load(); }),
+            "the credential queue is drained before the assertion");
+    require(f.credential_reads == 0,
+            "a sweep skips this Mac's own Claude sign-in rather than raise the keychain prompt");
+    f.controller->useNow(QStringLiteral("0"));
+    require(waitFor([&] { return f.spent.size() == 2; }), "asking spends the local own reset");
     const auto calls = f.calls();
     require(calls.size() == 4 && f.credential_reads == 1,
-            "one check per account and keychain only for the local own sign-in");
+            "one check per account, and the keychain read only when asked");
     for (const auto& call : calls) {
         const auto args = call.value("args").toArray();
         require(args.contains(QStringLiteral("--keep")) && args.contains(QStringLiteral("1")) &&

@@ -44,6 +44,17 @@ QString quoted(const QString& word) {
     return QLatin1Char('\'') + QString(word).replace(QLatin1Char('\''), QStringLiteral("'\\''")) +
            QLatin1Char('\'');
 }
+// This Mac's own Claude Code sign-in lives in the keychain. Claude Code
+// rewrites that item whenever it refreshes the sign-in, which drops any
+// "Always Allow", so every read can ask for the login password.
+bool readsKeychain(const LimitResets::AgentTarget& t) {
+    return t.credential.isEmpty() && t.machine.isEmpty() && t.cli == QLatin1String("claude") &&
+           (t.account.isEmpty() || (t.hasHome && t.home.isEmpty()));
+}
+// Automation must never raise the interactive credential prompt. This policy
+// deliberately names that product rule instead of leaking the credential-source
+// predicate directly into scheduling.
+bool automaticResetWouldPrompt(const LimitResets::AgentTarget& t) { return readsKeychain(t); }
 QString targetKey(const LimitResets::AgentTarget& target) {
     const QJsonArray identity{target.machine, target.cli, target.account, target.home,
                               target.hasHome};
@@ -192,6 +203,17 @@ void LimitResets::sweep() {
         const auto key = targetKey(target);
         if (!supported(target.cli) || seen.contains(key))
             continue;
+        // Only the macOS keychain reader can raise the login-password prompt.
+        if (credentials_ && automaticResetWouldPrompt(target)) {
+            if (!keychain_skips_logged_.contains(key)) {
+                qInfo().noquote()
+                    << "Limit reset check: skipping automatic reset for this Mac's Claude "
+                       "keychain sign-in"
+                    << (target.account.isEmpty() ? QStringLiteral("<default>") : target.account);
+                keychain_skips_logged_.insert(key);
+            }
+            continue;
+        }
         seen.insert(key);
         run(target, false);
     }
@@ -263,11 +285,7 @@ bool LimitResets::loadState(const std::shared_ptr<Run>& pending) {
     return true;
 }
 void LimitResets::readCredentials(const std::shared_ptr<Run>& pending) {
-    const auto& t = pending->target;
-    const bool ownClaude = t.credential.isEmpty() && t.machine.isEmpty() &&
-                           t.cli == QLatin1String("claude") &&
-                           (t.account.isEmpty() || (t.hasHome && t.home.isEmpty()));
-    if (!ownClaude || !credentials_) {
+    if (!readsKeychain(pending->target) || !credentials_) {
         start(pending);
         return;
     }

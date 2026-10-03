@@ -69,14 +69,18 @@ credential on its own machine.
 lapis can spend saved Claude Code and Codex resets for the plan selected by an
 agent. Automatic spending is on by default: checks start after one minute and
 repeat every five minutes. **Use a saved limit reset for this agent's plan** in
-Commands asks for one immediately, only for that CLI and plan.
+Commands asks for one immediately, only for that CLI and plan. Claude Code on a
+Mac keeps its own sign-in in the keychain, where each read can ask for your
+login password, so the five-minute checks skip this Mac's own Claude Code
+account; only asking for its reset reads the keychain.
 
 `limitResets` configures `auto` (true), `minBlockedMinutes` (60), `keepCredits`
 (0) and `salvageHours` (12). Set `{"limitResets": {"auto": false}}` for manual
 use only. Automatic restores require a sufficiently long block and coverage of
 every exhausted window; expiring credits can be salvaged when a covered weekly
-window is at least one-quarter used. A weekly session reset cannot clear an
-Opus/Sonnet weekly cap.
+window is at least one-quarter used. That automatic policy still excludes this
+Mac's own Claude Code keychain sign-in; only the saved-reset action above reads
+it. A weekly session reset cannot clear an Opus/Sonnet weekly cap.
 
 Missing plan credentials or provider IDs, or an account mismatch, stop the
 operation; email alone is not an account identity. A definite provider refusal
