@@ -4429,6 +4429,17 @@ run once against the candidate. Existing independent branches
 `fix/next-prompt-scored-followup` and `docs/claude-background-limit` are polish
 or documentation work, not blockers for this wave.
 
+#### R4 source-provenance audit (October 3)
+
+The audit at `efb17db` found the existing package manifest sufficient for the
+bounded source task: it records source, dependency and notice identities,
+revokes approval when mutable bytes are replaced, records notarized
+qualification only for the exact artifact digests, and runs a final release
+preflight after appcast binding. The focused manifest and packaging suites,
+lint and format checks pass as recorded in the
+[source audit receipt](../evidence/r4-provenance-source-audit.json). R4 remains
+open for an actual packaged, downloaded, installed and updated candidate.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal
