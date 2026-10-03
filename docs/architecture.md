@@ -2912,6 +2912,18 @@ tracked receipt establishes their execution at this source. This is not a
 sustained-output soak, memory measurement, MiB-budget promotion or native
 package qualification; those remain R5/Milestone 4 gates.
 
+#### Runtime diagnostics disposition (October 3)
+
+At baseline `efb17db`, the preserved R5 slice is ported to the current
+dispatcher. Read-only `diagnose` and the separate explicit `diagnose --export`
+command inspect bounded package shape/version metadata and private runtime
+registry shape/counts, and emit a bounded redacted summary without changing
+runtime state. Local focused tests and focused quality exercise fixture
+parsing, redaction and dispatcher wiring. This is not installed-package/runtime
+acceptance, a health determination, protocol-compatibility evidence, or package
+release qualification; live Unix-socket reachability and R5 workload gates
+remain separate.
+
 #### Minimum supported slice
 
 Start with an explicitly labelled macOS Apple Silicon early-access release:
