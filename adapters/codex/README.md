@@ -222,7 +222,8 @@ boundaries when the pinned binary changes. Permission `-c` values may be bare
 or a balanced double-quoted TOML string. Single-quoted literals, padding inside
 quotes, unmatched or trailing quote content, and values outside the key's
 registered set are launch errors. A quoted value must span the entire `-c`
-value. Accepted input is normalized to `key="value"` before forwarding.
+value; whitespace around `=` is accepted. Accepted input is normalized to
+`key="value"` before forwarding.
 `--approve-for-me` is an
 installed CLI spelling for automatic approval review and maps to
 `approval_policy="on-request"`, `sandbox_mode="workspace-write"`, and
