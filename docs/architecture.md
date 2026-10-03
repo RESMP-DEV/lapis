@@ -3806,8 +3806,9 @@ person was, a pasted meeting, a new idea. The model also over-guessed approval
 (a one- or two-word first guess 12 times, right twice). So the design gates a
 guess on the model's stated `minConfidence` probability, as Cursor's retrained
 Tab shows fewer suggestions to be accepted more often, and it logs every guess
-to measure that threshold. A candidate without a numeric probability is never
-offered, whatever the threshold.
+to measure that threshold. The helper normalizes an unscored candidate to
+`p: 0.0` and records `scored: false`; the C++ boundary still rejects a candidate
+without a numeric probability, and the predicted event records `top_scored`.
 
 - **Where it runs.** `NextPrompt` follows `Workspace::turnFinished`, which covers
   Codex and Claude turns and requests but not terminal agents' output pauses.
@@ -3905,9 +3906,10 @@ with the right intent for 44%; at 0.5 almost nothing is offered. The default was
 0.4 at first. In live use from September 30 to October 2 it hid 159 of 179
 guesses (the top guess's probability was mostly 0.3 to 0.35, usually for "go"
 or "continue"), and Tab, finding nothing, moved to another agent instead. Of
-the 20 guesses shown, 6 were sent with Tab. The default is now 0, so a top
-guess the model scored, including a reported 0.0, shows; `minConfidence` remains
-for anyone who wants fewer.
+the 20 guesses shown, 6 were sent with Tab. The default is now 0, so the top
+guess shows whether the model reported a numeric probability or the helper used
+its unscored fallback; `top_scored` keeps those cases measurable, and
+`minConfidence` remains for anyone who wants fewer.
 
 It is off by default: each prediction is a model call on the person's plan.
 Claude Code 2.1.285 has its own prompt suggestions (on unless

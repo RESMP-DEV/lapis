@@ -320,6 +320,7 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     event.insert(QStringLiteral("model"), settings_.model);
     event.insert(QStringLiteral("category"), answer.value(QStringLiteral("category")));
     event.insert(QStringLiteral("candidates"), candidates);
+    event.insert(QStringLiteral("top_scored"), top.value(QStringLiteral("scored")).toBool());
     event.insert(QStringLiteral("shown"), shown);
     event.insert(QStringLiteral("min_confidence"), settings_.minConfidence);
     event.insert(QStringLiteral("ms"), answer.value(QStringLiteral("ms")));

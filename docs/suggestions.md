@@ -12,7 +12,8 @@ Add this to `~/.lapis/lapis.json`:
 ```
 
 The other settings are `model` (`claude-opus-5-5`), `effort`, `minConfidence`
-(0, so any top guess the model scored shows) and `maxPerHour` (60). Each prediction
+(0, so the helper's top guess shows, including its numeric fallback for an
+unscored candidate) and `maxPerHour` (60). Each prediction
 attempt uses the Claude Code plan this Mac is signed in to: API keys, custom
 endpoints and cloud-provider variables are removed from the call. An attempt
 may retry a malformed answer once, so `maxPerHour` bounds attempts rather than

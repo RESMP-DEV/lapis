@@ -277,8 +277,8 @@ class ModelTests(unittest.TestCase):
         )
         self.assertEqual(parsed["category"], "approve")
         self.assertEqual(
-            [(c["text"], c["p"]) for c in parsed["candidates"]],
-            [("send it", 1.0), ("go", 0.4), ("status?", 0.0)],
+            [(c["text"], c["p"], c["scored"]) for c in parsed["candidates"]],
+            [("send it", 1.0, True), ("go", 0.4, True), ("status?", 0.0, False)],
         )
         self.assertEqual(
             next_prompt.parse('{"category": "vibes"}')["category"], "other"
@@ -307,7 +307,9 @@ class ModelTests(unittest.TestCase):
                 "low",
                 str(fake),
             )
-        self.assertEqual(answer["candidates"], [{"text": "status?", "p": 0.8}])
+        self.assertEqual(
+            answer["candidates"], [{"text": "status?", "p": 0.8, "scored": True}]
+        )
         self.assertEqual((answer["category"], answer["cost"]), ("status", 0.05))
         seen = json.loads(record.read_text())
         self.assertEqual(seen["key"], [], "a metered key or endpoint reached the CLI")
