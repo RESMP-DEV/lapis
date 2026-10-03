@@ -918,6 +918,25 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 ["--", "-a", "never", "resume", thread],
             ),
         ]
+        for key, value in {
+            "approval_policy": "untrusted",
+            "sandbox_mode": "read-only",
+            "approvals_reviewer": "user",
+        }.items():
+            cases.extend(
+                [
+                    (
+                        ["-c", f"{key}={value}", "resume", thread],
+                        [f'{key}="{value}"'],
+                        ["resume", thread],
+                    ),
+                    (
+                        ["-c", f'{key}="{value}"', "resume", thread],
+                        [f'{key}="{value}"'],
+                        ["resume", thread],
+                    ),
+                ]
+            )
         for index, (arguments, backend, tui) in enumerate(cases):
             if tui is None:
                 tui = arguments
@@ -960,21 +979,31 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 )
             finally:
                 service.stop()
-        for index, arguments in enumerate(
-            (
-                ["-a", "untrusted", "resume", thread],
-                ["-s", 'x" y', "resume", thread],
-                ["-s", "read-only\n", "resume", thread],
-                ["-sandbox", "resume", thread],
-                ["-a", "on-failure", "resume", thread],
-                ["-c", 'approval_policy=x" y', "resume", thread],
-                ["-c", 'approval_policy="never', "resume", thread],
-                ["-c", " approval_policy=bogus", "resume", thread],
-                ["-c", "approvals_reviewer=bogus", "resume", thread],
-                ["-a"],
-                ["--sandbox="],
+        invalid_arguments = [
+            ["-a", "untrusted", "resume", thread],
+            ["-s", 'x" y', "resume", thread],
+            ["-s", "read-only\n", "resume", thread],
+            ["-sandbox", "resume", thread],
+            ["-a", "on-failure", "resume", thread],
+            ["-c", 'approval_policy=x" y', "resume", thread],
+            ["-c", 'approval_policy="never', "resume", thread],
+            ["-c", " approval_policy=bogus", "resume", thread],
+            ["-c", "approvals_reviewer=bogus", "resume", thread],
+            ["-a"],
+            ["--sandbox="],
+        ]
+        for key, value in {
+            "approval_policy": "never",
+            "sandbox_mode": "read-only",
+            "approvals_reviewer": "user",
+        }.items():
+            invalid_arguments.extend(
+                [
+                    ["-c", f'{key}={value}"', "resume", thread],
+                    ["-c", f'{key}="{value}', "resume", thread],
+                ]
             )
-        ):
+        for index, arguments in enumerate(invalid_arguments):
             name = f"codex-permissions-invalid-{index}"
             service = Service(
                 binary,

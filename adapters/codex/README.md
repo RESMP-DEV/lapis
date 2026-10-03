@@ -218,7 +218,10 @@ values `user`, `auto_review`, and legacy `guardian_subagent`; Codex defines and
 deserializes that reviewer enum in its current protocol config source. A live
 app-server startup/initialize probe on the pinned binary accepted all three
 reviewer values and rejected `bogus` before listening. Requalify these
-boundaries when the pinned binary changes. `--approve-for-me` is an
+boundaries when the pinned binary changes. Permission `-c` values may be bare
+or a balanced double-quoted TOML string; unmatched quotes are launch errors,
+and accepted values are normalized to `key="value"` before forwarding.
+`--approve-for-me` is an
 installed CLI spelling for automatic approval review and maps to
 `approval_policy="on-request"`, `sandbox_mode="workspace-write"`, and
 `approvals_reviewer="auto_review"`. The installed `codex-cli` help does not
