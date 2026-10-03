@@ -777,17 +777,26 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             f"#!{program}\n"
             "import json,socket,sys\n"
             "from pathlib import Path\n"
+            f"fixture_root=Path({str(runtime)!r})\n"
+            "if len(sys.argv)<2:\n"
+            " sys.exit(2)\n"
             "if sys.argv[1]=='app-server':\n"
+            " if len(sys.argv)<4:\n"
+            "  sys.exit(2)\n"
             " endpoint=sys.argv[3].removeprefix('unix://')\n"
-            " Path(endpoint+'.backend.json').write_text(json.dumps(sys.argv[1:]))\n"
+            " marker=fixture_root/(Path(endpoint).name+'.backend.json')\n"
+            " marker.write_text(json.dumps(sys.argv[1:]))\n"
             " server=socket.socket(socket.AF_UNIX)\n"
             " server.bind(endpoint)\n"
             " server.listen()\n"
             " while True:\n"
             "  connection,_=server.accept();connection.close()\n"
             "else:\n"
+            " if len(sys.argv)<3:\n"
+            "  sys.exit(2)\n"
             " endpoint=sys.argv[2].removeprefix('unix://')\n"
-            " Path(endpoint+'.tui.json').write_text(json.dumps(sys.argv[1:]))\n"
+            " marker=fixture_root/(Path(endpoint).name+'.tui.json')\n"
+            " marker.write_text(json.dumps(sys.argv[1:]))\n"
             " for line in sys.stdin: pass\n"
         )
         executable.chmod(0o700)
@@ -945,9 +954,13 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 codex=True,
             )
             try:
-                code = service.process.wait(timeout=WAIT)
+                try:
+                    code = service.process.wait(timeout=WAIT)
+                except subprocess.TimeoutExpired:
+                    code = None
                 require(
-                    code != 0, f"Invalid permission value launched service: {arguments}"
+                    code is not None and code != 0,
+                    f"Invalid permission value launched or hung service: {arguments}",
                 )
             finally:
                 service.stop()
