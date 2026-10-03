@@ -769,6 +769,208 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 )
         return {"argument_cases": len(cases), "live_codex_used": False}
 
+    def codex_resume_permissions():
+        # Codex refuses approval and sandbox options when a remote TUI resumes
+        # a thread; the dedicated server takes them as config instead.
+        executable = runtime / "permission-codex"
+        executable.write_text(
+            f"#!{program}\n"
+            "import json,socket,sys\n"
+            "from pathlib import Path\n"
+            f"fixture_root=Path({str(runtime)!r})\n"
+            "if len(sys.argv)<2:\n"
+            " sys.exit(2)\n"
+            "if sys.argv[1]=='app-server':\n"
+            " if len(sys.argv)<4:\n"
+            "  sys.exit(2)\n"
+            " endpoint=sys.argv[3].removeprefix('unix://')\n"
+            " marker=fixture_root/(Path(endpoint).name+'.backend.json')\n"
+            " marker.write_text(json.dumps(sys.argv[1:]))\n"
+            " server=socket.socket(socket.AF_UNIX)\n"
+            " server.bind(endpoint)\n"
+            " server.listen()\n"
+            " while True:\n"
+            "  connection,_=server.accept();connection.close()\n"
+            "else:\n"
+            " if len(sys.argv)<3:\n"
+            "  sys.exit(2)\n"
+            " endpoint=sys.argv[2].removeprefix('unix://')\n"
+            " marker=fixture_root/(Path(endpoint).name+'.tui.json')\n"
+            " marker.write_text(json.dumps(sys.argv[1:]))\n"
+            " for line in sys.stdin: pass\n"
+        )
+        executable.chmod(0o700)
+        thread = "00000000-0000-7000-8000-000000000001"
+        full = ['approval_policy="never"', 'sandbox_mode="danger-full-access"']
+        cases = [
+            (
+                ["--dangerously-bypass-approvals-and-sandbox", "resume", thread],
+                full,
+                ["resume", thread],
+            ),
+            (
+                ["--full-auto", "resume", thread],
+                ['approval_policy="on-request"', 'sandbox_mode="workspace-write"'],
+                ["resume", thread],
+            ),
+            (
+                ["--yolo", "fork", thread],
+                full,
+                ["fork", thread],
+            ),
+            (
+                ["--approve-for-me", "resume", thread],
+                [
+                    'approval_policy="on-request"',
+                    'sandbox_mode="workspace-write"',
+                    'approvals_reviewer="auto_review"',
+                ],
+                ["resume", thread],
+            ),
+            # Permission config on a resuming TUI is an explicit override Codex
+            # refuses; the server keeps it, unrelated config survives.
+            (
+                ["-c", "approval_policy=never", "-c", "model=o3", "resume", thread],
+                ['approval_policy="never"', "model=o3"],
+                ["-c", "model=o3", "resume", thread],
+            ),
+            (
+                ["--config=sandbox_mode=read-only", "resume", thread],
+                ['sandbox_mode="read-only"'],
+                ["resume", thread],
+            ),
+            (
+                ["-c=sandbox_mode=read-only", "resume", thread],
+                ['sandbox_mode="read-only"'],
+                ["resume", thread],
+            ),
+            (
+                ["-a", "untrusted", "resume", thread],
+                ['approval_policy="untrusted"'],
+                ["resume", thread],
+            ),
+            (
+                ["-a", "never", "-s", "workspace-write", "fork", thread],
+                ['approval_policy="never"', 'sandbox_mode="workspace-write"'],
+                ["fork", thread],
+            ),
+            (
+                ["-s=read-only", "resume", thread],
+                ['sandbox_mode="read-only"'],
+                ["resume", thread],
+            ),
+            (
+                ["-sread-only", "resume", thread],
+                ['sandbox_mode="read-only"'],
+                ["resume", thread],
+            ),
+            (
+                ["resume", thread, "--sandbox=read-only"],
+                ['sandbox_mode="read-only"'],
+                ["resume", thread],
+            ),
+            # A new thread keeps its options; Codex accepts them there.
+            (
+                ["--dangerously-bypass-approvals-and-sandbox"],
+                full,
+                ["--dangerously-bypass-approvals-and-sandbox"],
+            ),
+            (
+                ["--full-auto"],
+                ['approval_policy="on-request"', 'sandbox_mode="workspace-write"'],
+                ["--full-auto"],
+            ),
+            # "resume" as an option's value is not the subcommand.
+            (["-m", "resume", "-a", "never"], ['approval_policy="never"'], None),
+            # After the literal separator, every token belongs to the TUI.
+            (
+                ["--", "-a", "never", "resume", thread],
+                [],
+                ["--", "-a", "never", "resume", thread],
+            ),
+        ]
+        for index, (arguments, backend, tui) in enumerate(cases):
+            if tui is None:
+                tui = arguments
+            name = f"codex-permissions-{index}"
+            service = Service(
+                binary,
+                runtime,
+                artifacts,
+                name,
+                str(executable),
+                arguments,
+                runtime,
+                codex=True,
+            )
+            try:
+                socket_path = str(service.endpoint) + ".codex"
+                marker = Path(socket_path + ".tui.json")
+                deadline = time.monotonic() + WAIT
+                while not marker.exists():
+                    require(
+                        time.monotonic() < deadline, f"TUI never started: {arguments}"
+                    )
+                    time.sleep(0.01)
+                time.sleep(0.05)
+                forwarded = json.loads(Path(socket_path + ".backend.json").read_text())
+                # `backend` holds config values unless a case marks itself raw
+                # (a `(raw_backend)` tuple), in which case it is literal argv.
+                if isinstance(backend, tuple):
+                    expected = list(backend[0])
+                else:
+                    expected = [part for pair in backend for part in ("-c", pair)]
+                require(
+                    forwarded[3:] == expected,
+                    f"Backend permissions {forwarded[3:]} != {expected} for {arguments}",
+                )
+                launched = json.loads(marker.read_text())
+                require(
+                    launched == ["--remote", "unix://" + socket_path] + tui,
+                    f"TUI arguments {launched} for {arguments}",
+                )
+            finally:
+                service.stop()
+        for index, arguments in enumerate(
+            (
+                ["-s", 'x" y', "resume", thread],
+                ["-s", "read-only\n", "resume", thread],
+                ["-sandbox", "resume", thread],
+                ["-a", "on-failure", "resume", thread],
+                ["-c", 'approval_policy=x" y', "resume", thread],
+                ["-a"],
+                ["--sandbox="],
+            )
+        ):
+            name = f"codex-permissions-invalid-{index}"
+            service = Service(
+                binary,
+                runtime,
+                artifacts,
+                name,
+                str(executable),
+                arguments,
+                runtime,
+                codex=True,
+            )
+            try:
+                try:
+                    code = service.process.wait(timeout=WAIT)
+                except subprocess.TimeoutExpired:
+                    code = None
+                require(
+                    code is not None and code != 0,
+                    f"Invalid permission value launched or hung service: {arguments}",
+                )
+            finally:
+                service.stop()
+            diagnostic = (artifacts / (name + ".service.log")).read_text()
+            require(
+                "Codex permission" in diagnostic,
+                f"Missing permission diagnostic: {arguments}",
+            )
+        return {"permission_cases": len(cases), "live_codex_used": False}
+
     def codex_backend_exit():
         # Exercise a dedicated backend failure before TUI startup. Raw backend
         # output may contain private data and must not enter service diagnostics.
@@ -1886,6 +2088,11 @@ with open(sys.argv[1], 'wb', buffering=0) as output:
         ("mismatch and malformed attachment preserve active client", mismatch, None),
         ("failed executable and cwd", failures, None),
         ("Codex config values and literal separator", codex_config_arguments, None),
+        (
+            "Codex permissions reach the server and leave a resuming TUI",
+            codex_resume_permissions,
+            None,
+        ),
         (
             "Codex backend exit diagnostics exclude private stderr",
             codex_backend_exit,

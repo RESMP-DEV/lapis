@@ -200,6 +200,28 @@ Use an explicitly selected mode in qualification and record it. Killing a TUI
 process or retaining its PID says nothing by itself about daemon-owned work.
 Do not start/stop the user's shared daemon or install global hooks for a probe.
 
+A TUI on `--remote` that resumes or forks a thread refuses approval and sandbox
+options (Codex 0.157.1: "Permission overrides are not supported when resuming a
+remote task"); a new thread accepts them. The session service therefore gives
+the dedicated app-server `-a`, `-s`, `--full-auto` and
+`--dangerously-bypass-approvals-and-sandbox` as `approval_policy` and
+`sandbox_mode` config, and leaves them off the TUI's command line when it
+resumes or forks. `--full-auto` translates specifically to
+`approval_policy="on-request"` and `sandbox_mode="workspace-write"`; multiple
+permission options emit their config pairs in argument order, so a later option
+wins. A recognized permission option whose value is not one Codex accepts is a
+launch error rather than a silently mismatched TUI/server policy. The accepted
+sets are `on-request`, `untrusted`, and `never` for approval policy (the live
+app-server accepts `untrusted` even though the CLI help summary omits it) and
+`read-only`, `workspace-write`, and `danger-full-access` for sandbox mode;
+requalify them when the pinned binary changes. `--approve-for-me` is an
+installed CLI spelling for automatic approval review and maps to
+`approval_policy="on-request"`, `sandbox_mode="workspace-write"`, and
+`approvals_reviewer="auto_review"`. The installed `codex-cli` help does not
+advertise `--full-auto` or `--yolo`, so those spellings are translated for a
+continuing thread while a new thread keeps the spelling for Codex to judge. A
+resumed thread then reports the chosen permissions in `/status`.
+
 The inspected `codex-rs/hooks/src/lib.rs` lists `PermissionRequest`,
 `UserPromptSubmit`, `Stop`, `Interrupt`, `SessionStart`, `SessionEnd`, and tool,
 compaction, and subagent hooks. This is source evidence only. Hook dispatch,
