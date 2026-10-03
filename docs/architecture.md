@@ -3944,11 +3944,11 @@ impact (#25, #26, #27, #34, #42). Reviewed against how lapis starts Claude:
   requests are answered in the terminal, so it needs no routing here. Nothing
   lapis types for the person may answer a pending request; the next-prompt Tab
   (#44) sends nothing while one is pending.
-- **Background commands stopped after 30 minutes** in 2.1.285 unless Claude
-  asked for up to two hours. Since 2.1.288 the limit applies only to unattended
-  sessions (`-p`, SDK, CI, cloud), so lapis's terminal agents have none.
-  Session ownership is unchanged: this is the CLI's policy for its own
-  children, documented for users in [agents](agents.md#long-jobs).
+- **Background commands stop after 30 minutes** in 2.1.285 unless Claude asks
+  for up to two hours; `BASH_MAX_TIMEOUT_MS` raises that ceiling and
+  `BASH_DEFAULT_TIMEOUT_MS` changes the foreground default. Session ownership is
+  unchanged: this is the CLI's policy for its own children, documented for users
+  in [agents](agents.md#long-jobs).
 - **Fixes lapis benefits from:** bracketed paste after a mode reset (2.1.282)
   and fast type-ahead (2.1.283), which lapis's paste and Tab rely on; synchronous
   hooks no longer hanging on a background child (2.1.285); and resume fixes for
@@ -3959,6 +3959,13 @@ impact (#25, #26, #27, #34, #42). Reviewed against how lapis starts Claude:
 Still open: the Claude qualification scripts pin `SUPPORTED_VERSION` 2.1.280
 and refuse newer CLIs. Their fixtures drive a GLM model through a local model
 router, so the bump waits for a run on a machine with that router.
+
+Post-section qualification note: upstream 2.1.288 release notes scope the
+background-command limit to unattended sessions, and the PR #83 receipt records
+a 2.1.288 print-mode probe. Lapis qualification remains pinned at 2.1.286
+because the router-dependent hook check and an unrelated parallel-approval
+fixture did not pass here; the version-dependent user guidance above is not a
+claim that those suites were promoted.
 
 ### Update pacing audit (September 28)
 
