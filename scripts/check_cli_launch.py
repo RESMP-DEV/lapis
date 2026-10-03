@@ -811,19 +811,33 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             ),
             (
                 ["--approve-for-me", "resume", thread],
-                ['approval_policy="on-request"', 'sandbox_mode="workspace-write"'],
+                [
+                    'approval_policy="on-request"',
+                    'sandbox_mode="workspace-write"',
+                    'approvals_reviewer="auto_review"',
+                ],
                 ["resume", thread],
             ),
             # Permission config on a resuming TUI is an explicit override Codex
             # refuses; the server keeps it, unrelated config survives.
             (
                 ["-c", "approval_policy=never", "-c", "model=o3", "resume", thread],
-                ["approval_policy=never", "model=o3"],
+                ['approval_policy="never"', "model=o3"],
                 ["-c", "model=o3", "resume", thread],
             ),
             (
                 ["--config=sandbox_mode=read-only", "resume", thread],
-                (["--config=sandbox_mode=read-only"],),
+                ['sandbox_mode="read-only"'],
+                ["resume", thread],
+            ),
+            (
+                ["-c=sandbox_mode=read-only", "resume", thread],
+                ['sandbox_mode="read-only"'],
+                ["resume", thread],
+            ),
+            (
+                ["-a", "untrusted", "resume", thread],
+                ['approval_policy="untrusted"'],
                 ["resume", thread],
             ),
             (
@@ -914,6 +928,7 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 ["-s", "read-only\n", "resume", thread],
                 ["-sandbox", "resume", thread],
                 ["-a", "on-failure", "resume", thread],
+                ["-c", 'approval_policy=x" y', "resume", thread],
                 ["-a"],
                 ["--sandbox="],
             )

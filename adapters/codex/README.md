@@ -211,13 +211,16 @@ resumes or forks. `--full-auto` translates specifically to
 permission options emit their config pairs in argument order, so a later option
 wins. A recognized permission option whose value is not one Codex accepts is a
 launch error rather than a silently mismatched TUI/server policy. The accepted
-sets are the ones the installed binary documents for `-a/--ask-for-approval`
-(`on-request`, `never`) and `-s/--sandbox` (`read-only`, `workspace-write`,
-`danger-full-access`); requalify them when the pinned binary changes. Note the
-installed `codex-cli` advertises neither `--full-auto` nor `--yolo` in `--help`,
-so those spellings are recognized for a user-configured mode and translated
-server-side rather than forwarded to the TUI. A resumed thread then reports the
-chosen permissions in `/status`.
+sets are `on-request`, `untrusted`, and `never` for approval policy (the live
+app-server accepts `untrusted` even though the CLI help summary omits it) and
+`read-only`, `workspace-write`, and `danger-full-access` for sandbox mode;
+requalify them when the pinned binary changes. `--approve-for-me` is an
+installed CLI spelling for automatic approval review and maps to
+`approval_policy="on-request"`, `sandbox_mode="workspace-write"`, and
+`approvals_reviewer="auto_review"`. The installed `codex-cli` help does not
+advertise `--full-auto` or `--yolo`, so those spellings are translated for a
+continuing thread while a new thread keeps the spelling for Codex to judge. A
+resumed thread then reports the chosen permissions in `/status`.
 
 The inspected `codex-rs/hooks/src/lib.rs` lists `PermissionRequest`,
 `UserPromptSubmit`, `Stop`, `Interrupt`, `SessionStart`, `SessionEnd`, and tool,
