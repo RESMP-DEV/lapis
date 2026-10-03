@@ -210,11 +210,13 @@ resumes or forks. `--full-auto` translates specifically to
 `approval_policy="on-request"` and `sandbox_mode="workspace-write"`; multiple
 permission options emit their config pairs in argument order, so a later option
 wins. A recognized permission option whose value is not one Codex accepts is a
-launch error rather than a silently mismatched TUI/server policy. The accepted
-sets are `on-request`, `untrusted`, and `never` for approval policy (the live
-app-server accepts `untrusted` even though the CLI help summary omits it) and
-`read-only`, `workspace-write`, and `danger-full-access` for sandbox mode;
-requalify them when the pinned binary changes. `--approve-for-me` is an
+launch error rather than a silently mismatched TUI/server policy. The CLI-facing
+sets are `on-request` and `never` for approval policy, plus `read-only`,
+`workspace-write`, and `danger-full-access` for sandbox mode. The server-config
+sets additionally accept `untrusted` approval policy and `approvals_reviewer`
+values `user`, `auto_review`, and legacy `guardian_subagent`; Codex defines and
+deserializes that reviewer enum in its current protocol config source. Requalify
+these boundaries when the pinned binary changes. `--approve-for-me` is an
 installed CLI spelling for automatic approval review and maps to
 `approval_policy="on-request"`, `sandbox_mode="workspace-write"`, and
 `approvals_reviewer="auto_review"`. The installed `codex-cli` help does not

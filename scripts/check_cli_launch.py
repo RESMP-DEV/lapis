@@ -835,6 +835,16 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 ["-c", "model=o3", "resume", thread],
             ),
             (
+                ["-c", "approval_policy=untrusted", "resume", thread],
+                ['approval_policy="untrusted"'],
+                ["resume", thread],
+            ),
+            (
+                ["-c", "approvals_reviewer=auto_review", "resume", thread],
+                ['approvals_reviewer="auto_review"'],
+                ["resume", thread],
+            ),
+            (
                 ["--config=sandbox_mode=read-only", "resume", thread],
                 ['sandbox_mode="read-only"'],
                 ["resume", thread],
@@ -842,11 +852,6 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             (
                 ["-c=sandbox_mode=read-only", "resume", thread],
                 ['sandbox_mode="read-only"'],
-                ["resume", thread],
-            ),
-            (
-                ["-a", "untrusted", "resume", thread],
-                ['approval_policy="untrusted"'],
                 ["resume", thread],
             ),
             (
@@ -879,6 +884,15 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 ["--full-auto"],
                 ['approval_policy="on-request"', 'sandbox_mode="workspace-write"'],
                 ["--full-auto"],
+            ),
+            (
+                ["--approve-for-me"],
+                [
+                    'approval_policy="on-request"',
+                    'sandbox_mode="workspace-write"',
+                    'approvals_reviewer="auto_review"',
+                ],
+                ["--approve-for-me"],
             ),
             # "resume" as an option's value is not the subcommand.
             (["-m", "resume", "-a", "never"], ['approval_policy="never"'], None),
@@ -933,11 +947,14 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 service.stop()
         for index, arguments in enumerate(
             (
+                ["-a", "untrusted", "resume", thread],
                 ["-s", 'x" y', "resume", thread],
                 ["-s", "read-only\n", "resume", thread],
                 ["-sandbox", "resume", thread],
                 ["-a", "on-failure", "resume", thread],
                 ["-c", 'approval_policy=x" y', "resume", thread],
+                ["-c", " approval_policy=bogus", "resume", thread],
+                ["-c", "approvals_reviewer=bogus", "resume", thread],
                 ["-a"],
                 ["--sandbox="],
             )
@@ -957,11 +974,15 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 try:
                     code = service.process.wait(timeout=WAIT)
                 except subprocess.TimeoutExpired:
-                    code = None
-                require(
-                    code is not None and code != 0,
-                    f"Invalid permission value launched or hung service: {arguments}",
-                )
+                    require(
+                        False,
+                        f"Invalid permission value launched or hung service: {arguments}",
+                    )
+                else:
+                    require(
+                        code != 0,
+                        f"Invalid permission value launched service: {arguments}",
+                    )
             finally:
                 service.stop()
             diagnostic = (artifacts / (name + ".service.log")).read_text()
