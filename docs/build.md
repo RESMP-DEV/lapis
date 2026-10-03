@@ -6,6 +6,7 @@ After the [dependency setup](../CONTRIBUTING.md#desktop-preview):
 
 ```sh
 uv run --no-project python scripts/lapis.py doctor      # what is ready
+uv run --no-project python scripts/lapis.py diagnose --json
 uv run --no-project python scripts/lapis.py bootstrap   # the pinned terminal engine, once
 uv run --no-project python scripts/lapis.py build       # build and the full desktop checks
 uv run --no-project python scripts/lapis.py run         # open the workspace
@@ -15,6 +16,25 @@ A build from the repository is a developer build; the
 [downloadable app](install.md) carries its own Qt, MoltenVK and dependency
 notices. How releases are built, signed and notarized is in
 [CONTRIBUTING](../CONTRIBUTING.md#build-the-mac-app).
+
+## Diagnosing an installed runtime
+
+`diagnose` is a read-only, user-facing check that needs neither a desktop build
+nor a GUI. On macOS it defaults to `/Applications/lapis.app` and
+`$LAPIS_HOME/runtime` (otherwise `~/.lapis/runtime`); `--app PATH` and
+`--runtime PATH` select explicit fixtures or another installation. It checks
+package shape and version metadata, private runtime-directory rules, bounded
+registry inventory counts, and the shape of session identity hints. Endpoint
+reachability is only a bounded Unix-socket connect that is closed before any
+protocol bytes; this proves neither protocol compatibility nor health. Missing
+or malformed selected inputs return status 1. It never restores sessions, reads
+terminal output, launches a process, or changes runtime state.
+
+`diagnose --export` is the separate support-export mode. It writes a bounded
+JSON summary to standard output for the user to submit deliberately. It reports
+states, stable issue codes and counts, version-like package fields, and socket
+connect counts. It omits selected paths, session identities, launch data,
+account identifiers, terminal content, and any health claim.
 
 ## Checking a change
 

@@ -2912,6 +2912,18 @@ tracked receipt establishes their execution at this source. This is not a
 sustained-output soak, memory measurement, MiB-budget promotion or native
 package qualification; those remain R5/Milestone 4 gates.
 
+#### Runtime diagnostics disposition (October 3)
+
+At baseline `efb17db`, the preserved R5 slice is ported to the current
+dispatcher. Read-only `diagnose` and the separate explicit `diagnose --export`
+command inspect bounded package shape/version metadata and private runtime
+registry shape/counts, and emit a bounded redacted summary without changing
+runtime state. Local focused tests and focused quality exercise fixture
+parsing, redaction and dispatcher wiring. This is not installed-package/runtime
+acceptance, a health determination, protocol-compatibility evidence, or package
+release qualification; live Unix-socket reachability and R5 workload gates
+remain separate.
+
 #### Minimum supported slice
 
 Start with an explicitly labelled macOS Apple Silicon early-access release:
@@ -3017,6 +3029,36 @@ this documentation change. One state-only primitive is now implemented behind
 parsing, token checks, singleton locking and owner-only atomic persistence. It
 is not the supervisor itself and adds no daemon, launchd registration, control
 socket, process launcher, restart/reconciliation or production GUI/CLI route.
+
+An experimental one-session lifecycle seam is implemented behind
+`LAPIS_BUILD_SUPERVISOR_RUNTIME`. It reuses the single-writer state registry and
+adds a headless AF_UNIX control surface that accepts only the supervisor's
+effective UID, reads one four-byte length-prefixed control frame bounded by the
+state-core limit, and returns a bounded status reply. The runtime has an
+injected child-launcher boundary. Its experimental ownership launcher writes a
+private spawn-token/PID record before exec and can therefore adopt that exact
+record after supervisor restart instead of starting a duplicate. Crash
+restarts are admitted at most three times per 60-second window; each admitted
+restart rotates the spawn token. Exhaustion persists desired-stopped state with
+an explicit blocked reason; explicit stop remains enabled while explicit
+disable remains disabled. Focused tests exercise direct peer-UID rejection,
+token-authenticated start/stop/disable, stale/malformed/oversized requests,
+simulated restart adoption, the admission boundary, and a harmless child
+fixture's launch/adopt/terminate path.
+
+This is not the persistent supervisor. It has no launchd registration, daemon
+CLI, package update flow, GUI route, production client, multi-session restore,
+or provider routing. It does not adapt or launch the existing session service:
+the fixture proves only the ownership-handling seam, while the existing service
+remains the PTY/terminal/history owner by contract. The launcher's experimental
+adoption currently relies on a private owner record and PID liveness rather
+than a qualified session-service protocol handshake. Supervisor crash while
+another process is alive is simulated at the launcher seam, not yet qualified
+against a real session service or launchd restart. The focused test skips the
+socket listener when its host denies AF_UNIX `bind(2)`; listener framing must
+therefore be qualified on a socket-capable host before any production claim. The
+parent-side port receipt, including a caught and repaired socket-framing defect,
+is [runtime port evidence](../evidence/r1-supervisor-runtime-port.json).
 
 #### Current implementation disposition (September 30)
 
@@ -4374,6 +4416,40 @@ This corrects the stale sentence above without converting the recorded
 qualification evidence: the existing runtime receipts and dated observations
 remain Claude 2.1.280. A run on 2.1.286 is still required before claiming the
 newer fixture as qualified.
+
+## Architecture execution scoring (October 3)
+
+This refresh scores the canonical R-gates at lapis `4750360a`. The score is a
+release-planning rank, not a test result. It weights an explicit release blocker
+at 35 percent, correctness/security or data-loss risk at 30 percent, enablement
+of later acceptance at 20 percent, and current readiness at 15 percent.
+
+| Rank | Gate | Score | Current position and next bounded slice |
+| ---: | --- | ---: | --- |
+| 1 | R1 process lifetime | 98 | The GUI still owns process birth, so GUI replacement can destroy sessions. Port the preserved supervisor-runtime seam into the current baseline, keeping it behind `LAPIS_BUILD_SUPERVISOR_RUNTIME`; qualify one supervised local service and two reconnecting clients before any launchd/install claim. |
+| 2 | R4 release and upgrade provenance | 93 | Artifact/source binding and update recovery remain package gates. Audit the current package and manifest code, then implement only missing enforcement plus one candidate gate-map receipt; source tests cannot substitute for installation/update qualification. |
+| 3 | R3 account identity | 82 | Source refusal paths exist, but selected-account and healthy-transport acceptance remain parent-owned. Build a read-only preflight map and focused refusal discriminators without consuming a provider operation. |
+| 4 | R2 input integrity | 78 | Paste repair is implemented; assembled-candidate acceptance remains. Select the existing full-queue, slow-reader, disconnect, bracketed-mode and ownership cases once, and reserve native IME/presentation for the candidate run. |
+| 5 | R5 operational bounds and support | 74 | Port the preserved bounded runtime diagnostics/support-export slice, then add workload selection and measured tails. Diagnostics can proceed now, but resource claims require the assembled candidate. |
+
+Dispatch is deliberately narrower than the score table. The first implementation
+wave owns R1, R4 and R5 source work in disjoint worktrees; R2/R3 begin as a
+read-only acceptance preflight so unchanged evidence is reused and live checks
+run once against the candidate. Existing independent branches
+`fix/next-prompt-scored-followup` and `docs/claude-background-limit` are polish
+or documentation work, not blockers for this wave. The R2/R3 command map is
+preserved in [candidate preflight](../evidence/r2-r3-preflight.md).
+
+#### R4 source-provenance audit (October 3)
+
+The audit at `efb17db` found the existing package manifest sufficient for the
+bounded source task: it records source, dependency and notice identities,
+revokes approval when mutable bytes are replaced, records notarized
+qualification only for the exact artifact digests, and runs a final release
+preflight after appcast binding. The focused manifest and packaging suites,
+lint and format checks pass as recorded in the
+[source audit receipt](../evidence/r4-provenance-source-audit.json). R4 remains
+open for an actual packaged, downloaded, installed and updated candidate.
 
 ## Contracts to preserve
 

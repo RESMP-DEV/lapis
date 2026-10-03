@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "date_utc": "2026-10-03",
+  "purpose": "Audit the R4 package provenance enforcement at source revision efb17db and record the focused checks that close the source-level audit.",
+  "source": {
+    "revision": "efb17dbe85d20d6759e15b0ccf3f5634e00ba188",
+    "clean_at_audit_start": true,
+    "project_version": "0.5.0"
+  },
+  "scope": "This receipt covers source and focused Python checks for macOS package manifest binding only. It does not build a package, run Apple notarization, publish a release, or qualify installation or update behavior.",
+  "conclusions": [
+    "The manifest records the Git commit, tree, clean/dirty status, project version, Qt source pins, Sparkle pin, Ghostty sources/receipt/header/library, MoltenVK library and bundled notice hashes.",
+    "Replacing app or DMG bytes revokes the matching notarization state and the qualification verdict while retaining the prior qualification artifact digests.",
+    "Release verification requires the staged app and DMG to match the manifest, runs the notarized checks, and records a passing notarized-scope qualification only with the final artifact digests.",
+    "Release preflight requires the exact recorded source, version, dependencies, app and DMG digests, DMG source-app provenance, notarization states, passing notarized-scope qualification and pinned downloads.",
+    "After the appcast is written and bound, a second release preflight rechecks the complete binding set, including the exact appcast bytes, signature, enclosure URL, DMG hash and length.",
+    "The audit found no additional source-level binding or stale-artifact enforcement required for this bounded task."
+  ],
+  "checks": [
+    {
+      "name": "focused_manifest_and_packaging_tests",
+      "command": "python3 -m unittest -v scripts.tests.test_release_manifest scripts.tests.test_package_macos",
+      "exit_code": 0,
+      "result": "31 tests passed"
+    },
+    {
+      "name": "focused_ruff_check",
+      "command": "ruff check --config ruff.toml scripts/release_manifest.py scripts/package_macos.py scripts/tests/test_release_manifest.py scripts/tests/test_package_macos.py",
+      "exit_code": 0,
+      "result": "passed with ruff 0.16.9"
+    },
+    {
+      "name": "focused_ruff_format_check",
+      "command": "ruff format --config ruff.toml --check scripts/release_manifest.py scripts/package_macos.py scripts/tests/test_release_manifest.py scripts/tests/test_package_macos.py",
+      "exit_code": 0,
+      "result": "four files already formatted"
+    },
+    {
+      "name": "diff_whitespace",
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed before documentation and receipt edits"
+    },
+    {
+      "name": "repository_quality_attempt",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 1,
+      "result": "failed outside the assigned focus: sandbox denials on loopback and Unix-socket binds plus three downstream failures; ruff-check, ruff-format-check and git-diff-check passed. Receipt: build/reports/quality/receipt.json."
+    }
+  ],
+  "environment": {
+    "python": "3.14.8",
+    "ruff": "0.16.9",
+    "limitation": "The broad Python suite requires local socket and path permissions unavailable to this restricted session; the failure is not evidence about package provenance."
+  },
+  "aggregate": {
+    "passed": true,
+    "scope": "The source-level R4 provenance audit and its focused checks passed; the broad repository quality aggregate did not run cleanly in the restricted session."
+  },
+  "non_claims": [
+    "No app, DMG or appcast was produced.",
+    "No signing, notarization, stapling, publication or installation was performed.",
+    "No Sparkle update, fresh-user Finder launch, GPU, service lifetime, migration recovery or reboot recovery was exercised.",
+    "The unrelated broad-quality failures do not establish that the full repository is healthy."
+  ],
+  "remaining_package_and_update_gates": [
+    "Build one candidate and run notarized verification and release preflight on its exact bytes.",
+    "Verify the downloaded asset and appcast independently of the staging tree.",
+    "Install and update with live sessions, then exercise update failure and recovery.",
+    "Qualify fresh-user Finder launch, independent service birth and actual login/reboot recovery."
+  ]
+}
