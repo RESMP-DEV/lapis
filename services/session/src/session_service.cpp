@@ -263,11 +263,12 @@ CodexPermission codex_permission_config(const QStringList& arguments, qsizetype 
     const auto key_match = permission_key.match(value);
     if (!key_match.hasMatch())
         return {};
+    const qsizetype consumed = argument.contains(QLatin1Char('=')) ? 1 : 2;
     const auto key = key_match.capturedView(1).toString();
     const auto* spec = codex_permission_spec(key);
     if (!spec)
         return {{},
-                argument.contains(QLatin1Char('=')) ? 1 : 2,
+                consumed,
                 true,
                 QStringLiteral("Codex permission key has no registered values: %1").arg(key)};
     auto rhs = value.mid(key_match.capturedEnd(0)).trimmed();
@@ -277,7 +278,7 @@ CodexPermission codex_permission_config(const QStringList& arguments, qsizetype 
         const auto quoted_match = quoted_value.match(rhs);
         if (!quoted_match.hasMatch())
             return {{},
-                    argument.contains(QLatin1Char('=')) ? 1 : 2,
+                    consumed,
                     true,
                     QStringLiteral(
                         "Codex permission config syntax is invalid for %1; expected key=value or "
@@ -290,14 +291,11 @@ CodexPermission codex_permission_config(const QStringList& arguments, qsizetype 
     const auto accepted = spec->config_values();
     if (!codex_permission_value_valid(accepted, configured))
         return {{},
-                argument.contains(QLatin1Char('=')) ? 1 : 2,
+                consumed,
                 true,
                 QStringLiteral("Codex permission value is invalid for %1; accepted: %2")
                     .arg(key, accepted.join(QLatin1String(", ")))};
-    return {{QStringLiteral("%1=\"%2\"").arg(key, configured)},
-            argument.contains(QLatin1Char('=')) ? 1 : 2,
-            true,
-            {}};
+    return {{QStringLiteral("%1=\"%2\"").arg(key, configured)}, consumed, true, {}};
 }
 // Whether the arguments resume or fork a saved Codex thread.
 bool codex_continues_thread(const QStringList& arguments) {

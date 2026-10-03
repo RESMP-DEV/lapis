@@ -1029,7 +1029,7 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 "config syntax is invalid"
                 if index in syntax_invalid_indices
                 else "requires a value"
-                if index == 9
+                if arguments == ["-a"]
                 else "value is invalid for"
             )
             require(
