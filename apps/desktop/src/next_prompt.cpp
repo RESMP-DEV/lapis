@@ -304,9 +304,14 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     const auto candidates = answer.value(QStringLiteral("candidates")).toArray();
     const auto top = candidates.isEmpty() ? QJsonObject() : candidates.first().toObject();
     const auto text = top.value(QStringLiteral("text")).toString();
-    const bool shown = !text.isEmpty() &&
-                       top.value(QStringLiteral("p")).toDouble() >= settings_.minConfidence &&
-                       settings_.automatic;
+    const auto probability = top.value(QStringLiteral("p"));
+    // The helper always emits a numeric p (0.0 for unscored candidates, flagged
+    // `scored: false`), so isDouble() only rejects replies that skipped that
+    // normalization. A reported 0.0 still counts at the default; whether the
+    // model scored the top guess is recorded as top_scored below.
+    const bool usable_probability = probability.isDouble();
+    const bool shown = !text.isEmpty() && usable_probability &&
+                       probability.toDouble() >= settings_.minConfidence && settings_.automatic;
     const Offer made{QStringLiteral("%1:%2.%3").arg(id, run_).arg(++offers_made_), text,
                      context.value(QStringLiteral("conversation")).toString(),
                      context.value(QStringLiteral("turn")).toInt(), 0};
@@ -317,6 +322,7 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     event.insert(QStringLiteral("model"), settings_.model);
     event.insert(QStringLiteral("category"), answer.value(QStringLiteral("category")));
     event.insert(QStringLiteral("candidates"), candidates);
+    event.insert(QStringLiteral("top_scored"), top.value(QStringLiteral("scored")).toBool());
     event.insert(QStringLiteral("shown"), shown);
     event.insert(QStringLiteral("min_confidence"), settings_.minConfidence);
     event.insert(QStringLiteral("ms"), answer.value(QStringLiteral("ms")));

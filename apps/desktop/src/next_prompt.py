@@ -435,11 +435,15 @@ def parse(text):
     candidates = []
     for c in body.get("candidates", [])[:3]:
         if isinstance(c, str):
-            c = {"text": c, "p": 0.0}
+            c = {"text": c}
         words = str(c.get("text", "")).strip()
         if words:
-            p = float(c.get("p", 0) or 0)
-            candidates.append({"text": words, "p": max(0.0, min(1.0, p))})
+            raw_p = c.get("p")
+            scored = isinstance(raw_p, (int, float)) and not isinstance(raw_p, bool)
+            p = float(raw_p) if scored else 0.0
+            candidates.append(
+                {"text": words, "p": max(0.0, min(1.0, p)), "scored": scored}
+            )
     category = body.get("category")
     return {
         "category": category if category in CATEGORIES else "other",

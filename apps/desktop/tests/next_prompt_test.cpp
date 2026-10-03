@@ -88,8 +88,8 @@ void settingsReadFromTheConfig() {
     const auto defaults = lapis::desktop::parse_next_prompt(QJsonValue());
     require(defaults == NextPromptSettings{} && !defaults.automatic &&
                 defaults.model == QLatin1String("claude-opus-5-5") &&
-                defaults.minConfidence == 0.4 && defaults.maxPerHour == 60,
-            "off by default, Opus, 0.4, sixty an hour");
+                defaults.minConfidence == 0.0 && defaults.maxPerHour == 60,
+            "off by default, Opus, every guess offered, sixty an hour");
     const auto set = lapis::desktop::parse_next_prompt(
         QJsonDocument::fromJson(R"({"auto": true, "model": "claude-sonnet-5", "effort": "low",
                                     "minConfidence": 7, "maxPerHour": -3})")
@@ -144,6 +144,46 @@ void concurrentContextsRespectCap() {
         skipped += event.value(QStringLiteral("event")) == QLatin1String("skipped");
     }
     require(predicted == 1 && skipped == 1, "concurrent contexts must share the prediction cap");
+}
+
+void missingProbabilityIsNotOffered() {
+    QTemporaryDir directory;
+    const QDir root(directory.path());
+    require(root.mkpath(QStringLiteral("bin")), "fixture bin");
+    standIns(root);
+    const auto log = root.filePath(QStringLiteral("next.jsonl"));
+    NextPrompt next(
+        [](const QString&) -> std::optional<NextPrompt::Agent> {
+            NextPrompt::Agent agent;
+            agent.cli = QStringLiteral("claude");
+            return agent;
+        },
+        [] { return QJsonArray{}; },
+        [&root](const QString& name) { return root.filePath(QStringLiteral("bin/") + name); },
+        {root.path(), log});
+    next.setSettings(on(60));
+    // Absent and non-numeric probabilities are unknown; a reported zero is a
+    // real probability the model gave and is offered at the default.
+    for (const auto* reply :
+         {R"({"candidates":[{"text":"go"}]})", R"({"candidates":[{"text":"go","p":"0.9"}]})"}) {
+        write(root.filePath(QStringLiteral("context.reply")), R"({"conversation":"c"})");
+        write(root.filePath(QStringLiteral("predict.reply")), reply);
+        const auto before = events(log).size();
+        next.turnFinished(QStringLiteral("a"));
+        require(waitFor([&] { return events(log).size() > before; }), "the prediction is logged");
+        require(next.suggestion(QStringLiteral("a")).isEmpty() &&
+                    !events(log).last().value(QStringLiteral("shown")).toBool(),
+                "a missing or non-numeric probability is unknown, not an offer");
+    }
+    write(root.filePath(QStringLiteral("context.reply")), R"({"conversation":"c"})");
+    write(root.filePath(QStringLiteral("predict.reply")),
+          R"({"candidates":[{"text":"go","p":0.0}]})");
+    const auto before_zero = events(log).size();
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] { return events(log).size() > before_zero; }),
+            "the zero-probability prediction is logged");
+    require(next.suggestion(QStringLiteral("a")) == QLatin1String("go"),
+            "a model-reported zero is offered at the default threshold");
 }
 
 void predictsAndOffers() {
@@ -277,6 +317,9 @@ void predictsAndOffers() {
     // Another machine: its conversation is read there, with the helper on stdin.
     write(root.filePath(QStringLiteral("predict.reply")),
           R"({"category": "new", "candidates": [{"text": "rerun it on 8 GPUs", "p": 0.2}]})");
+    auto cautious = on(60, QStringLiteral("low"));
+    cautious.minConfidence = 0.4;
+    next.setSettings(cautious);
     next.turnFinished(QStringLiteral("b"));
     require(waitFor([&] { return events(log).size() == 4; }), "the remote prediction is logged");
     const auto ssh =
@@ -290,7 +333,16 @@ void predictsAndOffers() {
             "and sends it on stdin");
     require(next.suggestion(QStringLiteral("b")).isEmpty() &&
                 !events(log).last().value(QStringLiteral("shown")).toBool(),
-            "an unlikely guess is logged but not offered");
+            "below a chosen minConfidence, a guess is logged but not offered");
+    // Tie the offering behaviour to the parsed default, not only the struct.
+    const auto default_on = lapis::desktop::parse_next_prompt(QJsonObject{
+        {QStringLiteral("auto"), true}, {QStringLiteral("effort"), QStringLiteral("low")}});
+    next.setSettings(default_on);
+    next.turnFinished(QStringLiteral("b"));
+    require(waitFor([&] {
+                return next.suggestion(QStringLiteral("b")) == QLatin1String("rerun it on 8 GPUs");
+            }),
+            "an unlikely guess is still offered by default");
 
     // A new turn withdraws the old offer; the hourly cap stops more.
     write(root.filePath(QStringLiteral("predict.reply")),
@@ -311,7 +363,7 @@ void predictsAndOffers() {
     require(withdrawn.value(QStringLiteral("event")) == QLatin1String("withdrawn") &&
                 withdrawn.value(QStringLiteral("reason")) == QLatin1String("new_turn") &&
                 withdrawn.value(QStringLiteral("seen")).toBool() &&
-                withdrawn.value(QStringLiteral("offer")).toString().endsWith(QStringLiteral(".3")),
+                withdrawn.value(QStringLiteral("offer")).toString().endsWith(QStringLiteral(".4")),
             "an offer seen but not used is recorded as replaced");
     QFile::remove(root.filePath(QStringLiteral("context.args")));
     static_cast<void>(waitFor([] { return false; }, 300));
@@ -378,6 +430,7 @@ int main(int argc, char** argv) {
         settingsReadFromTheConfig();
         screensReadAsText();
         concurrentContextsRespectCap();
+        missingProbabilityIsNotOffered();
         predictsAndOffers();
     } catch (const std::exception& error) {
         std::cerr << "next_prompt_test: " << error.what() << '\n';
