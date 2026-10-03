@@ -982,17 +982,22 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             ["-a"],
             ["--sandbox="],
         ]
+        syntax_invalid_indices = set()
         for key, value in {
             "approval_policy": "never",
             "sandbox_mode": "read-only",
             "approvals_reviewer": "user",
         }.items():
+            start = len(invalid_arguments)
             invalid_arguments.extend(
                 [
                     ["-c", f'{key}={value}"', "resume", thread],
                     ["-c", f'{key}="{value}', "resume", thread],
                 ]
             )
+            syntax_invalid_indices.add(start + 1)
+        syntax_invalid_indices.add(len(invalid_arguments))
+        invalid_arguments.append(["-c", 'approval_policy="never" x', "resume", thread])
         for index, arguments in enumerate(invalid_arguments):
             name = f"codex-permissions-invalid-{index}"
             service = Service(
@@ -1020,9 +1025,16 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             finally:
                 service.stop()
             diagnostic = (artifacts / (name + ".service.log")).read_text()
+            expected_diagnostic = (
+                "config syntax is invalid"
+                if index in syntax_invalid_indices
+                else "requires a value"
+                if index == 9
+                else "value is invalid for"
+            )
             require(
-                "Codex permission" in diagnostic,
-                f"Missing permission diagnostic: {arguments}",
+                expected_diagnostic in diagnostic,
+                f"Missing {expected_diagnostic!r} diagnostic: {arguments}",
             )
         return {"permission_cases": len(cases), "live_codex_used": False}
 

@@ -224,7 +224,12 @@ CodexPermission codex_permission(const QStringList& arguments, qsizetype index) 
             continue;
         }
         const auto* spec = codex_permission_spec(QLatin1String(key));
-        Q_ASSERT(spec && spec->cli_option);
+        if (!spec || !spec->cli_option)
+            return {{},
+                    consumed,
+                    true,
+                    QStringLiteral("Codex permission option cannot be set from the CLI: %1")
+                        .arg(QLatin1String(key))};
         const auto accepted = spec->option_values();
         if (!codex_permission_value_valid(accepted, value))
             return {{},
@@ -260,17 +265,25 @@ CodexPermission codex_permission_config(const QStringList& arguments, qsizetype 
         return {};
     const auto key = key_match.capturedView(1).toString();
     const auto* spec = codex_permission_spec(key);
-    Q_ASSERT(spec);
+    if (!spec)
+        return {{},
+                argument.contains(QLatin1Char('=')) ? 1 : 2,
+                true,
+                QStringLiteral("Codex permission key has no registered values: %1").arg(key)};
     auto rhs = value.mid(key_match.capturedEnd(0)).trimmed();
     QString configured;
     if (rhs.startsWith(QLatin1Char('"'))) {
-        if (rhs.size() < 2 || !rhs.endsWith(QLatin1Char('"')))
-            return {
-                {},
-                argument.contains(QLatin1Char('=')) ? 1 : 2,
-                true,
-                QStringLiteral("Codex permission value has an unmatched quote for %1").arg(key)};
-        configured = rhs.mid(1, rhs.size() - 2);
+        static const QRegularExpression quoted_value(QStringLiteral("^\"([^\"]*)\"$"));
+        const auto quoted_match = quoted_value.match(rhs);
+        if (!quoted_match.hasMatch())
+            return {{},
+                    argument.contains(QLatin1Char('=')) ? 1 : 2,
+                    true,
+                    QStringLiteral(
+                        "Codex permission config syntax is invalid for %1; expected key=value or "
+                        "key=\"value\"")
+                        .arg(key)};
+        configured = quoted_match.capturedView(1).toString();
     } else {
         configured = rhs;
     }
