@@ -302,6 +302,13 @@ class ModelTests(unittest.TestCase):
             [(c["text"], c["p"], c["scored"]) for c in infinity],
             [("infinity", 0.0, False)],
         )
+        huge = next_prompt.parse(
+            f'{{"candidates":[{{"text":"huge","p":{"1" * 400}}}]}}'
+        )["candidates"]
+        self.assertEqual(
+            [(c["text"], c["p"], c["scored"]) for c in huge],
+            [("huge", 0.0, False)],
+        )
 
     def test_the_model_runs_on_the_plan_with_tools_off(self):
         folder = Path(tempfile.mkdtemp(prefix="lapis-claude-"))
@@ -576,6 +583,37 @@ class AcceptanceTests(unittest.TestCase):
             ]
         )
         self.assertEqual(bounded["failed"], {"context: helper failed": 100})
+
+    def test_summarize_preserves_top_scored_unknown(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        rows = [
+            {
+                "words": 1,
+                "category": "other",
+                "p": 0.8,
+                "scores": [],
+                "top_scored": value,
+            }
+            for value in (True, False, None)
+        ]
+        report = next_prompt_eval.summarize(rows)
+        self.assertEqual(
+            (
+                report["top_scored"],
+                report["top_unscored"],
+                report["top_scored_unknown"],
+            ),
+            (1, 1, 1),
+        )
+        at_eight = [
+            row for row in report["by_confidence"] if row["min_confidence"] == 0.8
+        ][0]
+        self.assertEqual(
+            (at_eight["scored"], at_eight["unscored"], at_eight["scored_unknown"]),
+            (1, 1, 1),
+        )
 
 
 if __name__ == "__main__":

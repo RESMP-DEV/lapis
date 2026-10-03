@@ -150,8 +150,13 @@ def summarize(rows):
 
     report = {
         "count": n,
-        "top_scored": sum(1 for r in rows if r.get("top_scored")),
-        "top_unscored": sum(1 for r in rows if not r.get("top_scored")),
+        "top_scored": sum(1 for r in rows if r.get("top_scored") is True),
+        "top_unscored": sum(1 for r in rows if r.get("top_scored") is False),
+        "top_scored_unknown": sum(
+            1
+            for r in rows
+            if r.get("top_scored") is not True and r.get("top_scored") is not False
+        ),
         "top1_sendable": rate(rows, lambda r: r["scores"][:1] == [2]),
         "top1_intent": rate(rows, lambda r: (r["scores"] or [0])[0] >= 1),
         "top3_sendable": rate(rows, lambda r: 2 in r["scores"]),
@@ -185,8 +190,14 @@ def summarize(rows):
             {
                 "min_confidence": threshold,
                 "shown": round(len(shown) / n, 3),
-                "scored": sum(1 for r in shown if r.get("top_scored")),
-                "unscored": sum(1 for r in shown if not r.get("top_scored")),
+                "scored": sum(1 for r in shown if r.get("top_scored") is True),
+                "unscored": sum(1 for r in shown if r.get("top_scored") is False),
+                "scored_unknown": sum(
+                    1
+                    for r in shown
+                    if r.get("top_scored") is not True
+                    and r.get("top_scored") is not False
+                ),
                 "sendable_when_shown": rate(shown, lambda r: r["scores"][:1] == [2]),
                 "intent_when_shown": rate(
                     shown, lambda r: (r["scores"] or [0])[0] >= 1
@@ -271,7 +282,13 @@ def replay(arguments):
             "words": len(g["actual"].split()),
             "category": grade.get("category", "other"),
             "p": g["candidates"][0]["p"],
-            "top_scored": bool(g["candidates"][0].get("scored")),
+            "top_scored": (
+                True
+                if g["candidates"][0].get("scored") is True
+                else False
+                if g["candidates"][0].get("scored") is False
+                else None
+            ),
             "scores": grade.get("scores", [])[: len(g["candidates"])],
             "ms": g["ms"],
         }
@@ -305,7 +322,10 @@ def acceptance(events):
             candidates = e.get("candidates") or [{}]
             top_scored = e.get("top_scored")
             if top_scored is None:
-                top_scored = candidates[0].get("scored") if candidates else None
+                top_scored = candidates[0].get("scored")
+            top_scored = (
+                True if top_scored is True else False if top_scored is False else None
+            )
             offer.update(
                 shown=bool(e.get("shown")),
                 p=float(candidates[0].get("p", 0) or 0),
@@ -361,7 +381,7 @@ def acceptance(events):
     report = {
         "predicted": sum(1 for o in offers.values() if "shown" in o),
         "offered": len(shown),
-        "offered_scored": sum(1 for o in shown if o["top_scored"]),
+        "offered_scored": sum(1 for o in shown if o["top_scored"] is True),
         "offered_unscored": sum(1 for o in shown if o["top_scored"] is False),
         "offered_top_scored_unknown": sum(1 for o in shown if o["top_scored"] is None),
         "seen": len(seen),
@@ -401,8 +421,13 @@ def acceptance(events):
             {
                 "min_confidence": low,
                 "seen": len(part),
-                "scored": sum(1 for o in part if o["top_scored"]),
+                "scored": sum(1 for o in part if o["top_scored"] is True),
                 "unscored": sum(1 for o in part if o["top_scored"] is False),
+                "scored_unknown": sum(
+                    1
+                    for o in part
+                    if o["top_scored"] is not True and o["top_scored"] is not False
+                ),
                 "acceptance": rate([o for o in part if o["used"]], part),
             }
         )

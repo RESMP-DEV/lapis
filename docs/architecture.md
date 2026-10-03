@@ -3912,8 +3912,9 @@ the 20 guesses shown, 6 were sent with Tab. The default is now 0, so the top
 guess shows whether the model reported a numeric probability or the helper used
 its unscored fallback; `next_prompt_eval log` reports offered and seen counts
 split by `top_scored`, and `minConfidence` remains for anyone who wants fewer.
-Non-numeric probabilities, quoted numbers, booleans, NaN, and infinity are
-treated as unscored rather than coerced into confidence values.
+Non-numeric probabilities, quoted numbers, booleans, NaN, infinity, and
+out-of-range numbers are treated as unscored rather than coerced into
+confidence values.
 
 It is off by default: each prediction is a model call on the person's plan.
 Claude Code 2.1.285 has its own prompt suggestions (on unless
