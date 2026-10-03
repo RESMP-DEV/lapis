@@ -21,6 +21,7 @@
 #include <QLocalSocket>
 #include <QLockFile>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QSet>
 #include <QTimer>
 
@@ -142,6 +143,18 @@ CodexPermission codex_permission(const QStringList& arguments, qsizetype index) 
                 1,
                 true,
                 {}};
+    if (argument == QStringLiteral("--yolo"))
+        return {{QStringLiteral("approval_policy=\"never\""),
+                 QStringLiteral("sandbox_mode=\"danger-full-access\"")},
+                1,
+                true,
+                {}};
+    if (argument == QStringLiteral("--approve-for-me"))
+        return {{QStringLiteral("approval_policy=\"on-request\""),
+                 QStringLiteral("sandbox_mode=\"workspace-write\"")},
+                1,
+                true,
+                {}};
     static const std::array<std::array<const char*, 3>, 2> valued{
         {{"-a", "--ask-for-approval", "approval_policy"}, {"-s", "--sandbox", "sandbox_mode"}}};
     static const QSet<QString> approval_values{QStringLiteral("on-request"),
@@ -175,14 +188,37 @@ CodexPermission codex_permission(const QStringList& arguments, qsizetype index) 
                                    ? approval_values
                                    : sandbox_values;
         if (!accepted.contains(value))
-            return {
-                {},
-                consumed,
-                true,
-                QStringLiteral("Codex permission value is invalid for %1").arg(QLatin1String(key))};
+            return {{},
+                    consumed,
+                    true,
+                    QStringLiteral("Codex permission value is invalid for %1; accepted: %2")
+                        .arg(QLatin1String(key), accepted.values().join(QLatin1String(", ")))};
         return {{QStringLiteral("%1=\"%2\"").arg(QLatin1String(key), value)}, consumed, true, {}};
     }
     return {};
+}
+// `-c key=value` carrying a permission key is an explicit override to Codex, so
+// a resuming TUI must not carry it; the server still receives the whole pair.
+// `consumed` is how many arguments the pair spans, 0 when it is not one.
+CodexPermission codex_permission_config(const QStringList& arguments, qsizetype index) {
+    const auto& argument = arguments.at(index);
+    QString value;
+    if (argument == QStringLiteral("-c") || argument == QStringLiteral("--config")) {
+        if (index + 1 == arguments.size())
+            return {};
+        value = arguments.at(index + 1);
+    } else if (argument.startsWith(QStringLiteral("--config="))) {
+        value = argument.mid(qsizetype(std::strlen("--config=")));
+    } else if (argument.startsWith(QStringLiteral("-c="))) {
+        value = argument.mid(qsizetype(std::strlen("-c=")));
+    } else {
+        return {};
+    }
+    static const QRegularExpression permission_key(
+        QStringLiteral("^\\s*(approval_policy|sandbox_mode)\\s*="));
+    if (!permission_key.match(value).hasMatch())
+        return {};
+    return {{}, argument.contains(QLatin1Char('=')) ? 1 : 2, true, {}};
 }
 // Whether the arguments resume or fork a saved Codex thread.
 bool codex_continues_thread(const QStringList& arguments) {
@@ -486,6 +522,11 @@ class SessionService final : public QObject {
                 if (tui.arguments.at(index) == QStringLiteral("--")) {
                     kept += tui.arguments.mid(index);
                     break;
+                }
+                if (const auto config = codex_permission_config(launch.arguments, index);
+                    config.consumed > 0) {
+                    index += config.consumed - 1;
+                    continue;
                 }
                 if (const auto permission = codex_permission(tui.arguments, index);
                     permission.consumed > 0) {

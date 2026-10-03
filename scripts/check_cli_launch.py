@@ -805,6 +805,28 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 ["resume", thread],
             ),
             (
+                ["--yolo", "fork", thread],
+                full,
+                ["fork", thread],
+            ),
+            (
+                ["--approve-for-me", "resume", thread],
+                ['approval_policy="on-request"', 'sandbox_mode="workspace-write"'],
+                ["resume", thread],
+            ),
+            # Permission config on a resuming TUI is an explicit override Codex
+            # refuses; the server keeps it, unrelated config survives.
+            (
+                ["-c", "approval_policy=never", "-c", "model=o3", "resume", thread],
+                ["approval_policy=never", "model=o3"],
+                ["-c", "model=o3", "resume", thread],
+            ),
+            (
+                ["--config=sandbox_mode=read-only", "resume", thread],
+                (["--config=sandbox_mode=read-only"],),
+                ["resume", thread],
+            ),
+            (
                 ["-a", "never", "-s", "workspace-write", "fork", thread],
                 ['approval_policy="never"', 'sandbox_mode="workspace-write"'],
                 ["fork", thread],
@@ -869,7 +891,12 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                     time.sleep(0.01)
                 time.sleep(0.05)
                 forwarded = json.loads(Path(socket_path + ".backend.json").read_text())
-                expected = [part for pair in backend for part in ("-c", pair)]
+                # `backend` holds config values unless a case marks itself raw
+                # (a `(raw_backend)` tuple), in which case it is literal argv.
+                if isinstance(backend, tuple):
+                    expected = list(backend[0])
+                else:
+                    expected = [part for pair in backend for part in ("-c", pair)]
                 require(
                     forwarded[3:] == expected,
                     f"Backend permissions {forwarded[3:]} != {expected} for {arguments}",
@@ -886,6 +913,7 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 ["-s", 'x" y', "resume", thread],
                 ["-s", "read-only\n", "resume", thread],
                 ["-sandbox", "resume", thread],
+                ["-a", "on-failure", "resume", thread],
                 ["-a"],
                 ["--sandbox="],
             )

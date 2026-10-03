@@ -209,9 +209,15 @@ the dedicated app-server `-a`, `-s`, `--full-auto` and
 resumes or forks. `--full-auto` translates specifically to
 `approval_policy="on-request"` and `sandbox_mode="workspace-write"`; multiple
 permission options emit their config pairs in argument order, so a later option
-wins. A recognized permission option with a missing or non-Codex value is a
-launch error rather than a silently mismatched TUI/server policy. A resumed
-thread then reports the chosen permissions in `/status`.
+wins. A recognized permission option whose value is not one Codex accepts is a
+launch error rather than a silently mismatched TUI/server policy. The accepted
+sets are the ones the installed binary documents for `-a/--ask-for-approval`
+(`on-request`, `never`) and `-s/--sandbox` (`read-only`, `workspace-write`,
+`danger-full-access`); requalify them when the pinned binary changes. Note the
+installed `codex-cli` advertises neither `--full-auto` nor `--yolo` in `--help`,
+so those spellings are recognized for a user-configured mode and translated
+server-side rather than forwarded to the TUI. A resumed thread then reports the
+chosen permissions in `/status`.
 
 The inspected `codex-rs/hooks/src/lib.rs` lists `PermissionRequest`,
 `UserPromptSubmit`, `Stop`, `Interrupt`, `SessionStart`, `SessionEnd`, and tool,
