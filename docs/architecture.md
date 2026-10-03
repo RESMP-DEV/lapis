@@ -3018,6 +3018,36 @@ parsing, token checks, singleton locking and owner-only atomic persistence. It
 is not the supervisor itself and adds no daemon, launchd registration, control
 socket, process launcher, restart/reconciliation or production GUI/CLI route.
 
+An experimental one-session lifecycle seam is implemented behind
+`LAPIS_BUILD_SUPERVISOR_RUNTIME`. It reuses the single-writer state registry and
+adds a headless AF_UNIX control surface that accepts only the supervisor's
+effective UID, reads one four-byte length-prefixed control frame bounded by the
+state-core limit, and returns a bounded status reply. The runtime has an
+injected child-launcher boundary. Its experimental ownership launcher writes a
+private spawn-token/PID record before exec and can therefore adopt that exact
+record after supervisor restart instead of starting a duplicate. Crash
+restarts are admitted at most three times per 60-second window; each admitted
+restart rotates the spawn token. Exhaustion persists desired-stopped state with
+an explicit blocked reason; explicit stop remains enabled while explicit
+disable remains disabled. Focused tests exercise direct peer-UID rejection,
+token-authenticated start/stop/disable, stale/malformed/oversized requests,
+simulated restart adoption, the admission boundary, and a harmless child
+fixture's launch/adopt/terminate path.
+
+This is not the persistent supervisor. It has no launchd registration, daemon
+CLI, package update flow, GUI route, production client, multi-session restore,
+or provider routing. It does not adapt or launch the existing session service:
+the fixture proves only the ownership-handling seam, while the existing service
+remains the PTY/terminal/history owner by contract. The launcher's experimental
+adoption currently relies on a private owner record and PID liveness rather
+than a qualified session-service protocol handshake. Supervisor crash while
+another process is alive is simulated at the launcher seam, not yet qualified
+against a real session service or launchd restart. The focused test skips the
+socket listener when its host denies AF_UNIX `bind(2)`; listener framing must
+therefore be qualified on a socket-capable host before any production claim. The
+parent-side port receipt, including a caught and repaired socket-framing defect,
+is [runtime port evidence](../evidence/r1-supervisor-runtime-port.json).
+
 #### Current implementation disposition (September 30)
 
 PRs #40 (saved resets), #43 (long paste) and #44 (next-prompt suggestions) are

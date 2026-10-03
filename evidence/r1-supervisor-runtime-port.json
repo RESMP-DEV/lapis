@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-10-03",
+  "source": {
+    "baseline_revision": "efb17dbe85d20d6759e15b0ccf3f5634e00ba188",
+    "branch": "architecture/r1-supervisor",
+    "source_dirty_at_checks": true
+  },
+  "scope": "Experimental one-session supervisor runtime/control seam behind LAPIS_BUILD_SUPERVISOR_RUNTIME. This is not persistent process ownership, launchd registration, GUI integration, package update behavior, or production session-service supervision.",
+  "implementation": {
+    "state": "Reuses the supervisor state registry and adds explicit blocked-reason stop state.",
+    "runtime": "Injected child launcher, ownership record, bounded restart admission, adoption, disable, and lifecycle control.",
+    "control": "Private AF_UNIX listener with effective-UID peer check, bounded four-byte length framing, bounded JSON replies, and malformed/oversized connection closure."
+  },
+  "environment": "macOS arm64; AppleClang 21.0.0.21000334; Apple clang-format 21.0.0.21000334",
+  "verification": [
+    {
+      "name": "focused-configure",
+      "command": "cmake -S . -B build/supervisor-runtime-parent -DCMAKE_CXX_COMPILER=/usr/bin/c++ -DLAPIS_BUILD_SESSION=OFF -DLAPIS_BUILD_SUPERVISOR_RUNTIME=ON -DBUILD_TESTING=ON",
+      "exit_code": 0
+    },
+    {
+      "name": "focused-build",
+      "command": "cmake --build build/supervisor-runtime-parent --target lapis_supervisor_runtime_tests lapis_supervisor_child_fixture lapis_supervisor_state_tests --parallel 4",
+      "exit_code": 0
+    },
+    {
+      "name": "initial-parent-ctest",
+      "command": "ctest --test-dir build/supervisor-runtime-parent -R 'supervisor-(state|runtime)$' --output-on-failure --no-tests=error",
+      "exit_code": 8,
+      "result": "Caught the worker-masked oversized-frame close defect: supervisor-runtime failed 'an oversized frame closes the client'."
+    },
+    {
+      "name": "control-framing-repair",
+      "result": "Repaired header/payload state handling so oversized clients close, complete frames process in one poll cycle, payload bytes are appended, and served clients retire."
+    },
+    {
+      "name": "final-parent-ctest",
+      "command": "ctest --test-dir build/supervisor-runtime-parent -R 'supervisor-(state|runtime)$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "result": "2/2 passed on the socket-capable parent host."
+    },
+    {
+      "name": "clang-format",
+      "command": "clang-format --dry-run --Werror <eight touched C++ files>",
+      "exit_code": 0
+    },
+    {
+      "name": "diff-check",
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "aggregate_passed": true,
+  "non_claims": [
+    "No launchd registration, daemon CLI, production client, GUI route, or package update path.",
+    "The harmless child fixture proves only the ownership seam, not existing session-service integration.",
+    "No real supervisor crash, login/reboot, application replacement, multi-session restore, sanitizer, or static-analysis run.",
+    "Adoption remains based on a private ownership record and PID liveness, not a qualified session-service handshake."
+  ]
+}

@@ -142,12 +142,12 @@ SupervisorState SupervisorRegistry::start(DesiredSession session) {
     return state_;
 }
 
-SupervisorState SupervisorRegistry::stop() {
+SupervisorState SupervisorRegistry::stop(const std::string& blocked_reason) {
     check(!poisoned_, "Supervisor persistence failed; reload before transitioning");
     check(state_.session.has_value(), "No desired session to stop");
     SupervisorState next = state_;
     next.session->desired_state = DesiredState::stopped;
-    next.session->blocked_reason.clear();
+    next.session->blocked_reason = blocked_reason;
     next.session->spawn_token = identities_->spawn_token();
     commit(std::move(next));
     return state_;

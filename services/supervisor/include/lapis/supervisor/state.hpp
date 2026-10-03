@@ -188,7 +188,7 @@ class SupervisorRegistry final {
     // Direct authoritative transitions are local operations. Remote requests
     // must pass through control(); no production wiring is included here.
     [[nodiscard]] SupervisorState start(DesiredSession session);
-    [[nodiscard]] SupervisorState stop();
+    [[nodiscard]] SupervisorState stop(const std::string& blocked_reason = {});
     [[nodiscard]] SupervisorState disable();
     [[nodiscard]] ControlOutcome control(const ControlRequest& request);
 

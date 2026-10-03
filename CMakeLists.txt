@@ -16,6 +16,7 @@ option(LAPIS_BUILD_DESKTOP "Build the live desktop preview and local session ser
 option(LAPIS_BUILD_SESSION "Build the existing session service and its terminal dependency" ON)
 option(LAPIS_PACKAGE "Build the desktop as the downloadable app (see scripts/package_macos.py)" OFF)
 option(LAPIS_BUILD_SUPERVISOR_STATE "Build the focused supervisor state-core test target" OFF)
+option(LAPIS_BUILD_SUPERVISOR_RUNTIME "Build the experimental one-session supervisor runtime" OFF)
 
 if(LAPIS_BUILD_DESKTOP AND NOT LAPIS_BUILD_SESSION)
     message(FATAL_ERROR "LAPIS_BUILD_DESKTOP requires LAPIS_BUILD_SESSION")
@@ -25,6 +26,10 @@ include(CTest)
 
 if(LAPIS_BUILD_SESSION)
     add_subdirectory(services/session)
+endif()
+
+if(LAPIS_BUILD_SUPERVISOR_RUNTIME AND NOT LAPIS_BUILD_SUPERVISOR_STATE)
+    set(LAPIS_BUILD_SUPERVISOR_STATE ON)
 endif()
 
 if(LAPIS_BUILD_SUPERVISOR_STATE)
