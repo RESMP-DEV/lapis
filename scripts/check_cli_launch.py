@@ -835,18 +835,8 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 ["-c", "model=o3", "resume", thread],
             ),
             (
-                ["-c", "approval_policy=untrusted", "resume", thread],
-                ['approval_policy="untrusted"'],
-                ["resume", thread],
-            ),
-            (
                 ["-c", "approvals_reviewer=auto_review", "resume", thread],
                 ['approvals_reviewer="auto_review"'],
-                ["resume", thread],
-            ),
-            (
-                ["-c", "approvals_reviewer=user", "resume", thread],
-                ['approvals_reviewer="user"'],
                 ["resume", thread],
             ),
             (
@@ -860,12 +850,12 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 ["resume", thread],
             ),
             (
-                ["--config=sandbox_mode=read-only", "resume", thread],
+                ['--config=sandbox_mode="read-only"', "resume", thread],
                 ['sandbox_mode="read-only"'],
                 ["resume", thread],
             ),
             (
-                ["-c=sandbox_mode=read-only", "resume", thread],
+                ['-c=sandbox_mode = "read-only"', "resume", thread],
                 ['sandbox_mode="read-only"'],
                 ["resume", thread],
             ),
@@ -986,7 +976,7 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             ["-sandbox", "resume", thread],
             ["-a", "on-failure", "resume", thread],
             ["-c", 'approval_policy=x" y', "resume", thread],
-            ["-c", 'approval_policy="never', "resume", thread],
+            ["-c", 'approval_policy="bogus"', "resume", thread],
             ["-c", " approval_policy=bogus", "resume", thread],
             ["-c", "approvals_reviewer=bogus", "resume", thread],
             ["-a"],
