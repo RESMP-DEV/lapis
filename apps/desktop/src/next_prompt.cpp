@@ -17,7 +17,9 @@
 #include <memory>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
+#include <vector>
 
 namespace lapis::desktop {
 namespace {
@@ -152,6 +154,7 @@ void NextPrompt::setSettings(NextPromptSettings settings) {
     if (!settings_.automatic) {
         for (const auto& id : offers_.keys())
             withdraw(id, Withdrawal::off);
+        awaiting_.clear();
         for (const auto& run : std::as_const(running_))
             if (run.process)
                 run.process->stopGroup();
@@ -185,7 +188,10 @@ void NextPrompt::turnFinished(const QString& id) {
         QStringLiteral("context"),  QStringLiteral("--cli"), agent->cli,
         QStringLiteral("--folder"), agent->folder,           QStringLiteral("--conversation"),
         agent->conversation};
+    if (const auto waiting = awaiting_.constFind(id); waiting != awaiting_.cend())
+        words << QStringLiteral("--answered") << QString::number(waiting->offer.turn);
     const auto done = [this, id, generation](const QJsonObject& context) {
+        settle(id, context);
         predict(id, generation, context);
     };
     if (agent->machine.isEmpty()) {
@@ -330,6 +336,9 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     if (!shown)
         return;
     offers_.insert(id, made);
+    // A guess already typed in stays the one its prompt is compared with.
+    if (!awaiting_.value(id).filled)
+        awaiting_.insert(id, {made, false, false});
     ++revision_;
     emit changed();
 }
@@ -387,6 +396,20 @@ void NextPrompt::seenOffer(const QVariantMap& identity) {
 }
 
 void NextPrompt::used(const QString& id, bool sent, int typed_first, const QString& expectedKey) {
+    // A second Tab sent the guess Tab had typed: its offer is already used.
+    if (sent) {
+        const auto waiting = awaiting_.find(id);
+        if (waiting == awaiting_.end() || !waiting->filled ||
+            (!expectedKey.isEmpty() && waiting->offer.key != expectedKey))
+            return;
+        waiting->tab_sent = true;
+        auto event = about(waiting->offer, id);
+        event.insert(QStringLiteral("event"), QStringLiteral("used"));
+        event.insert(QStringLiteral("sent"), true);
+        event.insert(QStringLiteral("typed_first"), typed_first);
+        record(event);
+        return;
+    }
     const auto offer = offers_.value(id);
     if (offer.text.isEmpty() || (!expectedKey.isEmpty() && offer.key != expectedKey))
         return;
@@ -397,6 +420,9 @@ void NextPrompt::used(const QString& id, bool sent, int typed_first, const QStri
     event.insert(QStringLiteral("ms_after_seen"),
                  offer.seen_ms == 0 ? -1 : QDateTime::currentMSecsSinceEpoch() - offer.seen_ms);
     record(event);
+    if (const auto waiting = awaiting_.find(id);
+        waiting != awaiting_.end() && waiting->offer.key == offer.key)
+        waiting->filled = true;
     offers_.remove(id);
     ++revision_;
     emit changed();
@@ -414,6 +440,67 @@ void NextPrompt::withdraw(const QString& id, Withdrawal why) {
     record(event);
     ++revision_;
     emit changed();
+}
+
+namespace {
+// How alike two prompts are: 1 minus their edit distance over the longer
+// length, so 1 is the same text and 0 nothing in common. Bounded: prompts
+// past 2000 characters compare by their start.
+double similarity(const QString& guess, const QString& sent) {
+    constexpr qsizetype kCompared = 2000;
+    const auto a = guess.trimmed().left(kCompared);
+    const auto b = sent.trimmed().left(kCompared);
+    if (a.isEmpty() && b.isEmpty())
+        return 1.0;
+    std::vector<qsizetype> previous(static_cast<std::size_t>(b.size()) + 1);
+    std::vector<qsizetype> row(previous.size());
+    for (qsizetype j = 0; j <= b.size(); ++j)
+        previous[static_cast<std::size_t>(j)] = j;
+    for (qsizetype i = 1; i <= a.size(); ++i) {
+        row[0] = i;
+        for (qsizetype j = 1; j <= b.size(); ++j) {
+            const auto at = static_cast<std::size_t>(j);
+            const qsizetype replace = previous[at - 1] + (a[i - 1] == b[j - 1] ? 0 : 1);
+            row[at] = std::min({previous[at] + 1, row[at - 1] + 1, replace});
+        }
+        std::swap(previous, row);
+    }
+    const auto distance = previous[static_cast<std::size_t>(b.size())];
+    return 1.0 - double(distance) / double(std::max(a.size(), b.size()));
+}
+} // namespace
+
+// Once the conversation holds the prompt sent after the last offer, record it
+// beside the guess: used as is, edited after Tab, or typed instead. A turn the
+// agent started on its own leaves the offer waiting; a new conversation (as
+// after /clear) drops it.
+void NextPrompt::settle(const QString& id, const QJsonObject& context) {
+    const auto waiting = awaiting_.constFind(id);
+    if (waiting == awaiting_.cend())
+        return;
+    const auto conversation = context.value(QStringLiteral("conversation")).toString();
+    if (!waiting->offer.conversation.isEmpty() && conversation != waiting->offer.conversation) {
+        awaiting_.erase(waiting);
+        return;
+    }
+    const auto answered = context.value(QStringLiteral("answered")).toObject();
+    if (answered.value(QStringLiteral("turn")).toInt(-1) != waiting->offer.turn)
+        return;
+    const auto sent = answered.value(QStringLiteral("text")).toString();
+    const auto& guess = waiting->offer.text;
+    const bool exact = sent.trimmed() == guess.trimmed();
+    auto event = about(waiting->offer, id);
+    event.insert(QStringLiteral("event"), QStringLiteral("outcome"));
+    event.insert(QStringLiteral("filled"), waiting->filled);
+    event.insert(QStringLiteral("tab_sent"), waiting->tab_sent);
+    event.insert(QStringLiteral("result"), exact             ? QStringLiteral("as_offered")
+                                           : waiting->filled ? QStringLiteral("edited")
+                                                             : QStringLiteral("own"));
+    event.insert(QStringLiteral("similarity"),
+                 std::round(similarity(guess, sent) * 1000.0) / 1000.0);
+    event.insert(QStringLiteral("sent_text"), sent.left(4000));
+    awaiting_.erase(waiting);
+    record(event);
 }
 
 void NextPrompt::record(QJsonObject event) const {

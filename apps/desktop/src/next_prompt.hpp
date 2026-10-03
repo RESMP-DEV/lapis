@@ -45,10 +45,11 @@ struct NextPromptSettings {
 // on this Mac sees it with the person's standing instructions, the agent's
 // screen and every other agent's state. The top guess, when it has a usable
 // probability of at least `minConfidence`, is offered, dim at the agent's
-// cursor; Tab sends it and Option-Tab only types it (see TerminalSurface).
-// Nothing is sent without those keys.
+// cursor; Tab types it for the person to edit and send (see TerminalSurface).
+// Nothing is sent for them.
 //
-// Every prediction and what became of it (seen, used, replaced) goes to a
+// Every prediction and what became of it (seen, used, replaced, and the
+// prompt the person then sent, compared with the guess) goes to a
 // private log (JSON lines, owner-only), which scripts/next_prompt_eval.py
 // turns into the acceptance rate and joins with what the person actually
 // typed: the measure of this, and the data for a model of one's own.
@@ -98,9 +99,11 @@ class NextPrompt final : public QObject {
     // The suggestion is on screen in the active window: an impression.
     Q_INVOKABLE void seen(const QString& id);
     Q_INVOKABLE void seenOffer(const QVariantMap& identity);
-    // The person took it: typed into the agent, and `sent` when submitted;
-    // `typedFirst` keys went to the agent while it was offered. Typing is not
-    // a refusal: an offer stays until used or replaced by the next turn's.
+    // The person took it: typed into the agent (`sent` false), then perhaps
+    // sent by a second Tab (`sent` true, a second call); `typedFirst` keys went
+    // to the agent while it was offered.
+    // Typing is not a refusal: an offer stays until used or replaced by the
+    // next turn's. What they then send is recorded as the offer's outcome.
     Q_INVOKABLE void used(const QString& id, bool sent, int typedFirst,
                           const QString& expectedKey = {});
     [[nodiscard]] int revision() const { return revision_; }
@@ -122,7 +125,17 @@ class NextPrompt final : public QObject {
         int turn{};
         qint64 seen_ms{}; // when first on screen; 0 while unseen
     };
+    // The last offer shown to an agent, until the prompt the person sends
+    // after it is read from the conversation.
+    struct Awaiting {
+        Offer offer;
+        bool filled{};   // Tab typed it
+        bool tab_sent{}; // and a second Tab sent it
+    };
     [[nodiscard]] static QJsonObject about(const Offer& offer, const QString& id);
+    // Records what the person sent after the agent's last offer, once the
+    // conversation (`context`) holds it.
+    void settle(const QString& id, const QJsonObject& context);
     // Reading the conversation where the agent runs, then the model here.
     enum class Stage : std::uint8_t { context, predict };
     void start(const QString& id, quint64 generation, const QString& program,
@@ -147,6 +160,7 @@ class NextPrompt final : public QObject {
     NextPromptSettings settings_;
     QHash<QString, Run> running_; // by agent id
     QHash<QString, Offer> offers_;
+    QHash<QString, Awaiting> awaiting_; // by agent id
     struct Attempt {
         qint64 at;
         quint64 generation;

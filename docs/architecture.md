@@ -3873,15 +3873,14 @@ without a numeric probability, and the predicted event records `top_scored`.
   or idle: never over a request that can answer a dialog or over stale evidence,
   since Return in a permission dialog would answer it (the view also refuses
   to send one then). With `tabFlow` (a
-  Claude Code or Codex agent while guessing is on), Tab sends a guess that
-  shows whole: one negotiated paste request with its Return included in the
-  service's atomic queue admission. Later typing follows that operation; no
-  GUI timer submits it. The service refuses submission while a decision-capable
-  request is current; a synchronized observation-only idle notice is exempt,
-  and stale evidence fails closed. A longer or multi-line guess is only typed,
-  as Option-Tab always does, so nothing unseen is submitted. Both suggestion actions require the
-  negotiated receipt; older services refuse visibly until upgraded/restarted. Typing does not withdraw a guess; keys typed first are counted.
-  With nothing offered and nothing typed since arriving, Tab calls QML's
+  Claude Code or Codex agent while guessing is on), Tab (and Option-Tab) types
+  a guess as one negotiated paste request without Return (October 3: the
+  person may edit it first). A second Tab before any other key sends Return
+  after that paste is admitted, never over a request. Later typing
+  follows that operation. It requires the negotiated receipt; older services
+  refuse visibly until upgraded/restarted. Typing does not withdraw a guess;
+  keys typed first are counted. With nothing offered and nothing typed since
+  arriving or the last Return, Tab calls QML's
   `tabAway`, which asks `Workspace::nextPriorityAttention` for a guess not yet
   seen, then an unseen turn or a request, then a guess already seen (the longest
   waiting within each, so Tab cannot bounce between two guesses while another

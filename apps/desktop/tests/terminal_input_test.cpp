@@ -728,9 +728,10 @@ void command_links_open() {
     require(text_frames(peer).isEmpty(), "Command-click sent input to the agent");
 }
 // A next prompt offered at the cursor, with the Tab flow on: drawn there and
-// seen once; Tab sends it, Option-Tab only types it; typing keeps it and is
-// counted; and Tab with nothing offered and nothing typed asks for the next
-// agent, while Tab after typing goes to the agent.
+// seen once; Tab and Option-Tab only type it, never pressing Return; typing
+// keeps it and is counted; Tab with nothing offered and nothing typed since
+// arriving or the last Return asks for the next agent, while Tab after typing
+// goes to the agent.
 std::vector<wire::Frame> suggestion_operations(Peer& peer, std::size_t count) {
     std::vector<wire::Frame> found;
     until([&] {
@@ -930,8 +931,8 @@ void suggestions() {
     require(!rebound.grabWindow().isNull(), "Rebound scene graph produced no frame");
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
-    require(paste_is(typed[0], "go now", true),
-            "The new window's presented suggestion could not be submitted");
+    require(paste_is(typed[0], "go now", false),
+            "The new window's presented suggestion was submitted or not typed");
     surface.setParentItem(window.contentItem());
     rebound.hide();
     lapis::desktop::test::activate_test_window(window);
@@ -944,11 +945,18 @@ void suggestions() {
 
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
-    require(paste_is(typed[0], "go now", true), "Tab did not type and send the suggestion");
-    require(used == std::vector<std::pair<bool, int>>{{true, 0}} && surface.suggestion().isEmpty(),
-            "Tab was not reported as sent");
+    require(paste_is(typed[0], "go now", false), "Tab did not type the suggestion without Return");
+    require(used == std::vector<std::pair<bool, int>>{{false, 0}} && surface.suggestion().isEmpty(),
+            "Tab was not reported as typed");
+    // A second Tab sends the typed guess: Return after the admitted paste.
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
-    require(calls() == 1 && nothing_sent(), "The second Tab did not move to the next agent");
+    typed = frames(1);
+    require(calls() == 0 && is_key(typed[0], lapis::session::TerminalKey::enter) &&
+                used.back() == std::pair{true, 0},
+            "A second Tab did not send the typed guess");
+    // The prompt is empty again, so Tab moves on.
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    require(calls() == 1 && nothing_sent(), "Tab after sending did not move to the next agent");
     engine.globalObject().setProperty(QStringLiteral("moves"), false);
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
@@ -973,20 +981,32 @@ void suggestions() {
     press(Qt::Key_C, Qt::MetaModifier, QStringLiteral("c"));
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
-    require(paste_is(typed[0], "status?", true) && !used.empty() &&
-                used.back() == std::pair{true, 3},
-            "Tab after typing did not send it, counting three keys typed first");
+    require(paste_is(typed[0], "status?", false) && !used.empty() &&
+                used.back() == std::pair{false, 3},
+            "Tab after typing did not type it, counting three keys typed first");
 
-    // The Enter belongs to the same admitted operation; later typing cannot
-    // be accidentally submitted by a delayed GUI timer.
+    // Editing right after Tab follows the typed guess, never before it.
     surface.setSuggestion(QStringLiteral("rerun"));
     settle();
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     press(Qt::Key_S, Qt::NoModifier, QStringLiteral("s"));
     typed = frames(2);
-    require(paste_is(typed[0], "rerun", true) && payload(typed[1]) == QByteArray("s") &&
+    require(paste_is(typed[0], "rerun", false) && payload(typed[1]) == QByteArray("s") &&
                 nothing_sent(),
-            "Later typing was interleaved before the paste-and-submit request");
+            "Later typing was interleaved before the typed guess");
+    // Tab, then Tab again before the service admitted the first: Return
+    // still follows the paste, never ahead of it.
+    press(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+    typed = frames(1);
+    surface.setSuggestion(QStringLiteral("ship it"));
+    settle();
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(2);
+    require(paste_is(typed[0], "ship it", false) &&
+                is_key(typed[1], lapis::session::TerminalKey::enter) && nothing_sent() &&
+                used.back() == std::pair{true, 0},
+            "A quick second Tab did not send after the typed guess");
 
     // A fresh offer has not been presented yet: Tab may fill it, but must not
     // submit text the person could not have read in a completed frame.
@@ -997,8 +1017,7 @@ void suggestions() {
                 used.back() == std::pair{false, 0} && nothing_sent(),
             "An unpresented suggestion was submitted");
 
-    // A suggestion that does not show whole is only typed, for the person to
-    // read before sending.
+    // A suggestion that does not show whole is typed the same way.
     const QString longer(60, QLatin1Char('w'));
     surface.setSuggestion(longer);
     settle();
@@ -1011,7 +1030,7 @@ void suggestions() {
     typed = frames(1);
     require(paste_is(typed[0], longer.toUtf8(), false) && !used.empty() &&
                 used.back() == std::pair{false, 0} && nothing_sent(),
-            "A suggestion not shown whole was sent");
+            "A suggestion not shown whole was submitted");
 
     // A pending request (a permission dialog) is never answered by Tab: the
     // suggestion is not sent, and Tab moves on instead.
@@ -1030,7 +1049,8 @@ void suggestions() {
     require(f.document.resolvePreviewRequest(QStringLiteral("r1")), "Fixture request stayed");
     surface.setSuggestion({});
 
-    // Option-Tab only types it; Tab after typing is the program's.
+    // Option-Tab types it too. An edit after it ends the double Tab: Tab is
+    // then the program's, and after Return it moves on again.
     surface.setSuggestion(QStringLiteral("rerun it"));
     press(Qt::Key_Tab, Qt::AltModifier, QStringLiteral("\t"));
     typed = frames(1);
@@ -1038,10 +1058,19 @@ void suggestions() {
                 used.back() == std::pair{false, 0},
             "Option-Tab did not only type the suggestion");
     const int after_fill = calls();
+    press(Qt::Key_S, Qt::NoModifier, QStringLiteral("s"));
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(2);
+    require(payload(typed[0]) == QByteArray("s") &&
+                is_key(typed[1], lapis::session::TerminalKey::tab) && calls() == after_fill &&
+                used.back() == std::pair{false, 0},
+            "Tab after editing the typed guess did not reach the agent");
+    press(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
     typed = frames(1);
-    require(is_key(typed[0], lapis::session::TerminalKey::tab) && calls() == after_fill,
-            "Tab after typing did not reach the agent");
+    require(is_key(typed[0], lapis::session::TerminalKey::enter), "Return did not reach the agent");
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    require(calls() == after_fill + 1 && nothing_sent(),
+            "Tab after Return did not move to the next agent");
 }
 
 void long_pastes() {

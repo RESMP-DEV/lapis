@@ -63,7 +63,7 @@ terminal_link_at(const session::TerminalSnapshot& snapshot, int column, int row)
 
 // How an offered next prompt lays out after the cursor: the one line shown
 // (elided to the room left before the row's last two cells), whether that is
-// the whole suggestion (so Tab may send it), the keys hint, the first column
+// the whole suggestion (else it ends in an ellipsis), the keys hint, the first column
 // and the width drawn. Empty `shown` when there is no room.
 struct SuggestionLayout {
     QString shown;
@@ -187,8 +187,9 @@ class TerminalSurface : public QQuickItem {
     void tabFlowChanged();
     // The suggestion is on screen in the active window, once per suggestion.
     void suggestionSeen(const QString& sessionId, const QString& offerKey);
-    // The offered suggestion was typed into the agent, and `sent` when also
-    // submitted; `typedFirst` keys went to the agent while it was offered.
+    // The offered suggestion was typed into the agent (`sent` false), or a
+    // second Tab right after sent it (`sent` true); `typedFirst` keys went to
+    // the agent while it was offered.
     void suggestionUsed(const QString& sessionId, const QString& offerKey, bool sent,
                         int typedFirst);
 
@@ -294,11 +295,24 @@ class TerminalSurface : public QQuickItem {
     QString suggestion_key_;
     QString seen_;
     QJSValue tab_away_;
-    [[nodiscard]] bool suggestionWhole() const;
     [[nodiscard]] SuggestionLayout presentedSuggestion() const;
     bool tab_flow_{};
     bool typed_since_arrival_{};
     int typed_while_offered_{};
+    // The guess Tab just typed in, until another key: a second Tab sends it.
+    struct Filled {
+        QPointer<SessionPreview> owner;
+        QString session;
+        QString offer;
+        int typed_first{};
+        quint64 request{};
+        bool admitted{};     // the service queued the typed guess
+        bool send_pending{}; // the second Tab came before that
+    };
+    std::optional<Filled> filled_;
+    void fillSuggestion();
+    void filledAdmitted(const Filled& made, bool queued);
+    void sendFilled();
     bool takeSuggestion(const QKeyEvent& event);
     quint64 pasteTextRequest(const QString& text, std::optional<bool> submit);
     void reportSeen();
