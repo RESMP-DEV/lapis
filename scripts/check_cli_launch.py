@@ -835,18 +835,8 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 ["-c", "model=o3", "resume", thread],
             ),
             (
-                ["-c", "approval_policy=untrusted", "resume", thread],
-                ['approval_policy="untrusted"'],
-                ["resume", thread],
-            ),
-            (
                 ["-c", "approvals_reviewer=auto_review", "resume", thread],
                 ['approvals_reviewer="auto_review"'],
-                ["resume", thread],
-            ),
-            (
-                ["-c", "approvals_reviewer=user", "resume", thread],
-                ['approvals_reviewer="user"'],
                 ["resume", thread],
             ),
             (
@@ -860,12 +850,12 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 ["resume", thread],
             ),
             (
-                ["--config=sandbox_mode=read-only", "resume", thread],
+                ['--config=sandbox_mode="read-only"', "resume", thread],
                 ['sandbox_mode="read-only"'],
                 ["resume", thread],
             ),
             (
-                ["-c=sandbox_mode=read-only", "resume", thread],
+                ['-c=sandbox_mode = "read-only"', "resume", thread],
                 ['sandbox_mode="read-only"'],
                 ["resume", thread],
             ),
@@ -918,6 +908,25 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 ["--", "-a", "never", "resume", thread],
             ),
         ]
+        for key, value in {
+            "approval_policy": "untrusted",
+            "sandbox_mode": "read-only",
+            "approvals_reviewer": "user",
+        }.items():
+            cases.extend(
+                [
+                    (
+                        ["-c", f"{key}={value}", "resume", thread],
+                        [f'{key}="{value}"'],
+                        ["resume", thread],
+                    ),
+                    (
+                        ["-c", f'{key}="{value}"', "resume", thread],
+                        [f'{key}="{value}"'],
+                        ["resume", thread],
+                    ),
+                ]
+            )
         for index, (arguments, backend, tui) in enumerate(cases):
             if tui is None:
                 tui = arguments
@@ -960,21 +969,36 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 )
             finally:
                 service.stop()
-        for index, arguments in enumerate(
-            (
-                ["-a", "untrusted", "resume", thread],
-                ["-s", 'x" y', "resume", thread],
-                ["-s", "read-only\n", "resume", thread],
-                ["-sandbox", "resume", thread],
-                ["-a", "on-failure", "resume", thread],
-                ["-c", 'approval_policy=x" y', "resume", thread],
-                ["-c", 'approval_policy="never', "resume", thread],
-                ["-c", " approval_policy=bogus", "resume", thread],
-                ["-c", "approvals_reviewer=bogus", "resume", thread],
-                ["-a"],
-                ["--sandbox="],
+        invalid_arguments = [
+            ["-a", "untrusted", "resume", thread],
+            ["-s", 'x" y', "resume", thread],
+            ["-s", "read-only\n", "resume", thread],
+            ["-sandbox", "resume", thread],
+            ["-a", "on-failure", "resume", thread],
+            ["-c", 'approval_policy=x" y', "resume", thread],
+            ["-c", 'approval_policy="bogus"', "resume", thread],
+            ["-c", " approval_policy=bogus", "resume", thread],
+            ["-c", "approvals_reviewer=bogus", "resume", thread],
+            ["-a"],
+            ["--sandbox="],
+        ]
+        syntax_invalid_indices = set()
+        for key, value in {
+            "approval_policy": "never",
+            "sandbox_mode": "read-only",
+            "approvals_reviewer": "user",
+        }.items():
+            start = len(invalid_arguments)
+            invalid_arguments.extend(
+                [
+                    ["-c", f'{key}={value}"', "resume", thread],
+                    ["-c", f'{key}="{value}', "resume", thread],
+                ]
             )
-        ):
+            syntax_invalid_indices.add(start + 1)
+        syntax_invalid_indices.add(len(invalid_arguments))
+        invalid_arguments.append(["-c", 'approval_policy="never" x', "resume", thread])
+        for index, arguments in enumerate(invalid_arguments):
             name = f"codex-permissions-invalid-{index}"
             service = Service(
                 binary,
@@ -1001,9 +1025,16 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             finally:
                 service.stop()
             diagnostic = (artifacts / (name + ".service.log")).read_text()
+            expected_diagnostic = (
+                "config syntax is invalid"
+                if index in syntax_invalid_indices
+                else "requires a value"
+                if arguments == ["-a"]
+                else "value is invalid for"
+            )
             require(
-                "Codex permission" in diagnostic,
-                f"Missing permission diagnostic: {arguments}",
+                expected_diagnostic in diagnostic,
+                f"Missing {expected_diagnostic!r} diagnostic: {arguments}",
             )
         return {"permission_cases": len(cases), "live_codex_used": False}
 

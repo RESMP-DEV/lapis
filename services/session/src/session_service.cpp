@@ -129,29 +129,48 @@ struct CodexPermission {
     bool recognized = false;
     QString error;
 };
-QStringList codex_permission_sandbox_values() {
-    return {QStringLiteral("read-only"), QStringLiteral("workspace-write"),
-            QStringLiteral("danger-full-access")};
+struct CodexPermissionSpec {
+    QString key;
+    bool cli_option;
+    QStringList shared_values;
+    QStringList config_only_values;
+
+    [[nodiscard]] QStringList option_values() const { return shared_values; }
+    [[nodiscard]] QStringList config_values() const { return shared_values + config_only_values; }
+};
+const std::vector<CodexPermissionSpec>& codex_permission_specs() {
+    static const std::vector<CodexPermissionSpec> specs{
+        {QStringLiteral("approval_policy"),
+         true,
+         {QStringLiteral("on-request"), QStringLiteral("never")},
+         {QStringLiteral("untrusted")}},
+        {QStringLiteral("sandbox_mode"),
+         true,
+         {QStringLiteral("read-only"), QStringLiteral("workspace-write"),
+          QStringLiteral("danger-full-access")},
+         {}},
+        {QStringLiteral("approvals_reviewer"),
+         false,
+         {},
+         {QStringLiteral("user"), QStringLiteral("auto_review"),
+          QStringLiteral("guardian_subagent")}},
+    };
+    return specs;
 }
-QStringList codex_permission_option_values(const char* key) {
-    if (QLatin1String(key) == QLatin1String("approval_policy"))
-        return {QStringLiteral("on-request"), QStringLiteral("never")};
-    if (QLatin1String(key) == QLatin1String("sandbox_mode"))
-        return codex_permission_sandbox_values();
-    return {};
+const CodexPermissionSpec* codex_permission_spec(const QString& key) {
+    const auto& specs = codex_permission_specs();
+    const auto found = std::find_if(specs.cbegin(), specs.cend(),
+                                    [&](const auto& spec) { return spec.key == key; });
+    return found == specs.cend() ? nullptr : &*found;
 }
-QStringList codex_permission_config_values(const QString& key) {
-    if (key == QStringLiteral("approval_policy"))
-        return {QStringLiteral("on-request"), QStringLiteral("untrusted"), QStringLiteral("never")};
-    if (key == QStringLiteral("approvals_reviewer"))
-        return {QStringLiteral("user"), QStringLiteral("auto_review"),
-                QStringLiteral("guardian_subagent")};
-    if (key == QStringLiteral("sandbox_mode"))
-        return codex_permission_sandbox_values();
-    return {};
+QString codex_permission_key_pattern() {
+    QStringList keys;
+    for (const auto& spec : codex_permission_specs())
+        keys << QRegularExpression::escape(spec.key);
+    return keys.join(QLatin1Char('|'));
 }
 bool codex_permission_value_valid(const QStringList& values, const QString& value) {
-    return QSet<QString>(values.cbegin(), values.cend()).contains(value);
+    return std::find(values.cbegin(), values.cend(), value) != values.cend();
 }
 CodexPermission codex_permission(const QStringList& arguments, qsizetype index) {
     const auto& argument = arguments.at(index);
@@ -204,7 +223,14 @@ CodexPermission codex_permission(const QStringList& arguments, qsizetype index) 
         } else {
             continue;
         }
-        const auto accepted = codex_permission_option_values(key);
+        const auto* spec = codex_permission_spec(QLatin1String(key));
+        if (!spec || !spec->cli_option)
+            return {{},
+                    consumed,
+                    true,
+                    QStringLiteral("Codex permission option cannot be set from the CLI: %1")
+                        .arg(QLatin1String(key))};
+        const auto accepted = spec->option_values();
         if (!codex_permission_value_valid(accepted, value))
             return {{},
                     consumed,
@@ -232,32 +258,44 @@ CodexPermission codex_permission_config(const QStringList& arguments, qsizetype 
     } else {
         return {};
     }
-    static const QString permission_keys =
-        QStringLiteral("approval_policy|sandbox_mode|approvals_reviewer");
-    static const QRegularExpression permission_key(QStringLiteral("^\\s*(") + permission_keys +
-                                                   QStringLiteral(")\\s*="));
+    static const QRegularExpression permission_key(
+        QStringLiteral("^\\s*(") + codex_permission_key_pattern() + QStringLiteral(")\\s*="));
     const auto key_match = permission_key.match(value);
     if (!key_match.hasMatch())
         return {};
+    const qsizetype consumed = argument.contains(QLatin1Char('=')) ? 1 : 2;
     const auto key = key_match.capturedView(1).toString();
-    const auto accepted = codex_permission_config_values(key);
-    static const QRegularExpression permission_value(
-        QStringLiteral("^\\s*(") + permission_keys +
-        QStringLiteral(")\\s*=\\s*(?:\"([a-z_][a-z_-]*)\"|([a-z_][a-z_-]*))\\s*$"));
-    const auto value_match = permission_value.match(value);
-    const auto configured = value_match.hasMatch()
-                                ? value_match.captured(value_match.captured(2).isEmpty() ? 3 : 2)
-                                : QString();
+    const auto* spec = codex_permission_spec(key);
+    if (!spec)
+        return {{},
+                consumed,
+                true,
+                QStringLiteral("Codex permission key has no registered values: %1").arg(key)};
+    auto rhs = value.mid(key_match.capturedEnd(0)).trimmed();
+    QString configured;
+    if (rhs.startsWith(QLatin1Char('"'))) {
+        static const QRegularExpression quoted_value(QStringLiteral("^\"([^\"]*)\"$"));
+        const auto quoted_match = quoted_value.match(rhs);
+        if (!quoted_match.hasMatch())
+            return {{},
+                    consumed,
+                    true,
+                    QStringLiteral(
+                        "Codex permission config syntax is invalid for %1; expected key=value or "
+                        "key=\"value\"")
+                        .arg(key)};
+        configured = quoted_match.capturedView(1).toString();
+    } else {
+        configured = rhs;
+    }
+    const auto accepted = spec->config_values();
     if (!codex_permission_value_valid(accepted, configured))
         return {{},
-                argument.contains(QLatin1Char('=')) ? 1 : 2,
+                consumed,
                 true,
                 QStringLiteral("Codex permission value is invalid for %1; accepted: %2")
                     .arg(key, accepted.join(QLatin1String(", ")))};
-    return {{QStringLiteral("%1=\"%2\"").arg(key, configured)},
-            argument.contains(QLatin1Char('=')) ? 1 : 2,
-            true,
-            {}};
+    return {{QStringLiteral("%1=\"%2\"").arg(key, configured)}, consumed, true, {}};
 }
 // Whether the arguments resume or fork a saved Codex thread.
 bool codex_continues_thread(const QStringList& arguments) {
