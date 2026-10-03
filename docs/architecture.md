@@ -3944,9 +3944,9 @@ impact (#25, #26, #27, #34, #42). Reviewed against how lapis starts Claude:
   requests are answered in the terminal, so it needs no routing here. Nothing
   lapis types for the person may answer a pending request; the next-prompt Tab
   (#44) sends nothing while one is pending.
-- **Background commands stop after 30 minutes** (2.1.285) unless Claude asks
-  for up to two hours; `BASH_MAX_TIMEOUT_MS` raises the ceiling and
-  `BASH_DEFAULT_TIMEOUT_MS` the default for foreground and background alike.
+- **Background commands stopped after 30 minutes** in 2.1.285 unless Claude
+  asked for up to two hours. Since 2.1.288 the limit applies only to unattended
+  sessions (`-p`, SDK, CI, cloud), so lapis's terminal agents have none.
   Session ownership is unchanged: this is the CLI's policy for its own
   children, documented for users in [agents](agents.md#long-jobs).
 - **Fixes lapis benefits from:** bracketed paste after a mode reset (2.1.282)

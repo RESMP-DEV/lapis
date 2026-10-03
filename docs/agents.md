@@ -106,11 +106,12 @@ meanwhile; an update that fails says why and leaves them running.
 
 ## Long jobs
 
-Since Claude Code 2.1.285 a shell command Claude runs in the background stops
-after 30 minutes unless it asks for more, at most 2 hours (`BASH_MAX_TIMEOUT_MS`
-raises that ceiling). That is Claude Code's limit, not lapis's. Start a longer
-job detached (`nohup`, `setsid` or `tmux`, writing to a log the agent reads),
-which also outlives restarts, reloads and plan switches.
+Claude Code 2.1.285 stopped a shell command Claude runs in the background
+after 30 minutes. Since 2.1.288 that limit applies only to unattended sessions
+(`-p`, the Agent SDK, CI and cloud); agents in lapis run in a terminal and have
+no limit. A job that must outlive the agent still belongs detached (`nohup`,
+`setsid` or `tmux`, writing to a log the agent reads), which also outlives
+restarts, reloads and plan switches.
 
 ## Restart, reload, reopen
 
