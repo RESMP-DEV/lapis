@@ -351,9 +351,9 @@ void configuredTargetsUseTheirOwnRoutes() {
     // Drain the shared pool deterministically: a sentinel queued after the sweep
     // has finished every task queued before it, so a wrongly queued credential
     // read is observed instead of inferred from elapsed time.
-    std::atomic<bool> sentinel_ran{false};
-    QThreadPool::globalInstance()->start([&sentinel_ran] { sentinel_ran = true; });
-    require(waitFor([&] { return sentinel_ran.load(); }),
+    auto sentinel_ran = std::make_shared<std::atomic<bool>>(false);
+    QThreadPool::globalInstance()->start([sentinel_ran] { sentinel_ran->store(true); });
+    require(waitFor([&] { return sentinel_ran->load(); }),
             "the credential queue is drained before the assertion");
     require(f.credential_reads == 0,
             "a sweep skips this Mac's own Claude sign-in rather than raise the keychain prompt");
