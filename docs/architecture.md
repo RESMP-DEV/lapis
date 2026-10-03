@@ -4365,6 +4365,28 @@ qualification evidence: the existing runtime receipts and dated observations
 remain Claude 2.1.280. A run on 2.1.286 is still required before claiming the
 newer fixture as qualified.
 
+## Architecture execution scoring (October 3)
+
+This refresh scores the canonical R-gates at lapis `4750360a`. The score is a
+release-planning rank, not a test result. It weights an explicit release blocker
+at 35 percent, correctness/security or data-loss risk at 30 percent, enablement
+of later acceptance at 20 percent, and current readiness at 15 percent.
+
+| Rank | Gate | Score | Current position and next bounded slice |
+| ---: | --- | ---: | --- |
+| 1 | R1 process lifetime | 98 | The GUI still owns process birth, so GUI replacement can destroy sessions. Port the preserved supervisor-runtime seam into the current baseline, keeping it behind `LAPIS_BUILD_SUPERVISOR_RUNTIME`; qualify one supervised local service and two reconnecting clients before any launchd/install claim. |
+| 2 | R4 release and upgrade provenance | 93 | Artifact/source binding and update recovery remain package gates. Audit the current package and manifest code, then implement only missing enforcement plus one candidate gate-map receipt; source tests cannot substitute for installation/update qualification. |
+| 3 | R3 account identity | 82 | Source refusal paths exist, but selected-account and healthy-transport acceptance remain parent-owned. Build a read-only preflight map and focused refusal discriminators without consuming a provider operation. |
+| 4 | R2 input integrity | 78 | Paste repair is implemented; assembled-candidate acceptance remains. Select the existing full-queue, slow-reader, disconnect, bracketed-mode and ownership cases once, and reserve native IME/presentation for the candidate run. |
+| 5 | R5 operational bounds and support | 74 | Port the preserved bounded runtime diagnostics/support-export slice, then add workload selection and measured tails. Diagnostics can proceed now, but resource claims require the assembled candidate. |
+
+Dispatch is deliberately narrower than the score table. The first implementation
+wave owns R1, R4 and R5 source work in disjoint worktrees; R2/R3 begin as a
+read-only acceptance preflight so unchanged evidence is reused and live checks
+run once against the candidate. Existing independent branches
+`fix/next-prompt-scored-followup` and `docs/claude-background-limit` are polish
+or documentation work, not blockers for this wave.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal
