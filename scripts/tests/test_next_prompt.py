@@ -283,6 +283,25 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(
             next_prompt.parse('{"category": "vibes"}')["category"], "other"
         )
+        non_numeric = next_prompt.parse(
+            '{"candidates":[{"text":"quoted","p":"0.9"},{"text":"boolean","p":true},'
+            '{"text":"nan","p":NaN}]}'
+        )["candidates"]
+        self.assertEqual(
+            [(c["text"], c["p"], c["scored"]) for c in non_numeric],
+            [
+                ("quoted", 0.0, False),
+                ("boolean", 0.0, False),
+                ("nan", 0.0, False),
+            ],
+        )
+        infinity = next_prompt.parse(
+            '{"candidates":[{"text":"infinity","p":Infinity}]}'
+        )["candidates"]
+        self.assertEqual(
+            [(c["text"], c["p"], c["scored"]) for c in infinity],
+            [("infinity", 0.0, False)],
+        )
 
     def test_the_model_runs_on_the_plan_with_tools_off(self):
         folder = Path(tempfile.mkdtemp(prefix="lapis-claude-"))
@@ -471,17 +490,20 @@ class AcceptanceTests(unittest.TestCase):
         sys.path.insert(0, str(ROOT / "scripts"))
         import next_prompt_eval
 
-        def predicted(key, p, shown=True, category="approve"):
-            return {
+        def predicted(key, p, shown=True, category="approve", top_scored=None):
+            event = {
                 "event": "predicted",
                 "offer": key,
                 "shown": shown,
                 "category": category,
                 "candidates": [{"text": "go", "p": p}],
             }
+            if top_scored is not None:
+                event["top_scored"] = top_scored
+            return event
 
         events = [
-            predicted("a:1", 0.8),
+            predicted("a:1", 0.8, top_scored=True),
             {"event": "seen", "offer": "a:1"},
             {
                 "event": "used",
@@ -490,7 +512,7 @@ class AcceptanceTests(unittest.TestCase):
                 "typed_first": 3,
                 "ms_after_seen": 900,
             },
-            predicted("a:2", 0.45, category="status"),
+            predicted("a:2", 0.45, category="status", top_scored=False),
             {"event": "seen", "offer": "a:2"},
             {"event": "withdrawn", "offer": "a:2", "reason": "new_turn", "seen": True},
             predicted("b:3", 0.5),
@@ -506,6 +528,14 @@ class AcceptanceTests(unittest.TestCase):
             (4, 3, 2, 1),
         )
         self.assertEqual(report["acceptance"], 0.5)
+        self.assertEqual(
+            (
+                report["offered_scored"],
+                report["offered_unscored"],
+                report["offered_top_scored_unknown"],
+            ),
+            (1, 1, 1),
+        )
         self.assertEqual(
             (
                 report["sent_with_tab"],
@@ -526,7 +556,15 @@ class AcceptanceTests(unittest.TestCase):
         at_half = [
             row for row in report["by_confidence"] if row["min_confidence"] == 0.5
         ][0]
-        self.assertEqual((at_half["seen"], at_half["acceptance"]), (1, 1.0))
+        self.assertEqual(
+            (
+                at_half["seen"],
+                at_half["scored"],
+                at_half["unscored"],
+                at_half["acceptance"],
+            ),
+            (1, 1, 0, 1.0),
+        )
         _, bounded = next_prompt_eval.acceptance(
             [
                 {

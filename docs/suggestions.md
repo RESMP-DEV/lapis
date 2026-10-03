@@ -29,8 +29,8 @@ When a Claude Code or Codex agent finishes a turn, lapis reads its conversation
 where it runs (over ssh for another machine) and asks the model, on this Mac,
 with your `~/.claude/CLAUDE.md`, the agent's screen, every other agent's state
 and your latest prompts elsewhere. The model's top guess shows dim after the
-agent's cursor, as long as the model reported a probability for it. None shows
-while an agent waits on a request such as a permission prompt.
+agent's cursor whenever the helper returns one and it passes `minConfidence`.
+None shows while an agent waits on a request such as a permission prompt.
 
 ## Tab
 

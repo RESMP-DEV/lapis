@@ -12,6 +12,7 @@ Standard library only; Python 3.9 or newer.
 import argparse
 import glob
 import json
+import math
 import os
 import random
 import re
@@ -439,7 +440,11 @@ def parse(text):
         words = str(c.get("text", "")).strip()
         if words:
             raw_p = c.get("p")
-            scored = isinstance(raw_p, (int, float)) and not isinstance(raw_p, bool)
+            scored = (
+                isinstance(raw_p, (int, float))
+                and not isinstance(raw_p, bool)
+                and math.isfinite(raw_p)
+            )
             p = float(raw_p) if scored else 0.0
             candidates.append(
                 {"text": words, "p": max(0.0, min(1.0, p)), "scored": scored}
