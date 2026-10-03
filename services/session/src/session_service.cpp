@@ -129,11 +129,16 @@ struct CodexPermission {
     bool recognized = false;
     QString error;
 };
+QStringList codex_permission_sandbox_values() {
+    return {QStringLiteral("read-only"), QStringLiteral("workspace-write"),
+            QStringLiteral("danger-full-access")};
+}
 QStringList codex_permission_option_values(const char* key) {
     if (QLatin1String(key) == QLatin1String("approval_policy"))
         return {QStringLiteral("on-request"), QStringLiteral("never")};
-    return {QStringLiteral("read-only"), QStringLiteral("workspace-write"),
-            QStringLiteral("danger-full-access")};
+    if (QLatin1String(key) == QLatin1String("sandbox_mode"))
+        return codex_permission_sandbox_values();
+    return {};
 }
 QStringList codex_permission_config_values(const QString& key) {
     if (key == QStringLiteral("approval_policy"))
@@ -141,11 +146,11 @@ QStringList codex_permission_config_values(const QString& key) {
     if (key == QStringLiteral("approvals_reviewer"))
         return {QStringLiteral("user"), QStringLiteral("auto_review"),
                 QStringLiteral("guardian_subagent")};
-    return {QStringLiteral("read-only"), QStringLiteral("workspace-write"),
-            QStringLiteral("danger-full-access")};
+    if (key == QStringLiteral("sandbox_mode"))
+        return codex_permission_sandbox_values();
+    return {};
 }
-template <typename Values>
-bool codex_permission_value_valid(Values&& values, const QString& value) {
+bool codex_permission_value_valid(const QStringList& values, const QString& value) {
     return QSet<QString>(values.cbegin(), values.cend()).contains(value);
 }
 CodexPermission codex_permission(const QStringList& arguments, qsizetype index) {
@@ -227,30 +232,28 @@ CodexPermission codex_permission_config(const QStringList& arguments, qsizetype 
     } else {
         return {};
     }
-    static const QRegularExpression permission_key(
-        QStringLiteral("^\\s*(approval_policy|sandbox_mode|approvals_reviewer)\\s*="));
+    static const QString permission_keys =
+        QStringLiteral("approval_policy|sandbox_mode|approvals_reviewer");
+    static const QRegularExpression permission_key(QStringLiteral("^\\s*(") + permission_keys +
+                                                   QStringLiteral(")\\s*="));
     const auto key_match = permission_key.match(value);
     if (!key_match.hasMatch())
         return {};
-    static const QRegularExpression permission_value(
-        QStringLiteral("^\\s*(approval_policy|sandbox_mode|approvals_reviewer)\\s*=\\s*\"?([a-z_]["
-                       "a-z_-]*)\"?\\s*$"));
-    const auto value_match = permission_value.match(value);
     const auto key = key_match.capturedView(1).toString();
-    if (!value_match.hasMatch()) {
+    const auto accepted = codex_permission_config_values(key);
+    static const QRegularExpression permission_value(
+        QStringLiteral("^\\s*(") + permission_keys +
+        QStringLiteral(")\\s*=\\s*(?:\"([a-z_][a-z_-]*)\"|([a-z_][a-z_-]*))\\s*$"));
+    const auto value_match = permission_value.match(value);
+    const auto configured = value_match.hasMatch()
+                                ? value_match.captured(value_match.captured(2).isEmpty() ? 3 : 2)
+                                : QString();
+    if (!codex_permission_value_valid(accepted, configured))
         return {{},
                 argument.contains(QLatin1Char('=')) ? 1 : 2,
                 true,
                 QStringLiteral("Codex permission value is invalid for %1; accepted: %2")
-                    .arg(key, codex_permission_config_values(key).join(QLatin1String(", ")))};
-    }
-    const auto configured = value_match.capturedView(2).toString();
-    if (!codex_permission_value_valid(codex_permission_config_values(key), configured))
-        return {{},
-                argument.contains(QLatin1Char('=')) ? 1 : 2,
-                true,
-                QStringLiteral("Codex permission value is invalid for %1; accepted: %2")
-                    .arg(key, codex_permission_config_values(key).join(QLatin1String(", ")))};
+                    .arg(key, accepted.join(QLatin1String(", ")))};
     return {{QStringLiteral("%1=\"%2\"").arg(key, configured)},
             argument.contains(QLatin1Char('=')) ? 1 : 2,
             true,

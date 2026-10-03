@@ -845,6 +845,21 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 ["resume", thread],
             ),
             (
+                ["-c", "approvals_reviewer=user", "resume", thread],
+                ['approvals_reviewer="user"'],
+                ["resume", thread],
+            ),
+            (
+                ["-c", "approvals_reviewer=guardian_subagent", "resume", thread],
+                ['approvals_reviewer="guardian_subagent"'],
+                ["resume", thread],
+            ),
+            (
+                ["-c", 'approvals_reviewer="auto_review"', "resume", thread],
+                ['approvals_reviewer="auto_review"'],
+                ["resume", thread],
+            ),
+            (
                 ["--config=sandbox_mode=read-only", "resume", thread],
                 ['sandbox_mode="read-only"'],
                 ["resume", thread],
@@ -953,6 +968,7 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 ["-sandbox", "resume", thread],
                 ["-a", "on-failure", "resume", thread],
                 ["-c", 'approval_policy=x" y', "resume", thread],
+                ["-c", 'approval_policy="never', "resume", thread],
                 ["-c", " approval_policy=bogus", "resume", thread],
                 ["-c", "approvals_reviewer=bogus", "resume", thread],
                 ["-a"],
@@ -974,10 +990,9 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 try:
                     code = service.process.wait(timeout=WAIT)
                 except subprocess.TimeoutExpired:
-                    require(
-                        False,
-                        f"Invalid permission value launched or hung service: {arguments}",
-                    )
+                    raise CheckError(
+                        f"Invalid permission value hung the service: {arguments}"
+                    ) from None
                 else:
                     require(
                         code != 0,
