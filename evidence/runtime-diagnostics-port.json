@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-10-03",
+  "purpose": "Record the bounded port of the preserved R5 runtime diagnostics and redacted support-export slice to branch baseline efb17db.",
+  "source": {
+    "baseline_revision": "efb17dbe85d20d6759e15b0ccf3f5634e00ba188",
+    "branch": "architecture/r5-diagnostics",
+    "source_dirty_at_checks": true,
+    "snapshot": "Preserved implementation and focused-test snapshot reconciled with the current dispatcher before this run."
+  },
+  "scope": "Read-only diagnosis, explicit redacted export, dispatcher wiring, focused tests and documentation. No installed runtime was selected or modified.",
+  "changed_files": [
+    "docs/architecture.md",
+    "docs/build.md",
+    "docs/status.md",
+    "scripts/lapis.py",
+    "scripts/runtime_diagnostics.py",
+    "scripts/tests/test_runtime_diagnostics.py"
+  ],
+  "implementation": [
+    "Reused the launcher's private-runtime contract with the selected runtime path in full diagnostics.",
+    "Added a Ghostty-free diagnose dispatcher command and its help description.",
+    "Kept full diagnose and support export as separate explicit modes; they are mutually exclusive.",
+    "Validated registry versions before scanning records and retained the production terminal argument bound of 256.",
+    "Classified descriptor symlinks as invalid and kept plain-text failures structured when reachability is absent.",
+    "Restricted support export to states, bounded counts, stable issue codes, version-shaped metadata and connectivity counters; it omits selected paths, registry identities, launch data, terminal content, credentials and health claims."
+  ],
+  "verification": [
+    {
+      "command": "ruff check scripts/lapis.py scripts/runtime_diagnostics.py scripts/tests/test_runtime_diagnostics.py && ruff format --check scripts/lapis.py scripts/runtime_diagnostics.py scripts/tests/test_runtime_diagnostics.py",
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "command": "python3 scripts/check_quality.py --focused --test scripts.tests.test_runtime_diagnostics --path scripts/lapis.py --path scripts/runtime_diagnostics.py --path scripts/tests/test_runtime_diagnostics.py",
+      "exit_code": 0,
+      "result": "passed; all 8 selected checks passed",
+      "receipt": "build/reports/quality-focused/receipt.json"
+    },
+    {
+      "command": "unittest scripts.tests.test_runtime_diagnostics",
+      "exit_code": 0,
+      "result": "passed; 20 tests"
+    },
+    {
+      "command": "unittest scripts.tests.test_check_cli_launch",
+      "exit_code": 0,
+      "result": "passed; 4 tests"
+    },
+    {
+      "command": "lapis.py with no arguments; lapis.py diagnose --help; unknown-command probe",
+      "exit_code": "0, 0, 2 respectively",
+      "result": "passed; diagnose appears in the command list, its help is reachable, and an unknown command exits 2"
+    },
+    {
+      "command": "diagnose missing isolated app/runtime fixtures, in plain and --export modes",
+      "exit_code": "1, 1",
+      "result": "passed; both failures were structured, export was explicit and redacted, and no fixture directories were created",
+      "evidence": "Ignored probe logs under the task build directory."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "environment_notes": [
+    "The shared uv cache was unavailable to this sandbox; commands used a temporary cache under ignored build storage.",
+    "The local semantic index backend was unavailable; exact bounded text inspection was used for snapshot reconciliation."
+  ],
+  "non_claims": [
+    "No installed application or installed runtime was inspected, connected to, or modified.",
+    "No live Unix-socket reachability, protocol compatibility, service health, package release, update, reboot-recovery or workload/resource claim.",
+    "No full quality, compiled, sanitizer, native-input, packaged or assembled-candidate acceptance claim.",
+    "The snapshot's prior focused run is provenance only; acceptance for this port is the receipt and checks recorded here."
+  ],
+  "remaining_r5": [
+    "Exercise diagnose against a real installed package and runtime without changing it.",
+    "Qualify live endpoint reachability separately from structural and health claims.",
+    "Select and measure the R5 workload, resource tails and warm/idle behavior on the assembled candidate."
+  ]
+}
