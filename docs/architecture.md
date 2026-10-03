@@ -4430,7 +4430,8 @@ wave owns R1, R4 and R5 source work in disjoint worktrees; R2/R3 begin as a
 read-only acceptance preflight so unchanged evidence is reused and live checks
 run once against the candidate. Existing independent branches
 `fix/next-prompt-scored-followup` and `docs/claude-background-limit` are polish
-or documentation work, not blockers for this wave.
+or documentation work, not blockers for this wave. The R2/R3 command map is
+preserved in [candidate preflight](../evidence/r2-r3-preflight.md).
 
 #### R4 source-provenance audit (October 3)
 
