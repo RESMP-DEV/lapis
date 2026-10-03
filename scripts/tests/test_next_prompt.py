@@ -173,6 +173,24 @@ class TranscriptTests(Homes):
         self.assertEqual((context["conversation"], context["turn"]), ("c1", 2))
         self.assertEqual(context["turns"][-1], {"role": "agent", "text": "Installed."})
         self.assertEqual([r["text"] for r in context["recent"]], ["run the suite"])
+        self.assertNotIn("answered", context)
+
+    def test_context_brings_what_was_sent_for_an_earlier_offer(self):
+        ask = next_prompt.argparse.Namespace
+        context = next_prompt.command_context(
+            ask(cli="claude", conversation="", folder=str(self.work), answered=1)
+        )
+        self.assertEqual(context["answered"], {"turn": 1, "text": "go"})
+        for pending in (2, -1):
+            context = next_prompt.command_context(
+                ask(
+                    cli="claude",
+                    conversation="",
+                    folder=str(self.work),
+                    answered=pending,
+                )
+            )
+            self.assertNotIn("answered", context)
 
     def test_the_actual_next_prompt_or_pending(self):
         actual = next_prompt.command_actual

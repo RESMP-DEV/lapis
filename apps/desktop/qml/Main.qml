@@ -3396,10 +3396,9 @@ ApplicationWindow {
                                  && (preview.active || document.inputReady || document.historyActive)
                     focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
                     // The next prompt lapis predicted for the agent, while it
-                    // waits for a prompt (never over a request, where Return
-                    // would answer it): Tab sends it (Option-Tab only types it), and
-                    // Tab with nothing offered moves to the next agent that
-                    // needs you, so a day can be spent pressing Tab.
+                    // waits for a prompt (never over a request): Tab types it
+                    // for you to edit, Tab again sends it, and Tab with nothing
+                    // offered moves to the next agent that needs you.
                     readonly property bool predicting: typeof nextPrompt !== "undefined" && nextPrompt !== null
                                                        && nextPrompt.enabled && document !== null
                     tabFlow: predicting && ["claude", "codex"].indexOf(document.harnessId) >= 0
