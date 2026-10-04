@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "date_utc": "2026-10-04",
+  "purpose": "Record the R4 source slice that blocks release publication until a versioned, digest-bound candidate gate map is complete.",
+  "source": {
+    "revision": "3276b5ecc92ac5262c09b2f0e52627e321133632",
+    "dirty_at_check": true,
+    "changed_files": [
+      "scripts/release_manifest.py",
+      "scripts/package_macos.py",
+      "scripts/tests/test_release_manifest.py",
+      "scripts/tests/test_package_macos.py",
+      "docs/architecture.md",
+      "docs/status.md"
+    ]
+  },
+  "scope": "This receipt covers source enforcement and focused Python checks only. It does not build, verify, notarize, package, publish, download, install, or qualify a candidate.",
+  "implementation": [
+    "Package manifest candidate gate-map schema 1 requires downloaded-asset, notarized staged verification, fresh-user Finder launch, installed Sparkle update with live sessions, update-failure recovery, and registry/history migration rollback receipts.",
+    "Each gate binds source revision, version, app and DMG artifact hashes, applicable appcast digest, receipt digest and path inside the map, UTC timestamp, command, zero exit status, passing scope, and the whole gate-map digest.",
+    "Release accepts --candidate-gate-map, binds it after appcast creation, and requires it in final preflight before the remote-branch and gh release create steps.",
+    "Replacing covered app or DMG bytes, weakening notarization, or rebinding the appcast revokes gate approval while retaining prior receipts as evidence.",
+    "Final preflight rejects missing, malformed, failed, stale, unbound, or receipt-digest-mismatched gates."
+  ],
+  "checks": [
+    {
+      "name": "focused_manifest_and_packaging_tests",
+      "command": "python3 -m unittest -v scripts.tests.test_release_manifest scripts.tests.test_package_macos",
+      "exit_code": 0,
+      "result": "35 tests passed"
+    },
+    {
+      "name": "focused_ruff_check",
+      "command": "ruff check --config ruff.toml scripts/release_manifest.py scripts/package_macos.py scripts/tests/test_release_manifest.py scripts/tests/test_package_macos.py",
+      "exit_code": 0,
+      "result": "passed with ruff 0.16.9"
+    },
+    {
+      "name": "focused_ruff_format_check",
+      "command": "ruff format --config ruff.toml --check scripts/release_manifest.py scripts/package_macos.py scripts/tests/test_release_manifest.py scripts/tests/test_package_macos.py",
+      "exit_code": 0,
+      "result": "four files already formatted"
+    },
+    {
+      "name": "focused_quality",
+      "command": "python3 scripts/check_quality.py --focused --test scripts.tests.test_release_manifest --test scripts.tests.test_package_macos --path scripts/release_manifest.py --path scripts/package_macos.py",
+      "exit_code": 0,
+      "result": "source/status, diff whitespace, Ruff check/format, and the two focused unittest modules passed; this is not full-suite coverage."
+    },
+    {
+      "name": "diff_whitespace",
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "name": "repository_quality",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "Source/status, whitespace, Ruff, and Python unit checks passed on the parent host."
+    }
+  ],
+  "environment": {
+    "platform": "Darwin arm64",
+    "python": "3.14.8",
+    "ruff": "0.16.9"
+  },
+  "aggregate": {
+    "passed": true,
+    "scope": "The focused R4 candidate-gate source checks and repository Python quality passed; packaging and candidate acceptance remain unclaimed."
+  },
+  "non_claims": [
+    "No candidate app, DMG, appcast, independent download, or candidate gate receipt was produced.",
+    "No staged verification, notarization, stapling, Finder launch, Sparkle update, update-failure recovery, migration rollback, release, or publication was performed.",
+    "Focused Python checks do not qualify a real artifact or make the release candidate accepted.",
+    "The focused quality aggregate is not broad-repository acceptance."
+  ],
+  "remaining_release_gates": [
+    "Produce one candidate and its complete sanitized, immutable candidate receipts.",
+    "Verify independently downloaded assets and the appcast against the exact candidate.",
+    "Qualify fresh-user Finder launch and installed Sparkle update with live sessions.",
+    "Exercise update-failure recovery and registry/history migration rollback.",
+    "Run the required packaging matrix on a later real candidate."
+  ]
+}

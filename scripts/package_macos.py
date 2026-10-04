@@ -43,6 +43,7 @@ from lapis import SetupError, ghostty_prefix  # noqa: E402
 from release_manifest import (  # noqa: E402
     ManifestError,
     bind_appcast,
+    bind_candidate_gates,
     dependency_snapshot,
     digest as artifact_digest,
     load_manifest,
@@ -90,6 +91,7 @@ SPARKLE_URL = (
 )
 SPARKLE = RELEASE / "sparkle"
 APPCAST = RELEASE / "appcast.xml"
+CANDIDATE_GATE_MAP = RELEASE / "candidate-gate-map.json"
 RELEASES = "https://github.com/RESMP-DEV/lapis/releases"
 APP = RELEASE / "stage" / "lapis.app"
 PACKAGE_MANIFEST = RELEASE / "package-manifest.json"
@@ -1453,7 +1455,7 @@ def command_release(arguments):
     try:
         dependencies = release_dependencies(ghostty)
         version = project_version(ROOT)
-        preflight_release(
+        source_manifest = preflight_release(
             PACKAGE_MANIFEST,
             root=ROOT,
             tag=arguments.tag,
@@ -1466,6 +1468,10 @@ def command_release(arguments):
             capture=capture,
             require_appcast=False,
         )
+        source = source_manifest.get("source")
+        source_revision = source.get("commit") if isinstance(source, dict) else None
+        if not isinstance(source_revision, str):
+            raise ManifestError("package manifest has no source revision")
     except ManifestError as error:
         raise PackageError(str(error)) from error
     write_appcast(arguments.tag, version)
@@ -1477,6 +1483,14 @@ def command_release(arguments):
             appcast=APPCAST,
             dmg=DMG,
             release_url=RELEASES,
+        )
+        bind_candidate_gates(
+            PACKAGE_MANIFEST,
+            gate_map_path=Path(arguments.candidate_gate_map),
+            source_revision=source_revision,
+            version=version,
+            artifacts={"app": APP, "dmg": DMG},
+            appcast_digest=artifact_digest(APPCAST),
         )
         preflight_release(
             PACKAGE_MANIFEST,
@@ -1490,6 +1504,7 @@ def command_release(arguments):
             release_url=RELEASES,
             capture=capture,
             require_appcast=True,
+            require_candidate_gates=True,
         )
     except ManifestError as error:
         raise PackageError(str(error)) from error
@@ -1587,6 +1602,12 @@ def main():
     release = commands.add_parser("release", help="Publish a GitHub release")
     release.add_argument("--tag", required=True, help="for example v0.1.0")
     release.add_argument("--draft", action="store_true", help="Leave it as a draft")
+    release.add_argument(
+        "--candidate-gate-map",
+        type=Path,
+        default=CANDIDATE_GATE_MAP,
+        help="versioned digest-bound candidate acceptance gate map",
+    )
     verify = commands.add_parser("verify", help="Check the bundle before release")
     verify.add_argument(
         "--notarized", action="store_true", help="Also check Gatekeeper"

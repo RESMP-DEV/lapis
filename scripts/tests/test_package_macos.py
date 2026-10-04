@@ -23,6 +23,34 @@ MARK_FIXTURE = """<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1
 """
 
 
+class ReleaseArgumentTests(unittest.TestCase):
+    def test_release_takes_the_digest_bound_candidate_gate_map(self):
+        for argv, expected in (
+            (
+                ["package_macos.py", "release", "--tag", "v0.5.0"],
+                package.CANDIDATE_GATE_MAP,
+            ),
+            (
+                [
+                    "package_macos.py",
+                    "release",
+                    "--tag",
+                    "v0.5.0",
+                    "--candidate-gate-map",
+                    "candidate/map.json",
+                ],
+                Path("candidate/map.json"),
+            ),
+        ):
+            with self.subTest(arguments=argv[1:]):
+                with (
+                    patch.object(package.sys, "argv", argv),
+                    patch.object(package, "command_release") as command,
+                ):
+                    package.main()
+                self.assertEqual(command.call_args[0][0].candidate_gate_map, expected)
+
+
 def mark_svg(body):
     return f'<svg xmlns="http://www.w3.org/2000/svg">{body}</svg>'
 

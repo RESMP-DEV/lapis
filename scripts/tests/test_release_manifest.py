@@ -1,6 +1,7 @@
 """Release manifests must fail closed before stale packages can publish."""
 
 import contextlib
+import json
 import plistlib
 import subprocess
 import tempfile
@@ -14,6 +15,51 @@ from scripts import release_manifest as manifest
 COMMIT = "a" * 40
 TREE = "b" * 40
 REMOTE_COMMIT = "c" * 40
+GATE_TIMESTAMP = "2026-10-04T00:00:00Z"
+
+
+def write_candidate_gate_map(directory, source_revision, version, artifacts, appcast):
+    """Create a minimal, sanitized map with one receipt per required gate."""
+    directory.mkdir(parents=True, exist_ok=True)
+    gates = {}
+    for name in manifest.CANDIDATE_GATE_NAMES:
+        receipt_name = f"{name}.json"
+        appcast_sha256 = (
+            appcast if name in manifest.CANDIDATE_GATES_REQUIRING_APPCAST else None
+        )
+        identity = {
+            "source_revision": source_revision,
+            "version": version,
+            "artifacts": dict(artifacts),
+            "appcast_sha256": appcast_sha256,
+            "recorded_at": GATE_TIMESTAMP,
+            "command": f"run candidate check: {name}",
+            "exit_status": 0,
+        }
+        receipt = {
+            "schema_version": 1,
+            "receipt_kind": manifest.CANDIDATE_GATE_RECEIPT_KIND,
+            "scope": name,
+            "passed": True,
+            "gate": name,
+            **identity,
+        }
+        (directory / receipt_name).write_text(
+            json.dumps(receipt, sort_keys=True), encoding="utf-8"
+        )
+        gates[name] = {
+            **identity,
+            "receipt": receipt_name,
+            "receipt_sha256": manifest.content_sha256(directory / receipt_name),
+        }
+    gate_map = {
+        "schema_version": manifest.CANDIDATE_GATE_MAP_SCHEMA_VERSION,
+        "map_kind": manifest.CANDIDATE_GATE_MAP_KIND,
+        "gates": gates,
+    }
+    path = directory / "gate-map.json"
+    path.write_text(json.dumps(gate_map, sort_keys=True), encoding="utf-8")
+    return path
 
 
 class SourceSnapshotTests(unittest.TestCase):
@@ -78,6 +124,44 @@ class ManifestBindingTests(unittest.TestCase):
         )
         manifest.write_manifest(self.manifest_path, value)
         return value
+
+    def write_appcast(self):
+        appcast = self.release / "appcast.xml"
+        signature = "ed" * 64
+        appcast.write_text(
+            f'''<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel><item>
+    <title>lapis 0.5.0</title>
+    <sparkle:version>0.5.0</sparkle:version>
+    <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
+    <enclosure url="https://example.test/releases/download/v0.5.0/{self.dmg.name}"
+               type="application/octet-stream"
+               sparkle:edSignature="{signature}" length="{self.dmg.stat().st_size}"/>
+  </item></channel>
+</rss>
+'''
+        )
+        return appcast
+
+    def qualified(self, dependencies):
+        manifest.set_artifacts(
+            self.manifest_path,
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            provenance={"dmg_source_app_sha256": manifest.digest(self.app)},
+        )
+        manifest.set_notarized(self.manifest_path, True, True)
+        manifest.set_verification(
+            self.manifest_path,
+            scope="notarized",
+            artifacts={
+                "app": manifest.digest(self.app),
+                "dmg": manifest.digest(self.dmg),
+            },
+        )
+        recorded = manifest.load_manifest(self.manifest_path)
+        recorded["dependencies"] = dependencies
+        manifest.write_manifest(self.manifest_path, recorded)
 
     def test_missing_and_malformed_manifests_are_rejected(self):
         with self.assertRaisesRegex(manifest.ManifestError, "manifest is missing"):
@@ -199,6 +283,157 @@ class ManifestBindingTests(unittest.TestCase):
             manifest.preflight_release(self.manifest_path, tag="v0.5.0", **arguments)
         with self.assertRaisesRegex(manifest.ManifestError, "tag 'v9.0.0' is not"):
             manifest.preflight_release(self.manifest_path, tag="v9.0.0", **arguments)
+
+    def test_release_requires_a_complete_digest_bound_gate_map(self):
+        self.write_manifest()
+        dependencies = {
+            "qt": {
+                "version": "6",
+                "source_sha256": {
+                    "qtbase": manifest.content_sha256(self.qtbase_archive())
+                },
+            },
+            "sparkle": {
+                "version": "1",
+                "archive_sha256": manifest.content_sha256(self.sparkle_archive()),
+            },
+        }
+        self.dependencies = dependencies
+        self.qualified(dependencies)
+        appcast = self.write_appcast()
+        manifest.bind_appcast(
+            self.manifest_path,
+            tag="v0.5.0",
+            version="0.5.0",
+            appcast=appcast,
+            dmg=self.dmg,
+            release_url="https://example.test/releases",
+        )
+        arguments = {
+            "root": self.root,
+            "version": "0.5.0",
+            "artifacts": {"app": self.app, "dmg": self.dmg},
+            "dependencies": dependencies,
+            "downloads": self.root / "downloads",
+            "appcast": appcast,
+            "release_url": "https://example.test/releases",
+            "capture": self.capture,
+            "require_appcast": True,
+            "require_candidate_gates": True,
+        }
+        with self.assertRaisesRegex(
+            manifest.ManifestError, "candidate gate map is missing"
+        ):
+            manifest.preflight_release(self.manifest_path, tag="v0.5.0", **arguments)
+
+        gate_map = write_candidate_gate_map(
+            self.release / "candidate-gates",
+            COMMIT,
+            "0.5.0",
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            manifest.digest(appcast),
+        )
+        manifest.bind_candidate_gates(
+            self.manifest_path,
+            gate_map_path=gate_map,
+            source_revision=COMMIT,
+            version="0.5.0",
+            artifacts={"app": self.app, "dmg": self.dmg},
+            appcast_digest=manifest.digest(appcast),
+        )
+        self.assertEqual(
+            manifest.preflight_release(self.manifest_path, tag="v0.5.0", **arguments)[
+                "version"
+            ],
+            "0.5.0",
+        )
+
+    def test_malformed_and_artifact_replaced_gate_maps_fail_closed(self):
+        self.write_manifest()
+        self.qualified(self.dependencies)
+        appcast = self.write_appcast()
+        gate_map = write_candidate_gate_map(
+            self.release / "candidate-gates",
+            COMMIT,
+            "0.5.0",
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            manifest.digest(appcast),
+        )
+        (gate_map.parent / "downloaded_asset.json").unlink()
+        with self.assertRaisesRegex(
+            manifest.ManifestError, "candidate gate downloaded_asset receipt is missing"
+        ):
+            manifest.bind_candidate_gates(
+                self.manifest_path,
+                gate_map_path=gate_map,
+                source_revision=COMMIT,
+                version="0.5.0",
+                artifacts={"app": self.app, "dmg": self.dmg},
+                appcast_digest=manifest.digest(appcast),
+            )
+
+        declared_digest = write_candidate_gate_map(
+            self.release / "declared-digest",
+            COMMIT,
+            "0.5.0",
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            manifest.digest(appcast),
+        )
+        declared_map = json.loads(declared_digest.read_text(encoding="utf-8"))
+        declared_map["gates"]["downloaded_asset"]["receipt_sha256"] = "f" * 64
+        declared_digest.write_text(json.dumps(declared_map, sort_keys=True))
+        with self.assertRaisesRegex(
+            manifest.ManifestError,
+            "declared candidate receipt SHA-256 mismatch",
+        ):
+            manifest.bind_candidate_gates(
+                self.manifest_path,
+                gate_map_path=declared_digest,
+                source_revision=COMMIT,
+                version="0.5.0",
+                artifacts={"app": self.app, "dmg": self.dmg},
+                appcast_digest=manifest.digest(appcast),
+            )
+
+        complete = write_candidate_gate_map(
+            self.release / "complete",
+            COMMIT,
+            "0.5.0",
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            manifest.digest(appcast),
+        )
+        manifest.bind_candidate_gates(
+            self.manifest_path,
+            gate_map_path=complete,
+            source_revision=COMMIT,
+            version="0.5.0",
+            artifacts={"app": self.app, "dmg": self.dmg},
+            appcast_digest=manifest.digest(appcast),
+        )
+        self.dmg.write_bytes(b"rebuilt after acceptance")
+        manifest.set_artifacts(self.manifest_path, {"dmg": manifest.digest(self.dmg)})
+        recorded = manifest.load_manifest(self.manifest_path)
+        self.assertFalse(
+            recorded["candidate_gates"]["gates"]["downloaded_asset"]["passed"]
+        )
+        with self.assertRaisesRegex(
+            manifest.ManifestError,
+            "candidate gate downloaded_asset has been revoked or failed",
+        ):
+            manifest.preflight_release(
+                self.manifest_path,
+                root=self.root,
+                tag="v0.5.0",
+                version="0.5.0",
+                artifacts={"app": self.app, "dmg": self.dmg},
+                dependencies=self.dependencies,
+                downloads=self.root / "downloads",
+                appcast=appcast,
+                release_url="https://example.test/releases",
+                capture=self.capture,
+                require_appcast=True,
+                require_candidate_gates=True,
+            )
 
     def test_failed_remote_branch_probe_is_not_treated_as_a_missing_tag(self):
         self.write_manifest()
@@ -431,6 +666,7 @@ class ReleaseCommandTests(unittest.TestCase):
         self.verify_commands = []
         self.published = False
         self.qualification_observer = None
+        self.bind_candidate_gates = True
 
     def write_appcast(self):
         signature = "ed" * 64
@@ -504,12 +740,39 @@ class ReleaseCommandTests(unittest.TestCase):
         arguments.tag = "v0.5.0"
         arguments.draft = True
         arguments.notarized = False
+        arguments.candidate_gate_map = self.release / "candidate-gates" / "map.json"
 
         def release_dependencies(_ghostty):
             return self.dependencies
 
         def write_appcast(_tag, _version):
             self.write_appcast()
+
+        def bind_gates(manifest_path, **kwargs):
+            if self.bind_candidate_gates:
+                gate_map_path = write_candidate_gate_map(
+                    self.release / "candidate-gates",
+                    COMMIT,
+                    "0.5.0",
+                    {
+                        "app": manifest.digest(self.app),
+                        "dmg": manifest.digest(self.dmg),
+                    },
+                    kwargs["appcast_digest"],
+                )
+            else:
+                gate_map_path = self.release / "candidate-gates" / "absent.json"
+            try:
+                return manifest.bind_candidate_gates(
+                    manifest_path,
+                    gate_map_path=gate_map_path,
+                    source_revision=kwargs["source_revision"],
+                    version=kwargs["version"],
+                    artifacts=kwargs["artifacts"],
+                    appcast_digest=kwargs["appcast_digest"],
+                )
+            except manifest.ManifestError as error:
+                raise package.ManifestError(str(error)) from error
 
         patches = [
             patch.object(package, "ROOT", self.root),
@@ -525,6 +788,7 @@ class ReleaseCommandTests(unittest.TestCase):
             patch.object(package, "ghostty_prefix", return_value=self.root / "ghostty"),
             patch.object(package, "release_dependencies", release_dependencies),
             patch.object(package, "write_appcast", side_effect=write_appcast),
+            patch.object(package, "bind_candidate_gates", side_effect=bind_gates),
         ]
         if not real_verify:
             patches.append(
@@ -567,6 +831,18 @@ class ReleaseCommandTests(unittest.TestCase):
         self.assertEqual(binding["version"], "0.5.0")
         self.assertEqual(binding["sha256"], manifest.digest(self.appcast))
         self.assertEqual(binding["dmg_sha256"], manifest.digest(self.dmg))
+
+    def test_missing_candidate_gate_map_stops_before_publication(self):
+        self.bind_candidate_gates = False
+        with self.assertRaisesRegex(
+            package.PackageError, "candidate gate map is missing"
+        ):
+            self.invoke_release()
+        self.assertFalse(self.published)
+        self.assertTrue(self.appcast.exists())
+        self.assertIsNone(
+            manifest.load_manifest(self.manifest_path).get("candidate_gates")
+        )
 
     def test_changed_bytes_before_appcast_binding_refuses_publication(self):
         def mutate_after_qualification():

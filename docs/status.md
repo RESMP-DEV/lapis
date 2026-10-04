@@ -47,6 +47,16 @@ update-transition and reboot gates remain open. PR63, PR64 and PR66 likewise
 repair tracked source risks but do not close the broader responsiveness,
 remote-host or packaged-workload gates.
 
+The unmerged R4 candidate-gate source further blocks `package_macos.py release`
+until a versioned manifest binds six sanitized, digest-bound receipts for
+independent downloaded assets, notarized staged verification, fresh-user Finder
+launch, installed Sparkle update with live sessions, update-failure recovery,
+and registry/history migration rollback. No such receipts exist, so this is
+release enforcement only; it neither produces a candidate nor qualifies any of
+those behaviors. The
+[source receipt](../evidence/r4-candidate-gate-map.json) records the focused
+checks and explicit non-claims.
+
 ## Components
 
 The underlying terminal and managed-attention milestones retain their earlier
