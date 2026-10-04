@@ -64,6 +64,13 @@
       "exit_code": 0,
       "seconds": 0.06,
       "result": "1/1 journal test passes under AddressSanitizer."
+    },
+    {
+      "name": "repository_quality_after_commit",
+      "passed": true,
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "Source/status, whitespace, Ruff and Python unit checks passed on the parent host after the merge commit."
     }
   ],
   "repairs": [
@@ -74,8 +81,8 @@
   "failed_attempts": [
     {
       "command": "python3 scripts/lapis.py quality",
-      "result": "Source-revision/status, git diff, Ruff check and format checks passed. The Python suite reached 501 tests but 28 loopback binds were denied by the execution sandbox, with three dependent failures and eight skips.",
-      "resolution": "No Python or remote-gateway source changed. Recorded as an environment-limited baseline failure rather than claiming a full quality pass."
+      "result": "In the editing sandbox the Python suite reached 501 tests but 28 loopback binds were denied, with three dependent failures and eight skips.",
+      "resolution": "No Python or remote-gateway source changed; the parent-host post-commit repository quality run passed."
     },
     {
       "command": "focused attention CTest after the first recovery regression edit",
@@ -86,7 +93,6 @@
   "non_claims": [
     "No live Codex or Claude restart was exercised through the new journal path.",
     "No native decision delivery through a real agent binary was exercised.",
-    "The full clang-tidy session-service scan reports pre-existing canonical-main findings in Codex permission parsing and service helpers; it was not made a journal gate because those findings are outside this merge scope.",
-    "The repository-wide Python portion of quality was not green in this sandbox because local socket creation was denied; this receipt does not reuse a stale full-quality pass."
+    "The full clang-tidy session-service scan reports pre-existing canonical-main findings in Codex permission parsing and service helpers; it was not made a journal gate because those findings are outside this merge scope."
   ]
 }
