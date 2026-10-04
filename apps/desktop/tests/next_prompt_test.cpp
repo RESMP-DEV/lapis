@@ -544,8 +544,8 @@ void outcomesCompareWhatWasSent() {
     require(outcomes().last().value(QStringLiteral("similarity_bounded")).toBool(),
             "the outcome records when similarity ignored its suffix");
 
-    // A much shorter replacement exercises the diagonal-band fallback. Use the
-    // stronger length bound conservatively and mark the score as bounded.
+    // A much shorter, disjoint replacement gets the conservative shared-prefix
+    // score of zero, rather than an inflated diagonal-band estimate.
     turn(R"({"conversation":"c","turn":9})", long_guess);
     next.used(QStringLiteral("a"), false, 0, next.offerKey(QStringLiteral("a")));
     const auto short_sent = QByteArray(qsizetype{400}, 'x');
@@ -554,9 +554,22 @@ void outcomesCompareWhatWasSent() {
              short_sent + QByteArrayLiteral("\"}}"),
          "next");
     require(answered(5) &&
-                outcomes().last().value(QStringLiteral("similarity")).toDouble() <= 0.201 &&
+                outcomes().last().value(QStringLiteral("similarity")).toDouble() == 0.0 &&
                 outcomes().last().value(QStringLiteral("similarity_bounded")).toBool(),
-            "a much shorter prompt is not given an inflated similarity");
+            "a disjoint shorter prompt is not given an inflated similarity");
+
+    // A real shared prefix must contribute to the long-prompt fallback.
+    turn(R"({"conversation":"c","turn":11})", long_guess);
+    next.used(QStringLiteral("a"), false, 0, next.offerKey(QStringLiteral("a")));
+    const auto shared_replacement = long_guess.left(1000) + QByteArray(qsizetype{300}, 'x');
+    turn(QByteArrayLiteral(
+             R"json({"conversation":"c","turn":12,"answered":{"turn":11,"text":")json") +
+             shared_replacement + QByteArrayLiteral("\"}}"),
+         "next");
+    require(answered(6) &&
+                outcomes().last().value(QStringLiteral("similarity")).toDouble() == 0.5 &&
+                outcomes().last().value(QStringLiteral("similarity_bounded")).toBool(),
+            "a long prompt's shared prefix contributes to bounded similarity");
 }
 
 int main(int argc, char** argv) {
