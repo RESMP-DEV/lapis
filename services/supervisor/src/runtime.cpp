@@ -495,7 +495,7 @@ Convergence SupervisorRuntime::converge() {
         restart_admissions_.push_back(now);
         // A restart is a new admission, not a replay of the old token. Rotate
         // it before launching so ownership discovery cannot choose a dead peer.
-        const auto rotated = registry_->start(session);
+        const auto rotated = registry_->restart(session);
         if (!rotated.session)
             failed("Supervisor restart did not retain its session slot");
         const auto& rotated_session = rotated.session;

@@ -54,7 +54,7 @@ if(BUILD_TESTING)
     set_tests_properties(terminal-behavior PROPERTIES TIMEOUT 30)
 endif()
 
-if(LAPIS_BUILD_DESKTOP)
+if(LAPIS_BUILD_SESSION)
     find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Core Network)
     set(CMAKE_AUTOMOC ON)
     add_library(lapis_session_launch STATIC src/launch_spec.cpp src/platform/posix/local_endpoint.cpp)

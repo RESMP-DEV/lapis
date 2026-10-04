@@ -52,7 +52,10 @@ class DeterministicIdentity final : public IdentityProvider {
   public:
     [[nodiscard]] std::string instance_epoch() override { return repeat('3', epoch_hex_bytes); }
     [[nodiscard]] std::string session_id() override { return repeat('4', identity_hex_bytes); }
-    [[nodiscard]] std::string session_epoch() override { return repeat('5', identity_hex_bytes); }
+    [[nodiscard]] std::string session_epoch() override {
+        const auto value = static_cast<char>('5' + epoch_serial_++ % 5);
+        return repeat(value, identity_hex_bytes);
+    }
     [[nodiscard]] std::string spawn_token() override {
         const auto value = static_cast<char>('0' + token_serial_++ % 10);
         return repeat(value, spawn_token_hex_bytes);
@@ -60,6 +63,7 @@ class DeterministicIdentity final : public IdentityProvider {
 
   private:
     unsigned token_serial_{0};
+    unsigned epoch_serial_{0};
 };
 
 class FakeClock final : public MonotonicClock {
@@ -281,6 +285,8 @@ void bounded_restart_admission() {
     world->kill_all();
     const auto refused = runtime.converge();
     require(world->launches == 4, "three restarts are admitted");
+    require(runtime.state().session->identity.epoch != saved.session->identity.epoch,
+            "a crash restart rotates the service epoch");
     require(refused == Convergence::exhausted && world->launches == 4,
             "the fourth restart is refused");
     require(runtime.state().session->desired_state == DesiredState::stopped &&

@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-10-04",
+  "source": {
+    "revision_at_receipt": "3276b5ecc92ac5262c09b2f0e52627e321133632",
+    "branch": "work/r1-supervised-session",
+    "source_dirty_at_checks": true
+  },
+  "scope": "Smallest build-gated R1 implementation slice: supervisor-born lapis_session_service ownership, protocol-identity adoption, authoritative reconnect and join clients, reconstruction, and explicit stop. This is not integrated GUI birth or persistent supervisor acceptance.",
+  "environment": {
+    "platform": "darwin",
+    "build_directory": "build/r1-runtime",
+    "build_gate": "LAPIS_BUILD_SUPERVISOR_RUNTIME=ON"
+  },
+  "implemented": [
+    "Headless session-service launcher builds the existing service command without fixture-only supervisor arguments.",
+    "Service accepts an exact --session-epoch HEX32; restart rotates service epoch and spawn token while preserving session ID.",
+    "Launcher writes a private spawn-token/PID ownership record and performs a non-authoritative v6 join handshake.",
+    "Launcher retries only the service's transient overloaded startup status and validates/canonicalizes the child payload exactly as the service does.",
+    "Adoption validates live PID, service executable, owner token, desired launch fingerprint and protocol identity; stale identity and fingerprint mismatch are rejected.",
+    "The handshake drains already-buffered Unix-domain reads and accepts a synchronous Qt flush without misreading an empty pending-write queue as failure.",
+    "Focused integration source exercises authoritative reconnect, join detach/rejoin, detached output, supervisor reconstruction and authenticated explicit stop."
+  ],
+  "verification": [
+    {
+      "name": "format",
+      "command": "python3 scripts/check_cpp.py format",
+      "exit_code": 0
+    },
+    {
+      "name": "python-check",
+      "command": "ruff check scripts/check_supervisor_runtime.py",
+      "exit_code": 0
+    },
+    {
+      "name": "focused-checker",
+      "command": "python3 scripts/check_supervisor_runtime.py --output build/reports/r1-supervisor/receipt.json",
+      "exit_code": 0,
+      "result": "Configure, build, focused CTest, and the real supervisor-born service/client integration passed on the parent host."
+    },
+    {
+      "name": "focused-ctest",
+      "command": "ctest --test-dir build/r1-runtime -R 'supervisor-(state|runtime|session-service)$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "result": "3/3 passed, including authoritative reconnect, joined detach/rejoin, detached output, supervisor reconstruction, and explicit stop."
+    },
+    {
+      "name": "existing-cli-detach-probe",
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/r1-runtime --case detach --output build/reports/r1-supervisor/cli-launch-probe.json",
+      "exit_code": 1,
+      "result": "Service exited before listening; confirms the current sandbox bind denial and is not a source regression receipt."
+    },
+    {
+      "name": "cpp-dev-gate",
+      "command": "CCACHE_DISABLE=1 LAPIS_GHOSTTY_PREFIX=<verified-prefix> python3 scripts/check_cpp.py dev",
+      "exit_code": 1,
+      "result": "Build and clang-tidy workers passed. The gate failed because three AF_UNIX adapter tests could not bind and the LLVM 23 formatter reports pre-existing desktop formatting differences. The focused r1-runtime build and clang-tidy results are the changed-source evidence."
+    },
+    {
+      "name": "python-quality-gate",
+      "command": "CCACHE_DISABLE=1 python3 scripts/lapis.py quality",
+      "exit_code": 1,
+      "result": "Source revision/status, git diff, ruff check and ruff format passed. The suite ran 501 tests with 3 failures and 28 errors; sampled failures are TCP/AF_UNIX bind or private-file-mode denials in this sandbox."
+    },
+    {
+      "name": "repository_quality_parent_host",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "Source/status, whitespace, Ruff, and Python unit checks passed after the integration repair."
+    }
+  ],
+  "aggregate_passed": true,
+  "non_claims": [
+    "The worker sandbox's failed broad C++/Python attempts remain recorded; the parent-host focused integration and repository quality runs are the acceptance evidence.",
+    "No GUI route creates the service; GUI replacement survival is unqualified.",
+    "No launchd, package, reboot, GUI crash, provider routing, restart-storm-on-real-service, sanitizer, load, latency or memory qualification.",
+    "No broader C++ static-analysis pass is claimed beyond the focused changed-source checks."
+  ]
+}
