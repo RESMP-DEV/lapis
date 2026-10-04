@@ -3061,13 +3061,14 @@ and spawn token together. The session service accepts `--session-epoch HEX32`.
 The focused integration test constructs the real service and `/bin/cat` PTY,
 an authoritative reconnect client, a join client, detach/rejoin, supervisor
 destruction/reconstruction, false-peer rejection cases and explicit
-token-authenticated supervisor stop. In this restricted worker sandbox,
-`QLocalServer::listen` returns its bind-denied error, so CTest skips that
-integration with return code 75 after the seam and fixture tests pass. The
-receipt below records that skip and therefore does not claim the real-service
-qualification. This is still not GUI birth replacement: no desktop route calls
-the launcher, there is no persistent daemon CLI, and no launchd, package, or
-environment-ownership admission is implemented.
+token-authenticated supervisor stop. The 2026-10-04 receipt identifies revision
+`3276b5ecc92ac5262c09b2f0e52627e321133632` with a dirty source tree. It records
+that the parent-host focused CTest run passed 3/3 cases, including the
+real-service integration. A separate worker-sandbox CLI probe failed before the
+service listened; that probe is not the focused CTest result. The receipt does
+not establish results at this head. This is still not GUI birth replacement: no
+desktop route calls the launcher, there is no persistent daemon CLI, and no
+launchd, package, or environment-ownership admission is implemented.
 
 A parent-host rerun exposed one real handshake defect: the service accepts an
 attachment before its PTY emits `started`, so the launcher could receive the
@@ -3075,16 +3076,18 @@ transient overloaded "starting" status and treat it as final rejection. The
 launcher now retries only that overloaded startup status, while identity,
 fingerprint and terminal rejection remain terminal. It also canonicalizes the
 child payload through the same service validation used to derive the launch
-fingerprint. Post-repair parent qualification is still required.
+fingerprint. The post-repair parent-host focused run is the 3/3 result recorded
+at the revision above; the repairs in this batch require their own receipt.
 
 This is not the persistent supervisor. It has no launchd registration, daemon
 CLI, package update flow, GUI route, production client, multi-session restore,
 or provider routing. The existing service remains the PTY/terminal/history
-owner; the launcher merely supervises it. Real-service adoption is implemented
-and compiled, but its observed qualification remains pending because the
-current sandbox denies the service bind. On a socket-capable host, the focused
-test still must observe the full client, adoption and stop contract before any
-R1 claim. The earlier ownership-only port receipt remains a dated observation
+owner; the launcher merely supervises it. Real-service client, adoption and
+stop observation is complete at the recorded parent-host revision; the worker
+sandbox bind denial remains a limitation of that separate probe, not of the
+focused CTest result. Broader qualification gaps stay open: no GUI birth route,
+launchd, package, reboot, restart-storm, load or memory evidence exists for this
+slice. The earlier ownership-only port receipt remains a dated observation
 at [runtime port evidence](../evidence/r1-supervisor-runtime-port.json); the
 current limited receipt is
 [supervised session evidence](../evidence/r1-supervised-session.json).

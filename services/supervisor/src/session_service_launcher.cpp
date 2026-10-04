@@ -140,6 +140,8 @@ bool process_runs_program(pid_t pid, const QString& program) {
         ::readlink(("/proc/" + std::to_string(pid) + "/exe").c_str(), path.data(), path.size() - 1);
     if (size > 0)
         actual.assign(path.data(), static_cast<std::size_t>(size));
+#else
+#error "Supervisor service adoption requires macOS proc_pidpath or Linux /proc executable discovery"
 #endif
     return !actual.empty() && actual == expected;
 }
@@ -177,6 +179,8 @@ wire::SessionIdentity wire_identity(const DesiredSession& session) {
 
 SessionServiceLauncher::SessionServiceLauncher(SessionServiceLaunch launch, std::string fingerprint)
     : launch_{std::move(launch)}, fingerprint_{std::move(fingerprint)} {
+    if (launch_.columns == 0 || launch_.rows == 0 || launch_.columns > 1024 || launch_.rows > 1024)
+        failed("Supervisor service launch has an invalid terminal size");
     if (launch_.service_program.isEmpty() || !QFileInfo{launch_.service_program}.isAbsolute() ||
         launch_.agent_program.isEmpty() || launch_.working_directory.isEmpty())
         failed("Supervisor service launch requires absolute programs and a working directory");
@@ -203,8 +207,6 @@ SessionServiceLauncher::SessionServiceLauncher(SessionServiceLaunch launch, std:
         failed("Supervisor service launch fingerprint does not match its payload");
     if (launch_.codex && launch_.claude)
         failed("Supervisor service launch accepts at most one agent integration mode");
-    if (launch_.columns == 0 || launch_.rows == 0 || launch_.columns > 1024 || launch_.rows > 1024)
-        failed("Supervisor service launch has an invalid terminal size");
 }
 
 QStringList SessionServiceLauncher::service_arguments(const DesiredSession& session) const {
@@ -224,8 +226,14 @@ QStringList SessionServiceLauncher::service_arguments(const DesiredSession& sess
 }
 
 bool SessionServiceLauncher::handshake(const DesiredSession& session, pid_t child_pid) {
-    constexpr int attempts = 300;
-    for (int attempt = 0; attempt < attempts; ++attempt) {
+    // A Codex service cannot answer the join until its own backend accepts a
+    // connection; session_service.cpp waits up to about ten seconds to observe
+    // that startup. Share one bounded budget across every attempt instead of
+    // paying a full read timeout per retry, and pause between attempts so a
+    // rejecting or not-yet-ready service is never polled in a tight loop.
+    constexpr auto handshake_budget = std::chrono::seconds(20);
+    const auto budget_end = std::chrono::steady_clock::now() + handshake_budget;
+    while (std::chrono::steady_clock::now() < budget_end) {
         if (!process_alive(child_pid))
             return false;
         QLocalSocket socket;
@@ -244,9 +252,8 @@ bool SessionServiceLauncher::handshake(const DesiredSession& session, pid_t chil
             if (socket.bytesToWrite() != 0 && !socket.waitForBytesWritten(1000))
                 return false;
             QByteArray buffer;
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
             bool retry_startup = false;
-            while (std::chrono::steady_clock::now() < deadline) {
+            while (!retry_startup && std::chrono::steady_clock::now() < budget_end) {
                 // waitForReadyRead() can report false while a Unix-domain peer
                 // has bytes buffered; drain what is available on every poll.
                 buffer += socket.readAll();
@@ -286,19 +293,22 @@ bool SessionServiceLauncher::handshake(const DesiredSession& session, pid_t chil
                         return false;
                     return true;
                 }
-                if (!socket.waitForReadyRead(50))
+                // A startup-overload retry must not keep polling the aborted
+                // socket until the budget expires; leave for the next attempt.
+                if (!retry_startup && !socket.waitForReadyRead(50))
                     continue;
             }
-            if (retry_startup)
+            if (retry_startup) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
+            }
             return false;
         }
-        if (attempt == attempts - 1)
-            qWarning().noquote() << "Supervisor service handshake endpoint did not become ready:"
-                                 << socket_path(session);
         socket.abort();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
+    qWarning().noquote() << "Supervisor service handshake deadline expired:"
+                         << socket_path(session);
     return false;
 }
 
@@ -314,7 +324,10 @@ std::optional<ChildProcess> SessionServiceLauncher::adopt(const DesiredSession& 
         return std::nullopt;
     }
     if (!handshake(session, *owned)) {
-        remove_quietly(owner_path(endpoint));
+        // The peer is alive and verified against this spawn token, so it is
+        // recoverable: deleting its ownership record would orphan the running
+        // service while no supervisor could adopt or stop it again. Keep the
+        // record and let a later adoption retry or explicit stop decide.
         return std::nullopt;
     }
     return ChildProcess{*owned, spawn_token, endpoint, -1, true};
@@ -337,6 +350,7 @@ ChildProcess SessionServiceLauncher::launch(const DesiredSession& session,
 
     const auto owner = owner_path(endpoint);
     const auto temporary = owner + "." + std::to_string(::getpid()) + ".tmp";
+    const auto log_path = endpoint + ".log";
     remove_quietly(temporary);
     int barrier[2]{};
     if (::pipe(barrier) != 0)
@@ -418,8 +432,10 @@ ChildProcess SessionServiceLauncher::launch(const DesiredSession& session,
             _exit(117);
         const UniqueFd null_input{::open("/dev/null", O_RDONLY | O_CLOEXEC)};
         const UniqueFd null_output{::open("/dev/null", O_WRONLY | O_CLOEXEC)};
+        // Every post-fork path uses only materialized strings; allocating here
+        // could deadlock the child against a parent allocator lock.
         const UniqueFd service_log{
-            ::open((endpoint + ".log").c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600)};
+            ::open(log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600)};
         if (!null_input || !null_output || !service_log ||
             ::dup2(null_input.get(), STDIN_FILENO) < 0 ||
             ::dup2(null_output.get(), STDOUT_FILENO) < 0 ||
@@ -448,7 +464,18 @@ ChildProcess SessionServiceLauncher::launch(const DesiredSession& session,
             failed(("Supervisor service failed its ownership handshake" + detail).c_str());
         }
     }
-    const auto owned = read_ownership(owner, spawn_token);
+    std::optional<pid_t> owned;
+    try {
+        owned = read_ownership(owner, spawn_token);
+    } catch (...) {
+        // The service already runs; an unreadable or mismatched record must
+        // not leak it unreaped and unowned. Send the same cleanup as an
+        // explicit mismatch before rethrowing.
+        static_cast<void>(::killpg(pid, SIGKILL));
+        static_cast<void>(wait_terminated(pid));
+        remove_quietly(owner);
+        throw;
+    }
     if (!owned || *owned != pid) {
         static_cast<void>(::killpg(pid, SIGKILL));
         static_cast<void>(wait_terminated(pid));
@@ -456,7 +483,7 @@ ChildProcess SessionServiceLauncher::launch(const DesiredSession& session,
         failed("Supervisor service ownership does not match the launched PID");
     }
     if (!handshake(session, pid)) {
-        QFile service_log{QString::fromStdString(endpoint + ".log")};
+        QFile service_log{QString::fromStdString(log_path)};
         if (service_log.open(QIODevice::ReadOnly))
             qWarning().noquote() << "Supervisor service log:"
                                  << QString::fromUtf8(service_log.readAll());
@@ -469,16 +496,40 @@ ChildProcess SessionServiceLauncher::launch(const DesiredSession& session,
 }
 
 bool SessionServiceLauncher::alive(const ChildProcess& child) {
-    return child.pid > 0 && process_alive(child.pid);
+    if (child.pid <= 0)
+        return false;
+    // A crashed service this supervisor forked remains a zombie until reaped,
+    // and kill(pid, 0) keeps succeeding for zombies. Reap own children here so
+    // convergence observes the death and the restart path can fire; adopted
+    // PIDs belong to another parent and can only be probed with signals.
+    if (!child.adopted) {
+        int status = 0;
+        if (::waitpid(child.pid, &status, WNOHANG) == child.pid)
+            return false;
+    }
+    return process_alive(child.pid);
 }
 
 bool SessionServiceLauncher::terminate(const ChildProcess& child) {
     if (child.pid <= 0)
         return true;
-    static_cast<void>(::killpg(child.pid, SIGTERM));
+    // The PID was validated when the child was adopted or launched, but it may
+    // have exited and been recycled since. Never signal a process or group that
+    // no longer provably runs this exact service program.
+    if (!process_runs_program(child.pid, launch_.service_program)) {
+        if (!child.adopted) {
+            int status = 0;
+            static_cast<void>(::waitpid(child.pid, &status, WNOHANG));
+        }
+        return !process_alive(child.pid);
+    }
+    const auto signal_peer = [pid = child.pid](int signal_value) {
+        static_cast<void>(::killpg(pid, signal_value));
+    };
+    signal_peer(SIGTERM);
     if (wait_terminated(child.pid))
         return true;
-    static_cast<void>(::killpg(child.pid, SIGKILL));
+    signal_peer(SIGKILL);
     return wait_terminated(child.pid);
 }
 

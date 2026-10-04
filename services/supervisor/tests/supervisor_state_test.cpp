@@ -321,6 +321,54 @@ void fresh_registry_rejects_every_control_token() {
     owner.reset();
 }
 
+// A restart exists to rotate the service identity. An identity provider that
+// repeats the stored epoch would republish the crashed session identity, so
+// the transition must fail instead of silently persisting it.
+void restart_refuses_a_repeated_epoch() {
+    struct RepeatingEpoch final : IdentityProvider {
+        [[nodiscard]] std::string instance_epoch() override { return repeat('4', epoch_hex_bytes); }
+        [[nodiscard]] std::string session_id() override { return repeat('5', identity_hex_bytes); }
+        [[nodiscard]] std::string session_epoch() override {
+            return repeat('2', identity_hex_bytes);
+        }
+        [[nodiscard]] std::string spawn_token() override {
+            const auto value = static_cast<char>('0' + token_serial_++ % 10);
+            return repeat(value, spawn_token_hex_bytes);
+        }
+
+        unsigned token_serial_{0};
+    };
+    auto owner = std::make_shared<SupervisorRegistry>(std::make_shared<MemoryStateStorage>(),
+                                                      std::make_shared<JsonStateCodec>(),
+                                                      std::make_shared<RepeatingEpoch>());
+    const auto started = owner->start(record());
+    require(started.session.has_value(), "start before the refused restart");
+    rejects("a restart whose epoch repeats the previous one",
+            [&] { static_cast<void>(owner->restart(*started.session)); });
+}
+
+void restart_refuses_a_repeated_spawn_token() {
+    struct RotatedEpochRepeatedToken final : IdentityProvider {
+        [[nodiscard]] std::string instance_epoch() override { return repeat('4', epoch_hex_bytes); }
+        [[nodiscard]] std::string session_id() override { return repeat('5', identity_hex_bytes); }
+        [[nodiscard]] std::string session_epoch() override {
+            return repeat(static_cast<char>('6' + ++epoch_serial_ % 2), identity_hex_bytes);
+        }
+        [[nodiscard]] std::string spawn_token() override {
+            return repeat('8', spawn_token_hex_bytes);
+        }
+
+        unsigned epoch_serial_{0};
+    };
+    auto owner = std::make_shared<SupervisorRegistry>(
+        std::make_shared<MemoryStateStorage>(), std::make_shared<JsonStateCodec>(),
+        std::make_shared<RotatedEpochRepeatedToken>());
+    const auto started = owner->start(record());
+    require(started.session.has_value(), "start before the repeated-token restart");
+    rejects("a restart whose spawn token repeats the previous one",
+            [&] { static_cast<void>(owner->restart(*started.session)); });
+}
+
 void control_parsing_and_authentication() {
     const JsonStateCodec codec;
     const auto epoch = repeat('4', epoch_hex_bytes);
@@ -411,6 +459,8 @@ int main() {
         fresh_registry_rejects_every_control_token();
         posix_private_atomic_storage();
         post_persistence_failure_poisons_registry();
+        restart_refuses_a_repeated_epoch();
+        restart_refuses_a_repeated_spawn_token();
         control_parsing_and_authentication();
         std::cout << "Supervisor schema, storage, transitions and control passed\n";
         return 0;

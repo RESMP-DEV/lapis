@@ -77,9 +77,10 @@ def main() -> int:
     parser.add_argument("--jobs", type=int, default=4)
     arguments = parser.parse_args()
     receipt_path = arguments.output.resolve()
+    if not receipt_path.is_relative_to(ROOT):
+        parser.error("--output must name a receipt inside the repository checkout")
     receipt_path.unlink(missing_ok=True)
     logs = receipt_path.parent
-    revision, dirty = source_revision()
     scope = (
         "Focused supervisor-runtime build and tests in build/r1-runtime. It does not prove "
         "launchd ownership, GUI integration, package replacement, reboot recovery, load, "
@@ -116,6 +117,7 @@ def main() -> int:
         ),
     )
     try:
+        revision, dirty = source_revision()
         results = []
         for label, command in commands:
             results.append(run(label, command, logs, timeout=300))

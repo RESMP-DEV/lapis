@@ -47,7 +47,10 @@ class DeterministicIdentity final : public IdentityProvider {
   public:
     [[nodiscard]] std::string instance_epoch() override { return repeat('3', epoch_hex_bytes); }
     [[nodiscard]] std::string session_id() override { return repeat('4', identity_hex_bytes); }
-    [[nodiscard]] std::string session_epoch() override { return repeat('5', identity_hex_bytes); }
+    [[nodiscard]] std::string session_epoch() override {
+        const auto value = static_cast<char>('5' + epoch_serial_++ % 5);
+        return repeat(value, identity_hex_bytes);
+    }
     [[nodiscard]] std::string spawn_token() override {
         const auto value = static_cast<char>('0' + token_serial_++ % 10);
         return repeat(value, spawn_token_hex_bytes);
@@ -55,6 +58,7 @@ class DeterministicIdentity final : public IdentityProvider {
 
   private:
     unsigned token_serial_{0};
+    unsigned epoch_serial_{0};
 };
 
 DesiredSession record(const std::string& endpoint, const std::string& fingerprint) {
@@ -195,6 +199,27 @@ void restore_ownership(const std::string& path, const QByteArray& bytes) {
             "restore the private supervisor ownership fixture");
 }
 
+QTemporaryDir owned_test_directory() {
+#if defined(__APPLE__)
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-r1-XXXXXX")};
+#else
+    QTemporaryDir directory{QStringLiteral("/tmp/lapis-r1-XXXXXX")};
+#endif
+    return directory;
+}
+
+void require_bindable_endpoint(const QString& probe) {
+    QLocalServer server;
+    if (!server.listen(probe)) {
+        QFile::remove(probe);
+        std::cout << "supervisor-session-service: QLocalServer bind unavailable ("
+                  << server.errorString().toStdString() << ")\n";
+        throw BindUnavailable{};
+    }
+    server.close();
+    QFile::remove(probe);
+}
+
 void adoption_rejects_false_peers(const DesiredSession& session, const SessionServiceLaunch& launch,
                                   const std::string& fingerprint) {
     SessionServiceLauncher real{launch, fingerprint};
@@ -205,11 +230,16 @@ void adoption_rejects_false_peers(const DesiredSession& session, const SessionSe
     auto identity_changed = session;
     identity_changed.identity.epoch = repeat('7', identity_hex_bytes);
     require(!real.adopt(identity_changed, session.spawn_token), "reject a stale identity");
+    QByteArray preserved;
+    require(ownership_bytes(owner, preserved) && preserved == saved,
+            "a live peer keeps its ownership record across a rejected handshake");
     restore_ownership(owner, saved);
 
     auto fingerprint_changed = session;
     fingerprint_changed.fingerprint = repeat('b', fingerprint_hex_bytes);
     require(!real.adopt(fingerprint_changed, session.spawn_token), "reject a launch mismatch");
+    require(ownership_bytes(owner, preserved) && preserved == saved,
+            "a launch mismatch does not orphan the running service");
     restore_ownership(owner, saved);
 
     QFile dead(QString::fromStdString(owner));
@@ -219,6 +249,7 @@ void adoption_rejects_false_peers(const DesiredSession& session, const SessionSe
             "write a dead PID record");
     dead.close();
     require(!real.adopt(session, session.spawn_token), "reject a dead ownership PID");
+    require(!ownership_bytes(owner, preserved), "a dead ownership PID removes its record");
     restore_ownership(owner, saved);
 }
 
@@ -235,18 +266,10 @@ void wait_gone(pid_t pid) {
 }
 
 void supervised_service_clients_adopt_and_stop() {
-    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-r1-XXXXXX")};
+    QTemporaryDir directory = owned_test_directory();
     require(directory.isValid(), "create an owned private test directory");
     const QString bind_probe = directory.filePath(QStringLiteral("bind.sock"));
-    QLocalServer bind_server;
-    if (!bind_server.listen(bind_probe)) {
-        QFile::remove(bind_probe);
-        std::cout << "supervisor-session-service: QLocalServer bind unavailable ("
-                  << bind_server.errorString().toStdString() << ")\n";
-        throw BindUnavailable{};
-    }
-    bind_server.close();
-    QFile::remove(bind_probe);
+    require_bindable_endpoint(bind_probe);
     const auto endpoint = directory.filePath(QStringLiteral("s.sock")).toStdString();
     const auto expected =
         lapis::session::launch_fingerprint(lapis::session::validate_launch(launch_spec(directory)));
@@ -379,12 +402,85 @@ void supervised_service_clients_adopt_and_stop() {
             "explicit stop removes service ownership");
 }
 
+// A crashed service becomes a zombie child of this test process, so a bare
+// kill(pid, 0) probe keeps reporting it alive and convergence would never take
+// the restart path. The launcher must reap its own children, and the admitted
+// replacement must rotate the epoch and spawn token.
+void crashed_service_restarts_with_rotated_identity() {
+    QTemporaryDir directory = owned_test_directory();
+    require(directory.isValid(), "create an owned private test directory");
+    require_bindable_endpoint(directory.filePath(QStringLiteral("bind.sock")));
+    const auto endpoint = directory.filePath(QStringLiteral("restart.sock")).toStdString();
+    const auto expected =
+        lapis::session::launch_fingerprint(lapis::session::validate_launch(launch_spec(directory)));
+    const auto fingerprint = QString::fromLatin1(expected.toHex()).toStdString();
+    auto desired = record(endpoint, fingerprint);
+    const auto launch = service_launch(directory);
+    auto owner_registry = std::make_shared<SupervisorRegistry>(
+        std::make_shared<MemoryStateStorage>(), std::make_shared<JsonStateCodec>(),
+        std::make_shared<DeterministicIdentity>());
+    const auto launcher = std::make_shared<SessionServiceLauncher>(launch, fingerprint);
+    SupervisorRuntime runtime{owner_registry, launcher};
+    const auto started = runtime.bootstrap(desired);
+    const auto first_pid = runtime.child_pid();
+    require(first_pid > 0, "the first real service starts");
+    require(started.session.has_value(), "the started session is persisted");
+    const auto original_epoch = started.session->identity.epoch;
+    const auto original_token = started.session->spawn_token;
+
+    require(::kill(first_pid, SIGKILL) == 0, "crash the first real service");
+    bool crashed = false;
+    for (int attempt = 0; attempt < 300 && !crashed; ++attempt) {
+        // SIGKILL delivery is asynchronous; converge once the dead service is
+        // visible as an unreaped zombie so alive() cannot hide behind it.
+        crashed = ::kill(first_pid, 0) == 0;
+        if (!crashed)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    require(crashed, "the crashed service is visible before convergence");
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    require(runtime.converge() == Convergence::restarted, "a crashed real service restarts");
+    const auto second_pid = runtime.child_pid();
+    require(second_pid > 0 && second_pid != first_pid, "the replacement is a new service process");
+    const auto& rotated = owner_registry->state().session;
+    require(rotated.has_value() && rotated->identity.epoch != original_epoch,
+            "the crash restart rotates the service epoch");
+    require(rotated->spawn_token != original_token, "the crash restart rotates the spawn token");
+
+    const QJsonObject stop_json{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("action"), QStringLiteral("stop")},
+        {QStringLiteral("supervisor_epoch"),
+         QString::fromStdString(owner_registry->state().instance_epoch)},
+        {QStringLiteral("token"), QString::fromStdString(rotated->spawn_token)},
+        {QStringLiteral("session"), QJsonValue::Null},
+    };
+    const auto stop_bytes = QJsonDocument{stop_json}.toJson(QJsonDocument::Compact);
+    const std::string stop_request{stop_bytes.constData(),
+                                   static_cast<std::size_t>(stop_bytes.size())};
+    const auto stopped_reply_bytes = runtime.control(::geteuid(), stop_request);
+    const QJsonDocument stopped_reply =
+        QJsonDocument::fromJson(QByteArray::fromStdString(stopped_reply_bytes));
+    require(stopped_reply.object().value(QStringLiteral("status")).toString() ==
+                    QStringLiteral("applied") &&
+                runtime.state().session->desired_state == DesiredState::stopped,
+            "authenticated control stops the replacement service");
+    require(runtime.converge() == Convergence::stopped && runtime.child_pid() == -1,
+            "explicit stop terminates the replacement service");
+    wait_gone(second_pid);
+    struct stat owner_info{};
+    require(::lstat((endpoint + ".supervisor-owner").c_str(), &owner_info) != 0 && errno == ENOENT,
+            "explicit stop removes the replacement ownership record");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     QCoreApplication application{argc, argv};
     try {
         supervised_service_clients_adopt_and_stop();
+        crashed_service_restarts_with_rotated_identity();
         std::cout << "supervisor-session-service: ok\n";
         return 0;
     } catch (const BindUnavailable&) {

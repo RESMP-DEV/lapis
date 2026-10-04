@@ -142,6 +142,13 @@ DesiredSession SupervisorRegistry::restart_record(DesiredSession session) const 
     session.desired_state = DesiredState::started;
     session.spawn_token = identities_->spawn_token();
     session.blocked_reason.clear();
+    // Rotation is the reason this transition exists: stale reconnects must not
+    // accept the replacement as the original process. Refuse a provider that
+    // repeats the previous epoch or spawn token instead of silently
+    // republishing the crashed identity.
+    check(session.identity.epoch != state_.session->identity.epoch &&
+              session.spawn_token != state_.session->spawn_token,
+          "Supervisor restart did not rotate the service identity");
     return session;
 }
 
