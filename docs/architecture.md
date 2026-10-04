@@ -4453,6 +4453,19 @@ lint and format checks pass as recorded in the
 [source audit receipt](../evidence/r4-provenance-source-audit.json). R4 remains
 open for an actual packaged, downloaded, installed and updated candidate.
 
+#### Preview pacing reconciliation (October 4)
+
+The preview card's output gate now measures from the last snapshot
+publication, not the last timer activation or event that entered the gate. A
+change after the quiet interval publishes immediately and the scene graph
+coalesces presentation; changes inside the interval arm one precise timer for
+only the remaining time and the deadline presents the newest snapshot. Changing
+`frameInterval` re-paces an already open gate. A focused offscreen/software
+pixel fixture drives a stage and 250 ms card from one document and checks the
+quiet-gap frame, held middle frame and newest-state catch-up
+(`lapis_ui_preview_tests --background --preview-frame-only`). That evidence does
+not qualify native GPU presentation or input.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal
