@@ -570,6 +570,19 @@ void outcomesCompareWhatWasSent() {
                 outcomes().last().value(QStringLiteral("similarity")).toDouble() == 0.5 &&
                 outcomes().last().value(QStringLiteral("similarity_bounded")).toBool(),
             "a long prompt's shared prefix contributes to bounded similarity");
+
+    // The mirrored replacement pins the suffix half of the same fallback.
+    turn(R"({"conversation":"c","turn":13})", long_guess);
+    next.used(QStringLiteral("a"), false, 0, next.offerKey(QStringLiteral("a")));
+    const auto tail_replacement = QByteArray(qsizetype{1000}, 'x') + long_guess.right(1000);
+    turn(QByteArrayLiteral(
+             R"json({"conversation":"c","turn":14,"answered":{"turn":13,"text":")json") +
+             tail_replacement + QByteArrayLiteral("\"}}"),
+         "next");
+    require(answered(7) &&
+                outcomes().last().value(QStringLiteral("similarity")).toDouble() == 0.5 &&
+                outcomes().last().value(QStringLiteral("similarity_bounded")).toBool(),
+            "a long prompt's shared suffix contributes to bounded similarity");
 }
 
 int main(int argc, char** argv) {
