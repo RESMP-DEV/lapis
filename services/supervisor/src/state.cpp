@@ -131,10 +131,35 @@ DesiredSession SupervisorRegistry::start_record(DesiredSession session) const {
     return session;
 }
 
+DesiredSession SupervisorRegistry::restart_record(DesiredSession session) const {
+    // A replacement service is a new logical session identity even when the
+    // conversation is resumed. Preserve the durable session ID, but rotate
+    // the epoch with the spawn token so stale reconnects cannot accept the
+    // replacement as the original process.
+    check(state_.session.has_value(), "No desired session to restart");
+    session.identity.session_id = state_.session->identity.session_id;
+    session.identity.epoch = identities_->session_epoch();
+    session.desired_state = DesiredState::started;
+    session.spawn_token = identities_->spawn_token();
+    session.blocked_reason.clear();
+    return session;
+}
+
 SupervisorState SupervisorRegistry::start(DesiredSession session) {
     check(!poisoned_, "Supervisor persistence failed; reload before transitioning");
     SupervisorState next = state_;
     session = start_record(std::move(session));
+    check(valid_desired_session(session), "Invalid desired session");
+    next.enabled = true;
+    next.session = std::move(session);
+    commit(std::move(next));
+    return state_;
+}
+
+SupervisorState SupervisorRegistry::restart(DesiredSession session) {
+    check(!poisoned_, "Supervisor persistence failed; reload before transitioning");
+    SupervisorState next = state_;
+    session = restart_record(std::move(session));
     check(valid_desired_session(session), "Invalid desired session");
     next.enabled = true;
     next.session = std::move(session);

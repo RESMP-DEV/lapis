@@ -3039,26 +3039,55 @@ injected child-launcher boundary. Its experimental ownership launcher writes a
 private spawn-token/PID record before exec and can therefore adopt that exact
 record after supervisor restart instead of starting a duplicate. Crash
 restarts are admitted at most three times per 60-second window; each admitted
-restart rotates the spawn token. Exhaustion persists desired-stopped state with
-an explicit blocked reason; explicit stop remains enabled while explicit
-disable remains disabled. Focused tests exercise direct peer-UID rejection,
+restart rotates the spawn token and service epoch. Exhaustion persists
+desired-stopped state with an explicit blocked reason; explicit stop remains
+enabled while explicit disable remains disabled. Focused tests exercise direct peer-UID rejection,
 token-authenticated start/stop/disable, stale/malformed/oversized requests,
 simulated restart adoption, the admission boundary, and a harmless child
 fixture's launch/adopt/terminate path.
 
+#### Supervised session-service slice (October 4)
+
+The same opt-in runtime now has a real `lapis_session_service` launcher: it
+builds the existing service command, passes the supervisor-selected 32-hex
+session ID and epoch, starts the requested terminal child, writes the same
+private ownership record, and performs a non-authoritative v6 join handshake
+before treating the process as adoptable. Adoption checks the endpoint, owner
+record, live PID, service executable identity and protocol identity; launch
+fingerprint mismatch and stale identity are rejected. `SupervisorRegistry`
+has an explicit restart transition that preserves session ID but rotates epoch
+and spawn token together. The session service accepts `--session-epoch HEX32`.
+
+The focused integration test constructs the real service and `/bin/cat` PTY,
+an authoritative reconnect client, a join client, detach/rejoin, supervisor
+destruction/reconstruction, false-peer rejection cases and explicit
+token-authenticated supervisor stop. In this restricted worker sandbox,
+`QLocalServer::listen` returns its bind-denied error, so CTest skips that
+integration with return code 75 after the seam and fixture tests pass. The
+receipt below records that skip and therefore does not claim the real-service
+qualification. This is still not GUI birth replacement: no desktop route calls
+the launcher, there is no persistent daemon CLI, and no launchd, package, or
+environment-ownership admission is implemented.
+
+A parent-host rerun exposed one real handshake defect: the service accepts an
+attachment before its PTY emits `started`, so the launcher could receive the
+transient overloaded "starting" status and treat it as final rejection. The
+launcher now retries only that overloaded startup status, while identity,
+fingerprint and terminal rejection remain terminal. It also canonicalizes the
+child payload through the same service validation used to derive the launch
+fingerprint. Post-repair parent qualification is still required.
+
 This is not the persistent supervisor. It has no launchd registration, daemon
 CLI, package update flow, GUI route, production client, multi-session restore,
-or provider routing. It does not adapt or launch the existing session service:
-the fixture proves only the ownership-handling seam, while the existing service
-remains the PTY/terminal/history owner by contract. The launcher's experimental
-adoption currently relies on a private owner record and PID liveness rather
-than a qualified session-service protocol handshake. Supervisor crash while
-another process is alive is simulated at the launcher seam, not yet qualified
-against a real session service or launchd restart. The focused test skips the
-socket listener when its host denies AF_UNIX `bind(2)`; listener framing must
-therefore be qualified on a socket-capable host before any production claim. The
-parent-side port receipt, including a caught and repaired socket-framing defect,
-is [runtime port evidence](../evidence/r1-supervisor-runtime-port.json).
+or provider routing. The existing service remains the PTY/terminal/history
+owner; the launcher merely supervises it. Real-service adoption is implemented
+and compiled, but its observed qualification remains pending because the
+current sandbox denies the service bind. On a socket-capable host, the focused
+test still must observe the full client, adoption and stop contract before any
+R1 claim. The earlier ownership-only port receipt remains a dated observation
+at [runtime port evidence](../evidence/r1-supervisor-runtime-port.json); the
+current limited receipt is
+[supervised session evidence](../evidence/r1-supervised-session.json).
 
 #### Current implementation disposition (September 30)
 

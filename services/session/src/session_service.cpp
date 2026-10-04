@@ -316,9 +316,11 @@ bool codex_continues_thread(const QStringList& arguments) {
 class SessionService final : public QObject {
   public:
     SessionService(const QString& endpoint, const QByteArray& requested_session_id,
-                   const LaunchSpec& launch)
+                   const LaunchSpec& launch, const QByteArray& requested_session_epoch = {})
         : lock_(endpoint + QStringLiteral(".lock")), terminal_(launch.size, limits()),
-          fingerprint_(launch_fingerprint(launch)), identity_{requested_session_id, wire::new_id()},
+          fingerprint_(launch_fingerprint(launch)),
+          identity_{requested_session_id,
+                    requested_session_epoch.isEmpty() ? wire::new_id() : requested_session_epoch},
           history_(history_root(endpoint), QString::fromLatin1(requested_session_id.toHex()),
                    history_limits()) {
         configure_history();
@@ -1887,6 +1889,7 @@ TerminalSize parse_size(const QString& text) {
 // The options before SOCKET; `socket` is left at the first other argument.
 struct ServiceOptions {
     QByteArray session_id;
+    QByteArray session_epoch;
     AgentMode agent{AgentMode::terminal};
     std::optional<TerminalSize> size;
     qsizetype socket{1};
@@ -1904,6 +1907,10 @@ ServiceOptions parse_options(const QStringList& arguments) {
             if (!options.session_id.isEmpty())
                 throw std::invalid_argument("Expected one --session-id HEX32");
             options.session_id = parse_session_id(value("Expected one --session-id HEX32"));
+        } else if (option == QStringLiteral("--session-epoch")) {
+            if (!options.session_epoch.isEmpty())
+                throw std::invalid_argument("Expected one --session-epoch HEX32");
+            options.session_epoch = parse_session_id(value("Expected one --session-epoch HEX32"));
         } else if (option == QStringLiteral("--codex") || option == QStringLiteral("--claude")) {
             if (options.agent != AgentMode::terminal)
                 throw std::invalid_argument("Expected one agent mode");
@@ -1939,6 +1946,7 @@ int main(int argc, char** argv) {
         if (arguments.size() - socket_index < 3)
             throw std::invalid_argument(
                 "Usage: lapis_session_service [--session-id HEX32] [--codex | --claude] "
+                "[--session-epoch HEX32] "
                 "[--size COLUMNSxROWS] SOCKET DIRECTORY PROGRAM [ARG ...]");
         if (options.session_id.isEmpty())
             options.session_id = wire::new_id();
@@ -1949,7 +1957,7 @@ int main(int argc, char** argv) {
                                              .size = options.size.value_or(TerminalSize{100, 30}),
                                              .agent = options.agent});
         SessionService service(posix::prepare_endpoint(arguments.at(socket_index)),
-                               options.session_id, launch);
+                               options.session_id, launch, options.session_epoch);
         return app.exec();
     } catch (const std::exception& error) {
         qCritical().noquote() << error.what();
