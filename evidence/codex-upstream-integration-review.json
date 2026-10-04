@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-10-04",
+  "source": {
+    "baseline_revision": "3276b5ecc92ac5262c09b2f0e52627e321133632",
+    "source_revision": "268e6d6907d219de6c63719a8e6618cb6c2dbdfa",
+    "ported_revision": "b5e0c55"
+  },
+  "scope": "Documentation-only port of the Codex upstream integration review, its open-choice row, five observations, and probes P1-P3 onto current architecture. No Codex binary probe or adapter behavior changed.",
+  "verification": [
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "command": "architecture local link and anchor check",
+      "exit_code": 0,
+      "result": "94 local references checked"
+    },
+    {
+      "command": "source-to-working section and open-choice row comparison",
+      "exit_code": 0,
+      "result": "Both ported blocks match the source commit text"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "Source/status, whitespace, Ruff, and Python unit checks passed after the documentation commit"
+    }
+  ],
+  "aggregate_passed": true,
+  "non_claims": [
+    "No Codex binary requalification, two-thread worktree probe, permission-catalog smoke, or adapter capability-matrix update was run.",
+    "The review records open probes only; it does not claim support for multi-thread Codex sessions.",
+    "No external upstream repository was modified or published."
+  ]
+}
