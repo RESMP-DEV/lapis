@@ -1476,22 +1476,35 @@ def command_release(arguments):
         raise PackageError(str(error)) from error
     write_appcast(arguments.tag, version)
     try:
-        bind_appcast(
-            PACKAGE_MANIFEST,
-            tag=arguments.tag,
-            version=version,
-            appcast=APPCAST,
-            dmg=DMG,
-            release_url=RELEASES,
+        # The appcast and the gate map are one publication decision.  Stage
+        # both bindings beside the manifest and swap them in with a single
+        # replace, so a rejected gate map never leaves a manifest that looks
+        # bound for release with an appcast but no candidate approval.
+        staged_manifest = PACKAGE_MANIFEST.with_name(
+            f".{PACKAGE_MANIFEST.name}.release-binding"
         )
-        bind_candidate_gates(
-            PACKAGE_MANIFEST,
-            gate_map_path=Path(arguments.candidate_gate_map),
-            source_revision=source_revision,
-            version=version,
-            artifacts={"app": APP, "dmg": DMG},
-            appcast_digest=artifact_digest(APPCAST),
-        )
+        staged_manifest.unlink(missing_ok=True)
+        shutil.copy2(PACKAGE_MANIFEST, staged_manifest)
+        try:
+            bind_appcast(
+                staged_manifest,
+                tag=arguments.tag,
+                version=version,
+                appcast=APPCAST,
+                dmg=DMG,
+                release_url=RELEASES,
+            )
+            bind_candidate_gates(
+                staged_manifest,
+                gate_map_path=Path(arguments.candidate_gate_map),
+                source_revision=source_revision,
+                version=version,
+                artifacts={"app": APP, "dmg": DMG},
+                appcast_digest=artifact_digest(APPCAST),
+            )
+            os.replace(staged_manifest, PACKAGE_MANIFEST)
+        finally:
+            staged_manifest.unlink(missing_ok=True)
         preflight_release(
             PACKAGE_MANIFEST,
             root=ROOT,

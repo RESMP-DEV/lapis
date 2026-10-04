@@ -54,8 +54,8 @@ launch, installed Sparkle update with live sessions, update-failure recovery,
 and registry/history migration rollback. No such receipts exist, so this is
 release enforcement only; it neither produces a candidate nor qualifies any of
 those behaviors. The
-[source receipt](../evidence/r4-candidate-gate-map.json) records the focused
-checks and explicit non-claims.
+[source receipt](../evidence/r4-candidate-gate-map.json) records the validated review-repair working tree, the focused checks, and explicit non-claims. It is an enforcement
+receipt, not a gate map instance.
 
 ## Components
 

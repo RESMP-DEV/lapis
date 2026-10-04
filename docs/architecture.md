@@ -2932,12 +2932,24 @@ receipts: independently downloaded-asset verification, notarized staged
 verification, fresh-user Finder launch, an installed Sparkle update with live
 sessions, update-failure recovery, and registry/history migration rollback.
 Each gate records the source revision, version, app and DMG artifact hashes,
-the appcast digest where applicable, the receipt digest, a UTC timestamp, the
-command, and zero exit status. The bound map also records its own digest.
+the `appcast_digest` where applicable, the receipt digest, a UTC timestamp, the
+command, and zero exit status. The bound map also records its own digest. The
+timestamp accepts any ISO 8601 form that resolves to UTC, not only a trailing
+`Z`. The appcast field is named `appcast_digest` because it carries the
+manifest `digest()` of the appcast, which binds structure as well as bytes;
+receipts bind raw bytes separately through `content_sha256` under
+`receipt_sha256`.
+
 `release --candidate-gate-map` binds this map after the appcast exists and
-before final preflight; replacing app or DMG bytes, weakening notarization, or
+before final preflight. The appcast and gate bindings are staged into one
+temporary copy of the manifest and swapped in with a single atomic replace, so
+a rejected gate map never leaves a manifest carrying an appcast binding with no
+candidate approval. Replacing app or DMG bytes, weakening notarization, or
 rebinding the appcast revokes approval while retaining the old receipts as
-evidence. Final preflight refuses missing, malformed, failed, stale, or
+evidence. `bind_candidate_gates` refuses to overwrite an existing binding;
+`replace=True` is the explicit operator escape hatch for re-binding while a
+candidate is still being iterated, and it revalidates the complete replacement
+before writing. Final preflight refuses missing, malformed, failed, stale, or
 unbound gates before the remote-branch check and `gh release create`.
 
 This is enforcement, not acceptance. No external candidate receipt exists in
@@ -2946,7 +2958,9 @@ transition, recovery, migration rollback, publication, or release
 qualification was exercised. Receipts used for a future candidate must be
 sanitized and immutable, and their commands must not embed machine identities.
 The [focused source receipt](../evidence/r4-candidate-gate-map.json) records
-the checked dirty source and the remaining candidate gates.
+the validated review-repair working tree, the check results, and the remaining candidate gates. It
+is an enforcement receipt rather than a gate map instance, so it carries no
+gates and must never be passed to `release --candidate-gate-map`.
 
 #### Minimum supported slice
 

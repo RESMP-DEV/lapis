@@ -48,6 +48,22 @@ class ManifestError(RuntimeError):
 ManifestSink = Callable[[list[str | Path]], str]
 
 
+def _utc_timestamp(value: object) -> datetime | None:
+    """Return an ISO timestamp only when it explicitly resolves to UTC."""
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    return (
+        parsed
+        if parsed.tzinfo is not None and parsed.utcoffset() == timedelta(0)
+        else None
+    )
+
+
 def _git(root: Path, arguments: list[str], capture: ManifestSink) -> str:
     try:
         return capture(["git", "-C", str(root), *arguments]).strip()
@@ -479,7 +495,12 @@ def _validate_candidate_identity(
         errors.append("candidate gate artifacts must bind exactly app and DMG SHA-256s")
     else:
         _equal("candidate artifacts", expected_artifacts, artifacts, errors)
-    _equal("candidate appcast", expected_appcast, value.get("appcast_sha256"), errors)
+    _equal(
+        "candidate appcast digest",
+        expected_appcast,
+        value.get("appcast_digest"),
+        errors,
+    )
 
 
 def _validate_candidate_fields(value: object, errors: list[str]) -> None:
@@ -489,15 +510,7 @@ def _validate_candidate_fields(value: object, errors: list[str]) -> None:
     receipt_digest = value.get("receipt_sha256")
     if not isinstance(receipt_digest, str) or _SHA256.fullmatch(receipt_digest) is None:
         errors.append("candidate gate has no valid receipt SHA-256")
-    timestamp = value.get("recorded_at")
-    valid_timestamp = False
-    if isinstance(timestamp, str) and timestamp.endswith("Z"):
-        try:
-            parsed = datetime.fromisoformat(f"{timestamp[:-1]}+00:00")
-            valid_timestamp = parsed.utcoffset() == timedelta(0)
-        except ValueError:
-            pass
-    if not valid_timestamp:
+    if _utc_timestamp(value.get("recorded_at")) is None:
         errors.append("candidate gate has no UTC timestamp")
     command = value.get("command")
     if not isinstance(command, str) or not command.strip():
@@ -611,8 +624,8 @@ def candidate_gate_binding(
                 )
                 _equal(
                     "candidate receipt appcast",
-                    entry.get("appcast_sha256"),
-                    receipt.get("appcast_sha256"),
+                    entry.get("appcast_digest"),
+                    receipt.get("appcast_digest"),
                     errors,
                 )
                 _equal(
@@ -659,8 +672,14 @@ def bind_candidate_gates(
     version: str,
     artifacts: dict[str, Path],
     appcast_digest: str | None,
+    replace: bool = False,
 ) -> dict[str, object]:
-    """Atomically record the complete, digest-bound candidate gate map."""
+    """Atomically record the complete, digest-bound candidate gate map.
+
+    ``replace=True`` is the operator escape hatch for a failed candidate run.
+    It is explicit, revalidates the complete replacement, and production
+    defaults to refusing to overwrite an existing binding.
+    """
     binding = candidate_gate_binding(
         gate_map_path,
         source_revision=source_revision,
@@ -669,7 +688,7 @@ def bind_candidate_gates(
         appcast_digest=appcast_digest,
     )
     manifest = load_manifest(path)
-    if "candidate_gates" in manifest:
+    if "candidate_gates" in manifest and not replace:
         raise ManifestError("candidate gates are already bound to this manifest")
     manifest["candidate_gates"] = binding
     write_manifest(path, manifest)
