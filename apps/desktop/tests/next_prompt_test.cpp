@@ -543,6 +543,20 @@ void outcomesCompareWhatWasSent() {
             "long prompts are classified and scored over the same bound");
     require(outcomes().last().value(QStringLiteral("similarity_bounded")).toBool(),
             "the outcome records when similarity ignored its suffix");
+
+    // A much shorter replacement exercises the diagonal-band fallback. Use the
+    // stronger length bound conservatively and mark the score as bounded.
+    turn(R"({"conversation":"c","turn":9})", long_guess);
+    next.used(QStringLiteral("a"), false, 0, next.offerKey(QStringLiteral("a")));
+    const auto short_sent = QByteArray(qsizetype{400}, 'x');
+    turn(QByteArrayLiteral(
+             R"json({"conversation":"c","turn":10,"answered":{"turn":9,"text":")json") +
+             short_sent + QByteArrayLiteral("\"}}"),
+         "next");
+    require(answered(5) &&
+                outcomes().last().value(QStringLiteral("similarity")).toDouble() <= 0.201 &&
+                outcomes().last().value(QStringLiteral("similarity_bounded")).toBool(),
+            "a much shorter prompt is not given an inflated similarity");
 }
 
 int main(int argc, char** argv) {

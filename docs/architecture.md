@@ -3902,7 +3902,7 @@ without a numeric probability, and the predicted event records `top_scored`.
   window after a presented frame, once per offer even when two offers share
   their words: the impression), `used` (service-admitted Tab or Option-Tab,
   keys typed first, milliseconds after seen) and `withdrawn` (replaced by the next turn's guess, or the setting turned
-  off, and whether it had been seen), plus a bounded `similarity_bounded` marker when outcome scoring compares only the first 2000 characters, `failed` (the stage, context or
+  off, and whether it had been seen), plus a bounded `similarity_bounded` marker when outcome scoring compares only the first 2000 characters or uses its conservative shared-prefix/suffix fallback for prompts over 256 characters, `failed` (the stage, context or
   predict, and a stable reason category without raw error text) and `skipped`
   (the hourly cap, which counts model calls). Log records are bounded to 1 MiB;
   the active log rotates at 4 MiB with one owner-only backup. Helper stdout is

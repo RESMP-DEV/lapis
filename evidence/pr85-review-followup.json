@@ -23,7 +23,7 @@
     "Taking a newer offer re-anchors awaiting outcome telemetry to that offer and records the Tab-sent wait metric.",
     "The helper clips answered prompt text to the same bounded context contract as the other helper fields.",
     "A failed suggestion paste lets Tab fall through, QML re-pushes of the same offer do not disarm or duplicate the fill, deferred Enter is not reported when the preview would drop it, and an accepted external paste disarms Tab-Tab.",
-    "The Kilo follow-up round counts an admitted paste once, preserves an armed guess across a pending request, keeps full-prompt `as_offered` classification separate from explicitly marked bounded similarity, bounds both the similarity band and row clearing, aggregates settled-outcome rates in next_prompt_eval.py, and scopes this receipt's aggregate."
+    "The Kilo follow-up round counts an admitted paste once, preserves an armed guess across a pending request, keeps full-prompt `as_offered` classification separate from explicitly marked bounded similarity, and uses a conservative shared-prefix/suffix score for long prompts so settlement stays linear. It also aggregates settled-outcome rates in next_prompt_eval.py and scopes this receipt's aggregate."
   ],
   "environment": "macOS arm64; AppleClang 21.0.0.21000334; Qt 6.11.2",
   "verification": [

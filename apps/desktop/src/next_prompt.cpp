@@ -18,18 +18,21 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <utility>
 #include <vector>
 
 namespace lapis::desktop {
 namespace {
+struct Similarity {
+    double value{};
+    bool bounded{};
+};
 constexpr int kContextTimeoutMs = 60 * 1000;
 constexpr int kPredictTimeoutMs = 180 * 1000;
 constexpr qint64 kHourMs = qint64{60} * 60 * 1000;
 constexpr int kScreenChars = 6000;
 constexpr qsizetype kCompared = 2000;
-constexpr qsizetype kSimilarityBand = 256;
+constexpr qsizetype kExactSimilarityLimit = 256;
 // The log's record format: offer ids and seen/used/withdrawn events.
 constexpr int kLogVersion = 2;
 constexpr qsizetype kHelperOutputLimit = qsizetype{1024} * 1024;
@@ -451,34 +454,33 @@ void NextPrompt::withdraw(const QString& id, Withdrawal why) {
 
 namespace {
 // How alike two prompts are: 1 minus their edit distance over the longer
-// length, so 1 is the same text and 0 nothing in common. Prompts past 2000
-// characters compare by their start. Long comparisons also use a diagonal
-// band: this runs in a GUI callback, and widely divergent long prompts do not
-// need a precise distance to be reported as dissimilar.
-double similarity(const QString& guess, const QString& sent) {
+// length, so 1 is the same text and 0 nothing in common. Short prompts use the
+// exact distance. Longer prompts, which settle in a GUI callback, use only a
+// conservative shared-prefix/suffix score and are marked bounded.
+Similarity similarity(const QString& guess, const QString& sent) {
     const auto a = guess.trimmed().left(kCompared);
     const auto b = sent.trimmed().left(kCompared);
     if (a.isEmpty() && b.isEmpty())
-        return 1.0;
-    const qsizetype band = std::min(kSimilarityBand, std::max(a.size(), b.size()));
-    const auto unreachable = std::numeric_limits<qsizetype>::max() / 4;
-    std::vector<qsizetype> previous(static_cast<std::size_t>(b.size()) + 1, unreachable);
-    std::vector<qsizetype> row(previous.size(), unreachable);
-    previous.front() = 0;
-    for (qsizetype j = 1; j <= std::min(b.size(), band); ++j)
+        return {1.0, false};
+    const auto longest = std::max(a.size(), b.size());
+    if (longest > kExactSimilarityLimit) {
+        qsizetype prefix = 0;
+        while (prefix < a.size() && prefix < b.size() && a[prefix] == b[prefix])
+            ++prefix;
+        qsizetype suffix = 0;
+        while (suffix < a.size() - prefix && suffix < b.size() - prefix &&
+               a[a.size() - suffix - 1] == b[b.size() - suffix - 1])
+            ++suffix;
+        const auto shared = std::min(prefix + suffix, std::min(a.size(), b.size()));
+        return {double(shared) / double(longest), true};
+    }
+    std::vector<qsizetype> previous(static_cast<std::size_t>(b.size()) + 1);
+    std::vector<qsizetype> row(previous.size());
+    for (qsizetype j = 0; j <= b.size(); ++j)
         previous[static_cast<std::size_t>(j)] = j;
     for (qsizetype i = 1; i <= a.size(); ++i) {
-        const auto first_clear = std::max<qsizetype>(0, i - band - 1);
-        const auto last_clear = std::min<qsizetype>(b.size() + 1, i + band + 2);
-        const auto offset = [](qsizetype value) {
-            return static_cast<std::vector<qsizetype>::difference_type>(value);
-        };
-        std::fill(row.begin() + offset(first_clear), row.begin() + offset(last_clear), unreachable);
-        if (i <= band)
-            row.front() = i;
-        const auto first = std::max<qsizetype>(1, i - band);
-        const auto last = std::min(b.size(), i + band);
-        for (qsizetype j = first; j <= last; ++j) {
+        row[0] = i;
+        for (qsizetype j = 1; j <= b.size(); ++j) {
             const auto at = static_cast<std::size_t>(j);
             const qsizetype replace = previous[at - 1] + (a[i - 1] == b[j - 1] ? 0 : 1);
             row[at] = std::min({previous[at] + 1, row[at - 1] + 1, replace});
@@ -486,9 +488,7 @@ double similarity(const QString& guess, const QString& sent) {
         std::swap(previous, row);
     }
     const auto distance = previous[static_cast<std::size_t>(b.size())];
-    if (distance >= unreachable)
-        return std::max(0.0, 1.0 - double(band + 1) / double(std::max(a.size(), b.size())));
-    return 1.0 - double(distance) / double(std::max(a.size(), b.size()));
+    return {1.0 - double(distance) / double(longest), false};
 }
 } // namespace
 
@@ -513,7 +513,8 @@ void NextPrompt::settle(const QString& id, const QJsonObject& context) {
     const auto compared_guess = guess.trimmed().left(kCompared);
     const auto compared_sent = sent.trimmed().left(kCompared);
     const bool exact = sent.trimmed() == guess.trimmed();
-    const bool similarity_bounded = compared_guess == compared_sent && !exact;
+    const auto score = similarity(guess, sent);
+    const bool prefix_bounded = compared_guess == compared_sent && !exact;
     auto event = about(waiting->offer, id);
     event.insert(QStringLiteral("event"), QStringLiteral("outcome"));
     event.insert(QStringLiteral("filled"), waiting->filled);
@@ -521,9 +522,8 @@ void NextPrompt::settle(const QString& id, const QJsonObject& context) {
     event.insert(QStringLiteral("result"), exact             ? QStringLiteral("as_offered")
                                            : waiting->filled ? QStringLiteral("edited")
                                                              : QStringLiteral("own"));
-    event.insert(QStringLiteral("similarity"),
-                 std::round(similarity(guess, sent) * 1000.0) / 1000.0);
-    event.insert(QStringLiteral("similarity_bounded"), similarity_bounded);
+    event.insert(QStringLiteral("similarity"), std::round(score.value * 1000.0) / 1000.0);
+    event.insert(QStringLiteral("similarity_bounded"), prefix_bounded || score.bounded);
     event.insert(QStringLiteral("sent_text"), sent.left(4000));
     awaiting_.erase(waiting);
     record(event);
