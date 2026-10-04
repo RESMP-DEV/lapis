@@ -4453,6 +4453,29 @@ lint and format checks pass as recorded in the
 [source audit receipt](../evidence/r4-provenance-source-audit.json). R4 remains
 open for an actual packaged, downloaded, installed and updated candidate.
 
+## Durable attention journal integration (October 4)
+
+An agent session service owns a versioned append-only attention journal beside
+its endpoint for non-terminal agents. The journal is a POSIX audit boundary, not
+a process owner or source of reconnect truth. Opening it takes an exclusive
+lease, verifies format version and sequence integrity, truncates only a torn
+tail, refuses mid-file corruption or a newer format, and rotates only when no
+question is open.
+
+A pending request is asked softly: presentation proceeds if that audit append
+fails. A user decision is different and fail-closed: the service appends and
+fsyncs `decided` before forwarding it, and an unavailable or failing journal
+refuses the forward and asks for the decision again. On restart, an unanswered
+ask is closed as `outcome_unknown`; this is explicitly not evidence that the
+user approved it. Later agent retirement or resolution records `resolved`.
+
+The focused journal target covers round trips, torn tails and checksums,
+mid-file corruption, format refusal, exclusive ownership, recovery
+classification (including a stale decision followed by a newer same-id ask), and
+rotation. Its first integration receipt is
+[attention-journal-integration](../evidence/attention-journal-integration.json);
+it does not claim native live-agent restart or decision-delivery qualification.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal

@@ -24,6 +24,22 @@ if(BUILD_TESTING)
     set_tests_properties(session-platform-ownership PROPERTIES TIMEOUT 10)
 endif()
 
+# Durable attention audit. The decision barrier lives here: a forwarded
+# decision is appended and fsynced first. POSIX file ownership only; no GUI,
+# protocol or terminal dependency.
+add_library(lapis_attention_journal STATIC src/attention_journal.cpp)
+target_link_libraries(lapis_attention_journal PRIVATE lapis_project_options
+    PUBLIC lapis_attention)
+target_include_directories(lapis_attention_journal PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+if(BUILD_TESTING)
+    add_executable(lapis_attention_journal_tests tests/attention_journal_test.cpp)
+    target_link_libraries(lapis_attention_journal_tests PRIVATE
+        lapis_project_options lapis_attention_journal)
+    add_test(NAME attention-journal COMMAND lapis_attention_journal_tests)
+    set_tests_properties(attention-journal PROPERTIES TIMEOUT 20)
+endif()
+
 # The production adapter is part of every normal build. Bootstrap its pinned
 # external dependency once; do not silently omit behavior when it is missing.
 include("${PROJECT_SOURCE_DIR}/cmake/Ghostty.cmake")
@@ -58,7 +74,8 @@ if(LAPIS_BUILD_DESKTOP)
     add_executable(lapis_session_service src/session_service.cpp)
     target_link_libraries(lapis_session_service PRIVATE lapis_project_options
         lapis_session_platform lapis_session_launch lapis_terminal lapis_attention
-        lapis_local_protocol lapis_pty_process lapis_history Qt6::Core Qt6::Network)
+        lapis_local_protocol lapis_pty_process lapis_history lapis_attention_journal
+        Qt6::Core Qt6::Network)
     if(BUILD_TESTING)
         add_executable(lapis_history_store_tests tests/history_store_test.cpp)
         target_link_libraries(lapis_history_store_tests PRIVATE lapis_project_options lapis_history)

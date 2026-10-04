@@ -1,0 +1,92 @@
+{
+  "schema": "lapis.attention-journal-integration/1",
+  "recorded_at": "2026-10-04T13:00:26Z",
+  "canonical_parent": "3276b5ecc92ac5262c09b2f0e52627e321133632",
+  "journal_source_branch_commit": "c4c9f5997babb766b77bf72f2074403da2a066be",
+  "scope": "Merged the durable attention journal into the current session-service dependency graph and exercised the focused journal and attention targets. This receipt binds the working tree before merge staging; it does not prove native live-agent restart or decision-delivery qualification.",
+  "platform": "macOS arm64",
+  "source_sha256": {
+    "services/session/CMakeLists.txt": "4baab6ee13233f5e77dc0dfedf9b1b5c03975fe5704a66cc8516250f33282523",
+    "services/session/src/attention_journal.hpp": "3ca0d58d843618645fe07ee37c6515eaf1337c1f9e8cb8bb3a2a1e2d684673d1",
+    "services/session/src/attention_journal.cpp": "85cabd1001a79f556fa4e466d1b2baf376a09b33d5c12d66b91ac642d1b24362",
+    "services/session/src/session_service.cpp": "d230474b5db2983627584dc7d012ddc1d916308d73929f325068b67e93960913",
+    "services/session/tests/attention_journal_test.cpp": "5ebfca1f9ab158f50962354e689154e4578ecbba33f5f9dd6f1942eb0b0f3305",
+    "docs/architecture.md": "f37ebd99f26f74a561e85732df7fb7385d46a0bc9e214cc36b3a994b02290470",
+    "docs/status.md": "20a7652f8a2360f24cb9e4b6daaa74b1ea57aef1927216bef87f3658417ac276"
+  },
+  "tools": {
+    "cmake": "4.4.3",
+    "ctest": "4.4.3",
+    "clang": "Homebrew 23.1.2",
+    "clang-tidy": "Homebrew LLVM 23.1.2",
+    "cppcheck": "2.22.0"
+  },
+  "checks": [
+    {
+      "name": "configure-and-build",
+      "passed": true,
+      "command": "cmake -S . -B build/pr87-desktop -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=ON -DLAPIS_SANITIZER=none -DLAPIS_WARNINGS_AS_ERRORS=ON -DLAPIS_BUILD_DESKTOP=ON -DCMAKE_CXX_COMPILER=<repository LLVM clang++> -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OSX_SYSROOT=<xcrun SDK>; cmake --build build/pr87-desktop --target lapis_attention_journal_tests lapis_session_service -j 8",
+      "exit_code": 0,
+      "result": "Journal and linked session-service targets compile with warnings-as-errors enabled."
+    },
+    {
+      "name": "focused-ctest",
+      "passed": true,
+      "command": "ctest --test-dir build/pr87-desktop -R '^attention-(journal|state|protocol)$' --no-tests=error --output-on-failure",
+      "exit_code": 0,
+      "seconds": 0.03,
+      "result": "3/3 pass: attention-journal, attention-state, attention-protocol."
+    },
+    {
+      "name": "format-and-whitespace",
+      "passed": true,
+      "command": "clang-format --dry-run --Werror <five journal/session C++ files>; git diff --check -- services/session docs",
+      "exit_code": 0
+    },
+    {
+      "name": "journal-clang-tidy",
+      "passed": true,
+      "command": "clang-tidy -p build/pr87-desktop services/session/src/attention_journal.cpp services/session/tests/attention_journal_test.cpp",
+      "exit_code": 0,
+      "seconds": 3.09
+    },
+    {
+      "name": "journal-cppcheck",
+      "passed": true,
+      "command": "cppcheck --project=<two-journal-TU filtered compilation database> --library=qt -DQ_MOC_INCLUDE(x)= --enable=warning,performance,portability --error-exitcode=1 --inline-suppr --template=gcc",
+      "exit_code": 0,
+      "seconds": 2.9
+    },
+    {
+      "name": "journal-asan",
+      "passed": true,
+      "command": "cmake -S . -B build/pr87-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DLAPIS_SANITIZER=address -DLAPIS_WARNINGS_AS_ERRORS=ON -DLAPIS_BUILD_DESKTOP=ON -DCMAKE_CXX_COMPILER=<repository LLVM clang++> -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OSX_SYSROOT=<xcrun SDK>; cmake --build build/pr87-asan --target lapis_attention_journal_tests -j 8; ctest --test-dir build/pr87-asan -R '^attention-journal$' --no-tests=error --output-on-failure",
+      "exit_code": 0,
+      "seconds": 0.06,
+      "result": "1/1 journal test passes under AddressSanitizer."
+    }
+  ],
+  "repairs": [
+    "Resolved the CMake conflict by preserving canonical-main service dependencies and adding lapis_attention_journal.",
+    "Made a newer same-id ask supersede the older open question in recovery, matching the documented identity-survives-epochs contract.",
+    "Added a regression in which a stale decision cannot close a newer same-id question."
+  ],
+  "failed_attempts": [
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "result": "Source-revision/status, git diff, Ruff check and format checks passed. The Python suite reached 501 tests but 28 loopback binds were denied by the execution sandbox, with three dependent failures and eight skips.",
+      "resolution": "No Python or remote-gateway source changed. Recorded as an environment-limited baseline failure rather than claiming a full quality pass."
+    },
+    {
+      "command": "focused attention CTest after the first recovery regression edit",
+      "result": "attention-journal failed because the fixture still expected the replacement question to be closed; corrected the fixture to resolve the current replacement before asserting one open question.",
+      "resolution": "Final 3/3 focused CTest pass."
+    }
+  ],
+  "non_claims": [
+    "No live Codex or Claude restart was exercised through the new journal path.",
+    "No native decision delivery through a real agent binary was exercised.",
+    "The full clang-tidy session-service scan reports pre-existing canonical-main findings in Codex permission parsing and service helpers; it was not made a journal gate because those findings are outside this merge scope.",
+    "The repository-wide Python portion of quality was not green in this sandbox because local socket creation was denied; this receipt does not reuse a stale full-quality pass."
+  ]
+}
