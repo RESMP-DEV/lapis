@@ -46,6 +46,7 @@ add_library(lapis_desktop_view STATIC
     src/app_paths.cpp src/app_paths.hpp
     src/desktop_actions.cpp src/desktop_actions.hpp src/platform_desktop.hpp
     src/shell_environment.cpp src/shell_environment.hpp
+    src/tool_status.cpp src/tool_status.hpp
     src/ui_preview.cpp src/ui_preview.hpp)
 target_include_directories(lapis_desktop_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 if(APPLE)
@@ -98,7 +99,7 @@ if(APPLE)
     target_link_libraries(lapis_desktop PRIVATE "-framework AppKit")
 endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
-qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml)
+qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml qml/Tools.qml)
 set_target_properties(lapis_desktop PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/macos/Info.plist.in"
     MACOSX_BUNDLE_BUNDLE_NAME "lapis"
@@ -217,6 +218,20 @@ if(BUILD_TESTING)
     add_test(NAME keymap COMMAND lapis_keymap_tests)
     set_tests_properties(keymap PROPERTIES TIMEOUT 20)
 
+    add_executable(lapis_tool_status_tests tests/tool_status_test.cpp)
+    target_link_libraries(lapis_tool_status_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME tool-status COMMAND lapis_tool_status_tests)
+    set_tests_properties(tool-status PROPERTIES TIMEOUT 30)
+
+    add_executable(lapis_tools_ui_tests tests/tools_ui_test.cpp)
+    target_link_libraries(lapis_tools_ui_tests PRIVATE lapis_project_options lapis_desktop_view
+        Qt6::QuickControls2)
+    target_compile_definitions(lapis_tools_ui_tests PRIVATE
+        LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
+    add_test(NAME tools-ui COMMAND lapis_tools_ui_tests)
+    set_tests_properties(tools-ui PROPERTIES TIMEOUT 60 RESOURCE_LOCK "qt_gui" ENVIRONMENT
+        "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
+
     add_executable(lapis_ui_preview_tests tests/ui_preview_test.cpp)
     target_link_libraries(lapis_ui_preview_tests PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
     target_compile_definitions(lapis_ui_preview_tests PRIVATE LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
@@ -283,4 +298,4 @@ target_link_libraries(lapis_attention_ui_probe PRIVATE lapis_project_options lap
     Qt6::QuickControls2)
 target_compile_definitions(lapis_attention_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
 qt_add_resources(lapis_attention_ui_probe attention_qml PREFIX "/" FILES
-    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml)
+    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml qml/Tools.qml)

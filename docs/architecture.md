@@ -65,6 +65,7 @@ promoting any number to an acceptance threshold.
 | Agent adapters | Tool-specific activity, attention requests, responses and reconciliation | Service-owned; capabilities verified per tool/version |
 | Attention policy | Service-owned pending requests; desktop aggregation, navigation aging/cooldowns and presentation snooze | Source state stays authoritative in each service; only desktop focus policy assigns keyboard ownership |
 | Desktop | Layout, navigation, keyboard ownership, IME, selection and accessibility | Receives snapshots; explicitly targets input and decisions to a session |
+| Tool status | Installed/version observations for canonical agent CLIs in the Tools pane | Reads `harness_catalog`; never configures tools or changes launch, restore, resume or update behavior |
 | Renderer | Glyph/texture caches, terminal drawing and previews | Desktop render thread; consumes snapshots, never mutable parser objects |
 
 ```mermaid
@@ -4454,6 +4455,13 @@ lint and format checks pass as recorded in the
 open for an actual packaged, downloaded, installed and updated candidate.
 
 ## Contracts to preserve
+
+**Runtime tool status is read-only.** `ToolStatus` has exactly one row for every
+entry in canonical `harness_catalog`, resolved through the same program lookup as
+launch. Its bounded version probe and freshness stamp are status evidence only:
+they do not configure tools, extend the catalog, qualify authentication or model
+access, or feed launch/restore semantics. Any broader tool registry needs a
+separate reviewed contract and must not replace the catalog.
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal
 sessions own PTYs and engines; structured Codex sessions own app-server

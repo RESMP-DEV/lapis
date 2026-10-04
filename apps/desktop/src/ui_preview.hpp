@@ -32,6 +32,7 @@ struct UiPreviewOptions {
     QObject* alerts{};        // exposed to QML as `alerts`
     QObject* agentSearch{};   // exposed to QML as `agentSearch`
     QObject* usage{};         // exposed to QML as `usage`
+    QObject* tools{};         // exposed to QML as `tools`
     QObject* desktop{};       // exposed to QML as `desktop`
     QObject* conversations{}; // exposed to QML as `conversations`
     QObject* terminals{};     // exposed to QML as `terminals`

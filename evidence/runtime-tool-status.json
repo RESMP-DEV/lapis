@@ -1,0 +1,130 @@
+{
+  "schema": "lapis.work-receipt/1",
+  "recorded_on": "2026-10-04",
+  "baseline_revision": "3276b5ecc92ac5262c09b2f0e52627e321133632",
+  "branch": "work/runtime-tool-status",
+  "source_dirty": true,
+  "scope": "Narrow read-only tool status and bounded version probes over the canonical desktop harness catalog. This rework does not replace harness_catalog or change launch, restore, resume or update semantics.",
+  "changes": [
+    "Added ToolStatus with exactly one row per harness_catalog entry, catalog-owned identity and launch metadata, bounded concurrent probes, timeout/failure/missing/present/unknown states, five-minute freshness and per-tool rerun.",
+    "Added a guarded Tools QML pane with live, failed, timeout, missing, unprobed and stale presentation plus all-check and per-row controls.",
+    "Exposed the status object through the desktop and isolated UI preview without adding a parallel registry, configuration section or tools.d surface.",
+    "Preserved Workspace, KeyMap, harness_catalog, saved-agent restoration, resume arguments and updater behavior unchanged.",
+    "Added focused process fixtures, production-QML coverage, architecture ownership/contract and status qualification rows."
+  ],
+  "verification": [
+    {
+      "name": "quality-startup-and-python-style",
+      "command": "just quality",
+      "exit_code": 1,
+      "passed_subchecks": [
+        "source-revision",
+        "source-status",
+        "git-diff-check",
+        "ruff-format-check",
+        "ruff-check"
+      ],
+      "scope": "The full Python suite started 501 tests. It failed on sandbox-denied localhost listeners and network access, live remote-service startup, and an unrelated plan-sign-in mode assertion; no failure names the changed tool status code.",
+      "log": "build/reports/quality/python-unittests.log",
+      "classification": "environment-blocked and pre-existing; not a pass"
+    },
+    {
+      "name": "repository_quality_parent_host",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "scope": "Source/status, whitespace, Ruff and Python unit checks passed after the implementation checks."
+    },
+    {
+      "name": "desktop-format",
+      "command": "LAPIS_LLVM_BIN=/opt/homebrew/opt/llvm/bin python3 scripts/check_cpp.py format --jobs 2",
+      "exit_code": 0,
+      "log": "build/reports/format/format.log"
+    },
+    {
+      "name": "changed-cpp-apple-clang-format-check",
+      "command": "clang-format --dry-run --Werror <changed C++ sources and tests>",
+      "exit_code": 0,
+      "llvm": "Apple 21.0.0",
+      "scope": "Final check of files owned by this change after unrelated Homebrew formatter edits were restored to HEAD."
+    },
+    {
+      "name": "desktop-all-target-build",
+      "command": "LAPIS_LLVM_BIN=/opt/homebrew/opt/llvm/bin CCACHE_DIR=build/.ccache CCACHE_TEMPDIR=build/tmp/ccache cmake --build --preset desktop --parallel 8",
+      "exit_code": 0,
+      "scope": "Configured the desktop preset with the pinned validated Ghostty prefix and built all desktop targets after the final status-source revision."
+    },
+    {
+      "name": "focused-desktop-tests",
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop -R '^(tool-status|tools-ui)$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "tests": 2,
+      "scope": "Canonical-only rows, fixture probes, expected and unexpected exits, output detail, timeout, missing, present, expiry and rerun; production QML rendered live, failure, timeout, unprobed, missing, rerun and stale states."
+    },
+    {
+      "name": "focused-clang-tidy",
+      "command": "clang-tidy -p build/desktop --warnings-as-errors='*' tool_status.cpp tool_status_test.cpp tools_ui_test.cpp",
+      "exit_code": 0,
+      "llvm": "23.1.2",
+      "scope": "New and directly changed C++ translation units only. Findings from the signed shift and unchecked optional were repaired before this pass."
+    },
+    {
+      "name": "full-desktop-gate",
+      "command": "LAPIS_LLVM_BIN=/opt/homebrew/opt/llvm/bin LAPIS_GHOSTTY_PREFIX=<validated-prefix> just desktop",
+      "exit_code": 1,
+      "passed_subchecks": [
+        "configure",
+        "build",
+        "clang-format"
+      ],
+      "failed_subchecks": {
+        "cppcheck": "Two warnings in untouched services/session/src/session_service.cpp.",
+        "clang-tidy": "New-code findings were repaired, but untouched session, PTY, workspace and plan-sign-in files fail Homebrew LLVM 23.1.2 checks.",
+        "ctest": "27 of 41 passed. Fourteen GUI/service/socket suites failed with no available screens, denied local sockets or unavailable remote usage in this sandbox."
+      },
+      "classification": "implementation builds and formats; broad static/GUI gate is environment-blocked and includes unrelated current-LLVM findings; not a pass"
+    },
+    {
+      "name": "ui-review-background",
+      "command": "LAPIS_LLVM_BIN=/opt/homebrew/opt/llvm/bin QT_QPA_PLATFORM=offscreen python3 scripts/lapis.py ui-review --json",
+      "exit_code": 1,
+      "passed_subchecks": [
+        "configure",
+        "build",
+        "ui-shortcuts-background"
+      ],
+      "failed_subchecks": {
+        "ui-full-background": "Workspace review captured 23 images and reached the side-terminal assertion, then failed because its local listener had an invalid QLocalSocket name.",
+        "terminal-input-background": "The PTY fixture listener failed before input."
+      },
+      "receipt": "build/reports/ui-review/20261004T131549Z-wjzek07z/receipt.json",
+      "scope": "Offscreen, software scene graph; no native GPU presentation or OS input.",
+      "classification": "shortcuts pass; full background review is environment-blocked; not a pass"
+    },
+    {
+      "name": "ui_review_parent_host",
+      "command": "python3 scripts/lapis.py ui-review",
+      "exit_code": 0,
+      "scope": "Configure/build, full background UI, shortcuts, and terminal input passed with the desktop target explicitly enabled; offscreen/software only."
+    }
+  ],
+  "source_sha256": {
+    "apps/desktop/src/tool_status.hpp": "736e8ee022c338a2054ba0981673c31d0108cffbc0e84389af48b2d8acbbfdaa",
+    "apps/desktop/src/tool_status.cpp": "fa43cb56961718a333b7c1a8363eb3c0cc3165680c1645a3efd14283df0e1fd6",
+    "apps/desktop/qml/Tools.qml": "61470ca19fa7d2e8fc53e05a4b003a44069563334ad9917688eb60b66f6ae193",
+    "apps/desktop/qml/Main.qml": "791584077f8187e966495fff31caf1fcd3b36fc4c1e0fa093421d877b1d72efc",
+    "apps/desktop/src/main.cpp": "c82408b1b9d885dcae5d84b8a186f0fa897fd20f80c4273490599cce468d427e",
+    "apps/desktop/src/ui_preview.hpp": "bf8367bee8eaad81412afc349e5097013e7766cf1db3faa60bc92cd127551b9f",
+    "apps/desktop/src/ui_preview.cpp": "69d441c3e1f4385a2f149fba08c37a5bf24385c28c68b4fc5d0192df9b21bcae",
+    "apps/desktop/CMakeLists.txt": "a95c5538a780184c0ba13e93967a3af40baa5052e38b41a243c80822552c7d87",
+    "apps/desktop/tests/tool_status_test.cpp": "6d2d1ce46cea663ef95de67040c1f2b0f859b6697c200b6f43be21d6daf07059",
+    "apps/desktop/tests/tools_ui_test.cpp": "2cd99480fe4fc3edec502c2ec219e159a5cb99d2a59ec4e750e160f94408d8c6",
+    "docs/architecture.md": "ed4a3c459ea5f0c70138a733b621b01d7f7bf8d6ee210eadb59820dfa941aa5b",
+    "docs/status.md": "a4943384ffddfc07bf72c375dc1a0e211825e2b4b67d32be2330d1d15ead42d5"
+  },
+  "non_claims": [
+    "A version probe does not prove authentication, account access, model availability, terminal rendering, attention delivery or successful agent launch.",
+    "Fixture executables prove status semantics, not installed Claude, Codex, OpenCode, Grok, OMP, Antigravity, Kimi or Gemini behavior.",
+    "The focused Qt checks do not qualify native macOS input, IME, pasteboard, native GPU presentation or Linux.",
+    "The full desktop static/CTest gate did not pass under Homebrew LLVM 23 because unrelated baseline findings and sandboxed service cases remain; focused tool tests, repository quality, and background UI review did pass."
+  ]
+}
