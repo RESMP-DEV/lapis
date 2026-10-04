@@ -173,6 +173,40 @@ class TranscriptTests(Homes):
         self.assertEqual((context["conversation"], context["turn"]), ("c1", 2))
         self.assertEqual(context["turns"][-1], {"role": "agent", "text": "Installed."})
         self.assertEqual([r["text"] for r in context["recent"]], ["run the suite"])
+        self.assertNotIn("answered", context)
+
+    def test_context_brings_what_was_sent_for_an_earlier_offer(self):
+        ask = next_prompt.argparse.Namespace
+        context = next_prompt.command_context(
+            ask(cli="claude", conversation="", folder=str(self.work), answered=1)
+        )
+        self.assertEqual(context["answered"], {"turn": 1, "text": "go"})
+        for pending in (2, -1):
+            context = next_prompt.command_context(
+                ask(
+                    cli="claude",
+                    conversation="",
+                    folder=str(self.work),
+                    answered=pending,
+                )
+            )
+            self.assertNotIn("answered", context)
+
+    def test_context_clips_what_was_sent_for_an_earlier_offer(self):
+        path = write_lines(
+            self.claude / "projects" / "-elsewhere" / "c3.jsonl",
+            [
+                claude_user("x" * 5000, "2026-09-28T11:00:00Z"),
+                claude_agent("Done.", "2026-09-28T11:00:01Z"),
+            ],
+        )
+        context = next_prompt.command_context(
+            next_prompt.argparse.Namespace(
+                cli="claude", conversation=path.stem, folder="", answered=0
+            )
+        )
+        self.assertLessEqual(len(context["answered"]["text"]), 4000 + len("\n[...]\n"))
+        self.assertIn("[...]", context["answered"]["text"])
 
     def test_the_actual_next_prompt_or_pending(self):
         actual = next_prompt.command_actual
@@ -519,9 +553,21 @@ class AcceptanceTests(unittest.TestCase):
                 "typed_first": 3,
                 "ms_after_seen": 900,
             },
+            {
+                "event": "outcome",
+                "offer": "a:1",
+                "result": "as_offered",
+                "similarity": 1.0,
+            },
             predicted("a:2", 0.45, category="status", top_scored=False),
             {"event": "seen", "offer": "a:2"},
             {"event": "withdrawn", "offer": "a:2", "reason": "new_turn", "seen": True},
+            {
+                "event": "outcome",
+                "offer": "a:2",
+                "result": "own",
+                "similarity": 0.0,
+            },
             predicted("b:3", 0.5),
             {"event": "withdrawn", "offer": "b:3", "reason": "new_turn", "seen": False},
             predicted("c:4", 0.2, shown=False),
@@ -535,6 +581,23 @@ class AcceptanceTests(unittest.TestCase):
             (4, 3, 2, 1),
         )
         self.assertEqual(report["acceptance"], 0.5)
+        self.assertEqual(
+            (
+                report["outcomes"],
+                report["outcome_as_offered"],
+                report["outcome_edited"],
+                report["outcome_own"],
+            ),
+            (2, 1, 0, 1),
+        )
+        self.assertEqual(
+            (
+                report["outcome_settled"],
+                report["outcome_unsettled"],
+                report["outcome_settled_of_used"],
+            ),
+            (0.667, 1, 1.0),
+        )
         self.assertEqual(
             (
                 report["offered_scored"],

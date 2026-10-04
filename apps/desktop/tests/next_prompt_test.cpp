@@ -24,6 +24,7 @@ using lapis::desktop::NextPrompt;
 using lapis::desktop::NextPromptSettings;
 
 namespace {
+constexpr qsizetype kComparedForTest = 2000;
 NextPromptSettings on(int max_per_hour = 60, const QString& effort = {}) {
     NextPromptSettings settings;
     settings.automatic = true;
@@ -298,7 +299,7 @@ void predictsAndOffers() {
     next.seen(QStringLiteral("a"));
     next.seen(QStringLiteral("a"));
     require(next.readyAgents() == QVariantMap{{QStringLiteral("a"), true}}, "now seen");
-    next.used(QStringLiteral("a"), true, 5);
+    next.used(QStringLiteral("a"), false, 5);
     require(next.suggestion(QStringLiteral("a")).isEmpty() && next.readyAgents().isEmpty(),
             "a used suggestion is gone");
     logged = events(log);
@@ -308,7 +309,7 @@ void predictsAndOffers() {
             "it was seen once");
     require(logged[2].value(QStringLiteral("event")) == QLatin1String("used") &&
                 logged[2].value(QStringLiteral("offer")) == first_offer &&
-                logged[2].value(QStringLiteral("sent")).toBool() &&
+                !logged[2].value(QStringLiteral("sent")).toBool() &&
                 logged[2].value(QStringLiteral("typed_first")).toInt() == 5 &&
                 logged[2].value(QStringLiteral("ms_after_seen")).toInteger() >= 0 &&
                 logged[2].value(QStringLiteral("turn")).toInt() == 7,
@@ -424,6 +425,166 @@ void predictsAndOffers() {
 }
 } // namespace
 
+// What the person sent after an offer is recorded beside it once the
+// conversation holds it: typed in by Tab and changed, their own words, or the
+// guess unchanged. A turn the agent starts itself waits; /clear drops it.
+void outcomesCompareWhatWasSent() {
+    QTemporaryDir directory;
+    const QDir root(directory.path());
+    require(root.mkpath(QStringLiteral("bin")), "fixture bin");
+    standIns(root);
+    const auto log = root.filePath(QStringLiteral("next.jsonl"));
+    NextPrompt next(
+        [](const QString&) -> std::optional<NextPrompt::Agent> {
+            NextPrompt::Agent agent;
+            agent.cli = QStringLiteral("claude");
+            return agent;
+        },
+        [] { return QJsonArray{}; },
+        [&root](const QString& name) { return root.filePath(QStringLiteral("bin/") + name); },
+        {root.path(), log});
+    next.setSettings(on(60));
+    const auto outcomes = [&log] {
+        QList<QJsonObject> found;
+        for (const auto& event : events(log))
+            if (event.value(QStringLiteral("event")) == QLatin1String("outcome"))
+                found << event;
+        return found;
+    };
+    const auto turn = [&](const QByteArray& context, const QByteArray& guess) {
+        write(root.filePath(QStringLiteral("context.reply")), context);
+        write(root.filePath(QStringLiteral("predict.reply")),
+              R"({"candidates":[{"text":")" + guess + R"(","p":0.3}]})");
+        next.turnFinished(QStringLiteral("a"));
+        require(waitFor([&] {
+                    return next.suggestion(QStringLiteral("a")) == QString::fromUtf8(guess);
+                }),
+                "the guess is offered");
+    };
+    const auto answered = [&](int count) {
+        return waitFor([&] { return outcomes().size() == count; });
+    };
+
+    turn(R"({"conversation":"c","turn":3})", "go now");
+    require(!read(root.filePath(QStringLiteral("context.args"))).contains("--answered"),
+            "nothing is asked for before an offer");
+    const auto first = next.offerKey(QStringLiteral("a"));
+    next.used(QStringLiteral("a"), false, 0, first);
+    next.used(QStringLiteral("a"), true, 0, QStringLiteral("other"));
+    require(events(log).last().value(QStringLiteral("sent")) != QJsonValue(true),
+            "a second Tab for another offer is ignored");
+    turn(R"({"conversation":"c","turn":4,"answered":{"turn":3,"text":"go now, and test it"}})",
+         "status?");
+    require(read(root.filePath(QStringLiteral("context.args"))).contains("--answered\n3\n"),
+            "the offer's turn is asked for");
+    require(answered(1), "an edited guess is recorded");
+    auto outcome = outcomes().last();
+    require(outcome.value(QStringLiteral("offer")).toString() == first &&
+                outcome.value(QStringLiteral("result")) == QLatin1String("edited") &&
+                outcome.value(QStringLiteral("filled")).toBool() &&
+                outcome.value(QStringLiteral("sent_text")) ==
+                    QLatin1String("go now, and test it") &&
+                outcome.value(QStringLiteral("similarity")).toDouble() > 0.2 &&
+                outcome.value(QStringLiteral("similarity")).toDouble() < 1.0,
+            "typed in by Tab, then changed, with its similarity and the text sent");
+    require(!outcome.value(QStringLiteral("tab_sent")).toBool(), "it was sent with Return");
+
+    // The agent's own turn (no prompt sent yet) leaves the offer waiting.
+    turn(R"({"conversation":"c","turn":4})", "status?");
+    require(outcomes().size() == 1, "a turn without a prompt records nothing");
+    turn(R"({"conversation":"c","turn":5,"answered":{"turn":4,"text":"what broke"}})", "go");
+    require(answered(2), "their own prompt is recorded");
+    outcome = outcomes().last();
+    require(outcome.value(QStringLiteral("result")) == QLatin1String("own") &&
+                !outcome.value(QStringLiteral("filled")).toBool(),
+            "a prompt typed instead of the guess is their own");
+
+    // A newer offer can replace a guess that is still waiting for the agent's
+    // own turn. Taking the newer offer must re-anchor the outcome to it.
+    const auto third = next.offerKey(QStringLiteral("a"));
+    next.used(QStringLiteral("a"), false, 0, third);
+    turn(R"({"conversation":"c","turn":5})", "go on");
+    const auto replacement = next.offerKey(QStringLiteral("a"));
+    require(replacement != third, "the agent's own turn did not offer a newer guess");
+    next.seen(QStringLiteral("a"));
+    next.used(QStringLiteral("a"), false, 0, replacement);
+    next.used(QStringLiteral("a"), true, 0, replacement);
+    require(events(log).last().value(QStringLiteral("event")) == QLatin1String("used") &&
+                events(log).last().value(QStringLiteral("offer")) == replacement &&
+                events(log).last().value(QStringLiteral("sent")).toBool() &&
+                events(log).last().value(QStringLiteral("ms_after_seen")).toInteger() >= 0,
+            "a second Tab's send is recorded with its wait");
+    turn(R"({"conversation":"c","turn":6,"answered":{"turn":5,"text":"go on"}})", "again");
+    require(answered(3) && outcomes().last().value(QStringLiteral("offer")) == replacement &&
+                outcomes().last().value(QStringLiteral("result")) == QLatin1String("as_offered") &&
+                outcomes().last().value(QStringLiteral("similarity")).toDouble() == 1.0 &&
+                outcomes().last().value(QStringLiteral("tab_sent")).toBool(),
+            "the newer guess sent by double Tab is the recorded outcome");
+
+    // A new conversation (after /clear) drops the waiting offer.
+    turn(R"({"conversation":"d","turn":0,"answered":{"turn":6,"text":"go on"}})", "go");
+    QCoreApplication::processEvents();
+    require(outcomes().size() == 3, "an offer from another conversation is not matched");
+
+    // Similarity is bounded, while `as_offered` still requires the whole prompt
+    // unchanged: a change beyond the score's bound is marked, not accepted.
+    const auto long_guess = QByteArray(qsizetype{kComparedForTest + 1}, 'g');
+    const auto long_context = QByteArrayLiteral(R"({"conversation":"c","turn":7})");
+    turn(long_context, long_guess);
+    next.used(QStringLiteral("a"), false, 0, next.offerKey(QStringLiteral("a")));
+    const auto changed_after_bound = long_guess + 'x';
+    turn(
+        QByteArrayLiteral(R"json({"conversation":"c","turn":8,"answered":{"turn":7,"text":")json") +
+            changed_after_bound + QByteArrayLiteral("\"}}"),
+        "next");
+    require(answered(4) &&
+                outcomes().last().value(QStringLiteral("result")) == QLatin1String("edited") &&
+                outcomes().last().value(QStringLiteral("similarity")).toDouble() == 1.0,
+            "long prompts are classified and scored over the same bound");
+    require(outcomes().last().value(QStringLiteral("similarity_bounded")).toBool(),
+            "the outcome records when similarity ignored its suffix");
+
+    // A much shorter, disjoint replacement gets the conservative shared-prefix
+    // score of zero, rather than an inflated diagonal-band estimate.
+    turn(R"({"conversation":"c","turn":9})", long_guess);
+    next.used(QStringLiteral("a"), false, 0, next.offerKey(QStringLiteral("a")));
+    const auto short_sent = QByteArray(qsizetype{400}, 'x');
+    turn(QByteArrayLiteral(
+             R"json({"conversation":"c","turn":10,"answered":{"turn":9,"text":")json") +
+             short_sent + QByteArrayLiteral("\"}}"),
+         "next");
+    require(answered(5) &&
+                outcomes().last().value(QStringLiteral("similarity")).toDouble() == 0.0 &&
+                outcomes().last().value(QStringLiteral("similarity_bounded")).toBool(),
+            "a disjoint shorter prompt is not given an inflated similarity");
+
+    // A real shared prefix must contribute to the long-prompt fallback.
+    turn(R"({"conversation":"c","turn":11})", long_guess);
+    next.used(QStringLiteral("a"), false, 0, next.offerKey(QStringLiteral("a")));
+    const auto shared_replacement = long_guess.left(1000) + QByteArray(qsizetype{300}, 'x');
+    turn(QByteArrayLiteral(
+             R"json({"conversation":"c","turn":12,"answered":{"turn":11,"text":")json") +
+             shared_replacement + QByteArrayLiteral("\"}}"),
+         "next");
+    require(answered(6) &&
+                outcomes().last().value(QStringLiteral("similarity")).toDouble() == 0.5 &&
+                outcomes().last().value(QStringLiteral("similarity_bounded")).toBool(),
+            "a long prompt's shared prefix contributes to bounded similarity");
+
+    // The mirrored replacement pins the suffix half of the same fallback.
+    turn(R"({"conversation":"c","turn":13})", long_guess);
+    next.used(QStringLiteral("a"), false, 0, next.offerKey(QStringLiteral("a")));
+    const auto tail_replacement = QByteArray(qsizetype{1000}, 'x') + long_guess.right(1000);
+    turn(QByteArrayLiteral(
+             R"json({"conversation":"c","turn":14,"answered":{"turn":13,"text":")json") +
+             tail_replacement + QByteArrayLiteral("\"}}"),
+         "next");
+    require(answered(7) &&
+                outcomes().last().value(QStringLiteral("similarity")).toDouble() == 0.5 &&
+                outcomes().last().value(QStringLiteral("similarity_bounded")).toBool(),
+            "a long prompt's shared suffix contributes to bounded similarity");
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
@@ -432,6 +593,7 @@ int main(int argc, char** argv) {
         concurrentContextsRespectCap();
         missingProbabilityIsNotOffered();
         predictsAndOffers();
+        outcomesCompareWhatWasSent();
     } catch (const std::exception& error) {
         std::cerr << "next_prompt_test: " << error.what() << '\n';
         return 1;

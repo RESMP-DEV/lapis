@@ -34,14 +34,18 @@ None shows while an agent waits on a request such as a permission prompt.
 
 ## Tab
 
-- **Tab** sends the guess: the service queues its text and Return together.
-  A guess too long to show whole, or on several lines, is only typed, for you
-  to read first. Suggestions require a service from this build; an older
-  service refuses the operation visibly until it is upgraded and restarted.
-- **Option-Tab** only types it.
+- **Tab** types the guess at the prompt and stops there, for you to edit.
+- **Tab twice** sends it as typed: a second Tab before any other key presses
+  Return (never over a permission prompt). If a request arrives first, Tab is
+  consumed rather than sent to the dialog and the typed guess stays armed.
+  After an edit, send with Return. Suggestions
+  require a service from this build; an older service refuses the operation
+  visibly until it is upgraded and restarted.
+- **Option-Tab** does the same.
 - **Typing** leaves the guess there: start your own, clear it with
   Command-Delete, and Tab still takes the guess.
-- **Tab with nothing offered** and nothing typed moves to the next agent that
+- **Tab with nothing offered** and nothing typed since you arrived or last
+  pressed Return moves to the next agent that
   needs you: a guess you have not seen first, then a turn that finished unseen
   or a request, then a guess you passed over, the longest waiting first. When
   nothing waits, Tab goes to the program as usual. With the default
@@ -55,8 +59,17 @@ Tab keeps its usual meaning in shells and in CLIs lapis does not guess for.
 ## What is recorded
 
 Every guess is kept, owner-only, in `~/.lapis/runtime/next_prompt.jsonl`: when it
-was on screen, whether Tab or Option-Tab used it, how many keys you typed first
-and how long you took, or that the next turn replaced it unused. A prediction
+was on screen, whether Tab typed it in (and a second Tab sent it), how many keys
+you typed first and how long you took, or that the next turn replaced it
+unused. Once the prompt you
+then sent reaches the conversation, an `outcome` record keeps it beside the
+guess: `as_offered` (sent unchanged), `edited` (Tab typed it and you changed it)
+or `own` (you typed something else), with a `similarity` from 0 to 1 and the
+text you sent. Similarity compares at most the first 2000 characters; prompts
+over 256 characters use a conservative shared-prefix/suffix score rather than
+quadratic edit distance. Every such bounded or fallback score is marked with
+`similarity_bounded`; `as_offered` still requires the complete prompt to be
+unchanged. A prediction
 that failed (with a stable reason category) or was skipped at the hourly cap
 is kept too. A use is recorded only after the service admits its input.
 Admission does not guarantee the CLI consumed it before a crash. The log

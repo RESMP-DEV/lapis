@@ -257,12 +257,21 @@ def command_context(arguments):
     if not path:
         return {"error": "no transcript"}
     turns = turns_of(arguments.cli, path)
-    return {
+    prompts = [t for t in turns if t["role"] == "person"]
+    result = {
         "conversation": os.path.basename(path)[: -len(".jsonl")],
-        "turn": sum(1 for t in turns if t["role"] == "person"),
+        "turn": len(prompts),
         "turns": history(turns),
         "recent": recent_prompts(path),
     }
+    # What the person sent for an earlier offer, to compare with the guess.
+    answered = getattr(arguments, "answered", -1)
+    if 0 <= answered < len(prompts):
+        result["answered"] = {
+            "turn": answered,
+            "text": clip(prompts[answered]["text"], 4000),
+        }
+    return result
 
 
 def command_actual(arguments):
@@ -543,6 +552,7 @@ def main(argv=None):
     context = modes.add_parser("context")
     context.add_argument("--cli", choices=("claude", "codex"), required=True)
     context.add_argument("--conversation", default="")
+    context.add_argument("--answered", type=int, default=-1)
     context.add_argument("--folder", default="")
     actual = modes.add_parser("actual")
     actual.add_argument("--cli", choices=("claude", "codex"), required=True)
