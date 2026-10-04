@@ -20,6 +20,7 @@
 #include <QThread>
 
 #include <QClipboard>
+#include <QColor>
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDir>
@@ -889,6 +890,81 @@ int run_surface_tests(bool background) {
     pump(30);
     CHECK(window.grabWindow() != empty);
     surface->setDocument(nullptr);
+    return EXIT_SUCCESS;
+}
+
+// The preview throttle gates publish-to-publish: after a quiet gap a change
+// reaches the card in the same frame-coalesced render as the stage, inside
+// the gate the card holds its last frame, and when the gate reopens the card
+// jumps to the newest snapshot, never a queued one.
+int run_preview_frame_sync_tests() {
+    using namespace lapis::desktop;
+    using namespace lapis::session;
+    SessionPreview document{
+        QStringLiteral("frame-sync"), QStringLiteral("/tmp"), {}, QColor(Qt::white), ""};
+    QQuickWindow window;
+    window.resize(440, 220);
+    auto* stage = new TerminalSurface(window.contentItem()); // parent owns it
+    auto* card = new TerminalSurface(window.contentItem());
+    stage->setObjectName(QStringLiteral("syncStage"));
+    card->setObjectName(QStringLiteral("syncCard"));
+    stage->setSize(QSizeF(200, 200));
+    card->setX(240);
+    card->setSize(QSizeF(200, 200));
+    card->setFrameInterval(250);
+    window.show();
+    pump(60);
+    stage->setDocument(&document);
+    card->setDocument(&document);
+    pump(60);
+
+    TerminalSnapshot snapshot;
+    snapshot.size = {4, 2};
+    snapshot.cells.resize(8);
+    snapshot.cursor = {.column = 0, .row = 0, .in_viewport = true, .visible = false};
+    const QRgb first = qRgb(0x10, 0x20, 0x30);
+    const QRgb second = qRgb(0x40, 0x50, 0x60);
+    const QRgb third = qRgb(0x70, 0x80, 0x90);
+    const auto paint = [&](QRgb color) {
+        snapshot.background_rgb = static_cast<std::uint32_t>(color & 0xffffff);
+        ++snapshot.revision;
+        document.applySnapshot(snapshot);
+    };
+    const auto grab_region = [&](const TerminalSurface* surface) {
+        const QImage image = window.grabWindow();
+        CHECK(!image.isNull());
+        // grabWindow() returns device pixels; crop the surface's mapped bounds.
+        const qreal dpr = image.devicePixelRatio() > 0 ? image.devicePixelRatio() : 1.0;
+        const QRectF scene = surface->mapRectToScene(QRectF(QPointF{}, surface->size()));
+        return image.copy(QRect(qRound(scene.left() * dpr), qRound(scene.top() * dpr),
+                                qRound(scene.width() * dpr), qRound(scene.height() * dpr)));
+    };
+    const auto area = [](const QImage& region, QRgb color) {
+        return colored_area(region, color).pixels;
+    };
+
+    paint(first);
+    pump(500); // The initial paint passes the card's gate; let it settle.
+    CHECK(area(grab_region(stage), first) > 0);
+    CHECK(area(grab_region(card), first) > 0);
+
+    // A keystroke after a quiet gap: both surfaces present the same frame.
+    paint(second);
+    pump(20);
+    CHECK(area(grab_region(stage), second) > 0);
+    CHECK(area(grab_region(card), second) > 0);
+
+    // Output inside the gate advances the stage while the card holds.
+    paint(third);
+    pump(20);
+    CHECK(area(grab_region(stage), third) > 0);
+    CHECK(area(grab_region(card), second) > 0);
+    CHECK(area(grab_region(card), third) == 0);
+
+    // Once the gate reopens the card catches up to the latest snapshot.
+    pump(500);
+    CHECK(area(grab_region(card), third) > 0);
+    CHECK(area(grab_region(card), second) == 0);
     return EXIT_SUCCESS;
 }
 
@@ -2577,6 +2653,7 @@ int main(int argc, char** argv) {
     bool background = false;
     bool shortcuts_only = false;
     bool history_only = false;
+    bool preview_frame_only = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         if (argument == "--background")
@@ -2585,9 +2662,11 @@ int main(int argc, char** argv) {
             shortcuts_only = true;
         else if (argument == "--history-only")
             history_only = true;
+        else if (argument == "--preview-frame-only")
+            preview_frame_only = true;
         else {
             std::cerr << "Usage: lapis_ui_preview_tests [--background] "
-                         "[--shortcuts-only|--history-only]\n";
+                         "[--shortcuts-only|--history-only|--preview-frame-only]\n";
             return EXIT_FAILURE;
         }
     }
@@ -2616,7 +2695,11 @@ int main(int argc, char** argv) {
     try {
         CHECK(background == (QGuiApplication::platformName() == QStringLiteral("offscreen")));
         CHECK(!(shortcuts_only && history_only));
-        if (history_only) {
+        CHECK(!(shortcuts_only && preview_frame_only) && !(history_only && preview_frame_only));
+        if (preview_frame_only) {
+            if (run_preview_frame_sync_tests() != EXIT_SUCCESS)
+                return EXIT_FAILURE;
+        } else if (history_only) {
             if (run_history_ui_tests() != EXIT_SUCCESS)
                 return EXIT_FAILURE;
         } else if (shortcuts_only) {
@@ -2625,6 +2708,7 @@ int main(int argc, char** argv) {
         } else if (run_workspace_tests() != EXIT_SUCCESS || run_ui_tests() != EXIT_SUCCESS ||
                    run_diagnostics_reentrancy_test() != EXIT_SUCCESS ||
                    run_surface_tests(background) != EXIT_SUCCESS ||
+                   run_preview_frame_sync_tests() != EXIT_SUCCESS ||
                    run_attention_dialog_tests() != EXIT_SUCCESS ||
                    run_attention_ui_tests() != EXIT_SUCCESS ||
                    run_strip_ui_tests() != EXIT_SUCCESS || run_history_ui_tests() != EXIT_SUCCESS)
