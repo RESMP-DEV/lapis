@@ -10,7 +10,8 @@
   "repairs": [
     "Taking a newer offer re-anchors awaiting outcome telemetry to that offer and records the Tab-sent wait metric.",
     "The helper clips answered prompt text to the same bounded context contract as the other helper fields.",
-    "A failed suggestion paste lets Tab fall through, QML re-pushes of the same offer do not disarm or duplicate the fill, deferred Enter is not reported when the preview would drop it, and an accepted external paste disarms Tab-Tab."
+    "A failed suggestion paste lets Tab fall through, QML re-pushes of the same offer do not disarm or duplicate the fill, deferred Enter is not reported when the preview would drop it, and an accepted external paste disarms Tab-Tab.",
+    "The Kilo follow-up round counts an admitted paste once, moves Tab to a pending request, uses one 2000-character bound for exact and similarity classification, bounds long similarity work, aggregates settled outcomes in next_prompt_eval.py, and scopes this receipt's aggregate."
   ],
   "environment": "macOS arm64; AppleClang 21.0.0.21000334; Qt 6.11.2",
   "verification": [
@@ -18,19 +19,19 @@
       "name": "helper_unit_tests",
       "command": "python3 -m unittest scripts.tests.test_next_prompt -v",
       "exit_code": 0,
-      "result": "20 tests passed, including oversized answered-context clipping."
+      "result": "20 tests passed, including oversized answered-context clipping and settled-outcome aggregation."
     },
     {
       "name": "next_prompt_binary",
       "command": "build/desktop/apps/desktop/lapis_next_prompt_tests",
       "exit_code": 0,
-      "result": "Passed, including newer-offer re-anchoring and Tab-sent timing."
+      "result": "Passed, including newer-offer re-anchoring, Tab-sent timing, and a long prompt that differs inside the 2000-character comparison bound."
     },
     {
       "name": "terminal_input_background",
       "command": "build/desktop/apps/desktop/lapis_terminal_input_tests --background",
       "exit_code": 0,
-      "result": "Passed, including binding re-push and intervening dropped-file paste cases; native macOS input and GPU were not exercised."
+      "result": "Passed, including binding re-push, an intervening dropped-file paste, and Tab moving away after a request arrives following a fill; native macOS input and GPU were not exercised."
     },
     {
       "name": "repository_quality",
@@ -57,8 +58,10 @@
       "result": "Configure, compile, CTest, and most static-analysis shards passed, but repository-wide format/tidy/cppcheck findings remain in unchanged baseline files: alerts.cpp, plan_sign_in.cpp, pty_process.cpp, and session_service.cpp. Those files are outside this PR's diff and were not modified in the final repair."
     }
   ],
-  "aggregate_passed": true,
-  "aggregate_scope": "The PR review repairs and their affected checks passed. A whole-repository desktop static-analysis pass is not claimed.",
+  "aggregate": {
+    "passed": true,
+    "scope": "The PR review repairs and their affected checks passed."
+  },
   "non_claims": [
     "No native macOS keyboard, IME, clipboard, or foreground GUI run.",
     "No Vulkan or Metal presentation qualification.",

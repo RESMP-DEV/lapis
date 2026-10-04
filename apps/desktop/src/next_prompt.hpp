@@ -45,14 +45,14 @@ struct NextPromptSettings {
 // on this Mac sees it with the person's standing instructions, the agent's
 // screen and every other agent's state. The top guess, when it has a usable
 // probability of at least `minConfidence`, is offered, dim at the agent's
-// cursor; Tab types it for the person to edit and send (see TerminalSurface).
-// Nothing is sent for them.
+// cursor; Tab types it for the person to edit. A second Tab can send that
+// unchanged guess (see TerminalSurface).
 //
 // Every prediction and what became of it (seen, used, replaced, and the
 // prompt the person then sent, compared with the guess) goes to a
 // private log (JSON lines, owner-only), which scripts/next_prompt_eval.py
-// turns into the acceptance rate and joins with what the person actually
-// typed: the measure of this, and the data for a model of one's own.
+// turns into use rates and settled-outcome counts, and joins unused offers
+// with what the person actually typed.
 class UpdaterProcess;
 
 class NextPrompt final : public QObject {

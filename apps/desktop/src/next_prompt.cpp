@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -27,6 +28,8 @@ constexpr int kContextTimeoutMs = 60 * 1000;
 constexpr int kPredictTimeoutMs = 180 * 1000;
 constexpr qint64 kHourMs = qint64{60} * 60 * 1000;
 constexpr int kScreenChars = 6000;
+constexpr qsizetype kCompared = 2000;
+constexpr qsizetype kSimilarityBand = 256;
 // The log's record format: offer ids and seen/used/withdrawn events.
 constexpr int kLogVersion = 2;
 constexpr qsizetype kHelperOutputLimit = qsizetype{1024} * 1024;
@@ -448,21 +451,29 @@ void NextPrompt::withdraw(const QString& id, Withdrawal why) {
 
 namespace {
 // How alike two prompts are: 1 minus their edit distance over the longer
-// length, so 1 is the same text and 0 nothing in common. Bounded: prompts
-// past 2000 characters compare by their start.
+// length, so 1 is the same text and 0 nothing in common. Prompts past 2000
+// characters compare by their start. Long comparisons also use a diagonal
+// band: this runs in a GUI callback, and widely divergent long prompts do not
+// need a precise distance to be reported as dissimilar.
 double similarity(const QString& guess, const QString& sent) {
-    constexpr qsizetype kCompared = 2000;
     const auto a = guess.trimmed().left(kCompared);
     const auto b = sent.trimmed().left(kCompared);
     if (a.isEmpty() && b.isEmpty())
         return 1.0;
-    std::vector<qsizetype> previous(static_cast<std::size_t>(b.size()) + 1);
+    const qsizetype band = std::min(kSimilarityBand, std::max(a.size(), b.size()));
+    const auto unreachable = std::numeric_limits<qsizetype>::max() / 4;
+    std::vector<qsizetype> previous(static_cast<std::size_t>(b.size()) + 1, unreachable);
     std::vector<qsizetype> row(previous.size());
-    for (qsizetype j = 0; j <= b.size(); ++j)
+    previous.front() = 0;
+    for (qsizetype j = 1; j <= std::min(b.size(), band); ++j)
         previous[static_cast<std::size_t>(j)] = j;
     for (qsizetype i = 1; i <= a.size(); ++i) {
-        row[0] = i;
-        for (qsizetype j = 1; j <= b.size(); ++j) {
+        std::fill(row.begin(), row.end(), unreachable);
+        if (i <= band)
+            row.front() = i;
+        const auto first = std::max<qsizetype>(1, i - band);
+        const auto last = std::min(b.size(), i + band);
+        for (qsizetype j = first; j <= last; ++j) {
             const auto at = static_cast<std::size_t>(j);
             const qsizetype replace = previous[at - 1] + (a[i - 1] == b[j - 1] ? 0 : 1);
             row[at] = std::min({previous[at] + 1, row[at - 1] + 1, replace});
@@ -470,6 +481,8 @@ double similarity(const QString& guess, const QString& sent) {
         std::swap(previous, row);
     }
     const auto distance = previous[static_cast<std::size_t>(b.size())];
+    if (distance >= unreachable)
+        return 0.0;
     return 1.0 - double(distance) / double(std::max(a.size(), b.size()));
 }
 } // namespace
@@ -492,7 +505,7 @@ void NextPrompt::settle(const QString& id, const QJsonObject& context) {
         return;
     const auto sent = answered.value(QStringLiteral("text")).toString();
     const auto& guess = waiting->offer.text;
-    const bool exact = sent.trimmed() == guess.trimmed();
+    const bool exact = sent.trimmed().left(kCompared) == guess.trimmed().left(kCompared);
     auto event = about(waiting->offer, id);
     event.insert(QStringLiteral("event"), QStringLiteral("outcome"));
     event.insert(QStringLiteral("filled"), waiting->filled);

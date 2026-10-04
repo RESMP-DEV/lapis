@@ -310,13 +310,16 @@ def replay(arguments):
 def acceptance(events):
     """Offers by id from lapis's log, and the rates that matter: of the offers
     seen on screen, how many were used (sent with Tab, or typed with
-    Option-Tab), how many after typing first, and how fast."""
+    Option-Tab), how many after typing first, how fast, and what the settled
+    prompt turned out to be."""
     offers = {}
     for e in events:
         key = e.get("offer")
         if not key:
             continue
-        offer = offers.setdefault(key, {"seen": False, "used": None, "withdrawn": None})
+        offer = offers.setdefault(
+            key, {"seen": False, "used": None, "outcome": None, "withdrawn": None}
+        )
         kind = e.get("event")
         if kind == "predicted":
             candidates = e.get("candidates") or [{}]
@@ -342,6 +345,8 @@ def acceptance(events):
         elif kind == "used":
             offer["seen"] = True
             offer["used"] = e
+        elif kind == "outcome":
+            offer["outcome"] = e
         elif kind == "withdrawn":
             offer["withdrawn"] = e.get("reason")
     failures = defaultdict(int)
@@ -392,6 +397,18 @@ def acceptance(events):
             1 for o in used if o["used"].get("typed_first", 0) > 0
         ),
         "seen_not_used": sum(1 for o in seen if not o["used"]),
+        "outcomes": sum(1 for o in offers.values() if o["outcome"]),
+        "outcome_as_offered": sum(
+            1
+            for o in offers.values()
+            if (o["outcome"] or {}).get("result") == "as_offered"
+        ),
+        "outcome_edited": sum(
+            1 for o in offers.values() if (o["outcome"] or {}).get("result") == "edited"
+        ),
+        "outcome_own": sum(
+            1 for o in offers.values() if (o["outcome"] or {}).get("result") == "own"
+        ),
         "offered_never_seen": sum(1 for o in shown if not o["seen"]),
         "median_ms_to_use": waits[len(waits) // 2] if waits else None,
         "attempts": sum(
@@ -458,7 +475,7 @@ def log(arguments):
     }
     report["judge_context"] = context_counts
     for number, o in enumerate(offers.values()):
-        if not (o.get("shown") and o["seen"] and not o["used"]):
+        if not (o.get("shown") and o["seen"] and not o["used"] and not o["outcome"]):
             continue
         context_counts["eligible"] += 1
         if not o.get("conversation"):

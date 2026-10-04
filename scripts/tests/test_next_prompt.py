@@ -553,9 +553,21 @@ class AcceptanceTests(unittest.TestCase):
                 "typed_first": 3,
                 "ms_after_seen": 900,
             },
+            {
+                "event": "outcome",
+                "offer": "a:1",
+                "result": "as_offered",
+                "similarity": 1.0,
+            },
             predicted("a:2", 0.45, category="status", top_scored=False),
             {"event": "seen", "offer": "a:2"},
             {"event": "withdrawn", "offer": "a:2", "reason": "new_turn", "seen": True},
+            {
+                "event": "outcome",
+                "offer": "a:2",
+                "result": "own",
+                "similarity": 0.0,
+            },
             predicted("b:3", 0.5),
             {"event": "withdrawn", "offer": "b:3", "reason": "new_turn", "seen": False},
             predicted("c:4", 0.2, shown=False),
@@ -569,6 +581,15 @@ class AcceptanceTests(unittest.TestCase):
             (4, 3, 2, 1),
         )
         self.assertEqual(report["acceptance"], 0.5)
+        self.assertEqual(
+            (
+                report["outcomes"],
+                report["outcome_as_offered"],
+                report["outcome_edited"],
+                report["outcome_own"],
+            ),
+            (2, 1, 0, 1),
+        )
         self.assertEqual(
             (
                 report["offered_scored"],

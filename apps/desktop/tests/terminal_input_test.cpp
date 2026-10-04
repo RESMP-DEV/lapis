@@ -1042,12 +1042,15 @@ void suggestions() {
     surface.setDocument(&f.document);
     surface.forceActiveFocus();
     surface.setSuggestion(QStringLiteral("yes do it"));
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(paste_is(typed[0], "yes do it", false),
+            "Tab did not type the suggestion before the request arrived");
     require(f.document.addPreviewRequest(QStringLiteral("r1"), QStringLiteral("rm -rf")),
             "Fixture request was not added");
     const int before = calls();
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
-    require(nothing_sent() && calls() == before + 1 &&
-                surface.suggestion() == QLatin1String("yes do it"),
+    require(nothing_sent() && calls() == before + 1 && surface.suggestion().isEmpty(),
             "Tab answered a pending request with the suggestion");
     require(f.document.resolvePreviewRequest(QStringLiteral("r1")), "Fixture request stayed");
     surface.setSuggestion({});

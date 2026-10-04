@@ -1707,7 +1707,7 @@ bool TerminalSurface::takeFilled(bool plain_tab) {
     if (!plain_tab)
         return true;
     if (document_->attentionPending())
-        return true;
+        return false; // Let Tab move to the request instead of swallowing it.
     if (filled_->admitted)
         sendFilled();
     else
@@ -1731,6 +1731,8 @@ bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
             return true;
         }
     }
+    if (tab && document_->attentionPending() && tab_away_.isCallable() && tab_away_.call().toBool())
+        return true;
     if (tab && !typed_since_arrival_ && tab_away_.isCallable() && tab_away_.call().toBool())
         return true;
     // Return submits the line, so the prompt is empty again and Tab may move on.
@@ -2114,7 +2116,6 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     if (composition_state_ == CompositionState::stale)
         composition_state_ = CompositionState::idle;
     if (event->matches(QKeySequence::Paste)) {
-        noteTyped();
         const QString text = QGuiApplication::clipboard()->text();
         static_cast<void>(pasteText(text));
         event->accept();

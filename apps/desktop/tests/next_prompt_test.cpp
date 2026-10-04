@@ -24,6 +24,7 @@ using lapis::desktop::NextPrompt;
 using lapis::desktop::NextPromptSettings;
 
 namespace {
+constexpr qsizetype kComparedForTest = 2000;
 NextPromptSettings on(int max_per_hour = 60, const QString& effort = {}) {
     NextPromptSettings settings;
     settings.automatic = true;
@@ -524,6 +525,23 @@ void outcomesCompareWhatWasSent() {
     turn(R"({"conversation":"d","turn":0,"answered":{"turn":6,"text":"go on"}})", "go");
     QCoreApplication::processEvents();
     require(outcomes().size() == 3, "an offer from another conversation is not matched");
+
+    // Similarity and exactness use the same bounded prefix: a change beyond it
+    // is still an edit even when the bounded score is one.
+    const auto long_guess = QByteArray(qsizetype{kComparedForTest + 1}, 'g');
+    const auto long_context = QByteArrayLiteral(R"({"conversation":"c","turn":7})");
+    turn(long_context, long_guess);
+    next.used(QStringLiteral("a"), false, 0, next.offerKey(QStringLiteral("a")));
+    const auto changed_within_bound =
+        long_guess.left(kComparedForTest - 1) + 'x' + long_guess.right(1);
+    turn(
+        QByteArrayLiteral(R"json({"conversation":"c","turn":8,"answered":{"turn":7,"text":")json") +
+            changed_within_bound + QByteArrayLiteral("\"}}"),
+        "next");
+    require(answered(4) &&
+                outcomes().last().value(QStringLiteral("result")) == QLatin1String("edited") &&
+                outcomes().last().value(QStringLiteral("similarity")).toDouble() == 1.0,
+            "long prompts are classified and scored over the same bound");
 }
 
 int main(int argc, char** argv) {
