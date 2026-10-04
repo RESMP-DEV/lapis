@@ -592,6 +592,14 @@ class AcceptanceTests(unittest.TestCase):
         )
         self.assertEqual(
             (
+                report["outcome_settled"],
+                report["outcome_unsettled"],
+                report["outcome_settled_of_used"],
+            ),
+            (0.667, 1, 1.0),
+        )
+        self.assertEqual(
+            (
                 report["offered_scored"],
                 report["offered_unscored"],
                 report["offered_top_scored_unknown"],

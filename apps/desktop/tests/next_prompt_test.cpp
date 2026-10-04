@@ -526,22 +526,23 @@ void outcomesCompareWhatWasSent() {
     QCoreApplication::processEvents();
     require(outcomes().size() == 3, "an offer from another conversation is not matched");
 
-    // Similarity and exactness use the same bounded prefix: a change beyond it
-    // is still an edit even when the bounded score is one.
+    // Similarity is bounded, while `as_offered` still requires the whole prompt
+    // unchanged: a change beyond the score's bound is marked, not accepted.
     const auto long_guess = QByteArray(qsizetype{kComparedForTest + 1}, 'g');
     const auto long_context = QByteArrayLiteral(R"({"conversation":"c","turn":7})");
     turn(long_context, long_guess);
     next.used(QStringLiteral("a"), false, 0, next.offerKey(QStringLiteral("a")));
-    const auto changed_within_bound =
-        long_guess.left(kComparedForTest - 1) + 'x' + long_guess.right(1);
+    const auto changed_after_bound = long_guess + 'x';
     turn(
         QByteArrayLiteral(R"json({"conversation":"c","turn":8,"answered":{"turn":7,"text":")json") +
-            changed_within_bound + QByteArrayLiteral("\"}}"),
+            changed_after_bound + QByteArrayLiteral("\"}}"),
         "next");
     require(answered(4) &&
                 outcomes().last().value(QStringLiteral("result")) == QLatin1String("edited") &&
                 outcomes().last().value(QStringLiteral("similarity")).toDouble() == 1.0,
             "long prompts are classified and scored over the same bound");
+    require(outcomes().last().value(QStringLiteral("similarity_bounded")).toBool(),
+            "the outcome records when similarity ignored its suffix");
 }
 
 int main(int argc, char** argv) {

@@ -315,6 +315,7 @@ class TerminalSurface : public QQuickItem {
     void filledAdmitted(const Filled& made, bool queued);
     void sendFilled();
     [[nodiscard]] bool takeFilled(bool plain_tab);
+    [[nodiscard]] bool holdFilledOverRequest(bool plain_tab);
     bool takeSuggestion(const QKeyEvent& event);
     quint64 pasteTextRequest(const QString& text, std::optional<bool> submit);
     void reportSeen();

@@ -1035,8 +1035,9 @@ void suggestions() {
                 used.back() == std::pair{false, 0} && nothing_sent(),
             "A suggestion not shown whole was submitted");
 
-    // A pending request (a permission dialog) is never answered by Tab: the
-    // suggestion is not sent, and Tab moves on instead.
+    // A pending request (a permission dialog) is never answered by Tab. It may
+    // ask the attention queue for a destination, but with none it is consumed
+    // and the typed guess stays armed.
     engine.globalObject().setProperty(QStringLiteral("moves"), true);
     surface.setDocument(nullptr);
     surface.setDocument(&f.document);
@@ -1053,6 +1054,20 @@ void suggestions() {
     require(nothing_sent() && calls() == before + 1 && surface.suggestion().isEmpty(),
             "Tab answered a pending request with the suggestion");
     require(f.document.resolvePreviewRequest(QStringLiteral("r1")), "Fixture request stayed");
+    engine.globalObject().setProperty(QStringLiteral("moves"), false);
+    require(f.document.addPreviewRequest(QStringLiteral("r2"), QStringLiteral("sudo rm")),
+            "Second fixture request was not added");
+    const int before_held = calls();
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    require(nothing_sent() && calls() == before_held + 1,
+            "Tab reached a permission dialog when no destination waited");
+    require(f.document.resolvePreviewRequest(QStringLiteral("r2")),
+            "Second fixture request stayed");
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(is_key(typed[0], lapis::session::TerminalKey::enter),
+            "A request did not preserve the typed guess for its later Tab");
+    engine.globalObject().setProperty(QStringLiteral("moves"), true);
     surface.setSuggestion({});
 
     // Option-Tab types it too. An edit after it ends the double Tab: Tab is

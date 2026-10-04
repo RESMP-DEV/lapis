@@ -4,14 +4,26 @@
   "source": {
     "baseline_revision": "f3070ac19c6a67b5c64b044568c47720908007a9",
     "branch": "feature/tab-types-only",
-    "source_dirty_at_checks": true
+    "source_dirty_at_checks": true,
+    "dirty_files": [
+      "apps/desktop/src/next_prompt.cpp",
+      "apps/desktop/src/next_prompt.hpp",
+      "apps/desktop/src/terminal_surface.cpp",
+      "apps/desktop/tests/next_prompt_test.cpp",
+      "apps/desktop/tests/terminal_input_test.cpp",
+      "docs/architecture.md",
+      "docs/suggestions.md",
+      "scripts/next_prompt_eval.py",
+      "scripts/tests/test_next_prompt.py",
+      "evidence/pr85-review-followup.json"
+    ]
   },
-  "scope": "PR #85 review repairs for next-prompt telemetry anchoring, bounded answered context, Tab fill/send edge cases, and pastes that edit a filled guess. This receipt does not qualify native macOS input, GPU presentation, or new prediction-model quality.",
+  "scope": "PR #85 review repairs for next-prompt telemetry anchoring, bounded answered context, Tab fill/send edge cases, and pastes that edit a filled guess. The native-input, GUI, sanitizer, and model-quality exclusions follow the required-check boundaries in AGENTS.md and CONTRIBUTING.md; this receipt does not qualify those separate gates or new prediction-model quality.",
   "repairs": [
     "Taking a newer offer re-anchors awaiting outcome telemetry to that offer and records the Tab-sent wait metric.",
     "The helper clips answered prompt text to the same bounded context contract as the other helper fields.",
     "A failed suggestion paste lets Tab fall through, QML re-pushes of the same offer do not disarm or duplicate the fill, deferred Enter is not reported when the preview would drop it, and an accepted external paste disarms Tab-Tab.",
-    "The Kilo follow-up round counts an admitted paste once, moves Tab to a pending request, uses one 2000-character bound for exact and similarity classification, bounds long similarity work, aggregates settled outcomes in next_prompt_eval.py, and scopes this receipt's aggregate."
+    "The Kilo follow-up round counts an admitted paste once, preserves an armed guess across a pending request, keeps full-prompt `as_offered` classification separate from explicitly marked bounded similarity, bounds both the similarity band and row clearing, aggregates settled-outcome rates in next_prompt_eval.py, and scopes this receipt's aggregate."
   ],
   "environment": "macOS arm64; AppleClang 21.0.0.21000334; Qt 6.11.2",
   "verification": [
@@ -55,7 +67,7 @@
       "name": "whole_desktop_static_gate_attempt",
       "command": "python3 scripts/lapis.py build",
       "exit_code": 1,
-      "result": "Configure, compile, CTest, and most static-analysis shards passed, but repository-wide format/tidy/cppcheck findings remain in unchanged baseline files: alerts.cpp, plan_sign_in.cpp, pty_process.cpp, and session_service.cpp. Those files are outside this PR's diff and were not modified in the final repair."
+      "result": "Configure, compile, CTest, and most static-analysis shards passed, but repository-wide format/tidy/cppcheck findings remain in unchanged baseline files: alerts.cpp, plan_sign_in.cpp, pty_process.cpp, and session_service.cpp. Those files are outside this PR's diff. The compiled, CTest, and offscreen-UI runs assembled them with the changed surfaces; the failures are analyzer diagnostics, not linked behavioral interactions claimed here."
     }
   ],
   "aggregate": {

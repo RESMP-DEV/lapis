@@ -374,6 +374,7 @@ def acceptance(events):
     shown = [o for o in offers.values() if o.get("shown")]
     seen = [o for o in shown if o["seen"]]
     used = [o for o in seen if o["used"]]
+    settled = [o for o in shown if o["outcome"]]
 
     def rate(part, whole):
         return round(len(part) / len(whole), 3) if whole else None
@@ -398,6 +399,9 @@ def acceptance(events):
         ),
         "seen_not_used": sum(1 for o in seen if not o["used"]),
         "outcomes": sum(1 for o in offers.values() if o["outcome"]),
+        "outcome_settled": rate(settled, shown),
+        "outcome_unsettled": len(shown) - len(settled),
+        "outcome_settled_of_used": rate([o for o in used if o["outcome"]], used),
         "outcome_as_offered": sum(
             1
             for o in offers.values()

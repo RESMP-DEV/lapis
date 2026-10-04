@@ -1715,6 +1715,16 @@ bool TerminalSurface::takeFilled(bool plain_tab) {
     return true;
 }
 
+bool TerminalSurface::holdFilledOverRequest(bool plain_tab) {
+    if (!plain_tab || !document_->attentionPending())
+        return false;
+    // Ask QML once for a safer destination, but never fall through to the
+    // program's Tab or reset the armed guess while a request is pending.
+    if (tab_away_.isCallable())
+        static_cast<void>(tab_away_.call());
+    return true;
+}
+
 bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
     if (!tab_flow_ || !document_ || modifier_key(event.key()))
         return false;
@@ -1731,7 +1741,7 @@ bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
             return true;
         }
     }
-    if (tab && document_->attentionPending() && tab_away_.isCallable() && tab_away_.call().toBool())
+    if (holdFilledOverRequest(tab))
         return true;
     if (tab && !typed_since_arrival_ && tab_away_.isCallable() && tab_away_.call().toBool())
         return true;
@@ -1795,14 +1805,14 @@ void TerminalSurface::sendFilled() {
     // SessionPreview::sendKey silently drops Enter in these states. Keep the
     // admitted guess armed so a later Tab can send it after history settles.
     if (!document_ || document_->historyActive() || document_->historyRequestPending() ||
-        !document_->live())
+        !document_->live() || document_->attentionPending())
         return;
-    std::optional<Filled> taken;
-    taken.swap(filled_);
-    if (!taken || !taken->owner || taken->owner != document_ || document_->attentionPending())
+    const std::optional<Filled> taken = filled_;
+    if (!taken || !taken->owner || taken->owner != document_)
         return;
     document_->sendKey(session::TerminalKey::enter, {});
     typed_since_arrival_ = false;
+    filled_.reset();
     emit suggestionUsed(taken->session, taken->offer, true, taken->typed_first);
 }
 

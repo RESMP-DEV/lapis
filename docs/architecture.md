@@ -3876,7 +3876,10 @@ without a numeric probability, and the predicted event records `top_scored`.
   Claude Code or Codex agent while guessing is on), Tab (and Option-Tab) types
   a guess as one negotiated paste request without Return (October 3: the
   person may edit it first). A second Tab before any other key sends Return
-  after that paste is admitted, never over a request. Later typing
+  after that paste is admitted, never over a request. If a request arrives
+  while that second Tab is still armed, Tab asks `tabAway` once for a safer
+  destination but is consumed rather than forwarded or allowed to reset the
+  armed guess. Later typing
   follows that operation. It requires the negotiated receipt; older services
   refuse visibly until upgraded/restarted. Typing does not withdraw a guess;
   keys typed first are counted. With nothing offered and nothing typed since
@@ -3899,7 +3902,7 @@ without a numeric probability, and the predicted event records `top_scored`.
   window after a presented frame, once per offer even when two offers share
   their words: the impression), `used` (service-admitted Tab or Option-Tab,
   keys typed first, milliseconds after seen) and `withdrawn` (replaced by the next turn's guess, or the setting turned
-  off, and whether it had been seen), plus `failed` (the stage, context or
+  off, and whether it had been seen), plus a bounded `similarity_bounded` marker when outcome scoring compares only the first 2000 characters, `failed` (the stage, context or
   predict, and a stable reason category without raw error text) and `skipped`
   (the hourly cap, which counts model calls). Log records are bounded to 1 MiB;
   the active log rotates at 4 MiB with one owner-only backup. Helper stdout is

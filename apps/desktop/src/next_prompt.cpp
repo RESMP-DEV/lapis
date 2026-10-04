@@ -463,12 +463,17 @@ double similarity(const QString& guess, const QString& sent) {
     const qsizetype band = std::min(kSimilarityBand, std::max(a.size(), b.size()));
     const auto unreachable = std::numeric_limits<qsizetype>::max() / 4;
     std::vector<qsizetype> previous(static_cast<std::size_t>(b.size()) + 1, unreachable);
-    std::vector<qsizetype> row(previous.size());
+    std::vector<qsizetype> row(previous.size(), unreachable);
     previous.front() = 0;
     for (qsizetype j = 1; j <= std::min(b.size(), band); ++j)
         previous[static_cast<std::size_t>(j)] = j;
     for (qsizetype i = 1; i <= a.size(); ++i) {
-        std::fill(row.begin(), row.end(), unreachable);
+        const auto first_clear = std::max<qsizetype>(0, i - band - 1);
+        const auto last_clear = std::min<qsizetype>(b.size() + 1, i + band + 2);
+        const auto offset = [](qsizetype value) {
+            return static_cast<std::vector<qsizetype>::difference_type>(value);
+        };
+        std::fill(row.begin() + offset(first_clear), row.begin() + offset(last_clear), unreachable);
         if (i <= band)
             row.front() = i;
         const auto first = std::max<qsizetype>(1, i - band);
@@ -482,7 +487,7 @@ double similarity(const QString& guess, const QString& sent) {
     }
     const auto distance = previous[static_cast<std::size_t>(b.size())];
     if (distance >= unreachable)
-        return 0.0;
+        return std::max(0.0, 1.0 - double(band + 1) / double(std::max(a.size(), b.size())));
     return 1.0 - double(distance) / double(std::max(a.size(), b.size()));
 }
 } // namespace
@@ -505,7 +510,10 @@ void NextPrompt::settle(const QString& id, const QJsonObject& context) {
         return;
     const auto sent = answered.value(QStringLiteral("text")).toString();
     const auto& guess = waiting->offer.text;
-    const bool exact = sent.trimmed().left(kCompared) == guess.trimmed().left(kCompared);
+    const auto compared_guess = guess.trimmed().left(kCompared);
+    const auto compared_sent = sent.trimmed().left(kCompared);
+    const bool exact = sent.trimmed() == guess.trimmed();
+    const bool similarity_bounded = compared_guess == compared_sent && !exact;
     auto event = about(waiting->offer, id);
     event.insert(QStringLiteral("event"), QStringLiteral("outcome"));
     event.insert(QStringLiteral("filled"), waiting->filled);
@@ -515,6 +523,7 @@ void NextPrompt::settle(const QString& id, const QJsonObject& context) {
                                                              : QStringLiteral("own"));
     event.insert(QStringLiteral("similarity"),
                  std::round(similarity(guess, sent) * 1000.0) / 1000.0);
+    event.insert(QStringLiteral("similarity_bounded"), similarity_bounded);
     event.insert(QStringLiteral("sent_text"), sent.left(4000));
     awaiting_.erase(waiting);
     record(event);

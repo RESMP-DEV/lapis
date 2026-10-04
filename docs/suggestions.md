@@ -36,7 +36,9 @@ None shows while an agent waits on a request such as a permission prompt.
 
 - **Tab** types the guess at the prompt and stops there, for you to edit.
 - **Tab twice** sends it as typed: a second Tab before any other key presses
-  Return (never over a permission prompt). After an edit, send with Return. Suggestions
+  Return (never over a permission prompt). If a request arrives first, Tab is
+  consumed rather than sent to the dialog and the typed guess stays armed.
+  After an edit, send with Return. Suggestions
   require a service from this build; an older service refuses the operation
   visibly until it is upgraded and restarted.
 - **Option-Tab** does the same.
@@ -63,7 +65,9 @@ unused. Once the prompt you
 then sent reaches the conversation, an `outcome` record keeps it beside the
 guess: `as_offered` (sent unchanged), `edited` (Tab typed it and you changed it)
 or `own` (you typed something else), with a `similarity` from 0 to 1 and the
-text you sent. A prediction
+text you sent. Similarity compares at most the first 2000 characters and marks
+that bound with `similarity_bounded`; `as_offered` still requires the complete
+prompt to be unchanged. A prediction
 that failed (with a stable reason category) or was skipped at the hourly cap
 is kept too. A use is recorded only after the service admits its input.
 Admission does not guarantee the CLI consumed it before a crash. The log
