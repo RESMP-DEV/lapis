@@ -90,6 +90,28 @@
       "resolution": "Final 3/3 focused CTest pass."
     }
   ],
+  "stacked_integration": {
+    "revision": "cddca97dca8802adbe31bcf0a7dbc3b4e9e10aac",
+    "base_feature": "work/r1-supervised-session at 837af775acc8c4e4c1c89023ebb91778d35070c1",
+    "checks": [
+      {
+        "command": "python3 scripts/check_supervisor_runtime.py --output build/reports/r1-supervisor/receipt.json",
+        "exit_code": 0,
+        "result": "Configure, build, and focused real-service supervisor CTest passed after integration."
+      },
+      {
+        "command": "ctest --test-dir build/pr87-desktop -R '^attention-(journal|state|protocol)$' --no-tests=error --output-on-failure",
+        "exit_code": 0,
+        "result": "3/3 focused attention tests passed after integration."
+      },
+      {
+        "command": "python3 scripts/lapis.py quality",
+        "exit_code": 0,
+        "result": "Repository Python quality passed after integration."
+      }
+    ],
+    "non_claim": "The stacked check proves the two source slices coexist in focused gates; it does not add live-agent decision delivery or broader R1 acceptance."
+  },
   "non_claims": [
     "No live Codex or Claude restart was exercised through the new journal path.",
     "No native decision delivery through a real agent binary was exercised.",
