@@ -67,6 +67,12 @@
       "command": "python3 scripts/lapis.py quality",
       "exit_code": 0,
       "result": "Source/status, whitespace, Ruff, and Python unit checks passed after the integration repair."
+    },
+    {
+      "name": "review_repair_gate",
+      "command": "python3 scripts/check_supervisor_runtime.py --output build/reports/r1-supervisor/receipt.json; python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "3/3 focused CTest cases passed at d3ef53a including the real-service integration and crash restart; repository quality passed on the parent host."
     }
   ],
   "aggregate_passed": true,
@@ -75,5 +81,28 @@
     "No GUI route creates the service; GUI replacement survival is unqualified.",
     "No launchd, package, reboot, GUI crash, provider routing, restart-storm-on-real-service, sanitizer, load, latency or memory qualification.",
     "No broader C++ static-analysis pass is claimed beyond the focused changed-source checks."
-  ]
+  ],
+  "review_repairs": {
+    "recorded_on": "2026-10-04",
+    "branch_head": "d3ef53a",
+    "addressed": [
+      "alive() reaps a forked service so a crash is visible and the restart path can fire",
+      "terminate() verifies the PID still runs the service before signalling a process group and falls back to a single-process signal",
+      "adoption keeps the ownership record for a live verified peer whose handshake fails",
+      "a throwing post-fork ownership read kills, reaps and cleans the forked service before rethrowing",
+      "the service log path is materialized before fork()",
+      "the handshake shares one bounded 20-second budget, sleeps between attempts, and leaves an aborted socket on a startup-overload reply",
+      "process_runs_program() fails the build on POSIX platforms without executable discovery",
+      "terminal size is validated before fingerprint truncation",
+      "the session-service test derives its temporary directory per platform and skips when binds are unavailable",
+      "the checker rejects an --output outside the checkout and records source-revision failures in a failure receipt",
+      "restart refuses to republish an unchanged session epoch or spawn token, with focused refusal coverage",
+      "docs/architecture.md and docs/status.md distinguish the parent-host focused result from the worker-sandbox CLI probe"
+    ],
+    "new_coverage": [
+      "supervisor-session-service gained a real-service crash-restart case asserting epoch and spawn-token rotation",
+      "supervisor-state gained a repeated-epoch restart refusal case",
+      "adoption false-peer cases now assert ownership-record preservation and removal"
+    ]
+  }
 }
