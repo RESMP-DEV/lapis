@@ -952,7 +952,7 @@ void suggestions() {
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
     require(calls() == 0 && is_key(typed[0], lapis::session::TerminalKey::enter) &&
-                used.back() == std::pair{true, 0},
+                used == std::vector<std::pair<bool, int>>{{false, 0}, {true, 0}},
             "A second Tab did not send the typed guess");
     // The prompt is empty again, so Tab moves on.
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
@@ -1001,11 +1001,14 @@ void suggestions() {
     surface.setSuggestion(QStringLiteral("ship it"));
     settle();
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    surface.setSuggestion(QStringLiteral("ship it")); // A binding re-push, not a new offer.
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(2);
     require(paste_is(typed[0], "ship it", false) &&
                 is_key(typed[1], lapis::session::TerminalKey::enter) && nothing_sent() &&
-                used.back() == std::pair{true, 0},
+                used ==
+                    std::vector<std::pair<bool, int>>{
+                        {false, 0}, {true, 0}, {false, 3}, {false, 0}, {false, 0}, {true, 0}},
             "A quick second Tab did not send after the typed guess");
 
     // A fresh offer has not been presented yet: Tab may fill it, but must not
@@ -1055,16 +1058,30 @@ void suggestions() {
     press(Qt::Key_Tab, Qt::AltModifier, QStringLiteral("\t"));
     typed = frames(1);
     require(typed.size() == 1 && paste_is(typed[0], "rerun it", false) && !used.empty() &&
-                used.back() == std::pair{false, 0},
+                used.at(used.size() - 1) == std::pair{false, 0},
             "Option-Tab did not only type the suggestion");
     const int after_fill = calls();
     press(Qt::Key_S, Qt::NoModifier, QStringLiteral("s"));
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(2);
     require(payload(typed[0]) == QByteArray("s") &&
-                is_key(typed[1], lapis::session::TerminalKey::tab) && calls() == after_fill &&
-                used.back() == std::pair{false, 0},
+                is_key(typed[1], lapis::session::TerminalKey::tab) && calls() == after_fill,
             "Tab after editing the typed guess did not reach the agent");
+
+    // A dropped file pastes into the prompt and therefore edits the typed
+    // guess: a later Tab must not submit the combined line for the person.
+    surface.setSuggestion(QStringLiteral("run tests"));
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(paste_is(typed[0], "run tests", false), "Tab did not type the offered guess");
+    require(surface.pasteText(QStringLiteral(" '/tmp/result.txt'")), "Fixture paste refused");
+    typed = frames(1);
+    require(payload(typed[0]) == QByteArray(" '/tmp/result.txt'"),
+            "The dropped-file paste did not reach the prompt");
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(is_key(typed[0], lapis::session::TerminalKey::tab),
+            "Tab submitted a guess after an intervening paste");
     press(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
     typed = frames(1);
     require(is_key(typed[0], lapis::session::TerminalKey::enter), "Return did not reach the agent");

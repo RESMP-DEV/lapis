@@ -304,15 +304,17 @@ class TerminalSurface : public QQuickItem {
         QPointer<SessionPreview> owner;
         QString session;
         QString offer;
+        QString typed; // the suggestion Tab pasted, before edits
         int typed_first{};
         quint64 request{};
         bool admitted{};     // the service queued the typed guess
         bool send_pending{}; // the second Tab came before that
     };
     std::optional<Filled> filled_;
-    void fillSuggestion();
+    [[nodiscard]] bool fillSuggestion();
     void filledAdmitted(const Filled& made, bool queued);
     void sendFilled();
+    [[nodiscard]] bool takeFilled(bool plain_tab);
     bool takeSuggestion(const QKeyEvent& event);
     quint64 pasteTextRequest(const QString& text, std::optional<bool> submit);
     void reportSeen();

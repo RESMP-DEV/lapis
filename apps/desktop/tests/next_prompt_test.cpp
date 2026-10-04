@@ -498,18 +498,27 @@ void outcomesCompareWhatWasSent() {
                 !outcome.value(QStringLiteral("filled")).toBool(),
             "a prompt typed instead of the guess is their own");
 
+    // A newer offer can replace a guess that is still waiting for the agent's
+    // own turn. Taking the newer offer must re-anchor the outcome to it.
     const auto third = next.offerKey(QStringLiteral("a"));
     next.used(QStringLiteral("a"), false, 0, third);
-    next.used(QStringLiteral("a"), true, 0, third);
+    turn(R"({"conversation":"c","turn":5})", "go on");
+    const auto replacement = next.offerKey(QStringLiteral("a"));
+    require(replacement != third, "the agent's own turn did not offer a newer guess");
+    next.seen(QStringLiteral("a"));
+    next.used(QStringLiteral("a"), false, 0, replacement);
+    next.used(QStringLiteral("a"), true, 0, replacement);
     require(events(log).last().value(QStringLiteral("event")) == QLatin1String("used") &&
-                events(log).last().value(QStringLiteral("sent")).toBool(),
-            "a second Tab's send is recorded");
-    turn(R"({"conversation":"c","turn":6,"answered":{"turn":5,"text":"go "}})", "go on");
-    require(answered(3) &&
+                events(log).last().value(QStringLiteral("offer")) == replacement &&
+                events(log).last().value(QStringLiteral("sent")).toBool() &&
+                events(log).last().value(QStringLiteral("ms_after_seen")).toInteger() >= 0,
+            "a second Tab's send is recorded with its wait");
+    turn(R"({"conversation":"c","turn":6,"answered":{"turn":5,"text":"go on"}})", "again");
+    require(answered(3) && outcomes().last().value(QStringLiteral("offer")) == replacement &&
                 outcomes().last().value(QStringLiteral("result")) == QLatin1String("as_offered") &&
                 outcomes().last().value(QStringLiteral("similarity")).toDouble() == 1.0 &&
                 outcomes().last().value(QStringLiteral("tab_sent")).toBool(),
-            "the guess sent unchanged by a double Tab is as offered");
+            "the newer guess sent by double Tab is the recorded outcome");
 
     // A new conversation (after /clear) drops the waiting offer.
     turn(R"({"conversation":"d","turn":0,"answered":{"turn":6,"text":"go on"}})", "go");

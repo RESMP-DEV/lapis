@@ -192,6 +192,22 @@ class TranscriptTests(Homes):
             )
             self.assertNotIn("answered", context)
 
+    def test_context_clips_what_was_sent_for_an_earlier_offer(self):
+        path = write_lines(
+            self.claude / "projects" / "-elsewhere" / "c3.jsonl",
+            [
+                claude_user("x" * 5000, "2026-09-28T11:00:00Z"),
+                claude_agent("Done.", "2026-09-28T11:00:01Z"),
+            ],
+        )
+        context = next_prompt.command_context(
+            next_prompt.argparse.Namespace(
+                cli="claude", conversation=path.stem, folder="", answered=0
+            )
+        )
+        self.assertLessEqual(len(context["answered"]["text"]), 4000 + len("\n[...]\n"))
+        self.assertIn("[...]", context["answered"]["text"])
+
     def test_the_actual_next_prompt_or_pending(self):
         actual = next_prompt.command_actual
         ask = next_prompt.argparse.Namespace

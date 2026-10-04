@@ -407,6 +407,10 @@ void NextPrompt::used(const QString& id, bool sent, int typed_first, const QStri
         event.insert(QStringLiteral("event"), QStringLiteral("used"));
         event.insert(QStringLiteral("sent"), true);
         event.insert(QStringLiteral("typed_first"), typed_first);
+        event.insert(QStringLiteral("ms_after_seen"),
+                     waiting->offer.seen_ms == 0
+                         ? -1
+                         : QDateTime::currentMSecsSinceEpoch() - waiting->offer.seen_ms);
         record(event);
         return;
     }
@@ -420,9 +424,9 @@ void NextPrompt::used(const QString& id, bool sent, int typed_first, const QStri
     event.insert(QStringLiteral("ms_after_seen"),
                  offer.seen_ms == 0 ? -1 : QDateTime::currentMSecsSinceEpoch() - offer.seen_ms);
     record(event);
-    if (const auto waiting = awaiting_.find(id);
-        waiting != awaiting_.end() && waiting->offer.key == offer.key)
-        waiting->filled = true;
+    // Taking a newer offer over a still-waiting guess makes that newer offer
+    // the one its eventual prompt must be compared with.
+    awaiting_.insert(id, {offer, true, false});
     offers_.remove(id);
     ++revision_;
     emit changed();

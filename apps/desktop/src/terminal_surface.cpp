@@ -1567,7 +1567,10 @@ std::optional<TerminalMatch> terminal_find(const session::TerminalSnapshot& snap
 void TerminalSurface::setSuggestion(const QString& suggestion) {
     if (suggestion_ == suggestion)
         return;
-    if (!suggestion.isEmpty())
+    // QML can re-push the same unconsumed offer when an unrelated binding
+    // dependency changes. That is not a new turn and must not disarm Tab-Tab.
+    if (!suggestion.isEmpty() &&
+        !(filled_ && filled_->typed == suggestion && filled_->offer == suggestion_key_))
         filled_.reset(); // a new turn's guess: the typed one is history
     suggestion_ = suggestion;
     typed_while_offered_ = 0;
@@ -1578,6 +1581,8 @@ void TerminalSurface::setSuggestion(const QString& suggestion) {
 void TerminalSurface::setSuggestionKey(const QString& key) {
     if (suggestion_key_ == key)
         return;
+    if (!key.isEmpty() && filled_ && filled_->offer != key)
+        filled_.reset(); // The same words can still be a different offer.
     suggestion_key_ = key;
     emit suggestionChanged();
     publishFrame(false);
@@ -1692,6 +1697,24 @@ SuggestionLayout TerminalSurface::presentedSuggestion() const {
 // With nothing offered and nothing typed since arriving or since the last
 // Return, Tab moves to the next agent that needs you, and is the program's own
 // when none does. Typing keeps the suggestion; what was typed first is counted.
+bool TerminalSurface::takeFilled(bool plain_tab) {
+    if (!filled_ || filled_->owner != document_)
+        return false;
+    const bool re_pushed = !suggestion_.isEmpty() && suggestion_ == filled_->typed &&
+                           suggestion_key_ == filled_->offer;
+    if (!re_pushed && !suggestion_.isEmpty())
+        return false;
+    if (!plain_tab)
+        return true;
+    if (document_->attentionPending())
+        return true;
+    if (filled_->admitted)
+        sendFilled();
+    else
+        filled_->send_pending = true;
+    return true;
+}
+
 bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
     if (!tab_flow_ || !document_ || modifier_key(event.key()))
         return false;
@@ -1699,17 +1722,12 @@ bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
     const bool tab = event.key() == Qt::Key_Tab && modifiers == Qt::NoModifier;
     const bool fill = event.key() == Qt::Key_Tab && modifiers == Qt::AltModifier;
     // Never over a request: Return in a permission dialog would answer it.
+    if ((tab || fill) && takeFilled(tab))
+        return true;
     if (tab || fill) {
         if (!suggestion_.isEmpty() && !document_->attentionPending()) {
-            fillSuggestion();
-            return true;
-        }
-        // A second Tab sends the guess just typed, unchanged.
-        if (tab && filled_ && filled_->owner == document_) {
-            if (filled_->admitted || document_->attentionPending())
-                sendFilled();
-            else
-                filled_->send_pending = true;
+            if (!fillSuggestion())
+                return false; // Nothing was typed; let Tab keep its old meaning.
             return true;
         }
     }
@@ -1730,13 +1748,14 @@ bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
     return false;
 }
 
-void TerminalSurface::fillSuggestion() {
+bool TerminalSurface::fillSuggestion() {
     const auto owner = document_;
-    Filled filled{owner, owner->sessionId(), suggestion_key_, typed_while_offered_, 0, false,
-                  false};
+    Filled filled{
+        owner, owner->sessionId(), suggestion_key_, suggestion_, typed_while_offered_, 0, false,
+        false};
     filled.request = pasteTextRequest(suggestion_, false);
     if (filled.request == 0)
-        return;
+        return false;
     setSuggestion({});
     typed_since_arrival_ = true;
     filled_ = filled;
@@ -1750,6 +1769,7 @@ void TerminalSurface::fillSuggestion() {
                               if (surface)
                                   surface->filledAdmitted(filled, queued);
                           });
+    return true;
 }
 
 // The service answered the paste Tab made: record the use, and send it now if
@@ -1770,6 +1790,11 @@ void TerminalSurface::filledAdmitted(const Filled& made, bool queued) {
 }
 
 void TerminalSurface::sendFilled() {
+    // SessionPreview::sendKey silently drops Enter in these states. Keep the
+    // admitted guess armed so a later Tab can send it after history settles.
+    if (!document_ || document_->historyActive() || document_->historyRequestPending() ||
+        !document_->live())
+        return;
     std::optional<Filled> taken;
     taken.swap(filled_);
     if (!taken || !taken->owner || taken->owner != document_ || document_->attentionPending())
@@ -1780,7 +1805,10 @@ void TerminalSurface::sendFilled() {
 }
 
 bool TerminalSurface::pasteText(const QString& text) {
-    return pasteTextRequest(text, std::nullopt) != 0;
+    const quint64 request = pasteTextRequest(text, std::nullopt);
+    if (request != 0)
+        noteTyped(); // A dropped file or other paste is no longer just the guess.
+    return request != 0;
 }
 quint64 TerminalSurface::pasteTextRequest(const QString& text, std::optional<bool> submit) {
     if (!document_ || text.isEmpty() || !interactive_ || !document_->live() || pasting_)

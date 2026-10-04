@@ -267,7 +267,10 @@ def command_context(arguments):
     # What the person sent for an earlier offer, to compare with the guess.
     answered = getattr(arguments, "answered", -1)
     if 0 <= answered < len(prompts):
-        result["answered"] = {"turn": answered, "text": prompts[answered]["text"]}
+        result["answered"] = {
+            "turn": answered,
+            "text": clip(prompts[answered]["text"], 4000),
+        }
     return result
 
 
