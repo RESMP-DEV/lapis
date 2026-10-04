@@ -30,11 +30,20 @@ protocol bytes; this proves neither protocol compatibility nor health. Missing
 or malformed selected inputs return status 1. It never restores sessions, reads
 terminal output, launches a process, or changes runtime state.
 
+`--samples N` repeats that same connect-only probe for each bounded endpoint.
+N must be 1 through 8 and defaults to 1. Every duration is measured with a
+monotonic clock around the connect only. The full report has aggregate and
+per-classification p50/p95/p99/max milliseconds plus sample, success, and
+timeout counts. Eight samples raise the worst-case connect wait to about 10
+seconds. They are local connect diagnostics, not service health, protocol
+compatibility, workload-capacity, or resource-acceptance evidence.
+
 `diagnose --export` is the separate support-export mode. It writes a bounded
 JSON summary to standard output for the user to submit deliberately. It reports
-states, stable issue codes and counts, version-like package fields, and socket
-connect counts. It omits selected paths, session identities, launch data,
-account identifiers, terminal content, and any health claim.
+states, stable issue codes and counts, version-like package fields, socket
+connect counters, and aggregate connect-timing distributions. It omits
+per-endpoint timing, selected paths, session identities, launch data, account
+identifiers, terminal content, and any health claim.
 
 ## Checking a change
 

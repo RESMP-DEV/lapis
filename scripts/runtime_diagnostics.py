@@ -13,6 +13,7 @@ import plistlib
 import socket
 import stat
 import sys
+import time
 import uuid
 from collections.abc import Iterable
 from itertools import islice
@@ -41,9 +42,11 @@ MAX_ARGUMENT_BYTES = 64 * 1024
 MAX_PATH_UNITS = 4096
 MAX_NAME_UNITS = 80
 MAX_ENDPOINT_PROBES = 8
+MAX_SAMPLES = 8
 MAX_INVENTORY_ENTRIES = 128
 MAX_FILENAME_BYTES = 255
 CONNECT_TIMEOUT_SECONDS = 0.15
+CONNECT_TIMEOUT_ERRNOS = frozenset((errno.ETIMEDOUT, errno.EAGAIN, errno.EWOULDBLOCK))
 DESCRIPTOR_SIZE = 73
 DESCRIPTOR_MAGIC = b"LAPIS-S1\n"
 FILE_OPEN_FLAGS = (
@@ -105,6 +108,17 @@ def default_runtime() -> Path:
     if home:
         return Path(home).expanduser() / "runtime"
     return Path.home() / ".lapis" / "runtime"
+
+
+def _bounded_sample_count(value: str) -> int:
+    """Reject sampling beyond the documented local diagnostic bound."""
+    try:
+        samples = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be an integer from 1 to 8") from None
+    if not 1 <= samples <= MAX_SAMPLES:
+        raise argparse.ArgumentTypeError("must be an integer from 1 to 8")
+    return samples
 
 
 def _text(value: object) -> str | None:
@@ -668,8 +682,48 @@ def _ancestor_is_trusted(path: Path) -> tuple[bool, str]:
     return True, ""
 
 
+def _connect_classification(result: int | None) -> str:
+    """Classify one zero-byte connect without interpreting protocol state."""
+    if result == 0:
+        return "connectable"
+    if result == errno.ECONNREFUSED:
+        return "not_listening"
+    if result in CONNECT_TIMEOUT_ERRNOS:
+        return "timeout"
+    return "unknown"
+
+
+def _empty_distribution() -> dict[str, Any]:
+    return {
+        "sample_count": 0,
+        "p50_ms": None,
+        "p95_ms": None,
+        "p99_ms": None,
+        "max_ms": None,
+    }
+
+
+def _distribution(durations: Iterable[float]) -> dict[str, Any]:
+    """Return bounded nearest-rank connect-time distributions in milliseconds."""
+    values = sorted(durations)
+    if not values:
+        return _empty_distribution()
+
+    def percentile(percentage: int) -> float:
+        rank = -(-percentage * len(values) // 100)
+        return round(values[max(0, min(len(values) - 1, rank - 1))], 3)
+
+    return {
+        "sample_count": len(values),
+        "p50_ms": percentile(50),
+        "p95_ms": percentile(95),
+        "p99_ms": percentile(99),
+        "max_ms": round(values[-1], 3),
+    }
+
+
 def _probe_endpoints(
-    runtime: Path, identifiers: Iterable[str]
+    runtime: Path, identifiers: Iterable[str], samples: int = 1
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     reachability: dict[str, Any] = {
         "method": "Unix-socket connect, immediately closed; no protocol bytes",
@@ -677,11 +731,40 @@ def _probe_endpoints(
         "probed": 0,
         "connectable": 0,
         "not_listening": 0,
+        "timeout": 0,
         "missing": 0,
         "unknown": 0,
         "unexamined": 0,
+        "samples_requested": samples,
+        "sample_count": 0,
+        "success_count": 0,
+        "timeout_count": 0,
         "health": "unknown",
         "authoritative": False,
+    }
+    durations: list[float] = []
+    classification_durations: dict[str, list[float]] = {
+        name: [] for name in ("connectable", "not_listening", "timeout", "unknown")
+    }
+    measurement: dict[str, Any] = {
+        "method": (
+            "Monotonic duration around a zero-byte Unix-socket connect; "
+            "no protocol bytes"
+        ),
+        "unit": "milliseconds",
+        "claim": (
+            "Local connect diagnostics only; not service health, protocol "
+            "compatibility, workload capacity, or resource acceptance"
+        ),
+        "samples_requested": samples,
+        "sample_count": 0,
+        "success_count": 0,
+        "timeout_count": 0,
+        "aggregate": _empty_distribution(),
+        "by_classification": {
+            name: _empty_distribution()
+            for name in ("connectable", "not_listening", "timeout", "unknown")
+        },
     }
     descriptors: dict[str, Any] = {
         "examined": 0,
@@ -703,27 +786,52 @@ def _probe_endpoints(
             else:
                 reachability["unknown"] += 1
         else:
-            try:
-                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-                    connection.settimeout(CONNECT_TIMEOUT_SECONDS)
-                    result = connection.connect_ex(str(endpoint))
-                if result == 0:
-                    reachability["connectable"] += 1
-                elif result == errno.ECONNREFUSED:
-                    reachability["not_listening"] += 1
+            for _ in range(samples):
+                started: int | None = None
+                try:
+                    with socket.socket(
+                        socket.AF_UNIX, socket.SOCK_STREAM
+                    ) as connection:
+                        connection.settimeout(CONNECT_TIMEOUT_SECONDS)
+                        started = time.monotonic_ns()
+                        result = connection.connect_ex(str(endpoint))
+                except (OSError, OverflowError) as error:
+                    result = (
+                        errno.ETIMEDOUT
+                        if isinstance(error, TimeoutError)
+                        else error.errno
+                    )
+                    elapsed_ms = (
+                        (time.monotonic_ns() - started) / 1_000_000
+                        if started is not None
+                        else 0.0
+                    )
                 else:
-                    reachability["unknown"] += 1
-            except (OSError, OverflowError):
-                reachability["unknown"] += 1
+                    elapsed_ms = (time.monotonic_ns() - started) / 1_000_000
+                classification = _connect_classification(result)
+                reachability[classification] += 1
+                durations.append(elapsed_ms)
+                classification_durations[classification].append(elapsed_ms)
+                reachability["sample_count"] += 1
+                reachability["success_count"] += classification == "connectable"
+                reachability["timeout_count"] += classification == "timeout"
         reachability["probed"] += 1
         state = _descriptor_observation(runtime / f"{identifier}.sock.session")
         if state != "missing":
             descriptors["examined"] += 1
         descriptors[state] += 1
+    measurement["sample_count"] = reachability["sample_count"]
+    measurement["success_count"] = reachability["success_count"]
+    measurement["timeout_count"] = reachability["timeout_count"]
+    measurement["aggregate"] = _distribution(durations)
+    measurement["by_classification"] = {
+        name: _distribution(values) for name, values in classification_durations.items()
+    }
+    reachability["measurement"] = measurement
     return reachability, descriptors
 
 
-def diagnose_runtime(selected: Path) -> dict[str, Any]:
+def diagnose_runtime(selected: Path, samples: int = 1) -> dict[str, Any]:
     """Apply launcher privacy rules and collect counts, not session content."""
     result: dict[str, Any] = {
         "selected": str(selected),
@@ -836,16 +944,16 @@ def diagnose_runtime(selected: Path) -> dict[str, Any]:
             terminal_result["state"] = "invalid"
         result["state"] = terminal_result["state"]
 
-    reachability, descriptors = _probe_endpoints(selected, endpoint_ids)
+    reachability, descriptors = _probe_endpoints(selected, endpoint_ids, samples)
     result["reachability"] = reachability
     result["descriptors"] = descriptors
     return result
 
 
-def diagnose(app: Path, runtime: Path) -> dict[str, Any]:
+def diagnose(app: Path, runtime: Path, samples: int = 1) -> dict[str, Any]:
     """Collect the complete diagnostic result and its meaningful exit status."""
     application = diagnose_app(app)
-    selected_runtime = diagnose_runtime(runtime)
+    selected_runtime = diagnose_runtime(runtime, samples)
     input_ready = application["state"] == "ok" and selected_runtime["state"] == "ok"
     return {
         "schema_version": SCHEMA_VERSION,
@@ -920,13 +1028,47 @@ def support_export(report: dict[str, Any]) -> dict[str, Any]:
         runtime.get("terminals", {}), ("state", "observations", "issues")
     )
     terminals["issues"] = _support_issues(terminals.get("issues", []))
+    reachability = _support_subdict(
+        runtime.get("reachability", {}),
+        (
+            "method",
+            "limit",
+            "probed",
+            "connectable",
+            "not_listening",
+            "timeout",
+            "missing",
+            "unknown",
+            "unexamined",
+            "samples_requested",
+            "sample_count",
+            "success_count",
+            "timeout_count",
+            "health",
+            "authoritative",
+        ),
+    )
+    reachability["measurement"] = _support_subdict(
+        runtime.get("reachability", {}).get("measurement", {}),
+        (
+            "method",
+            "unit",
+            "claim",
+            "samples_requested",
+            "sample_count",
+            "success_count",
+            "timeout_count",
+            "aggregate",
+            "by_classification",
+        ),
+    )
     selected_runtime = {
         "state": runtime["state"],
         "issues": _support_issues(runtime["issues"]),
         "inventory": runtime.get("inventory", {}),
         "registry": registry,
         "terminals": terminals,
-        "reachability": runtime.get("reachability", {}),
+        "reachability": reachability,
         "descriptors": runtime.get("descriptors", {}),
     }
     return {
@@ -937,7 +1079,8 @@ def support_export(report: dict[str, Any]) -> dict[str, Any]:
         "exit_status": report["exit_status"],
         "scope": (
             "redacted structural diagnosis; no selected paths, session identity, "
-            "launch data, terminal content, protocol bytes, or health claim"
+            "launch data, terminal content, protocol bytes, or health claim; "
+            "connect timing is aggregate only"
         ),
         "health": "unknown",
         "app": app,
@@ -957,12 +1100,22 @@ def _text_report(report: dict[str, Any]) -> str:
     not_listening = reachability.get("not_listening", 0)
     unknown = reachability.get("unknown", 0)
     unexamined = reachability.get("unexamined", 0)
+    distribution = reachability.get("measurement", {}).get("aggregate", {})
+    if distribution.get("sample_count"):
+        timing = (
+            f"Connect timings: p50 {distribution['p50_ms']} ms, "
+            f"p95 {distribution['p95_ms']} ms, p99 {distribution['p99_ms']} ms, "
+            f"max {distribution['max_ms']} ms (local connect diagnostics only).\n"
+        )
+    else:
+        timing = ""
     return (
         f"App: {app['state']} ({version}; package metadata only)\n"
         f"Runtime: {runtime['state']} ({agents} agents, {categories} categories recorded)\n"
         f"Endpoints: {connectable} connectable, "
         f"{not_listening} not listening, {unknown} unknown; "
         f"{unexamined} not examined\n"
+        f"{timing}"
         "Health: unknown. Read-only: no GUI, session restore, terminal content, or protocol handshake; "
         "file/socket evidence is not authoritative health."
     )
@@ -984,6 +1137,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--runtime", type=Path, help="private lapis runtime directory to inspect"
     )
+    parser.add_argument(
+        "--samples",
+        type=_bounded_sample_count,
+        default=1,
+        help=(
+            "bounded connect-only samples per endpoint, 1-8; default 1. "
+            "The worst case adds about 10 seconds"
+        ),
+    )
     return parser
 
 
@@ -994,7 +1156,7 @@ def main(arguments: list[str] | None = None) -> int:
         parser.error("--export and --json are mutually exclusive")
     app = options.app.expanduser() if options.app else default_app()
     runtime = options.runtime.expanduser() if options.runtime else default_runtime()
-    report = diagnose(app, runtime)
+    report = diagnose(app, runtime, options.samples)
     if options.export:
         print(json.dumps(support_export(report), indent=2, sort_keys=True))
     elif options.json:
