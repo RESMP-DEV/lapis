@@ -351,7 +351,7 @@ class Importer::Impl final : public QObject {
         rpc(QStringLiteral("externalAgentConfig/import"),
             QJsonObject{{QStringLiteral("migrationItems"), migration_items},
                         {QStringLiteral("source"), QStringLiteral("lapis")},
-                        {QStringLiteral("providerId"), QStringLiteral("claude")},
+                        {QStringLiteral("providerId"), QStringLiteral("lapis")},
                         {QStringLiteral("migrationSource"), QStringLiteral("claude")}},
             rpc_timeout);
         if (phase_ != ImportPhase::importing)
@@ -394,6 +394,7 @@ class Importer::Impl final : public QObject {
         detection_.items.clear();
         selected_types_.clear();
         import_id_.clear();
+        early_notifications_.clear();
         progress_.clear();
         completion_.reset();
     }
@@ -457,32 +458,6 @@ class Importer::Impl final : public QObject {
             throw std::runtime_error("Codex progress exceeded selected item types");
     }
 
-    static QString itemTypeString(ImportItemType type) {
-        switch (type) {
-        case ImportItemType::agents_md:
-            return QStringLiteral("AGENTS_MD");
-        case ImportItemType::config:
-            return QStringLiteral("CONFIG");
-        case ImportItemType::skills:
-            return QStringLiteral("SKILLS");
-        case ImportItemType::plugins:
-            return QStringLiteral("PLUGINS");
-        case ImportItemType::mcp_server_config:
-            return QStringLiteral("MCP_SERVER_CONFIG");
-        case ImportItemType::subagents:
-            return QStringLiteral("SUBAGENTS");
-        case ImportItemType::hooks:
-            return QStringLiteral("HOOKS");
-        case ImportItemType::commands:
-            return QStringLiteral("COMMANDS");
-        case ImportItemType::memory:
-            return QStringLiteral("MEMORY");
-        case ImportItemType::sessions:
-            return QStringLiteral("SESSIONS");
-        }
-        throw std::runtime_error("Unknown migration item type");
-    }
-
     void receive(const QByteArray& bytes) {
         const auto document = QJsonDocument::fromJson(bytes);
         if (!document.isObject())
@@ -505,6 +480,30 @@ class Importer::Impl final : public QObject {
         const auto parameters = message.value(QStringLiteral("params")).toObject();
         if (!message.value(QStringLiteral("params")).isObject())
             throw std::runtime_error("Codex import notification lacks parameters");
+        if (import_id_.isEmpty()) {
+            if (phase_ != ImportPhase::importing)
+                return;
+            if (early_notifications_.size() >= 64)
+                throw std::runtime_error("Codex early import notifications exceeded limit");
+            // JSON-RPC does not require the accept reply to precede progress or
+            // completion. Retain matching traffic only until acceptance identifies it.
+            early_notifications_.push_back(message);
+            return;
+        }
+        apply_notification(message);
+    }
+
+    void drain_early_notifications() {
+        if (early_notifications_.empty())
+            return;
+        const auto pending = std::exchange(early_notifications_, {});
+        for (const auto& early : pending)
+            apply_notification(early);
+    }
+
+    void apply_notification(const QJsonObject& message) {
+        const auto method = message.value(QStringLiteral("method")).toString();
+        const auto parameters = message.value(QStringLiteral("params")).toObject();
         const auto identifier =
             required_text(parameters, QStringLiteral("importId"), identity_limit);
         if (identifier != import_id_)
@@ -578,6 +577,7 @@ class Importer::Impl final : public QObject {
             diagnostic_ = QStringLiteral("Codex accepted the import");
             deadline_.start(import_timeout);
             emit owner_.importAccepted(import_id_);
+            drain_early_notifications();
         } else {
             throw std::runtime_error("Unexpected Codex import RPC result");
         }
@@ -595,6 +595,7 @@ class Importer::Impl final : public QObject {
     std::optional<Importer::Completion> completion_;
     QSet<QString> selected_types_;
     QString waiting_;
+    std::vector<QJsonObject> early_notifications_;
     qint64 rpc_id_{};
     ImportPhase phase_ = ImportPhase::disconnected;
 };

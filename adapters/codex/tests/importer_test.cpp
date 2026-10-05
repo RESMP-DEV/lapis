@@ -145,6 +145,7 @@ class Source final : public QObject {
 
     QJsonObject detection;
     QString import_id = QStringLiteral("import-1");
+    std::vector<QJsonObject> before_acceptance;
     std::vector<QJsonObject> after_acceptance;
     std::vector<QJsonObject> received;
 
@@ -209,6 +210,8 @@ class Source final : public QObject {
         } else if (method == QLatin1String("externalAgentConfig/import")) {
             const auto parameters = request.value(QStringLiteral("params")).toObject();
             last_import = parameters;
+            for (const auto& message : before_acceptance)
+                send(message);
             send({{"id", id}, {"result", QJsonObject{{QStringLiteral("importId"), import_id}}}});
             for (const auto& message : after_acceptance)
                 send(message);
@@ -341,7 +344,8 @@ void detect_select_import_and_parse_completion() {
     const auto items = parameters.value("migrationItems").toArray();
     require(items.size() == 1 && items.first().toObject() == session_item() &&
                 parameters.value("migrationSource") == QStringLiteral("claude") &&
-                parameters.value("source") == QStringLiteral("lapis"),
+                parameters.value("source") == QStringLiteral("lapis") &&
+                parameters.value("providerId") == QStringLiteral("lapis"),
             "selected payload is preserved and attribution is bounded");
     require(wait_for([&] {
                 return importer.phase() == Importer::Phase::completed ||
@@ -378,6 +382,26 @@ void wrong_import_identity_is_ignored() {
     require(importer.phase() == Importer::Phase::importing &&
                 importer.completion().import_id.isEmpty(),
             "another import's completion does not resolve this task");
+}
+
+void completion_before_acceptance_is_replayed() {
+    Source source;
+    source.detection = QJsonObject{{QStringLiteral("items"), QJsonArray{session_item()}}};
+    source.before_acceptance = {completion(source.import_id)};
+    source.start();
+    Importer importer;
+    importer.start(source.path());
+    require(wait_for([&] { return importer.phase() == Importer::Phase::ready; }),
+            "early-completion fixture initializes");
+    require(importer.detect() &&
+                wait_for([&] { return importer.phase() == Importer::Phase::ready; }),
+            "early-completion fixture detects");
+    require(importer.importSessions({0}) &&
+                wait_for([&] { return importer.phase() == Importer::Phase::completed; }),
+            "a completion racing the accept reply still finishes the task");
+    require(importer.importedSessions().size() == 1 &&
+                importer.completion().import_id == source.import_id,
+            "early completion retains its identity");
 }
 
 void non_session_migration_details_fail_closed() {
@@ -456,6 +480,7 @@ int run(int argc, char** argv) {
     QCoreApplication application(argc, argv);
     detect_select_import_and_parse_completion();
     wrong_import_identity_is_ignored();
+    completion_before_acceptance_is_replayed();
     non_session_migration_details_fail_closed();
     malformed_shape_fails_closed_without_retry();
     malformed_completion_fails_closed();

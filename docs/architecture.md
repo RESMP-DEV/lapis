@@ -4560,11 +4560,10 @@ request and cannot approve or answer anything.
 
 The first implementation slice imports only Claude sessions. After completion,
 each successful session target identifies an imported Codex thread. Lapis
-creates ordinary launch records with validated resume identities, reconciles
-against `thread/list` and migration history before offering Open/Resume, and
-never relies on titles or paths alone to suppress duplicates. A failure,
-disconnect or timeout leaves the import task recoverable and never automatically
-re-submits, because retries can duplicate or partially apply global config.
+does not create launch records, reconcile against `thread/list`, or suppress
+duplicates in this slice. A failure, disconnect or timeout terminates the task
+in `failed` and never automatically re-submits, because retries can duplicate
+or partially apply global config.
 
 Configuration, instructions, skills, agents, hooks, commands, MCP servers,
 memory and plugins remain outside the first slice. They need their own consent

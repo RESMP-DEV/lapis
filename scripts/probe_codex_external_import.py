@@ -50,7 +50,7 @@ async def initialize(client: Client) -> dict[str, Any]:
     return reply
 
 
-def session_item(items: list[dict[str, Any]]) -> dict[str, Any]:
+def session_item(items: list[dict[str, Any]], home: Path) -> dict[str, Any]:
     """Select only the detected session item; config classes stay opt-in elsewhere."""
     if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
         raise RuntimeError("Malformed Codex detection items")
@@ -83,6 +83,19 @@ def session_item(items: list[dict[str, Any]]) -> dict[str, Any]:
     sessions_detected = details.get("sessions")
     if not isinstance(sessions_detected, list) or len(sessions_detected) != 1:
         raise RuntimeError("Expected exactly one detected session")
+    session = sessions_detected[0]
+    if not isinstance(session, dict):
+        raise RuntimeError("Malformed detected session")
+    session_path = session.get("path")
+    if not isinstance(session_path, str) or not Path(
+        session_path
+    ).resolve().is_relative_to(home.resolve()):
+        raise RuntimeError("Detected session escapes the disposable home")
+    session_cwd = session.get("cwd")
+    if not isinstance(session_cwd, str) or not Path(
+        session_cwd
+    ).resolve().is_relative_to(home.resolve()):
+        raise RuntimeError("Detected session cwd escapes the disposable home")
     return item
 
 
@@ -266,7 +279,8 @@ async def run_probe(binary: Path, receipt: dict[str, Any]) -> None:
                 ),
                 "Malformed Codex detection response",
             )
-            item = session_item(detected.get("items", []))
+            item = session_item(detected.get("items", []), home)
+            receipt["isolation"]["real_claude_files_read"] = False
             receipt["observed"]["externalAgentConfig/detect"] = {
                 "passed": True,
                 "migration_source": "claude",
@@ -448,6 +462,8 @@ def main(argv: list[str] | None = None) -> int:
         asyncio.run(run_probe(binary, receipt))
     except (OSError, RpcError, RuntimeError, ValueError, TypeError, LookupError):
         # Source errors can contain absolute fixture paths or transcript text.
+        receipt["passed"] = False
+        receipt["isolation"]["cleanup_complete"] = False
         receipt["error_type"] = "ProbeError"
         receipt["error"] = "Probe failed without recording source error text"
     args.output.parent.mkdir(parents=True, exist_ok=True)

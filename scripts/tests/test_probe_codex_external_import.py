@@ -4,17 +4,25 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from scripts import probe_codex_external_import as probe
 
 
 def session_item() -> dict[str, object]:
+    home = Path("/private/source-home")
     return {
         "itemType": "SESSIONS",
         "description": "/private/source to /private/target",
         "cwd": None,
-        "details": {"sessions": [{"path": "/private/source/session.jsonl"}]},
+        "details": {
+            "sessions": [
+                {
+                    "path": str(home / ".claude/projects/source/session.jsonl"),
+                    "cwd": str(home / "project"),
+                }
+            ]
+        },
     }
 
 
@@ -34,24 +42,33 @@ class ProbeTests(unittest.IsolatedAsyncioTestCase):
             await probe.initialize(client)
 
     async def test_session_selection_requires_exactly_one_item_and_session(self):
-        self.assertEqual(probe.session_item([session_item()]), session_item())
+        home = Path("/private/source-home")
+        self.assertEqual(probe.session_item([session_item()], home), session_item())
         for malformed in (None, [None]):
             with self.assertRaisesRegex(RuntimeError, "Malformed Codex detection"):
-                probe.session_item(malformed)
+                probe.session_item(malformed, home)
         for items in ([], [session_item(), session_item()]):
             with self.assertRaisesRegex(RuntimeError, "exactly one session migration"):
-                probe.session_item(items)
+                probe.session_item(items, home)
         malformed = {"itemType": "SESSIONS", "details": {"sessions": []}}
         with self.assertRaisesRegex(RuntimeError, "exactly one detected session"):
-            probe.session_item([malformed])
+            probe.session_item([malformed], home)
         carrying_skills = session_item()
         carrying_skills["details"]["skills"] = [{"name": "other"}]
         with self.assertRaisesRegex(RuntimeError, "non-session migration"):
-            probe.session_item([carrying_skills])
+            probe.session_item([carrying_skills], home)
         unknown_detail = session_item()
         unknown_detail["details"]["future"] = []
         with self.assertRaisesRegex(RuntimeError, "unknown migration detail"):
-            probe.session_item([unknown_detail])
+            probe.session_item([unknown_detail], home)
+        escaping_path = session_item()
+        escaping_path["details"]["sessions"][0]["path"] = "/private/other/session.jsonl"
+        with self.assertRaisesRegex(RuntimeError, "escapes the disposable home"):
+            probe.session_item([escaping_path], home)
+        escaping_cwd = session_item()
+        escaping_cwd["details"]["sessions"][0]["cwd"] = "/private/other/project"
+        with self.assertRaisesRegex(RuntimeError, "escapes the disposable home"):
+            probe.session_item([escaping_cwd], home)
 
     async def test_import_request_is_sessions_only(self):
         request = probe.import_item(session_item(), provider_id="fixture")
@@ -168,6 +185,23 @@ class ReceiptTests(unittest.TestCase):
                 receipt["error"], "Probe failed without recording source error text"
             )
             self.assertNotIn(str(Path(directory)), output.read_text())
+
+    def test_teardown_failure_never_remains_a_pass(self):
+        async def teardown(binary, receipt):
+            receipt["passed"] = True
+            receipt["isolation"]["cleanup_complete"] = True
+            raise RuntimeError("teardown failed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "teardown.json"
+            with patch.object(probe, "run_probe", teardown):
+                self.assertEqual(
+                    probe.main(["--codex", "/usr/bin/true", "--output", str(output)]),
+                    1,
+                )
+            receipt = json.loads(output.read_text())
+            self.assertFalse(receipt["passed"])
+            self.assertFalse(receipt["isolation"]["cleanup_complete"])
 
 
 if __name__ == "__main__":

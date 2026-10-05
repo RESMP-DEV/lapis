@@ -171,7 +171,7 @@ python3 -m unittest scripts.tests.test_probe_codex_external_import -v
 ```
 
 The current receipt is
-[`evidence/codex-external-import-session-probe.json`](../evidence/codex-external-import-session-probe.json).
+[`evidence/codex-external-import-session-probe.json`](../../evidence/codex-external-import-session-probe.json).
 It does not qualify a desktop/service onboarding task, launch-record creation,
 duplicate reconciliation, global-config migration classes, failures, cancellation,
 or concurrent imports.
