@@ -45,9 +45,9 @@ def test_bind_skip_reports_exit_and_skip_without_success_claim() -> None:
     assert "exited successfully" not in str(result["diagnostic"])
 
 
-def test_output_outside_checkout_is_rejected_before_receipt_write() -> None:
-    output = Path("/private/tmp/lapis-supervisor-receipt-outside.json")
-    output.unlink(missing_ok=True)
+def test_output_outside_checkout_is_rejected_before_receipt_write(tmp_path) -> None:
+    output = tmp_path / "lapis-supervisor-receipt-outside.json"
+    assert not output.resolve().is_relative_to(ROOT)
     completed = subprocess.run(
         [sys.executable, str(_PATH), "--output", str(output)],
         cwd=ROOT,

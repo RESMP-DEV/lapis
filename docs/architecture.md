@@ -3091,8 +3091,9 @@ retained peer is replaced only after both its ownership token and endpoint
 protocol verify; otherwise its ownership record remains untouched and no signal
 is sent. A nonresponsive endpoint is likewise left in place unless a connect
 probe proves it refused or absent, so a briefly busy listener cannot be
-unlinked. A live peer that declines verification preserves its identity for
-retry instead of rotating into a token it can never match. Handshake polling
+unlinked. A live peer that declines verification preserves its identity and
+records an explicit retryable blocked reason instead of rotating into a token it
+can never match. Handshake polling
 reaps an exited fork so an exec failure fails immediately with child status,
 and malformed endpoint replies degrade termination to a single-PID signal
 rather than escaping control. Adopted liveness also rechecks executable and

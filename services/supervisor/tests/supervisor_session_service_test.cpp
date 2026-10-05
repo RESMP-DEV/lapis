@@ -403,8 +403,10 @@ void terminate_revalidates_protocol_before_group_signal() {
 
     const auto sentinel_pid = ::fork();
     require(sentinel_pid >= 0, "fork the same-process-group sentinel");
-    if (sentinel_pid == 0)
+    if (sentinel_pid == 0) {
         ::execl("/bin/sleep", "sleep", "30", static_cast<char*>(nullptr));
+        _exit(127);
+    }
     require(::kill(sentinel_pid, 0) == 0, "the sentinel starts");
 
     const QStringList peer_arguments{QString::fromLatin1(LAPIS_SUPERVISOR_SESSION_SERVICE),

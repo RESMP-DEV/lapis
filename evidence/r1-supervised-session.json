@@ -129,7 +129,10 @@
       "a live peer that declines adoption/verification preserves its identity and desired state for retry",
       "handshake polling reaps an exited fork and reports child exit status before the full deadline",
       "a malformed endpoint response falls back to a single-PID termination signal",
-      "a missing --session-epoch value retains the option-specific usage diagnostic"
+      "a missing --session-epoch value retains the option-specific usage diagnostic",
+      "checker logs decode UTF-8 with replacement and are written with explicit UTF-8 encoding",
+      "outside-checker tests use isolated temporary paths and assert they are outside the checkout",
+      "a failed sentinel exec exits the fork instead of continuing the test process"
     ],
     "new_coverage": [
       "adopted-service crash restart after supervisor reconstruction",
@@ -142,7 +145,9 @@
       "reconstruction after a supervisor dies and its replacement service crashes without a live supervisor",
       "a retained ownership-token mismatch refuses signalling and preserves the live peer record",
       "preserved live-peer verification failure does not rotate or launch a replacement",
-      "missing epoch-value usage"
+      "missing epoch-value usage",
+      "explicit blocked reason for a preserved peer without identity rotation",
+      "isolated outside-checkout receipt path"
     ],
     "verification": [
       {
