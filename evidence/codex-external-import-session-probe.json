@@ -1,21 +1,21 @@
 {
   "schema": "lapis.codex-external-import-probe/1",
-  "recorded_at": "2026-10-05T18:44:53.756753+00:00",
+  "recorded_at": "2026-10-05T19:20:53.149931+00:00",
   "passed": true,
   "purpose": "Exercise Codex external-agent session-only import against a synthetic Claude fixture without reading or modifying real Claude Code or Codex user state.",
   "source": {
-    "lapis_revision": "41c5cc8c37c7827d757019ba882db6b1186a6f5a",
-    "lapis_dirty": true,
+    "lapis_revision": "32450ab4030b3f2dd9f4097f66620fb85dff1098",
+    "lapis_dirty": false,
     "codex_repository": "PATH-resolved executable; source repository not asserted",
     "binary_path": "PATH-resolved codex executable",
     "reported_version": "codex-cli 0.0.0",
     "binary_sha256": "d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f",
     "changed_file_sha256": {
       "adapters/codex/src/importer.hpp": "ba4f06529e8434e221ebb206b64df156e2fdf92b405456f658e6574db48c088d",
-      "adapters/codex/src/importer.cpp": "2c5b4f8284524ced4a5baa4c9f3101558c8e0588074650334f1f66526a428bb4",
+      "adapters/codex/src/importer.cpp": "8f63bde9b3fd3c5c7e6cec0d331cc8fd6bf1015a482b465e304ac0fa48f02be9",
       "adapters/codex/tests/importer_test.cpp": "428520fd76547632a595c12ebd099423d4eb4b958223cf66e669fe641956a70d",
-      "scripts/probe_codex_external_import.py": "d309cfd4b27ce8ac2226914e571be319ad027b115e6201b77ea6950f173b7e64",
-      "scripts/tests/test_probe_codex_external_import.py": "4a6653f29fd67a2ce8e633d4b7721c0220299c66260f46d389b60fd7a190e051"
+      "scripts/probe_codex_external_import.py": "73d0ade69c64720de82833f7cacebf49def7bbbd0dc379de0ab4f640c6ccbc19",
+      "scripts/tests/test_probe_codex_external_import.py": "ab38f3b78c51e076afbb04fad59fb6b64d1c46ab50d02be6bad2082f9b954cd2"
     }
   },
   "isolation": {
@@ -63,7 +63,7 @@
     "thread/list": {
       "passed": true,
       "thread_count": 1,
-      "imported_thread_id": "01a10d62-1443-7483-8393-087f660a7556"
+      "imported_thread_id": "01a10d83-0766-7060-9911-24b0c06c3939"
     },
     "externalAgentConfig/import/readHistories": {
       "passed": true,
