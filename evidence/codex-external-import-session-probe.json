@@ -1,10 +1,10 @@
 {
   "schema": "lapis.codex-external-import-probe/1",
-  "recorded_at": "2026-10-05T19:24:31.057164+00:00",
+  "recorded_at": "2026-10-05T20:09:35.274220+00:00",
   "passed": true,
   "purpose": "Exercise Codex external-agent session-only import against a synthetic Claude fixture without reading or modifying real Claude Code or Codex user state.",
   "source": {
-    "lapis_revision": "6ef0b238b03ccc41cd435b73f9ae4f871bbb36a5",
+    "lapis_revision": "d3faa7c13ce07ee1d66cf8282a8f7930fcfa879f",
     "lapis_dirty": false,
     "codex_repository": "PATH-resolved executable; source repository not asserted",
     "binary_path": "PATH-resolved codex executable",
@@ -12,10 +12,10 @@
     "binary_sha256": "d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f",
     "changed_file_sha256": {
       "adapters/codex/src/importer.hpp": "ba4f06529e8434e221ebb206b64df156e2fdf92b405456f658e6574db48c088d",
-      "adapters/codex/src/importer.cpp": "cea979b521f066e946e581fe1fb27ced08de13184acf338049f6a9f6976f543e",
-      "adapters/codex/tests/importer_test.cpp": "74afedbf46c03cc962e71378a6eecfe24630861739b0642b5a8059bb066998c2",
-      "scripts/probe_codex_external_import.py": "f5ca30f5295dd083a649fc1685c78dad9ebfd761d8664416331e9b4621f09473",
-      "scripts/tests/test_probe_codex_external_import.py": "6cc27e532c5b509143f429f5435395af8b99f73e936915e47dd07d51a3ad0864"
+      "adapters/codex/src/importer.cpp": "928d1deeb67d641ad07c5478f9380862d7f8936bc09f1e85feb969c6e1e9511e",
+      "adapters/codex/tests/importer_test.cpp": "7536bda0affe853aea1c361ea29944ab0f8b702cfc240503ae91642625256302",
+      "scripts/probe_codex_external_import.py": "0e3a85782975a72fbc3f55999b05ea23e5cbf9127864f3e3f86858bff7537f1f",
+      "scripts/tests/test_probe_codex_external_import.py": "60bc52808e3e72baf0c7fd7a2ea38fbb212b36fd6c7b3b2b43f4075486db2e09"
     }
   },
   "isolation": {
@@ -63,7 +63,7 @@
     "thread/list": {
       "passed": true,
       "thread_count": 1,
-      "imported_thread_id": "01a10d86-5a9a-7381-8003-c8a8a63699ca"
+      "imported_thread_id": "01a10daf-9dee-73e0-afb6-a157e71c79ff"
     },
     "externalAgentConfig/import/readHistories": {
       "passed": true,
@@ -85,6 +85,10 @@
   "validation": {
     "focused": [
       {
+        "command": "cmake --build --preset desktop --target lapis_codex_adapter --parallel 8",
+        "exit_code": 0
+      },
+      {
         "command": "ctest --preset desktop -R '^codex-importer$' --output-on-failure",
         "exit_code": 0,
         "tests": 1
@@ -92,7 +96,7 @@
       {
         "command": "python3 -m unittest scripts.tests.test_probe_codex_external_import -v",
         "exit_code": 0,
-        "tests": 8
+        "tests": 9
       },
       {
         "command": "python3 scripts/lapis.py quality",
