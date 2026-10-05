@@ -2934,9 +2934,9 @@ sessions, update-failure recovery, and registry/history migration rollback.
 Each gate records the source revision, version, app and DMG artifact hashes,
 the `appcast_digest` where applicable, the receipt digest, a UTC timestamp, the
 command, and zero exit status. The bound map also records its own digest. The
-timestamp accepts any ISO 8601 form that resolves to UTC, not only a trailing
-`Z`. The appcast field is named `appcast_digest` because it carries the
-manifest `digest()` of the appcast, which binds structure as well as bytes;
+timestamp requires the full date/time shape with `T` and an explicit UTC
+designator. The appcast field is named `appcast_digest` because it carries the
+manifest `digest()` of the appcast file, which binds its size, mode, and bytes;
 receipts bind raw bytes separately through `content_sha256` under
 `receipt_sha256`.
 
@@ -2947,10 +2947,11 @@ a rejected gate map never leaves a manifest carrying an appcast binding with no
 candidate approval. Replacing app or DMG bytes, weakening notarization, or
 rebinding the appcast revokes approval while retaining the old receipts as
 evidence. `bind_candidate_gates` refuses to overwrite an existing binding;
-`replace=True` is the explicit operator escape hatch for re-binding while a
-candidate is still being iterated, and it revalidates the complete replacement
-before writing. Final preflight refuses missing, malformed, failed, stale, or
-unbound gates before the remote-branch check and `gh release create`.
+failed and revoked bindings are replaceable, an identical approved binding is
+accepted, and a different approved binding requires the explicit replacement
+flag while retaining superseded evidence. Final preflight refuses missing,
+malformed, failed, stale, or unbound gates before the remote-branch check and
+`gh release create`.
 
 This is enforcement, not acceptance. No external candidate receipt exists in
 this slice, and no app, DMG, independent download, Finder launch, Sparkle

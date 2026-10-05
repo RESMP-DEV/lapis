@@ -22,7 +22,7 @@
     ],
     "working_tree_sha256": {
       "CONTRIBUTING.md": "7d49ae2ee9383d1b83c324361ab0e316aa8cc2ba90e35aa548ff8276f4b84046",
-      "docs/architecture.md": "746cbc5aca997874c52a78be688405753cfc11645bd586efd7b58a9d3c0c69f1",
+      "docs/architecture.md": "b34bf0b624cf9ad09d55e3b4f53f60c560efbbaa690ddca174a42d365d3806ec",
       "docs/status.md": "252b60bd26d9b039c509fe5233a7af5110271234500e54b75367bdf3d1d3da6c",
       "scripts/package_macos.py": "0fd0a52347516b0e062e4f681d887b3318267af445e22dd6b0cc46bcfff6a7bf",
       "scripts/release_manifest.py": "f723440ef16c55d614efba6b8df319677c2ae83ae31d24a32e5c8d1eab148851",
