@@ -1,9 +1,9 @@
 {
   "schema": "lapis.work-receipt/1",
-  "recorded_on": "2026-10-04",
-  "baseline_revision": "3276b5ecc92ac5262c09b2f0e52627e321133632",
+  "recorded_on": "2026-10-05",
+  "baseline_revision": "92c0e82a3130e9aa8bf7e1a7d8322435eff7b683",
   "branch": "work/runtime-tool-status",
-  "source_dirty": true,
+  "source_dirty": false,
   "scope": "Narrow read-only tool status and bounded version probes over the canonical desktop harness catalog. This rework does not replace harness_catalog or change launch, restore, resume or update semantics.",
   "changes": [
     "Added ToolStatus with exactly one row per harness_catalog entry, catalog-owned identity and launch metadata, bounded concurrent probes, timeout/failure/missing/present/unknown states, five-minute freshness and per-tool rerun.",
@@ -105,6 +105,19 @@
       "command": "python3 scripts/lapis.py ui-review",
       "exit_code": 0,
       "scope": "Configure/build, full background UI, shortcuts, and terminal input passed with the desktop target explicitly enabled; offscreen/software only."
+    },
+    {
+      "name": "focused-desktop-tests-current-main",
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop -R '^(tool-status|tools-ui)$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "tests": 2,
+      "scope": "Both focused tool-status and production-QML tests passed after merging current main."
+    },
+    {
+      "name": "repository-quality-current-main",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "scope": "Source/status, whitespace, Ruff, and 527 Python tests (7 skipped) passed after merging current main."
     }
   ],
   "source_sha256": {
@@ -118,13 +131,15 @@
     "apps/desktop/CMakeLists.txt": "a95c5538a780184c0ba13e93967a3af40baa5052e38b41a243c80822552c7d87",
     "apps/desktop/tests/tool_status_test.cpp": "6d2d1ce46cea663ef95de67040c1f2b0f859b6697c200b6f43be21d6daf07059",
     "apps/desktop/tests/tools_ui_test.cpp": "2cd99480fe4fc3edec502c2ec219e159a5cb99d2a59ec4e750e160f94408d8c6",
-    "docs/architecture.md": "ed4a3c459ea5f0c70138a733b621b01d7f7bf8d6ee210eadb59820dfa941aa5b",
-    "docs/status.md": "a4943384ffddfc07bf72c375dc1a0e211825e2b4b67d32be2330d1d15ead42d5"
+    "docs/architecture.md": "ffe5aa045a2bdc83dcb62956a9c477019970b216fdadecc6145f58a23a2d130b",
+    "docs/status.md": "bf6411ea2f9366fb3dbf95a673dfec297a976c745c0edb6878baf41339941a77"
   },
   "non_claims": [
     "A version probe does not prove authentication, account access, model availability, terminal rendering, attention delivery or successful agent launch.",
     "Fixture executables prove status semantics, not installed Claude, Codex, OpenCode, Grok, OMP, Antigravity, Kimi or Gemini behavior.",
     "The focused Qt checks do not qualify native macOS input, IME, pasteboard, native GPU presentation or Linux.",
     "The full desktop static/CTest gate did not pass under Homebrew LLVM 23 because unrelated baseline findings and sandboxed service cases remain; focused tool tests, repository quality, and background UI review did pass."
-  ]
+  ],
+  "source_revision": "aabd1aa32e4070f2203219439a7bf5fa2af3e2fa",
+  "integration_note": "source_revision is the branch head after merging current main and preserving both runtime tool status and the newer attention-journal status row; the receipt-only follow-up commit records this integrated result."
 }
