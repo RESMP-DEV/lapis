@@ -158,7 +158,8 @@ void validate_connectors(const QJsonObject& result) {
         required_text(connector, QStringLiteral("name"), message_limit);
         const auto count_value = connector.value(QStringLiteral("sessionCount"));
         const auto count = count_value.toInteger(-1);
-        if (!count_value.isDouble() || count < 0 || count > std::numeric_limits<quint32>::max())
+        if (!count_value.isDouble() || count < 0 ||
+            count > static_cast<qint64>(std::numeric_limits<quint32>::max()))
             throw std::runtime_error("Invalid Codex connector session count");
         const auto source = required_text(connector, QStringLiteral("source"), 64);
         if (source != QLatin1String("remoteMcpServersConfig") &&
@@ -184,8 +185,6 @@ ImportedSession imported(const QJsonObject& value) {
     result.source = optional_text(value, QStringLiteral("source"), path_limit);
     result.title = optional_text(value, QStringLiteral("title"), message_limit);
     result.target = required_text(value, QStringLiteral("target"), identity_limit);
-    if (result.target.isEmpty())
-        throw std::runtime_error("Imported session lacks a target identity");
     return result;
 }
 
@@ -385,7 +384,6 @@ class Importer::Impl final : public QObject {
             transport_ = nullptr;
         }
         waiting_.clear();
-        initialized_ = false;
     }
 
     void clear_task() {
@@ -442,7 +440,6 @@ class Importer::Impl final : public QObject {
 
     void merge_progress(QVector<ItemResult> replacement) {
         for (const auto& result : replacement) {
-            const auto name = itemTypeString(result.item_type);
             const auto existing =
                 std::find_if(progress_.begin(), progress_.end(), [&](const ItemResult& value) {
                     return value.item_type == result.item_type;
@@ -497,9 +494,6 @@ class Importer::Impl final : public QObject {
         const auto method = message.value(QStringLiteral("method")).toString();
         if (method != QLatin1String("externalAgentConfig/import/progress") &&
             method != QLatin1String("externalAgentConfig/import/completed")) {
-            if (method == QLatin1String("initialized") && !initialized_ &&
-                !message.contains(QStringLiteral("params")))
-                return;
             return;
         }
         if (message.contains(QStringLiteral("id")))
@@ -544,6 +538,7 @@ class Importer::Impl final : public QObject {
         } else {
             merge_progress(std::move(replacement));
             diagnostic_ = QStringLiteral("Codex import is running");
+            deadline_.start(import_timeout);
             emit owner_.importProgress();
         }
         emit owner_.changed();
@@ -562,7 +557,6 @@ class Importer::Impl final : public QObject {
             throw std::runtime_error("Invalid Codex import RPC result");
         if (method == QLatin1String("initialize")) {
             required_text(result.toObject(), QStringLiteral("userAgent"), identity_limit);
-            initialized_ = true;
             phase_ = ImportPhase::ready;
             diagnostic_ = QStringLiteral("Codex importer ready");
             emit owner_.connected();
@@ -595,7 +589,6 @@ class Importer::Impl final : public QObject {
     QString waiting_;
     qint64 rpc_id_{};
     ImportPhase phase_ = ImportPhase::disconnected;
-    bool initialized_{};
 };
 
 Importer::Importer(QObject* parent) : QObject(parent), impl_(std::make_unique<Impl>(*this)) {}

@@ -200,6 +200,8 @@ async def run_probe(binary: Path, receipt: dict[str, Any]) -> None:
         home.mkdir()
         codex_home.mkdir()
         project = write_fixture(home)
+        receipt["fixture"]["transcripts"] = 1
+        receipt["fixture"]["session_title_present"] = True
         server_socket = runtime / "server.sock"
         environment = os.environ.copy()
         for name in (
@@ -309,7 +311,12 @@ async def run_probe(binary: Path, receipt: dict[str, Any]) -> None:
             receipt["passed"] = True
         finally:
             if client is not None:
-                await client.close()
+                try:
+                    await client.close()
+                finally:
+                    await stop(process)
+            else:
+                await stop(process)
             await stop(process)
         receipt["isolation"]["cleanup_complete"] = True
 
@@ -383,8 +390,8 @@ def base_receipt() -> dict[str, Any]:
             "settings": False,
             "instructions": False,
             "skills": 0,
-            "transcripts": 1,
-            "session_title_present": True,
+            "transcripts": 0,
+            "session_title_present": False,
         },
         "observed": {},
         "files": {},

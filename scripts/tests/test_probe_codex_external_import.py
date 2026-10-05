@@ -153,6 +153,9 @@ class ReceiptTests(unittest.TestCase):
             )
             receipt = json.loads(output.read_text())
             self.assertFalse(receipt["passed"])
+            self.assertEqual(receipt["fixture"]["transcripts"], 0)
+            self.assertFalse(receipt["fixture"]["session_title_present"])
+            self.assertFalse(receipt["isolation"]["cleanup_complete"])
             self.assertEqual(
                 receipt["error"], "Probe failed without recording source error text"
             )
