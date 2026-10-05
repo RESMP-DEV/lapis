@@ -524,7 +524,7 @@ def _candidate_appcast_digest(value: dict[str, object], label: str) -> object:
         warnings.warn(
             f"{label} uses deprecated appcast_sha256; rename it to appcast_digest",
             DeprecationWarning,
-            stacklevel=3,
+            stacklevel=5,
         )
         if canonical is not None and canonical != legacy:
             raise ManifestError(
@@ -788,8 +788,8 @@ def bind_candidate_gates(
         previous_failed = (
             isinstance(previous_gates, dict)
             and bool(previous_gates)
-            and all(
-                isinstance(entry, dict) and entry.get("passed") is not True
+            and any(
+                not isinstance(entry, dict) or entry.get("passed") is not True
                 for entry in previous_gates.values()
             )
         )
@@ -797,7 +797,7 @@ def bind_candidate_gates(
             raise ManifestError("candidate gates are already bound to this manifest")
     elif previous is not None and not replace:
         raise ManifestError("candidate gates are already bound to this manifest")
-    if isinstance(previous, dict) and previous != binding:
+    if previous is not None and previous != binding:
         history = manifest.get("superseded_candidate_gates")
         if history is None:
             history = []
@@ -827,6 +827,21 @@ def _validate_candidate_gates(
     if not isinstance(gates, dict):
         errors.append("candidate gate map is malformed")
         return
+    if gates.get("schema_version") != CANDIDATE_GATE_MAP_SCHEMA_VERSION:
+        errors.append("candidate gate map has an unsupported schema")
+    if gates.get("map_kind") != CANDIDATE_GATE_MAP_KIND:
+        errors.append("candidate gate map has the wrong kind")
+    gate_digest = gates.get("gate_map_sha256")
+    if not isinstance(gate_digest, str) or _SHA256.fullmatch(gate_digest) is None:
+        errors.append("candidate gate map has no valid SHA-256")
+    entries = gates.get("gates")
+    if not isinstance(entries, dict) or set(entries) != set(CANDIDATE_GATE_NAMES):
+        errors.append(
+            "candidate gate map must bind exactly: " + ", ".join(CANDIDATE_GATE_NAMES)
+        )
+        entries = {}
+    if any(not isinstance(entry, dict) for entry in entries.values()):
+        errors.append("candidate gate entries are malformed")
     if appcast is None:
         # The opening release preflight runs before the operator-selected
         # appcast is bound.  Candidate gates cover that exact feed, so final
@@ -838,17 +853,8 @@ def _validate_candidate_gates(
         errors.append("candidate gate map has an unsupported schema")
     if gates.get("map_kind") != CANDIDATE_GATE_MAP_KIND:
         errors.append("candidate gate map has the wrong kind")
-    gate_digest = gates.get("gate_map_sha256")
-    if not isinstance(gate_digest, str) or _SHA256.fullmatch(gate_digest) is None:
-        errors.append("candidate gate map has no valid SHA-256")
     source = manifest.get("source")
     source_revision = source.get("commit") if isinstance(source, dict) else None
-    entries = gates.get("gates")
-    if not isinstance(entries, dict) or set(entries) != set(CANDIDATE_GATE_NAMES):
-        errors.append(
-            "candidate gate map must bind exactly: " + ", ".join(CANDIDATE_GATE_NAMES)
-        )
-        return
     expected_artifacts: dict[str, str] = {}
     for name in CANDIDATE_GATE_ARTIFACTS:
         recorded = recorded_artifacts.get(name)

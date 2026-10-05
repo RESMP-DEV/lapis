@@ -1476,6 +1476,8 @@ def command_release(arguments):
     except ManifestError as error:
         raise PackageError(str(error)) from error
     if not APPCAST.is_file():
+        if APPCAST.exists():
+            raise PackageError("the release appcast path is not a regular file")
         raise PackageError(
             "write the appcast and record candidate gates against that exact "
             "file before release"
@@ -1538,7 +1540,7 @@ def command_release(arguments):
                     replace=getattr(arguments, "replace_candidate_gates", False),
                 )
                 os.replace(staged_manifest, PACKAGE_MANIFEST)
-            except BaseException as error:
+            except Exception as error:
                 binding_failure = error
                 if isinstance(error, OSError):
                     raise ManifestError(

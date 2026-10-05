@@ -594,6 +594,15 @@ class ManifestBindingTests(unittest.TestCase):
             )["version"],
             "0.5.0",
         )
+        recorded = manifest.load_manifest(self.manifest_path)
+        recorded["candidate_gates"]["schema_version"] = 2
+        manifest.write_manifest(self.manifest_path, recorded)
+        with self.assertRaisesRegex(
+            manifest.ManifestError, "candidate gate map has an unsupported schema"
+        ):
+            manifest.preflight_release(
+                self.manifest_path, tag="v0.5.0", **opening_arguments
+            )
 
     def test_failed_gates_are_replaceable_but_approved_gates_are_immutable(self):
         self.write_manifest()
@@ -631,8 +640,8 @@ class ManifestBindingTests(unittest.TestCase):
             )
 
         bound = manifest.load_manifest(self.manifest_path)
-        for entry in bound["candidate_gates"]["gates"].values():
-            entry["passed"] = False
+        for index, entry in enumerate(bound["candidate_gates"]["gates"].values()):
+            entry["passed"] = index == 0
         manifest.write_manifest(self.manifest_path, bound)
         replaced = manifest.bind_candidate_gates(
             self.manifest_path, gate_map_path=differing_map, **arguments
@@ -648,6 +657,31 @@ class ManifestBindingTests(unittest.TestCase):
         self.assertFalse(
             all(entry["passed"] for entry in superseded[0]["gates"].values())
         )
+
+    def test_replacement_retains_a_malformed_previous_binding(self):
+        self.write_manifest()
+        self.qualified(self.dependencies)
+        appcast = self.write_appcast()
+        malformed = manifest.load_manifest(self.manifest_path)
+        malformed["candidate_gates"] = "corrupt"
+        manifest.write_manifest(self.manifest_path, malformed)
+        gate_map = write_candidate_gate_map(
+            self.release / "replacement-gates",
+            COMMIT,
+            "0.5.0",
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            manifest.digest(appcast),
+        )
+        replaced = manifest.bind_candidate_gates(
+            self.manifest_path,
+            gate_map_path=gate_map,
+            source_revision=COMMIT,
+            version="0.5.0",
+            artifacts={"app": self.app, "dmg": self.dmg},
+            appcast_digest=manifest.digest(appcast),
+            replace=True,
+        )
+        self.assertEqual(replaced["superseded_candidate_gates"], ["corrupt"])
 
     def test_malformed_and_artifact_replaced_gate_maps_fail_closed(self):
         self.write_manifest()
