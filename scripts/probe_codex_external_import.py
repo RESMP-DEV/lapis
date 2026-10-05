@@ -169,7 +169,7 @@ def import_history(result: dict[str, Any], import_id: str) -> int:
     ]
     if len(matching) != 1:
         raise RuntimeError("Expected exactly one matching import history")
-    return len(histories)
+    return len(matching)
 
 
 def write_fixture(home: Path) -> Path:
@@ -341,14 +341,11 @@ async def run_probe(binary: Path, receipt: dict[str, Any]) -> None:
             )
             receipt["passed"] = True
         finally:
-            if client is not None:
-                try:
+            try:
+                if client is not None:
                     await client.close()
-                finally:
-                    await stop(process)
-            else:
+            finally:
                 await stop(process)
-            await stop(process)
         receipt["isolation"]["cleanup_complete"] = True
 
 

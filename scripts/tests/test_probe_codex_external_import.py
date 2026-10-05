@@ -141,6 +141,8 @@ class ProbeTests(unittest.IsolatedAsyncioTestCase):
             ]
         }
         self.assertEqual(probe.import_history(history, "import"), 1)
+        history["data"].append({"importId": "other", "providerId": probe.PROVIDER_ID})
+        self.assertEqual(probe.import_history(history, "import"), 1)
         with self.assertRaisesRegex(RuntimeError, "one persisted thread"):
             probe.imported_thread({"data": []}, "thread")
         with self.assertRaisesRegex(RuntimeError, "Malformed persisted-thread"):

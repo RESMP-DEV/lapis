@@ -157,9 +157,12 @@ void validate_connectors(const QJsonObject& result) {
         const auto connector = entry.toObject();
         required_text(connector, QStringLiteral("name"), message_limit);
         const auto count_value = connector.value(QStringLiteral("sessionCount"));
-        const auto count = count_value.toInteger(-1);
-        if (!count_value.isDouble() || count < 0 ||
-            count > static_cast<qint64>(std::numeric_limits<quint32>::max()))
+        const auto count = count_value.toDouble(-1.0);
+        if (!count_value.isDouble() || count < 0.0 ||
+            count > static_cast<double>(std::numeric_limits<quint32>::max()))
+            throw std::runtime_error("Invalid Codex connector session count");
+        const auto integer_count = static_cast<qint64>(count);
+        if (static_cast<double>(integer_count) != count)
             throw std::runtime_error("Invalid Codex connector session count");
         const auto source = required_text(connector, QStringLiteral("source"), 64);
         if (source != QLatin1String("remoteMcpServersConfig") &&
