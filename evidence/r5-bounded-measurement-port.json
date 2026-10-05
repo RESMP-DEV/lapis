@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-10-04",
+  "purpose": "Record the bounded connect-only sampling extension to R5 runtime diagnostics and its aggregate-only redacted export.",
+  "source": {
+    "baseline_revision": "3276b5ecc92ac5262c09b2f0e52627e321133632",
+    "branch": "work/r5-connect-diagnostics",
+    "source_dirty_at_checks": true,
+    "snapshot": "Implementation, tests and documentation were modified together before the recorded checks."
+  },
+  "scope": "Explicit bounded connect sampling, aggregate timing evidence, aggregate-only support export, focused tests and user/status documentation. No installed application or runtime was selected or changed.",
+  "changed_files": [
+    "docs/build.md",
+    "docs/status.md",
+    "scripts/runtime_diagnostics.py",
+    "scripts/tests/test_runtime_diagnostics.py"
+  ],
+  "implementation": [
+    "Added an explicit --samples argument bounded to integers 1 through 8 with the current single-sample behavior as the default.",
+    "Repeated the existing bounded zero-byte Unix-socket connect per selected endpoint and timed only that operation with monotonic_ns.",
+    "Added aggregate and per-classification nearest-rank p50/p95/p99/max distributions in milliseconds plus sample, success and timeout counts.",
+    "Classified timeout errors, including TimeoutError, without interpreting socket content or attempting protocol negotiation.",
+    "Kept health unknown and labeled the measurements as local connect diagnostics, not health, protocol compatibility, workload capacity or resource acceptance.",
+    "Selected support-export fields explicitly so it exposes aggregate distributions and counters only, never endpoint timing, endpoint paths or session identities."
+  ],
+  "verification": [
+    {
+      "command": "python3 -m unittest -v scripts.tests.test_runtime_diagnostics",
+      "exit_code": 0,
+      "result": "passed; 23 tests, including deterministic percentile/classification cases, timeout handling, sample-bound rejection, aggregate-only export and absence of send/receive calls"
+    },
+    {
+      "command": "ruff check --config ruff.toml scripts/runtime_diagnostics.py scripts/tests/test_runtime_diagnostics.py",
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "command": "ruff format --config ruff.toml --check scripts/runtime_diagnostics.py scripts/tests/test_runtime_diagnostics.py",
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "command": "python3 scripts/check_quality.py --focused --test scripts.tests.test_runtime_diagnostics --path scripts/runtime_diagnostics.py --path scripts/tests/test_runtime_diagnostics.py",
+      "exit_code": 0,
+      "result": "passed; source/status contracts, diff hygiene, focused Ruff check/format and 23 focused tests",
+      "receipt": "build/reports/quality-focused/receipt.json"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "name": "repository_quality_sandbox_attempt",
+      "exit_code": 1,
+      "result": "failed; repository contracts, diff hygiene, Ruff check and format passed, but full unittest discovery reported 28 errors and 3 failures in 504 tests. The observed errors include PermissionError when sandboxed fixtures bound loopback or local sockets. This repository-quality gate is not passed.",
+      "receipt": "build/reports/quality/receipt.json"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "name": "repository_quality_parent_host",
+      "exit_code": 0,
+      "result": "Source/status, whitespace, Ruff, and Python unit checks passed on the parent host after the implementation checks."
+    },
+    {
+      "command": "runtime_diagnostics.py --help and --samples 9",
+      "exit_code": "0, 2 respectively",
+      "result": "passed; help states the 1-8 bound and default, while 9 is rejected before diagnosis"
+    },
+    {
+      "command": "runtime_diagnostics.py --json --app scripts/lapis.py --runtime build/no-such-runtime-fixture --samples 3",
+      "exit_code": 1,
+      "result": "passed; missing runtime remained a structured attention result with runtime-missing, health unknown and no connect measurement",
+      "evidence": "build/reports/diagnose-missing-fixture.json"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "environment_notes": [
+    "The editing sandbox denied the local socket binds used by unrelated repository-quality fixtures; the parent-host post-change quality run passed.",
+    "The semantic-index probe returned no result before cancellation; bounded direct source inspection was used.",
+    "The audit's 14.4-second estimate does not follow from the implemented existing 0.15-second timeout and eight-endpoint bound; their direct worst case is 9.6 seconds, documented as about 10 seconds."
+  ],
+  "non_claims": [
+    "No installed application, installed runtime, live endpoint or external service was inspected or connected to.",
+    "No protocol bytes were sent and no protocol-compatibility, service-health, latency-qualification, workload-capacity or resource-acceptance claim is made.",
+    "No R4 release, package, update or assembled-candidate claim is made."
+  ],
+  "remaining_r5": [
+    "Run the bounded diagnostic against a real installed package and runtime without changing it.",
+    "Qualify live endpoint behavior, protocol compatibility and service health separately from connect evidence.",
+    "Select and measure the eight-session workload, sustained output pressure, resource tails, memory/descriptor/disk behavior and native rendering on the assembled candidate.",
+    "Resolve installed-package and workload/resource acceptance on the assembled candidate."
+  ],
+  "aggregate": {
+    "passed": true,
+    "scope": "The focused diagnostics implementation and repository Python quality passed; installed-runtime and workload acceptance remain unclaimed."
+  }
+}

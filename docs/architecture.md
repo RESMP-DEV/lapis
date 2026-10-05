@@ -2925,6 +2925,79 @@ acceptance, a health determination, protocol-compatibility evidence, or package
 release qualification; live Unix-socket reachability and R5 workload gates
 remain separate.
 
+#### R4 candidate gate enforcement (October 4)
+
+The unmerged R4 source slice adds version 1 of `candidate_gates` to the package
+manifest. Release now requires an external candidate gate map binding six
+receipts: independently downloaded-asset verification, notarized staged
+verification, fresh-user Finder launch, an installed Sparkle update with live
+sessions, update-failure recovery, and registry/history migration rollback.
+Each gate records the source revision, version, app and DMG artifact hashes,
+the `appcast_digest` where applicable, the receipt digest, a UTC timestamp, the
+command, and zero exit status. The bound map also records its own digest. The
+timestamp requires the full date/time shape with `T` and an explicit UTC
+designator. The appcast field is named `appcast_digest` because it carries the
+manifest `digest()` of the appcast file, which binds its size, mode, and bytes;
+receipts bind raw bytes separately through `content_sha256` under
+`receipt_sha256`.
+
+`release --candidate-gate-map` binds this map after the appcast exists and
+before final preflight. The appcast and gate bindings are staged into one
+temporary copy of the manifest and swapped in with a single atomic replace, so
+a rejected gate map never leaves a manifest carrying an appcast binding with no
+candidate approval. Replacing app or DMG bytes, weakening notarization, or
+rebinding the appcast revokes approval while retaining the old receipts as
+evidence. `bind_candidate_gates` refuses to overwrite an existing binding;
+failed and revoked bindings are replaceable, an identical approved binding is
+accepted, and a different approved binding requires the explicit replacement
+flag while retaining superseded evidence. Final preflight refuses missing,
+malformed, failed, stale, or unbound gates before the remote-branch check and
+`gh release create`.
+
+This is enforcement, not acceptance. No external candidate receipt exists in
+this slice, and no app, DMG, independent download, Finder launch, Sparkle
+transition, recovery, migration rollback, publication, or release
+qualification was exercised. Receipts used for a future candidate must be
+sanitized and immutable, and their commands must not embed machine identities.
+The [focused source receipt](../evidence/r4-candidate-gate-map.json) records
+the validated review-repair working tree, the check results, and the remaining candidate gates. It
+is an enforcement receipt rather than a gate map instance, so it carries no
+gates and must never be passed to `release --candidate-gate-map`.
+
+#### R4 candidate-gate review repairs (October 5)
+
+The second PR #88 repair pass supersedes the October 4 timestamp and
+replacement statements above. A schema-1 gate receipt timestamp must match the
+full `YYYY-MM-DDTHH:MM:SS[.fraction]` form with an explicit `Z`, `z`,
+`+00:00`, or `-00:00` offset; arbitrary ISO separators remain invalid. Schema
+1 also accepts its former `appcast_sha256` spelling when `appcast_digest` is
+absent, emits a deprecation warning naming the rename, and rejects conflicting
+values. The manifest binding stores only the canonical `appcast_digest`.
+`digest()` binds a file's size, mode, and bytes; file names are part of tree
+digests only.
+
+The explicit `package_macos.py appcast --tag vX.Y.Z` command renders the stable
+feed after the DMG is stapled and before gate receipts are collected. Release
+compares the feed's Sparkle EdDSA signature and byte length with the staged DMG,
+consumes that already qualified appcast, and never mints or rewrites it.
+Opening preflight leaves appcast-specific gate checks to final preflight when
+no appcast is supplied. A failed or revoked gate binding can be replaced
+without a flag; an approved binding is immutable unless its identical map is
+rebound or the new `release --replace-candidate-gates` flag is explicit. Every
+accepted, different replacement is retained in
+`superseded_candidate_gates` before the new binding is written. Binding a
+first appcast revokes existing gates unless every appcast-requiring gate
+already records that exact digest. The publication rename flushes its
+directory, and staging I/O failures are reported as package failures rather
+than raw tracebacks. Final preflight does not re-read receipt files; gate-map
+binding owns receipt-digest verification.
+
+The enforcement receipt no longer embeds a SHA-256 in the file that it hashes.
+It binds the other changed files directly, names its companion binding receipt,
+and the companion binds this receipt and the same changed files while relying
+on the follow-up commit to preserve its own bytes. Neither receipt contains its
+own digest.
+
 #### Minimum supported slice
 
 Start with an explicitly labelled macOS Apple Silicon early-access release:
@@ -2958,7 +3031,7 @@ scopes; contributors continue to share feature ownership.
 | R1, process lifetime | **Contract gap, reproduced platform failure.** `LiveConnection` starts services from the GUI. The [macOS 27 investigation](#macos-27-ends-a-quitting-apps-background-processes-september-28) shows that `setsid` and detached spawning do not escape its coalition; replacing the bundle or lacking BTM permission can kill every agent. | The platform launcher must make an independent launchd-owned service/broker responsible for process birth and supervision, with an explicit registration/disabled state. The GUI attaches to it. Keep service failure and reboot recovery distinct from GUI detach. Do not use an installer delay as the durability contract. | On a disposable qualified Mac installation: preserve child PID and terminal bytes through window close, GUI quit/crash and application replacement; exercise allowed/denied/unknown background permission, login item on/off, service crash and a real reboot. Reboot may resume a conversation; it must not be reported as same-process survival. Reuse the existing restore fixtures, then qualify the actual package. |
 | R2, input integrity | **Implemented repair; candidate acceptance remains.** PR #43 and its integrated follow-ups provide negotiated service-owned paste admission and correlated results. Next-prompt submission uses that contract and presented-frame ownership. Existing source, real-PTY and background/sanitizer receipts remain revision-scoped. | Preserve the current implementation through consolidation; do not rebuild the old chunked, socket-only path. Keep mode-dependent encoding in the service, attachment/epoch checks, explicit refusal and interrupted-delivery reporting. | Reuse unaffected focused evidence, then exercise the assembled candidate with a full PTY queue, slow reader, disconnect, bracketed-mode change and focus/IME transitions, including the side shell. Compare actual PTY bytes and matching bracket markers. Native macOS presentation and package acceptance remain separate from background Qt results. |
 | R3, account identity | **Remote source repair implemented; provider qualification remains.** `Workspace::applyAccount` and a live remote reload refuse a selected visiting plan whose managed credential is missing, unreadable, or malformed before replacing the session; the remote preamble exits instead of using the machine sign-in. Registry-seam tests cover remote apply and reload preflight, while refusal from a healthy real transport before termination remains parent-owned integration. PR #40 and follow-ups repaired reset identity/admission/reconciliation paths; those reset tests do not qualify real provider consumption. | Preserve chosen account identity through launch, usage and optional reset operations. Refuse the remote mismatch before replacing a healthy session, or keep that unqualified path outside the candidate. Retain stable durable operation identity and no replay after uncertain delivery. | Reuse existing credential/provider stand-ins for missing/unreadable credentials, malformed responses, exhausted model windows, timeout after acceptance and restart before reply persistence. Verify the actual selected account with a read-only operation on each advertised route. Real reset consumption is not a routine-test requirement or a prerequisite for the local-only slice. |
-| R4, release and upgrade provenance | **Acceptance and enforcement gaps.** `package_macos.py release` validates the DMG staple and checks that current HEAD exists on a remote; it does not bind the staged app/DMG to that HEAD, version and qualification result. The latest published v0.5.0 targets `0ec13cb`, a separate release tree from this audit's main. | Produce one immutable package manifest linking source tree/dirty status, app version, toolchain/dependency pins, bundled notices/SBOM, app and DMG hashes, appcast signature and validation. Refuse publishing stale/mismatched artifacts. Exercise installation and the Sparkle transition, including recoverable registry/history migration and a documented recovery/rollback path. Keep signing-key recovery outside the repository. | Run the existing `package_macos.py verify --notarized` on the exact staged artifact, then verify the downloaded asset and appcast. Qualify Finder launch in a fresh user environment without developer tools or pre-existing BTM state; install an update with live sessions; recover after a failed update/migration. Record source and artifact digests together. Do not relabel source tests or the old 0.2.0 signature receipt as v0.5.0 acceptance. |
+| R4, release and upgrade provenance | **Candidate-gate enforcement implemented; acceptance remains.** PR #65 binds the staged app/DMG to HEAD, version and notarized qualification, and the unmerged October 4 source adds a versioned candidate gate map that blocks release until six sanitized digest-bound acceptance receipts pass. No such candidate receipt exists. The latest published v0.5.0 targets `0ec13cb`, a separate release tree from this audit's main. | Produce one immutable package manifest linking source tree/dirty status, app version, toolchain/dependency pins, bundled notices/SBOM, app and DMG hashes, appcast signature and validation, plus scoped candidate receipts. Refuse publishing stale/mismatched artifacts. Exercise installation and the Sparkle transition, including recoverable registry/history migration and a documented recovery/rollback path. Keep signing-key recovery outside the repository. | Run the existing `package_macos.py verify --notarized` on the exact staged artifact, then verify the downloaded asset and appcast. Qualify Finder launch in a fresh user environment without developer tools or pre-existing BTM state; install an update with live sessions; recover after a failed update/migration. Record source and artifact digests together. Do not relabel source tests or the old 0.2.0 signature receipt as v0.5.0 acceptance. |
 | R5, operational bounds and support | **Coverage gaps and source-level pressure risks.** The configured gateway path waits up to eight seconds, then probes services serially at up to 0.3 seconds each, against the iOS list client's 15-second request timeout. These are source-configured bounds, not a measured latency distribution. `ThreadingHTTPServer` has no total client/listing budget. Desktop decode and attention pacing plus companion history catch-up remain tracked only in the [pacing audit](#update-pacing-audit-september-28). Older native UI/Metal and sanitizer receipts retain platform and scope limits. | Bound active clients, queued work, history/log retention and cancellation, protecting local input under output or optional remote pressure. Add package/runtime diagnostics and a user-controlled redacted support export to the existing CLI; developer `doctor` currently checks dependency/build readiness only. | Use the candidate workload and sustained soak defined above, then Milestone 4. Include dead endpoints/disconnected clients for any advertised gateway surface. Record limits, degradation and resource/input tails. Qualify native rendering on the candidate and assess existing sanitizer evidence against changed source; a background Qt pass alone is not GPU acceptance. |
 
 R2's source repair does not close R1, R3 or native GPU/package acceptance.
@@ -3040,26 +3113,87 @@ injected child-launcher boundary. Its experimental ownership launcher writes a
 private spawn-token/PID record before exec and can therefore adopt that exact
 record after supervisor restart instead of starting a duplicate. Crash
 restarts are admitted at most three times per 60-second window; each admitted
-restart rotates the spawn token. Exhaustion persists desired-stopped state with
-an explicit blocked reason; explicit stop remains enabled while explicit
-disable remains disabled. Focused tests exercise direct peer-UID rejection,
+restart rotates the spawn token and service epoch. Exhaustion persists
+desired-stopped state with an explicit blocked reason; explicit stop remains
+enabled while explicit disable remains disabled. Focused tests exercise direct peer-UID rejection,
 token-authenticated start/stop/disable, stale/malformed/oversized requests,
 simulated restart adoption, the admission boundary, and a harmless child
 fixture's launch/adopt/terminate path.
 
+#### Supervised session-service slice (October 4)
+
+The same opt-in runtime now has a real `lapis_session_service` launcher: it
+builds the existing service command, passes the supervisor-selected 32-hex
+session ID and epoch, starts the requested terminal child, writes the same
+private ownership record, and performs a non-authoritative v6 join handshake
+before treating the process as adoptable. Adoption checks the endpoint, owner
+record, live PID, service executable identity and protocol identity; launch
+fingerprint mismatch and stale identity are rejected. `SupervisorRegistry`
+has an explicit restart transition that preserves session ID but rotates epoch
+and spawn token together. The session service accepts `--session-epoch HEX32`.
+
+The focused integration test constructs the real service and `/bin/cat` PTY,
+an authoritative reconnect client, a join client, detach/rejoin, supervisor
+destruction/reconstruction, false-peer rejection cases and explicit
+token-authenticated supervisor stop. The 2026-10-04 receipt identifies revision
+`3276b5ecc92ac5262c09b2f0e52627e321133632` with a dirty source tree. It records
+that the parent-host focused CTest run passed 3/3 cases, including the
+real-service integration. A separate worker-sandbox CLI probe failed before the
+service listened; that probe is not the focused CTest result. The receipt does
+not establish results at this head. This is still not GUI birth replacement: no
+desktop route calls the launcher, there is no persistent daemon CLI, and no
+launchd, package, or environment-ownership admission is implemented.
+
+A parent-host rerun exposed one real handshake defect: the service accepts an
+attachment before its PTY emits `started`, so the launcher could receive the
+transient overloaded "starting" status and treat it as final rejection. The
+launcher now retries only that overloaded startup status, while identity,
+fingerprint and terminal rejection remain terminal. It also canonicalizes the
+child payload through the same service validation used to derive the launch
+fingerprint. The post-repair parent-host focused run is the 3/3 result recorded
+at the revision above; the repairs in this batch require their own receipt.
+
+The October 5 current-head repair batch closes the remaining review lifecycle
+defects: an adopted zombie is waitpid-visible and reaped, startup overload is
+distinguished from permanent view/pending overload, matching or rotated stale
+ownership cannot wedge the next launch, group termination requires an endpoint
+identity/PID recheck, checker receipts distinguish observed success, bind skip
+and failed test output, and malformed `--session-epoch` diagnostics name that
+option. A persisted desired-start token counts as an already consumed initial
+admission, so reconstruction after an unattended crash rotates identity. A live
+retained peer is replaced only after both its ownership token and endpoint
+protocol verify; otherwise its ownership record remains untouched and no signal
+is sent. A nonresponsive endpoint is likewise left in place unless a connect
+probe proves it refused or absent, so a briefly busy listener cannot be
+unlinked. A live peer that declines verification preserves its identity and
+records an explicit retryable blocked reason instead of rotating into a token it
+can never match. Handshake polling
+reaps an exited fork so an exec failure fails immediately with child status,
+and malformed endpoint replies degrade termination to a single-PID signal
+rather than escaping control. Adopted liveness also rechecks executable and
+token ownership so a
+recycled PID cannot keep a stale child converged. Focused regressions cover
+each source repair. The worker sandbox
+compiled all affected targets, passed state and generic runtime CTest, and
+correctly recorded the real-service CTest as a `QLocalServer` bind skip rather
+than integration success. The subsequent parent-host rerun passed all three
+focused supervisor cases at this dirty head, including real-service adoption,
+crash restart and retained-ownership recovery, followed by the full repository
+quality gate. The tracked evidence records both environments without treating
+the worker skip as integration acceptance.
+
 This is not the persistent supervisor. It has no launchd registration, daemon
 CLI, package update flow, GUI route, production client, multi-session restore,
-or provider routing. It does not adapt or launch the existing session service:
-the fixture proves only the ownership-handling seam, while the existing service
-remains the PTY/terminal/history owner by contract. The launcher's experimental
-adoption currently relies on a private owner record and PID liveness rather
-than a qualified session-service protocol handshake. Supervisor crash while
-another process is alive is simulated at the launcher seam, not yet qualified
-against a real session service or launchd restart. The focused test skips the
-socket listener when its host denies AF_UNIX `bind(2)`; listener framing must
-therefore be qualified on a socket-capable host before any production claim. The
-parent-side port receipt, including a caught and repaired socket-framing defect,
-is [runtime port evidence](../evidence/r1-supervisor-runtime-port.json).
+or provider routing. The existing service remains the PTY/terminal/history
+owner; the launcher merely supervises it. Real-service client, adoption and
+stop observation is complete at the recorded parent-host revision; the worker
+sandbox bind denial remains a limitation of that separate probe, not of the
+focused CTest result. Broader qualification gaps stay open: no GUI birth route,
+launchd, package, reboot, restart-storm, load or memory evidence exists for this
+slice. The earlier ownership-only port receipt remains a dated observation
+at [runtime port evidence](../evidence/r1-supervisor-runtime-port.json); the
+current limited receipt is
+[supervised session evidence](../evidence/r1-supervised-session.json).
 
 #### Current implementation disposition (September 30)
 
@@ -4453,6 +4587,54 @@ preflight after appcast binding. The focused manifest and packaging suites,
 lint and format checks pass as recorded in the
 [source audit receipt](../evidence/r4-provenance-source-audit.json). R4 remains
 open for an actual packaged, downloaded, installed and updated candidate.
+
+#### Preview pacing reconciliation (October 4)
+
+The preview card's output gate now measures from the last snapshot
+publication, not the last timer activation or event that entered the gate. A
+change after the quiet interval publishes immediately and the scene graph
+coalesces presentation; changes inside the interval arm one precise timer for
+only the remaining time and the deadline presents the newest snapshot. Changing
+`frameInterval` re-paces an already open gate. A focused offscreen/software
+pixel fixture drives a stage and 250 ms card from one document and checks the
+quiet-gap frame, held middle frame and newest-state catch-up
+(`lapis_ui_preview_tests --background --preview-frame-only`). That evidence does
+not qualify native GPU presentation or input.
+
+## Durable attention journal integration (October 4)
+
+An agent session service owns a versioned append-only attention journal beside
+its endpoint for non-terminal agents. The journal is a POSIX audit boundary, not
+a process owner or source of reconnect truth. Opening it takes an exclusive
+lease, verifies format version and sequence integrity, truncates only a torn
+tail, refuses mid-file corruption or a newer format, replays in bounded
+record-sized chunks, and rotates only before a future append and only when no
+question is open. A newer same-id
+ask supersedes its earlier derivation, while only the matching epoch and
+revision can close a question.
+
+A pending request is asked softly: presentation proceeds if that audit append
+fails. A user decision is different and fail-closed: the service checks the
+pending epoch, revision, status and choice, appends and fsyncs `decided` before
+forwarding it, and an unavailable or failing journal refuses the forward and
+asks for the decision again. That `decided` record is durable intent, not
+delivery proof: a successful adapter response gets a durable `delivered`
+closure, while an adapter refusal gets a compensating agent-origin `resolved`
+closure. If either closing append fails, the ask remains open and restart
+records `outcome_unknown`; this is explicitly not evidence that the user
+approved it. Later source retirement or resolution records `resolved`.
+
+The focused journal target covers round trips and request identity, torn tails
+and damaged fields, checksums, mid-file corruption, format refusal, exclusive
+ownership, recovery classification, rotation, and bounded replay. The focused
+audit target exercises the service policy seams for headless asks, local
+decision validation, refusal compensation, fail-closed lease loss, and restart
+working-set recovery. A service-level target constructs the real Qt
+`SessionService`, holds its journal lease, and proves that a decision remains
+pending with an explicit retry diagnostic instead of reaching the adapter. Their
+current integration receipt is
+[attention-journal-integration](../evidence/attention-journal-integration.json);
+it does not claim native live-agent restart or decision-delivery qualification.
 
 ## Contracts to preserve
 

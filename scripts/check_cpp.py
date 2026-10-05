@@ -99,10 +99,11 @@ def run(label, command, log_dir, *, expect_failure=None, cwd=ROOT, timeout=300):
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
             timeout=timeout,
         )
         output = result.stdout
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
         passed = result.returncode == 0
         if expect_failure:
             passed = result.returncode != 0 and expect_failure in output
@@ -123,7 +124,7 @@ def run(label, command, log_dir, *, expect_failure=None, cwd=ROOT, timeout=300):
         return_code = None
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{label}.log"
-    log_path.write_text(output)
+    log_path.write_text(output, encoding="utf-8")
     print(
         f"{'PASS' if passed else 'FAIL'} {label}: {log_path.relative_to(ROOT)}",
         flush=True,

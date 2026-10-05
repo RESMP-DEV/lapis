@@ -1,4 +1,4 @@
-find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Core)
+find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Core Network)
 
 # The focused state-only build reuses the session platform RAII source without
 # configuring Ghostty or the whole session service. A normal session build
@@ -40,6 +40,14 @@ if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
     target_link_libraries(lapis_supervisor_runtime
         PRIVATE lapis_project_options lapis_session_platform lapis_supervisor_endpoint
         PUBLIC lapis_supervisor_state Qt6::Core)
+    if(TARGET lapis_local_protocol)
+        target_sources(lapis_supervisor_runtime PRIVATE src/session_service_launcher.cpp)
+        target_link_libraries(lapis_supervisor_runtime PRIVATE
+            lapis_local_protocol lapis_session_launch Qt6::Network)
+    else()
+        message(FATAL_ERROR
+            "LAPIS_BUILD_SUPERVISOR_RUNTIME requires LAPIS_BUILD_SESSION")
+    endif()
     add_executable(lapis_supervisor_child_fixture tests/supervisor_child_fixture.cpp)
     target_link_libraries(lapis_supervisor_child_fixture PRIVATE lapis_project_options)
 
@@ -51,5 +59,14 @@ if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
             LAPIS_SUPERVISOR_CHILD_FIXTURE="$<TARGET_FILE:lapis_supervisor_child_fixture>")
         add_test(NAME supervisor-runtime COMMAND lapis_supervisor_runtime_tests)
         set_tests_properties(supervisor-runtime PROPERTIES TIMEOUT 30)
+        add_executable(lapis_supervisor_runtime_session_tests
+            tests/supervisor_session_service_test.cpp)
+        target_link_libraries(lapis_supervisor_runtime_session_tests PRIVATE
+            lapis_project_options lapis_supervisor_runtime lapis_session_launch Qt6::Network)
+        target_compile_definitions(lapis_supervisor_runtime_session_tests PRIVATE
+            LAPIS_SUPERVISOR_SESSION_SERVICE="$<TARGET_FILE:lapis_session_service>")
+        add_test(NAME supervisor-session-service
+            COMMAND lapis_supervisor_runtime_session_tests)
+        set_tests_properties(supervisor-session-service PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 75)
     endif()
 endif()

@@ -17,12 +17,32 @@ import tempfile
 import subprocess
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from pathlib import Path
+import warnings
 
 MANIFEST_SCHEMA_VERSION = 1
 MANIFEST_KIND = "lapis-macos-package"
+CANDIDATE_GATE_MAP_SCHEMA_VERSION = 1
+CANDIDATE_GATE_MAP_KIND = "lapis-release-candidate-gates"
+CANDIDATE_GATE_RECEIPT_KIND = "lapis-candidate-gate-receipt"
+CANDIDATE_GATE_NAMES = (
+    "downloaded_asset",
+    "notarized_staged_verification",
+    "fresh_user_finder_launch",
+    "installed_sparkle_update_with_live_sessions",
+    "update_failure_recovery",
+    "registry_history_migration_rollback",
+)
+CANDIDATE_GATES_REQUIRING_APPCAST = frozenset(
+    set(CANDIDATE_GATE_NAMES) - {"notarized_staged_verification"}
+)
+CANDIDATE_GATE_ARTIFACTS = ("app", "dmg")
 SPARKLE_XMLNS = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_UTC_TIMESTAMP = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]00:00)"
+)
 
 
 class ManifestError(RuntimeError):
@@ -30,6 +50,26 @@ class ManifestError(RuntimeError):
 
 
 ManifestSink = Callable[[list[str | Path]], str]
+
+
+def _utc_timestamp(value: object) -> bool:
+    """Return whether value is an explicit UTC calendar date and time.
+
+    ``fromisoformat`` deliberately accepts a broad family of ISO 8601
+    spellings, including separators other than ``T``.  Gate evidence needs
+    one recognizable shape, so constrain the shape before asking Python to
+    validate the calendar value and its UTC offset.
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    if _UTC_TIMESTAMP.fullmatch(value) is None:
+        return False
+    normalized = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() == timedelta(0)
 
 
 def _git(root: Path, arguments: list[str], capture: ManifestSink) -> str:
@@ -279,6 +319,21 @@ def write_manifest(path: Path, manifest: dict[str, object]) -> None:
         raise
 
 
+def sync_directory(path: Path) -> None:
+    """Persist a directory entry after replacing a file in it."""
+    path = Path(path)
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError as error:
+        raise ManifestError(f"cannot flush directory {path}: {error}") from error
+    try:
+        _sync(descriptor)
+    except OSError as error:
+        raise ManifestError(f"cannot flush directory {path}: {error}") from error
+    finally:
+        os.close(descriptor)
+
+
 def _revoke_verification(manifest: dict[str, object]) -> None:
     """Stop a recorded qualification receipt from authorizing anything.
 
@@ -288,6 +343,18 @@ def _revoke_verification(manifest: dict[str, object]) -> None:
     verification = manifest.get("verification")
     if isinstance(verification, dict):
         verification["passed"] = False
+
+
+def _revoke_candidate_gates(manifest: dict[str, object]) -> None:
+    """Withdraw candidate approval while preserving the receipts as evidence."""
+    gates = manifest.get("candidate_gates")
+    if not isinstance(gates, dict):
+        return
+    entries = gates.get("gates")
+    if isinstance(entries, dict):
+        for entry in entries.values():
+            if isinstance(entry, dict):
+                entry["passed"] = False
 
 
 def set_artifacts(
@@ -323,6 +390,7 @@ def set_artifacts(
                 if states.get(name) is True:
                     states[name] = False
         _revoke_verification(manifest)
+        _revoke_candidate_gates(manifest)
     write_manifest(path, manifest)
     return manifest
 
@@ -339,6 +407,7 @@ def set_notarized(path: Path, app: bool, dmg: bool) -> dict[str, object]:
     manifest["notarized"] = states
     if weakened:
         _revoke_verification(manifest)
+        _revoke_candidate_gates(manifest)
     write_manifest(path, manifest)
     return manifest
 
@@ -400,14 +469,419 @@ def bind_appcast(
         "expected_url": expected_url,
     }
     manifest = load_manifest(path)
+    previous = manifest.get("release")
+    previous_appcast = previous.get("appcast") if isinstance(previous, dict) else None
+    if (
+        manifest.get("candidate_gates") is not None
+        and previous_appcast != binding
+        and not _candidate_gates_cover_appcast(manifest, binding.get("sha256"))
+    ):
+        _revoke_candidate_gates(manifest)
     manifest["release"] = {"appcast": binding}
     write_manifest(path, manifest)
     return manifest
 
 
+def _candidate_gates_cover_appcast(
+    manifest: dict[str, object], appcast_digest: object
+) -> bool:
+    """Whether every appcast-requiring gate records this exact appcast."""
+    gates = manifest.get("candidate_gates")
+    if not isinstance(gates, dict):
+        return False
+    entries = gates.get("gates")
+    if not isinstance(entries, dict):
+        return False
+    return all(
+        isinstance(entries.get(name), dict)
+        and entries[name].get("appcast_digest") == appcast_digest
+        for name in CANDIDATE_GATES_REQUIRING_APPCAST
+    )
+
+
 def _equal(name: str, expected: object, actual: object, errors: list[str]) -> None:
     if expected != actual:
         errors.append(f"{name} mismatch: manifest={expected!r}, current={actual!r}")
+
+
+def _load_candidate_json(path: Path, label: str) -> dict[str, object]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise ManifestError(f"{label} is missing: {path}") from error
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ManifestError(f"{label} is malformed: {error}") from error
+    if not isinstance(value, dict):
+        raise ManifestError(f"{label} must be a JSON object")
+    return value
+
+
+def _candidate_appcast_digest(value: dict[str, object], label: str) -> object:
+    """Read the appcast digest while accepting the schema-1 legacy name."""
+    canonical = value.get("appcast_digest")
+    legacy = value.get("appcast_sha256")
+    if legacy is not None:
+        warnings.warn(
+            f"{label} uses deprecated appcast_sha256; rename it to appcast_digest",
+            DeprecationWarning,
+            stacklevel=5,
+        )
+        if canonical is not None and canonical != legacy:
+            raise ManifestError(
+                f"{label} declares conflicting appcast_digest and legacy appcast_sha256"
+            )
+        if canonical is None:
+            canonical = legacy
+    return canonical
+
+
+def _canonicalize_candidate_identity(value: object, label: str) -> object:
+    """Return a copy with the legacy appcast field under its canonical name."""
+    if not isinstance(value, dict):
+        return value
+    canonicalized = dict(value)
+    canonicalized["appcast_digest"] = _candidate_appcast_digest(value, label)
+    canonicalized.pop("appcast_sha256", None)
+    return canonicalized
+
+
+def _validate_candidate_identity(
+    value: object,
+    *,
+    expected_source: str,
+    expected_version: str,
+    expected_artifacts: dict[str, str],
+    expected_appcast: str | None,
+    errors: list[str],
+) -> None:
+    if not isinstance(value, dict):
+        errors.append("candidate gate identity is malformed")
+        return
+    _equal(
+        "candidate source revision",
+        expected_source,
+        value.get("source_revision"),
+        errors,
+    )
+    _equal("candidate version", expected_version, value.get("version"), errors)
+    artifacts = value.get("artifacts")
+    if not isinstance(artifacts, dict) or set(artifacts) != {*CANDIDATE_GATE_ARTIFACTS}:
+        errors.append("candidate gate artifacts must bind exactly app and DMG SHA-256s")
+    else:
+        _equal("candidate artifacts", expected_artifacts, artifacts, errors)
+    _equal(
+        "candidate appcast digest",
+        expected_appcast,
+        value.get("appcast_digest"),
+        errors,
+    )
+
+
+def _validate_candidate_fields(value: object, errors: list[str]) -> None:
+    if not isinstance(value, dict):
+        errors.append("candidate gate receipt is malformed")
+        return
+    receipt_digest = value.get("receipt_sha256")
+    if not isinstance(receipt_digest, str) or _SHA256.fullmatch(receipt_digest) is None:
+        errors.append("candidate gate has no valid receipt SHA-256")
+    if _utc_timestamp(value.get("recorded_at")) is not True:
+        errors.append("candidate gate has no UTC timestamp")
+    command = value.get("command")
+    if not isinstance(command, str) or not command.strip():
+        errors.append("candidate gate has no command")
+    exit_status = value.get("exit_status")
+    if (
+        isinstance(exit_status, bool)
+        or not isinstance(exit_status, int)
+        or exit_status != 0
+    ):
+        errors.append("candidate gate did not exit zero")
+
+
+def candidate_gate_binding(
+    gate_map_path: Path,
+    *,
+    source_revision: str,
+    version: str,
+    artifacts: dict[str, Path],
+    appcast_digest: str | None,
+) -> dict[str, object]:
+    """Validate an external gate map and return its immutable manifest binding."""
+    gate_map = _load_candidate_json(gate_map_path, "candidate gate map")
+    if gate_map.get("schema_version") != CANDIDATE_GATE_MAP_SCHEMA_VERSION:
+        raise ManifestError(
+            f"unsupported candidate gate map schema: {gate_map.get('schema_version')!r}"
+        )
+    if gate_map.get("map_kind") != CANDIDATE_GATE_MAP_KIND:
+        raise ManifestError(
+            f"wrong candidate gate map kind: {gate_map.get('map_kind')!r}"
+        )
+    gates = gate_map.get("gates")
+    if not isinstance(gates, dict) or set(gates) != set(CANDIDATE_GATE_NAMES):
+        raise ManifestError(
+            "candidate gate map must bind exactly: " + ", ".join(CANDIDATE_GATE_NAMES)
+        )
+
+    expected_artifacts = {name: digest(path) for name, path in artifacts.items()}
+    if set(expected_artifacts) != set(CANDIDATE_GATE_ARTIFACTS):
+        raise ManifestError("candidate gates require app and DMG artifacts")
+    binding: dict[str, object] = {
+        "schema_version": CANDIDATE_GATE_MAP_SCHEMA_VERSION,
+        "map_kind": CANDIDATE_GATE_MAP_KIND,
+        "gate_map_sha256": content_sha256(gate_map_path),
+        "gates": {},
+    }
+    bound_gates = binding["gates"]
+    assert isinstance(bound_gates, dict)
+    for name in CANDIDATE_GATE_NAMES:
+        entry = _canonicalize_candidate_identity(gates[name], f"candidate gate {name}")
+        errors: list[str] = []
+        expected_appcast = (
+            appcast_digest if name in CANDIDATE_GATES_REQUIRING_APPCAST else None
+        )
+        _validate_candidate_identity(
+            entry,
+            expected_source=source_revision,
+            expected_version=version,
+            expected_artifacts=expected_artifacts,
+            expected_appcast=expected_appcast,
+            errors=errors,
+        )
+        _validate_candidate_fields(entry, errors)
+        if not isinstance(entry, dict):
+            raise ManifestError(
+                f"candidate gate {name} is malformed:\n  " + "\n  ".join(errors)
+            )
+        receipt_name = entry.get("receipt")
+        if (
+            not isinstance(receipt_name, str)
+            or not receipt_name
+            or Path(receipt_name).is_absolute()
+        ):
+            errors.append("candidate gate has no receipt file")
+        else:
+            receipt_path = gate_map_path.parent / receipt_name
+            try:
+                receipt_path.resolve().relative_to(gate_map_path.parent.resolve())
+            except (OSError, ValueError):
+                errors.append("candidate receipt escapes the gate-map directory")
+            else:
+                receipt = _canonicalize_candidate_identity(
+                    _load_candidate_json(
+                        receipt_path, f"candidate gate {name} receipt"
+                    ),
+                    f"candidate gate {name} receipt",
+                )
+                if not isinstance(receipt, dict):
+                    errors.append(f"candidate gate {name} receipt is malformed")
+                    receipt = {}
+                if receipt.get("schema_version") != 1:
+                    errors.append("candidate receipt has an unsupported schema")
+                if receipt.get("receipt_kind") != CANDIDATE_GATE_RECEIPT_KIND:
+                    errors.append("candidate receipt has the wrong kind")
+                if receipt.get("scope") != name:
+                    errors.append("candidate receipt is not scoped to its gate")
+                if receipt.get("passed") is not True:
+                    errors.append("candidate receipt is not passing")
+                _equal("candidate receipt gate", name, receipt.get("gate"), errors)
+                _equal(
+                    "candidate receipt source",
+                    entry.get("source_revision"),
+                    receipt.get("source_revision"),
+                    errors,
+                )
+                _equal(
+                    "candidate receipt version",
+                    entry.get("version"),
+                    receipt.get("version"),
+                    errors,
+                )
+                _equal(
+                    "candidate receipt artifacts",
+                    entry.get("artifacts"),
+                    receipt.get("artifacts"),
+                    errors,
+                )
+                _equal(
+                    "candidate receipt appcast",
+                    entry.get("appcast_digest"),
+                    receipt.get("appcast_digest"),
+                    errors,
+                )
+                _equal(
+                    "candidate receipt timestamp",
+                    entry.get("recorded_at"),
+                    receipt.get("recorded_at"),
+                    errors,
+                )
+                _equal(
+                    "candidate receipt command",
+                    entry.get("command"),
+                    receipt.get("command"),
+                    errors,
+                )
+                _equal(
+                    "candidate receipt exit status",
+                    entry.get("exit_status"),
+                    receipt.get("exit_status"),
+                    errors,
+                )
+                receipt_sha256 = content_sha256(receipt_path)
+                _equal(
+                    "declared candidate receipt SHA-256",
+                    entry.get("receipt_sha256"),
+                    receipt_sha256,
+                    errors,
+                )
+                bound = {
+                    key: value
+                    for key, value in entry.items()
+                    if key not in {"receipt", "appcast_sha256"}
+                }
+                bound["receipt_sha256"] = receipt_sha256
+                bound["passed"] = True
+                bound_gates[name] = bound
+        if errors:
+            raise ManifestError(
+                f"candidate gate {name} binding failed:\n  " + "\n  ".join(errors)
+            )
+    return binding
+
+
+def bind_candidate_gates(
+    path: Path,
+    *,
+    gate_map_path: Path,
+    source_revision: str,
+    version: str,
+    artifacts: dict[str, Path],
+    appcast_digest: str | None,
+    replace: bool = False,
+) -> dict[str, object]:
+    """Atomically record the complete, digest-bound candidate gate map.
+
+    A failed or revoked binding may be replaced without an operator flag.  An
+    approved binding can be rewritten only when the replacement is identical
+    or the caller passes ``replace=True``.  Every accepted, different
+    replacement first retains the old binding as superseded evidence.
+    """
+    binding = candidate_gate_binding(
+        gate_map_path,
+        source_revision=source_revision,
+        version=version,
+        artifacts=artifacts,
+        appcast_digest=appcast_digest,
+    )
+    manifest = load_manifest(path)
+    release = manifest.get("release")
+    bound_appcast = release.get("appcast") if isinstance(release, dict) else None
+    if (
+        isinstance(bound_appcast, dict)
+        and bound_appcast.get("sha256") != appcast_digest
+    ):
+        raise ManifestError(
+            "candidate gates do not cover the already-bound release appcast"
+        )
+    previous = manifest.get("candidate_gates")
+    if isinstance(previous, dict):
+        previous_gates = previous.get("gates")
+        previous_failed = (
+            isinstance(previous_gates, dict)
+            and bool(previous_gates)
+            and any(
+                not isinstance(entry, dict) or entry.get("passed") is not True
+                for entry in previous_gates.values()
+            )
+        )
+        if not previous_failed and previous != binding and not replace:
+            raise ManifestError("candidate gates are already bound to this manifest")
+    elif previous is not None and not replace:
+        raise ManifestError("candidate gates are already bound to this manifest")
+    if previous is not None and previous != binding:
+        history = manifest.get("superseded_candidate_gates")
+        if history is None:
+            history = []
+        elif not isinstance(history, list):
+            raise ManifestError("superseded candidate gates are malformed")
+        history.append(previous)
+        manifest["superseded_candidate_gates"] = history
+    manifest["candidate_gates"] = binding
+    write_manifest(path, manifest)
+    return manifest
+
+
+def _validate_candidate_gates(
+    manifest: dict[str, object],
+    *,
+    version: str,
+    recorded_artifacts: dict[str, object],
+    appcast: Path | None,
+    require_gates: bool,
+    errors: list[str],
+) -> None:
+    gates = manifest.get("candidate_gates")
+    if gates is None:
+        if require_gates:
+            errors.append("candidate gate map is missing")
+        return
+    if not isinstance(gates, dict):
+        errors.append("candidate gate map is malformed")
+        return
+    if gates.get("schema_version") != CANDIDATE_GATE_MAP_SCHEMA_VERSION:
+        errors.append("candidate gate map has an unsupported schema")
+    if gates.get("map_kind") != CANDIDATE_GATE_MAP_KIND:
+        errors.append("candidate gate map has the wrong kind")
+    gate_digest = gates.get("gate_map_sha256")
+    if not isinstance(gate_digest, str) or _SHA256.fullmatch(gate_digest) is None:
+        errors.append("candidate gate map has no valid SHA-256")
+    entries = gates.get("gates")
+    if not isinstance(entries, dict) or set(entries) != set(CANDIDATE_GATE_NAMES):
+        errors.append(
+            "candidate gate map must bind exactly: " + ", ".join(CANDIDATE_GATE_NAMES)
+        )
+        entries = {}
+    if any(not isinstance(entry, dict) for entry in entries.values()):
+        errors.append("candidate gate entries are malformed")
+    if appcast is None:
+        # The opening release preflight runs before the operator-selected
+        # appcast is bound.  Candidate gates cover that exact feed, so final
+        # preflight owns every candidate check once the appcast is present.
+        if require_gates:
+            errors.append("candidate gates require the release appcast")
+        return
+    source = manifest.get("source")
+    source_revision = source.get("commit") if isinstance(source, dict) else None
+    expected_artifacts: dict[str, str] = {}
+    for name in CANDIDATE_GATE_ARTIFACTS:
+        recorded = recorded_artifacts.get(name)
+        if not isinstance(recorded, str) or _SHA256.fullmatch(recorded) is None:
+            errors.append(f"candidate gate has no recorded {name} artifact digest")
+        else:
+            expected_artifacts[name] = recorded
+    try:
+        appcast_digest = digest(appcast) if appcast is not None else None
+    except ManifestError as error:
+        errors.append(str(error))
+        return
+    for name in CANDIDATE_GATE_NAMES:
+        entry = entries.get(name)
+        if not isinstance(entry, dict):
+            errors.append(f"candidate gate {name} is malformed")
+            continue
+        if entry.get("passed") is not True:
+            errors.append(f"candidate gate {name} has been revoked or failed")
+        expected_appcast = (
+            appcast_digest if name in CANDIDATE_GATES_REQUIRING_APPCAST else None
+        )
+        _validate_candidate_identity(
+            entry,
+            expected_source=source_revision,
+            expected_version=version,
+            expected_artifacts=expected_artifacts,
+            expected_appcast=expected_appcast,
+            errors=errors,
+        )
+        _validate_candidate_fields(entry, errors)
 
 
 def _validate_release_source(
@@ -478,6 +952,7 @@ def preflight_release(
     release_url: str,
     capture: ManifestSink,
     require_appcast: bool,
+    require_candidate_gates: bool = False,
 ) -> dict[str, object]:
     """Return a valid publication binding, or explain every failed check."""
     manifest = load_manifest(path)
@@ -559,6 +1034,15 @@ def preflight_release(
             errors.append(str(error))
     elif require_appcast and dmg_path is not None:
         errors.append("release appcast is not bound")
+
+    _validate_candidate_gates(
+        manifest,
+        version=version,
+        recorded_artifacts=recorded_artifacts,
+        appcast=appcast,
+        require_gates=require_candidate_gates,
+        errors=errors,
+    )
 
     if errors:
         raise ManifestError("release preflight failed:\n  " + "\n  ".join(errors))
