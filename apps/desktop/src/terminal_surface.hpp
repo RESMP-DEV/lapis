@@ -334,6 +334,12 @@ class TerminalSurface : public QQuickItem {
     QPoint press_cell_;
     bool selecting_{};
     bool wheel_program_{}; // wheel units change between program and history scrolling
+    // Wheel steps a full-screen program was scrolled back by, and where; the
+    // next key the person types first scrolls it forward as far again, so
+    // typing lands at the bottom whatever the program's own keys are.
+    int program_scrolled_{};
+    QPoint program_scroll_cell_;
+    void returnProgramToBottom();
     int wheel_remainder_{};
     qreal pixel_remainder_{}; // a trackpad's scroll, short of a row
 };

@@ -5262,6 +5262,69 @@ void savedGrokDefaultsPreserveLaunchOwnership() {
     }
 }
 
+// Saved Codex launches gain the inline screen (and the update setting) once at
+// restart, before any owned resume pair, unless the person chose either.
+void savedCodexDefaultsKeepTranscriptInline() {
+    struct Case {
+        QStringList arguments;
+        QStringList expected;
+        bool managed{};
+    };
+    const QString update = QStringLiteral("check_for_update_on_startup=false");
+    const std::vector<Case> cases{
+        {{}, {"-c", update, "--no-alt-screen"}},
+        {{"-c", update}, {"--no-alt-screen", "-c", update}},
+        {{"--no-alt-screen"}, {"-c", update, "--no-alt-screen"}},
+        {{"-c", "tui.alt_screen=\"always\"", "-c", update},
+         {"-c", "tui.alt_screen=\"always\"", "-c", update}},
+        {{"--", "--no-alt-screen"}, {"-c", update, "--no-alt-screen", "--", "--no-alt-screen"}},
+        {{"resume", "conversation"},
+         {"-c", update, "--no-alt-screen", "resume", "conversation"},
+         true},
+    };
+    for (const auto& variant : cases) {
+        QTemporaryDir directory(QStringLiteral("/tmp/lapis-codex-defaults-XXXXXX"));
+        require(directory.isValid(), "Codex defaults directory");
+        const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+        const auto id = uuid();
+        auto record = agentRecord(root.path(), id, "general");
+        const auto program = root.filePath(QStringLiteral("codex"));
+        writeExecutable(program, "#!/usr/bin/env bash\nexit 0\n");
+        record.insert(QStringLiteral("program"), program);
+        record.insert(QStringLiteral("harness"), QStringLiteral("codex"));
+        record.insert(QStringLiteral("arguments"), QJsonArray::fromStringList(variant.arguments));
+        if (variant.managed)
+            record.insert(QStringLiteral("managedResume"),
+                          QJsonObject{{"index", 0}, {"identity", "conversation"}});
+        WorkspaceOptions options;
+        options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+        options.restoreAgents = true;
+        writeRegistry(
+            options.storagePath,
+            {{"version", 2},
+             {"activeCategory", "general"},
+             {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+             {"agents", QJsonArray{record}}});
+        for (int pass = 0; pass < 2; ++pass) {
+            Workspace workspace(WorkspaceMode::live, options);
+            require(workspace.workspaceError().isEmpty(), "restore saved Codex launch");
+            const auto saved = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                   .object()[QStringLiteral("agents")]
+                                   .toArray()
+                                   .first()
+                                   .toObject();
+            require(saved[QStringLiteral("arguments")].toArray() ==
+                        QJsonArray::fromStringList(variant.expected),
+                    "Codex restarts inline once, keeping explicit screen choices");
+            if (variant.managed)
+                require(saved[QStringLiteral("managedResume")]
+                                .toObject()[QStringLiteral("index")]
+                                .toInt(-1) == 3,
+                        "the owned resume pair shifts exactly once with the defaults");
+        }
+    }
+}
+
 struct PrintedCheckpointFixture {
     QTemporaryDir directory{QStringLiteral("/tmp/lapis-cp-XXXXXX")};
     QString canonical = QFileInfo(directory.path()).canonicalFilePath();
@@ -5550,6 +5613,7 @@ int main(int argc, char** argv) {
                 remoteClaudeReconnectsToItsConversation();
             } else if (selected == QStringLiteral("startup-defaults")) {
                 savedGrokDefaultsPreserveLaunchOwnership();
+                savedCodexDefaultsKeepTranscriptInline();
             } else if (selected == QStringLiteral("launch-policy")) {
                 modelessAgentsGetTheDefaultMode();
                 resumingAConversationStartsItsCli();

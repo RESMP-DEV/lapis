@@ -39,6 +39,14 @@
 
 namespace lapis::desktop {
 namespace {
+// Whether the person chose Codex's screen mode themselves.
+bool hasCodexScreenSetting(const QStringList& arguments) {
+    const auto separator = std::find(arguments.cbegin(), arguments.cend(), QStringLiteral("--"));
+    return std::any_of(arguments.cbegin(), separator, [](const QString& argument) {
+        return argument == QLatin1String("--no-alt-screen") ||
+               argument.contains(QLatin1String("alt_screen"));
+    });
+}
 bool hasCodexUpdateSetting(const QStringList& arguments) {
     for (qsizetype index = 0; index < arguments.size(); ++index) {
         const auto& argument = arguments.at(index);
@@ -2249,14 +2257,20 @@ void Workspace::applyStartupDefaults(const Agent& agent, ResumeLaunch& plan) {
             qWarning() << "Grok fullscreen default not added: saved argument limit reached";
         }
     }
-    if (agent.harness == QLatin1String("codex") && !hasCodexUpdateSetting(plan.launch.arguments)) {
-        if (plan.launch.arguments.size() + 2 <= max_saved_arguments) {
-            const auto* descriptor = find_harness(agent.harness);
-            plan.launch.arguments = (descriptor ? descriptor->defaultArguments() : QStringList()) +
-                                    plan.launch.arguments;
+    if (agent.harness == QLatin1String("codex")) {
+        QStringList missing;
+        if (!hasCodexUpdateSetting(plan.launch.arguments))
+            missing << QStringLiteral("-c") << QStringLiteral("check_for_update_on_startup=false");
+        // Saved before Codex ran inline; a remote launch carries its own words.
+        if (QFileInfo(plan.launch.program).fileName() == QLatin1String("codex") &&
+            !hasCodexScreenSetting(plan.launch.arguments))
+            missing << QStringLiteral("--no-alt-screen");
+        if (!missing.isEmpty() &&
+            plan.launch.arguments.size() + missing.size() <= max_saved_arguments) {
+            plan.launch.arguments = missing + plan.launch.arguments;
             if (plan.managed_resume_index >= 0)
-                plan.managed_resume_index += 2;
-        } else {
+                plan.managed_resume_index += static_cast<int>(missing.size());
+        } else if (!missing.isEmpty()) {
             qWarning() << "Codex startup setting not added: saved argument limit reached";
         }
     }

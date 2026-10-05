@@ -23,6 +23,7 @@
 
 #include <QClipboard>
 #include <QCommandLineParser>
+#include <QDateTime>
 #include <QDebug>
 #include <QDesktopServices>
 #include <QDir>
@@ -34,6 +35,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QPointer>
 #include <QQmlEngine>
 #include <QQuickStyle>
@@ -46,6 +49,7 @@
 #include <exception>
 #include <optional>
 #include <set>
+#include <sys/stat.h>
 
 namespace {
 void add_options(QCommandLineParser& parser) {
@@ -285,6 +289,46 @@ bool parsed_headless(const QCommandLineParser& parser, bool parsed) {
 // also starts checking for updates here.
 // Every ping decision, one JSON line each, in the owner-only runtime folder;
 // past 2 MiB the log starts over beside its predecessor.
+// Opened from Finder or the Dock, the app's standard error is /dev/null and its
+// warnings would be lost: they go to runtime/lapis.log instead (owner-only,
+// timestamped, starting over beside its predecessor past 2 MiB). Run from a
+// terminal or a test harness, standard error stays where it was.
+bool stderr_discarded() {
+    struct stat error{};
+    struct stat null{};
+    return ::fstat(2, &error) == 0 && ::stat("/dev/null", &null) == 0 && S_ISCHR(error.st_mode) &&
+           error.st_rdev == null.st_rdev;
+}
+QString& app_log_path() {
+    static QString path;
+    return path;
+}
+void log_to_file(QtMsgType type, const QMessageLogContext&, const QString& message) {
+    static QMutex mutex;
+    const QMutexLocker lock(&mutex);
+    constexpr qint64 kLimit = qint64{2} * 1024 * 1024;
+    const auto& path = app_log_path();
+    if (QFileInfo(path).size() > kLimit) {
+        QFile::remove(path + QStringLiteral(".1"));
+        QFile::rename(path, path + QStringLiteral(".1"));
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::Append | QIODevice::WriteOnly, QFile::ReadOwner | QFile::WriteOwner))
+        return;
+    static const char* const levels[] = {"debug", "warning", "critical", "fatal", "info"};
+    const auto level = static_cast<std::size_t>(type) < std::size(levels) ? levels[type] : "log";
+    file.write(QDateTime::currentDateTime().toString(Qt::ISODateWithMs).toUtf8() + ' ' + level +
+               ": " + message.toUtf8() + '\n');
+}
+void keep_app_log() {
+    if (!stderr_discarded())
+        return;
+    const QDir runtime(QDir(lapis::desktop::data_directory()).filePath(QStringLiteral("runtime")));
+    if (!runtime.exists())
+        return;
+    app_log_path() = runtime.filePath(QStringLiteral("lapis.log"));
+    qInstallMessageHandler(log_to_file);
+}
 lapis::desktop::AttentionLog attention_log() {
     return lapis::desktop::attention_log(
         QDir(lapis::desktop::data_directory()).filePath(QStringLiteral("runtime/attention.jsonl")));
@@ -823,6 +867,7 @@ int main(int argc, char** argv) {
     QGuiApplication app(application_argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("lapis"));
     QCoreApplication::setOrganizationName(QStringLiteral("lapis"));
+    keep_app_log();
     parser.process(arguments);
     if (!valid_options(parser) || !valid_connection_options(parser))
         return 2;

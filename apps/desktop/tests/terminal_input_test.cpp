@@ -1390,6 +1390,27 @@ void selection_and_scroll() {
     require(program_wheel.kind == wire::Kind::wheel &&
                 wire::decode_wheel(wire::decode_control(program_wheel.payload).payload).steps == 1,
             "A complete alternate-screen notch did not reach the program");
+    // Typing returns a scrolled-back program to the bottom first, whatever
+    // keys it binds for that: as many forward steps as it went back.
+    scroll(240);
+    const auto further = peer.read();
+    require(further.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(further.payload).payload).steps == 2,
+            "Two more notches did not reach the program");
+    QKeyEvent bottom(QEvent::KeyPress, Qt::Key_Z, Qt::NoModifier, QStringLiteral("z"));
+    QCoreApplication::sendEvent(&surface, &bottom);
+    const auto back = peer.read();
+    require(back.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(back.payload).payload).steps == -3,
+            "Typing did not first scroll the program back to the bottom");
+    require(text_frames(peer, 1) == QByteArray("z"), "The key after the return was lost");
+    QKeyEvent again(QEvent::KeyPress, Qt::Key_W, Qt::NoModifier, QStringLiteral("w"));
+    QCoreApplication::sendEvent(&surface, &again);
+    settle();
+    peer.bytes += peer.socket->readAll();
+    wire::Frame next;
+    require(wire::take_frame(peer.bytes, next) && next.kind != wire::Kind::wheel,
+            "A program already at the bottom was scrolled again");
 }
 } // namespace
 int main(int argc, char** argv) {
