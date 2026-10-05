@@ -10,7 +10,7 @@
     "dirty_at_check": true,
     "review_repair_state": "files_changed names the complete dirty set. files_hashed names the non-receipt implementation/documentation files plus the bound source receipt; this binding receipt deliberately excludes its own bytes. The follow-up commit preserves this file, completing the chain.",
     "bound_receipt": "r4-candidate-gate-map.json",
-    "bound_receipt_sha256": "65156e7dbac304b4563a0da4430042b5d321831cf52190ab0d489ea1c3e73d13",
+    "bound_receipt_sha256": "7905951b74fbfaa240514bbf59653603a6eff5b83ec2fdd7b0cf3386b491bf2e",
     "working_tree_sha256": {
       "CONTRIBUTING.md": "7d49ae2ee9383d1b83c324361ab0e316aa8cc2ba90e35aa548ff8276f4b84046",
       "docs/architecture.md": "b93fcc52a0686c33f6d06933e0bdda87cb4b6f901917da7fc385a3543c1d2043",
@@ -19,7 +19,7 @@
       "scripts/release_manifest.py": "59793239e305cb79f340d76159399e0ca772a0f3b0f84326bd716911223bf0ca",
       "scripts/tests/test_release_manifest.py": "a85280244b37c1aca914bb916d1ee40b67bca6566f8564723839012065d4095a",
       "scripts/tests/test_package_macos.py": "41c43bee0e69ba2b47854fe814cc6add4f92763bfe866b239b3c6e6bc7732688",
-      "evidence/r4-candidate-gate-map.json": "65156e7dbac304b4563a0da4430042b5d321831cf52190ab0d489ea1c3e73d13"
+      "evidence/r4-candidate-gate-map.json": "7905951b74fbfaa240514bbf59653603a6eff5b83ec2fdd7b0cf3386b491bf2e"
     },
     "files_changed": [
       "CONTRIBUTING.md",

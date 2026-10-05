@@ -86,6 +86,12 @@
       "command": "git diff --check",
       "exit_code": 0,
       "result": "passed"
+    },
+    {
+      "name": "source-and-binding-hash-chain",
+      "command": "python3 -c 'import hashlib,json;from pathlib import Path;A=Path(\"evidence/r4-candidate-gate-map.json\");B=Path(\"evidence/r4-candidate-gate-map-binding.json\");D=json.loads(A.read_text());X=json.loads(B.read_text());H=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest();assert all(H(k)==v for k,v in D[\"source\"][\"working_tree_sha256\"].items());assert set(D[\"source\"][\"files_hashed\"])==set(D[\"source\"][\"working_tree_sha256\"]);assert H(A)==X[\"source\"][\"bound_receipt_sha256\"];assert all(H(k)==v for k,v in X[\"source\"][\"working_tree_sha256\"].items());assert X[\"source\"][\"working_tree_sha256\"][\"evidence/r4-candidate-gate-map.json\"]==H(A);assert str(B) not in X[\"source\"][\"files_hashed\"];print(\"verified\")'",
+      "exit_code": 0,
+      "result": "Verified every current non-receipt source digest, exact files_hashed scope, bound source-receipt digest, companion working-tree digests, and exclusion of the companion receipt self-path."
     }
   ],
   "environment": {
