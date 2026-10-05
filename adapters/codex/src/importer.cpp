@@ -114,11 +114,15 @@ void validate_session_details(const QJsonObject& details, QSet<QString>& paths,
         if (!other.isArray() || !other.toArray().isEmpty())
             throw std::runtime_error("Codex session item carries a non-session migration class");
     }
-    const auto required_keys = allowed - QSet{QStringLiteral("memory")};
-    for (const auto& required : required_keys) {
-        if (!details.contains(required))
-            throw std::runtime_error("Codex session item is missing migration details: " +
-                                     required.toStdString());
+    QStringList missing_keys;
+    for (const auto& required : allowed) {
+        if (required != QLatin1String("memory") && !details.contains(required))
+            missing_keys.append(required);
+    }
+    missing_keys.sort();
+    if (!missing_keys.isEmpty()) {
+        throw std::runtime_error("Codex session item is missing migration details: " +
+                                 missing_keys.join(QStringLiteral(", ")).toStdString());
     }
 
     const auto sessions_value = details.value(QStringLiteral("sessions"));

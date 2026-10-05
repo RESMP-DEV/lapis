@@ -2,7 +2,7 @@
   "schema_version": 1,
   "record_kind": "lapis.codex-import-expanded-shape",
   "recorded_on": "2026-10-05",
-  "recorded_at": "2026-10-05T22:53:10Z",
+  "recorded_at": "2026-10-05T23:13:19Z",
   "source": {
     "revision": "7fa37a7422e77f1e24325d0ea18aaade50a4bf7c",
     "dirty_before_receipt": true,
@@ -15,10 +15,10 @@
     ],
     "working_tree_sha256": {
       "adapters/codex/src/importer.hpp": "82b4b8d399c29644f05f476bd0f3c5cca7d8e8ebfe1477fba2fc8ca980ff0c5e",
-      "adapters/codex/src/importer.cpp": "931f7a0df23b24f5d7bc02ee6fe5bd976abba513c11dddc56dbc33903237ad0c",
-      "adapters/codex/tests/importer_test.cpp": "3a48121c825e9965684caf4a8022cf191c1acfd68e6bd4e2e8a69f1b8263e0a0",
+      "adapters/codex/src/importer.cpp": "ae71851e64549928ea6375e7fb802b5fa85c24b153dac27856b5ce37c4a2c6dc",
+      "adapters/codex/tests/importer_test.cpp": "07d1fc6e5a2b792d3efc06c9807a867c2fe9c3cf6bc71634683dd2ee3a76676a",
       "scripts/probe_codex_external_import.py": "1f81301c6bc3eda8a9ee4dd841e0327c827f476010519ff6404182caa4125595",
-      "scripts/tests/test_probe_codex_external_import.py": "fd4adfea1b1bb9ba82577cb6f286f22f2dbccef9ae5405c0940726937d3ac281"
+      "scripts/tests/test_probe_codex_external_import.py": "05444d684358dc76b6286c0172eb0e5c82462bc80c445565bd6c9e93f4bca00e"
     }
   },
   "scope": "Fail closed on incomplete or unexpected SESSIONS migration-detail shapes while retaining compatibility with the observed pre-memory binary protocol.",
@@ -27,7 +27,7 @@
       "name": "codex-importer-ctest",
       "command": "ctest --test-dir build/desktop -R '^codex-importer$' --output-on-failure --no-tests=error",
       "exit_code": 0,
-      "result": "Synthetic incomplete-details with key-specific diagnostics and Python/C++ precedence parity, memory-absent content retention, and nonempty-memory regressions passed with the full importer suite."
+      "result": "Synthetic all-missing-keys diagnostics with Python/C++ precedence parity, memory-absent content retention, and nonempty-memory regressions passed with the full importer suite."
     },
     {
       "name": "probe-python-tests",
@@ -44,9 +44,15 @@
     },
     {
       "name": "ruff",
-      "command": "ruff check --config ruff.toml scripts/probe_codex_external_import.py scripts/tests/test_probe_codex_external_import.py; ruff format --config ruff.toml --check scripts/probe_codex_external_import.py scripts/tests/test_probe_codex_external_import.py",
+      "command": "ruff check --config ruff.toml scripts/probe_codex_external_import.py scripts/tests/test_probe_codex_external_import.py",
       "exit_code": 0,
-      "result": "Both passed."
+      "result": "Ruff lint passed."
+    },
+    {
+      "name": "ruff-format",
+      "command": "ruff format --config ruff.toml --check scripts/probe_codex_external_import.py scripts/tests/test_probe_codex_external_import.py",
+      "exit_code": 0,
+      "result": "Ruff format check passed."
     },
     {
       "name": "clang-tidy",
@@ -66,8 +72,8 @@
       "scope": "Final full-validation live probe output retained under the ignored build directory; it contains no user transcript and is not published in full."
     },
     "repaired_head_quality_receipt": {
-      "sha256": "6c764074e43f1833b7a887b36c41515c17850765dd6219a6a6a69fdf8c293e49",
-      "scope": "Full repository quality receipt after diagnostic-order parity, key-specific diagnostics, memory-compatibility assertions, and receipt-hardening changes."
+      "sha256": "3197a1f1e2b780a0b00313ee1ef111a79af31894b08d0fb4f49816ff41d11bb7",
+      "scope": "Full repository quality receipt after deterministic all-missing-keys diagnostics, diagnostic-order parity, memory-compatibility assertions, and receipt-hardening changes."
     }
   },
   "aggregate_passed": true,

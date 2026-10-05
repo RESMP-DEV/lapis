@@ -72,8 +72,9 @@ class ProbeTests(unittest.IsolatedAsyncioTestCase):
             probe.session_item([unknown_detail], home)
         missing_detail = session_item()
         missing_detail["details"].pop("plugins")
+        missing_detail["details"].pop("skills")
         with self.assertRaisesRegex(
-            RuntimeError, r"missing migration details: plugins"
+            RuntimeError, r"missing migration details: plugins, skills"
         ):
             probe.session_item([missing_detail], home)
         unknown_and_missing = session_item()

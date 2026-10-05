@@ -438,6 +438,7 @@ void incomplete_session_details_fail_closed() {
     auto item = session_item();
     auto details = item.value(QStringLiteral("details")).toObject();
     details.remove(QStringLiteral("plugins"));
+    details.remove(QStringLiteral("skills"));
     item.insert(QStringLiteral("details"), details);
     source.detection = QJsonObject{{QStringLiteral("items"), QJsonArray{item}}};
     source.start();
@@ -450,7 +451,7 @@ void incomplete_session_details_fail_closed() {
             "incomplete-details fixture initializes");
     require(importer.detect() &&
                 wait_for([&] { return importer.phase() == Importer::Phase::failed; }) &&
-                failure.contains(QStringLiteral("missing migration details: plugins")),
+                failure.contains(QStringLiteral("missing migration details: plugins, skills")),
             "a session item must contain the complete expanded details shape");
 }
 
