@@ -294,8 +294,17 @@ void preserved_peer_failure_retains_identity_for_retry() {
         } catch (const std::runtime_error&) {
             refused = true;
         }
-        require(refused && world->launches == 1 && blocked.state() == saved,
-                "a preserved live peer neither rotates nor launches a replacement");
+        require(refused, "a preserved peer refusal is surfaced");
+        require(world->launches == 1, "a preserved peer launches no replacement");
+        require(blocked.state().session->spawn_token == saved.session->spawn_token,
+                "a preserved peer keeps its spawn token");
+        require(blocked.state().session->identity.epoch == saved.session->identity.epoch,
+                "a preserved peer keeps its epoch");
+        require(blocked.state().session->desired_state == DesiredState::started,
+                "a preserved peer remains retryable");
+        require(blocked.state().session->blocked_reason ==
+                    "Supervisor service peer is alive but did not verify",
+                "a preserved peer records an explicit blocked reason");
     }
 
     world->decline_adoption = false;

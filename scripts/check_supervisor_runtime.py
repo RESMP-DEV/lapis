@@ -157,7 +157,7 @@ def main() -> int:
         results = []
         for label, command in commands:
             results.append(run(label, command, logs, timeout=300))
-        test_output = (logs / "test.log").read_text()
+        test_output = (logs / "test.log").read_text(encoding="utf-8", errors="replace")
         results.append(integration_result(test_output, results[-1], logs))
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         return write_failure(receipt_path, scope, "supervisor-runtime-setup", error)

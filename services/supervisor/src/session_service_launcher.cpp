@@ -347,8 +347,8 @@ std::optional<ChildProcess> SessionServiceLauncher::adopt(const DesiredSession& 
         remove_quietly(owner_path(endpoint));
         return std::nullopt;
     }
-    // A rotated token with a live peer is recoverable by launch's verified
-    // cleanup; adoption must not throw or delete that peer's ownership record.
+    // A live peer with a different token cannot be adopted. launch() refuses to
+    // signal or replace it, so do not remove its ownership record here.
     if (record->spawn_token != spawn_token)
         return std::nullopt;
     if (!handshake(session, owned)) {

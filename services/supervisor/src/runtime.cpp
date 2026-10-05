@@ -492,9 +492,13 @@ Convergence SupervisorRuntime::converge() {
         // Adoption consumed this token's admission. A later crash is a new
         // service instance and must use the rotating restart transition.
         initial_admission_used_ = true;
+        if (!session.blocked_reason.empty())
+            static_cast<void>(registry_->note_block(""));
         return Convergence::converged;
     }
     if (launcher_->peer_preserved(session, session.spawn_token)) {
+        static_cast<void>(
+            registry_->note_block("Supervisor service peer is alive but did not verify"));
         failed("Supervisor service peer is alive but did not verify; identity retained for retry");
     }
     if (initial_admission_used_) {

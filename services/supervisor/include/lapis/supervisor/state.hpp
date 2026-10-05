@@ -190,6 +190,8 @@ class SupervisorRegistry final {
     [[nodiscard]] SupervisorState start(DesiredSession session);
     [[nodiscard]] SupervisorState restart(DesiredSession session);
     [[nodiscard]] SupervisorState stop(const std::string& blocked_reason = {});
+    // Record a retryable diagnostic without rotating identity or desired state.
+    [[nodiscard]] SupervisorState note_block(const std::string& blocked_reason);
     [[nodiscard]] SupervisorState disable();
     [[nodiscard]] ControlOutcome control(const ControlRequest& request);
 

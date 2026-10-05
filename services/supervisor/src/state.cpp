@@ -41,8 +41,7 @@ bool valid_desired_session(const DesiredSession& session) {
            valid_hex(session.identity.session_id, identity_hex_bytes) &&
            valid_hex(session.identity.epoch, identity_hex_bytes) &&
            bounded_text(session.blocked_reason, max_blocked_reason_bytes, true) &&
-           (session.spawn_token.empty() || valid_hex(session.spawn_token, spawn_token_hex_bytes)) &&
-           (session.desired_state == DesiredState::stopped || session.blocked_reason.empty());
+           (session.spawn_token.empty() || valid_hex(session.spawn_token, spawn_token_hex_bytes));
 }
 
 bool valid_state(const SupervisorState& state) {
@@ -181,6 +180,15 @@ SupervisorState SupervisorRegistry::stop(const std::string& blocked_reason) {
     next.session->desired_state = DesiredState::stopped;
     next.session->blocked_reason = blocked_reason;
     next.session->spawn_token = identities_->spawn_token();
+    commit(std::move(next));
+    return state_;
+}
+
+SupervisorState SupervisorRegistry::note_block(const std::string& blocked_reason) {
+    check(!poisoned_, "Supervisor persistence failed; reload before transitioning");
+    check(state_.session.has_value(), "No desired session to annotate");
+    SupervisorState next = state_;
+    next.session->blocked_reason = blocked_reason;
     commit(std::move(next));
     return state_;
 }
