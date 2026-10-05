@@ -23,6 +23,14 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_TITLE = "lapis synthetic import title"
+PROVIDER_ID = "lapis-external-import-probe"
+
+
+def required_object(value: Any, message: str) -> dict[str, Any]:
+    """Require an RPC result object before accessing its keys."""
+    if not isinstance(value, dict):
+        raise RuntimeError(message)
+    return value
 
 
 async def initialize(client: Client) -> dict[str, Any]:
@@ -34,6 +42,7 @@ async def initialize(client: Client) -> dict[str, Any]:
             "capabilities": {"experimentalApi": True},
         },
     )
+    reply = required_object(reply, "Malformed Codex initialization response")
     required = {"userAgent", "codexHome", "platformFamily", "platformOs"}
     if not required.issubset(reply):
         raise RuntimeError("Incomplete initialize response")
@@ -43,6 +52,8 @@ async def initialize(client: Client) -> dict[str, Any]:
 
 def session_item(items: list[dict[str, Any]]) -> dict[str, Any]:
     """Select only the detected session item; config classes stay opt-in elsewhere."""
+    if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+        raise RuntimeError("Malformed Codex detection items")
     sessions = [
         item
         for item in items
@@ -59,7 +70,7 @@ def session_item(items: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def import_item(
-    item: dict[str, Any], *, provider_id: str = "lapis-external-import-probe"
+    item: dict[str, Any], *, provider_id: str = PROVIDER_ID
 ) -> dict[str, Any]:
     """Return a sessions-only import request carrying the server's exact item."""
     return {
@@ -105,6 +116,8 @@ def imported_thread(result: dict[str, Any], expected_thread_id: str) -> str:
     if not isinstance(threads, list) or len(threads) != 1:
         raise RuntimeError("Expected one persisted thread in the private Codex home")
     thread = threads[0]
+    if not isinstance(thread, dict):
+        raise RuntimeError("Malformed persisted-thread entry")
     thread_id = thread.get("id")
     if thread_id != expected_thread_id:
         raise RuntimeError("Persisted thread did not match the import target")
@@ -116,11 +129,13 @@ def import_history(result: dict[str, Any], import_id: str) -> int:
     histories = result.get("data")
     if not isinstance(histories, list):
         raise RuntimeError("Invalid import history response")
+    if any(not isinstance(history, dict) for history in histories):
+        raise RuntimeError("Malformed import history entry")
     matching = [
         history
         for history in histories
         if history.get("importId") == import_id
-        and history.get("providerId") == "lapis-external-import-probe"
+        and history.get("providerId") == PROVIDER_ID
     ]
     if len(matching) != 1:
         raise RuntimeError("Expected exactly one matching import history")
@@ -219,15 +234,18 @@ async def run_probe(binary: Path, receipt: dict[str, Any]) -> None:
                     await asyncio.sleep(0.05)
 
             client = await connect(server_socket, codex_home, receipt)
-            detected = await client.rpc(
-                "externalAgentConfig/detect",
-                {
-                    "includeHome": True,
-                    "cwds": [str(project)],
-                    "maxSessionAgeDays": 1,
-                    "maxSessions": 1,
-                    "migrationSource": "claude",
-                },
+            detected = required_object(
+                await client.rpc(
+                    "externalAgentConfig/detect",
+                    {
+                        "includeHome": True,
+                        "cwds": [str(project)],
+                        "maxSessionAgeDays": 1,
+                        "maxSessions": 1,
+                        "migrationSource": "claude",
+                    },
+                ),
+                "Malformed Codex detection response",
             )
             item = session_item(detected.get("items", []))
             receipt["observed"]["externalAgentConfig/detect"] = {
@@ -240,7 +258,10 @@ async def run_probe(binary: Path, receipt: dict[str, Any]) -> None:
             }
 
             request = import_item(item)
-            accepted = await client.rpc("externalAgentConfig/import", request)
+            accepted = required_object(
+                await client.rpc("externalAgentConfig/import", request),
+                "Malformed Codex import acceptance",
+            )
             import_id = accepted.get("importId")
             if not isinstance(import_id, str) or not import_id:
                 raise RuntimeError("Import acceptance did not contain an import ID")
@@ -261,10 +282,14 @@ async def run_probe(binary: Path, receipt: dict[str, Any]) -> None:
                 "failures": 0,
             }
 
-            threads = await client.rpc("thread/list", {"limit": 10})
+            threads = required_object(
+                await client.rpc("thread/list", {"limit": 10}),
+                "Malformed persisted-thread response",
+            )
             thread_id = imported_thread(threads, expected_thread_id)
-            histories = await client.rpc(
-                "externalAgentConfig/import/readHistories", None
+            histories = required_object(
+                await client.rpc("externalAgentConfig/import/readHistories", None),
+                "Malformed import-history response",
             )
             receipt["observed"]["thread/list"] = {
                 "passed": True,

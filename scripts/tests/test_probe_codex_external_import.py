@@ -35,6 +35,9 @@ class ProbeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_session_selection_requires_exactly_one_item_and_session(self):
         self.assertEqual(probe.session_item([session_item()]), session_item())
+        for malformed in (None, [None]):
+            with self.assertRaisesRegex(RuntimeError, "Malformed Codex detection"):
+                probe.session_item(malformed)
         for items in ([], [session_item(), session_item()]):
             with self.assertRaisesRegex(RuntimeError, "exactly one session migration"):
                 probe.session_item(items)
@@ -48,6 +51,9 @@ class ProbeTests(unittest.IsolatedAsyncioTestCase):
             [item["itemType"] for item in request["migrationItems"]], ["SESSIONS"]
         )
         self.assertEqual(request["providerId"], "fixture")
+        self.assertEqual(
+            probe.import_item(session_item())["providerId"], probe.PROVIDER_ID
+        )
         self.assertEqual(request["migrationSource"], "claude")
 
     async def test_completion_identity_and_results_are_strict(self):
@@ -112,10 +118,14 @@ class ProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(probe.import_history(history, "import"), 1)
         with self.assertRaisesRegex(RuntimeError, "one persisted thread"):
             probe.imported_thread({"data": []}, "thread")
+        with self.assertRaisesRegex(RuntimeError, "Malformed persisted-thread"):
+            probe.imported_thread({"data": [None]}, "thread")
         with self.assertRaisesRegex(RuntimeError, "did not match"):
             probe.imported_thread(threads, "other")
         with self.assertRaisesRegex(RuntimeError, "one matching import"):
             probe.import_history({"data": []}, "import")
+        with self.assertRaisesRegex(RuntimeError, "Malformed import history"):
+            probe.import_history({"data": [None]}, "import")
 
     async def test_fixture_is_confined_to_disposable_home(self):
         with tempfile.TemporaryDirectory() as directory:
