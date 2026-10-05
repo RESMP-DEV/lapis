@@ -40,6 +40,12 @@ struct ChildProcess {
     std::string endpoint;
     int transport{-1};
     bool adopted{false};
+    // The real session launcher records the protocol identity it verified.
+    // A generic harmless-child launcher may leave these empty; its process is
+    // then terminated by PID only instead of signalling a process group.
+    std::string session_id;
+    std::string session_epoch;
+    std::string fingerprint;
 };
 
 // The runtime owns lifecycle policy only. A production adapter still leaves
@@ -54,6 +60,14 @@ class ChildLauncher {
     // the reconnect seam: a restarted supervisor must adopt before launching.
     [[nodiscard]] virtual std::optional<ChildProcess> adopt(const DesiredSession& session,
                                                             const std::string& spawn_token) = 0;
+    // Whether adopt returned nullopt while deliberately preserving a live peer.
+    // Such a peer must not be rotated into an unadoptable identity.
+    [[nodiscard]] virtual bool peer_preserved(const DesiredSession& session,
+                                              const std::string& spawn_token) {
+        static_cast<void>(session);
+        static_cast<void>(spawn_token);
+        return false;
+    }
     [[nodiscard]] virtual ChildProcess launch(const DesiredSession& session,
                                               const std::string& spawn_token) = 0;
     [[nodiscard]] virtual bool alive(const ChildProcess& child) = 0;

@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-10-04",
+  "source": {
+    "revision_at_receipt": "3276b5ecc92ac5262c09b2f0e52627e321133632",
+    "branch": "work/r1-supervised-session",
+    "source_dirty_at_checks": true
+  },
+  "scope": "Smallest build-gated R1 implementation slice: supervisor-born lapis_session_service ownership, protocol-identity adoption, authoritative reconnect and join clients, reconstruction, and explicit stop. This is not integrated GUI birth or persistent supervisor acceptance.",
+  "environment": {
+    "platform": "darwin",
+    "build_directory": "build/r1-runtime",
+    "build_gate": "LAPIS_BUILD_SUPERVISOR_RUNTIME=ON"
+  },
+  "implemented": [
+    "Headless session-service launcher builds the existing service command without fixture-only supervisor arguments.",
+    "Service accepts an exact --session-epoch HEX32; restart rotates service epoch and spawn token while preserving session ID.",
+    "Launcher writes a private spawn-token/PID ownership record and performs a non-authoritative v6 join handshake.",
+    "Launcher retries only the service's transient overloaded startup status and validates/canonicalizes the child payload exactly as the service does.",
+    "Adoption validates live PID, service executable, owner token, desired launch fingerprint and protocol identity; stale identity and fingerprint mismatch are rejected.",
+    "The handshake drains already-buffered Unix-domain reads and accepts a synchronous Qt flush without misreading an empty pending-write queue as failure.",
+    "Focused integration source exercises authoritative reconnect, join detach/rejoin, detached output, supervisor reconstruction and authenticated explicit stop."
+  ],
+  "verification": [
+    {
+      "name": "format",
+      "command": "python3 scripts/check_cpp.py format",
+      "exit_code": 0
+    },
+    {
+      "name": "python-check",
+      "command": "ruff check scripts/check_supervisor_runtime.py",
+      "exit_code": 0
+    },
+    {
+      "name": "focused-checker",
+      "command": "python3 scripts/check_supervisor_runtime.py --output build/reports/r1-supervisor/receipt.json",
+      "exit_code": 0,
+      "result": "Configure, build, focused CTest, and the real supervisor-born service/client integration passed on the parent host."
+    },
+    {
+      "name": "focused-ctest",
+      "command": "ctest --test-dir build/r1-runtime -R 'supervisor-(state|runtime|session-service)$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "result": "3/3 passed, including authoritative reconnect, joined detach/rejoin, detached output, supervisor reconstruction, and explicit stop."
+    },
+    {
+      "name": "existing-cli-detach-probe",
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/r1-runtime --case detach --output build/reports/r1-supervisor/cli-launch-probe.json",
+      "exit_code": 1,
+      "result": "Service exited before listening; confirms the current sandbox bind denial and is not a source regression receipt."
+    },
+    {
+      "name": "cpp-dev-gate",
+      "command": "CCACHE_DISABLE=1 LAPIS_GHOSTTY_PREFIX=<verified-prefix> python3 scripts/check_cpp.py dev",
+      "exit_code": 1,
+      "result": "Build and clang-tidy workers passed. The gate failed because three AF_UNIX adapter tests could not bind and the LLVM 23 formatter reports pre-existing desktop formatting differences. The focused r1-runtime build and clang-tidy results are the changed-source evidence."
+    },
+    {
+      "name": "python-quality-gate",
+      "command": "CCACHE_DISABLE=1 python3 scripts/lapis.py quality",
+      "exit_code": 1,
+      "result": "Source revision/status, git diff, ruff check and ruff format passed. The suite ran 501 tests with 3 failures and 28 errors; sampled failures are TCP/AF_UNIX bind or private-file-mode denials in this sandbox."
+    },
+    {
+      "name": "repository_quality_parent_host",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "Source/status, whitespace, Ruff, and Python unit checks passed after the integration repair."
+    },
+    {
+      "name": "review_repair_gate",
+      "command": "python3 scripts/check_supervisor_runtime.py --output build/reports/r1-supervisor/receipt.json; python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "3/3 focused CTest cases passed at d3ef53a including the real-service integration and crash restart; repository quality passed on the parent host."
+    }
+  ],
+  "aggregate_passed": true,
+  "non_claims": [
+    "The worker sandbox's failed broad C++/Python attempts remain recorded; the parent-host focused integration and repository quality runs are the acceptance evidence.",
+    "No GUI route creates the service; GUI replacement survival is unqualified.",
+    "No launchd, package, reboot, GUI crash, provider routing, restart-storm-on-real-service, sanitizer, load, latency or memory qualification.",
+    "No broader C++ static-analysis pass is claimed beyond the focused changed-source checks."
+  ],
+  "review_repairs": {
+    "recorded_on": "2026-10-04",
+    "branch_head": "d3ef53a",
+    "addressed": [
+      "alive() reaps a forked service so a crash is visible and the restart path can fire",
+      "terminate() verifies the PID still runs the service before signalling a process group and falls back to a single-process signal",
+      "adoption keeps the ownership record for a live verified peer whose handshake fails",
+      "a throwing post-fork ownership read kills, reaps and cleans the forked service before rethrowing",
+      "the service log path is materialized before fork()",
+      "the handshake shares one bounded 20-second budget, sleeps between attempts, and leaves an aborted socket on a startup-overload reply",
+      "process_runs_program() fails the build on POSIX platforms without executable discovery",
+      "terminal size is validated before fingerprint truncation",
+      "the session-service test derives its temporary directory per platform and skips when binds are unavailable",
+      "the checker rejects an --output outside the checkout and records source-revision failures in a failure receipt",
+      "restart refuses to republish an unchanged session epoch or spawn token, with focused refusal coverage",
+      "docs/architecture.md and docs/status.md distinguish the parent-host focused result from the worker-sandbox CLI probe"
+    ],
+    "new_coverage": [
+      "supervisor-session-service gained a real-service crash-restart case asserting epoch and spawn-token rotation",
+      "supervisor-state gained a repeated-epoch restart refusal case",
+      "adoption false-peer cases now assert ownership-record preservation and removal"
+    ]
+  },
+  "latest_review_repairs": {
+    "recorded_on": "2026-10-05",
+    "base_revision": "adc41b155ff45c19217dc2df908b8ee31edb96aa",
+    "source_revision": "adc41b155ff45c19217dc2df908b8ee31edb96aa",
+    "source_dirty_at_checks": true,
+    "scope": "Current-head supervisor/session lifecycle review repairs. Worker results record sandbox limits; the parent host executed the decisive real-service and repository checks.",
+    "addressed": [
+      "alive() distinguishes an own-process zombie by waitpid and an externally adopted PID by ECHILD plus signal probe",
+      "successful adoption marks the token admission consumed so an adopted-service crash uses rotating restart admission",
+      "terminate() reaps an exited PID and revalidates endpoint identity plus PID before using a process-group signal",
+      "handshake retries only the exact startup overloaded status; view-cap and other overload replies are final",
+      "adoption tolerates a rotated stale record before its liveness check instead of throwing it permanently unrecoverable",
+      "launch() reclaims a dead retained peer and terminates a live retained peer without leaving desired-stopped or a blocking record",
+      "handshake-failure cleanup escalates to SIGKILL before removing ownership",
+      "the checker reports observed integration, bind skip and failed/absent-marker outcomes separately",
+      "--output outside the checkout is rejected before a receipt can escape relative_to(ROOT)",
+      "a malformed --session-epoch produces an option-specific diagnostic",
+      "a persisted desired-start spawn token counts as an already consumed initial admission, so unattended-crash reconstruction rotates identity",
+      "live retained-peer replacement requires both ownership-token and endpoint-protocol verification; an unverified peer is never signalled and keeps its record",
+      "adopted liveness rechecks executable and exact ownership so a recycled PID cannot remain converged",
+      "a failed endpoint probe removes only a clearly stale socket; busy or unavailable endpoints are preserved",
+      "a live peer that declines adoption/verification preserves its identity and desired state for retry",
+      "handshake polling reaps an exited fork and reports child exit status before the full deadline",
+      "a malformed endpoint response falls back to a single-PID termination signal",
+      "a missing --session-epoch value retains the option-specific usage diagnostic",
+      "checker logs decode UTF-8 with replacement and are written with explicit UTF-8 encoding",
+      "outside-checker tests use isolated temporary paths and assert they are outside the checkout",
+      "a failed sentinel exec exits the fork instead of continuing the test process"
+    ],
+    "new_coverage": [
+      "adopted-service crash restart after supervisor reconstruction",
+      "waitid-based unreaped-zombie synchronization",
+      "full view-cap final-overload and retained-ownership replacement recovery",
+      "protocol mismatch terminates only its PID while a same-process-group sentinel survives",
+      "stale rotated dead ownership reclamation",
+      "malformed epoch diagnostic wording",
+      "checker success, skip and failed-marker diagnostics plus outside output rejection",
+      "reconstruction after a supervisor dies and its replacement service crashes without a live supervisor",
+      "a retained ownership-token mismatch refuses signalling and preserves the live peer record",
+      "preserved live-peer verification failure does not rotate or launch a replacement",
+      "missing epoch-value usage",
+      "explicit blocked reason for a preserved peer without identity rotation",
+      "isolated outside-checkout receipt path"
+    ],
+    "verification": [
+      {
+        "name": "ruff-format",
+        "command": "ruff format scripts/check_supervisor_runtime.py scripts/tests/test_check_supervisor_runtime.py",
+        "exit_code": 0
+      },
+      {
+        "name": "ruff-check",
+        "command": "ruff check scripts/check_supervisor_runtime.py scripts/tests/test_check_supervisor_runtime.py",
+        "exit_code": 0
+      },
+      {
+        "name": "clang-format",
+        "command": "clang-format -i <changed C++ headers and sources>; git diff --check",
+        "exit_code": 0
+      },
+      {
+        "name": "checker-receipt-python-tests",
+        "command": "python3 -m pytest -q scripts/tests/test_check_supervisor_runtime.py",
+        "exit_code": 0,
+        "result": "3 passed."
+      },
+      {
+        "name": "focused-ctest",
+        "command": "ctest --test-dir build/r1-runtime -R 'supervisor-(state|runtime|session-service)$' --output-on-failure --no-tests=error",
+        "exit_code": 0,
+        "result": "supervisor-state and supervisor-runtime passed; supervisor-session-service returned CTest skip 75 after its QLocalServer bind probe failed. This is not real-service integration evidence."
+      },
+      {
+        "name": "focused-checker",
+        "command": "python3 scripts/check_supervisor_runtime.py --output build/reports/r1-supervisor/receipt.json",
+        "exit_code": 1,
+        "result": "Configure and build passed and CTest accepted the skip, but the real-service-integration check correctly remained failed/integration_skipped; aggregate receipt is false."
+      },
+      {
+        "name": "repository_quality_worker_sandbox",
+        "command": "python3 scripts/lapis.py quality",
+        "exit_code": 1,
+        "result": "Source/status, git diff, Ruff check and Ruff format passed. Of 501 tests, 3 failed and 28 errored with sandbox bind or private-file-mode denials; 8 skipped. This is an environment-limited run, not a source regression receipt."
+      },
+      {
+        "name": "checker-receipt-python-tests-parent-host",
+        "command": "python3 -m pytest -q scripts/tests/test_check_supervisor_runtime.py",
+        "exit_code": 0,
+        "result": "3 passed after the readiness-harness repair."
+      },
+      {
+        "name": "focused-supervisor-parent-host",
+        "command": "python3 scripts/check_supervisor_runtime.py --output build/reports/r1-supervisor/receipt.json",
+        "exit_code": 0,
+        "result": "Configure, build, and 3/3 focused CTest cases passed at dirty base adc41b1, including real-service adoption, crash restart, retained-ownership recovery, and protocol-safe termination."
+      },
+      {
+        "name": "repository-quality-parent-host",
+        "command": "python3 scripts/lapis.py quality",
+        "exit_code": 0,
+        "result": "Source/status, diff hygiene, Ruff check/format, and 501 Python tests (7 skipped) passed on the parent host."
+      }
+    ],
+    "non_claims": [
+      "The worker sandbox bind and filesystem failures remain environment observations, not source acceptance.",
+      "No GUI birth route, launchd, package, reboot, sanitizer, restart-storm, load, latency, or memory qualification is claimed.",
+      "No broader C++ static-analysis pass is claimed beyond the focused changed-source checks."
+    ],
+    "aggregate_passed": true,
+    "aggregate_scope": "Final parent-host checker, 3/3 focused supervisor CTest, checker tests, and full repository quality pass at the final head. Earlier worker-sandbox exit 1 entries in this same array are explicit environment limitations, not final acceptance."
+  }
+}
