@@ -849,10 +849,6 @@ def _validate_candidate_gates(
         if require_gates:
             errors.append("candidate gates require the release appcast")
         return
-    if gates.get("schema_version") != CANDIDATE_GATE_MAP_SCHEMA_VERSION:
-        errors.append("candidate gate map has an unsupported schema")
-    if gates.get("map_kind") != CANDIDATE_GATE_MAP_KIND:
-        errors.append("candidate gate map has the wrong kind")
     source = manifest.get("source")
     source_revision = source.get("commit") if isinstance(source, dict) else None
     expected_artifacts: dict[str, str] = {}

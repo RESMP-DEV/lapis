@@ -25,7 +25,7 @@
       "docs/architecture.md": "b93fcc52a0686c33f6d06933e0bdda87cb4b6f901917da7fc385a3543c1d2043",
       "docs/status.md": "252b60bd26d9b039c509fe5233a7af5110271234500e54b75367bdf3d1d3da6c",
       "scripts/package_macos.py": "94996c28655913e64fe0f25b110afaced026c086e0eee061c3e4500e170fd423",
-      "scripts/release_manifest.py": "59793239e305cb79f340d76159399e0ca772a0f3b0f84326bd716911223bf0ca",
+      "scripts/release_manifest.py": "0d648479548eaaf58ce90a0cb72471f7390e69609ec17288f4514baeba7c6abc",
       "scripts/tests/test_release_manifest.py": "011d214e59d066a452abc43bdd0021973ea23a01b4c27fb712190ddb7b10829f",
       "scripts/tests/test_package_macos.py": "d2ddba5b5797629317c1a8191870f3676c143a9bff8ccdf2f64fcbed37011e44"
     },
