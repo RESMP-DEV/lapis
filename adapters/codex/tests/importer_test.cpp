@@ -57,15 +57,22 @@ QByteArray frame(const QByteArray& payload) {
     return result;
 }
 
-bool decode_frame(const QByteArray& input, QByteArray& payload, qsizetype& consumed,
-                  quint8& opcode) {
+struct DecodedFrame {
+    bool complete{};
+    QByteArray payload;
+    qsizetype consumed{};
+    quint8 opcode{};
+};
+
+DecodedFrame decode_frame(const QByteArray& input) {
+    DecodedFrame result;
     if (input.size() < 2)
-        return false;
+        return result;
     QDataStream stream(input);
     stream.setByteOrder(QDataStream::BigEndian);
     quint8 marker{};
-    stream >> opcode >> marker;
-    if ((opcode & 0x0fU) != 1)
+    stream >> result.opcode >> marker;
+    if ((result.opcode & 0x0fU) != 1)
         throw std::runtime_error("fixture expected a text frame");
     auto length = static_cast<quint64>(marker & 0x7fU);
     qsizetype extended{};
@@ -75,7 +82,7 @@ bool decode_frame(const QByteArray& input, QByteArray& payload, qsizetype& consu
         extended = 8;
     }
     if (input.size() < 2 + extended)
-        return false;
+        return result;
     if (extended != 0) {
         length = 0;
         for (qsizetype index = 0; index < extended; ++index)
@@ -88,16 +95,18 @@ bool decode_frame(const QByteArray& input, QByteArray& payload, qsizetype& consu
     const auto mask_offset = 2 + extended;
     const auto offset = mask_offset + (masked ? 4 : 0);
     if (input.size() < offset || input.size() - offset < size)
-        return false;
-    payload = input.mid(offset, size);
+        return result;
+    result.payload = input.mid(offset, size);
     if (masked) {
         for (qsizetype index = 0; index < size; ++index) {
             const auto mask = static_cast<quint8>(input[mask_offset + (index % 4)]);
-            payload[index] = static_cast<char>(static_cast<quint8>(payload[index]) ^ mask);
+            result.payload[index] =
+                static_cast<char>(static_cast<quint8>(result.payload[index]) ^ mask);
         }
     }
-    consumed = offset + size;
-    return true;
+    result.consumed = offset + size;
+    result.complete = true;
+    return result;
 }
 
 QByteArray handshake_key(const QByteArray& request) {
@@ -170,24 +179,22 @@ class Source final : public QObject {
             input.append(connection->readAll());
         }
         while (!input.isEmpty()) {
-            QByteArray payload;
-            qsizetype consumed{};
-            quint8 opcode{};
-            if (!decode_frame(input, payload, consumed, opcode))
+            const auto decoded = decode_frame(input);
+            if (!decoded.complete)
                 return;
-            if (opcode == 0x88) {
-                if (payload.size() != 2)
+            if (decoded.opcode == 0x88) {
+                if (decoded.payload.size() != 2)
                     throw std::runtime_error("invalid fixture close frame");
                 QByteArray close_frame;
                 close_frame.append(static_cast<char>(0x88)).append(static_cast<char>(0x02));
-                close_frame.append(payload);
+                close_frame.append(decoded.payload);
                 connection->write(close_frame);
                 connection->disconnectFromServer();
                 input.clear();
                 return;
             }
-            input.remove(0, consumed);
-            const auto request = object(payload);
+            input.remove(0, decoded.consumed);
+            const auto request = object(decoded.payload);
             received.push_back(request);
             handle(request);
         }
