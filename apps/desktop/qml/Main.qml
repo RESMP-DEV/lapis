@@ -83,6 +83,7 @@ ApplicationWindow {
             || resumeDialog.visible
             || terminalPicker.visible
             || usageDialog.visible
+            || toolsDialog.visible
             || settingsDialog.visible
             || attentionDialog.visible
             || agentDialog.visible
@@ -398,7 +399,15 @@ ApplicationWindow {
         if (!interactionArmed || dialogsVisible() || !usageAvailable) return
         usageDialog.open()
     }
+    function openToolsDialog() {
+        if (!interactionArmed || dialogsVisible() || !toolsAvailable) return
+        toolsDialog.open()
+    }
     readonly property bool usageAvailable: typeof usage !== "undefined" && usage !== null
+    // A named window property prevents the pane's own `tools` model from
+    // resolving as the context object and forming an engine binding loop.
+    readonly property var toolStatus: typeof tools !== "undefined" ? tools : null
+    readonly property bool toolsAvailable: toolStatus !== null
     readonly property bool usageShown: usageAvailable && typeof keymap !== "undefined" && keymap !== null
                                        && keymap.showUsage
     // Each signed-in plan at its tightest window, for the meter under the
@@ -424,6 +433,7 @@ ApplicationWindow {
         add("newCategory", qsTr("New category"), "newCategory", true, "", () => window.openCategoryDialog("add"))
         add("searchAgents", qsTr("Find an agent"), "searchAgents", true, "", () => window.openSearchDialog())
         add("openUsage", qsTr("Usage"), "", usageAvailable, qsTr("Usage is not available here"), () => window.openUsageDialog())
+        add("openTools", qsTr("Tools"), "", toolsAvailable, qsTr("The tools pane is not available here"), () => window.openToolsDialog())
         add("toggleSidebar", sidebarExpanded ? qsTr("Hide sidebar") : qsTr("Show sidebar"), "toggleSidebar", true, "", () => window.toggleSidebar())
         add("togglePreviews", previewsEnabled ? qsTr("Hide agent previews") : qsTr("Show agent previews"), "togglePreviews", true, "", () => window.togglePreviews())
         add("nextAttention", qsTr("Go to agent that needs you"), "nextAttention", workspace.attentionAgents > 0, qsTr("No agent is waiting"), () => workspace.nextAttention())
@@ -591,7 +601,7 @@ ApplicationWindow {
     }
 
     function dialogsVisible() {
-        return commandsDialog.visible || searchDialog.visible || resumeDialog.visible || planSignInDialog.visible || terminalPicker.visible || usageDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
+        return commandsDialog.visible || searchDialog.visible || resumeDialog.visible || planSignInDialog.visible || terminalPicker.visible || usageDialog.visible || toolsDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
                 || closeAgentDialog.visible || categoryDialog.visible || renameAgentDialog.visible
     }
 
@@ -1132,6 +1142,28 @@ ApplicationWindow {
         faultColor: window.faultColor
         plentyColor: window.plentyColor
         scarceColor: window.scarceColor
+        attentionColor: window.attentionColor
+        borderColor: window.borderColor
+        selectionColor: window.focusedColor
+        monoFamily: window.monoFamily
+        uiFont: window.chromeFont
+        readoutFont: window.readoutFont
+        chromeRadius: window.chromeRadius
+        motionDuration: window.motionDuration
+        motionEnabled: window.motionEnabled
+        onClosed: preview.deferTerminalFocus()
+    }
+
+    Tools {
+        id: toolsDialog
+        engine: window.toolStatus
+        surfaceColor: window.surfaceColor
+        cardColor: window.cardColor
+        textColor: window.textColor
+        mutedColor: window.mutedTextColor
+        accentColor: window.focusedBorderColor
+        faultColor: window.faultColor
+        plentyColor: window.plentyColor
         attentionColor: window.attentionColor
         borderColor: window.borderColor
         selectionColor: window.focusedColor

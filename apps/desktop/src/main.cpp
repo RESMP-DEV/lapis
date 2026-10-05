@@ -12,6 +12,7 @@
 #include "shell_environment.hpp"
 #include "terminal_surface.hpp"
 #include "terminals.hpp"
+#include "tool_status.hpp"
 #include "ui_capture.hpp"
 #include "ui_preview.hpp"
 #include "usage.hpp"
@@ -898,6 +899,9 @@ int main(int argc, char** argv) {
                 workspace.setAccountLoads(usage->accountLoads());
             });
         }
+        // The canonical harness catalog's read-only status answers. It exists
+        // in the isolated fixture too, so the pane is testable without config.
+        ToolStatus toolStatus;
         std::optional<LimitResets> limitResets;
         QObject* const resetsForQml = keep_limit_resets(limitResets, workspace, keymap, isolated);
         std::optional<NextPrompt> nextPrompt;
@@ -916,6 +920,7 @@ int main(int argc, char** argv) {
                                    .alerts = alerts ? &*alerts : nullptr,
                                    .agentSearch = &agentSearch,
                                    .usage = usage ? &*usage : nullptr,
+                                   .tools = &toolStatus,
                                    .desktop = &desktop,
                                    .conversations = conversations.get(),
                                    .terminals = terminals.get(),
