@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "record_kind": "lapis.recent-integration-baseline",
+  "recorded_on": "2026-10-05",
+  "source": {
+    "revision": "7fa37a7422e77f1e24325d0ea18aaade50a4bf7c",
+    "dirty": false
+  },
+  "scope": "Clean-main triage baseline for the newest Codex import, Codex upstream-review, and runtime tool-status integrations. It does not qualify native macOS input/GPU, installed CLI behavior, or a Codex candidate build.",
+  "checks": [
+    {
+      "name": "focused-recent-targets",
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop -R '^(codex-importer|tool-status|tools-ui)$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "result": "3/3 passed at the clean revision."
+    },
+    {
+      "name": "repository-quality",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "All repository quality checks passed at the clean revision."
+    },
+    {
+      "name": "diff-whitespace",
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "aggregate_passed": true,
+  "non_claims": [
+    "No supervisor production birth route, multi-session supervisor state, Codex candidate executable, import UI, real CLI authentication, native GPU presentation, or native macOS input qualification."
+  ]
+}

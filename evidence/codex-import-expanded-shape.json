@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "record_kind": "lapis.codex-import-expanded-shape",
+  "recorded_on": "2026-10-05",
+  "source": {
+    "revision": "7fa37a7422e77f1e24325d0ea18aaade50a4bf7c",
+    "dirty_before_receipt": true,
+    "files_hashed": [
+      "adapters/codex/src/importer.hpp",
+      "adapters/codex/src/importer.cpp",
+      "adapters/codex/tests/importer_test.cpp",
+      "scripts/probe_codex_external_import.py",
+      "scripts/tests/test_probe_codex_external_import.py"
+    ],
+    "working_tree_sha256": {
+      "adapters/codex/src/importer.hpp": "82b4b8d399c29644f05f476bd0f3c5cca7d8e8ebfe1477fba2fc8ca980ff0c5e",
+      "adapters/codex/src/importer.cpp": "58b83c9bf05f93719bd320233db1a4a2e9993bf04731da4911355b183dff283d",
+      "adapters/codex/tests/importer_test.cpp": "7568d2cd67f7ed088e79acde40e5e9134cc4b630d7a0fd0b6db659b8749658fd",
+      "scripts/probe_codex_external_import.py": "ed5adf9c9d5bc5c34650b53263bd34944dd20aa76a8f3329394009aae3b47423",
+      "scripts/tests/test_probe_codex_external_import.py": "2680cea5ee79479e1068ba58a612ca3b7368c5561e406f387b943334ab57a1b6"
+    }
+  },
+  "scope": "Fail closed on incomplete or unexpected SESSIONS migration-detail shapes while retaining compatibility with the observed pre-memory binary protocol.",
+  "checks": [
+    {
+      "name": "codex-importer-ctest",
+      "command": "ctest --test-dir build/desktop -R '^codex-importer$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "result": "Synthetic incomplete-details and memory-absent regressions passed with the full importer suite."
+    },
+    {
+      "name": "probe-python-tests",
+      "command": "python3 -m unittest -v scripts.tests.test_probe_codex_external_import",
+      "exit_code": 0,
+      "result": "9/9 passed."
+    },
+    {
+      "name": "live-disposable-import",
+      "command": "python3 scripts/probe_codex_external_import.py --codex \"$(command -v codex)\" --output build/codex-external-import-expanded-shape.json",
+      "exit_code": 0,
+      "result": "Passed with private HOME/CODEX_HOME, one SESSIONS item, one successful imported thread, one matching history, and complete cleanup.",
+      "codex_sha256": "d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f"
+    },
+    {
+      "name": "ruff",
+      "command": "ruff check --config ruff.toml scripts/probe_codex_external_import.py scripts/tests/test_probe_codex_external_import.py; ruff format --config ruff.toml --check scripts/probe_codex_external_import.py scripts/tests/test_probe_codex_external_import.py",
+      "exit_code": 0,
+      "result": "Both passed."
+    },
+    {
+      "name": "clang-tidy",
+      "command": "SDKROOT=$(xcrun --show-sdk-path) /opt/homebrew/opt/llvm/bin/clang-tidy -p build/desktop adapters/codex/src/importer.cpp adapters/codex/tests/importer_test.cpp",
+      "exit_code": 0
+    },
+    {
+      "name": "repository-quality",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0
+    }
+  ],
+  "aggregate_passed": true,
+  "non_claims": [
+    "Synthetic parsing and one disposable live import do not qualify production import UI, exact-scope consent, a dedicated production server, duplicate reconciliation, launch/resume, failure recovery, or observer response capability."
+  ]
+}

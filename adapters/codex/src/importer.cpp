@@ -96,8 +96,8 @@ DetectedSession session(const QJsonObject& value, QSet<QString>& paths) {
 void validate_session_details(const QJsonObject& details, QSet<QString>& paths,
                               DetectedItem& result) {
     // A session selection cannot quietly carry executable or global
-    // configuration classes. Codex serializes every known list key, including
-    // empty ones; only that exact expanded shape is allowed.
+    // configuration classes. Core lists are required. Memory is optional in the
+    // observed protocol generations and, when present, must remain empty.
     static const QSet<QString> allowed{
         QStringLiteral("plugins"),    QStringLiteral("skills"), QStringLiteral("sessions"),
         QStringLiteral("mcpServers"), QStringLiteral("hooks"),  QStringLiteral("subagents"),
@@ -105,6 +105,11 @@ void validate_session_details(const QJsonObject& details, QSet<QString>& paths,
     };
     if (details.size() > allowed.size())
         throw std::runtime_error("Codex session item has unexpected migration details");
+    const auto required_keys = allowed - QSet{QStringLiteral("memory")};
+    for (const auto& required : required_keys) {
+        if (!details.contains(required))
+            throw std::runtime_error("Codex session item is missing migration details");
+    }
     for (const auto& name : details.keys()) {
         if (!allowed.contains(name))
             throw std::runtime_error("Codex session item has an unknown migration details key");
@@ -132,14 +137,15 @@ DetectedItem detection_item(const QJsonObject& value, QSet<QString>& paths) {
     const auto cwd = optional_text(value, QStringLiteral("cwd"), path_limit);
     result.home_scoped = !cwd.has_value() || cwd->isEmpty();
 
-    const auto details_value = value.value(QStringLiteral("details"));
-    if (!details_value.isUndefined() && !details_value.isNull()) {
+    if (result.item_type == ImportItemType::sessions) {
+        const auto details_value = value.value(QStringLiteral("details"));
         if (!details_value.isObject())
             throw std::runtime_error("Invalid Codex migration details");
-        const auto details = details_value.toObject();
-        if (result.item_type == ImportItemType::sessions) {
-            validate_session_details(details, paths, result);
-        }
+        validate_session_details(details_value.toObject(), paths, result);
+    } else {
+        const auto details_value = value.value(QStringLiteral("details"));
+        if (!details_value.isUndefined() && !details_value.isNull() && !details_value.isObject())
+            throw std::runtime_error("Invalid Codex migration details");
     }
     // Only the sessions-only first slice can be submitted. Other detected
     // classes remain visible as typed metadata, but their raw payloads are not

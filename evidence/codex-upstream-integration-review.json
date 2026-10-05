@@ -45,6 +45,30 @@
       "command": "python3 scripts/lapis.py quality",
       "exit_code": 0,
       "result": "After merging main including the importer static-review repair, source/status, whitespace, Ruff, and 536 Python tests (7 skipped) passed."
+    },
+    {
+      "name": "active-codex-binary-triage",
+      "command": "CODEX=\"$(command -v codex)\"; command -v codex; shasum -a 256 \"$CODEX\"; ! strings \"$CODEX\" | grep -E \"create_worktree|list_worktrees\"",
+      "exit_code": 0,
+      "result": "PATH selects the ef0f5c6990 AlphaHENG package, hash d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f, with no reviewed worktree-tool strings."
+    },
+    {
+      "name": "active-codex-source-triage",
+      "command": "ALPHAHENG_CODEX_SOURCE=\"${ALPHAHENG_CODEX_SOURCE:?set to the active AlphaHENG contrib/codex checkout}\"; git -C \"$ALPHAHENG_CODEX_SOURCE\" rev-parse HEAD; test -z \"$(git -C \"$ALPHAHENG_CODEX_SOURCE\" status --porcelain)\"",
+      "exit_code": 0,
+      "result": "The active source checkout is clean at ef0f5c6990b7446a731dc6df551c307a877a18e1; the superproject gitlink differs and is not used as the deployed-source claim."
+    },
+    {
+      "name": "candidate-codex-source-triage",
+      "command": "CODEX_CHECKOUT=\"${CODEX_CHECKOUT:?set to the clean RESMP-DEV/codex checkout}\"; git -C \"$CODEX_CHECKOUT\" rev-parse HEAD; test -z \"$(git -C \"$CODEX_CHECKOUT\" status --porcelain)\"",
+      "exit_code": 0,
+      "result": "The RESMP-DEV/codex checkout is clean at eba4e02df5e1962e4c001f837bf2ab6725d5b7a9."
+    },
+    {
+      "name": "stale-candidate-artifact-triage",
+      "command": "CODEX_CHECKOUT=\"${CODEX_CHECKOUT:?set to the clean RESMP-DEV/codex checkout}\"; ARTIFACT=\"$CODEX_CHECKOUT/codex-rs/target/release/codex\"; stat -f \"%Sm\" \"$ARTIFACT\"; shasum -a 256 \"$ARTIFACT\"; ! strings \"$ARTIFACT\" | grep -E \"create_worktree|list_worktrees\"",
+      "exit_code": 0,
+      "result": "The existing release artifact is stale at 2026-09-24, hash e1e083ab281668d370b5aa4d21a2803158723380ef1a04be80ffa459e700d407, with no reviewed worktree-tool strings."
     }
   ],
   "aggregate_passed": true,
@@ -52,5 +76,24 @@
     "No Codex binary requalification, two-thread worktree probe, permission-catalog smoke, or adapter capability-matrix update was run.",
     "The review records open probes only; it does not claim support for multi-thread Codex sessions.",
     "No external upstream repository was modified or published."
-  ]
+  ],
+  "triage": {
+    "recorded_on": "2026-10-05",
+    "baseline_revision": "7fa37a7422e77f1e24325d0ea18aaade50a4bf7c",
+    "active_path_binary": {
+      "source_revision": "ef0f5c6990b7446a731dc6df551c307a877a18e1",
+      "sha256": "d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f",
+      "worktree_tool_strings_present": false
+    },
+    "candidate_source": {
+      "revision": "eba4e02df5e1962e4c001f837bf2ab6725d5b7a9",
+      "clean": true
+    },
+    "local_release_artifact": {
+      "sha256": "e1e083ab281668d370b5aa4d21a2803158723380ef1a04be80ffa459e700d407",
+      "mtime": "2026-09-24",
+      "worktree_tool_strings_present": false
+    },
+    "conclusion": "No executable currently represents the reviewed candidate lineage. Build and hash an exact eba4e02df5e1962e4c001f837bf2ab6725d5b7a9 candidate before P1."
+  }
 }

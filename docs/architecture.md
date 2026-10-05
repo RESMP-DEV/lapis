@@ -4843,3 +4843,35 @@ The later 32-session experiment records workload/output rates, display rate,
 p50/p95/p99 input/switch latency and frame times, memory growth and idle CPU/GPU
 use. Separate replay from real CLI agents and keep provisional targets distinct
 from results. Use [CONTRIBUTING.md](../CONTRIBUTING.md) for commands and evidence rules.
+
+### Recent integration reconciliation (October 5)
+
+The clean-main baseline at `7fa37a7422e77f1e24325d0ea18aaade50a4bf7c` passed
+the importer and Tools focused targets plus the repository quality gate; the
+consolidated observation is recorded in
+[recent integration baseline](../evidence/recent-integration-baseline.json).
+Runtime tool status is integrated as a read-only desktop surface and needs no
+further source integration in this cycle. Its receipt now records the exact
+architecture bytes from its declared source revision instead of a stale shared-
+plan digest.
+
+The external-agent importer now enforces the observed expanded SESSIONS details
+contract: unknown classes and missing core serialized lists fail closed, while
+the older `d10a1b29…` binary's omission of the newer `memory` list remains
+compatible. Synthetic regressions and a disposable live import are recorded in
+[import expanded-shape evidence](../evidence/codex-import-expanded-shape.json).
+This does not change its dormant integration boundary: no production server
+owner, exact-scope consent UI, launch record, duplicate reconciliation, or
+observer capability is claimed.
+
+The Codex upstream-review triage verified that the live PATH binary remains the
+older AlphaHENG build (`d10a1b29…`, source `ef0f5c6990`) and that the current
+RESMP-DEV/codex source head is `eba4e02df5e1962e4c001f837bf2ab6725d5b7a9`. The
+existing local release artifact is stale (`e1e083ab…`, September 24) and lacks
+the reviewed worktree surfaces. P1 therefore remains blocked until an exact
+candidate is built and hashed. Integration proceeds on two bounded lanes: the
+lapis lane completes the per-session supervisor transition and production birth
+route, while a separate candidate lane builds and hashes the exact Codex P1
+binary. P2/P3 and the dedicated import-server/onboarding design wait for P1;
+tool status and the import protocol client remain available but dormant until
+their owners and qualification gates are ready.
