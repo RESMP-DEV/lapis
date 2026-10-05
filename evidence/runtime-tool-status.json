@@ -162,7 +162,7 @@
       "command": "python3 scripts/lapis.py ui-review",
       "exit_code": 0,
       "receipt": "build/reports/ui-review/20261005T212129Z-xof71lx5/receipt.json",
-      "scope": "Configure/build, full background UI, shortcuts, and terminal input passed after the stale-publicition and bounded-output repairs; offscreen/software only."
+      "scope": "Configure/build, full background UI, shortcuts, and terminal input passed after the stale-publication and bounded-output repairs; offscreen/software only."
     }
   ],
   "source_sha256": {
