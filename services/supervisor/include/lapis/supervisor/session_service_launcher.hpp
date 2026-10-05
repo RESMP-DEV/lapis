@@ -35,6 +35,8 @@ class SessionServiceLauncher final : public ChildLauncher {
 
     [[nodiscard]] std::optional<ChildProcess> adopt(const DesiredSession& session,
                                                     const std::string& spawn_token) override;
+    [[nodiscard]] bool peer_preserved(const DesiredSession& session,
+                                      const std::string& spawn_token) override;
     [[nodiscard]] ChildProcess launch(const DesiredSession& session,
                                       const std::string& spawn_token) override;
     [[nodiscard]] bool alive(const ChildProcess& child) override;

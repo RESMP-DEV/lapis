@@ -60,6 +60,14 @@ class ChildLauncher {
     // the reconnect seam: a restarted supervisor must adopt before launching.
     [[nodiscard]] virtual std::optional<ChildProcess> adopt(const DesiredSession& session,
                                                             const std::string& spawn_token) = 0;
+    // Whether adopt returned nullopt while deliberately preserving a live peer.
+    // Such a peer must not be rotated into an unadoptable identity.
+    [[nodiscard]] virtual bool peer_preserved(const DesiredSession& session,
+                                              const std::string& spawn_token) {
+        static_cast<void>(session);
+        static_cast<void>(spawn_token);
+        return false;
+    }
     [[nodiscard]] virtual ChildProcess launch(const DesiredSession& session,
                                               const std::string& spawn_token) = 0;
     [[nodiscard]] virtual bool alive(const ChildProcess& child) = 0;

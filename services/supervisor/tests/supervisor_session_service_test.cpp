@@ -523,6 +523,16 @@ void malformed_epoch_names_the_epoch_option() {
             "a malformed epoch diagnostic names --session-epoch");
     require(!diagnostic.contains(QStringLiteral("Session ID must be exactly")),
             "the epoch diagnostic does not reuse the session-ID wording");
+
+    QProcess missing_value;
+    missing_value.setProgram(QString::fromLatin1(LAPIS_SUPERVISOR_SESSION_SERVICE));
+    missing_value.setArguments({QStringLiteral("--session-epoch")});
+    missing_value.start();
+    require(missing_value.waitForFinished(5000), "a missing epoch value fails bounded startup");
+    const auto missing_diagnostic = QString::fromUtf8(missing_value.readAllStandardError());
+    require(missing_value.exitCode() != 0 &&
+                missing_diagnostic.contains(QStringLiteral("Expected one --session-epoch")),
+            "a missing epoch value names the expected option value");
 }
 
 void supervised_service_clients_adopt_and_stop() {

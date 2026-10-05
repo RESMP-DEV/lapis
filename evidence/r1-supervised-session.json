@@ -125,7 +125,11 @@
       "a persisted desired-start spawn token counts as an already consumed initial admission, so unattended-crash reconstruction rotates identity",
       "live retained-peer replacement requires both ownership-token and endpoint-protocol verification; an unverified peer is never signalled and keeps its record",
       "adopted liveness rechecks executable and exact ownership so a recycled PID cannot remain converged",
-      "a failed endpoint probe removes only a clearly stale socket; busy or unavailable endpoints are preserved"
+      "a failed endpoint probe removes only a clearly stale socket; busy or unavailable endpoints are preserved",
+      "a live peer that declines adoption/verification preserves its identity and desired state for retry",
+      "handshake polling reaps an exited fork and reports child exit status before the full deadline",
+      "a malformed endpoint response falls back to a single-PID termination signal",
+      "a missing --session-epoch value retains the option-specific usage diagnostic"
     ],
     "new_coverage": [
       "adopted-service crash restart after supervisor reconstruction",
@@ -136,7 +140,9 @@
       "malformed epoch diagnostic wording",
       "checker success, skip and failed-marker diagnostics plus outside output rejection",
       "reconstruction after a supervisor dies and its replacement service crashes without a live supervisor",
-      "a retained ownership-token mismatch refuses signalling and preserves the live peer record"
+      "a retained ownership-token mismatch refuses signalling and preserves the live peer record",
+      "preserved live-peer verification failure does not rotate or launch a replacement",
+      "missing epoch-value usage"
     ],
     "verification": [
       {

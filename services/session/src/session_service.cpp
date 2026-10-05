@@ -1910,9 +1910,9 @@ ServiceOptions parse_options(const QStringList& arguments) {
         } else if (option == QStringLiteral("--session-epoch")) {
             if (!options.session_epoch.isEmpty())
                 throw std::invalid_argument("Expected one --session-epoch HEX32");
+            const QString epoch_value = value("Expected one --session-epoch HEX32");
             try {
-                options.session_epoch =
-                    parse_session_id(value("Expected one --session-epoch HEX32"));
+                options.session_epoch = parse_session_id(epoch_value);
             } catch (const std::invalid_argument&) {
                 throw std::invalid_argument(
                     "Session epoch must be exactly 32 hexadecimal characters and nonzero");

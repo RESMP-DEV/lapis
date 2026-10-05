@@ -249,6 +249,12 @@ bool SessionServiceLauncher::handshake(const DesiredSession& session, pid_t chil
     constexpr auto handshake_budget = std::chrono::seconds(20);
     const auto budget_end = std::chrono::steady_clock::now() + handshake_budget;
     while (std::chrono::steady_clock::now() < budget_end) {
+        int exit_status = 0;
+        const auto waited = ::waitpid(child_pid, &exit_status, WNOHANG);
+        if (waited == child_pid)
+            return false;
+        if (waited < 0 && errno != ECHILD)
+            return false;
         if (!process_alive(child_pid))
             return false;
         QLocalSocket socket;
@@ -360,6 +366,19 @@ std::optional<ChildProcess> SessionServiceLauncher::adopt(const DesiredSession& 
                         session.identity.session_id,
                         session.identity.epoch,
                         session.fingerprint};
+}
+
+bool SessionServiceLauncher::peer_preserved(const DesiredSession& session,
+                                            const std::string& spawn_token) {
+    static_cast<void>(spawn_token);
+    const auto endpoint = socket_path(session).toStdString();
+    try {
+        const auto record = read_ownership_record(owner_path(endpoint));
+        return record.has_value() && process_alive(record->pid) &&
+               process_runs_program(record->pid, launch_.service_program);
+    } catch (...) {
+        return false;
+    }
 }
 
 ChildProcess SessionServiceLauncher::launch(const DesiredSession& session,
@@ -540,6 +559,13 @@ ChildProcess SessionServiceLauncher::launch(const DesiredSession& session,
         if (service_log.open(QIODevice::ReadOnly))
             qWarning().noquote() << "Supervisor service log:"
                                  << QString::fromUtf8(service_log.readAll());
+        int exit_status = 0;
+        if (::waitpid(pid, &exit_status, WNOHANG) == pid && WIFEXITED(exit_status)) {
+            remove_quietly(owner);
+            failed(("Supervisor service exited before its protocol handshake (child exit " +
+                    std::to_string(WEXITSTATUS(exit_status)) + ")")
+                       .c_str());
+        }
         static_cast<void>(::killpg(pid, SIGTERM));
         static_cast<void>(wait_terminated(pid));
         if (process_alive(pid)) {
@@ -652,7 +678,12 @@ bool SessionServiceLauncher::terminate(const ChildProcess& child) {
     }
     if (!ownership_matches)
         return !process_alive(child.pid);
-    const bool protocol_matches = protocol_identity_matches(child);
+    bool protocol_matches = false;
+    try {
+        protocol_matches = protocol_identity_matches(child);
+    } catch (...) {
+        protocol_matches = false;
+    }
     const auto signal_peer = [pid = child.pid, group = protocol_matches](int signal_value) {
         static_cast<void>(group ? ::killpg(pid, signal_value) : ::kill(pid, signal_value));
     };

@@ -494,6 +494,9 @@ Convergence SupervisorRuntime::converge() {
         initial_admission_used_ = true;
         return Convergence::converged;
     }
+    if (launcher_->peer_preserved(session, session.spawn_token)) {
+        failed("Supervisor service peer is alive but did not verify; identity retained for retry");
+    }
     if (initial_admission_used_) {
         const auto now = clock_->nanoseconds();
         std::erase_if(restart_admissions_,
