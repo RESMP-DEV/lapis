@@ -10,7 +10,7 @@ import sys
 import tempfile
 import unittest
 import uuid
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -237,6 +237,144 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
         self.assertEqual(report["app"]["kind"], "executable")
         self.assertEqual(report["runtime"]["registry"]["state"], "missing")
         self.assertEqual(report["runtime"]["state"], "ok")
+
+    def test_bounded_samples_measure_connect_only_distributions(self):
+        first = str(uuid.uuid4())
+        second = str(uuid.uuid4())
+        outcomes = {
+            first: [0, 0],
+            second: [errno.ECONNREFUSED, TimeoutError()],
+        }
+        events = []
+        monotonic_values = iter(
+            (
+                1_000_000,
+                3_000_000,
+                4_000_000,
+                8_000_000,
+                10_000_000,
+                11_000_000,
+                12_000_000,
+                15_000_000,
+            )
+        )
+
+        class FakeSocket:
+            def __init__(self, family=None, type=None):
+                self.family = family
+                self.type = type
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                self.close()
+
+            def settimeout(self, value):
+                events.append(("timeout", value))
+
+            def connect_ex(self, endpoint):
+                name = str(endpoint).rsplit("/", 1)[-1]
+                identifier = name.removesuffix(".sock")
+                events.append(("connect", name))
+                outcome = outcomes[identifier].pop(0)
+                if isinstance(outcome, TimeoutError):
+                    raise outcome
+                return outcome
+
+            def close(self):
+                events.append(("close",))
+
+        original_path_state = diagnostics.path_state
+
+        def socket_path_state(path):
+            if path.name in {f"{first}.sock", f"{second}.sock"}:
+                return {"state": "present", "kind": "socket"}
+            return original_path_state(path)
+
+        with (
+            patch.object(diagnostics.socket, "socket", FakeSocket),
+            patch.object(diagnostics, "path_state", socket_path_state),
+            patch.object(diagnostics.time, "monotonic_ns"),
+        ):
+            diagnostics.time.monotonic_ns.side_effect = monotonic_values
+            reachability, _ = diagnostics._probe_endpoints(
+                self.runtime, [first, second], samples=2
+            )
+
+        measurement = reachability["measurement"]
+        self.assertEqual(reachability["samples_requested"], 2)
+        self.assertEqual(reachability["sample_count"], 4)
+        self.assertEqual(reachability["connectable"], 2)
+        self.assertEqual(reachability["success_count"], 2)
+        self.assertEqual(reachability["not_listening"], 1)
+        self.assertEqual(reachability["timeout"], 1)
+        self.assertEqual(reachability["timeout_count"], 1)
+        self.assertEqual(measurement["aggregate"]["sample_count"], 4)
+        self.assertEqual(measurement["aggregate"]["p50_ms"], 2)
+        self.assertEqual(measurement["aggregate"]["p95_ms"], 4)
+        self.assertEqual(measurement["aggregate"]["p99_ms"], 4)
+        self.assertEqual(measurement["aggregate"]["max_ms"], 4)
+        self.assertEqual(measurement["by_classification"]["connectable"]["p50_ms"], 2)
+        self.assertEqual(measurement["by_classification"]["not_listening"]["max_ms"], 1)
+        self.assertEqual(measurement["by_classification"]["timeout"]["max_ms"], 3)
+        self.assertEqual(measurement["by_classification"]["unknown"]["sample_count"], 0)
+        self.assertEqual(
+            [event[0] for event in events],
+            [
+                "timeout",
+                "connect",
+                "close",
+                "timeout",
+                "connect",
+                "close",
+                "timeout",
+                "connect",
+                "close",
+                "timeout",
+                "connect",
+                "close",
+            ],
+        )
+        self.assertFalse(
+            any(event[0] in ("send", "sendall", "recv") for event in events)
+        )
+
+    def test_sample_bound_rejects_values_outside_one_to_eight(self):
+        parser = diagnostics.build_parser()
+        self.assertEqual(parser.parse_args([]).samples, 1)
+        self.assertEqual(parser.parse_args(["--samples", "8"]).samples, 8)
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as caught:
+                parser.parse_args(["--samples", "0"])
+        self.assertEqual(caught.exception.code, 2)
+
+    def test_export_carries_only_aggregate_connect_measurements(self):
+        app = self.write_bundle()
+        report = diagnostics.diagnose(app, self.runtime, samples=3)
+        report["runtime"]["reachability"]["measurement"].update(
+            {
+                "aggregate": {
+                    "sample_count": 1,
+                    "p50_ms": 2,
+                    "p95_ms": 2,
+                    "p99_ms": 2,
+                    "max_ms": 2,
+                },
+                "by_endpoint": {"secret": [2]},
+                "endpoint": "secret.sock",
+            }
+        )
+        report["runtime"]["reachability"]["endpoint_timings"] = {"secret.sock": [2]}
+        export = diagnostics.support_export(report)
+        serialized = json.dumps(export)
+        self.assertEqual(
+            export["runtime"]["reachability"]["measurement"]["aggregate"]["max_ms"],
+            2,
+        )
+        self.assertNotIn("by_endpoint", export)
+        self.assertNotIn("endpoint_timings", export)
+        self.assertNotIn("secret.sock", serialized)
 
     def test_missing_selected_inputs_are_structured_and_nonzero(self):
         code, output = self.run_diagnose(

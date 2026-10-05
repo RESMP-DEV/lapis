@@ -288,7 +288,10 @@ class TerminalSurface : public QQuickItem {
     int frame_interval_{};
     qreal minimum_scale_{};
     QTimer throttle_;
-    QElapsedTimer since_frame_; // since the last throttled frame
+    // Wall clock of the last output-driven publish; frameInterval gates the
+    // next one against it so the card never lags a quiet-gap change.
+    QElapsedTimer throttle_clock_;
+    qint64 last_output_publish_ms_{};
     bool pasting_{};
     QString preedit_;
     QString suggestion_;
