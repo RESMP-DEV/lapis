@@ -99,6 +99,7 @@ for ownership, shared contracts and integration checks across large changes.
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
 | Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging, attention messages and retained workspace entries | Automatic service recovery remains deferred |
 | Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
+| Codex external-agent import | Protocol observed live and exercised only in an isolated fixture; not integrated | A separate explicit onboarding/import flow on a requalified Codex build: detection, exact scope consent, asynchronous completion, imported-thread launch/resume, duplicate reconciliation and failure recovery; never a per-session observer capability |
 | Web surfaces | CEF 8037 (Chromium 154) provisional candidate for service-owned, CLI-drivable web views; September 29 design only, runtime pin awaits W0 | [Web surfaces section](#web-surfaces-september-29) owns the engine gate, wire contract, injection determinism and import consent |
 
 The [research receipt](../evidence/terminal-research.json) retains pinned upstream
@@ -4531,6 +4532,48 @@ store access and remain unavailable through managed importer/control APIs.
 V1 omits unrestricted eval/CDP and arbitrary userscripts. Page content and
 rendered pixels are untrusted observations, not universally secret-free data.
 Per-view storage isolation remains a qualification gate.
+
+### Codex external-agent import (October 5)
+
+The current Codex app-server exposes a supported external-agent migration
+surface rather than merely a TUI shortcut: `externalAgentConfig/detect` returns
+selectable migration items and exact source/destination descriptions;
+`externalAgentConfig/import` returns an import ID immediately; progress and
+completion arrive as notifications; `readHistories` records provenance. The
+live isolated probe in
+[the receipt](../evidence/codex-external-import-probe.json) imported synthetic
+Claude Code settings, instructions, one skill and one transcript into a private
+Codex home, observed four successful item results, and found the resulting
+Codex thread through `thread/list`. `thread/loaded/list` is not persisted-thread
+enumeration.
+
+The lapis boundary is a **workspace onboarding/import task**, not part of the
+attention observer and not attached to one live terminal. Import can mutate
+global Codex settings, instructions, skills, agents, hooks, commands, MCP
+configuration and thread storage; home-scoped skills target
+`CODEX_HOME.parent/.agents/skills`. Lapis displays Codex's detected
+source/destination descriptions verbatim, defaults to sessions only, requires
+separate explicit opt-in for every global-config class, retains the import ID,
+and treats the RPC response as acceptance rather than completion. Progress and
+completion are task state; they do not enter the attention queue as an agent
+request and cannot approve or answer anything.
+
+The first implementation slice imports only Claude sessions. After completion,
+each successful session target identifies an imported Codex thread. Lapis
+creates ordinary launch records with validated resume identities, reconciles
+against `thread/list` and migration history before offering Open/Resume, and
+never relies on titles or paths alone to suppress duplicates. A failure,
+disconnect or timeout leaves the import task recoverable and never automatically
+re-submits, because retries can duplicate or partially apply global config.
+
+Configuration, instructions, skills, agents, hooks, commands, MCP servers,
+memory and plugins remain outside the first slice. They need their own consent
+wording and qualification because they can change model routing, permissions,
+credential use or executable content. The implementation also waits on Codex
+binary requalification and the managed-daemon launch decision: the probe binary
+is newer than lapis's response-qualified pins, and import must use one clearly
+owned server process rather than racing per-terminal backends over the same
+Codex home.
 
 The later 32-session experiment records workload/output rates, display rate,
 p50/p95/p99 input/switch latency and frame times, memory growth and idle CPU/GPU
