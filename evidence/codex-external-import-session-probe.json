@@ -1,10 +1,10 @@
 {
   "schema": "lapis.codex-external-import-probe/1",
-  "recorded_at": "2026-10-05T20:09:35.274220+00:00",
+  "recorded_at": "2026-10-05T20:11:15.945495+00:00",
   "passed": true,
   "purpose": "Exercise Codex external-agent session-only import against a synthetic Claude fixture without reading or modifying real Claude Code or Codex user state.",
   "source": {
-    "lapis_revision": "d3faa7c13ce07ee1d66cf8282a8f7930fcfa879f",
+    "lapis_revision": "8f22d139539e9127a943bc152fc841edec0b2bee",
     "lapis_dirty": false,
     "codex_repository": "PATH-resolved executable; source repository not asserted",
     "binary_path": "PATH-resolved codex executable",
@@ -12,10 +12,10 @@
     "binary_sha256": "d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f",
     "changed_file_sha256": {
       "adapters/codex/src/importer.hpp": "ba4f06529e8434e221ebb206b64df156e2fdf92b405456f658e6574db48c088d",
-      "adapters/codex/src/importer.cpp": "928d1deeb67d641ad07c5478f9380862d7f8936bc09f1e85feb969c6e1e9511e",
+      "adapters/codex/src/importer.cpp": "795ef371ff54877ce653505055d69bc464609b07cd7861a9a53a311e4a6ed421",
       "adapters/codex/tests/importer_test.cpp": "7536bda0affe853aea1c361ea29944ab0f8b702cfc240503ae91642625256302",
-      "scripts/probe_codex_external_import.py": "0e3a85782975a72fbc3f55999b05ea23e5cbf9127864f3e3f86858bff7537f1f",
-      "scripts/tests/test_probe_codex_external_import.py": "60bc52808e3e72baf0c7fd7a2ea38fbb212b36fd6c7b3b2b43f4075486db2e09"
+      "scripts/probe_codex_external_import.py": "8a56c22936c58a65bee9e272649a06057a83568f4b0f5b587fc055e7407c3b61",
+      "scripts/tests/test_probe_codex_external_import.py": "420ef48d00335424d126cf8fb0b0ae86679fbd76252ca972e7d8cbbbf2710671"
     }
   },
   "isolation": {
@@ -63,7 +63,7 @@
     "thread/list": {
       "passed": true,
       "thread_count": 1,
-      "imported_thread_id": "01a10daf-9dee-73e0-afb6-a157e71c79ff"
+      "imported_thread_id": "01a10db1-272e-7951-858d-fabe1985d62a"
     },
     "externalAgentConfig/import/readHistories": {
       "passed": true,
