@@ -99,6 +99,7 @@ for ownership, shared contracts and integration checks across large changes.
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
 | Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging, attention messages and retained workspace entries | Automatic service recovery remains deferred |
 | Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
+| Codex multi-thread sessions | Upstream worktree tools (#50148) make attached tasks routine in one TUI; lapis binds a single persistent TUI thread and disables structured responses on a second | A disposable two-thread live session (worktree-created attached task) proving per-thread event delivery, response ownership and `thread/resume`+`thread/read` reconciliation, recorded in the Codex capability matrix; see the [October 2 review](#codex-upstream-integration-review-october-2) |
 | Codex external-agent import | Session-only protocol importer and isolated qualification probe are implemented; no service/desktop onboarding task yet | Finish the separate explicit flow on a requalified Codex build: exact scope consent, dedicated server ownership, imported-thread launch/resume, duplicate reconciliation and failure recovery; never a per-session observer capability |
 | Web surfaces | CEF 8037 (Chromium 154) provisional candidate for service-owned, CLI-drivable web views; September 29 design only, runtime pin awaits W0 | [Web surfaces section](#web-surfaces-september-29) owns the engine gate, wire contract, injection determinism and import consent |
 
@@ -3589,6 +3590,79 @@ verified per-CLI adapters — the haul is mostly refinements because the
 foundations were set early. The [pacing audit](#update-pacing-audit-september-28)
 owns the current gaps, including preview decoding, attention publication and
 companion history catch-up; this survey does not duplicate their completion state.
+
+### Codex upstream integration review (October 2)
+
+The RESMP-DEV/codex candidate lineage took two large upstream syncs on
+October 1-2 (155 upstream PRs through #50148, fork `eb9c48a45b`). It is not
+the binary lapis currently resolves: on October 5 the active AlphaHENG
+snapshot was source `ef0f5c6990` with executable SHA-256
+`d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f`, and it
+does not contain the reviewed worktree-tool changes. This section owns the
+integration investigation opened by the newer candidate; it records
+observations and open probes, not qualification.
+
+What changed on surfaces lapis consumes:
+
+- **Managed worktree tools (#50148).** The TUI exposes `create_worktree`,
+  `get_worktree_creation_status` and `list_worktrees` on trusted local projects.
+  Creation is asynchronous, attaches the worktree to the requesting task, and
+  persists ownership/attachments across restarts; the task's cwd and environment
+  stay unchanged. Rejected in ephemeral side conversations and untrusted
+  projects.
+- **Server-driven TUI surfaces.** Permission shortcuts now enumerate from a
+  server-reported permission catalog (#50140); fresh threads honor server model
+  defaults (#50013); the model selected for a running turn's next step is
+  exposed (#50128).
+- **App-server capabilities.** Native gRPC client for cloud thread resume/attach
+  (#50113); attachment owner lookup and paginated reverse lookup (#50094,
+  #50083); queued agent mail survives session eviction (#50087).
+- **Animation centralization.** TUI loading glyphs and frame scheduling moved
+  into `tui/src/motion.rs` (#50112).
+
+Why this matters to lapis:
+
+1. **Binary requalification is due now.** The Milestone 2 contract keeps
+   structured responses disabled for unqualified binary hashes; the candidate
+   changed materially (155 upstream PRs plus fork patches) while the currently
+   selected AlphaHENG binary remains outside the qualified set. Until a
+   candidate is selected and requalified, responses stay disabled by design.
+   Requalification is the first action, before any new probe.
+2. **Single-thread binding meets routine multi-threading.** The managed route
+   binds one persistent TUI thread and disables structured responses when a
+   second persistent thread appears. Worktree tools make attached tasks a
+   normal TUI workflow, so that fail-closed path can now trigger in ordinary
+   use rather than as an anomaly. The thread-switch contract remains open.
+3. **Reconciliation assumptions are binary-specific.** The `thread/resume` +
+   `thread/read` replay-boundary behavior was verified against a specific
+   implementation and must be reverified on the new binary per the existing
+   requalification rule.
+4. **Permission and model surfacing.** Server catalog/defaults change what the
+   ordinary TUI displays, not the observer contract; a smoke check of the
+   managed TUI's permission UX on the new binary is cheap insurance.
+5. **Fork-private IDE context endpoint** (process-scoped reads bound to the
+   active conversation, fork commits `844c1a3826`/`5138bd5ada`): with attached
+   worktree tasks the active conversation becomes dynamic within one process;
+   any lapis-side consumer must follow focus and never assume a single durable
+   conversation per process.
+
+Probes to run (each gets a sanitized receipt; update
+[adapters/codex/README](../adapters/codex/README.md) capability matrix from
+results):
+
+- **P1 binary requalification.** Requalify the fork binary hash on the
+  existing disposable GLM fixture: approval and user-input delivery, explicit
+  response, resolution and turn completion. Gate: existing Milestone 2 checks
+  pass unchanged on `eb9c48a45b`-lineage builds.
+- **P2 two-thread worktree probe.** One disposable session where the model
+  invokes the worktree tools; record which threads the observer sees, whether
+  attached-task events reach it, what binding does when a second persistent
+  thread exists, and whether resume/read reconciliation holds per thread.
+  Expected per current contract: responses disabled, no crashes, no stale
+  replies. Gate: a thread-switch contract proposal grounded in this evidence.
+- **P3 permission-catalog smoke.** Managed TUI with lapis's declared
+  provider/model: confirm approval requests and shortcuts render and route as
+  before. Gate: no behavioral delta recorded, or an explicit adapter note.
 
 ### Following milestones
 
