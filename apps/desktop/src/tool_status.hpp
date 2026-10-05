@@ -65,7 +65,9 @@ class ToolStatus final : public QObject {
     void setNowForTesting(QDateTime now) { now_ = std::move(now); }
     // Tests: republish rows immediately after moving the test clock, instead
     // of waiting for the production stale scan.
-    void publishForTesting() { emit changed(); }
+    void publishForTesting();
+    // Tests: prove that a noisy child is drained and truncated while running.
+    [[nodiscard]] qsizetype bufferedOutputForTesting(const QString& id) const;
 
   signals:
     void changed();
@@ -83,13 +85,16 @@ class ToolStatus final : public QObject {
         QPointer<QProcess> process;
         QPointer<QTimer> timeout;
         bool timedOut{};
+        QByteArray output;
     };
 
     [[nodiscard]] std::optional<Probe> probeFor(const QString& id) const;
     void queue(const QString& id);
     void startNext();
     void finished(QProcess* process);
+    void consumeOutput(QProcess* process);
     void note(const QString& id, Result result);
+    void publishStaleChanges();
     [[nodiscard]] QDateTime now() const;
     [[nodiscard]] bool fresh(const Result& result) const;
 

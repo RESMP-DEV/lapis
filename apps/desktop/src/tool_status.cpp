@@ -31,7 +31,11 @@ ToolStatus::Probe defaultProbe(const QString& id) {
 } // namespace
 
 ToolStatus::ToolStatus(Programs programs, QObject* parent)
-    : QObject(parent), programs_(programs ? std::move(programs) : Programs{&harness_program}) {}
+    : QObject(parent), programs_(programs ? std::move(programs) : Programs{&harness_program}) {
+    stale_check_.setInterval(1000);
+    connect(&stale_check_, &QTimer::timeout, this, [this] { publishStaleChanges(); });
+    stale_check_.start();
+}
 
 std::optional<ToolStatus::Probe> ToolStatus::probeFor(const QString& id) const {
     const auto configured = test_probes_.constFind(id);
@@ -147,6 +151,8 @@ void ToolStatus::startNext() {
                 });
         connect(job.process, &QProcess::finished, this,
                 [this, process = job.process.data()] { finished(process); });
+        connect(job.process, &QProcess::readyReadStandardOutput, job.process,
+                [this, process = job.process.data()] { consumeOutput(process); });
         job.process->start(program, command.mid(1));
         job.timeout->start(probe->timeoutMs);
     }
@@ -160,7 +166,8 @@ void ToolStatus::finished(QProcess* process) {
     const auto id = found->id;
     const auto timed_out = found->timedOut;
     const auto exit_code = process->exitCode();
-    auto output = process->readAll();
+    consumeOutput(process);
+    auto output = found->output;
     if (output.size() > kLongestOutput)
         output.truncate(kLongestOutput);
     Result result{.resolved = process->program(),
@@ -184,10 +191,50 @@ void ToolStatus::finished(QProcess* process) {
     startNext();
 }
 
+void ToolStatus::consumeOutput(QProcess* process) {
+    const auto found = std::find_if(running_.begin(), running_.end(),
+                                    [&](const Running& job) { return job.process == process; });
+    if (found == running_.end())
+        return;
+    auto bytes = process->readAllStandardOutput();
+    if (found->output.size() >= kLongestOutput) {
+        const auto room = kLongestOutput - found->output.size();
+        if (room > 0)
+            found->output.append(bytes.left(room));
+    } else {
+        found->output.append(bytes);
+    }
+    if (found->output.size() > kLongestOutput)
+        found->output.truncate(kLongestOutput);
+}
+
 void ToolStatus::note(const QString& id, Result result) {
     fresh_noted_.insert(id, fresh(result));
     results_.insert(id, std::move(result));
     emit changed();
+}
+
+void ToolStatus::publishStaleChanges() {
+    bool changed = false;
+    for (auto entry = results_.cbegin(); entry != results_.cend(); ++entry) {
+        if (fresh_noted_.value(entry.key()) && !fresh(entry.value())) {
+            fresh_noted_.insert(entry.key(), false);
+            changed = true;
+        }
+    }
+    if (changed)
+        emit this->changed();
+}
+
+void ToolStatus::publishForTesting() {
+    publishStaleChanges();
+    emit changed();
+}
+
+qsizetype ToolStatus::bufferedOutputForTesting(const QString& id) const {
+    const auto found = std::find_if(running_.cbegin(), running_.cend(),
+                                    [&](const Running& job) { return job.id == id; });
+    return found == running_.cend() ? qsizetype{0} : found->output.size();
 }
 
 QVariantList ToolStatus::rows() const {

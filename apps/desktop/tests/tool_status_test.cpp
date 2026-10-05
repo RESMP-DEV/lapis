@@ -165,11 +165,40 @@ void answers_expire_to_stale_without_rewording() {
                                                Qt::ISODateWithMs);
     require(checked.isValid(), "a fresh answer has a valid timestamp");
     status->setNowForTesting(checked.addMSecs(ToolStatus::kFreshMs + 1000));
+    require(settle([&status] {
+                return !rowFor(status, QStringLiteral("claude"))
+                            .value(QStringLiteral("fresh"))
+                            .toBool();
+            }),
+            "the production stale scan republishes currency changes");
     const auto after = rowFor(status, QStringLiteral("claude"));
     require(!after.value(QStringLiteral("fresh")).toBool() &&
                 after.value(QStringLiteral("state")).toString() == QStringLiteral("ok") &&
                 after.value(QStringLiteral("checked")) == before.value(QStringLiteral("checked")),
             "age changes only currency, not the recorded answer");
+}
+
+void noisy_probe_output_is_bounded_while_running() {
+    const auto status = fixtureStatus();
+    const auto noisy =
+        QStringLiteral("printf '%%1s' ''; sleep 0.15").arg(ToolStatus::kLongestOutput + 1);
+    status->setProbeForTesting(QStringLiteral("claude"),
+                               ToolStatus::Probe{
+                                   .argv = {QStringLiteral("/bin/sh"), QStringLiteral("-c"), noisy},
+                                   .timeoutMs = 2000,
+                               });
+    status->refreshTool(QStringLiteral("claude"));
+    require(settle([&status] {
+                return status->bufferedOutputForTesting(QStringLiteral("claude")) ==
+                       ToolStatus::kLongestOutput;
+            }),
+            "probe output is drained and truncated before exit");
+    require(settle([&status] {
+                return rowFor(status, QStringLiteral("claude"))
+                           .value(QStringLiteral("state"))
+                           .toString() == QStringLiteral("ok");
+            }),
+            "the bounded probe still records its result");
 }
 
 void one_harness_can_be_asked_again() {
@@ -203,6 +232,7 @@ int main(int argc, char** argv) {
         catalog_is_the_only_row_source();
         probes_report_their_own_answers();
         answers_expire_to_stale_without_rewording();
+        noisy_probe_output_is_bounded_while_running();
         one_harness_can_be_asked_again();
     } catch (const std::exception& error) {
         std::cerr << "tool_status_test: " << error.what() << '\n';

@@ -3,14 +3,17 @@
   "recorded_on": "2026-10-05",
   "baseline_revision": "705e7cd17d20149c70f28dc01a386361c5175be8",
   "branch": "work/runtime-tool-status",
-  "source_dirty": false,
+  "source_dirty": true,
   "scope": "Narrow read-only tool status and bounded version probes over the canonical desktop harness catalog. This rework does not replace harness_catalog or change launch, restore, resume or update semantics.",
   "changes": [
     "Added ToolStatus with exactly one row per harness_catalog entry, catalog-owned identity and launch metadata, bounded concurrent probes, timeout/failure/missing/present/unknown states, five-minute freshness and per-tool rerun.",
     "Added a guarded Tools QML pane with live, failed, timeout, missing, unprobed and stale presentation plus all-check and per-row controls.",
     "Exposed the status object through the desktop and isolated UI preview without adding a parallel registry, configuration section or tools.d surface.",
     "Preserved Workspace, KeyMap, harness_catalog, saved-agent restoration, resume arguments and updater behavior unchanged.",
-    "Added focused process fixtures, production-QML coverage, architecture ownership/contract and status qualification rows."
+    "Added focused process fixtures, production-QML coverage, architecture ownership/contract and status qualification rows.",
+    "A one-second stale scan republishes only currency transitions, so an open Tools pane marks stale rows without manual reopening.",
+    "Probe standard output is drained incrementally and capped at 64 KiB while each child runs.",
+    "The canonical status table keeps the newer attention-journal row and exactly one Runtime tool status row."
   ],
   "verification": [
     {
@@ -124,21 +127,44 @@
       "command": "python3 scripts/lapis.py quality",
       "exit_code": 0,
       "scope": "Source/status, whitespace, Ruff, and 536 Python tests passed after merging main including PR #92."
+    },
+    {
+      "name": "focused-desktop-tests-stale-output",
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop -R '^(tool-status|tools-ui)$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "tests": 2,
+      "scope": "Includes production stale-scan publication and greater-than-64-KiB incremental output bounding."
+    },
+    {
+      "name": "focused-clang-tidy-stale-output",
+      "command": "SDKROOT=$(xcrun --show-sdk-path) /opt/homebrew/opt/llvm/bin/clang-tidy -p build/desktop apps/desktop/src/tool_status.cpp apps/desktop/tests/tool_status_test.cpp apps/desktop/tests/tools_ui_test.cpp",
+      "exit_code": 0
+    },
+    {
+      "name": "repository-quality-stale-output",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0
+    },
+    {
+      "name": "committed-range-whitespace",
+      "command": "git diff --check origin/main..HEAD",
+      "exit_code": 0,
+      "scope": "Verified after committing the status-table repair; the pre-commit check correctly identified the old committed conflict marker."
     }
   ],
   "source_sha256": {
-    "apps/desktop/src/tool_status.hpp": "736e8ee022c338a2054ba0981673c31d0108cffbc0e84389af48b2d8acbbfdaa",
-    "apps/desktop/src/tool_status.cpp": "fa43cb56961718a333b7c1a8363eb3c0cc3165680c1645a3efd14283df0e1fd6",
+    "apps/desktop/src/tool_status.hpp": "067fed89f45ce9ddd264c6ad06179f6266c6fda26b9b76995a19468c7e7d2289",
+    "apps/desktop/src/tool_status.cpp": "acc83f0b05f91a41d5578bfb7a7d7bfd6454ca3c596e2feef7d796f7798b4ed4",
     "apps/desktop/qml/Tools.qml": "61470ca19fa7d2e8fc53e05a4b003a44069563334ad9917688eb60b66f6ae193",
     "apps/desktop/qml/Main.qml": "791584077f8187e966495fff31caf1fcd3b36fc4c1e0fa093421d877b1d72efc",
     "apps/desktop/src/main.cpp": "c82408b1b9d885dcae5d84b8a186f0fa897fd20f80c4273490599cce468d427e",
     "apps/desktop/src/ui_preview.hpp": "bf8367bee8eaad81412afc349e5097013e7766cf1db3faa60bc92cd127551b9f",
     "apps/desktop/src/ui_preview.cpp": "69d441c3e1f4385a2f149fba08c37a5bf24385c28c68b4fc5d0192df9b21bcae",
     "apps/desktop/CMakeLists.txt": "a95c5538a780184c0ba13e93967a3af40baa5052e38b41a243c80822552c7d87",
-    "apps/desktop/tests/tool_status_test.cpp": "6d2d1ce46cea663ef95de67040c1f2b0f859b6697c200b6f43be21d6daf07059",
+    "apps/desktop/tests/tool_status_test.cpp": "d068e89046ccf933947929a029c694157bf6de931e28dc8d1352be7ec06a66e8",
     "apps/desktop/tests/tools_ui_test.cpp": "2cd99480fe4fc3edec502c2ec219e159a5cb99d2a59ec4e750e160f94408d8c6",
     "docs/architecture.md": "0bbcbae7c254d7a8f06ca9df83141b36b666af8965cb8a28065bfb6c7705ab08",
-    "docs/status.md": "b996e78fa91bb391c21da6aa25cde266a9882ad89aac095f3d58bd365e5b5b45"
+    "docs/status.md": "9b5949c5a9d65690fa02f662ab8ecfa2f2f3049994e1132deda75d1caaea073a"
   },
   "non_claims": [
     "A version probe does not prove authentication, account access, model availability, terminal rendering, attention delivery or successful agent launch.",
@@ -146,6 +172,6 @@
     "The focused Qt checks do not qualify native macOS input, IME, pasteboard, native GPU presentation or Linux.",
     "The full desktop static/CTest gate did not pass under Homebrew LLVM 23 because unrelated baseline findings and sandboxed service cases remain; focused tool tests, repository quality, and background UI review did pass."
   ],
-  "source_revision": "d74e08305e1770e349c3d066a6304fbff4c0d4161",
-  "integration_note": "source_revision is the branch head after merging main including PR #92; the receipt-only follow-up commit records this integrated result."
+  "source_revision": "9ba448fa22aac1ea0e6636d2930cd5ea8614701b",
+  "integration_note": "source_revision is the committed integration head; the reviewed stale-publication, bounded-output, and status-table repairs were applied as the dirty working tree hashed below, then committed with this receipt."
 }
