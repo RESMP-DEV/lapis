@@ -1,7 +1,7 @@
 {
   "schema": "lapis.work-receipt/1",
   "recorded_on": "2026-10-05",
-  "baseline_revision": "92c0e82a3130e9aa8bf7e1a7d8322435eff7b683",
+  "baseline_revision": "705e7cd17d20149c70f28dc01a386361c5175be8",
   "branch": "work/runtime-tool-status",
   "source_dirty": false,
   "scope": "Narrow read-only tool status and bounded version probes over the canonical desktop harness catalog. This rework does not replace harness_catalog or change launch, restore, resume or update semantics.",
@@ -118,6 +118,12 @@
       "command": "python3 scripts/lapis.py quality",
       "exit_code": 0,
       "scope": "Source/status, whitespace, Ruff, and 527 Python tests (7 skipped) passed after merging current main."
+    },
+    {
+      "name": "repository-quality-import-era-main",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "scope": "Source/status, whitespace, Ruff, and 536 Python tests passed after merging main including PR #92."
     }
   ],
   "source_sha256": {
@@ -131,8 +137,8 @@
     "apps/desktop/CMakeLists.txt": "a95c5538a780184c0ba13e93967a3af40baa5052e38b41a243c80822552c7d87",
     "apps/desktop/tests/tool_status_test.cpp": "6d2d1ce46cea663ef95de67040c1f2b0f859b6697c200b6f43be21d6daf07059",
     "apps/desktop/tests/tools_ui_test.cpp": "2cd99480fe4fc3edec502c2ec219e159a5cb99d2a59ec4e750e160f94408d8c6",
-    "docs/architecture.md": "ffe5aa045a2bdc83dcb62956a9c477019970b216fdadecc6145f58a23a2d130b",
-    "docs/status.md": "bf6411ea2f9366fb3dbf95a673dfec297a976c745c0edb6878baf41339941a77"
+    "docs/architecture.md": "0bbcbae7c254d7a8f06ca9df83141b36b666af8965cb8a28065bfb6c7705ab08",
+    "docs/status.md": "b996e78fa91bb391c21da6aa25cde266a9882ad89aac095f3d58bd365e5b5b45"
   },
   "non_claims": [
     "A version probe does not prove authentication, account access, model availability, terminal rendering, attention delivery or successful agent launch.",
@@ -140,6 +146,6 @@
     "The focused Qt checks do not qualify native macOS input, IME, pasteboard, native GPU presentation or Linux.",
     "The full desktop static/CTest gate did not pass under Homebrew LLVM 23 because unrelated baseline findings and sandboxed service cases remain; focused tool tests, repository quality, and background UI review did pass."
   ],
-  "source_revision": "aabd1aa32e4070f2203219439a7bf5fa2af3e2fa",
-  "integration_note": "source_revision is the branch head after merging current main and preserving both runtime tool status and the newer attention-journal status row; the receipt-only follow-up commit records this integrated result."
+  "source_revision": "d74e08305e1770e349c3d066a6304fbff4c0d4161",
+  "integration_note": "source_revision is the branch head after merging main including PR #92; the receipt-only follow-up commit records this integrated result."
 }
