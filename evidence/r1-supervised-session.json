@@ -212,6 +212,8 @@
       "The worker sandbox bind and filesystem failures remain environment observations, not source acceptance.",
       "No GUI birth route, launchd, package, reboot, sanitizer, restart-storm, load, latency, or memory qualification is claimed.",
       "No broader C++ static-analysis pass is claimed beyond the focused changed-source checks."
-    ]
+    ],
+    "aggregate_passed": true,
+    "aggregate_scope": "Final parent-host checker, 3/3 focused supervisor CTest, checker tests, and full repository quality pass at the final head. Earlier worker-sandbox exit 1 entries in this same array are explicit environment limitations, not final acceptance."
   }
 }
