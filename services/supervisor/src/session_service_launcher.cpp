@@ -394,6 +394,9 @@ ChildProcess SessionServiceLauncher::launch(const DesiredSession& session,
         probe.connectToServer(QString::fromStdString(endpoint), QLocalSocket::ReadWrite);
         if (probe.waitForConnected(100))
             failed("Supervisor service endpoint is already live");
+        if (probe.error() != QLocalSocket::ConnectionRefusedError &&
+            probe.error() != QLocalSocket::ServerNotFoundError)
+            failed("Supervisor service endpoint is unavailable; refusing to replace it");
         remove_quietly(endpoint);
     }
     remove_quietly(endpoint + ".log");

@@ -124,7 +124,8 @@
       "a malformed --session-epoch produces an option-specific diagnostic",
       "a persisted desired-start spawn token counts as an already consumed initial admission, so unattended-crash reconstruction rotates identity",
       "live retained-peer replacement requires both ownership-token and endpoint-protocol verification; an unverified peer is never signalled and keeps its record",
-      "adopted liveness rechecks executable and exact ownership so a recycled PID cannot remain converged"
+      "adopted liveness rechecks executable and exact ownership so a recycled PID cannot remain converged",
+      "a failed endpoint probe removes only a clearly stale socket; busy or unavailable endpoints are preserved"
     ],
     "new_coverage": [
       "adopted-service crash restart after supervisor reconstruction",
