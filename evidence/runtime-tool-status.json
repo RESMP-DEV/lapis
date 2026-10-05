@@ -1,9 +1,9 @@
 {
   "schema": "lapis.work-receipt/1",
   "recorded_on": "2026-10-05",
-  "baseline_revision": "705e7cd17d20149c70f28dc01a386361c5175be8",
+  "baseline_revision": "8e3df6478536bf1bc5392a0cdecaaaf0a8ca0287",
   "branch": "work/runtime-tool-status",
-  "source_dirty": true,
+  "source_dirty": false,
   "scope": "Narrow read-only tool status and bounded version probes over the canonical desktop harness catalog. This rework does not replace harness_catalog or change launch, restore, resume or update semantics.",
   "changes": [
     "Added ToolStatus with exactly one row per harness_catalog entry, catalog-owned identity and launch metadata, bounded concurrent probes, timeout/failure/missing/present/unknown states, five-minute freshness and per-tool rerun.",
@@ -150,6 +150,12 @@
       "command": "git diff --check origin/main..HEAD",
       "exit_code": 0,
       "scope": "Verified after committing the status-table repair; the pre-commit check correctly identified the old committed conflict marker."
+    },
+    {
+      "name": "repository-quality-static-repair-era",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "scope": "Source/status, whitespace, Ruff, and 536 Python tests passed after merging main including the importer static-review repair."
     }
   ],
   "source_sha256": {
@@ -172,6 +178,6 @@
     "The focused Qt checks do not qualify native macOS input, IME, pasteboard, native GPU presentation or Linux.",
     "The full desktop static/CTest gate did not pass under Homebrew LLVM 23 because unrelated baseline findings and sandboxed service cases remain; focused tool tests, repository quality, and background UI review did pass."
   ],
-  "source_revision": "9ba448fa22aac1ea0e6636d2930cd5ea8614701b",
-  "integration_note": "source_revision is the committed integration head; the reviewed stale-publication, bounded-output, and status-table repairs were applied as the dirty working tree hashed below, then committed with this receipt."
+  "source_revision": "7f8b67893df24928e6c4f6d4dabe262af136978b",
+  "integration_note": "source_revision is the branch head after merging main including the importer static-review repair; this receipt-only follow-up records the integrated result."
 }
