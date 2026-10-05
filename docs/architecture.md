@@ -4551,10 +4551,11 @@ The lapis boundary is a **workspace onboarding/import task**, not part of the
 attention observer and not attached to one live terminal. Import can mutate
 global Codex settings, instructions, skills, agents, hooks, commands, MCP
 configuration and thread storage; home-scoped skills target
-`CODEX_HOME.parent/.agents/skills`. Lapis displays Codex's detected
-source/destination descriptions verbatim, defaults to sessions only, requires
-separate explicit opt-in for every global-config class, retains the import ID,
-and treats the RPC response as acceptance rather than completion. Progress and
+`CODEX_HOME.parent/.agents/skills`. The onboarding flow must display Codex's
+detected source/destination descriptions verbatim, default to sessions only,
+and require separate explicit opt-in for every global-config class. The
+importer retains the import ID and treats the RPC response as acceptance rather
+than completion. Progress and
 completion are task state; they do not enter the attention queue as an agent
 request and cannot approve or answer anything.
 
