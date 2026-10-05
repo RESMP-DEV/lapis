@@ -8,7 +8,7 @@
     "ported_revision": "b5e0c55",
     "ported_open_choice_row_sha256": "a188fe4a722f837170ec9e82eb6271850d38d4e9c4b3eb601d11bbeb41b57146",
     "ported_review_section_sha256": "9b1169631c617e67c4ba9242f5ffb7d76ca29bba93f0a9e7c894a16d10742209",
-    "receipt_note": "source_revision identifies the original local source commit; integrated_revision is the branch head before this receipt-only follow-up. The two content hashes make the ported row and section reproducible without requiring the private source commit to be reachable from this branch."
+    "receipt_note": "source_revision identifies the original local source commit; integrated_revision is the branch head before the provenance and active-binary clarification. The two content hashes make the ported row and section reproducible without requiring the private source commit to be reachable from this branch."
   },
   "scope": "Documentation-only port of the Codex upstream integration review, its open-choice row, five observations, and probes P1-P3 onto current architecture. No Codex binary probe or adapter behavior changed.",
   "verification": [
