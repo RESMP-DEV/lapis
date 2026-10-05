@@ -1,0 +1,117 @@
+{
+  "schema": "lapis.preview-publish-pacing/1",
+  "recorded_at": "2026-10-04T13:03:50Z",
+  "base_revision": "3276b5ecc92ac5262c09b2f0e52627e321133632",
+  "source_dirty": true,
+  "platform": "macOS",
+  "passed": true,
+  "focused_passed": true,
+  "scope": "Publish-to-publish preview pacing extraction with focused offscreen software-rendered verification, repository quality, and full background UI review.",
+  "excluded_preserved_work": [
+    "file-drop destination ownership",
+    "programmatic paste ownership",
+    "keyboard paste ownership consolidation",
+    "unrelated documentation, packaging, iOS, remote and session hunks"
+  ],
+  "implementation": [
+    "Record the monotonic time of every snapshot publication in TerminalSurface.",
+    "Publish eligible preview output immediately and arm one precise timer for the remainder after a denied publish.",
+    "Re-pace an open gate when frameInterval changes.",
+    "Add an offscreen stage/card pixel fixture and --preview-frame-only selector."
+  ],
+  "source_sha256": {
+    "apps/desktop/src/terminal_surface.cpp": "558c04d380c9c2b1055377a5e89e78ad2439b6654faeeef031c8fb9e0e059355",
+    "apps/desktop/src/terminal_surface.hpp": "d64e51dcd041e91b8028cf0015ad48e156f2de058922ac579176a63211e1bcac",
+    "apps/desktop/tests/ui_preview_test.cpp": "36b1bb98626e4d59429295d8be0f953868e235609680c5ba76794a0b8d660dab",
+    "docs/architecture.md": "32b2c390e3365eecb35306254bad91e93e92972ee704fa9a88608994e553e4a4"
+  },
+  "checks": [
+    {
+      "name": "desktop-configure",
+      "command": "cmake --preset desktop with CCACHE_DIR/CCACHE_TEMPDIR under build/cache and a matching validated pinned Ghostty prefix",
+      "exit_code": 0,
+      "passed": true,
+      "elapsed_seconds": 1.893
+    },
+    {
+      "name": "ui-preview-test-build",
+      "command": "cmake --build build/desktop --target lapis_ui_preview_tests -j 8",
+      "exit_code": 0,
+      "passed": true,
+      "elapsed_seconds": 15.863
+    },
+    {
+      "name": "desktop-app-and-service-build",
+      "command": "cmake --build build/desktop --target lapis_desktop lapis_session_service -j 8",
+      "exit_code": 0,
+      "passed": true,
+      "elapsed_seconds": 8.004
+    },
+    {
+      "name": "preview-frame-background",
+      "command": "build/desktop/apps/desktop/lapis_ui_preview_tests --background --preview-frame-only",
+      "exit_code": 0,
+      "passed": true,
+      "elapsed_seconds": 1.25,
+      "result": "PASS (offscreen/software; not native input or GPU acceptance)"
+    },
+    {
+      "name": "preview-frame-background-repeat",
+      "command": "three repetitions of build/desktop/apps/desktop/lapis_ui_preview_tests --background --preview-frame-only",
+      "exit_code": 0,
+      "passed": true,
+      "elapsed_seconds": 3.746
+    },
+    {
+      "name": "changed-cpp-clang-format",
+      "command": "clang-format --dry-run --Werror apps/desktop/src/terminal_surface.cpp apps/desktop/src/terminal_surface.hpp apps/desktop/tests/ui_preview_test.cpp",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "quality",
+      "command": "just quality",
+      "exit_code": 1,
+      "passed": false,
+      "elapsed_seconds": 13.537,
+      "passing_subchecks": [
+        "source-revision",
+        "source-status",
+        "ruff-check",
+        "ruff-format-check",
+        "git-diff-check"
+      ],
+      "failed_subcheck": "python-unittests",
+      "diagnostic": "501 tests: 3 failures and 28 errors; observed Errno 1 Operation not permitted on loopback socket binds and sandboxed filesystem operations in unrelated network/runtime tests."
+    },
+    {
+      "name": "quality_parent_host",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "passed": true,
+      "result": "Source/status, whitespace, Ruff, and Python unit checks passed after the implementation checks."
+    },
+    {
+      "name": "full-background-ui-suite",
+      "command": "build/desktop/apps/desktop/lapis_ui_preview_tests --background",
+      "exit_code": 1,
+      "passed": false,
+      "elapsed_seconds": 25.03,
+      "diagnostic": "After the app and service executable targets were built, the side-terminal fixture failed readiness with QLocalSocket connectToServer Invalid name and no current connection. This sandbox cannot exercise the local socket transport; it is not a pacing-case failure."
+    },
+    {
+      "name": "ui_review_parent_host",
+      "command": "python3 scripts/lapis.py ui-review",
+      "exit_code": 0,
+      "passed": true,
+      "result": "Configure/build, full background UI, shortcuts, and terminal input passed with the desktop target explicitly enabled."
+    }
+  ],
+  "non_claims": [
+    "No native macOS GUI, GPU presentation, Vulkan/Metal scene graph, system input, IME, pasteboard or session-service acceptance was exercised.",
+    "The failed sandbox attempts are retained as environment diagnostics; the parent-host quality and full background UI review passed.",
+    "The repository clang-tidy gate did not run; ad hoc invocations against the isolated AppleClang database produced pre-existing tool/compiler and repository-wide diagnostics and are not evidence about this diff.",
+    "The preserved paste and file-drop repairs remain excluded and unqualified by this receipt."
+  ],
+  "artifacts": "Ignored run logs under build/reports/preview-pacing/; this sanitized receipt is the durable evidence."
+}

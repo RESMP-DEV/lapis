@@ -43,6 +43,7 @@ from lapis import SetupError, ghostty_prefix  # noqa: E402
 from release_manifest import (  # noqa: E402
     ManifestError,
     bind_appcast,
+    bind_candidate_gates,
     dependency_snapshot,
     digest as artifact_digest,
     load_manifest,
@@ -53,6 +54,7 @@ from release_manifest import (  # noqa: E402
     set_notarized,
     set_verification,
     source_snapshot,
+    sync_directory,
     write_manifest,
 )
 
@@ -90,6 +92,7 @@ SPARKLE_URL = (
 )
 SPARKLE = RELEASE / "sparkle"
 APPCAST = RELEASE / "appcast.xml"
+CANDIDATE_GATE_MAP = RELEASE / "candidate-gate-map.json"
 RELEASES = "https://github.com/RESMP-DEV/lapis/releases"
 APP = RELEASE / "stage" / "lapis.app"
 PACKAGE_MANIFEST = RELEASE / "package-manifest.json"
@@ -1453,7 +1456,7 @@ def command_release(arguments):
     try:
         dependencies = release_dependencies(ghostty)
         version = project_version(ROOT)
-        preflight_release(
+        source_manifest = preflight_release(
             PACKAGE_MANIFEST,
             root=ROOT,
             tag=arguments.tag,
@@ -1466,18 +1469,93 @@ def command_release(arguments):
             capture=capture,
             require_appcast=False,
         )
+        source = source_manifest.get("source")
+        source_revision = source.get("commit") if isinstance(source, dict) else None
+        if not isinstance(source_revision, str):
+            raise ManifestError("package manifest has no source revision")
     except ManifestError as error:
         raise PackageError(str(error)) from error
-    write_appcast(arguments.tag, version)
-    try:
-        bind_appcast(
-            PACKAGE_MANIFEST,
-            tag=arguments.tag,
-            version=version,
-            appcast=APPCAST,
-            dmg=DMG,
-            release_url=RELEASES,
+    if not APPCAST.is_file():
+        if APPCAST.exists():
+            raise PackageError("the release appcast path is not a regular file")
+        raise PackageError(
+            "write the appcast and record candidate gates against that exact "
+            "file before release"
         )
+    signature, signed_length = update_signature(DMG)
+    try:
+        appcast_root = ET.parse(APPCAST).getroot()
+    except (OSError, ET.ParseError) as error:
+        raise PackageError(f"cannot read the release appcast: {error}") from error
+    appcast_items = appcast_root.findall("./channel/item")
+    appcast_enclosures = (
+        appcast_items[0].findall("enclosure") if len(appcast_items) == 1 else []
+    )
+    appcast_enclosure = appcast_enclosures[0] if len(appcast_enclosures) == 1 else None
+    sparkle_signature = ""
+    sparkle_length = ""
+    if appcast_enclosure is not None:
+        sparkle_signature = appcast_enclosure.attrib.get(
+            "{http://www.andymatuschak.org/xml-namespaces/sparkle}edSignature", ""
+        )
+        sparkle_length = appcast_enclosure.attrib.get("length", "")
+    if sparkle_signature != signature or sparkle_length != signed_length:
+        raise PackageError(
+            "appcast EdDSA signature does not authenticate this DMG; "
+            "regenerate it with package_macos.py appcast"
+        )
+    try:
+        # The appcast and the gate map are one publication decision.  Stage
+        # both bindings beside the manifest and swap them in with a single
+        # replace, so a rejected gate map never leaves a manifest that looks
+        # bound for release with an appcast but no candidate approval.
+        staged_manifest = PACKAGE_MANIFEST.with_name(
+            f".{PACKAGE_MANIFEST.name}.release-binding"
+        )
+        try:
+            staged_manifest.unlink(missing_ok=True)
+            shutil.copy2(PACKAGE_MANIFEST, staged_manifest)
+        except OSError as error:
+            raise ManifestError(
+                f"cannot stage the release manifest: {error}"
+            ) from error
+        binding_failure: BaseException | None = None
+        try:
+            try:
+                bind_appcast(
+                    staged_manifest,
+                    tag=arguments.tag,
+                    version=version,
+                    appcast=APPCAST,
+                    dmg=DMG,
+                    release_url=RELEASES,
+                )
+                bind_candidate_gates(
+                    staged_manifest,
+                    gate_map_path=Path(arguments.candidate_gate_map),
+                    source_revision=source_revision,
+                    version=version,
+                    artifacts={"app": APP, "dmg": DMG},
+                    appcast_digest=artifact_digest(APPCAST),
+                    replace=getattr(arguments, "replace_candidate_gates", False),
+                )
+                os.replace(staged_manifest, PACKAGE_MANIFEST)
+            except Exception as error:
+                binding_failure = error
+                if isinstance(error, OSError):
+                    raise ManifestError(
+                        f"cannot stage the release manifest: {error}"
+                    ) from error
+                raise
+        finally:
+            try:
+                staged_manifest.unlink(missing_ok=True)
+            except OSError as error:
+                if binding_failure is None:
+                    raise ManifestError(
+                        f"cannot clean the staged release manifest: {error}"
+                    ) from error
+        sync_directory(PACKAGE_MANIFEST.parent)
         preflight_release(
             PACKAGE_MANIFEST,
             root=ROOT,
@@ -1490,6 +1568,7 @@ def command_release(arguments):
             release_url=RELEASES,
             capture=capture,
             require_appcast=True,
+            require_candidate_gates=True,
         )
     except ManifestError as error:
         raise PackageError(str(error)) from error
@@ -1534,9 +1613,13 @@ def update_signature(path):
 
 
 def write_appcast(tag, version):
-    """The update feed the app reads from the latest release's assets."""
+    """Write the stable update feed whose exact bytes candidate gates bind.
+
+    A wall-clock ``pubDate`` would change the digest each second and invalidate
+    receipts collected against an earlier rendering.  Sparkle can sort this
+    single-item feed without it; GitHub retains the actual release date.
+    """
     signature, length = update_signature(DMG)
-    published = time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime())
     APPCAST.write_text(
         f"""<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
@@ -1544,7 +1627,6 @@ def write_appcast(tag, version):
     <title>lapis</title>
     <item>
       <title>lapis {version}</title>
-      <pubDate>{published}</pubDate>
       <link>{RELEASES}/tag/{tag}</link>
       <sparkle:version>{version}</sparkle:version>
       <sparkle:shortVersionString>{version}</sparkle:shortVersionString>
@@ -1556,6 +1638,20 @@ def write_appcast(tag, version):
 </rss>
 """
     )
+
+
+def command_appcast(arguments):
+    """Write the deterministic feed whose exact bytes gates must bind."""
+    try:
+        version = project_version(ROOT)
+        if arguments.tag != f"v{version}":
+            raise PackageError(
+                f"tag {arguments.tag} does not match project version {version}"
+            )
+        write_appcast(arguments.tag, version)
+    except (ManifestError, OSError) as error:
+        raise PackageError(f"cannot write the release appcast: {error}") from error
+    print(f"Wrote {APPCAST}", flush=True)
 
 
 def command_all(arguments):
@@ -1587,6 +1683,21 @@ def main():
     release = commands.add_parser("release", help="Publish a GitHub release")
     release.add_argument("--tag", required=True, help="for example v0.1.0")
     release.add_argument("--draft", action="store_true", help="Leave it as a draft")
+    release.add_argument(
+        "--candidate-gate-map",
+        type=Path,
+        default=CANDIDATE_GATE_MAP,
+        help="versioned digest-bound candidate acceptance gate map",
+    )
+    release.add_argument(
+        "--replace-candidate-gates",
+        action="store_true",
+        help="replace approved gates while retaining them as superseded evidence",
+    )
+    appcast = commands.add_parser(
+        "appcast", help="Write the deterministic update feed for gate binding"
+    )
+    appcast.add_argument("--tag", required=True, help="for example v0.1.0")
     verify = commands.add_parser("verify", help="Check the bundle before release")
     verify.add_argument(
         "--notarized", action="store_true", help="Also check Gatekeeper"
@@ -1601,6 +1712,7 @@ def main():
         "notarize": command_notarize,
         "verify": command_verify,
         "release": command_release,
+        "appcast": command_appcast,
         "all": command_all,
     }
     try:

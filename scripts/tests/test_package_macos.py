@@ -23,6 +23,73 @@ MARK_FIXTURE = """<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1
 """
 
 
+class ReleaseArgumentTests(unittest.TestCase):
+    def test_release_takes_the_digest_bound_candidate_gate_map(self):
+        for argv, expected in (
+            (
+                ["package_macos.py", "release", "--tag", "v0.5.0"],
+                package.CANDIDATE_GATE_MAP,
+            ),
+            (
+                [
+                    "package_macos.py",
+                    "release",
+                    "--tag",
+                    "v0.5.0",
+                    "--candidate-gate-map",
+                    "candidate/map.json",
+                ],
+                Path("candidate/map.json"),
+            ),
+        ):
+            with self.subTest(arguments=argv[1:]):
+                with (
+                    patch.object(package.sys, "argv", argv),
+                    patch.object(package, "command_release") as command,
+                ):
+                    package.main()
+                self.assertEqual(command.call_args[0][0].candidate_gate_map, expected)
+
+    def test_appcast_command_exposes_the_pre_gate_stable_feed(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        release = Path(temporary.name)
+        appcast = release / "appcast.xml"
+        argv = [
+            "package_macos.py",
+            "appcast",
+            "--tag",
+            "v0.5.0",
+        ]
+        with (
+            patch.object(package.sys, "argv", argv),
+            patch.object(package, "RELEASE", release),
+            patch.object(package, "APPCAST", appcast),
+            patch.object(package, "project_version", return_value="0.5.0"),
+            patch.object(package, "write_appcast") as write,
+        ):
+            package.main()
+        write.assert_called_once_with("v0.5.0", "0.5.0")
+
+    def test_appcast_command_rejects_a_version_mismatched_tag(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        release = Path(temporary.name)
+        with (
+            patch.object(
+                package.sys,
+                "argv",
+                ["package_macos.py", "appcast", "--tag", "v0.4.0"],
+            ),
+            patch.object(package, "RELEASE", release),
+            patch.object(package, "APPCAST", release / "appcast.xml"),
+            patch.object(package, "project_version", return_value="0.5.0"),
+            patch.object(package, "write_appcast") as write,
+        ):
+            self.assertEqual(package.main(), 1)
+        write.assert_not_called()
+
+
 def mark_svg(body):
     return f'<svg xmlns="http://www.w3.org/2000/svg">{body}</svg>'
 

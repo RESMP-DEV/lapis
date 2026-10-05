@@ -409,6 +409,13 @@ SupervisorRuntime::SupervisorRuntime(
       clock_{clock ? std::move(clock) : std::make_shared<SteadyMonotonicClock>()} {
     if (!registry_ || !launcher_)
         failed("Supervisor runtime dependencies are required");
+    // A persisted desired-start slot with a spawn token has already consumed
+    // its initial admission. Reconstructing after an unattended service crash
+    // must use the rotating restart transition, never replay that identity.
+    const auto& persisted = registry_->state();
+    initial_admission_used_ = persisted.enabled && persisted.session.has_value() &&
+                              persisted.session->desired_state == DesiredState::started &&
+                              !persisted.session->spawn_token.empty();
     try {
         static_cast<void>(converge());
     } catch (const std::exception&) {
@@ -482,7 +489,17 @@ Convergence SupervisorRuntime::converge() {
     const auto& session = *current.session;
     if (const auto adopted = launcher_->adopt(session, session.spawn_token)) {
         child_ = *adopted;
+        // Adoption consumed this token's admission. A later crash is a new
+        // service instance and must use the rotating restart transition.
+        initial_admission_used_ = true;
+        if (!session.blocked_reason.empty())
+            static_cast<void>(registry_->note_block(""));
         return Convergence::converged;
+    }
+    if (launcher_->peer_preserved(session, session.spawn_token)) {
+        static_cast<void>(
+            registry_->note_block("Supervisor service peer is alive but did not verify"));
+        failed("Supervisor service peer is alive but did not verify; identity retained for retry");
     }
     if (initial_admission_used_) {
         const auto now = clock_->nanoseconds();
@@ -495,7 +512,7 @@ Convergence SupervisorRuntime::converge() {
         restart_admissions_.push_back(now);
         // A restart is a new admission, not a replay of the old token. Rotate
         // it before launching so ownership discovery cannot choose a dead peer.
-        const auto rotated = registry_->start(session);
+        const auto rotated = registry_->restart(session);
         if (!rotated.session)
             failed("Supervisor restart did not retain its session slot");
         const auto& rotated_session = rotated.session;

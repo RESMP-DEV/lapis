@@ -710,6 +710,8 @@ struct TerminalSurface::FrameHandoff {
 void TerminalSurface::publishFrame(bool snapshot_changed) {
     // Only the GUI thread touches document_, preedit_, or item geometry. The
     // render thread gets owned immutable values through an explicit C++ handoff.
+    if (snapshot_changed)
+        last_output_publish_ms_ = throttle_clock_.elapsed();
     auto frame = std::make_shared<RenderState>();
     frame->preedit = preedit_;
     if (document_ && !document_->attentionPending()) {
@@ -775,10 +777,11 @@ TerminalSurface::TerminalSurface(QQuickItem* parent)
     window_changed_connection_ =
         connect(this, &QQuickItem::windowChanged, this, &TerminalSurface::bindWindow);
     throttle_.setSingleShot(true);
-    connect(&throttle_, &QTimer::timeout, this, [this] {
-        since_frame_.start();
-        publishFrame(true);
-    });
+    // Preview pacing is visible next to the stage, so keep the wait deadline
+    // tight; presentation itself is frame-coalesced by the scene graph.
+    throttle_.setTimerType(Qt::PreciseTimer);
+    connect(&throttle_, &QTimer::timeout, this, [this] { publishFrame(true); });
+    throttle_clock_.start();
     bindWindow(window());
     publishFrame(true);
 }
@@ -858,16 +861,16 @@ void TerminalSurface::screenChanged() {
     if (hovered_link_)
         updateLink(hover_position_, QGuiApplication::keyboardModifiers());
     if (frame_interval_ > 0) {
-        // A change after a quiet interval draws at once; changes
-        // within one share the frame at its end.
-        if (!throttle_.isActive()) {
-            const auto waited = since_frame_.isValid() ? since_frame_.elapsed() : frame_interval_;
-            if (waited >= frame_interval_) {
-                since_frame_.start();
-                publishFrame(true);
-            } else {
-                throttle_.start(static_cast<int>(frame_interval_ - waited));
-            }
+        // The gate runs publish-to-publish. Output after a quiet gap
+        // publishes now and reaches this card in the same
+        // frame-coalesced render as the stage; output inside the gate
+        // waits for the one deadline every denial computes, so
+        // sustained output keeps an even cadence.
+        const qint64 since_publish = throttle_clock_.elapsed() - last_output_publish_ms_;
+        if (since_publish >= frame_interval_) {
+            publishFrame(true);
+        } else if (!throttle_.isActive()) {
+            throttle_.start(static_cast<int>(frame_interval_ - since_publish));
         }
         updateInputContext(Qt::ImCursorRectangle);
         return;
@@ -1093,9 +1096,17 @@ void TerminalSurface::setFrameInterval(int milliseconds) {
         return;
     frame_interval_ = bounded;
     updateViewing();
-    if (frame_interval_ == 0 && throttle_.isActive()) {
+    if (frame_interval_ == 0) {
+        if (throttle_.isActive()) {
+            throttle_.stop();
+            publishFrame(true);
+        }
+    } else if (throttle_.isActive()) {
+        // Re-pace an open gate under the new interval.
         throttle_.stop();
-        publishFrame(true);
+        const qint64 since_publish = throttle_clock_.elapsed() - last_output_publish_ms_;
+        if (since_publish < frame_interval_)
+            throttle_.start(static_cast<int>(frame_interval_ - since_publish));
     }
     emit frameIntervalChanged();
 }

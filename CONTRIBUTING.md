@@ -815,10 +815,13 @@ the login keychain and prints the public half, saved in
 without it, installed copies cannot verify later updates.
 `notices` regenerates `third_party/qt/NOTICES.txt` from the Qt build's SBOM and
 `third_party/moltenvk/NOTICES.txt` from MoltenVK's pinned revisions; rerun it
-when either version changes. `release --tag vX.Y.Z` (add `--draft` to review
-first) refuses a DMG without a stapled ticket or a commit not yet pushed, then
-creates the GitHub release with the DMG, `appcast.xml` and the three Qt source
-archives. The
+when either version changes. After the DMG is stapled, run
+`package_macos.py appcast --tag vX.Y.Z`; it renders the deterministic
+`appcast.xml` that candidate gate receipts must bind. `release --tag vX.Y.Z`
+(add `--draft` to review first) refuses a DMG without a stapled ticket, a
+pre-existing qualified appcast, complete candidate gates, or a commit not yet
+pushed, then creates the GitHub release with the DMG, `appcast.xml` and the
+three Qt source archives. The
 download page in `site/` is published to GitHub Pages by
 `.github/workflows/site.yml` when it changes on `main`.
 
