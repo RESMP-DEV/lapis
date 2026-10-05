@@ -6,6 +6,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVector>
+#include <cstdint>
 #include <memory>
 #include <optional>
 
@@ -17,7 +18,9 @@ namespace lapis::codex {
 class Importer final : public QObject {
     Q_OBJECT
   public:
-    enum class Phase {
+    // NOLINTNEXTLINE(performance-enum-size) -- the explicit compact base is ignored by this
+    // checker.
+    enum class Phase : std::uint8_t {
         disconnected,
         connecting,
         ready,
@@ -28,7 +31,9 @@ class Importer final : public QObject {
         failed,
     };
     Q_ENUM(Phase)
-    enum class ItemType {
+    // NOLINTNEXTLINE(performance-enum-size) -- the explicit compact base is ignored by this
+    // checker.
+    enum class ItemType : std::uint8_t {
         agents_md,
         config,
         skills,

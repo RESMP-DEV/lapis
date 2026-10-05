@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "record_kind": "lapis.codex-import-static-review",
+  "recorded_on": "2026-10-05",
+  "source": {
+    "revision": "705e7cd17d20149c70f28dc01a386361c5175be8",
+    "dirty_before_receipt": true,
+    "files_changed": [
+      "adapters/codex/src/importer.hpp",
+      "adapters/codex/src/importer.cpp",
+      "adapters/codex/tests/importer_test.cpp"
+    ],
+    "working_tree_sha256": {
+      "adapters/codex/src/importer.hpp": "82b4b8d399c29644f05f476bd0f3c5cca7d8e8ebfe1477fba2fc8ca980ff0c5e",
+      "adapters/codex/src/importer.cpp": "0904a0bb6ec06a5956c55cbd2a6badb36443fdd9fae39f561f5c328b5bc84113",
+      "adapters/codex/tests/importer_test.cpp": "456613d1bb8542cd5b42581d015a02e6c16ad51730bcde665d7dc4b723074302"
+    }
+  },
+  "scope": "Follow-up to merged PR #92: repair importer-owned clang-tidy findings without changing import protocol semantics.",
+  "repairs": [
+    "Mark private importer accessors nodiscard.",
+    "Give importer enums explicit compact underlying types and suppress the checker false positive that still reports the explicit std::uint8_t base as int.",
+    "Return the fixture decoded-frame outputs in a struct instead of adjacent mutable reference parameters.",
+    "Split session-detail validation into a helper and pass progress by const reference."
+  ],
+  "checks": [
+    {
+      "name": "clang-tidy",
+      "command": "SDKROOT=$(xcrun --show-sdk-path) /opt/homebrew/opt/llvm/bin/clang-tidy -p build/desktop adapters/codex/src/importer.cpp adapters/codex/tests/importer_test.cpp",
+      "exit_code": 0
+    },
+    {
+      "name": "codex-importer-ctest",
+      "command": "ctest --test-dir build/desktop -R '^codex-importer$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "result": "1/1 passed."
+    },
+    {
+      "name": "probe-python-tests",
+      "command": "python3 -m unittest -v scripts.tests.test_probe_codex_external_import",
+      "exit_code": 0,
+      "result": "9/9 passed."
+    },
+    {
+      "name": "live-disposable-probe",
+      "command": "python3 scripts/probe_codex_external_import.py --codex \"$(command -v codex)\" --output build/codex-external-import-static-repair.json",
+      "exit_code": 0,
+      "result": "Synthetic session-only import passed with private HOME/CODEX_HOME, one imported thread, one matching history, and cleanup complete.",
+      "binary_sha256": "d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f"
+    },
+    {
+      "name": "repository-quality",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0
+    },
+    {
+      "name": "diff-whitespace",
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "aggregate_passed": true,
+  "non_claims": [
+    "Static analysis and the synthetic disposable import do not qualify production onboarding UI, duplicate reconciliation, failure recovery, or managed-daemon coexistence."
+  ]
+}
