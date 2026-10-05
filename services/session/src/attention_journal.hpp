@@ -68,6 +68,7 @@ class AttentionJournal {
     // Drops the in-memory replay/append working set after its recovery scan.
     // The next sequence number and leased file are unchanged.
     void release_entries() { entries_.clear(); }
+    [[nodiscard]] bool usable() const { return static_cast<bool>(descriptor_); }
 
   private:
     void open_new();

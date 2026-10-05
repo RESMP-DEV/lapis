@@ -7,16 +7,16 @@
   "platform": "macOS arm64",
   "source_sha256": {
     "services/session/CMakeLists.txt": "26d6f11b361cdbf604876c512d1c5727215779f43cc434deb38f51095d987945",
-    "services/session/src/attention_journal.hpp": "53064a6ecd48fbfbc25a5cc3878d55dc9e6af699df52068a1b0061354a634153",
-    "services/session/src/attention_journal.cpp": "71dbc7e49bcb8c9998816b85d9a7d7b8db6a8bceab6012f1c03d4a6b20f25d95",
+    "services/session/src/attention_journal.hpp": "da7821472c2b93ff52108fa11af377f5ad3ab3626659696985c7d0bdc70d44a9",
+    "services/session/src/attention_journal.cpp": "c10e1f9517766f61d6972e9d5f655edd296f18bb1bcf3e04a98367bd35782544",
     "services/session/src/attention_audit.hpp": "81d6ef5122ef9ea885ed49ad34e1ed2e880b4fb837159bce92a3ea24c74f439a",
     "services/session/src/attention_audit.cpp": "8a6a8227dd3401ff67a769025506bab2a9da5be5781d86ae189b67f377b7134d",
-    "services/session/src/session_service.cpp": "bf8ec1b72e1284a750002df5e1c7f6fe030bc8645381526bb4ad0ea8e2e9a116",
-    "services/session/tests/attention_journal_test.cpp": "3ede07e53bd72323ff77730d41464ec055ca71bd67d2b94e2f8441cfaec40ed7",
+    "services/session/src/session_service.cpp": "e365788476bc284f4c8aa2c769ff558e6a2b507c43714382833124060369586c",
+    "services/session/tests/attention_journal_test.cpp": "c8ed33b7520e2cac9811bf2d8d278dd5574d4bb112418c21b6f9ae80716725f3",
     "services/session/tests/attention_audit_test.cpp": "fc3a43810d6f4f4d4ac478dc611edc3a9aa0479d57fcc53e8d6c9c05d49d15c3",
     "services/session/tests/attention_service_test.cpp": "1c237708ed69032230b17f9bd49087c64f0ff97949fb64cfd55a9e389b2b9245",
-    "docs/architecture.md": "278c06e3562ebdc34fccd96a2f4bc7a8e1764b34b351b8c54178d2762a29fa10",
-    "docs/status.md": "1fa5b276100e1cb8753655bea2a9b0e852518f35f77b6890c4856995152b2a21"
+    "docs/architecture.md": "a422762e7181cd81db8db6f4491a2ae149c4576efa4c29c931b0168efdb0c19f",
+    "docs/status.md": "e660db876027b53e24a337cf7ec7bbc824252b08c1a57bf8292ec55fc1c72b7e"
   },
   "tools": {
     "cmake": "4.4.3",
@@ -106,7 +106,11 @@
     "A user decision is durable intent; a separate delivered record closes it only after adapter acceptance.",
     "A failed delivery confirmation or compensation leaves the ask open for restart outcome_unknown classification.",
     "Directory fsync failures and journal format zero are fail-closed rather than ignored.",
-    "A real SessionService service-level test holds the journal lease and proves the production decision path refuses forwarding while retaining the pending request and retry diagnostic."
+    "A real SessionService service-level test holds the journal lease and proves the production decision path refuses forwarding while retaining the pending request and retry diagnostic.",
+    "Transport-uncertain Codex delivery leaves durable intent open for outcome_unknown recovery instead of recording a final refusal closure.",
+    "A failed append with a still-usable descriptor remains retryable; only descriptor loss permanently disables the journal.",
+    "A first-sequence user decision with no preceding ask remains open for unknown-outcome recovery.",
+    "Replay caps include the string request ID, choice, five request strings, and every choice."
   ],
   "non_claims": [
     "No live Codex or Claude restart was exercised through the production SessionService process.",

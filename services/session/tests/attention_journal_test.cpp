@@ -18,6 +18,8 @@ namespace {
 using namespace lapis::session;
 using Kind = AttentionJournal::Kind;
 using Origin = AttentionJournal::Origin;
+constexpr std::size_t max_string_bytes = std::size_t{64} * 1024U;
+constexpr std::size_t max_choices = 64;
 
 void require(bool value, std::source_location where = std::source_location::current()) {
     if (!value)
@@ -235,6 +237,34 @@ void recovery_classification() {
     require(unknown.kind == Kind::decided && unknown.origin == Origin::outcome_unknown &&
             unknown.epoch == 2 && unknown.revision == 5 && unknown.choice.empty() &&
             !unknown.request.has_value());
+    auto orphan_intent = closed(Kind::decided, 3, std::int64_t{1}, 7, "allow");
+    orphan_intent.seq = 1;
+    open = open_questions({orphan_intent});
+    require(open.size() == 1 &&
+            outcome_unknown_for(open.front()).origin == Origin::outcome_unknown);
+}
+
+void maximum_record_replays_without_a_short_read() {
+    const auto directory = make_directory();
+    const auto path = directory / "journal.attention";
+    const std::string large(max_string_bytes, 'x');
+    attention::Request payload{
+        .id = std::string(max_string_bytes, 'i'),
+        .thread_id = large,
+        .turn_id = large,
+        .item_id = large,
+        .reason = large,
+        .summary = large,
+        .choices = std::vector<std::string>(max_choices, large),
+        .priority = 3,
+    };
+    {
+        AttentionJournal journal{path, std::uint64_t{16} * 1024U * 1024U};
+        journal.append(asked(1, payload.id, 1, payload));
+    }
+    AttentionJournal reopened{path, std::uint64_t{16} * 1024U * 1024U};
+    require(reopened.entries().size() == 1 && reopened.entries().front().request == payload);
+    std::filesystem::remove_all(directory);
 }
 
 void invalid_final_field_is_dropped() {
@@ -341,6 +371,7 @@ int main() {
         {"torn-header", torn_header_is_rewritten},
         {"single-writer", second_writer_rejected},
         {"recovery-classification", recovery_classification},
+        {"maximum-record", maximum_record_replays_without_a_short_read},
         {"rotation", oversized_journal_rotates},
         {"preappend-rotation-failure", failed_preappend_rotation_does_not_commit_record},
         {"invalid-final-field", invalid_final_field_is_dropped},

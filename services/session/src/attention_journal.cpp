@@ -21,9 +21,9 @@ constexpr std::uint8_t format_version = 1;
 constexpr std::size_t header_bytes = magic.size() + 2; // magic, version, newline
 constexpr std::size_t max_string_bytes = std::size_t{64} * 1024U;
 constexpr std::size_t max_choices = 64;
-// One valid record cannot exceed these maximum-size fields. Replay reads at
-// most one record of this size at a time instead of loading a whole journal.
-constexpr std::size_t max_record_bytes = (max_choices + 6U) * (max_string_bytes + 4U) + 64U;
+// ID, choice, five request strings, and every choice, plus fixed fields.
+// Replay reads at most one record of this size at a time.
+constexpr std::size_t max_record_bytes = (max_choices + 7U) * (max_string_bytes + 4U) + 64U;
 constexpr int lease_attempts = 3;
 
 // std::strerror is not thread safe; the error_code machinery is the
@@ -521,8 +521,19 @@ open_questions(const std::vector<AttentionJournal::Entry>& entries) {
         // It stays open until `delivered` or a compensating closure; older
         // non-user decisions remain closures for compatibility.
         if (entry.kind == AttentionJournal::Kind::decided &&
-            entry.origin == AttentionJournal::Origin::user)
+            entry.origin == AttentionJournal::Origin::user) {
+            const bool matched =
+                std::any_of(open.begin(), open.end(), [&](const AttentionJournal::Entry& question) {
+                    return question.id == entry.id && question.epoch == entry.epoch &&
+                           question.revision == entry.revision;
+                });
+            // A durable decision with no visible preceding ask can exist only
+            // when that ask append failed; its first sequence is the decision.
+            // Stale historical decisions with no matching ask stay closed.
+            if (!matched && entry.seq == 1)
+                open.push_back(entry);
             continue;
+        }
         for (std::size_t index = 0; index < open.size(); ++index) {
             if (open[index].id == entry.id && open[index].epoch == entry.epoch &&
                 open[index].revision == entry.revision) {

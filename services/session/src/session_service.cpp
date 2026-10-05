@@ -1437,7 +1437,8 @@ class SessionService final : public QObject {
             }
         } catch (const std::exception& error) {
             qWarning().noquote() << "Attention decision not recorded:" << error.what();
-            attention_journal_failed_ = true;
+            if (!attention_journal_->usable())
+                attention_journal_failed_ = true;
             allow_decision_retry(decision);
             decision_error_ = QStringLiteral("Decision could not be recorded; try again");
             attention_dirty_ = true;
@@ -1446,11 +1447,20 @@ class SessionService final : public QObject {
         }
         if (!codex_observer_->decide(decision.source_epoch, decision.request_id, decision.revision,
                                      decision.choice, decision.answers)) {
+            if (codex_observer_->diagnostic().contains(
+                    QStringLiteral("Codex response delivery is uncertain"))) {
+                decision_error_ =
+                    QStringLiteral("Delivery outcome is unknown; reconnect before deciding again");
+                attention_dirty_ = true;
+                schedule_attention();
+                return;
+            }
             try {
                 record_refused_decision(*attention_journal_, approval);
                 journaled_.erase(decision.request_id);
             } catch (const std::exception& error) {
-                attention_journal_failed_ = true;
+                if (!attention_journal_->usable())
+                    attention_journal_failed_ = true;
                 qWarning().noquote() << "Attention rejection not recorded:" << error.what();
             }
             allow_decision_retry(decision);
@@ -1463,7 +1473,8 @@ class SessionService final : public QObject {
         try {
             record_delivered_decision(*attention_journal_, approval);
         } catch (const std::exception& error) {
-            attention_journal_failed_ = true;
+            if (!attention_journal_->usable())
+                attention_journal_failed_ = true;
             qWarning().noquote() << "Attention delivery outcome not recorded:" << error.what();
             decision_error_ = QStringLiteral("Delivery outcome is unknown; see the audit journal");
             attention_dirty_ = true;
