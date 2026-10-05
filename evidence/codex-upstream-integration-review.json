@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-10-05",
+  "source": {
+    "baseline_revision": "8e3df6478536bf1bc5392a0cdecaaaf0a8ca0287",
+    "source_revision": "268e6d6907d219de6c63719a8e6618cb6c2dbdfa",
+    "integrated_revision": "6722df132ca8762eb939ba3fe94d5a4c5b53a577",
+    "ported_revision": "b5e0c55",
+    "ported_open_choice_row_sha256": "a188fe4a722f837170ec9e82eb6271850d38d4e9c4b3eb601d11bbeb41b57146",
+    "ported_review_section_sha256": "9b1169631c617e67c4ba9242f5ffb7d76ca29bba93f0a9e7c894a16d10742209",
+    "receipt_note": "source_revision identifies the original local source commit; integrated_revision is the branch head before the provenance and active-binary clarification. The two content hashes make the ported row and section reproducible without requiring the private source commit to be reachable from this branch."
+  },
+  "scope": "Documentation-only port of the Codex upstream integration review, its open-choice row, five observations, and probes P1-P3 onto current architecture. No Codex binary probe or adapter behavior changed.",
+  "verification": [
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "command": "architecture local link and anchor check",
+      "exit_code": 0,
+      "result": "94 local references checked"
+    },
+    {
+      "command": "compare source and ported content hashes",
+      "exit_code": 0,
+      "result": "The open-choice row and review-section SHA-256 values are recorded in source; the follow-up commit preserves those bytes."
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "Source/status, whitespace, Ruff, and Python unit checks passed after the documentation commit"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "After merging current main, source/status, whitespace, Ruff, and 527 Python tests (7 skipped) passed on the parent host."
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "After merging main including PR #92, source/status, whitespace, Ruff, and 536 Python tests (7 skipped) passed on the parent host."
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "After merging main including the importer static-review repair, source/status, whitespace, Ruff, and 536 Python tests (7 skipped) passed."
+    }
+  ],
+  "aggregate_passed": true,
+  "non_claims": [
+    "No Codex binary requalification, two-thread worktree probe, permission-catalog smoke, or adapter capability-matrix update was run.",
+    "The review records open probes only; it does not claim support for multi-thread Codex sessions.",
+    "No external upstream repository was modified or published."
+  ]
+}
