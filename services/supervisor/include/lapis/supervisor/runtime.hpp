@@ -40,6 +40,12 @@ struct ChildProcess {
     std::string endpoint;
     int transport{-1};
     bool adopted{false};
+    // The real session launcher records the protocol identity it verified.
+    // A generic harmless-child launcher may leave these empty; its process is
+    // then terminated by PID only instead of signalling a process group.
+    std::string session_id;
+    std::string session_epoch;
+    std::string fingerprint;
 };
 
 // The runtime owns lifecycle policy only. A production adapter still leaves

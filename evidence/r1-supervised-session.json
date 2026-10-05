@@ -104,5 +104,102 @@
       "supervisor-state gained a repeated-epoch restart refusal case",
       "adoption false-peer cases now assert ownership-record preservation and removal"
     ]
+  },
+  "latest_review_repairs": {
+    "recorded_on": "2026-10-05",
+    "base_revision": "adc41b155ff45c19217dc2df908b8ee31edb96aa",
+    "source_revision": "adc41b155ff45c19217dc2df908b8ee31edb96aa",
+    "source_dirty_at_checks": true,
+    "scope": "Current-head supervisor/session lifecycle review repairs. Worker results record sandbox limits; the parent host executed the decisive real-service and repository checks.",
+    "addressed": [
+      "alive() distinguishes an own-process zombie by waitpid and an externally adopted PID by ECHILD plus signal probe",
+      "successful adoption marks the token admission consumed so an adopted-service crash uses rotating restart admission",
+      "terminate() reaps an exited PID and revalidates endpoint identity plus PID before using a process-group signal",
+      "handshake retries only the exact startup overloaded status; view-cap and other overload replies are final",
+      "adoption tolerates a rotated stale record before its liveness check instead of throwing it permanently unrecoverable",
+      "launch() reclaims a dead retained peer and terminates a live retained peer without leaving desired-stopped or a blocking record",
+      "handshake-failure cleanup escalates to SIGKILL before removing ownership",
+      "the checker reports observed integration, bind skip and failed/absent-marker outcomes separately",
+      "--output outside the checkout is rejected before a receipt can escape relative_to(ROOT)",
+      "a malformed --session-epoch produces an option-specific diagnostic",
+      "a persisted desired-start spawn token counts as an already consumed initial admission, so unattended-crash reconstruction rotates identity",
+      "live retained-peer replacement requires both ownership-token and endpoint-protocol verification; an unverified peer is never signalled and keeps its record",
+      "adopted liveness rechecks executable and exact ownership so a recycled PID cannot remain converged"
+    ],
+    "new_coverage": [
+      "adopted-service crash restart after supervisor reconstruction",
+      "waitid-based unreaped-zombie synchronization",
+      "full view-cap final-overload and retained-ownership replacement recovery",
+      "protocol mismatch terminates only its PID while a same-process-group sentinel survives",
+      "stale rotated dead ownership reclamation",
+      "malformed epoch diagnostic wording",
+      "checker success, skip and failed-marker diagnostics plus outside output rejection",
+      "reconstruction after a supervisor dies and its replacement service crashes without a live supervisor",
+      "a retained ownership-token mismatch refuses signalling and preserves the live peer record"
+    ],
+    "verification": [
+      {
+        "name": "ruff-format",
+        "command": "ruff format scripts/check_supervisor_runtime.py scripts/tests/test_check_supervisor_runtime.py",
+        "exit_code": 0
+      },
+      {
+        "name": "ruff-check",
+        "command": "ruff check scripts/check_supervisor_runtime.py scripts/tests/test_check_supervisor_runtime.py",
+        "exit_code": 0
+      },
+      {
+        "name": "clang-format",
+        "command": "clang-format -i <changed C++ headers and sources>; git diff --check",
+        "exit_code": 0
+      },
+      {
+        "name": "checker-receipt-python-tests",
+        "command": "python3 -m pytest -q scripts/tests/test_check_supervisor_runtime.py",
+        "exit_code": 0,
+        "result": "3 passed."
+      },
+      {
+        "name": "focused-ctest",
+        "command": "ctest --test-dir build/r1-runtime -R 'supervisor-(state|runtime|session-service)$' --output-on-failure --no-tests=error",
+        "exit_code": 0,
+        "result": "supervisor-state and supervisor-runtime passed; supervisor-session-service returned CTest skip 75 after its QLocalServer bind probe failed. This is not real-service integration evidence."
+      },
+      {
+        "name": "focused-checker",
+        "command": "python3 scripts/check_supervisor_runtime.py --output build/reports/r1-supervisor/receipt.json",
+        "exit_code": 1,
+        "result": "Configure and build passed and CTest accepted the skip, but the real-service-integration check correctly remained failed/integration_skipped; aggregate receipt is false."
+      },
+      {
+        "name": "repository_quality_worker_sandbox",
+        "command": "python3 scripts/lapis.py quality",
+        "exit_code": 1,
+        "result": "Source/status, git diff, Ruff check and Ruff format passed. Of 501 tests, 3 failed and 28 errored with sandbox bind or private-file-mode denials; 8 skipped. This is an environment-limited run, not a source regression receipt."
+      },
+      {
+        "name": "checker-receipt-python-tests-parent-host",
+        "command": "python3 -m pytest -q scripts/tests/test_check_supervisor_runtime.py",
+        "exit_code": 0,
+        "result": "3 passed after the readiness-harness repair."
+      },
+      {
+        "name": "focused-supervisor-parent-host",
+        "command": "python3 scripts/check_supervisor_runtime.py --output build/reports/r1-supervisor/receipt.json",
+        "exit_code": 0,
+        "result": "Configure, build, and 3/3 focused CTest cases passed at dirty base adc41b1, including real-service adoption, crash restart, retained-ownership recovery, and protocol-safe termination."
+      },
+      {
+        "name": "repository-quality-parent-host",
+        "command": "python3 scripts/lapis.py quality",
+        "exit_code": 0,
+        "result": "Source/status, diff hygiene, Ruff check/format, and 501 Python tests (7 skipped) passed on the parent host."
+      }
+    ],
+    "non_claims": [
+      "The worker sandbox bind and filesystem failures remain environment observations, not source acceptance.",
+      "No GUI birth route, launchd, package, reboot, sanitizer, restart-storm, load, latency, or memory qualification is claimed.",
+      "No broader C++ static-analysis pass is claimed beyond the focused changed-source checks."
+    ]
   }
 }

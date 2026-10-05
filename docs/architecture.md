@@ -3079,6 +3079,27 @@ child payload through the same service validation used to derive the launch
 fingerprint. The post-repair parent-host focused run is the 3/3 result recorded
 at the revision above; the repairs in this batch require their own receipt.
 
+The October 5 current-head repair batch closes the remaining review lifecycle
+defects: an adopted zombie is waitpid-visible and reaped, startup overload is
+distinguished from permanent view/pending overload, matching or rotated stale
+ownership cannot wedge the next launch, group termination requires an endpoint
+identity/PID recheck, checker receipts distinguish observed success, bind skip
+and failed test output, and malformed `--session-epoch` diagnostics name that
+option. A persisted desired-start token counts as an already consumed initial
+admission, so reconstruction after an unattended crash rotates identity. A live
+retained peer is replaced only after both its ownership token and endpoint
+protocol verify; otherwise its ownership record remains untouched and no signal
+is sent. Adopted liveness also rechecks executable and token ownership so a
+recycled PID cannot keep a stale child converged. Focused regressions cover
+each source repair. The worker sandbox
+compiled all affected targets, passed state and generic runtime CTest, and
+correctly recorded the real-service CTest as a `QLocalServer` bind skip rather
+than integration success. The subsequent parent-host rerun passed all three
+focused supervisor cases at this dirty head, including real-service adoption,
+crash restart and retained-ownership recovery, followed by the full repository
+quality gate. The tracked evidence records both environments without treating
+the worker skip as integration acceptance.
+
 This is not the persistent supervisor. It has no launchd registration, daemon
 CLI, package update flow, GUI route, production client, multi-session restore,
 or provider routing. The existing service remains the PTY/terminal/history

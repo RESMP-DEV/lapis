@@ -91,7 +91,12 @@ std::optional<pid_t> parse_pid(const std::string& value) {
                              static_cast<pid_t>(parsed)}; // NOLINT(bugprone-narrowing-conversions)
 }
 
-std::optional<pid_t> read_ownership(const std::string& path, const std::string& spawn_token) {
+struct OwnershipRecord {
+    pid_t pid{};
+    std::string spawn_token;
+};
+
+std::optional<OwnershipRecord> read_ownership_record(const std::string& path) {
     struct stat info{};
     if (::lstat(path.c_str(), &info) != 0) {
         if (errno == ENOENT)
@@ -119,9 +124,19 @@ std::optional<pid_t> read_ownership(const std::string& path, const std::string& 
         !hex(bytes.substr(prefix.size(), spawn_token_hex_bytes), spawn_token_hex_bytes) ||
         bytes[prefix.size() + spawn_token_hex_bytes] != '\n')
         failed("Invalid supervisor service ownership record");
-    if (bytes.substr(prefix.size(), spawn_token_hex_bytes) != spawn_token)
+    const auto pid = parse_pid(bytes.substr(prefix.size() + spawn_token_hex_bytes + 1));
+    if (!pid)
+        failed("Supervisor service ownership record has no usable PID");
+    return OwnershipRecord{*pid, bytes.substr(prefix.size(), spawn_token_hex_bytes)};
+}
+
+std::optional<pid_t> read_ownership(const std::string& path, const std::string& spawn_token) {
+    const auto record = read_ownership_record(path);
+    if (!record)
+        return std::nullopt;
+    if (record->spawn_token != spawn_token)
         failed("Supervisor service ownership identity does not match authoritative state");
-    return parse_pid(bytes.substr(prefix.size() + spawn_token_hex_bytes + 1));
+    return record->pid;
 }
 
 bool process_runs_program(pid_t pid, const QString& program) {
@@ -261,10 +276,12 @@ bool SessionServiceLauncher::handshake(const DesiredSession& session, pid_t chil
                 while (wire::take_frame(buffer, frame)) {
                     if (frame.kind == wire::Kind::status) {
                         const auto status = wire::decode_status(frame.payload);
-                        if (status.code == wire::StatusCode::overloaded) {
+                        if (status.code == wire::StatusCode::overloaded &&
+                            status.message == QStringLiteral("Session is starting; try again")) {
                             // The local listener accepts attachments before the
-                            // PTY emits started. That transient admission window
-                            // is retryable; identity and launch rejection is not.
+                            // PTY emits started. Only that transient admission
+                            // window is retryable; view-slot, attachment and
+                            // generation overload is final.
                             socket.abort();
                             retry_startup = true;
                             break;
@@ -316,29 +333,62 @@ std::optional<ChildProcess> SessionServiceLauncher::adopt(const DesiredSession& 
                                                           const std::string& spawn_token) {
     const auto endpoint = socket_path(session).toStdString();
     validate_parent(QString::fromStdString(endpoint));
-    const auto owned = read_ownership(owner_path(endpoint), spawn_token);
-    if (!owned)
+    const auto record = read_ownership_record(owner_path(endpoint));
+    if (!record)
         return std::nullopt;
-    if (!process_alive(*owned) || !process_runs_program(*owned, launch_.service_program)) {
+    const auto owned = record->pid;
+    if (!process_alive(owned) || !process_runs_program(owned, launch_.service_program)) {
         remove_quietly(owner_path(endpoint));
         return std::nullopt;
     }
-    if (!handshake(session, *owned)) {
+    // A rotated token with a live peer is recoverable by launch's verified
+    // cleanup; adoption must not throw or delete that peer's ownership record.
+    if (record->spawn_token != spawn_token)
+        return std::nullopt;
+    if (!handshake(session, owned)) {
         // The peer is alive and verified against this spawn token, so it is
         // recoverable: deleting its ownership record would orphan the running
         // service while no supervisor could adopt or stop it again. Keep the
         // record and let a later adoption retry or explicit stop decide.
         return std::nullopt;
     }
-    return ChildProcess{*owned, spawn_token, endpoint, -1, true};
+    return ChildProcess{owned,
+                        spawn_token,
+                        endpoint,
+                        -1,
+                        true,
+                        session.identity.session_id,
+                        session.identity.epoch,
+                        session.fingerprint};
 }
 
 ChildProcess SessionServiceLauncher::launch(const DesiredSession& session,
                                             const std::string& spawn_token) {
     const auto endpoint = socket_path(session).toStdString();
     validate_parent(QString::fromStdString(endpoint));
-    if (read_ownership(owner_path(endpoint), spawn_token))
-        failed("A supervisor service already owns this spawn token");
+    if (const auto retained = read_ownership_record(owner_path(endpoint))) {
+        const bool live_instance = process_alive(retained->pid) &&
+                                   process_runs_program(retained->pid, launch_.service_program);
+        if (live_instance) {
+            // A token match identifies the ownership instance; protocol
+            // verification is what makes the process group safe to signal.
+            // Without both checks, retain the record and refuse replacement.
+            const bool verified =
+                retained->spawn_token == spawn_token && handshake(session, retained->pid);
+            if (!verified)
+                throw std::runtime_error(
+                    "A live retained supervisor service is not verifiable; refusing to "
+                    "signal or replace it");
+            static_cast<void>(::kill(retained->pid, SIGTERM));
+            static_cast<void>(::killpg(retained->pid, SIGTERM));
+            if (!wait_terminated(retained->pid)) {
+                static_cast<void>(::kill(retained->pid, SIGKILL));
+                static_cast<void>(::killpg(retained->pid, SIGKILL));
+                static_cast<void>(wait_terminated(retained->pid));
+            }
+        }
+        remove_quietly(owner_path(endpoint));
+    }
     if (QFile::exists(QString::fromStdString(endpoint))) {
         QLocalSocket probe;
         probe.connectToServer(QString::fromStdString(endpoint), QLocalSocket::ReadWrite);
@@ -489,25 +539,90 @@ ChildProcess SessionServiceLauncher::launch(const DesiredSession& session,
                                  << QString::fromUtf8(service_log.readAll());
         static_cast<void>(::killpg(pid, SIGTERM));
         static_cast<void>(wait_terminated(pid));
+        if (process_alive(pid)) {
+            static_cast<void>(::killpg(pid, SIGKILL));
+            static_cast<void>(wait_terminated(pid));
+        }
         remove_quietly(owner);
         failed("Supervisor service did not complete its protocol handshake");
     }
-    return ChildProcess{pid, spawn_token, endpoint, -1, false};
+    return ChildProcess{pid,
+                        spawn_token,
+                        endpoint,
+                        -1,
+                        false,
+                        session.identity.session_id,
+                        session.identity.epoch,
+                        session.fingerprint};
+}
+
+bool protocol_identity_matches(const ChildProcess& child) {
+    if (child.session_id.empty() || child.session_epoch.empty() || child.fingerprint.empty())
+        return false;
+    QLocalSocket socket;
+    socket.connectToServer(QString::fromStdString(child.endpoint), QLocalSocket::ReadWrite);
+    if (!socket.waitForConnected(200))
+        return false;
+    const wire::AttachRequest request{
+        .mode = wire::AttachMode::reconnect,
+        .fingerprint = QByteArray::fromHex(QByteArray::fromStdString(child.fingerprint)),
+        .expected =
+            wire::SessionIdentity{
+                QByteArray::fromHex(QByteArray::fromStdString(child.session_id)),
+                QByteArray::fromHex(QByteArray::fromStdString(child.session_epoch))},
+        .hyperlinks = false,
+        .attention_phase = false,
+        .paste_transactions = false,
+    };
+    const auto bytes = wire::frame(wire::Kind::attach, wire::encode_attach(request));
+    if (socket.write(bytes) != bytes.size() || !socket.flush())
+        return false;
+    QByteArray buffer;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline) {
+        buffer += socket.readAll();
+        wire::Frame frame;
+        while (wire::take_frame(buffer, frame)) {
+            if (frame.kind != wire::Kind::hello)
+                return false;
+            const auto hello = wire::decode_hello(frame.payload);
+            return hello.attachment.identity ==
+                   wire::SessionIdentity{
+                       QByteArray::fromHex(QByteArray::fromStdString(child.session_id)),
+                       QByteArray::fromHex(QByteArray::fromStdString(child.session_epoch))};
+        }
+        if (!socket.waitForReadyRead(50))
+            continue;
+    }
+    return false;
 }
 
 bool SessionServiceLauncher::alive(const ChildProcess& child) {
     if (child.pid <= 0)
         return false;
-    // A crashed service this supervisor forked remains a zombie until reaped,
-    // and kill(pid, 0) keeps succeeding for zombies. Reap own children here so
-    // convergence observes the death and the restart path can fire; adopted
-    // PIDs belong to another parent and can only be probed with signals.
-    if (!child.adopted) {
+    // A crashed service remains a zombie until reaped, and kill(pid, 0) keeps
+    // succeeding for zombies. Reap a child in this process first. ECHILD means
+    // the PID was adopted elsewhere, so the signal probe is then meaningful.
+    for (;;) {
         int status = 0;
-        if (::waitpid(child.pid, &status, WNOHANG) == child.pid)
+        const auto waited = ::waitpid(child.pid, &status, WNOHANG);
+        if (waited == child.pid)
             return false;
+        if (waited == 0)
+            break;
+        if (waited < 0 && errno == EINTR)
+            continue;
+        break;
     }
-    return process_alive(child.pid);
+    if (!process_alive(child.pid) || !process_runs_program(child.pid, launch_.service_program))
+        return false;
+    try {
+        const auto record = read_ownership_record(owner_path(child.endpoint));
+        return record.has_value() && record->pid == child.pid &&
+               record->spawn_token == child.spawn_token;
+    } catch (...) {
+        return false;
+    }
 }
 
 bool SessionServiceLauncher::terminate(const ChildProcess& child) {
@@ -517,14 +632,26 @@ bool SessionServiceLauncher::terminate(const ChildProcess& child) {
     // have exited and been recycled since. Never signal a process or group that
     // no longer provably runs this exact service program.
     if (!process_runs_program(child.pid, launch_.service_program)) {
-        if (!child.adopted) {
-            int status = 0;
-            static_cast<void>(::waitpid(child.pid, &status, WNOHANG));
-        }
+        int status = 0;
+        static_cast<void>(::waitpid(child.pid, &status, WNOHANG));
         return !process_alive(child.pid);
     }
-    const auto signal_peer = [pid = child.pid](int signal_value) {
-        static_cast<void>(::killpg(pid, signal_value));
+    // Executable identity alone does not distinguish this instance from a
+    // recycled PID running the same program. Revalidate the endpoint protocol;
+    // only an exact identity/PID match may receive a process-group signal.
+    bool ownership_matches = false;
+    try {
+        const auto record = read_ownership_record(owner_path(child.endpoint));
+        ownership_matches = record.has_value() && record->pid == child.pid &&
+                            record->spawn_token == child.spawn_token;
+    } catch (...) {
+        ownership_matches = false;
+    }
+    if (!ownership_matches)
+        return !process_alive(child.pid);
+    const bool protocol_matches = protocol_identity_matches(child);
+    const auto signal_peer = [pid = child.pid, group = protocol_matches](int signal_value) {
+        static_cast<void>(group ? ::killpg(pid, signal_value) : ::kill(pid, signal_value));
     };
     signal_peer(SIGTERM);
     if (wait_terminated(child.pid))
@@ -534,8 +661,16 @@ bool SessionServiceLauncher::terminate(const ChildProcess& child) {
 }
 
 void SessionServiceLauncher::release(const ChildProcess& child) {
-    if (!child.endpoint.empty())
-        remove_quietly(owner_path(child.endpoint));
+    if (child.endpoint.empty())
+        return;
+    try {
+        const auto record = read_ownership_record(owner_path(child.endpoint));
+        if (record.has_value() && record->pid == child.pid &&
+            record->spawn_token == child.spawn_token)
+            remove_quietly(owner_path(child.endpoint));
+    } catch (...) {
+        // A malformed or foreign ownership record is not ours to delete.
+    }
 }
 
 } // namespace lapis::supervisor

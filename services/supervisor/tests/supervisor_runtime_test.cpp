@@ -84,7 +84,7 @@ class FakeLauncherWorld {
         const auto found = children.find(token);
         if (found == children.end() || !found->second.alive)
             return std::nullopt;
-        return ChildProcess{found->second.pid, token, session.endpoint, -1, true};
+        return ChildProcess{found->second.pid, token, session.endpoint, -1, true, "", "", ""};
     }
 
     [[nodiscard]] ChildProcess launch(const DesiredSession& session, const std::string& token) {
@@ -92,7 +92,7 @@ class FakeLauncherWorld {
         const pid_t pid = ++next_pid;
         children.emplace(token, FakeChild{pid, true});
         ++launches;
-        return ChildProcess{pid, token, session.endpoint, -1, false};
+        return ChildProcess{pid, token, session.endpoint, -1, false, "", "", ""};
     }
 
     [[nodiscard]] bool alive(const ChildProcess& child) {

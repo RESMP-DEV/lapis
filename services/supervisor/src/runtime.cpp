@@ -409,6 +409,13 @@ SupervisorRuntime::SupervisorRuntime(
       clock_{clock ? std::move(clock) : std::make_shared<SteadyMonotonicClock>()} {
     if (!registry_ || !launcher_)
         failed("Supervisor runtime dependencies are required");
+    // A persisted desired-start slot with a spawn token has already consumed
+    // its initial admission. Reconstructing after an unattended service crash
+    // must use the rotating restart transition, never replay that identity.
+    const auto& persisted = registry_->state();
+    initial_admission_used_ = persisted.enabled && persisted.session.has_value() &&
+                              persisted.session->desired_state == DesiredState::started &&
+                              !persisted.session->spawn_token.empty();
     try {
         static_cast<void>(converge());
     } catch (const std::exception&) {
@@ -482,6 +489,9 @@ Convergence SupervisorRuntime::converge() {
     const auto& session = *current.session;
     if (const auto adopted = launcher_->adopt(session, session.spawn_token)) {
         child_ = *adopted;
+        // Adoption consumed this token's admission. A later crash is a new
+        // service instance and must use the rotating restart transition.
+        initial_admission_used_ = true;
         return Convergence::converged;
     }
     if (initial_admission_used_) {

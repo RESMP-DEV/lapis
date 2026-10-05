@@ -11,13 +11,16 @@
 #include <QJsonValue>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QProcess>
 #include <QTemporaryDir>
 
 #include <chrono>
 #include <csignal>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <source_location>
+#include <spawn.h>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -26,6 +29,8 @@
 #include <thread>
 #include <unistd.h>
 #include <utility>
+
+extern char** environ;
 
 namespace {
 using namespace lapis::supervisor;
@@ -220,6 +225,18 @@ void require_bindable_endpoint(const QString& probe) {
     QFile::remove(probe);
 }
 
+void wait_zombie(pid_t pid) {
+    for (int attempt = 0; attempt < 300; ++attempt) {
+        siginfo_t info{};
+        info.si_pid = 0;
+        if (::waitid(P_PID, static_cast<id_t>(pid), &info, WNOHANG | WEXITED | WNOWAIT) == 0 &&
+            info.si_pid == pid)
+            return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    throw std::runtime_error("the crashed child did not become a zombie");
+}
+
 void adoption_rejects_false_peers(const DesiredSession& session, const SessionServiceLaunch& launch,
                                   const std::string& fingerprint) {
     SessionServiceLauncher real{launch, fingerprint};
@@ -240,6 +257,20 @@ void adoption_rejects_false_peers(const DesiredSession& session, const SessionSe
     require(!real.adopt(fingerprint_changed, session.spawn_token), "reject a launch mismatch");
     require(ownership_bytes(owner, preserved) && preserved == saved,
             "a launch mismatch does not orphan the running service");
+    restore_ownership(owner, saved);
+
+    QFile rotated(QString::fromStdString(owner));
+    require(rotated.open(QIODevice::WriteOnly | QIODevice::Truncate),
+            "replace ownership for token rotation");
+    const std::string stale_bytes =
+        "LAPIS-SUP-OWNER-1\n" + repeat('c', spawn_token_hex_bytes) + "\n99999999";
+    require(rotated.write(QByteArray::fromStdString(stale_bytes)) ==
+                static_cast<qint64>(stale_bytes.size()),
+            "write a stale rotated ownership record");
+    rotated.close();
+    require(!real.adopt(session, session.spawn_token),
+            "a stale dead record does not throw before liveness");
+    require(!ownership_bytes(owner, preserved), "a stale dead ownership record is reclaimed");
     restore_ownership(owner, saved);
 
     QFile dead(QString::fromStdString(owner));
@@ -263,6 +294,235 @@ void wait_gone(pid_t pid) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     throw std::runtime_error("supervised processes did not stop");
+}
+
+void final_overload_recovers_retained_ownership() {
+    QTemporaryDir directory = owned_test_directory();
+    require(directory.isValid(), "create an owned private test directory");
+    require_bindable_endpoint(directory.filePath(QStringLiteral("bind.sock")));
+    const auto endpoint = directory.filePath(QStringLiteral("recover.sock")).toStdString();
+    const auto expected =
+        lapis::session::launch_fingerprint(lapis::session::validate_launch(launch_spec(directory)));
+    const auto fingerprint = QString::fromLatin1(expected.toHex()).toStdString();
+    auto desired = record(endpoint, fingerprint);
+    desired.spawn_token = repeat('d', spawn_token_hex_bytes);
+    SessionServiceLauncher launcher{service_launch(directory), fingerprint};
+    const auto first = launcher.launch(desired, desired.spawn_token);
+    require(first.pid > 0, "retained-ownership recovery starts its first peer");
+
+    std::vector<std::unique_ptr<QLocalSocket>> views;
+    try {
+        for (unsigned index = 0; index < 4; ++index) {
+            auto socket = std::make_unique<QLocalSocket>();
+            socket->connectToServer(QString::fromStdString(endpoint), QLocalSocket::ReadWrite);
+            require(socket->waitForConnected(5000), "a joined view reaches the service");
+            static_cast<void>(attach(*socket, desired, true));
+            static_cast<void>(synchronize(*socket));
+            views.push_back(std::move(socket));
+        }
+
+        const auto started = std::chrono::steady_clock::now();
+        require(!launcher.adopt(desired, desired.spawn_token),
+                "a full view-cap overloaded reply is final");
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+        require(elapsed < std::chrono::seconds(5),
+                "view-cap overload does not consume the startup retry budget");
+        QByteArray saved;
+        require(ownership_bytes(first.endpoint + ".supervisor-owner", saved),
+                "a live overloaded peer retains its ownership record");
+        for (const auto& view : views)
+            detach(*view);
+        views.clear();
+    } catch (...) {
+        static_cast<void>(launcher.terminate(first));
+        throw;
+    }
+
+    const auto replacement = launcher.launch(desired, desired.spawn_token);
+    require(replacement.pid > 0 && replacement.pid != first.pid,
+            "retained ownership does not block the next start");
+    static_cast<void>(launcher.terminate(replacement));
+    launcher.release(replacement);
+    wait_gone(first.pid);
+    wait_gone(replacement.pid);
+    struct stat owner_info{};
+    require(::lstat((endpoint + ".supervisor-owner").c_str(), &owner_info) != 0 && errno == ENOENT,
+            "recovery leaves only the replacement ownership lifecycle");
+}
+
+void retained_mismatch_never_signals_unverified_peer() {
+    QTemporaryDir directory = owned_test_directory();
+    require(directory.isValid(), "create an owned private test directory");
+    require_bindable_endpoint(directory.filePath(QStringLiteral("bind.sock")));
+    const auto endpoint = directory.filePath(QStringLiteral("mismatch.sock")).toStdString();
+    const auto expected =
+        lapis::session::launch_fingerprint(lapis::session::validate_launch(launch_spec(directory)));
+    const auto fingerprint = QString::fromLatin1(expected.toHex()).toStdString();
+    auto desired = record(endpoint, fingerprint);
+    desired.spawn_token = repeat('f', spawn_token_hex_bytes);
+    SessionServiceLauncher launcher{service_launch(directory), fingerprint};
+    const auto peer = launcher.launch(desired, desired.spawn_token);
+    require(peer.pid > 0, "the retained peer starts");
+
+    const std::string mismatched = repeat('a', spawn_token_hex_bytes);
+    const QByteArray stale = QByteArray::fromStdString("LAPIS-SUP-OWNER-1\n" + mismatched + "\n" +
+                                                       std::to_string(peer.pid));
+    restore_ownership(endpoint + ".supervisor-owner", stale);
+    bool refused = false;
+    try {
+        static_cast<void>(launcher.launch(desired, desired.spawn_token));
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    require(refused, "a token mismatch refuses retained-peer replacement");
+    require(::kill(peer.pid, 0) == 0, "an unverified retained peer is not signalled");
+    QByteArray preserved;
+    require(ownership_bytes(endpoint + ".supervisor-owner", preserved) && preserved == stale,
+            "an unverified retained peer keeps its ownership record");
+
+    static_cast<void>(::killpg(peer.pid, SIGKILL));
+    wait_gone(peer.pid);
+    QFile::remove(QString::fromStdString(endpoint + ".supervisor-owner"));
+    QFile::remove(QString::fromStdString(endpoint));
+}
+
+void terminate_revalidates_protocol_before_group_signal() {
+    QTemporaryDir directory = owned_test_directory();
+    require(directory.isValid(), "create an owned private test directory");
+    require_bindable_endpoint(directory.filePath(QStringLiteral("bind.sock")));
+    const auto endpoint = directory.filePath(QStringLiteral("identity.sock")).toStdString();
+    const auto expected =
+        lapis::session::launch_fingerprint(lapis::session::validate_launch(launch_spec(directory)));
+    const auto fingerprint = QString::fromLatin1(expected.toHex()).toStdString();
+    auto desired = record(endpoint, fingerprint);
+    desired.spawn_token = repeat('e', spawn_token_hex_bytes);
+    auto peer_identity = desired.identity;
+    peer_identity.epoch = repeat('2', identity_hex_bytes);
+    auto peer = desired;
+    peer.identity = peer_identity;
+
+    const auto sentinel_pid = ::fork();
+    require(sentinel_pid >= 0, "fork the same-process-group sentinel");
+    if (sentinel_pid == 0)
+        ::execl("/bin/sleep", "sleep", "30", static_cast<char*>(nullptr));
+    require(::kill(sentinel_pid, 0) == 0, "the sentinel starts");
+
+    const QStringList peer_arguments{QString::fromLatin1(LAPIS_SUPERVISOR_SESSION_SERVICE),
+                                     QStringLiteral("--session-id"),
+                                     QString::fromStdString(peer_identity.session_id),
+                                     QStringLiteral("--session-epoch"),
+                                     QString::fromStdString(peer_identity.epoch),
+                                     QStringLiteral("--size"),
+                                     QStringLiteral("80x24"),
+                                     QString::fromStdString(endpoint),
+                                     directory.path(),
+                                     QStringLiteral("/bin/cat")};
+    std::vector<std::string> storage;
+    storage.reserve(static_cast<std::size_t>(peer_arguments.size()));
+    for (const auto& argument : peer_arguments)
+        storage.push_back(argument.toStdString());
+    std::vector<char*> argv;
+    argv.reserve(storage.size() + 1);
+    for (const auto& value : storage)
+        argv.push_back(const_cast<char*>(value.c_str()));
+    argv.push_back(nullptr);
+
+    pid_t peer_pid = -1;
+    quint64 peer_child_pid = 0;
+    require(::posix_spawn(&peer_pid, storage.front().c_str(), nullptr, nullptr, argv.data(),
+                          environ) == 0,
+            "spawn the non-setsid protocol peer");
+    try {
+        bool socket_ready = false;
+        const auto readiness_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
+        while (std::chrono::steady_clock::now() < readiness_deadline) {
+            struct stat socket_info{};
+            socket_ready =
+                ::stat(endpoint.c_str(), &socket_info) == 0 && S_ISSOCK(socket_info.st_mode);
+            if (socket_ready)
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        require(socket_ready, "the non-setsid peer binds its endpoint");
+        const std::string ownership =
+            "LAPIS-SUP-OWNER-1\n" + desired.spawn_token + "\n" + std::to_string(peer_pid);
+        QFile owner_file(QString::fromStdString(endpoint + ".supervisor-owner"));
+        require(owner_file.open(QIODevice::WriteOnly | QIODevice::NewOnly) &&
+                    owner_file.write(QByteArray::fromStdString(ownership)) ==
+                        static_cast<qint64>(ownership.size()) &&
+                    owner_file.setPermissions(QFile::ReadOwner | QFile::WriteOwner),
+                "record the peer PID and token before termination");
+        owner_file.close();
+
+        try {
+            for (int attempt = 0; attempt < 100; ++attempt) {
+                QLocalSocket client;
+                client.connectToServer(QString::fromStdString(endpoint), QLocalSocket::ReadWrite);
+                require(client.waitForConnected(5000), "the protocol peer accepts a client");
+                try {
+                    peer_child_pid = attach(client, peer, true).pid;
+                    break;
+                } catch (const std::runtime_error& error) {
+                    if (std::string_view{error.what()}.find("Session is starting") ==
+                        std::string_view::npos)
+                        throw;
+                    client.disconnectFromServer();
+                    if (client.state() != QLocalSocket::UnconnectedState)
+                        require(client.waitForDisconnected(2000),
+                                "a starting protocol peer disconnects cleanly");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+            }
+            require(peer_child_pid > 0, "the protocol peer owns a terminal child");
+
+            ChildProcess recycled{peer_pid,
+                                  peer.spawn_token,
+                                  endpoint,
+                                  -1,
+                                  true,
+                                  peer_identity.session_id,
+                                  repeat('3', identity_hex_bytes),
+                                  fingerprint};
+            SessionServiceLauncher launcher{service_launch(directory), fingerprint};
+            require(launcher.terminate(recycled), "a protocol mismatch terminates only its PID");
+            wait_gone(peer_pid);
+            require(::kill(sentinel_pid, 0) == 0,
+                    "a protocol mismatch does not signal the recycled PID's group");
+        } catch (...) {
+            static_cast<void>(::kill(peer_pid, SIGKILL));
+            static_cast<void>(::kill(sentinel_pid, SIGKILL));
+            throw;
+        }
+    } catch (...) {
+        static_cast<void>(::kill(peer_pid, SIGKILL));
+        if (peer_child_pid != 0)
+            static_cast<void>(::kill(static_cast<pid_t>(peer_child_pid), SIGKILL));
+        static_cast<void>(::kill(sentinel_pid, SIGKILL));
+        throw;
+    }
+    static_cast<void>(::kill(static_cast<pid_t>(peer_child_pid), SIGKILL));
+    static_cast<void>(::kill(sentinel_pid, SIGKILL));
+    wait_gone(sentinel_pid);
+    QFile::remove(QString::fromStdString(endpoint));
+}
+
+void malformed_epoch_names_the_epoch_option() {
+    QTemporaryDir directory = owned_test_directory();
+    require(directory.isValid(), "create an owned private test directory");
+    QProcess service;
+    service.setProgram(QString::fromLatin1(LAPIS_SUPERVISOR_SESSION_SERVICE));
+    service.setArguments({QStringLiteral("--session-epoch"), QStringLiteral("not-hex"),
+                          QStringLiteral("--size"), QStringLiteral("80x24"),
+                          directory.filePath(QStringLiteral("epoch.sock")), directory.path(),
+                          QStringLiteral("/bin/cat")});
+    service.start();
+    require(service.waitForFinished(5000), "a malformed epoch fails bounded startup");
+    const auto diagnostic = QString::fromUtf8(service.readAllStandardError());
+    require(service.exitCode() != 0 &&
+                diagnostic.contains(QStringLiteral("Session epoch must be exactly")),
+            "a malformed epoch diagnostic names --session-epoch");
+    require(!diagnostic.contains(QStringLiteral("Session ID must be exactly")),
+            "the epoch diagnostic does not reuse the session-ID wording");
 }
 
 void supervised_service_clients_adopt_and_stop() {
@@ -373,6 +633,14 @@ void supervised_service_clients_adopt_and_stop() {
                 reconstructed.child_pid() == service_pid,
             "a reconstructed supervisor adopts the same real service");
 
+    require(::kill(service_pid, SIGKILL) == 0, "crash the adopted real service");
+    wait_zombie(service_pid);
+    require(reconstructed.converge() == Convergence::restarted,
+            "a crashed adopted service is reaped and restarted");
+    const auto replacement_pid = reconstructed.child_pid();
+    require(replacement_pid > 0 && replacement_pid != service_pid,
+            "an adopted-service crash produces a new service process");
+
     require(reconstructed.state().session.has_value(), "adopted state retains the session");
     const QJsonObject stop_json{
         {QStringLiteral("version"), 1},
@@ -396,6 +664,7 @@ void supervised_service_clients_adopt_and_stop() {
     require(reconstructed.converge() == Convergence::stopped && reconstructed.child_pid() == -1,
             "explicit supervisor stop terminates the adopted service");
     wait_gone(service_pid);
+    wait_gone(replacement_pid);
     wait_gone(static_cast<pid_t>(child_pid));
     struct stat owner_info{};
     require(::lstat((endpoint + ".supervisor-owner").c_str(), &owner_info) != 0 && errno == ENOENT,
@@ -431,9 +700,13 @@ void crashed_service_restarts_with_rotated_identity() {
     require(::kill(first_pid, SIGKILL) == 0, "crash the first real service");
     bool crashed = false;
     for (int attempt = 0; attempt < 300 && !crashed; ++attempt) {
-        // SIGKILL delivery is asynchronous; converge once the dead service is
-        // visible as an unreaped zombie so alive() cannot hide behind it.
-        crashed = ::kill(first_pid, 0) == 0;
+        // This process forked the service, so waitid is the only probe that
+        // distinguishes an unreaped zombie from a process that still runs.
+        siginfo_t info{};
+        info.si_pid = 0;
+        crashed = ::waitid(P_PID, static_cast<id_t>(first_pid), &info,
+                           WNOHANG | WEXITED | WNOWAIT) == 0 &&
+                  info.si_pid == first_pid;
         if (!crashed)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
@@ -474,13 +747,100 @@ void crashed_service_restarts_with_rotated_identity() {
             "explicit stop removes the replacement ownership record");
 }
 
+void reconstruction_after_unattended_crash_rotates_identity() {
+    QTemporaryDir directory = owned_test_directory();
+    require(directory.isValid(), "create an owned private test directory");
+    require_bindable_endpoint(directory.filePath(QStringLiteral("bind.sock")));
+    const auto endpoint = directory.filePath(QStringLiteral("unattended.sock")).toStdString();
+    const auto expected =
+        lapis::session::launch_fingerprint(lapis::session::validate_launch(launch_spec(directory)));
+    const auto fingerprint = QString::fromLatin1(expected.toHex()).toStdString();
+    auto desired = record(endpoint, fingerprint);
+    const auto registry = std::make_shared<SupervisorRegistry>(
+        std::make_shared<MemoryStateStorage>(), std::make_shared<JsonStateCodec>(),
+        std::make_shared<DeterministicIdentity>());
+    const auto launcher =
+        std::make_shared<SessionServiceLauncher>(service_launch(directory), fingerprint);
+
+    pid_t first_pid = -1;
+    pid_t second_pid = -1;
+    std::string first_epoch;
+    std::string first_token;
+    quint64 first_child = 0;
+    quint64 second_child = 0;
+    {
+        SupervisorRuntime runtime{registry, launcher};
+        const auto started = runtime.bootstrap(desired);
+        first_pid = runtime.child_pid();
+        first_epoch = started.session->identity.epoch;
+        first_token = started.session->spawn_token;
+        require(first_pid > 0, "the first unattended service starts");
+        QLocalSocket client;
+        client.connectToServer(QString::fromStdString(endpoint), QLocalSocket::ReadWrite);
+        require(client.waitForConnected(5000), "the first unattended service accepts a client");
+        first_child = attach(client, *registry->state().session, true).pid;
+        synchronize(client);
+        detach(client);
+
+        require(::kill(first_pid, SIGKILL) == 0, "crash the first unattended service");
+        wait_zombie(first_pid);
+        static_cast<void>(::kill(static_cast<pid_t>(first_child), SIGKILL));
+        require(runtime.converge() == Convergence::restarted,
+                "the live supervisor rotates after the first crash");
+        second_pid = runtime.child_pid();
+        const auto& second = *registry->state().session;
+        require(second_pid > 0 && second_pid != first_pid && second.identity.epoch != first_epoch &&
+                    second.spawn_token != first_token,
+                "the first replacement rotates identity");
+        QLocalSocket replacement_client;
+        replacement_client.connectToServer(QString::fromStdString(endpoint),
+                                           QLocalSocket::ReadWrite);
+        require(replacement_client.waitForConnected(5000),
+                "the first replacement accepts a client");
+        second_child = attach(replacement_client, *registry->state().session, true).pid;
+        synchronize(replacement_client);
+        detach(replacement_client);
+    }
+
+    require(::kill(second_pid, SIGKILL) == 0, "crash the replacement without a supervisor");
+    wait_zombie(second_pid);
+    static_cast<void>(::kill(static_cast<pid_t>(second_child), SIGKILL));
+    SupervisorRuntime reconstructed{registry, launcher};
+    const auto third_pid = reconstructed.child_pid();
+    const auto& third = *registry->state().session;
+    require(third_pid > 0 && third_pid != second_pid && third.identity.epoch != first_epoch &&
+                third.spawn_token != first_token,
+            "reconstruction after an unattended crash rotates identity");
+
+    const QJsonObject stop_json{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("action"), QStringLiteral("stop")},
+        {QStringLiteral("supervisor_epoch"),
+         QString::fromStdString(registry->state().instance_epoch)},
+        {QStringLiteral("token"), QString::fromStdString(third.spawn_token)},
+        {QStringLiteral("session"), QJsonValue::Null},
+    };
+    const auto stop_bytes = QJsonDocument{stop_json}.toJson(QJsonDocument::Compact);
+    const std::string stop_request{stop_bytes.constData(),
+                                   static_cast<std::size_t>(stop_bytes.size())};
+    static_cast<void>(reconstructed.control(::geteuid(), stop_request));
+    require(reconstructed.converge() == Convergence::stopped && reconstructed.child_pid() == -1,
+            "the reconstructed replacement stops explicitly");
+    wait_gone(third_pid);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     QCoreApplication application{argc, argv};
     try {
+        terminate_revalidates_protocol_before_group_signal();
         supervised_service_clients_adopt_and_stop();
         crashed_service_restarts_with_rotated_identity();
+        reconstruction_after_unattended_crash_rotates_identity();
+        final_overload_recovers_retained_ownership();
+        retained_mismatch_never_signals_unverified_peer();
+        malformed_epoch_names_the_epoch_option();
         std::cout << "supervisor-session-service: ok\n";
         return 0;
     } catch (const BindUnavailable&) {
