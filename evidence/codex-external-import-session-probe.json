@@ -1,0 +1,108 @@
+{
+  "schema": "lapis.codex-external-import-probe/1",
+  "recorded_at": "2026-10-05T20:11:15.945495+00:00",
+  "passed": true,
+  "purpose": "Exercise Codex external-agent session-only import against a synthetic Claude fixture without reading or modifying real Claude Code or Codex user state.",
+  "source": {
+    "lapis_revision": "8f22d139539e9127a943bc152fc841edec0b2bee",
+    "lapis_dirty": false,
+    "codex_repository": "PATH-resolved executable; source repository not asserted",
+    "binary_path": "PATH-resolved codex executable",
+    "reported_version": "codex-cli 0.0.0",
+    "binary_sha256": "d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f",
+    "changed_file_sha256": {
+      "adapters/codex/src/importer.hpp": "ba4f06529e8434e221ebb206b64df156e2fdf92b405456f658e6574db48c088d",
+      "adapters/codex/src/importer.cpp": "795ef371ff54877ce653505055d69bc464609b07cd7861a9a53a311e4a6ed421",
+      "adapters/codex/tests/importer_test.cpp": "7536bda0affe853aea1c361ea29944ab0f8b702cfc240503ae91642625256302",
+      "scripts/probe_codex_external_import.py": "8a56c22936c58a65bee9e272649a06057a83568f4b0f5b587fc055e7407c3b61",
+      "scripts/tests/test_probe_codex_external_import.py": "420ef48d00335424d126cf8fb0b0ae86679fbd76252ca972e7d8cbbbf2710671"
+    }
+  },
+  "isolation": {
+    "home": "private temporary HOME containing only the synthetic .claude fixture",
+    "codex_home": "private temporary CODEX_HOME",
+    "server": "dedicated codex app-server listening on a private Unix socket",
+    "inference_used": false,
+    "real_claude_files_read": false,
+    "real_codex_files_modified": false,
+    "cleanup_complete": true
+  },
+  "fixture": {
+    "settings": false,
+    "instructions": false,
+    "skills": 0,
+    "transcripts": 1,
+    "session_title_present": true,
+    "transcript_records": 3,
+    "message_records": 2,
+    "custom_title_present": true
+  },
+  "observed": {
+    "initialize": {
+      "passed": true
+    },
+    "externalAgentConfig/detect": {
+      "passed": true,
+      "migration_source": "claude",
+      "item_types": [
+        "SESSIONS"
+      ],
+      "session_count": 1
+    },
+    "externalAgentConfig/import": {
+      "accepted": true,
+      "import_id_present": true
+    },
+    "externalAgentConfig/import/completed": {
+      "observed": true,
+      "successes": {
+        "SESSIONS": 1
+      },
+      "failures": 0
+    },
+    "thread/list": {
+      "passed": true,
+      "thread_count": 1,
+      "imported_thread_id": "01a10db1-272e-7951-858d-fabe1985d62a"
+    },
+    "externalAgentConfig/import/readHistories": {
+      "passed": true,
+      "history_count": 1
+    }
+  },
+  "files": {
+    "session_rollout_jsonl": 1
+  },
+  "limits": [
+    "Session-only import; no configuration, instructions, skills, agents, hooks, commands, MCP, plugins or memory",
+    "No model turn, lapis UI, launch/resume, duplicate reconciliation or failure/cancellation qualification"
+  ],
+  "non_claims": [
+    "Does not prove every real Claude transcript variant is importable.",
+    "Does not qualify production import UI, consent flow, retries or managed-daemon coexistence.",
+    "One passing synthetic session does not establish broader external-agent migration support."
+  ],
+  "validation": {
+    "focused": [
+      {
+        "command": "cmake --build --preset desktop --target lapis_codex_adapter --parallel 8",
+        "exit_code": 0
+      },
+      {
+        "command": "ctest --preset desktop -R '^codex-importer$' --output-on-failure",
+        "exit_code": 0,
+        "tests": 1
+      },
+      {
+        "command": "python3 -m unittest scripts.tests.test_probe_codex_external_import -v",
+        "exit_code": 0,
+        "tests": 9
+      },
+      {
+        "command": "python3 scripts/lapis.py quality",
+        "exit_code": 0,
+        "receipt": "build/reports/quality/receipt.json"
+      }
+    ]
+  }
+}

@@ -1145,6 +1145,27 @@ adapter pin only with passing integration evidence and the affected compiled and
 sanitizer checks; retain failed attempts and previous receipts as dated evidence.
 See [the current binary receipt](evidence/codex-binary-update.json).
 
+### Codex external-agent import qualification
+
+Run the importer fixture whenever its adapter contract changes, and run the
+live disposable-state probe whenever the Codex binary or migration protocol
+changes:
+
+```sh
+ctest --test-dir build/desktop -R '^codex-importer$' --output-on-failure
+python3 scripts/probe_codex_external_import.py \
+  --output build/codex-external-import.json
+python3 -m unittest scripts.tests.test_probe_codex_external_import -v
+ruff check --config ruff.toml scripts/probe_codex_external_import.py \
+  scripts/tests/test_probe_codex_external_import.py
+```
+
+The live probe must remain session-only and use private `HOME` and `CODEX_HOME`
+directories. It fails rather than retrying import RPCs, records no transcript
+content or source error text, and validates the persisted thread through the
+completion target and `thread/list`. Passing it does not requalify the observer
+response pin or authorize global-config migration classes.
+
 Protocol, service and workspace fixtures create a new private Codex home and
 write trust for only their disposable working directory. The shared helper refuses
 to overwrite an existing configuration. They do not confirm arbitrary terminal
