@@ -1,0 +1,111 @@
+{
+  "schema": "lapis.codex-external-import-probe/1",
+  "recorded_at": "2026-10-05T15:42:02.025004+00:00",
+  "passed": true,
+  "purpose": "Exercise Codex external-agent detect/import/notifications against a synthetic Claude fixture without reading or modifying real Claude Code or Codex user state.",
+  "source": {
+    "lapis_revision": "b8dfd7ba3d00a622e135b5381834faa4bb3f3870",
+    "lapis_dirty": true,
+    "codex_repository": "local openai/codex checkout",
+    "codex_revision": "eba4e02df5e1962e4c001f837bf2ab6725d5b7a9",
+    "codex_source_clean": true,
+    "binary_path": "PATH-resolved codex executable",
+    "binary_sha256": "d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f",
+    "reported_version": "codex-cli 0.0.0",
+    "probe_script_sha256": "928dd2b1a6f81578f980492e8949f01197e8ad717f745de4244f3157888cd94e",
+    "contract_sha256": {
+      "codex-rs/app-server-protocol/src/protocol/common.rs": "b6dd9ded3bd8493f899d128c06cfdf717ab5cf1561441dfb369e291bd7048496",
+      "codex-rs/app-server-protocol/src/protocol/v2/config.rs": "8187edb07de0259f5a96927ca69b749a7ba9049062bf2ef2eb1ff9c7d8696447",
+      "codex-rs/app-server/src/external_agent_migration/processor.rs": "1a8ec606f2f5c26a6b9eabb465bd2540473d0277956c7a3e9c95ace3fdfdd3d7",
+      "codex-rs/app-server/src/external_agent_migration/session_importer.rs": "c5cdd40f0305055a773eaf27bb65ceeb4c9c2dfa74045360364eff1198f5b4c0",
+      "codex-rs/external-agent-migration/src/service.rs": "a307a7d0fc4ffce757e720f3d03b91a7493573ff351d0d6673e38108d74e3610"
+    }
+  },
+  "isolation": {
+    "home": "private temporary HOME containing only the synthetic .claude fixture",
+    "codex_home": "private temporary CODEX_HOME",
+    "server": "dedicated codex app-server listening on a private Unix socket",
+    "inference_used": false,
+    "real_claude_files_read": false,
+    "real_codex_files_modified": false,
+    "cleanup_complete": true
+  },
+  "fixture": {
+    "settings": true,
+    "instructions": true,
+    "skills": 1,
+    "transcripts": 1,
+    "session_title": "lapis synthetic import title"
+  },
+  "observed": {
+    "initialize": {
+      "passed": true,
+      "private_codex_home_confirmed": true
+    },
+    "externalAgentConfig/detect": {
+      "passed": true,
+      "migration_source": "claude",
+      "item_types": [
+        "CONFIG",
+        "SKILLS",
+        "AGENTS_MD",
+        "SESSIONS"
+      ],
+      "session_count": 1
+    },
+    "externalAgentConfig/import": {
+      "accepted": true,
+      "import_id_present": true
+    },
+    "externalAgentConfig/import/completed": {
+      "observed": true,
+      "failures": 0,
+      "successes": {
+        "CONFIG": 1,
+        "SKILLS": 1,
+        "AGENTS_MD": 1,
+        "SESSIONS": 1
+      }
+    },
+    "thread/list": {
+      "passed": true,
+      "thread_count": 1,
+      "imported_thread_id": "01a10cba-aa29-7030-bda7-ab934773643a"
+    },
+    "thread/loaded/list": {
+      "called": true,
+      "thread_count": 0,
+      "interpretation": "Lists loaded threads; it is not persisted-thread enumeration."
+    },
+    "externalAgentConfig/import/readHistories": {
+      "passed": true,
+      "history_count": 1
+    },
+    "files": {
+      "codex_config_toml": true,
+      "codex_agents_md": true,
+      "session_rollout_jsonl": 1
+    }
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "uv run --python 3.12 --no-project python runtime/probe_codex_external_import_once.py",
+        "exit_code": 0,
+        "raw_receipt": "runtime/codex-external-import-probe-once.json"
+      }
+    ],
+    "source_inspection": [
+      "git -C <local-codex-checkout> rev-parse HEAD",
+      "git -C <local-codex-checkout> status --short",
+      "shasum -a 256 <pinned external-agent migration contract files>"
+    ]
+  },
+  "non_claims": [
+    "Does not qualify lapis's existing observer, response routing or resume/replay contract on this newer binary.",
+    "Does not import real user data or prove handling of every real Claude transcript variant.",
+    "Does not qualify plugins, hooks, MCP servers, memory, repo-scoped settings, failures, cancellation or concurrent imports.",
+    "Does not prove a production UI, duplicate reconciliation, launch/resume of an imported thread, or compatibility with the managed daemon.",
+    "The one-off probe script is ignored runtime evidence, not a committed lapis verification workflow."
+  ]
+}

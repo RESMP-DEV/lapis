@@ -149,6 +149,33 @@ exercise real approvals and answers through this service, including pending
 reattachment and archive/restore source reconciliation. The assembled receipt also records cancellation and two simultaneous live
 approvals, separately from the synthetic adapter coverage.
 
+## External-agent session import
+
+`lapis::codex::Importer` is a separate onboarding protocol client, not part of
+the attention observer. It initializes a dedicated Codex app-server connection,
+validates bounded Claude detection results, preserves the exact selected
+`SESSIONS` migration payload, and tracks import acceptance plus progress and
+completion by Codex's import ID. It never retries a failed, malformed or timed-out
+task and does not retain payloads for non-session migration classes. The
+synthetic protocol suite is registered as `codex-importer`.
+
+The live qualification creates a private `HOME` and `CODEX_HOME`, writes one
+synthetic Claude transcript, starts a dedicated app-server, imports only sessions,
+awaits completion, validates the completion target through `thread/list`, and
+reads migration history:
+
+```sh
+python3 scripts/probe_codex_external_import.py \
+  --output build/codex-external-import.json
+python3 -m unittest scripts.tests.test_probe_codex_external_import -v
+```
+
+The current receipt is
+[`evidence/codex-external-import-session-probe.json`](../../evidence/codex-external-import-session-probe.json).
+It does not qualify a desktop/service onboarding task, launch-record creation,
+duplicate reconciliation, global-config migration classes, failures, cancellation,
+or concurrent imports.
+
 ## Structured app-server route
 
 Candidate for sessions owned by lapis: launch `codex app-server --listen stdio://`,
