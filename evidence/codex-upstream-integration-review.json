@@ -77,6 +77,18 @@
       "result": "The exact eba4e02df5e1962e4c001f837bf2ab6725d5b7a9 candidate is an arm64 executable, hash 7f1115012d8a55822bfd530cf8a6e273edb211a48fcb508a5f38a05b92af3c83, with version smoke codex-cli 0.0.0, --worktree help present, and reviewed worktree symbols present."
     }
   ],
+  "validation_artifacts": {
+    "candidate_build_receipt": {
+      "sha256": "7bd2f13dafa27a235f95c1a77644de6b74273a682607e37bac7d2a6ed134d926",
+      "retained_path": "build/codex-candidate-eba4e02-receipt.json",
+      "scope": "Ignored local copy of the external build receipt; absolute checkout paths remain unpublished."
+    },
+    "candidate_smoke_log": {
+      "sha256": "bc1fb08631ff2a899a1e98ff1ae7746de84c631be0328d12242396cb0b73d861",
+      "retained_path": "build/codex-candidate-eba4e02-smoke.log",
+      "scope": "Ignored local copy of the bounded candidate version/help smoke log."
+    }
+  },
   "aggregate_passed": true,
   "non_claims": [
     "No Codex binary requalification, two-thread worktree probe, permission-catalog smoke, or adapter capability-matrix update was run.",

@@ -108,7 +108,8 @@ void validate_session_details(const QJsonObject& details, QSet<QString>& paths,
     const auto required_keys = allowed - QSet{QStringLiteral("memory")};
     for (const auto& required : required_keys) {
         if (!details.contains(required))
-            throw std::runtime_error("Codex session item is missing migration details");
+            throw std::runtime_error("Codex session item is missing migration details: " +
+                                     required.toStdString());
     }
     for (const auto& name : details.keys()) {
         if (!allowed.contains(name))

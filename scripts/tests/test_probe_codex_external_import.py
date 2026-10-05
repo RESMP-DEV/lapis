@@ -3,6 +3,7 @@
 import json
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -71,11 +72,16 @@ class ProbeTests(unittest.IsolatedAsyncioTestCase):
             probe.session_item([unknown_detail], home)
         missing_detail = session_item()
         missing_detail["details"].pop("plugins")
-        with self.assertRaisesRegex(RuntimeError, "missing migration details"):
+        with self.assertRaisesRegex(
+            RuntimeError, r"missing migration details: plugins"
+        ):
             probe.session_item([missing_detail], home)
         memory_absent = session_item()
         memory_absent["details"].pop("memory")
-        self.assertEqual(probe.session_item([memory_absent], home), memory_absent)
+        expected_memory_absent = deepcopy(memory_absent)
+        self.assertEqual(
+            probe.session_item([memory_absent], home), expected_memory_absent
+        )
         nonempty_memory = session_item()
         nonempty_memory["details"]["memory"] = ["not-a-session"]
         with self.assertRaisesRegex(RuntimeError, "non-session migration class"):

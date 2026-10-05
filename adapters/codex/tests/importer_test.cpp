@@ -450,7 +450,7 @@ void incomplete_session_details_fail_closed() {
             "incomplete-details fixture initializes");
     require(importer.detect() &&
                 wait_for([&] { return importer.phase() == Importer::Phase::failed; }) &&
-                failure.contains(QStringLiteral("missing migration details")),
+                failure.contains(QStringLiteral("missing migration details: plugins")),
             "a session item must contain the complete expanded details shape");
 }
 
@@ -463,14 +463,21 @@ void memory_absent_session_details_remain_compatible() {
     source.detection = QJsonObject{{QStringLiteral("items"), QJsonArray{item}}};
     source.start();
     Importer importer;
+    QString failure;
+    QObject::connect(&importer, &Importer::failed,
+                     [&](const QString& reason) { failure = reason; });
     importer.start(source.path());
     require(wait_for([&] { return importer.phase() == Importer::Phase::ready; }),
             "memory-absent fixture initializes");
-    require(importer.detect() &&
-                wait_for([&] { return importer.phase() == Importer::Phase::ready; }) &&
-                importer.detection().items.size() == 1 &&
-                importer.detection().items.first().sessions.size() == 1,
-            "the observed pre-memory expanded shape remains compatible");
+    require(
+        importer.detect() && wait_for([&] { return importer.phase() == Importer::Phase::ready; }) &&
+            importer.detection().items.size() == 1 &&
+            importer.detection().items.first().sessions.size() == 1 &&
+            importer.detection().items.first().sessions.first().path ==
+                QStringLiteral("/fixture/session.jsonl") &&
+            importer.detection().items.first().sessions.first().cwd == QStringLiteral("/fixture") &&
+            failure.isEmpty(),
+        "the observed pre-memory expanded shape remains compatible");
 }
 
 void nonempty_memory_session_details_fail_closed() {

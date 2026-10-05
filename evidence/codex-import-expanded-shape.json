@@ -2,7 +2,7 @@
   "schema_version": 1,
   "record_kind": "lapis.codex-import-expanded-shape",
   "recorded_on": "2026-10-05",
-  "recorded_at": "2026-10-05T22:31:24Z",
+  "recorded_at": "2026-10-05T22:44:31Z",
   "source": {
     "revision": "7fa37a7422e77f1e24325d0ea18aaade50a4bf7c",
     "dirty_before_receipt": true,
@@ -15,10 +15,10 @@
     ],
     "working_tree_sha256": {
       "adapters/codex/src/importer.hpp": "82b4b8d399c29644f05f476bd0f3c5cca7d8e8ebfe1477fba2fc8ca980ff0c5e",
-      "adapters/codex/src/importer.cpp": "58b83c9bf05f93719bd320233db1a4a2e9993bf04731da4911355b183dff283d",
-      "adapters/codex/tests/importer_test.cpp": "bcee7996a317490a2ad1abc4ccaa3652054a60bd1f7579db4eff639fad2b5730",
-      "scripts/probe_codex_external_import.py": "ed5adf9c9d5bc5c34650b53263bd34944dd20aa76a8f3329394009aae3b47423",
-      "scripts/tests/test_probe_codex_external_import.py": "544fb4354d6bb5c1e428067e678c965a0619d20fa8025f152ef5f610bb8296fc"
+      "adapters/codex/src/importer.cpp": "6e72b3e4018f45812b18334d12d41bed055a4f6689b07d46400bc462c4602385",
+      "adapters/codex/tests/importer_test.cpp": "ef60bee8d78ae7ab6ffee79fca22e8ca111fd868dc797331f4dca023495ab4f3",
+      "scripts/probe_codex_external_import.py": "1f81301c6bc3eda8a9ee4dd841e0327c827f476010519ff6404182caa4125595",
+      "scripts/tests/test_probe_codex_external_import.py": "515f525357de92499f35aad0f1f6939b972e0e5189d25c2dd91a6cc7fb38a7ec"
     }
   },
   "scope": "Fail closed on incomplete or unexpected SESSIONS migration-detail shapes while retaining compatibility with the observed pre-memory binary protocol.",
@@ -27,7 +27,7 @@
       "name": "codex-importer-ctest",
       "command": "ctest --test-dir build/desktop -R '^codex-importer$' --output-on-failure --no-tests=error",
       "exit_code": 0,
-      "result": "Synthetic incomplete-details, memory-absent, and nonempty-memory regressions passed with the full importer suite."
+      "result": "Synthetic incomplete-details with key-specific diagnostics, memory-absent content retention, and nonempty-memory regressions passed with the full importer suite."
     },
     {
       "name": "probe-python-tests",
@@ -37,7 +37,7 @@
     },
     {
       "name": "live-disposable-import",
-      "command": "python3 scripts/probe_codex_external_import.py --codex \"$(command -v codex)\" --output build/codex-external-import-expanded-shape.json",
+      "command": "python3 scripts/probe_codex_external_import.py --codex \"$(command -v codex)\" --output build/codex-external-import-expanded-shape-final.json",
       "exit_code": 0,
       "result": "Passed with private HOME/CODEX_HOME, one SESSIONS item, one successful imported thread, one matching history, and complete cleanup.",
       "codex_sha256": "d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f"
@@ -62,11 +62,12 @@
   "validation_artifacts": {
     "live_disposable_import_output": {
       "sha256": "d9a96334f9ccdc9e2e41a8d6f87cc423f03b6af051c6f296632b8dac226aabc4",
+      "output_path": "build/codex-external-import-expanded-shape-final.json",
       "scope": "Final full-validation live probe output retained under the ignored build directory; it contains no user transcript and is not published in full."
     },
     "repaired_head_quality_receipt": {
-      "sha256": "8e5cf59d130ba1995f3a0c43523aacd006213688ad41784db941b77ecd82f8f6",
-      "scope": "Full repository quality receipt after the nonempty-memory regression and receipt-hardening changes."
+      "sha256": "c72d1b05bfc289c92da805bcdac8b3c3aba9cf4b90297173b583b5d3fb0a3eaf",
+      "scope": "Full repository quality receipt after the key-specific diagnostics, memory-compatibility assertions, and receipt-hardening changes."
     }
   },
   "aggregate_passed": true,
