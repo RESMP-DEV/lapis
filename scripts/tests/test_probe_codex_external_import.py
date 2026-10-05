@@ -3,6 +3,7 @@
 import json
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -16,12 +17,19 @@ def session_item() -> dict[str, object]:
         "description": "/private/source to /private/target",
         "cwd": None,
         "details": {
+            "plugins": [],
+            "skills": [],
             "sessions": [
                 {
                     "path": str(home / ".claude/projects/source/session.jsonl"),
                     "cwd": str(home / "project"),
                 }
-            ]
+            ],
+            "mcpServers": [],
+            "hooks": [],
+            "subagents": [],
+            "commands": [],
+            "memory": [],
         },
     }
 
@@ -50,7 +58,8 @@ class ProbeTests(unittest.IsolatedAsyncioTestCase):
         for items in ([], [session_item(), session_item()]):
             with self.assertRaisesRegex(RuntimeError, "exactly one session migration"):
                 probe.session_item(items, home)
-        malformed = {"itemType": "SESSIONS", "details": {"sessions": []}}
+        malformed = session_item()
+        malformed["details"]["sessions"] = []
         with self.assertRaisesRegex(RuntimeError, "exactly one detected session"):
             probe.session_item([malformed], home)
         carrying_skills = session_item()
@@ -61,6 +70,28 @@ class ProbeTests(unittest.IsolatedAsyncioTestCase):
         unknown_detail["details"]["future"] = []
         with self.assertRaisesRegex(RuntimeError, "unknown migration detail"):
             probe.session_item([unknown_detail], home)
+        missing_detail = session_item()
+        missing_detail["details"].pop("plugins")
+        missing_detail["details"].pop("skills")
+        with self.assertRaisesRegex(
+            RuntimeError, r"missing migration details: plugins, skills"
+        ):
+            probe.session_item([missing_detail], home)
+        unknown_and_missing = session_item()
+        unknown_and_missing["details"].pop("plugins")
+        unknown_and_missing["details"]["future"] = []
+        with self.assertRaisesRegex(RuntimeError, "unknown migration detail"):
+            probe.session_item([unknown_and_missing], home)
+        memory_absent = session_item()
+        memory_absent["details"].pop("memory")
+        expected_memory_absent = deepcopy(memory_absent)
+        self.assertEqual(
+            probe.session_item([memory_absent], home), expected_memory_absent
+        )
+        nonempty_memory = session_item()
+        nonempty_memory["details"]["memory"] = ["not-a-session"]
+        with self.assertRaisesRegex(RuntimeError, "non-session migration class"):
+            probe.session_item([nonempty_memory], home)
         escaping_path = session_item()
         escaping_path["details"]["sessions"][0]["path"] = "/private/other/session.jsonl"
         with self.assertRaisesRegex(RuntimeError, "escapes the disposable home"):

@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "record_kind": "lapis.recent-integration-baseline",
+  "recorded_on": "2026-10-05",
+  "recorded_at": "2026-10-05T22:34:05Z",
+  "source": {
+    "revision": "7fa37a7422e77f1e24325d0ea18aaade50a4bf7c",
+    "dirty": false
+  },
+  "scope": "Clean-main triage baseline for the newest Codex import, Codex upstream-review, and runtime tool-status integrations. It does not qualify native macOS input/GPU, installed CLI behavior, or a Codex candidate build.",
+  "checks": [
+    {
+      "name": "focused-recent-targets",
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop -R '^(codex-importer|tool-status|tools-ui)$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "result": "3/3 passed at the clean revision."
+    },
+    {
+      "name": "repository-quality",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "All repository quality checks passed at the clean revision."
+    },
+    {
+      "name": "diff-whitespace",
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "validation_artifacts": {
+    "clean_baseline_quality_receipt": {
+      "sha256": "687c1f52137a0987cd39609772e7608d830ccc7ff7e085fcafc215474b02d1b0",
+      "scope": "Quality receipt reproduced in an isolated clean worktree at 7fa37a7422e77f1e24325d0ea18aaade50a4bf7c; the sanitized digest is retained here and the disposable worktree was removed."
+    }
+  },
+  "aggregate_passed": true,
+  "non_claims": [
+    "No supervisor production birth route, multi-session supervisor state, Codex candidate executable runtime qualification, import UI, real CLI authentication, native GPU presentation, or native macOS input qualification."
+  ]
+}

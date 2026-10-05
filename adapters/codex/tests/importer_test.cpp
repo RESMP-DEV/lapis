@@ -433,6 +433,97 @@ void non_session_migration_details_fail_closed() {
             "a session item cannot carry another migration class");
 }
 
+void incomplete_session_details_fail_closed() {
+    Source source;
+    auto item = session_item();
+    auto details = item.value(QStringLiteral("details")).toObject();
+    details.remove(QStringLiteral("plugins"));
+    details.remove(QStringLiteral("skills"));
+    item.insert(QStringLiteral("details"), details);
+    source.detection = QJsonObject{{QStringLiteral("items"), QJsonArray{item}}};
+    source.start();
+    Importer importer;
+    QString failure;
+    QObject::connect(&importer, &Importer::failed,
+                     [&](const QString& reason) { failure = reason; });
+    importer.start(source.path());
+    require(wait_for([&] { return importer.phase() == Importer::Phase::ready; }),
+            "incomplete-details fixture initializes");
+    require(importer.detect() &&
+                wait_for([&] { return importer.phase() == Importer::Phase::failed; }) &&
+                failure.contains(QStringLiteral("missing migration details: plugins, skills")),
+            "a session item must contain the complete expanded details shape");
+}
+
+void unknown_details_take_precedence_over_missing_details() {
+    Source source;
+    auto item = session_item();
+    auto details = item.value(QStringLiteral("details")).toObject();
+    details.remove(QStringLiteral("plugins"));
+    details.insert(QStringLiteral("future"), QJsonArray{});
+    item.insert(QStringLiteral("details"), details);
+    source.detection = QJsonObject{{QStringLiteral("items"), QJsonArray{item}}};
+    source.start();
+    Importer importer;
+    QString failure;
+    QObject::connect(&importer, &Importer::failed,
+                     [&](const QString& reason) { failure = reason; });
+    importer.start(source.path());
+    require(wait_for([&] { return importer.phase() == Importer::Phase::ready; }),
+            "unknown-and-missing fixture initializes");
+    require(importer.detect() &&
+                wait_for([&] { return importer.phase() == Importer::Phase::failed; }) &&
+                failure.contains(QStringLiteral("unknown migration details key")),
+            "unknown classes are diagnosed before missing core lists");
+}
+
+void memory_absent_session_details_remain_compatible() {
+    Source source;
+    auto item = session_item();
+    auto details = item.value(QStringLiteral("details")).toObject();
+    details.remove(QStringLiteral("memory"));
+    item.insert(QStringLiteral("details"), details);
+    source.detection = QJsonObject{{QStringLiteral("items"), QJsonArray{item}}};
+    source.start();
+    Importer importer;
+    QString failure;
+    QObject::connect(&importer, &Importer::failed,
+                     [&](const QString& reason) { failure = reason; });
+    importer.start(source.path());
+    require(wait_for([&] { return importer.phase() == Importer::Phase::ready; }),
+            "memory-absent fixture initializes");
+    require(
+        importer.detect() && wait_for([&] { return importer.phase() == Importer::Phase::ready; }) &&
+            importer.detection().items.size() == 1 &&
+            importer.detection().items.first().sessions.size() == 1 &&
+            importer.detection().items.first().sessions.first().path ==
+                QStringLiteral("/fixture/session.jsonl") &&
+            importer.detection().items.first().sessions.first().cwd == QStringLiteral("/fixture") &&
+            failure.isEmpty(),
+        "the observed pre-memory expanded shape remains compatible");
+}
+
+void nonempty_memory_session_details_fail_closed() {
+    Source source;
+    auto item = session_item();
+    auto details = item.value(QStringLiteral("details")).toObject();
+    details.insert(QStringLiteral("memory"), QJsonArray{QStringLiteral("memory")});
+    item.insert(QStringLiteral("details"), details);
+    source.detection = QJsonObject{{QStringLiteral("items"), QJsonArray{item}}};
+    source.start();
+    Importer importer;
+    QString failure;
+    QObject::connect(&importer, &Importer::failed,
+                     [&](const QString& reason) { failure = reason; });
+    importer.start(source.path());
+    require(wait_for([&] { return importer.phase() == Importer::Phase::ready; }),
+            "nonempty-memory fixture initializes");
+    require(importer.detect() &&
+                wait_for([&] { return importer.phase() == Importer::Phase::failed; }) &&
+                failure.contains(QStringLiteral("non-session migration class")),
+            "a nonempty memory list must not enter a session selection");
+}
+
 void malformed_shape_fails_closed_without_retry() {
     Source source;
     source.detection = QJsonObject{
@@ -489,6 +580,10 @@ int run(int argc, char** argv) {
     wrong_import_identity_is_ignored();
     completion_before_acceptance_is_replayed();
     non_session_migration_details_fail_closed();
+    incomplete_session_details_fail_closed();
+    unknown_details_take_precedence_over_missing_details();
+    memory_absent_session_details_remain_compatible();
+    nonempty_memory_session_details_fail_closed();
     malformed_shape_fails_closed_without_retry();
     malformed_completion_fails_closed();
     return 0;

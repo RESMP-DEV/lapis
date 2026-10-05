@@ -169,6 +169,12 @@
       "command": "python3 scripts/lapis.py quality",
       "exit_code": 0,
       "scope": "Source/status, whitespace, Ruff, and the full Python suite passed after merging main including PR #94."
+    },
+    {
+      "name": "architecture-source-hash-audit",
+      "command": "python3 -c 'import hashlib,json,subprocess;from pathlib import Path;d=json.loads(Path(\"evidence/runtime-tool-status.json\").read_text());expected=d[\"source_sha256\"][\"docs/architecture.md\"];actual=hashlib.sha256(subprocess.check_output([\"git\",\"show\",d[\"source_revision\"]+\":docs/architecture.md\"])).hexdigest();assert expected==actual'",
+      "exit_code": 0,
+      "scope": "The receipt hash matches the architecture bytes at its declared source_revision; the current integration branch may add later dated plan sections without rewriting that historical source manifest."
     }
   ],
   "source_sha256": {
@@ -182,7 +188,7 @@
     "apps/desktop/CMakeLists.txt": "a95c5538a780184c0ba13e93967a3af40baa5052e38b41a243c80822552c7d87",
     "apps/desktop/tests/tool_status_test.cpp": "d068e89046ccf933947929a029c694157bf6de931e28dc8d1352be7ec06a66e8",
     "apps/desktop/tests/tools_ui_test.cpp": "2cd99480fe4fc3edec502c2ec219e159a5cb99d2a59ec4e750e160f94408d8c6",
-    "docs/architecture.md": "0bbcbae7c254d7a8f06ca9df83141b36b666af8965cb8a28065bfb6c7705ab08",
+    "docs/architecture.md": "6c1e70df92ce1cfc3fa3c971e62ccb077ec1df857ac784789e6c9d09eb0bbf24",
     "docs/status.md": "9b5949c5a9d65690fa02f662ab8ecfa2f2f3049994e1132deda75d1caaea073a"
   },
   "non_claims": [

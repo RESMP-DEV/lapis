@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "record_kind": "lapis.codex-import-expanded-shape",
+  "recorded_on": "2026-10-05",
+  "recorded_at": "2026-10-05T23:13:19Z",
+  "source": {
+    "revision": "7fa37a7422e77f1e24325d0ea18aaade50a4bf7c",
+    "dirty_before_receipt": true,
+    "files_hashed": [
+      "adapters/codex/src/importer.hpp",
+      "adapters/codex/src/importer.cpp",
+      "adapters/codex/tests/importer_test.cpp",
+      "scripts/probe_codex_external_import.py",
+      "scripts/tests/test_probe_codex_external_import.py"
+    ],
+    "working_tree_sha256": {
+      "adapters/codex/src/importer.hpp": "82b4b8d399c29644f05f476bd0f3c5cca7d8e8ebfe1477fba2fc8ca980ff0c5e",
+      "adapters/codex/src/importer.cpp": "ae71851e64549928ea6375e7fb802b5fa85c24b153dac27856b5ce37c4a2c6dc",
+      "adapters/codex/tests/importer_test.cpp": "07d1fc6e5a2b792d3efc06c9807a867c2fe9c3cf6bc71634683dd2ee3a76676a",
+      "scripts/probe_codex_external_import.py": "1f81301c6bc3eda8a9ee4dd841e0327c827f476010519ff6404182caa4125595",
+      "scripts/tests/test_probe_codex_external_import.py": "05444d684358dc76b6286c0172eb0e5c82462bc80c445565bd6c9e93f4bca00e"
+    }
+  },
+  "scope": "Fail closed on incomplete or unexpected SESSIONS migration-detail shapes while retaining compatibility with the observed pre-memory binary protocol.",
+  "checks": [
+    {
+      "name": "codex-importer-ctest",
+      "command": "ctest --test-dir build/desktop -R '^codex-importer$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "result": "Synthetic all-missing-keys diagnostics with Python/C++ precedence parity, memory-absent content retention, and nonempty-memory regressions passed with the full importer suite."
+    },
+    {
+      "name": "probe-python-tests",
+      "command": "python3 -m unittest -v scripts.tests.test_probe_codex_external_import",
+      "exit_code": 0,
+      "result": "9/9 passed."
+    },
+    {
+      "name": "live-disposable-import",
+      "command": "python3 scripts/probe_codex_external_import.py --codex \"$(command -v codex)\" --output build/codex-external-import-expanded-shape-final.json",
+      "exit_code": 0,
+      "result": "Passed with private HOME/CODEX_HOME, one SESSIONS item, one successful imported thread, one matching history, and complete cleanup.",
+      "codex_sha256": "d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f"
+    },
+    {
+      "name": "ruff",
+      "command": "ruff check --config ruff.toml scripts/probe_codex_external_import.py scripts/tests/test_probe_codex_external_import.py",
+      "exit_code": 0,
+      "result": "Ruff lint passed."
+    },
+    {
+      "name": "ruff-format",
+      "command": "ruff format --config ruff.toml --check scripts/probe_codex_external_import.py scripts/tests/test_probe_codex_external_import.py",
+      "exit_code": 0,
+      "result": "Ruff format check passed."
+    },
+    {
+      "name": "clang-tidy",
+      "command": "SDKROOT=$(xcrun --show-sdk-path) /opt/homebrew/opt/llvm/bin/clang-tidy -p build/desktop adapters/codex/src/importer.cpp adapters/codex/tests/importer_test.cpp",
+      "exit_code": 0
+    },
+    {
+      "name": "repository-quality",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0
+    }
+  ],
+  "validation_artifacts": {
+    "live_disposable_import_output": {
+      "sha256": "d9a96334f9ccdc9e2e41a8d6f87cc423f03b6af051c6f296632b8dac226aabc4",
+      "output_path": "build/codex-external-import-expanded-shape-final.json",
+      "scope": "Final full-validation live probe output retained under the ignored build directory; it contains no user transcript and is not published in full."
+    },
+    "repaired_head_quality_receipt": {
+      "sha256": "3197a1f1e2b780a0b00313ee1ef111a79af31894b08d0fb4f49816ff41d11bb7",
+      "scope": "Full repository quality receipt after deterministic all-missing-keys diagnostics, diagnostic-order parity, memory-compatibility assertions, and receipt-hardening changes."
+    }
+  },
+  "aggregate_passed": true,
+  "non_claims": [
+    "Synthetic parsing and one disposable live import do not qualify production import UI, exact-scope consent, a dedicated production server, duplicate reconciliation, launch/resume, failure recovery, or observer response capability."
+  ]
+}
