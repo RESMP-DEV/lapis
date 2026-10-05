@@ -1644,6 +1644,10 @@ def command_appcast(arguments):
     """Write the deterministic feed whose exact bytes gates must bind."""
     try:
         version = project_version(ROOT)
+        if arguments.tag != f"v{version}":
+            raise PackageError(
+                f"tag {arguments.tag} does not match project version {version}"
+            )
         write_appcast(arguments.tag, version)
     except (ManifestError, OSError) as error:
         raise PackageError(f"cannot write the release appcast: {error}") from error

@@ -71,6 +71,24 @@ class ReleaseArgumentTests(unittest.TestCase):
             package.main()
         write.assert_called_once_with("v0.5.0", "0.5.0")
 
+    def test_appcast_command_rejects_a_version_mismatched_tag(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        release = Path(temporary.name)
+        with (
+            patch.object(
+                package.sys,
+                "argv",
+                ["package_macos.py", "appcast", "--tag", "v0.4.0"],
+            ),
+            patch.object(package, "RELEASE", release),
+            patch.object(package, "APPCAST", release / "appcast.xml"),
+            patch.object(package, "project_version", return_value="0.5.0"),
+            patch.object(package, "write_appcast") as write,
+        ):
+            self.assertEqual(package.main(), 1)
+        write.assert_not_called()
+
 
 def mark_svg(body):
     return f'<svg xmlns="http://www.w3.org/2000/svg">{body}</svg>'

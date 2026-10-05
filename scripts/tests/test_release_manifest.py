@@ -1309,9 +1309,7 @@ class ReleaseCommandTests(unittest.TestCase):
             patch.object(package, "capture", side_effect=self.capture),
             patch.object(package, "ghostty_prefix", return_value=self.root / "ghostty"),
             patch.object(package, "release_dependencies", release_dependencies),
-            patch.object(
-                package, "write_appcast", return_value=self.write_appcast_mock
-            ),
+            patch.object(package, "write_appcast", new=self.write_appcast_mock),
             patch.object(
                 package,
                 "update_signature",
