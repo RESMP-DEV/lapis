@@ -2,8 +2,8 @@
   "schema_version": 1,
   "recorded_on": "2026-10-05",
   "source": {
-    "baseline_revision": "92c0e82a3130e9aa8bf7e1a7d8322435eff7b683",
-    "source_revision": "cf5d58b0948f45abf9d70e115aca2870cf6eb777",
+    "baseline_revision": "705e7cd17d20149c70f28dc01a386361c5175be8",
+    "source_revision": "b27445e62386d3594fe7b822de26035c79a0e01f",
     "ported_revision": "b5e0c55",
     "receipt_note": "source_revision is the integrated branch head before this receipt-only commit; the follow-up commit preserves the reviewed architecture text and this receipt."
   },
@@ -32,6 +32,11 @@
       "command": "python3 scripts/lapis.py quality",
       "exit_code": 0,
       "result": "After merging current main, source/status, whitespace, Ruff, and 527 Python tests (7 skipped) passed on the parent host."
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "After merging main including PR #92, source/status, whitespace, Ruff, and 536 Python tests (7 skipped) passed on the parent host."
     }
   ],
   "aggregate_passed": true,
