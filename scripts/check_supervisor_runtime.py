@@ -69,6 +69,42 @@ def write_failure(path: Path, scope: str, label: str, error: BaseException) -> i
     return 1
 
 
+def integration_result(
+    test_output: str, test_result: dict[str, object], logs: Path
+) -> dict[str, object]:
+    """Describe the observed integration without inventing a successful skip."""
+    integration_observed = "supervisor-session-service: ok" in test_output
+    integration_skipped = "QLocalServer bind unavailable" in test_output
+    diagnostic = "Observed supervisor-born service and clients."
+    exit_code = 0
+    if not integration_observed:
+        if integration_skipped:
+            diagnostic = (
+                "The integration skipped because QLocalServer bind is unavailable "
+                "in the current sandbox."
+            )
+            exit_code = 75
+        else:
+            diagnostic = (
+                "The integration marker was absent; the test step did not pass "
+                f"(exit_code={test_result['exit_code']}, "
+                f"timed_out={test_result['timed_out']}). See test.log."
+            )
+            exit_code = test_result["exit_code"]
+    return {
+        "check": "real-service-integration",
+        "command": [],
+        "cwd": str(ROOT),
+        "passed": integration_observed,
+        "timed_out": test_result["timed_out"],
+        "exit_code": exit_code,
+        "diagnostic": diagnostic,
+        "elapsed_seconds": 0.0,
+        "log": str((logs / "test.log").relative_to(ROOT)),
+        "integration_skipped": integration_skipped,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -77,9 +113,10 @@ def main() -> int:
     parser.add_argument("--jobs", type=int, default=4)
     arguments = parser.parse_args()
     receipt_path = arguments.output.resolve()
+    if not receipt_path.is_relative_to(ROOT):
+        parser.error("--output must name a receipt inside the repository checkout")
     receipt_path.unlink(missing_ok=True)
     logs = receipt_path.parent
-    revision, dirty = source_revision()
     scope = (
         "Focused supervisor-runtime build and tests in build/r1-runtime. It does not prove "
         "launchd ownership, GUI integration, package replacement, reboot recovery, load, "
@@ -116,31 +153,12 @@ def main() -> int:
         ),
     )
     try:
+        revision, dirty = source_revision()
         results = []
         for label, command in commands:
             results.append(run(label, command, logs, timeout=300))
         test_output = (logs / "test.log").read_text()
-        integration_observed = "supervisor-session-service: ok" in test_output
-        integration_skipped = "QLocalServer bind unavailable" in test_output
-        results.append(
-            {
-                "check": "real-service-integration",
-                "command": [],
-                "cwd": str(ROOT),
-                "passed": integration_observed,
-                "timed_out": False,
-                "exit_code": 0 if integration_observed else 75,
-                "diagnostic": (
-                    "Observed supervisor-born service and clients."
-                    if integration_observed
-                    else "CTest exited successfully but the integration skipped because "
-                    "QLocalServer bind is unavailable in the current sandbox."
-                ),
-                "elapsed_seconds": 0.0,
-                "log": str((logs / "test.log").relative_to(ROOT)),
-                "integration_skipped": integration_skipped,
-            }
-        )
+        results.append(integration_result(test_output, results[-1], logs))
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         return write_failure(receipt_path, scope, "supervisor-runtime-setup", error)
 

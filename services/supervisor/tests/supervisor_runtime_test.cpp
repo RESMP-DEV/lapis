@@ -81,10 +81,12 @@ class FakeLauncherWorld {
   public:
     [[nodiscard]] std::optional<ChildProcess> adopt(const DesiredSession& session,
                                                     const std::string& token) {
+        if (decline_adoption)
+            return std::nullopt;
         const auto found = children.find(token);
         if (found == children.end() || !found->second.alive)
             return std::nullopt;
-        return ChildProcess{found->second.pid, token, session.endpoint, -1, true};
+        return ChildProcess{found->second.pid, token, session.endpoint, -1, true, "", "", ""};
     }
 
     [[nodiscard]] ChildProcess launch(const DesiredSession& session, const std::string& token) {
@@ -92,7 +94,7 @@ class FakeLauncherWorld {
         const pid_t pid = ++next_pid;
         children.emplace(token, FakeChild{pid, true});
         ++launches;
-        return ChildProcess{pid, token, session.endpoint, -1, false};
+        return ChildProcess{pid, token, session.endpoint, -1, false, "", "", ""};
     }
 
     [[nodiscard]] bool alive(const ChildProcess& child) {
@@ -111,6 +113,11 @@ class FakeLauncherWorld {
 
     void release(const ChildProcess&) {}
 
+    [[nodiscard]] bool peer_preserved(const DesiredSession& session, const std::string& token) {
+        const auto found = children.find(token);
+        return found != children.end() && found->second.alive && session.spawn_token == token;
+    }
+
     void kill_all() {
         for (auto& [token, child] : children) {
             static_cast<void>(token);
@@ -120,6 +127,7 @@ class FakeLauncherWorld {
 
     unsigned launches{0};
     unsigned terminations{0};
+    bool decline_adoption{false};
     pid_t next_pid{1000};
     std::vector<std::string> launch_order;
     std::vector<std::string> children_keys() const {
@@ -142,6 +150,10 @@ class FakeLauncher final : public ChildLauncher {
     [[nodiscard]] std::optional<ChildProcess> adopt(const DesiredSession& session,
                                                     const std::string& token) override {
         return world_->adopt(session, token);
+    }
+    [[nodiscard]] bool peer_preserved(const DesiredSession& session,
+                                      const std::string& token) override {
+        return world_->peer_preserved(session, token);
     }
     [[nodiscard]] ChildProcess launch(const DesiredSession& session,
                                       const std::string& token) override {
@@ -264,6 +276,33 @@ void restarted_runtime_adopts_without_duplicate() {
     const auto stopped = restarted.control(::geteuid(), stop_request(saved.session->spawn_token));
     require(control_status(stopped) == "applied" && world->terminations == 1,
             "the restarted supervisor can stop its adopted child");
+}
+
+void preserved_peer_failure_retains_identity_for_retry() {
+    auto world = std::make_shared<FakeLauncherWorld>();
+    const auto owner = registry(std::make_shared<MemoryStateStorage>());
+    const auto saved = [&] {
+        SupervisorRuntime runtime{owner, std::make_shared<FakeLauncher>(world)};
+        return runtime.bootstrap(record());
+    }();
+    world->decline_adoption = true;
+    {
+        SupervisorRuntime blocked{owner, std::make_shared<FakeLauncher>(world)};
+        bool refused = false;
+        try {
+            static_cast<void>(blocked.converge());
+        } catch (const std::runtime_error&) {
+            refused = true;
+        }
+        require(refused && world->launches == 1 && blocked.state() == saved,
+                "a preserved live peer neither rotates nor launches a replacement");
+    }
+
+    world->decline_adoption = false;
+    SupervisorRuntime retry{owner, std::make_shared<FakeLauncher>(world)};
+    require(retry.converge() == Convergence::converged && world->launches == 1 &&
+                retry.state() == saved,
+            "the preserved peer can be adopted once verification recovers");
 }
 
 void bounded_restart_admission() {
@@ -438,6 +477,7 @@ int main() {
     try {
         authenticated_control_and_stop();
         restarted_runtime_adopts_without_duplicate();
+        preserved_peer_failure_retains_identity_for_retry();
         bounded_restart_admission();
         explicit_disable();
         harmless_child_ownership_fixture();
