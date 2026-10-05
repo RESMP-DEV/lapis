@@ -1,10 +1,11 @@
 {
   "schema_version": 1,
-  "recorded_on": "2026-10-04",
+  "recorded_on": "2026-10-05",
   "source": {
-    "baseline_revision": "3276b5ecc92ac5262c09b2f0e52627e321133632",
-    "source_revision": "268e6d6907d219de6c63719a8e6618cb6c2dbdfa",
-    "ported_revision": "b5e0c55"
+    "baseline_revision": "92c0e82a3130e9aa8bf7e1a7d8322435eff7b683",
+    "source_revision": "cf5d58b0948f45abf9d70e115aca2870cf6eb777",
+    "ported_revision": "b5e0c55",
+    "receipt_note": "source_revision is the integrated branch head before this receipt-only commit; the follow-up commit preserves the reviewed architecture text and this receipt."
   },
   "scope": "Documentation-only port of the Codex upstream integration review, its open-choice row, five observations, and probes P1-P3 onto current architecture. No Codex binary probe or adapter behavior changed.",
   "verification": [
@@ -26,6 +27,11 @@
       "command": "python3 scripts/lapis.py quality",
       "exit_code": 0,
       "result": "Source/status, whitespace, Ruff, and Python unit checks passed after the documentation commit"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "After merging current main, source/status, whitespace, Ruff, and 527 Python tests (7 skipped) passed on the parent host."
     }
   ],
   "aggregate_passed": true,
