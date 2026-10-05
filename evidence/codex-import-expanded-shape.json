@@ -2,6 +2,7 @@
   "schema_version": 1,
   "record_kind": "lapis.codex-import-expanded-shape",
   "recorded_on": "2026-10-05",
+  "recorded_at": "2026-10-05T22:31:24Z",
   "source": {
     "revision": "7fa37a7422e77f1e24325d0ea18aaade50a4bf7c",
     "dirty_before_receipt": true,
@@ -15,9 +16,9 @@
     "working_tree_sha256": {
       "adapters/codex/src/importer.hpp": "82b4b8d399c29644f05f476bd0f3c5cca7d8e8ebfe1477fba2fc8ca980ff0c5e",
       "adapters/codex/src/importer.cpp": "58b83c9bf05f93719bd320233db1a4a2e9993bf04731da4911355b183dff283d",
-      "adapters/codex/tests/importer_test.cpp": "7568d2cd67f7ed088e79acde40e5e9134cc4b630d7a0fd0b6db659b8749658fd",
+      "adapters/codex/tests/importer_test.cpp": "bcee7996a317490a2ad1abc4ccaa3652054a60bd1f7579db4eff639fad2b5730",
       "scripts/probe_codex_external_import.py": "ed5adf9c9d5bc5c34650b53263bd34944dd20aa76a8f3329394009aae3b47423",
-      "scripts/tests/test_probe_codex_external_import.py": "2680cea5ee79479e1068ba58a612ca3b7368c5561e406f387b943334ab57a1b6"
+      "scripts/tests/test_probe_codex_external_import.py": "544fb4354d6bb5c1e428067e678c965a0619d20fa8025f152ef5f610bb8296fc"
     }
   },
   "scope": "Fail closed on incomplete or unexpected SESSIONS migration-detail shapes while retaining compatibility with the observed pre-memory binary protocol.",
@@ -26,7 +27,7 @@
       "name": "codex-importer-ctest",
       "command": "ctest --test-dir build/desktop -R '^codex-importer$' --output-on-failure --no-tests=error",
       "exit_code": 0,
-      "result": "Synthetic incomplete-details and memory-absent regressions passed with the full importer suite."
+      "result": "Synthetic incomplete-details, memory-absent, and nonempty-memory regressions passed with the full importer suite."
     },
     {
       "name": "probe-python-tests",
@@ -58,6 +59,16 @@
       "exit_code": 0
     }
   ],
+  "validation_artifacts": {
+    "live_disposable_import_output": {
+      "sha256": "d9a96334f9ccdc9e2e41a8d6f87cc423f03b6af051c6f296632b8dac226aabc4",
+      "scope": "Final full-validation live probe output retained under the ignored build directory; it contains no user transcript and is not published in full."
+    },
+    "repaired_head_quality_receipt": {
+      "sha256": "8e5cf59d130ba1995f3a0c43523aacd006213688ad41784db941b77ecd82f8f6",
+      "scope": "Full repository quality receipt after the nonempty-memory regression and receipt-hardening changes."
+    }
+  },
   "aggregate_passed": true,
   "non_claims": [
     "Synthetic parsing and one disposable live import do not qualify production import UI, exact-scope consent, a dedicated production server, duplicate reconciliation, launch/resume, failure recovery, or observer response capability."

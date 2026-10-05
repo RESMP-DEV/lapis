@@ -473,6 +473,27 @@ void memory_absent_session_details_remain_compatible() {
             "the observed pre-memory expanded shape remains compatible");
 }
 
+void nonempty_memory_session_details_fail_closed() {
+    Source source;
+    auto item = session_item();
+    auto details = item.value(QStringLiteral("details")).toObject();
+    details.insert(QStringLiteral("memory"), QJsonArray{QStringLiteral("memory")});
+    item.insert(QStringLiteral("details"), details);
+    source.detection = QJsonObject{{QStringLiteral("items"), QJsonArray{item}}};
+    source.start();
+    Importer importer;
+    QString failure;
+    QObject::connect(&importer, &Importer::failed,
+                     [&](const QString& reason) { failure = reason; });
+    importer.start(source.path());
+    require(wait_for([&] { return importer.phase() == Importer::Phase::ready; }),
+            "nonempty-memory fixture initializes");
+    require(importer.detect() &&
+                wait_for([&] { return importer.phase() == Importer::Phase::failed; }) &&
+                failure.contains(QStringLiteral("non-session migration class")),
+            "a nonempty memory list must not enter a session selection");
+}
+
 void malformed_shape_fails_closed_without_retry() {
     Source source;
     source.detection = QJsonObject{
@@ -531,6 +552,7 @@ int run(int argc, char** argv) {
     non_session_migration_details_fail_closed();
     incomplete_session_details_fail_closed();
     memory_absent_session_details_remain_compatible();
+    nonempty_memory_session_details_fail_closed();
     malformed_shape_fails_closed_without_retry();
     malformed_completion_fails_closed();
     return 0;

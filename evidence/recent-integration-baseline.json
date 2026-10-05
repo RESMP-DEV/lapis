@@ -2,6 +2,7 @@
   "schema_version": 1,
   "record_kind": "lapis.recent-integration-baseline",
   "recorded_on": "2026-10-05",
+  "recorded_at": "2026-10-05T22:34:05Z",
   "source": {
     "revision": "7fa37a7422e77f1e24325d0ea18aaade50a4bf7c",
     "dirty": false
@@ -26,8 +27,14 @@
       "exit_code": 0
     }
   ],
+  "validation_artifacts": {
+    "clean_baseline_quality_receipt": {
+      "sha256": "687c1f52137a0987cd39609772e7608d830ccc7ff7e085fcafc215474b02d1b0",
+      "scope": "Quality receipt reproduced in an isolated clean worktree at 7fa37a7422e77f1e24325d0ea18aaade50a4bf7c; the sanitized digest is retained here and the disposable worktree was removed."
+    }
+  },
   "aggregate_passed": true,
   "non_claims": [
-    "No supervisor production birth route, multi-session supervisor state, Codex candidate executable, import UI, real CLI authentication, native GPU presentation, or native macOS input qualification."
+    "No supervisor production birth route, multi-session supervisor state, Codex candidate executable runtime qualification, import UI, real CLI authentication, native GPU presentation, or native macOS input qualification."
   ]
 }

@@ -48,27 +48,33 @@
     },
     {
       "name": "active-codex-binary-triage",
-      "command": "CODEX=\"$(command -v codex)\"; command -v codex; shasum -a 256 \"$CODEX\"; ! strings \"$CODEX\" | grep -E \"create_worktree|list_worktrees\"",
+      "command": "CODEX=\"$(command -v codex)\"; test -n \"$CODEX\"; python3 -c 'import subprocess,sys; p=sys.argv[1]; assert subprocess.check_output([\"shasum\",\"-a\",\"256\",p],text=True).split()[0]==\"d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f\"; strings=subprocess.run([\"strings\",p],check=True,capture_output=True,text=True).stdout; assert \"create_worktree\" not in strings and \"list_worktrees\" not in strings' \"$CODEX\"",
       "exit_code": 0,
       "result": "PATH selects the ef0f5c6990 AlphaHENG package, hash d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f, with no reviewed worktree-tool strings."
     },
     {
       "name": "active-codex-source-triage",
-      "command": "ALPHAHENG_CODEX_SOURCE=\"${ALPHAHENG_CODEX_SOURCE:?set to the active AlphaHENG contrib/codex checkout}\"; git -C \"$ALPHAHENG_CODEX_SOURCE\" rev-parse HEAD; test -z \"$(git -C \"$ALPHAHENG_CODEX_SOURCE\" status --porcelain)\"",
+      "command": "set -euo pipefail; ALPHAHENG_CODEX_SOURCE=\"${ALPHAHENG_CODEX_SOURCE:?set to the active AlphaHENG contrib/codex checkout}\"; test \"$(git -C \"$ALPHAHENG_CODEX_SOURCE\" rev-parse HEAD)\" = \"ef0f5c6990b7446a731dc6df551c307a877a18e1\"; STATUS=\"$(git -C \"$ALPHAHENG_CODEX_SOURCE\" status --porcelain)\"; test -z \"$STATUS\"; test \"$(git -C \"$ALPHAHENG_CODEX_SOURCE\" remote get-url origin)\" = \"https://github.com/RESMP-DEV/codex.git\"",
       "exit_code": 0,
-      "result": "The active source checkout is clean at ef0f5c6990b7446a731dc6df551c307a877a18e1; the superproject gitlink differs and is not used as the deployed-source claim."
+      "result": "The active source checkout is clean at ef0f5c6990b7446a731dc6df551c307a877a18e1 and its origin is RESMP-DEV/codex; the superproject gitlink is not used as the deployed-source claim."
     },
     {
       "name": "candidate-codex-source-triage",
-      "command": "CODEX_CHECKOUT=\"${CODEX_CHECKOUT:?set to the clean RESMP-DEV/codex checkout}\"; git -C \"$CODEX_CHECKOUT\" rev-parse HEAD; test -z \"$(git -C \"$CODEX_CHECKOUT\" status --porcelain)\"",
+      "command": "set -euo pipefail; CODEX_CHECKOUT=\"${CODEX_CHECKOUT:?set to the exact detached candidate worktree}\"; test \"$(git -C \"$CODEX_CHECKOUT\" rev-parse HEAD)\" = \"eba4e02df5e1962e4c001f837bf2ab6725d5b7a9\"; STATUS=\"$(git -C \"$CODEX_CHECKOUT\" status --porcelain)\"; test -z \"$STATUS\"; test \"$(git -C \"$CODEX_CHECKOUT\" rev-parse refs/remotes/resmp/main)\" = \"eba4e02df5e1962e4c001f837bf2ab6725d5b7a9\"; test \"$(git -C \"$CODEX_CHECKOUT\" remote get-url resmp)\" = \"https://github.com/RESMP-DEV/codex.git\"",
       "exit_code": 0,
-      "result": "The RESMP-DEV/codex checkout is clean at eba4e02df5e1962e4c001f837bf2ab6725d5b7a9."
+      "result": "The detached candidate worktree is clean at eba4e02df5e1962e4c001f837bf2ab6725d5b7a9, which is exactly the RESMP-DEV/codex resmp/main head."
     },
     {
       "name": "stale-candidate-artifact-triage",
-      "command": "CODEX_CHECKOUT=\"${CODEX_CHECKOUT:?set to the clean RESMP-DEV/codex checkout}\"; ARTIFACT=\"$CODEX_CHECKOUT/codex-rs/target/release/codex\"; stat -f \"%Sm\" \"$ARTIFACT\"; shasum -a 256 \"$ARTIFACT\"; ! strings \"$ARTIFACT\" | grep -E \"create_worktree|list_worktrees\"",
+      "command": "set -euo pipefail; ARTIFACT=\"${ARTIFACT:?set to the stale release artifact}\"; stat -f \"%Sm\" \"$ARTIFACT\"; test \"$(shasum -a 256 \"$ARTIFACT\" | awk '{print $1}')\" = \"e1e083ab281668d370b5aa4d21a2803158723380ef1a04be80ffa459e700d407\"; python3 -c 'import subprocess,sys; p=sys.argv[1]; strings=subprocess.run([\"strings\",p],check=True,capture_output=True,text=True).stdout; assert \"create_worktree\" not in strings and \"list_worktrees\" not in strings' \"$ARTIFACT\"",
       "exit_code": 0,
       "result": "The existing release artifact is stale at 2026-09-24, hash e1e083ab281668d370b5aa4d21a2803158723380ef1a04be80ffa459e700d407, with no reviewed worktree-tool strings."
+    },
+    {
+      "name": "exact-candidate-binary-triage",
+      "command": "set -euo pipefail; CANDIDATE=\"${CANDIDATE:?set to the exact eba4e02 candidate executable}\"; test -x \"$CANDIDATE\"; test \"$(shasum -a 256 \"$CANDIDATE\" | awk '{print $1}')\" = \"7f1115012d8a55822bfd530cf8a6e273edb211a48fcb508a5f38a05b92af3c83\"; test \"$($CANDIDATE --version)\" = \"codex-cli 0.0.0\"; \"$CANDIDATE\" exec --help 2>&1 | grep -F -- \"--worktree\" >/dev/null; strings \"$CANDIDATE\" | grep -E \"create_worktree|get_worktree_creation_status|list_worktrees\" >/dev/null",
+      "exit_code": 0,
+      "result": "The exact eba4e02df5e1962e4c001f837bf2ab6725d5b7a9 candidate is an arm64 executable, hash 7f1115012d8a55822bfd530cf8a6e273edb211a48fcb508a5f38a05b92af3c83, with version smoke codex-cli 0.0.0, --worktree help present, and reviewed worktree symbols present."
     }
   ],
   "aggregate_passed": true,
@@ -83,17 +89,26 @@
     "active_path_binary": {
       "source_revision": "ef0f5c6990b7446a731dc6df551c307a877a18e1",
       "sha256": "d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f",
-      "worktree_tool_strings_present": false
+      "worktree_tool_strings_present": false,
+      "source_origin": "https://github.com/RESMP-DEV/codex.git"
     },
     "candidate_source": {
       "revision": "eba4e02df5e1962e4c001f837bf2ab6725d5b7a9",
-      "clean": true
+      "clean": true,
+      "resmp_main_revision": "eba4e02df5e1962e4c001f837bf2ab6725d5b7a9"
+    },
+    "candidate_binary": {
+      "source_revision": "eba4e02df5e1962e4c001f837bf2ab6725d5b7a9",
+      "sha256": "7f1115012d8a55822bfd530cf8a6e273edb211a48fcb508a5f38a05b92af3c83",
+      "version_smoke": "codex-cli 0.0.0",
+      "worktree_help_present": true,
+      "worktree_tool_strings_present": true
     },
     "local_release_artifact": {
       "sha256": "e1e083ab281668d370b5aa4d21a2803158723380ef1a04be80ffa459e700d407",
       "mtime": "2026-09-24",
       "worktree_tool_strings_present": false
     },
-    "conclusion": "No executable currently represents the reviewed candidate lineage. Build and hash an exact eba4e02df5e1962e4c001f837bf2ab6725d5b7a9 candidate before P1."
+    "conclusion": "An exact eba4e02df5e1962e4c001f837bf2ab6725d5b7a9 candidate exists and passed bounded identity/surface smoke. P1 has not run, so no worktree operation or observer capability is qualified."
   }
 }

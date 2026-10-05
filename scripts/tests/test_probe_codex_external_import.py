@@ -76,6 +76,10 @@ class ProbeTests(unittest.IsolatedAsyncioTestCase):
         memory_absent = session_item()
         memory_absent["details"].pop("memory")
         self.assertEqual(probe.session_item([memory_absent], home), memory_absent)
+        nonempty_memory = session_item()
+        nonempty_memory["details"]["memory"] = ["not-a-session"]
+        with self.assertRaisesRegex(RuntimeError, "non-session migration class"):
+            probe.session_item([nonempty_memory], home)
         escaping_path = session_item()
         escaping_path["details"]["sessions"][0]["path"] = "/private/other/session.jsonl"
         with self.assertRaisesRegex(RuntimeError, "escapes the disposable home"):

@@ -4865,13 +4865,15 @@ owner, exact-scope consent UI, launch record, duplicate reconciliation, or
 observer capability is claimed.
 
 The Codex upstream-review triage verified that the live PATH binary remains the
-older AlphaHENG build (`d10a1b29…`, source `ef0f5c6990`) and that the current
-RESMP-DEV/codex source head is `eba4e02df5e1962e4c001f837bf2ab6725d5b7a9`. The
-existing local release artifact is stale (`e1e083ab…`, September 24) and lacks
-the reviewed worktree surfaces. P1 therefore remains blocked until an exact
-candidate is built and hashed. Integration proceeds on two bounded lanes: the
-lapis lane completes the per-session supervisor transition and production birth
-route, while a separate candidate lane builds and hashes the exact Codex P1
-binary. P2/P3 and the dedicated import-server/onboarding design wait for P1;
-tool status and the import protocol client remain available but dormant until
-their owners and qualification gates are ready.
+older AlphaHENG build (`d10a1b29…`, source `ef0f5c6990`) while an exact clean
+candidate for RESMP-DEV/codex source `eba4e02df5e1962e4c001f837bf2ab6725d5b7a9`
+has now been built and hashed (`7f111501…`, version smoke `codex-cli 0.0.0`,
+`--worktree` help present, reviewed worktree symbols present). The existing
+local release artifact remains stale (`e1e083ab…`, September 24) and must not be
+used for P1. The candidate check does not run a worktree operation, app-server
+exchange, or adapter probe, so P1 itself remains unqualified. Integration
+proceeds on two bounded lanes: the lapis lane completes the per-session
+supervisor transition and production birth route, while the candidate lane now
+runs exact-P1 qualification. P2/P3 and the dedicated import-server/onboarding
+design wait for P1; tool status and the import protocol client remain available
+but dormant until their owners and qualification gates are ready.
