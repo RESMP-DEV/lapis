@@ -1480,6 +1480,28 @@ def command_release(arguments):
             "write the appcast and record candidate gates against that exact "
             "file before release"
         )
+    signature, signed_length = update_signature(DMG)
+    try:
+        appcast_root = ET.parse(APPCAST).getroot()
+    except (OSError, ET.ParseError) as error:
+        raise PackageError(f"cannot read the release appcast: {error}") from error
+    appcast_items = appcast_root.findall("./channel/item")
+    appcast_enclosures = (
+        appcast_items[0].findall("enclosure") if len(appcast_items) == 1 else []
+    )
+    appcast_enclosure = appcast_enclosures[0] if len(appcast_enclosures) == 1 else None
+    sparkle_signature = ""
+    sparkle_length = ""
+    if appcast_enclosure is not None:
+        sparkle_signature = appcast_enclosure.attrib.get(
+            "{http://www.andymatuschak.org/xml-namespaces/sparkle}edSignature", ""
+        )
+        sparkle_length = appcast_enclosure.attrib.get("length", "")
+    if sparkle_signature != signature or sparkle_length != signed_length:
+        raise PackageError(
+            "appcast EdDSA signature does not authenticate this DMG; "
+            "regenerate it with package_macos.py appcast"
+        )
     try:
         # The appcast and the gate map are one publication decision.  Stage
         # both bindings beside the manifest and swap them in with a single

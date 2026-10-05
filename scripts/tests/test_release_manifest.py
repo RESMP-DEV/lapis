@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 import warnings
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -1204,6 +1205,7 @@ class ReleaseCommandTests(unittest.TestCase):
         bind_appcast_failure=False,
         appcast_exists=True,
         replace_candidate_gates=False,
+        appcast_signature="ed" * 64,
     ):
         arguments = type("Arguments", (), {})()
         arguments.tag = "v0.5.0"
@@ -1214,6 +1216,15 @@ class ReleaseCommandTests(unittest.TestCase):
         self.bind_appcast_failure = bind_appcast_failure
         if appcast_exists:
             self.write_appcast()
+            if appcast_signature != "ed" * 64:
+                root = ET.parse(self.appcast).getroot()
+                enclosure = root.find("./channel/item/enclosure")
+                assert enclosure is not None
+                enclosure.set(
+                    "{http://www.andymatuschak.org/xml-namespaces/sparkle}edSignature",
+                    appcast_signature,
+                )
+                self.appcast.write_bytes(ET.tostring(root, encoding="utf-8"))
 
         def release_dependencies(_ghostty):
             return self.dependencies
@@ -1266,6 +1277,11 @@ class ReleaseCommandTests(unittest.TestCase):
             patch.object(package, "release_dependencies", release_dependencies),
             patch.object(
                 package, "write_appcast", return_value=self.write_appcast_mock
+            ),
+            patch.object(
+                package,
+                "update_signature",
+                return_value=("ed" * 64, str(self.dmg.stat().st_size)),
             ),
             patch.object(package, "bind_appcast", side_effect=bind_release_appcast),
             patch.object(package, "bind_candidate_gates", side_effect=bind_gates),
@@ -1393,6 +1409,17 @@ class ReleaseCommandTests(unittest.TestCase):
         self.assertFalse(self.published)
         self.assertFalse(self.appcast.exists())
         self.write_appcast_mock.assert_not_called()
+
+    def test_release_requires_the_appcast_signature_to_authenticate_the_dmg(self):
+        with self.assertRaisesRegex(
+            package.PackageError,
+            "appcast EdDSA signature does not authenticate this DMG",
+        ):
+            self.invoke_release(appcast_signature="aa" * 64)
+        self.assertFalse(self.published)
+        unchanged = manifest.load_manifest(self.manifest_path)
+        self.assertIsNone(unchanged.get("release"))
+        self.assertIsNone(unchanged.get("candidate_gates"))
 
     def test_failed_appcast_binding_does_not_expose_staged_gates(self):
         self.bind_candidate_gates = True

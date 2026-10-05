@@ -2977,7 +2977,8 @@ digests only.
 
 The explicit `package_macos.py appcast --tag vX.Y.Z` command renders the stable
 feed after the DMG is stapled and before gate receipts are collected. Release
-consumes that already qualified appcast and never mints or rewrites it.
+compares the feed's Sparkle EdDSA signature and byte length with the staged DMG,
+consumes that already qualified appcast, and never mints or rewrites it.
 Opening preflight leaves appcast-specific gate checks to final preflight when
 no appcast is supplied. A failed or revoked gate binding can be replaced
 without a flag; an approved binding is immutable unless its identical map is
