@@ -3594,9 +3594,13 @@ companion history catch-up; this survey does not duplicate their completion stat
 
 ### Codex upstream integration review (October 2)
 
-The Codex fork (RESMP-DEV/codex, the binary lapis manages) took two large
-upstream syncs on October 1-2 (155 upstream PRs through #50148, fork `eb9c48a45b`).
-This section owns the integration investigation those syncs opened; it records
+The RESMP-DEV/codex candidate lineage took two large upstream syncs on
+October 1-2 (155 upstream PRs through #50148, fork `eb9c48a45b`). It is not
+the binary lapis currently resolves: on October 5 the active AlphaHENG
+snapshot was source `ef0f5c6990` with executable SHA-256
+`d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f`, and it
+does not contain the reviewed worktree-tool changes. This section owns the
+integration investigation opened by the newer candidate; it records
 observations and open probes, not qualification.
 
 What changed on surfaces lapis consumes:
@@ -3620,10 +3624,11 @@ What changed on surfaces lapis consumes:
 Why this matters to lapis:
 
 1. **Binary requalification is due now.** The Milestone 2 contract keeps
-   structured responses disabled for unqualified binary hashes; the managed
-   binary changed materially (155 upstream PRs plus fork patches). Until the
-   fork build is requalified, responses against it are expected to stay
-   disabled by design. This is the first action, before any new probe.
+   structured responses disabled for unqualified binary hashes; the candidate
+   changed materially (155 upstream PRs plus fork patches) while the currently
+   selected AlphaHENG binary remains outside the qualified set. Until a
+   candidate is selected and requalified, responses stay disabled by design.
+   Requalification is the first action, before any new probe.
 2. **Single-thread binding meets routine multi-threading.** The managed route
    binds one persistent TUI thread and disables structured responses when a
    second persistent thread appears. Worktree tools make attached tasks a
