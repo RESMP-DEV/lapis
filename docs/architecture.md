@@ -99,7 +99,7 @@ for ownership, shared contracts and integration checks across large changes.
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
 | Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging, attention messages and retained workspace entries | Automatic service recovery remains deferred |
 | Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
-| Codex external-agent import | Protocol observed live and exercised only in an isolated fixture; not integrated | A separate explicit onboarding/import flow on a requalified Codex build: detection, exact scope consent, asynchronous completion, imported-thread launch/resume, duplicate reconciliation and failure recovery; never a per-session observer capability |
+| Codex external-agent import | Session-only protocol importer and isolated qualification probe are implemented; no service/desktop onboarding task yet | Finish the separate explicit flow on a requalified Codex build: exact scope consent, dedicated server ownership, imported-thread launch/resume, duplicate reconciliation and failure recovery; never a per-session observer capability |
 | Web surfaces | CEF 8037 (Chromium 154) provisional candidate for service-owned, CLI-drivable web views; September 29 design only, runtime pin awaits W0 | [Web surfaces section](#web-surfaces-september-29) owns the engine gate, wire contract, injection determinism and import consent |
 
 The [research receipt](../evidence/terminal-research.json) retains pinned upstream
@@ -4574,6 +4574,19 @@ binary requalification and the managed-daemon launch decision: the probe binary
 is newer than lapis's response-qualified pins, and import must use one clearly
 owned server process rather than racing per-terminal backends over the same
 Codex home.
+
+The October 5 implementation checkpoint adds the first compiled slice without
+changing the observer or attention contracts: `lapis::codex::Importer` owns a
+dedicated WebSocket migration conversation, validates the expanded session
+details shape, submits only selected `SESSIONS` payloads unchanged, tracks
+acceptance/progress/completion by import ID, and terminates the task on timeout,
+malformed data or transport loss without retrying. Non-session migration payloads
+are not retained. Its synthetic protocol suite is `codex-importer`.
+`scripts/probe_codex_external_import.py` performs the live disposable-HOME
+qualification and is recorded by
+[the session receipt](../evidence/codex-external-import-session-probe.json). It
+does not create launch records, expose UI, reconcile duplicates, or qualify a
+different binary hash.
 
 The later 32-session experiment records workload/output rates, display rate,
 p50/p95/p99 input/switch latency and frame times, memory growth and idle CPU/GPU
