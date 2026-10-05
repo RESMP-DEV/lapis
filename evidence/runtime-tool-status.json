@@ -1,7 +1,7 @@
 {
   "schema": "lapis.work-receipt/1",
   "recorded_on": "2026-10-05",
-  "baseline_revision": "8e3df6478536bf1bc5392a0cdecaaaf0a8ca0287",
+  "baseline_revision": "a9715230950c85c3b4f6197c08ac12961b828741",
   "branch": "work/runtime-tool-status",
   "source_dirty": false,
   "scope": "Narrow read-only tool status and bounded version probes over the canonical desktop harness catalog. This rework does not replace harness_catalog or change launch, restore, resume or update semantics.",
@@ -163,6 +163,12 @@
       "exit_code": 0,
       "receipt": "build/reports/ui-review/20261005T212129Z-xof71lx5/receipt.json",
       "scope": "Configure/build, full background UI, shortcuts, and terminal input passed after the stale-publication and bounded-output repairs; offscreen/software only."
+    },
+    {
+      "name": "repository-quality-codex-review-era",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "scope": "Source/status, whitespace, Ruff, and the full Python suite passed after merging main including PR #94."
     }
   ],
   "source_sha256": {
@@ -185,6 +191,6 @@
     "The focused Qt checks do not qualify native macOS input, IME, pasteboard, native GPU presentation or Linux.",
     "The full desktop static/CTest gate did not pass under Homebrew LLVM 23 because unrelated baseline findings and sandboxed service cases remain; focused tool tests, repository quality, and background UI review did pass."
   ],
-  "source_revision": "7f8b67893df24928e6c4f6d4dabe262af136978b",
-  "integration_note": "source_revision is the branch head after merging main including the importer static-review repair; this receipt-only follow-up records the integrated result."
+  "source_revision": "c0b845764c74558a9695ce0cf1c587b2e0bfef29",
+  "integration_note": "source_revision is the branch head after merging main including the Codex integration-review PR; this receipt-only follow-up records the integrated result."
 }
