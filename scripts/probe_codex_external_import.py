@@ -63,7 +63,24 @@ def session_item(items: list[dict[str, Any]]) -> dict[str, Any]:
         raise RuntimeError("Expected exactly one session migration item")
     item = sessions[0]
     details = item.get("details")
-    sessions_detected = details.get("sessions") if isinstance(details, dict) else None
+    if not isinstance(details, dict):
+        raise RuntimeError("Expected exactly one detected session")
+    allowed_details = {
+        "plugins",
+        "skills",
+        "sessions",
+        "mcpServers",
+        "hooks",
+        "subagents",
+        "commands",
+        "memory",
+    }
+    if set(details) - allowed_details:
+        raise RuntimeError("Session item has an unknown migration detail")
+    for name, value in details.items():
+        if name != "sessions" and (not isinstance(value, list) or value):
+            raise RuntimeError("Session item carries a non-session migration class")
+    sessions_detected = details.get("sessions")
     if not isinstance(sessions_detected, list) or len(sessions_detected) != 1:
         raise RuntimeError("Expected exactly one detected session")
     return item

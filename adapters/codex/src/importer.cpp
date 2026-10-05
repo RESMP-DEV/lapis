@@ -320,6 +320,8 @@ class Importer::Impl final : public QObject {
         phase_ = ImportPhase::detecting;
         diagnostic_ = QStringLiteral("Detecting Claude sessions");
         rpc(QStringLiteral("externalAgentConfig/detect"), parameters, rpc_timeout);
+        if (phase_ != ImportPhase::detecting)
+            return false;
         emit owner_.changed();
         return true;
     }
@@ -352,6 +354,8 @@ class Importer::Impl final : public QObject {
                         {QStringLiteral("providerId"), QStringLiteral("claude")},
                         {QStringLiteral("migrationSource"), QStringLiteral("claude")}},
             rpc_timeout);
+        if (phase_ != ImportPhase::importing)
+            return false;
         emit owner_.changed();
         return true;
     }
@@ -557,6 +561,10 @@ class Importer::Impl final : public QObject {
             throw std::runtime_error("Invalid Codex import RPC result");
         if (method == QLatin1String("initialize")) {
             required_text(result.toObject(), QStringLiteral("userAgent"), identity_limit);
+            if (!transport_->send(QJsonDocument(QJsonObject{{QStringLiteral("method"),
+                                                             QStringLiteral("initialized")}})
+                                      .toJson(QJsonDocument::Compact)))
+                throw std::runtime_error("Codex initialization write failed");
             phase_ = ImportPhase::ready;
             diagnostic_ = QStringLiteral("Codex importer ready");
             emit owner_.connected();

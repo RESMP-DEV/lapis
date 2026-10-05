@@ -44,6 +44,14 @@ class ProbeTests(unittest.IsolatedAsyncioTestCase):
         malformed = {"itemType": "SESSIONS", "details": {"sessions": []}}
         with self.assertRaisesRegex(RuntimeError, "exactly one detected session"):
             probe.session_item([malformed])
+        carrying_skills = session_item()
+        carrying_skills["details"]["skills"] = [{"name": "other"}]
+        with self.assertRaisesRegex(RuntimeError, "non-session migration"):
+            probe.session_item([carrying_skills])
+        unknown_detail = session_item()
+        unknown_detail["details"]["future"] = []
+        with self.assertRaisesRegex(RuntimeError, "unknown migration detail"):
+            probe.session_item([unknown_detail])
 
     async def test_import_request_is_sessions_only(self):
         request = probe.import_item(session_item(), provider_id="fixture")

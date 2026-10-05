@@ -306,6 +306,12 @@ void detect_select_import_and_parse_completion() {
     importer.start(source.path());
     require(wait_for([&] { return connected && importer.phase() == Importer::Phase::ready; }),
             "importer initializes");
+    require(std::any_of(source.received.begin(), source.received.end(),
+                        [](const QJsonObject& message) {
+                            return message.value(QStringLiteral("method")) ==
+                                   QStringLiteral("initialized");
+                        }),
+            "importer completes the app-server handshake");
     require(importer.detect() && wait_for([&] {
                 return importer.phase() == Importer::Phase::ready &&
                        !importer.detection().items.empty();
