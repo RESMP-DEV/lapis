@@ -93,6 +93,38 @@ DetectedSession session(const QJsonObject& value, QSet<QString>& paths) {
     return result;
 }
 
+void validate_session_details(const QJsonObject& details, QSet<QString>& paths,
+                              DetectedItem& result) {
+    // A session selection cannot quietly carry executable or global
+    // configuration classes. Codex serializes every known list key, including
+    // empty ones; only that exact expanded shape is allowed.
+    static const QSet<QString> allowed{
+        QStringLiteral("plugins"),    QStringLiteral("skills"), QStringLiteral("sessions"),
+        QStringLiteral("mcpServers"), QStringLiteral("hooks"),  QStringLiteral("subagents"),
+        QStringLiteral("commands"),   QStringLiteral("memory"),
+    };
+    if (details.size() > allowed.size())
+        throw std::runtime_error("Codex session item has unexpected migration details");
+    for (const auto& name : details.keys()) {
+        if (!allowed.contains(name))
+            throw std::runtime_error("Codex session item has an unknown migration details key");
+        if (name == QLatin1String("sessions"))
+            continue;
+        const auto other = details.value(name);
+        if (!other.isArray() || !other.toArray().isEmpty())
+            throw std::runtime_error("Codex session item carries a non-session migration class");
+    }
+
+    const auto sessions_value = details.value(QStringLiteral("sessions"));
+    if (!sessions_value.isArray() || sessions_value.toArray().size() > sessions_limit)
+        throw std::runtime_error("Invalid Codex detected session list");
+    for (const auto& entry : sessions_value.toArray()) {
+        if (!entry.isObject())
+            throw std::runtime_error("Invalid Codex detected session");
+        result.sessions.push_back(session(entry.toObject(), paths));
+    }
+}
+
 DetectedItem detection_item(const QJsonObject& value, QSet<QString>& paths) {
     DetectedItem result;
     result.item_type = item_type(required_text(value, QStringLiteral("itemType"), 64));
@@ -106,35 +138,7 @@ DetectedItem detection_item(const QJsonObject& value, QSet<QString>& paths) {
             throw std::runtime_error("Invalid Codex migration details");
         const auto details = details_value.toObject();
         if (result.item_type == ImportItemType::sessions) {
-            // A session selection cannot quietly carry executable or global
-            // configuration classes. Codex serializes every known list key,
-            // including empty ones; only that exact expanded shape is allowed.
-            constexpr const char* allowed[] = {"plugins", "skills",    "sessions", "mcpServers",
-                                               "hooks",   "subagents", "commands", "memory"};
-            if (details.size() > static_cast<qsizetype>(std::size(allowed)))
-                throw std::runtime_error("Codex session item has unexpected migration details");
-            for (const auto& name : details.keys()) {
-                const auto known =
-                    std::any_of(std::begin(allowed), std::end(allowed),
-                                [&](const char* wanted) { return name == QLatin1String(wanted); });
-                if (!known)
-                    throw std::runtime_error(
-                        "Codex session item has an unknown migration details key");
-                if (name == QLatin1String("sessions"))
-                    continue;
-                const auto other = details.value(name);
-                if (!other.isArray() || !other.toArray().isEmpty())
-                    throw std::runtime_error(
-                        "Codex session item carries a non-session migration class");
-            }
-            const auto sessions_value = details.value(QStringLiteral("sessions"));
-            if (!sessions_value.isArray() || sessions_value.toArray().size() > sessions_limit)
-                throw std::runtime_error("Invalid Codex detected session list");
-            for (const auto& entry : sessions_value.toArray()) {
-                if (!entry.isObject())
-                    throw std::runtime_error("Invalid Codex detected session");
-                result.sessions.push_back(session(entry.toObject(), paths));
-            }
+            validate_session_details(details, paths, result);
         }
     }
     // Only the sessions-only first slice can be submitted. Other detected
@@ -363,16 +367,16 @@ class Importer::Impl final : public QObject {
         return true;
     }
 
-    ImportPhase phase() const { return phase_; }
-    const QString& diagnostic() const { return diagnostic_; }
-    const Importer::Detection& detection() const { return detection_; }
-    const QVector<ItemResult>& progress() const { return progress_; }
-    const Importer::Completion& completion() const {
+    [[nodiscard]] ImportPhase phase() const { return phase_; }
+    [[nodiscard]] const QString& diagnostic() const { return diagnostic_; }
+    [[nodiscard]] const Importer::Detection& detection() const { return detection_; }
+    [[nodiscard]] const QVector<ItemResult>& progress() const { return progress_; }
+    [[nodiscard]] const Importer::Completion& completion() const {
         static const Importer::Completion empty;
         return completion_.has_value() ? *completion_ : empty;
     }
-    QString import_id() const { return import_id_; }
-    QVector<ImportedSession> imported_sessions() const {
+    [[nodiscard]] QString import_id() const { return import_id_; }
+    [[nodiscard]] QVector<ImportedSession> imported_sessions() const {
         if (!completion_.has_value())
             return {};
         QVector<ImportedSession> sessions;
@@ -446,7 +450,7 @@ class Importer::Impl final : public QObject {
         emit owner_.changed();
     }
 
-    void merge_progress(QVector<ItemResult> replacement) {
+    void merge_progress(const QVector<ItemResult>& replacement) {
         for (const auto& result : replacement) {
             const auto existing =
                 std::find_if(progress_.begin(), progress_.end(), [&](const ItemResult& value) {
@@ -542,7 +546,7 @@ class Importer::Impl final : public QObject {
             close();
             emit owner_.importCompleted();
         } else {
-            merge_progress(std::move(replacement));
+            merge_progress(replacement);
             diagnostic_ = QStringLiteral("Codex import is running");
             deadline_.start(import_timeout);
             emit owner_.importProgress();
