@@ -1,120 +1,117 @@
 {
-  "schema": "lapis.attention-journal-integration/1",
-  "recorded_at": "2026-10-04T13:00:26Z",
-  "canonical_parent": "3276b5ecc92ac5262c09b2f0e52627e321133632",
-  "journal_source_branch_commit": "c4c9f5997babb766b77bf72f2074403da2a066be",
-  "scope": "Merged the durable attention journal into the current session-service dependency graph and exercised the focused journal and attention targets. This receipt binds the working tree before merge staging; it does not prove native live-agent restart or decision-delivery qualification.",
+  "schema": "lapis.attention-journal-integration/2",
+  "recorded_at": "2026-10-05T14:55:00Z",
+  "source_revision": "a259990b7d55534fec631143582bb821a925c253",
+  "source_dirty": true,
+  "scope": "PR91 review repair: durable attention lifecycle, bounded replay, exact derivation closure, descriptor-safe rotation, fail-closed service audit policy, and focused regressions. This receipt does not prove a native live-agent restart or real decision delivery.",
   "platform": "macOS arm64",
   "source_sha256": {
-    "services/session/CMakeLists.txt": "4baab6ee13233f5e77dc0dfedf9b1b5c03975fe5704a66cc8516250f33282523",
-    "services/session/src/attention_journal.hpp": "3ca0d58d843618645fe07ee37c6515eaf1337c1f9e8cb8bb3a2a1e2d684673d1",
-    "services/session/src/attention_journal.cpp": "85cabd1001a79f556fa4e466d1b2baf376a09b33d5c12d66b91ac642d1b24362",
-    "services/session/src/session_service.cpp": "d230474b5db2983627584dc7d012ddc1d916308d73929f325068b67e93960913",
-    "services/session/tests/attention_journal_test.cpp": "5ebfca1f9ab158f50962354e689154e4578ecbba33f5f9dd6f1942eb0b0f3305",
-    "docs/architecture.md": "f37ebd99f26f74a561e85732df7fb7385d46a0bc9e214cc36b3a994b02290470",
-    "docs/status.md": "20a7652f8a2360f24cb9e4b6daaa74b1ea57aef1927216bef87f3658417ac276"
+    "services/session/CMakeLists.txt": "26d6f11b361cdbf604876c512d1c5727215779f43cc434deb38f51095d987945",
+    "services/session/src/attention_journal.hpp": "53064a6ecd48fbfbc25a5cc3878d55dc9e6af699df52068a1b0061354a634153",
+    "services/session/src/attention_journal.cpp": "71dbc7e49bcb8c9998816b85d9a7d7b8db6a8bceab6012f1c03d4a6b20f25d95",
+    "services/session/src/attention_audit.hpp": "81d6ef5122ef9ea885ed49ad34e1ed2e880b4fb837159bce92a3ea24c74f439a",
+    "services/session/src/attention_audit.cpp": "8a6a8227dd3401ff67a769025506bab2a9da5be5781d86ae189b67f377b7134d",
+    "services/session/src/session_service.cpp": "bf8ec1b72e1284a750002df5e1c7f6fe030bc8645381526bb4ad0ea8e2e9a116",
+    "services/session/tests/attention_journal_test.cpp": "3ede07e53bd72323ff77730d41464ec055ca71bd67d2b94e2f8441cfaec40ed7",
+    "services/session/tests/attention_audit_test.cpp": "fc3a43810d6f4f4d4ac478dc611edc3a9aa0479d57fcc53e8d6c9c05d49d15c3",
+    "services/session/tests/attention_service_test.cpp": "1c237708ed69032230b17f9bd49087c64f0ff97949fb64cfd55a9e389b2b9245",
+    "docs/architecture.md": "278c06e3562ebdc34fccd96a2f4bc7a8e1764b34b351b8c54178d2762a29fa10",
+    "docs/status.md": "1fa5b276100e1cb8753655bea2a9b0e852518f35f77b6890c4856995152b2a21"
   },
   "tools": {
     "cmake": "4.4.3",
     "ctest": "4.4.3",
-    "clang": "Homebrew 23.1.2",
     "clang-tidy": "Homebrew LLVM 23.1.2",
-    "cppcheck": "2.22.0"
+    "cppcheck": "2.22.0",
+    "ruff": "0.16.9"
   },
   "checks": [
     {
-      "name": "configure-and-build",
-      "passed": true,
-      "command": "cmake -S . -B build/pr87-desktop -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=ON -DLAPIS_SANITIZER=none -DLAPIS_WARNINGS_AS_ERRORS=ON -DLAPIS_BUILD_DESKTOP=ON -DCMAKE_CXX_COMPILER=<repository LLVM clang++> -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OSX_SYSROOT=<xcrun SDK>; cmake --build build/pr87-desktop --target lapis_attention_journal_tests lapis_session_service -j 8",
-      "exit_code": 0,
-      "result": "Journal and linked session-service targets compile with warnings-as-errors enabled."
-    },
-    {
-      "name": "focused-ctest",
-      "passed": true,
-      "command": "ctest --test-dir build/pr87-desktop -R '^attention-(journal|state|protocol)$' --no-tests=error --output-on-failure",
-      "exit_code": 0,
-      "seconds": 0.03,
-      "result": "3/3 pass: attention-journal, attention-state, attention-protocol."
-    },
-    {
       "name": "format-and-whitespace",
       "passed": true,
-      "command": "clang-format --dry-run --Werror <five journal/session C++ files>; git diff --check -- services/session docs",
+      "command": "clang-format --dry-run --Werror services/session/src/attention_journal.hpp services/session/src/attention_journal.cpp services/session/src/attention_audit.hpp services/session/src/attention_audit.cpp services/session/src/session_service.cpp services/session/tests/attention_journal_test.cpp services/session/tests/attention_audit_test.cpp services/session/tests/attention_service_test.cpp; git diff --check",
       "exit_code": 0
     },
     {
-      "name": "journal-clang-tidy",
+      "name": "focused-build-and-ctest",
       "passed": true,
-      "command": "clang-tidy -p build/pr87-desktop services/session/src/attention_journal.cpp services/session/tests/attention_journal_test.cpp",
+      "command": "CCACHE_DISABLE=1 cmake --build build/pr87-desktop --target lapis_attention_journal_tests lapis_attention_audit_tests lapis_attention_service_tests lapis_attention_tests lapis_attention_protocol_tests lapis_session_service -j 8; ctest --test-dir build/pr87-desktop -R \"^(attention-(state|journal|audit|service|protocol))$\" --no-tests=error --output-on-failure",
       "exit_code": 0,
-      "seconds": 3.09
+      "result": "5/5 focused tests pass: real service fail-closed wiring plus state, journal, audit, and protocol."
     },
     {
-      "name": "journal-cppcheck",
+      "name": "journal-audit-service-asan",
       "passed": true,
-      "command": "cppcheck --project=<two-journal-TU filtered compilation database> --library=qt -DQ_MOC_INCLUDE(x)= --enable=warning,performance,portability --error-exitcode=1 --inline-suppr --template=gcc",
+      "command": "CCACHE_DISABLE=1 cmake --build build/pr87-asan --target lapis_attention_journal_tests lapis_attention_audit_tests lapis_attention_service_tests -j 8; ctest --test-dir build/pr87-asan -R \"^(attention-(journal|audit|service))$\" --no-tests=error --output-on-failure",
       "exit_code": 0,
-      "seconds": 2.9
+      "result": "3/3 journal, audit, and production service tests pass under AddressSanitizer."
     },
     {
-      "name": "journal-asan",
+      "name": "journal-and-audit-clang-tidy",
       "passed": true,
-      "command": "cmake -S . -B build/pr87-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DLAPIS_SANITIZER=address -DLAPIS_WARNINGS_AS_ERRORS=ON -DLAPIS_BUILD_DESKTOP=ON -DCMAKE_CXX_COMPILER=<repository LLVM clang++> -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OSX_SYSROOT=<xcrun SDK>; cmake --build build/pr87-asan --target lapis_attention_journal_tests -j 8; ctest --test-dir build/pr87-asan -R '^attention-journal$' --no-tests=error --output-on-failure",
-      "exit_code": 0,
-      "seconds": 0.06,
-      "result": "1/1 journal test passes under AddressSanitizer."
+      "command": "/opt/homebrew/opt/llvm/bin/clang-tidy -p build/pr87-desktop services/session/src/attention_journal.cpp services/session/src/attention_audit.cpp services/session/tests/attention_journal_test.cpp services/session/tests/attention_audit_test.cpp",
+      "exit_code": 0
     },
     {
-      "name": "repository_quality_after_commit",
+      "name": "journal-and-audit-cppcheck",
+      "passed": true,
+      "command": "cppcheck --std=c++20 --library=posix --enable=warning,performance,portability --error-exitcode=1 --inline-suppr --template=gcc -I services/session/src -I services/session/include services/session/src/attention_journal.cpp services/session/src/attention_audit.cpp services/session/tests/attention_journal_test.cpp services/session/tests/attention_audit_test.cpp",
+      "exit_code": 0
+    },
+    {
+      "name": "session-service-changed-static-scan",
+      "passed": false,
+      "command": "/opt/homebrew/opt/llvm/bin/clang-tidy -p build/pr87-desktop services/session/src/session_service.cpp",
+      "exit_code": 1,
+      "result": "The three reported findings are the pre-existing Codex permission parser and argument-builder complexity/move findings recorded by the prior receipt; the changed audit and decision sections had no new finding."
+    },
+    {
+      "name": "supervisor-runtime-build-and-tests",
+      "passed": false,
+      "command": "python3 scripts/check_supervisor_runtime.py --output build/reports/pr91-journal-supervisor/receipt.json --jobs 8",
+      "exit_code": 1,
+      "result": "Configure, service build and three CTest expressions passed; the real socket integration was skipped because QLocalServer bind is denied by the managed sandbox (exit 75), so the runner correctly reports failure rather than integration acceptance."
+    },
+    {
+      "name": "repository-quality",
       "passed": true,
       "command": "python3 scripts/lapis.py quality",
       "exit_code": 0,
-      "result": "Source/status, whitespace, Ruff and Python unit checks passed on the parent host after the merge commit."
+      "result": "Passed on the parent host: source/status, whitespace, repository Ruff check/format, and 501 Python tests (7 skipped)."
+    },
+    {
+      "name": "repository-quality-parent-host",
+      "passed": true,
+      "exit_code": 0,
+      "command": "python3 scripts/lapis.py quality",
+      "result": "Passed at the final dirty tree: source/status, whitespace, Ruff check/format, and 501 Python tests (7 skipped)."
+    },
+    {
+      "name": "diff-whitespace-parent-host",
+      "passed": true,
+      "exit_code": 0,
+      "command": "git diff --check",
+      "result": "Passed at the final dirty tree."
     }
   ],
   "repairs": [
-    "Resolved the CMake conflict by preserving canonical-main service dependencies and adding lapis_attention_journal.",
-    "Made a newer same-id ask supersede the older open question in recovery, matching the documented identity-survives-epochs contract.",
-    "Added a regression in which a stale decision cannot close a newer same-id question."
+    "Leased journal descriptors use RAII through construction, rotation and append failures.",
+    "Write and fsync failures durably roll back the partial record and preserve the original diagnostic; unrecoverable service appends disable decisions.",
+    "Replay parses one bounded record at a time and validates enum/length fields only after its checksum.",
+    "Open questions close only on the exact epoch/revision derivation; a newer same-id ask supersedes the prior ask.",
+    "The headless observer changed hook journals asks and source closures without requiring an attached GUI client.",
+    "Locally invalid decisions are rejected before a durable approval record; a valid but undelivered decision receives an exact compensating closure.",
+    "A null journal, failed recovery, failed decision append, or failed compensation refuses delivery and requests a retry.",
+    "Rotation is attempted only before a future append, so a rotation failure cannot turn an already durable decision into a caller-visible append failure.",
+    "A user decision is durable intent; a separate delivered record closes it only after adapter acceptance.",
+    "A failed delivery confirmation or compensation leaves the ask open for restart outcome_unknown classification.",
+    "Directory fsync failures and journal format zero are fail-closed rather than ignored.",
+    "A real SessionService service-level test holds the journal lease and proves the production decision path refuses forwarding while retaining the pending request and retry diagnostic."
   ],
-  "failed_attempts": [
-    {
-      "command": "python3 scripts/lapis.py quality",
-      "result": "In the editing sandbox the Python suite reached 501 tests but 28 loopback binds were denied, with three dependent failures and eight skips.",
-      "resolution": "No Python or remote-gateway source changed; the parent-host post-commit repository quality run passed."
-    },
-    {
-      "command": "focused attention CTest after the first recovery regression edit",
-      "result": "attention-journal failed because the fixture still expected the replacement question to be closed; corrected the fixture to resolve the current replacement before asserting one open question.",
-      "resolution": "Final 3/3 focused CTest pass."
-    }
-  ],
-  "stacked_integration": {
-    "revision": "cddca97dca8802adbe31bcf0a7dbc3b4e9e10aac",
-    "base_feature": "work/r1-supervised-session at 837af775acc8c4e4c1c89023ebb91778d35070c1",
-    "checks": [
-      {
-        "command": "python3 scripts/check_supervisor_runtime.py --output build/reports/r1-supervisor/receipt.json",
-        "exit_code": 0,
-        "result": "Configure, build, and focused real-service supervisor CTest passed after integration."
-      },
-      {
-        "command": "ctest --test-dir build/pr87-desktop -R '^attention-(journal|state|protocol)$' --no-tests=error --output-on-failure",
-        "exit_code": 0,
-        "result": "3/3 focused attention tests passed after integration."
-      },
-      {
-        "command": "python3 scripts/lapis.py quality",
-        "exit_code": 0,
-        "result": "Repository Python quality passed after integration."
-      }
-    ],
-    "non_claim": "The stacked check proves the two source slices coexist in focused gates; it does not add live-agent decision delivery or broader R1 acceptance."
-  },
   "non_claims": [
-    "No live Codex or Claude restart was exercised through the new journal path.",
+    "No live Codex or Claude restart was exercised through the production SessionService process.",
     "No native decision delivery through a real agent binary was exercised.",
-    "The full clang-tidy session-service scan reports pre-existing canonical-main findings in Codex permission parsing and service helpers; it was not made a journal gate because those findings are outside this merge scope."
+    "The full session-service clang-tidy scan retains three known pre-existing findings in unchanged permission/argument parsing.",
+    "The worker sandbox supervisor/quality failures remain environment observations; parent-host attention tests and repository quality passed at the final dirty tree."
   ]
 }

@@ -27,8 +27,9 @@ endif()
 # Durable attention audit. The decision barrier lives here: a forwarded
 # decision is appended and fsynced first. POSIX file ownership only; no GUI,
 # protocol or terminal dependency.
-add_library(lapis_attention_journal STATIC src/attention_journal.cpp)
+add_library(lapis_attention_journal STATIC src/attention_journal.cpp src/attention_audit.cpp)
 target_link_libraries(lapis_attention_journal PRIVATE lapis_project_options
+    lapis_session_platform
     PUBLIC lapis_attention)
 target_include_directories(lapis_attention_journal PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
@@ -38,6 +39,11 @@ if(BUILD_TESTING)
         lapis_project_options lapis_attention_journal)
     add_test(NAME attention-journal COMMAND lapis_attention_journal_tests)
     set_tests_properties(attention-journal PROPERTIES TIMEOUT 20)
+    add_executable(lapis_attention_audit_tests tests/attention_audit_test.cpp)
+    target_link_libraries(lapis_attention_audit_tests PRIVATE
+        lapis_project_options lapis_attention_journal)
+    add_test(NAME attention-audit COMMAND lapis_attention_audit_tests)
+    set_tests_properties(attention-audit PROPERTIES TIMEOUT 20)
 endif()
 
 # The production adapter is part of every normal build. Bootstrap its pinned
@@ -97,6 +103,15 @@ if(LAPIS_BUILD_SESSION)
         target_link_libraries(lapis_attention_protocol_tests PRIVATE lapis_project_options lapis_local_protocol)
         add_test(NAME attention-protocol COMMAND lapis_attention_protocol_tests)
         set_tests_properties(attention-protocol PROPERTIES TIMEOUT 10)
+        add_executable(lapis_attention_service_tests tests/attention_service_test.cpp)
+        target_link_libraries(lapis_attention_service_tests PRIVATE lapis_project_options
+            lapis_session_platform lapis_session_launch lapis_terminal lapis_attention
+            lapis_local_protocol lapis_pty_process lapis_history lapis_attention_journal
+            lapis_codex_adapter lapis_claude_adapter Qt6::Core Qt6::Network)
+        target_include_directories(lapis_attention_service_tests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        add_test(NAME attention-service COMMAND lapis_attention_service_tests)
+        set_tests_properties(attention-service PROPERTIES TIMEOUT 20)
         add_executable(lapis_local_protocol_tests tests/local_protocol_test.cpp)
         target_link_libraries(lapis_local_protocol_tests PRIVATE lapis_project_options lapis_local_protocol)
         add_test(NAME local-protocol COMMAND lapis_local_protocol_tests)

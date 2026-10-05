@@ -7,6 +7,8 @@
 // returned.
 #include <lapis/session/attention.hpp>
 
+#include "platform/posix/unique_fd.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -17,10 +19,11 @@
 namespace lapis::session {
 class AttentionJournal {
   public:
-    enum class Kind : std::uint8_t { asked, decided, resolved };
-    // Who closed a request: a decision lapis forwarded (user), the agent
-    // resolving or retiring it on its own (agent), or a restart that found it
-    // still open after a crash (outcome_unknown).
+    enum class Kind : std::uint8_t { asked, decided, resolved, delivered };
+    // Who closed a request: a decision lapis forwarded (user), the source
+    // resolving or retiring it on its own or refusing a locally valid attempt
+    // (agent), or a restart that found it still open after a crash
+    // (outcome_unknown).
     enum class Origin : std::uint8_t { user, agent, outcome_unknown };
     struct Entry {
         Kind kind{};
@@ -35,12 +38,14 @@ class AttentionJournal {
     };
 
     // Journals are rotated one generation (to <path>.1, replacing it) once
-    // they exceed this many bytes at open, and only when no question is open,
+    // they exceed this many bytes at open or before append, and only when no
+    // question is open,
     // so recovery always reads a self-consistent log.
     static constexpr std::uint64_t default_rotate_bytes = std::uint64_t{4} * 1024U * 1024U;
 
-    // Opens (creating if absent), takes the exclusive writer lock, replays,
-    // and truncates a torn tail left by a crash mid-append. Throws
+    // Opens (creating if absent), takes the exclusive writer lock, replays in
+    // bounded record-sized chunks, and truncates a torn tail left by a crash
+    // mid-append. Throws
     // std::runtime_error when another writer holds the lock, the file carries
     // a newer format, or a mid-file record is corrupt; those are conditions a
     // fresh service must not paper over. Oversized journals rotate before
@@ -52,28 +57,36 @@ class AttentionJournal {
     AttentionJournal(const AttentionJournal&) = delete;
     AttentionJournal& operator=(const AttentionJournal&) = delete;
 
+    // Records replayed or appended since the last release are the retained
+    // working set; the file remains the durable audit history.
     [[nodiscard]] const std::vector<Entry>& entries() const { return entries_; }
     // Makes the record durable (write and fsync) before returning and assigns
     // its seq. Throws std::runtime_error when the record cannot be made
     // durable; the caller must then not perform whatever the record gates.
     void append(Entry entry);
 
+    // Drops the in-memory replay/append working set after its recovery scan.
+    // The next sequence number and leased file are unchanged.
+    void release_entries() { entries_.clear(); }
+
   private:
     void open_new();
     void ensure_header();
     void replay();
     void truncate_to(std::uint64_t bytes);
+    void rotate_locked();
     std::filesystem::path path_;
     std::uint64_t rotate_bytes_;
     std::uint64_t size_{};
-    int descriptor_{-1};
+    posix::UniqueFd descriptor_;
     std::vector<Entry> entries_;
     std::uint64_t next_seq_{1};
 };
 
-// Asked entries never closed by a later decided or resolved carrying the same
-// id, in journal order. Identity survives epochs: a request re-derived under
-// a new source epoch closes the question its earlier ask opened. Pure.
+// Asked entries not yet closed by a delivered decision, non-user decision, or
+// resolved record carrying the same id, source epoch and revision, in journal
+// order. Durable user intent remains open until delivery is confirmed. A newer
+// same-id ask supersedes an earlier derivation. Pure.
 [[nodiscard]] std::vector<AttentionJournal::Entry>
 open_questions(const std::vector<AttentionJournal::Entry>& entries);
 

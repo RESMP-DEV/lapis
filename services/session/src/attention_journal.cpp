@@ -1,8 +1,10 @@
 #include "attention_journal.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstring>
+#include <exception>
 #include <fcntl.h>
 #include <stdexcept>
 #include <string_view>
@@ -19,6 +21,9 @@ constexpr std::uint8_t format_version = 1;
 constexpr std::size_t header_bytes = magic.size() + 2; // magic, version, newline
 constexpr std::size_t max_string_bytes = std::size_t{64} * 1024U;
 constexpr std::size_t max_choices = 64;
+// One valid record cannot exceed these maximum-size fields. Replay reads at
+// most one record of this size at a time instead of loading a whole journal.
+constexpr std::size_t max_record_bytes = (max_choices + 6U) * (max_string_bytes + 4U) + 64U;
 constexpr int lease_attempts = 3;
 
 // std::strerror is not thread safe; the error_code machinery is the
@@ -110,6 +115,8 @@ class Reader {
             value |= static_cast<std::uint64_t>(*at_++) << shift;
         return true;
     }
+    void invalidate() { invalid_ = true; }
+    [[nodiscard]] bool invalid() const { return invalid_; }
     bool bytes(std::string& value) {
         std::uint32_t size = 0;
         if (!u32(size))
@@ -117,8 +124,16 @@ class Reader {
         if (static_cast<std::size_t>(end_ - at_) < size)
             return starved_ = true, false;
         if (size > max_string_bytes)
-            throw corrupt("field length out of range");
+            invalidate();
         value.assign(reinterpret_cast<const char*>(at_), size);
+        at_ += size;
+        return true;
+    }
+    bool skip_bytes(std::uint32_t size) {
+        if (static_cast<std::size_t>(end_ - at_) < size)
+            return starved_ = true, false;
+        if (size > max_string_bytes)
+            invalidate();
         at_ += size;
         return true;
     }
@@ -128,9 +143,10 @@ class Reader {
     const std::uint8_t* at_;
     const std::uint8_t* end_;
     bool starved_{};
+    bool invalid_{};
 };
 
-bool read_request(Reader& reader, attention::Request& request) {
+bool read_request(Reader& reader, const attention::RequestId& id, attention::Request& request) {
     if (!reader.bytes(request.thread_id) || !reader.bytes(request.turn_id) ||
         !reader.bytes(request.item_id) || !reader.bytes(request.reason) ||
         !reader.bytes(request.summary))
@@ -138,52 +154,70 @@ bool read_request(Reader& reader, attention::Request& request) {
     std::uint32_t count = 0;
     if (!reader.u32(count))
         return false;
-    if (count > max_choices)
-        throw corrupt("too many choices");
-    request.choices.resize(count);
+    if (count > max_choices) {
+        reader.invalidate();
+        request.choices.resize(max_choices);
+    } else
+        request.choices.resize(count);
     for (auto& choice : request.choices)
         if (!reader.bytes(choice))
+            return false;
+    std::uint32_t length = 0;
+    for (std::uint32_t extra = max_choices; reader.invalid() && extra < count; ++extra)
+        if (!reader.u32(length) || !reader.skip_bytes(length))
             return false;
     std::uint8_t priority = 0;
     if (!reader.u8(priority))
         return false;
     request.priority = priority;
+    request.id = id;
     return true;
 }
 
-AttentionJournal::Entry decode(Reader& reader) {
+struct Decoded {
     AttentionJournal::Entry entry;
+    bool valid{};
+};
+
+Decoded decode(Reader& reader) {
+    Decoded result{.entry = {}, .valid = true};
+    auto& entry = result.entry;
     std::uint8_t kind = 0, origin = 0, id_tag = 0, has_request = 0;
     if (!reader.u8(kind) || !reader.u8(origin) || !reader.u64(entry.seq) ||
         !reader.u64(entry.epoch) || !reader.u64(entry.revision) || !reader.u8(id_tag))
-        return entry;
-    if (kind > static_cast<std::uint8_t>(AttentionJournal::Kind::resolved) ||
-        origin > static_cast<std::uint8_t>(AttentionJournal::Origin::outcome_unknown) || id_tag > 1)
-        throw corrupt("invalid record field");
+        return result;
+    if (kind > static_cast<std::uint8_t>(AttentionJournal::Kind::delivered) ||
+        origin > static_cast<std::uint8_t>(AttentionJournal::Origin::outcome_unknown) ||
+        id_tag > 1) {
+        reader.invalidate();
+        result.valid = false;
+    }
     entry.kind = static_cast<AttentionJournal::Kind>(kind);
     entry.origin = static_cast<AttentionJournal::Origin>(origin);
     if (id_tag == 0) {
         std::uint64_t number = 0;
         if (!reader.u64(number))
-            return entry;
+            return result;
         entry.id = static_cast<std::int64_t>(number);
     } else {
         std::string text;
         if (!reader.bytes(text))
-            return entry;
+            return result;
         entry.id = std::move(text);
     }
     if (!reader.bytes(entry.choice) || !reader.u8(has_request))
-        return entry;
-    if (has_request > 1)
-        throw corrupt("invalid request marker");
+        return result;
+    if (has_request > 1) {
+        reader.invalidate();
+        result.valid = false;
+    }
     if (has_request == 1) {
         attention::Request request;
-        if (!read_request(reader, request))
-            return entry;
+        if (!read_request(reader, entry.id, request))
+            return result;
         entry.request = std::move(request);
     }
-    return entry;
+    return result;
 }
 
 std::filesystem::path rotated_path(const std::filesystem::path& path) {
@@ -193,17 +227,36 @@ std::filesystem::path rotated_path(const std::filesystem::path& path) {
 }
 
 void sync_directory(const std::filesystem::path& file) {
-    const int directory = ::open(file.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (directory >= 0) {
-        static_cast<void>(::fsync(directory));
-        static_cast<void>(::close(directory));
+    posix::UniqueFd directory{
+        ::open(file.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC)};
+    if (!directory)
+        throw std::runtime_error(std::string("Cannot open attention journal directory: ") +
+                                 errno_message(errno));
+    if (::fsync(directory.get()) != 0)
+        throw std::runtime_error(std::string("Cannot flush attention journal directory: ") +
+                                 errno_message(errno));
+}
+
+void read_at(int descriptor, std::uint8_t* data, std::size_t size, std::uint64_t offset) {
+    std::size_t filled = 0;
+    while (filled < size) {
+        const auto read_bytes =
+            ::pread(descriptor, data + filled, size - filled, static_cast<off_t>(offset + filled));
+        if (read_bytes < 0) {
+            if (errno == EINTR)
+                continue;
+            throw std::runtime_error(std::string("Cannot read attention journal: ") +
+                                     errno_message());
+        }
+        if (read_bytes == 0)
+            throw corrupt("file shrank while leased");
+        filled += static_cast<std::size_t>(read_bytes);
     }
 }
 
-// Full write loop at an explicit offset; a short write is failure, so
-// append() either made the whole record durable or leaves no complete-looking
-// record behind. The file position is meaningless across opens, so nothing
-// relies on it.
+// Full write loop at an explicit offset; a short write is failure, so append()
+// either made the whole record durable or durably removes the partial tail.
+// The file position is meaningless across opens, so nothing relies on it.
 void write_all_at(int descriptor, const std::uint8_t* data, std::size_t size,
                   std::uint64_t offset) {
     while (size > 0) {
@@ -219,6 +272,50 @@ void write_all_at(int descriptor, const std::uint8_t* data, std::size_t size,
         offset += static_cast<std::uint64_t>(written);
     }
 }
+
+// A checksum-valid partial tail would replay as a commit, so failed durability
+// removes it durably. If that rollback itself fails, the original failure is
+// still named first; the decision gate must treat the journal unavailable.
+[[noreturn]] void rollback_failed(int descriptor, std::uint64_t size, std::string original) {
+    if (::ftruncate(descriptor, static_cast<off_t>(size)) != 0 || ::fsync(descriptor) != 0) {
+        original += "; rollback also failed: ";
+        original += errno_message();
+    }
+    throw std::runtime_error(original);
+}
+
+enum class RecordStatus : std::uint8_t { accepted, torn, malformed, corrupt };
+
+struct ParsedRecord {
+    AttentionJournal::Entry entry;
+    std::size_t total{};
+    RecordStatus status{RecordStatus::accepted};
+};
+
+ParsedRecord parse_record(const std::vector<std::uint8_t>& bytes, std::size_t loaded,
+                          bool final_input, std::uint64_t expected_seq) {
+    Reader reader(bytes.data(), bytes.data() + bytes.size());
+    Decoded decoded = decode(reader);
+    decoded.valid = decoded.valid && !reader.invalid();
+    if (reader.starved())
+        return {std::move(decoded.entry), 0,
+                final_input ? RecordStatus::torn : RecordStatus::corrupt};
+    std::uint32_t stored_checksum = 0;
+    if (!reader.u32(stored_checksum))
+        return {std::move(decoded.entry), 0,
+                final_input ? RecordStatus::torn : RecordStatus::corrupt};
+    const std::size_t total = static_cast<std::size_t>(reader.at() - bytes.data());
+    const bool at_end = reader.at() == bytes.data() + bytes.size();
+    if (checksum(bytes.data(), total - 4) != stored_checksum)
+        return {std::move(decoded.entry), total,
+                at_end && final_input ? RecordStatus::torn : RecordStatus::corrupt};
+    if (!decoded.valid)
+        return {std::move(decoded.entry), total,
+                total == loaded && final_input ? RecordStatus::malformed : RecordStatus::corrupt};
+    if (decoded.entry.seq != expected_seq)
+        return {std::move(decoded.entry), total, RecordStatus::corrupt};
+    return {std::move(decoded.entry), total, RecordStatus::accepted};
+}
 } // namespace
 
 AttentionJournal::AttentionJournal(std::filesystem::path file, std::uint64_t rotate_bytes)
@@ -228,14 +325,14 @@ AttentionJournal::AttentionJournal(std::filesystem::path file, std::uint64_t rot
     // that was unlinked and replaced under us, and a wedged writer's lock is
     // never stolen by age (ported from dsh's persistence lease).
     for (int attempt = 0; attempt < lease_attempts; ++attempt) {
-        descriptor_ = ::open(path_.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-        if (descriptor_ < 0)
+        const int leased = ::open(path_.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+        descriptor_.reset(leased);
+        if (!descriptor_)
             throw std::runtime_error(std::string("Cannot open attention journal: ") +
                                      errno_message());
-        if (::flock(descriptor_, LOCK_EX | LOCK_NB) != 0) {
+        if (::flock(descriptor_.get(), LOCK_EX | LOCK_NB) != 0) {
             const int error = errno;
-            ::close(descriptor_);
-            descriptor_ = -1;
+            descriptor_.reset();
             if (error == EWOULDBLOCK)
                 throw std::runtime_error("Attention journal is already owned");
             throw std::runtime_error(std::string("Cannot lock attention journal: ") +
@@ -243,61 +340,60 @@ AttentionJournal::AttentionJournal(std::filesystem::path file, std::uint64_t rot
         }
         struct stat locked{};
         struct stat current{};
-        if (::fstat(descriptor_, &locked) == 0 && ::stat(path_.c_str(), &current) == 0 &&
+        if (::fstat(descriptor_.get(), &locked) == 0 && ::stat(path_.c_str(), &current) == 0 &&
             locked.st_dev == current.st_dev && locked.st_ino == current.st_ino)
             break;
-        ::close(descriptor_);
-        descriptor_ = -1;
+        descriptor_.reset();
     }
-    if (descriptor_ < 0)
+    if (!descriptor_)
         throw std::runtime_error("Attention journal kept changing under the lease");
     struct stat leased{};
-    if (::fstat(descriptor_, &leased) != 0)
+    if (::fstat(descriptor_.get(), &leased) != 0)
         throw std::runtime_error("Cannot size attention journal");
     size_ = static_cast<std::uint64_t>(leased.st_size);
     replay();
     if (size_ > rotate_bytes_ && open_questions(entries_).empty()) {
-        // Rotate with the old lock still held and create the fresh file before
-        // releasing it, so the unowned-name window is as small as the rename
-        // itself. A second service is already excluded by the endpoint lock.
-        const auto sibling = rotated_path(path_);
-        if (::rename(path_.c_str(), sibling.c_str()) != 0)
-            throw std::runtime_error(std::string("Cannot rotate attention journal: ") +
-                                     errno_message());
-        sync_directory(path_);
-        const int previous = descriptor_;
-        descriptor_ = -1;
-        open_new();
-        ensure_header();
-        entries_.clear();
-        next_seq_ = 1;
-        ::close(previous);
+        rotate_locked();
     }
 }
 
-AttentionJournal::~AttentionJournal() {
-    if (descriptor_ >= 0)
-        ::close(descriptor_);
-}
+AttentionJournal::~AttentionJournal() {}
 
 void AttentionJournal::open_new() {
     // Rotation path only: the previous lease is still held while the fresh
     // file is created, so a would-be second writer never finds it unlocked.
-    descriptor_ = ::open(path_.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-    if (descriptor_ < 0)
+    posix::UniqueFd opened{::open(path_.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600)};
+    if (!opened)
         throw std::runtime_error(std::string("Cannot create attention journal: ") +
                                  errno_message());
-    if (::flock(descriptor_, LOCK_EX | LOCK_NB) != 0) {
+    if (::flock(opened.get(), LOCK_EX | LOCK_NB) != 0) {
         const int error = errno;
-        ::close(descriptor_);
-        descriptor_ = -1;
         throw std::runtime_error(std::string("Cannot lock fresh attention journal: ") +
                                  errno_message(error));
     }
     struct stat info{};
-    if (::fstat(descriptor_, &info) != 0)
+    if (::fstat(opened.get(), &info) != 0)
         throw std::runtime_error("Cannot size attention journal");
+    descriptor_ = std::move(opened);
     size_ = static_cast<std::uint64_t>(info.st_size);
+}
+
+void AttentionJournal::rotate_locked() {
+    // Rotate with the old lock still held and create the fresh file before
+    // releasing it, so the unowned-name window is as small as the rename
+    // itself. A second service is already excluded by the endpoint lock.
+    const auto sibling = rotated_path(path_);
+    if (::rename(path_.c_str(), sibling.c_str()) != 0) {
+        const int error = errno;
+        throw std::runtime_error(std::string("Cannot rotate attention journal: ") +
+                                 errno_message(error));
+    }
+    sync_directory(path_);
+    posix::UniqueFd previous{descriptor_.release()};
+    open_new();
+    ensure_header();
+    entries_.clear();
+    next_seq_ = 1;
 }
 
 void AttentionJournal::ensure_header() {
@@ -310,18 +406,21 @@ void AttentionJournal::ensure_header() {
         header.insert(header.end(), magic.begin(), magic.end());
         header.push_back(format_version);
         header.push_back('\n');
-        write_all_at(descriptor_, header.data(), header.size(), 0);
-        if (::fsync(descriptor_) != 0)
+        write_all_at(descriptor_.get(), header.data(), header.size(), 0);
+        if (::fsync(descriptor_.get()) != 0)
             throw std::runtime_error("Cannot initialize attention journal");
         size_ = header.size();
         sync_directory(path_);
         return;
     }
     std::array<std::uint8_t, header_bytes> stored{};
-    if (::pread(descriptor_, stored.data(), stored.size(), 0) != static_cast<ssize_t>(header_bytes))
+    if (::pread(descriptor_.get(), stored.data(), stored.size(), 0) !=
+        static_cast<ssize_t>(header_bytes))
         throw corrupt("unreadable header");
     if (std::string_view(reinterpret_cast<const char*>(stored.data()), magic.size()) != magic)
         throw corrupt("unrecognized header");
+    if (stored[magic.size()] == 0)
+        throw corrupt("unsupported journal format");
     if (stored[magic.size()] > format_version)
         throw std::runtime_error(
             "Attention journal uses a newer format; upgrade lapis before resuming");
@@ -333,65 +432,42 @@ void AttentionJournal::replay() {
     ensure_header();
     if (size_ == header_bytes)
         return;
-    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size_));
-    std::size_t filled = 0;
-    while (filled < bytes.size()) {
-        const auto read_bytes = ::pread(descriptor_, bytes.data() + filled, bytes.size() - filled,
-                                        static_cast<off_t>(filled));
-        if (read_bytes < 0) {
-            if (errno == EINTR)
-                continue;
-            throw std::runtime_error(std::string("Cannot read attention journal: ") +
-                                     errno_message());
-        }
-        if (read_bytes == 0)
-            throw corrupt("file shrank while leased");
-        filled += static_cast<std::size_t>(read_bytes);
-    }
-    Reader reader(bytes.data() + header_bytes, bytes.data() + bytes.size());
     std::uint64_t expected_seq = 1;
+    std::uint64_t record_offset = header_bytes;
     for (;;) {
-        const auto* record_begin = reader.at();
-        if (record_begin == bytes.data() + bytes.size())
+        if (record_offset == size_)
             break;
-        Entry entry = decode(reader);
-        if (reader.starved()) {
-            // The append was interrupted before the record was complete, so
-            // nothing from here on can be valid.
-            truncate_to(static_cast<std::uint64_t>(record_begin - bytes.data()));
+        const auto remaining = static_cast<std::size_t>(size_ - record_offset);
+        const auto loaded = std::min(remaining, max_record_bytes);
+        std::vector<std::uint8_t> bytes(loaded);
+        read_at(descriptor_.get(), bytes.data(), bytes.size(), record_offset);
+        const bool final_input = record_offset + loaded == size_;
+        auto parsed = parse_record(bytes, loaded, final_input, expected_seq);
+        if (parsed.status == RecordStatus::torn || parsed.status == RecordStatus::malformed) {
+            // A final complete-looking but invalid checksum or field is an
+            // interrupted append; mid-file damage is not explained by a tear.
+            truncate_to(record_offset);
             break;
         }
-        std::uint32_t stored_checksum = 0;
-        if (!reader.u32(stored_checksum)) {
-            truncate_to(static_cast<std::uint64_t>(record_begin - bytes.data()));
-            break;
-        }
-        const std::size_t total = static_cast<std::size_t>(reader.at() - record_begin);
-        if (checksum(record_begin, total - 4) != stored_checksum) {
-            if (reader.at() == bytes.data() + bytes.size()) {
-                // A final record failing its checksum is an interrupted append
-                // that nonetheless spanned the whole tail; drop it. The same
-                // failure before later records is damage no tear explains.
-                truncate_to(static_cast<std::uint64_t>(record_begin - bytes.data()));
-                break;
-            }
-            throw corrupt("checksum mismatch");
-        }
-        if (entry.seq != expected_seq)
-            throw corrupt("sequence gap");
+        if (parsed.status == RecordStatus::corrupt)
+            throw corrupt("checksum, sequence, or field mismatch");
         ++expected_seq;
-        entries_.push_back(std::move(entry));
+        entries_.push_back(std::move(parsed.entry));
+        record_offset += parsed.total;
     }
     next_seq_ = expected_seq;
 }
 
 void AttentionJournal::truncate_to(std::uint64_t bytes) {
-    if (::ftruncate(descriptor_, static_cast<off_t>(bytes)) != 0 || ::fsync(descriptor_) != 0)
+    if (::ftruncate(descriptor_.get(), static_cast<off_t>(bytes)) != 0 ||
+        ::fsync(descriptor_.get()) != 0)
         throw std::runtime_error("Cannot trim torn attention journal tail");
     size_ = bytes;
 }
 
 void AttentionJournal::append(Entry entry) {
+    if (size_ > rotate_bytes_ && open_questions(entries_).empty())
+        rotate_locked();
     entry.seq = next_seq_;
     std::vector<std::uint8_t> record;
     record.reserve(256);
@@ -409,15 +485,20 @@ void AttentionJournal::append(Entry entry) {
         put_u8(record, 0);
     }
     put_u32(record, checksum(record.data(), record.size()));
-    write_all_at(descriptor_, record.data(), record.size(), size_);
-    if (::fsync(descriptor_) != 0) {
-        // The bytes may or may not reach the disk later; do not claim them.
-        static_cast<void>(::ftruncate(descriptor_, static_cast<off_t>(size_)));
-        throw std::runtime_error("Attention journal record is not durable");
+    try {
+        write_all_at(descriptor_.get(), record.data(), record.size(), size_);
+    } catch (const std::exception& error) {
+        rollback_failed(descriptor_.get(), size_, error.what());
+    }
+    if (::fsync(descriptor_.get()) != 0) {
+        const int error = errno;
+        rollback_failed(descriptor_.get(), size_,
+                        "Attention journal record is not durable: " + errno_message(error));
     }
     size_ += record.size();
     entries_.push_back(std::move(entry));
     ++next_seq_;
+    entries_ = open_questions(entries_);
 }
 
 std::vector<AttentionJournal::Entry>
@@ -436,8 +517,15 @@ open_questions(const std::vector<AttentionJournal::Entry>& entries) {
             open.push_back(entry);
             continue;
         }
+        // A user `decided` record is durable intent, not proof of delivery.
+        // It stays open until `delivered` or a compensating closure; older
+        // non-user decisions remain closures for compatibility.
+        if (entry.kind == AttentionJournal::Kind::decided &&
+            entry.origin == AttentionJournal::Origin::user)
+            continue;
         for (std::size_t index = 0; index < open.size(); ++index) {
-            if (open[index].id == entry.id) {
+            if (open[index].id == entry.id && open[index].epoch == entry.epoch &&
+                open[index].revision == entry.revision) {
                 open.erase(open.begin() + static_cast<std::ptrdiff_t>(index));
                 break;
             }
