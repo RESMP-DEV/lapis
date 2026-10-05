@@ -1,4 +1,6 @@
 #include "agent_checkpoint.hpp"
+#include "attention_audit.hpp"
+#include "attention_journal.hpp"
 #include "claude_observer.hpp"
 #include "history_worker.hpp"
 #include "hook_relay.hpp"
@@ -30,13 +32,19 @@
 #include <chrono>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
+
+namespace lapis::session {
+class AttentionServiceTestAccess;
+}
 
 namespace {
 using namespace lapis::session;
@@ -338,6 +346,8 @@ class SessionService final : public QObject {
         QFile log(endpoint + QStringLiteral(".log"));
         if (log.size() > qint64{1024} * 1024 && log.open(QIODevice::ReadWrite))
             static_cast<void>(log.resize(0));
+        if (launch.agent != AgentMode::terminal)
+            open_attention_journal(endpoint);
         if (QFileInfo::exists(endpoint)) {
             QLocalSocket existing;
             existing.connectToServer(endpoint);
@@ -422,6 +432,8 @@ class SessionService final : public QObject {
             disconnect(pending, nullptr, this, nullptr);
     }
 
+    friend class ::lapis::session::AttentionServiceTestAccess;
+
   private:
     const attention::State* attention_state() const {
         return codex_state_ ? codex_state_.get() : claude_state_.get();
@@ -434,6 +446,7 @@ class SessionService final : public QObject {
             note_conversation(QStringLiteral("claude"), claude_observer_->sessionId());
             decision_error_.clear();
             attention_dirty_ = true;
+            journal_attention();
             schedule_attention();
         });
         auto terminal = launch;
@@ -530,12 +543,61 @@ class SessionService final : public QObject {
             attention_timer_.start(since >= frame_ms ? 0 : static_cast<int>(frame_ms - since));
         }
     }
+    // The durable audit trail for attention requests. A decision is recorded
+    // before it is forwarded (durable-before-effect), so an approval the agent
+    // acted on is never missing from the journal. Surfacing needs no barrier
+    // because surfacing never approves; only the decision path gates.
+    void open_attention_journal(const QString& endpoint) {
+        try {
+            attention_journal_ = std::make_unique<AttentionJournal>(std::filesystem::path(
+                QFile::encodeName(endpoint + QStringLiteral(".attention")).constData()));
+        } catch (const std::exception& error) {
+            qWarning().noquote() << "Attention journal unavailable:" << error.what();
+            attention_journal_failed_ = true;
+            return;
+        }
+        const auto open = open_questions(attention_journal_->entries());
+        for (const auto& question : open) {
+            try {
+                attention_journal_->append(outcome_unknown_for(question));
+            } catch (const std::exception& error) {
+                qWarning().noquote() << "Attention outcome not recorded:" << error.what();
+                attention_journal_failed_ = true;
+                break;
+            }
+        }
+        attention_journal_->release_entries();
+        if (!open.empty())
+            qWarning().noquote() << open.size()
+                                 << "attention request(s) from a previous run ended with an "
+                                    "unknown outcome; see the attention journal";
+    }
+    // Audit hook for source state changes and the coalesced publish. Asked
+    // records are soft:
+    // a failed append never hides a request from the user. A journaled id that
+    // leaves the pending set is recorded as resolved by the agent; a failed
+    // append leaves the id journaled so the next publish retries it.
+    void journal_attention() {
+        const auto* state = attention_state();
+        if (!state || !attention_journal_ || attention_journal_failed_)
+            return;
+        try {
+            lapis::session::journal_attention(*attention_journal_, *state, journaled_);
+            journal_append_failed_ = false;
+        } catch (const std::exception& error) {
+            if (!journal_append_failed_) {
+                journal_append_failed_ = true;
+                qWarning().noquote() << "Attention journal append failed:" << error.what();
+            }
+        }
+    }
     void publish_attention() {
         const auto* state = attention_state();
         if (!state || !client_ || !ready_ || stopping_)
             return;
         QLocalSocket* const destination = client_;
         const auto owner = attachment_;
+        journal_attention();
         try {
             wire::AttentionSnapshot snapshot{
                 .attachment = owner,
@@ -692,6 +754,7 @@ class SessionService final : public QObject {
             note_conversation(QStringLiteral("codex"), codex_observer_->threadId());
             decision_error_.clear();
             attention_dirty_ = true;
+            journal_attention();
             schedule_attention();
         });
         const auto arguments = codex_arguments(launch, backend_socket);
@@ -1352,15 +1415,73 @@ class SessionService final : public QObject {
             schedule_attention();
             return;
         }
+        // Unavailable or failing journals refuse the forward, exactly like a
+        // decision that cannot be made durable.
+        if (!attention_journal_ || attention_journal_failed_) {
+            allow_decision_retry(decision);
+            decision_error_ = QStringLiteral("Decision could not be recorded; try again");
+            attention_dirty_ = true;
+            schedule_attention();
+            return;
+        }
+        const AttentionApproval approval{decision.source_epoch, decision.request_id,
+                                         decision.revision, decision.choice.toStdString()};
+        try {
+            if (!record_intended_decision(*attention_journal_, *attention_state(), approval)) {
+                allow_decision_retry(decision);
+                decision_error_ =
+                    QStringLiteral("Request changed or response is unsupported; refresh attention");
+                attention_dirty_ = true;
+                schedule_attention();
+                return;
+            }
+        } catch (const std::exception& error) {
+            qWarning().noquote() << "Attention decision not recorded:" << error.what();
+            if (!attention_journal_->usable())
+                attention_journal_failed_ = true;
+            allow_decision_retry(decision);
+            decision_error_ = QStringLiteral("Decision could not be recorded; try again");
+            attention_dirty_ = true;
+            schedule_attention();
+            return;
+        }
         if (!codex_observer_->decide(decision.source_epoch, decision.request_id, decision.revision,
                                      decision.choice, decision.answers)) {
+            if (codex_observer_->diagnostic().contains(
+                    QStringLiteral("Codex response delivery is uncertain"))) {
+                decision_error_ =
+                    QStringLiteral("Delivery outcome is unknown; reconnect before deciding again");
+                attention_dirty_ = true;
+                schedule_attention();
+                return;
+            }
+            try {
+                record_refused_decision(*attention_journal_, approval);
+                journaled_.erase(decision.request_id);
+            } catch (const std::exception& error) {
+                if (!attention_journal_->usable())
+                    attention_journal_failed_ = true;
+                qWarning().noquote() << "Attention rejection not recorded:" << error.what();
+            }
             allow_decision_retry(decision);
             decision_error_ =
                 QStringLiteral("Request changed or response is unsupported; refresh attention");
             attention_dirty_ = true;
             schedule_attention();
+            return;
         }
-        return;
+        try {
+            record_delivered_decision(*attention_journal_, approval);
+        } catch (const std::exception& error) {
+            if (!attention_journal_->usable())
+                attention_journal_failed_ = true;
+            qWarning().noquote() << "Attention delivery outcome not recorded:" << error.what();
+            decision_error_ = QStringLiteral("Delivery outcome is unknown; see the audit journal");
+            attention_dirty_ = true;
+            schedule_attention();
+            return;
+        }
+        journaled_.erase(decision.request_id);
     }
     void handle(const wire::Frame& frame) {
         if (!process_started_ || stopping_)
@@ -1847,6 +1968,10 @@ class SessionService final : public QObject {
     posix::UniqueFd backend_guard_control_;
     bool pty_requested_{};
     bool attention_dirty_{};
+    std::unique_ptr<AttentionJournal> attention_journal_;
+    JournaledAsks journaled_;
+    bool journal_append_failed_{};
+    bool attention_journal_failed_{};
     QString codex_error_;
     QString decision_error_;
 };
@@ -1858,7 +1983,7 @@ class SessionService final : public QObject {
 // and other harnesses similarly detect a parent agent, sandbox or tool bridge.
 // Only markers a harness sets for its own children are removed; user settings
 // such as CLAUDE_CODE_EFFORT_LEVEL or GROK_DEFAULT_MODEL stay intact.
-void clear_parent_session_markers() {
+[[maybe_unused]] void clear_parent_session_markers() {
     for (const char* name :
          {// Claude Code, and the cross-harness marker it sets.
           "CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID",
@@ -1933,6 +2058,7 @@ ServiceOptions parse_options(const QStringList& arguments) {
     return options;
 }
 
+#ifndef LAPIS_SESSION_SERVICE_TEST
 int main(int argc, char** argv) {
     // Before any agent or Codex backend inherits the environment.
     clear_parent_session_markers();
@@ -1970,3 +2096,4 @@ int main(int argc, char** argv) {
         return 1;
     }
 }
+#endif

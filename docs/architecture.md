@@ -4527,6 +4527,41 @@ quiet-gap frame, held middle frame and newest-state catch-up
 (`lapis_ui_preview_tests --background --preview-frame-only`). That evidence does
 not qualify native GPU presentation or input.
 
+## Durable attention journal integration (October 4)
+
+An agent session service owns a versioned append-only attention journal beside
+its endpoint for non-terminal agents. The journal is a POSIX audit boundary, not
+a process owner or source of reconnect truth. Opening it takes an exclusive
+lease, verifies format version and sequence integrity, truncates only a torn
+tail, refuses mid-file corruption or a newer format, replays in bounded
+record-sized chunks, and rotates only before a future append and only when no
+question is open. A newer same-id
+ask supersedes its earlier derivation, while only the matching epoch and
+revision can close a question.
+
+A pending request is asked softly: presentation proceeds if that audit append
+fails. A user decision is different and fail-closed: the service checks the
+pending epoch, revision, status and choice, appends and fsyncs `decided` before
+forwarding it, and an unavailable or failing journal refuses the forward and
+asks for the decision again. That `decided` record is durable intent, not
+delivery proof: a successful adapter response gets a durable `delivered`
+closure, while an adapter refusal gets a compensating agent-origin `resolved`
+closure. If either closing append fails, the ask remains open and restart
+records `outcome_unknown`; this is explicitly not evidence that the user
+approved it. Later source retirement or resolution records `resolved`.
+
+The focused journal target covers round trips and request identity, torn tails
+and damaged fields, checksums, mid-file corruption, format refusal, exclusive
+ownership, recovery classification, rotation, and bounded replay. The focused
+audit target exercises the service policy seams for headless asks, local
+decision validation, refusal compensation, fail-closed lease loss, and restart
+working-set recovery. A service-level target constructs the real Qt
+`SessionService`, holds its journal lease, and proves that a decision remains
+pending with an explicit retry diagnostic instead of reaching the adapter. Their
+current integration receipt is
+[attention-journal-integration](../evidence/attention-journal-integration.json);
+it does not claim native live-agent restart or decision-delivery qualification.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal
