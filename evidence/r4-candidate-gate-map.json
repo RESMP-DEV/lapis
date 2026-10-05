@@ -2,46 +2,51 @@
   "schema_version": 1,
   "record_kind": "lapis-enforcement-source-receipt",
   "record_purpose": "Record the R4 source slice that blocks release publication until a versioned, digest-bound candidate gate map is complete. This file is an enforcement receipt, not an instance of the lapis-release-candidate-gates gate map that release consumes; it carries no gates, so release --candidate-gate-map must never be pointed at it.",
-  "date_utc": "2026-10-04",
+  "date_utc": "2026-10-05",
   "source": {
-    "revision": "1f7a98b1191af5512f1c4c1966684f2cf63c3a63",
-    "revision_role": "committed baseline containing the first candidate-gate slice",
-    "parent": "3276b5ecc92ac5262c09b2f0e52627e321133632",
+    "revision": "80d9b3f265168602f0844591d16021aeda7b6815",
+    "revision_role": "committed baseline containing the first review-repair pass",
+    "parent": "1f7a98b1191af5512f1c4c1966684f2cf63c3a63",
     "dirty_at_check": true,
-    "review_repair_state": "The eight PR #88 review repairs were applied as a dirty working tree on the named committed baseline. The complete dirty-file set and hashes below bind the validated bytes; the follow-up commit preserves them.",
+    "review_repair_state": "The deduplicated, non-outdated PR #88 review repairs were applied as a dirty working tree on the named committed baseline. The parent host then passed focused manifest/package checks and the full repository quality gate. This receipt hashes every non-receipt changed file, because it cannot contain the SHA-256 of its own bytes. r4-candidate-gate-map-binding.json hashes this receipt and those same files; the follow-up commit preserves both receipt files.",
     "files_changed": [
+      "CONTRIBUTING.md",
       "docs/architecture.md",
       "docs/status.md",
       "evidence/r4-candidate-gate-map.json",
+      "evidence/r4-candidate-gate-map-binding.json",
       "scripts/package_macos.py",
       "scripts/release_manifest.py",
-      "scripts/tests/test_release_manifest.py"
+      "scripts/tests/test_release_manifest.py",
+      "scripts/tests/test_package_macos.py"
     ],
     "working_tree_sha256": {
-      "docs/architecture.md": "ad695713a7e502389cf557c28a2c6ff5e9236ce73e95112b3bce1b8315978b36",
-      "docs/status.md": "8e143916ee794b1c8e4dd325e41a9a48de0ab8a65079449afb3ce1d3d889d778",
-      "evidence/r4-candidate-gate-map.json": "afd74b4325f12f216177b5cfb4caa1bc6c998bc7357b96b2706043ba0fb5a90b",
-      "scripts/package_macos.py": "41c114a2a00b653bca415963a4f95ae4592c1ae7c971d236068ed8d19ae96ea2",
-      "scripts/release_manifest.py": "663ac2fc8d5eb2795c5bba66ebeec9a3d8acebca39bb8fba4ed80090109116e5",
-      "scripts/tests/test_release_manifest.py": "f450a3c17c4c1c8dece9b55efa8918fcde8c4755e81278261187158f2e19926e"
+      "CONTRIBUTING.md": "7d49ae2ee9383d1b83c324361ab0e316aa8cc2ba90e35aa548ff8276f4b84046",
+      "docs/architecture.md": "746cbc5aca997874c52a78be688405753cfc11645bd586efd7b58a9d3c0c69f1",
+      "docs/status.md": "252b60bd26d9b039c509fe5233a7af5110271234500e54b75367bdf3d1d3da6c",
+      "scripts/package_macos.py": "0fd0a52347516b0e062e4f681d887b3318267af445e22dd6b0cc46bcfff6a7bf",
+      "scripts/release_manifest.py": "f723440ef16c55d614efba6b8df319677c2ae83ae31d24a32e5c8d1eab148851",
+      "scripts/tests/test_release_manifest.py": "ae779172b59198fe6e25ef8e8c633b21e77245b70d68cbbb0f6619e713f74904",
+      "scripts/tests/test_package_macos.py": "41c43bee0e69ba2b47854fe814cc6add4f92763bfe866b239b3c6e6bc7732688"
     }
   },
   "scope": "This receipt covers source enforcement and focused Python checks only. It does not build, verify, notarize, package, publish, download, install, or qualify a candidate.",
   "implementation": [
     "Package manifest candidate gate-map schema 1 requires downloaded-asset, notarized staged verification, fresh-user Finder launch, installed Sparkle update with live sessions, update-failure recovery, and registry/history migration rollback receipts.",
-    "Each gate binds source revision, version, app and DMG artifact hashes, the applicable appcast digest where required, the receipt digest and path inside the map, a UTC timestamp in any ISO 8601 form that resolves to UTC, a command, zero exit status, and a passing scope. The bound map also records its own byte digest.",
-    "The appcast field is named appcast_digest because it carries the release manifest digest() of the appcast, which binds the file name and structure as well as its bytes; receipts bind raw bytes separately via content_sha256 under receipt_sha256.",
-    "Release accepts --candidate-gate-map, stages the appcast and gate bindings into one temporary copy of the manifest, and swaps it in with a single atomic replace, so a rejected gate map never leaves a manifest carrying an appcast binding with no candidate approval.",
-    "Replacing covered app or DMG bytes, weakening notarization, or rebinding the appcast revokes gate approval while retaining prior receipts as evidence.",
-    "bind_candidate_gates refuses to overwrite an existing binding by default; replace=True is the explicit operator escape hatch for re-binding during candidate iteration, and it revalidates the complete replacement before writing.",
-    "Final preflight rejects missing, malformed, failed, stale, unbound, or receipt-digest-mismatched gates."
+    "Each gate binds source revision, version, app and DMG artifact hashes, the applicable appcast digest where required, the receipt digest and path inside the map, an explicit UTC date-time, a command, zero exit status, and a passing scope. The bound map also records its own byte digest.",
+    "The explicit package_macos.py appcast --tag vX.Y.Z command writes the stable feed after the DMG is stapled and before receipts are collected. Release requires that already qualified appcast, does not rewrite it, stages the appcast and gate bindings into one temporary manifest copy, atomically replaces and directory-flushes the result, and converts staging I/O failures to package errors.",
+    "Release requires the operator to write the stable appcast and collect gate receipts against those exact bytes before release. It does not rewrite the appcast, stages the appcast and gate bindings into one temporary manifest copy, atomically replaces and directory-flushes the result, and converts staging I/O failures to package errors.",
+    "Opening preflight skips appcast-specific gate identity checks until final preflight supplies the appcast. Replacing covered app or DMG bytes, weakening notarization, or changing the covered appcast revokes gate approval while retaining prior receipts as evidence; a first appcast binding without prior gate coverage also revokes.",
+    "bind_candidate_gates replaces failed or revoked bindings without a flag, accepts an identical approved binding, requires release --replace-candidate-gates for a different approved map, revalidates the complete replacement, and retains every superseded binding as evidence.",
+    "Final preflight rejects missing, malformed, failed, stale, or unbound gates and reports unreadable appcast and artifact failures without masking the collected error set. Receipt-digest mismatches are enforced when the gate map is bound, not by re-reading receipt files at preflight.",
+    "The companion r4-candidate-gate-map-binding receipt binds this receipt's bytes; neither receipt embeds its own hash."
   ],
   "checks": [
     {
       "name": "focused_manifest_and_packaging_tests",
       "command": "python3 -m unittest scripts.tests.test_release_manifest scripts.tests.test_package_macos",
       "exit_code": 0,
-      "result": "38 tests passed after the review repairs, up from 35 at the baseline commit."
+      "result": "51 focused tests passed after the final review-repair pass, including the explicit stable-appcast command, timestamp shape, schema-1 compatibility, appcast consistency, superseded gate evidence, staging I/O, and durable publication."
     },
     {
       "name": "focused_ruff_check",
@@ -56,10 +61,16 @@
       "result": "four files already formatted"
     },
     {
+      "name": "focused_repository_quality",
+      "command": "python3 scripts/lapis.py quality --focused --path scripts/release_manifest.py --path scripts/package_macos.py --path scripts/tests/test_release_manifest.py --test scripts.tests.test_release_manifest --test scripts.tests.test_package_macos",
+      "exit_code": 0,
+      "result": "Source/status, whitespace, scoped Ruff, and the two affected unit modules passed; this is not full-suite coverage."
+    },
+    {
       "name": "repository_quality",
       "command": "python3 scripts/lapis.py quality",
       "exit_code": 0,
-      "result": "Source/status, whitespace, Ruff, and Python unit checks passed on this worktree."
+      "result": "Passed on the parent host: source/status contracts, diff hygiene, repository Ruff check and format, and 521 Python tests (7 skipped) passed."
     },
     {
       "name": "diff_whitespace",
@@ -76,7 +87,7 @@
   },
   "aggregate": {
     "passed": true,
-    "scope": "The focused R4 candidate-gate source checks and repository Python quality passed; packaging and candidate acceptance remain unclaimed."
+    "scope": "Focused R4 source checks, the 51 affected tests, scoped Ruff, focused quality, and the parent-host full repository quality gate passed; this does not qualify a real release artifact."
   },
   "non_claims": [
     "No candidate app, DMG, appcast, independent download, or candidate gate receipt was produced.",

@@ -50,6 +50,27 @@ class ReleaseArgumentTests(unittest.TestCase):
                     package.main()
                 self.assertEqual(command.call_args[0][0].candidate_gate_map, expected)
 
+    def test_appcast_command_exposes_the_pre_gate_stable_feed(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        release = Path(temporary.name)
+        appcast = release / "appcast.xml"
+        argv = [
+            "package_macos.py",
+            "appcast",
+            "--tag",
+            "v0.5.0",
+        ]
+        with (
+            patch.object(package.sys, "argv", argv),
+            patch.object(package, "RELEASE", release),
+            patch.object(package, "APPCAST", appcast),
+            patch.object(package, "project_version", return_value="0.5.0"),
+            patch.object(package, "write_appcast") as write,
+        ):
+            package.main()
+        write.assert_called_once_with("v0.5.0", "0.5.0")
+
 
 def mark_svg(body):
     return f'<svg xmlns="http://www.w3.org/2000/svg">{body}</svg>'

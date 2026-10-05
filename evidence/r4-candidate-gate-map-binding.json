@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "record_kind": "lapis-enforcement-binding-receipt",
+  "record_purpose": "Bind the R4 enforcement receipt without putting that receipt's SHA-256 inside itself. This file is not a candidate gate map.",
+  "date_utc": "2026-10-05",
+  "source": {
+    "revision": "80d9b3f265168602f0844591d16021aeda7b6815",
+    "revision_role": "committed baseline containing the first review-repair pass",
+    "parent": "1f7a98b1191af5512f1c4c1966684f2cf63c3a63",
+    "dirty_at_check": true,
+    "review_repair_state": "The bound receipt hashes the non-receipt implementation and documentation files and records the parent-host full quality pass. This receipt adds the bound receipt hash. Neither receipt records its own hash; the follow-up commit preserves this binding receipt.",
+    "bound_receipt": "r4-candidate-gate-map.json",
+    "bound_receipt_sha256": "b04e796069a8fa41edde3acf7c1b07f1f89ea177dddcf691987684540ea0b893",
+    "working_tree_sha256": {
+      "CONTRIBUTING.md": "7d49ae2ee9383d1b83c324361ab0e316aa8cc2ba90e35aa548ff8276f4b84046",
+      "docs/architecture.md": "746cbc5aca997874c52a78be688405753cfc11645bd586efd7b58a9d3c0c69f1",
+      "docs/status.md": "252b60bd26d9b039c509fe5233a7af5110271234500e54b75367bdf3d1d3da6c",
+      "scripts/package_macos.py": "0fd0a52347516b0e062e4f681d887b3318267af445e22dd6b0cc46bcfff6a7bf",
+      "scripts/release_manifest.py": "f723440ef16c55d614efba6b8df319677c2ae83ae31d24a32e5c8d1eab148851",
+      "scripts/tests/test_release_manifest.py": "ae779172b59198fe6e25ef8e8c633b21e77245b70d68cbbb0f6619e713f74904",
+      "scripts/tests/test_package_macos.py": "41c43bee0e69ba2b47854fe814cc6add4f92763bfe866b239b3c6e6bc7732688",
+      "evidence/r4-candidate-gate-map.json": "b04e796069a8fa41edde3acf7c1b07f1f89ea177dddcf691987684540ea0b893"
+    }
+  },
+  "scope": "This file binds review-repair source bytes only. It records no check result, execution evidence, or candidate approval.",
+  "non_claims": [
+    "This binding does not verify a live candidate, artifact, appcast, gate receipt, packaging run, or release.",
+    "This file cannot contain its own SHA-256; its bytes are bound by the follow-up commit rather than by a self-entry."
+  ]
+}

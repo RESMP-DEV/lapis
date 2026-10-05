@@ -6,8 +6,9 @@ import plistlib
 import subprocess
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from scripts import package_macos as package
 from scripts import release_manifest as manifest
@@ -18,7 +19,9 @@ REMOTE_COMMIT = "c" * 40
 GATE_TIMESTAMP = "2026-10-04T00:00:00Z"
 
 
-def write_candidate_gate_map(directory, source_revision, version, artifacts, appcast):
+def write_candidate_gate_map(
+    directory, source_revision, version, artifacts, appcast, timestamp=GATE_TIMESTAMP
+):
     """Create a minimal, sanitized map with one receipt per required gate."""
     directory.mkdir(parents=True, exist_ok=True)
     gates = {}
@@ -32,7 +35,7 @@ def write_candidate_gate_map(directory, source_revision, version, artifacts, app
             "version": version,
             "artifacts": dict(artifacts),
             "appcast_digest": appcast_digest,
-            "recorded_at": GATE_TIMESTAMP,
+            "recorded_at": timestamp,
             "command": f"run candidate check: {name}",
             "exit_status": 0,
         }
@@ -88,6 +91,32 @@ class SourceSnapshotTests(unittest.TestCase):
         self.assertFalse(snapshot["clean"])
         self.assertEqual(snapshot["status"], [" M apps/desktop/main.cpp", "?? new.txt"])
         self.assertEqual(len(commands), 3)
+
+
+class GateTimestampTests(unittest.TestCase):
+    def test_explicit_utc_timestamps_are_valid_and_other_shapes_are_not(self):
+        for timestamp in (
+            "2026-10-04T00:00:00Z",
+            "2026-10-04T00:00:00z",
+            "2026-10-04T00:00:00.000Z",
+            "2026-10-04T00:00:00+00:00",
+            "2026-10-04T00:00:00-00:00",
+        ):
+            with self.subTest(timestamp=timestamp):
+                self.assertTrue(manifest._utc_timestamp(timestamp))
+        for timestamp in (
+            None,
+            "",
+            "2026-10-04",
+            "2026-10-04 00:00:00Z",
+            "2026-10-04_00:00:00Z",
+            "2026-10-04q00:00:00Z",
+            "2026-10-04T00:00:00",
+            "2026-10-04T00:00:00+01:00",
+            "2026-13-04T00:00:00Z",
+        ):
+            with self.subTest(timestamp=timestamp):
+                self.assertFalse(manifest._utc_timestamp(timestamp))
 
 
 class ManifestBindingTests(unittest.TestCase):
@@ -395,6 +424,230 @@ class ManifestBindingTests(unittest.TestCase):
                     timestamp,
                 )
 
+    def test_schema1_accepts_only_matching_legacy_appcast_field(self):
+        self.write_manifest()
+        self.qualified(self.dependencies)
+        appcast = self.write_appcast()
+
+        def rename_appcast_field(gate_map_path):
+            gate_map = json.loads(gate_map_path.read_text(encoding="utf-8"))
+            for entry in gate_map["gates"].values():
+                entry["appcast_sha256"] = entry.pop("appcast_digest")
+                receipt_path = gate_map_path.parent / entry["receipt"]
+                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                receipt["appcast_sha256"] = receipt.pop("appcast_digest")
+                receipt_path.write_text(
+                    json.dumps(receipt, sort_keys=True), encoding="utf-8"
+                )
+                entry["receipt_sha256"] = manifest.content_sha256(receipt_path)
+            gate_map_path.write_text(json.dumps(gate_map, sort_keys=True))
+
+        legacy_map = write_candidate_gate_map(
+            self.release / "legacy-gates",
+            COMMIT,
+            "0.5.0",
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            manifest.digest(appcast),
+        )
+        rename_appcast_field(legacy_map)
+        with warnings.catch_warnings(record=True) as observed:
+            warnings.simplefilter("always")
+            bound = manifest.bind_candidate_gates(
+                self.manifest_path,
+                gate_map_path=legacy_map,
+                source_revision=COMMIT,
+                version="0.5.0",
+                artifacts={"app": self.app, "dmg": self.dmg},
+                appcast_digest=manifest.digest(appcast),
+            )
+        self.assertTrue(observed)
+        self.assertTrue(
+            all(
+                issubclass(item.category, DeprecationWarning)
+                and "appcast_sha256" in str(item.message)
+                and "appcast_digest" in str(item.message)
+                for item in observed
+            )
+        )
+        for name, entry in bound["candidate_gates"]["gates"].items():
+            self.assertEqual(
+                entry["appcast_digest"],
+                manifest.digest(appcast)
+                if name in manifest.CANDIDATE_GATES_REQUIRING_APPCAST
+                else None,
+            )
+            self.assertNotIn("appcast_sha256", entry)
+
+    def test_gate_binding_rejects_a_different_already_bound_appcast(self):
+        self.write_manifest()
+        self.qualified(self.dependencies)
+        bound_appcast = self.write_appcast()
+        manifest.bind_appcast(
+            self.manifest_path,
+            tag="v0.5.0",
+            version="0.5.0",
+            appcast=bound_appcast,
+            dmg=self.dmg,
+            release_url="https://example.test/releases",
+        )
+        replacement_appcast = self.release / "replacement-appcast.xml"
+        replacement_appcast.write_bytes(bound_appcast.read_bytes() + b"\n")
+        replacement_map = write_candidate_gate_map(
+            self.release / "replacement-gates",
+            COMMIT,
+            "0.5.0",
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            manifest.digest(replacement_appcast),
+        )
+        with self.assertRaisesRegex(
+            manifest.ManifestError,
+            "candidate gates do not cover the already-bound release appcast",
+        ):
+            manifest.bind_candidate_gates(
+                self.manifest_path,
+                gate_map_path=replacement_map,
+                source_revision=COMMIT,
+                version="0.5.0",
+                artifacts={"app": self.app, "dmg": self.dmg},
+                appcast_digest=manifest.digest(replacement_appcast),
+            )
+
+        conflicting_map = write_candidate_gate_map(
+            self.release / "conflicting-gates",
+            COMMIT,
+            "0.5.0",
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            manifest.digest(bound_appcast),
+        )
+        conflicting = json.loads(conflicting_map.read_text(encoding="utf-8"))
+        conflicting["gates"]["downloaded_asset"]["appcast_sha256"] = "0" * 64
+        conflicting_map.write_text(json.dumps(conflicting, sort_keys=True))
+        with self.assertRaisesRegex(
+            manifest.ManifestError, "conflicting appcast_digest"
+        ):
+            manifest.bind_candidate_gates(
+                self.manifest_path,
+                gate_map_path=conflicting_map,
+                source_revision=COMMIT,
+                version="0.5.0",
+                artifacts={"app": self.app, "dmg": self.dmg},
+                appcast_digest=manifest.digest(bound_appcast),
+            )
+
+    def test_opening_preflight_leaves_appcast_gates_to_final_preflight(self):
+        self.write_manifest()
+        self.dependencies["qt"]["source_sha256"]["qtbase"] = manifest.content_sha256(
+            self.qtbase_archive()
+        )
+        self.dependencies["sparkle"]["archive_sha256"] = manifest.content_sha256(
+            self.sparkle_archive()
+        )
+        self.qualified(self.dependencies)
+        appcast = self.write_appcast()
+        manifest.bind_appcast(
+            self.manifest_path,
+            tag="v0.5.0",
+            version="0.5.0",
+            appcast=appcast,
+            dmg=self.dmg,
+            release_url="https://example.test/releases",
+        )
+        gate_map = write_candidate_gate_map(
+            self.release / "candidate-gates",
+            COMMIT,
+            "0.5.0",
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            manifest.digest(appcast),
+        )
+        manifest.bind_candidate_gates(
+            self.manifest_path,
+            gate_map_path=gate_map,
+            source_revision=COMMIT,
+            version="0.5.0",
+            artifacts={"app": self.app, "dmg": self.dmg},
+            appcast_digest=manifest.digest(appcast),
+        )
+
+        opening_arguments = {
+            "root": self.root,
+            "version": "0.5.0",
+            "artifacts": {"app": self.app, "dmg": self.dmg},
+            "dependencies": self.dependencies,
+            "downloads": self.root / "downloads",
+            "appcast": None,
+            "release_url": "https://example.test/releases",
+            "capture": self.capture,
+            "require_appcast": False,
+        }
+        self.assertEqual(
+            manifest.preflight_release(
+                self.manifest_path, tag="v0.5.0", **opening_arguments
+            )["version"],
+            "0.5.0",
+        )
+        self.assertEqual(
+            manifest.preflight_release(
+                self.manifest_path,
+                tag="v0.5.0",
+                **{**opening_arguments, "appcast": appcast, "require_appcast": True},
+            )["version"],
+            "0.5.0",
+        )
+
+    def test_failed_gates_are_replaceable_but_approved_gates_are_immutable(self):
+        self.write_manifest()
+        self.qualified(self.dependencies)
+        appcast = self.write_appcast()
+        arguments = {
+            "source_revision": COMMIT,
+            "version": "0.5.0",
+            "artifacts": {"app": self.app, "dmg": self.dmg},
+            "appcast_digest": manifest.digest(appcast),
+        }
+        initial_map = write_candidate_gate_map(
+            self.release / "initial-gates",
+            COMMIT,
+            "0.5.0",
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            manifest.digest(appcast),
+        )
+        manifest.bind_candidate_gates(
+            self.manifest_path, gate_map_path=initial_map, **arguments
+        )
+        differing_map = write_candidate_gate_map(
+            self.release / "differing-gates",
+            COMMIT,
+            "0.5.0",
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            manifest.digest(appcast),
+        )
+        self.rewrite_gate_timestamps(differing_map, "2026-10-05T00:00:00Z")
+        with self.assertRaisesRegex(
+            manifest.ManifestError, "candidate gates are already bound"
+        ):
+            manifest.bind_candidate_gates(
+                self.manifest_path, gate_map_path=differing_map, **arguments
+            )
+
+        bound = manifest.load_manifest(self.manifest_path)
+        for entry in bound["candidate_gates"]["gates"].values():
+            entry["passed"] = False
+        manifest.write_manifest(self.manifest_path, bound)
+        replaced = manifest.bind_candidate_gates(
+            self.manifest_path, gate_map_path=differing_map, **arguments
+        )
+        self.assertTrue(
+            all(
+                entry["passed"]
+                for entry in replaced["candidate_gates"]["gates"].values()
+            )
+        )
+        superseded = replaced["superseded_candidate_gates"]
+        self.assertEqual(superseded, [bound["candidate_gates"]])
+        self.assertFalse(
+            all(entry["passed"] for entry in superseded[0]["gates"].values())
+        )
+
     def test_malformed_and_artifact_replaced_gate_maps_fail_closed(self):
         self.write_manifest()
         self.qualified(self.dependencies)
@@ -482,7 +735,7 @@ class ManifestBindingTests(unittest.TestCase):
                 require_candidate_gates=True,
             )
 
-    def test_rebinding_appcast_revokes_gates_until_explicit_replacement(self):
+    def test_rebinding_appcast_revokes_gates_until_replacement(self):
         self.write_manifest()
         self.qualified(self.dependencies)
         appcast = self.write_appcast()
@@ -532,17 +785,6 @@ class ManifestBindingTests(unittest.TestCase):
             {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
             manifest.digest(appcast),
         )
-        with self.assertRaisesRegex(
-            manifest.ManifestError, "candidate gates are already bound"
-        ):
-            manifest.bind_candidate_gates(
-                self.manifest_path,
-                gate_map_path=replacement_map,
-                source_revision=COMMIT,
-                version="0.5.0",
-                artifacts={"app": self.app, "dmg": self.dmg},
-                appcast_digest=manifest.digest(appcast),
-            )
         replaced = manifest.bind_candidate_gates(
             self.manifest_path,
             gate_map_path=replacement_map,
@@ -550,7 +792,6 @@ class ManifestBindingTests(unittest.TestCase):
             version="0.5.0",
             artifacts={"app": self.app, "dmg": self.dmg},
             appcast_digest=manifest.digest(appcast),
-            replace=True,
         )
         self.assertTrue(
             all(
@@ -558,6 +799,99 @@ class ManifestBindingTests(unittest.TestCase):
                 for entry in replaced["candidate_gates"]["gates"].values()
             )
         )
+
+    def test_first_appcast_binding_covers_or_revokes_existing_gates(self):
+        self.write_manifest()
+        self.qualified(self.dependencies)
+        appcast = self.write_appcast()
+        gate_map = write_candidate_gate_map(
+            self.release / "candidate-gates",
+            COMMIT,
+            "0.5.0",
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            manifest.digest(appcast),
+        )
+        manifest.bind_candidate_gates(
+            self.manifest_path,
+            gate_map_path=gate_map,
+            source_revision=COMMIT,
+            version="0.5.0",
+            artifacts={"app": self.app, "dmg": self.dmg},
+            appcast_digest=manifest.digest(appcast),
+        )
+        manifest.bind_appcast(
+            self.manifest_path,
+            tag="v0.5.0",
+            version="0.5.0",
+            appcast=appcast,
+            dmg=self.dmg,
+            release_url="https://example.test/releases",
+        )
+        self.assertTrue(
+            manifest.load_manifest(self.manifest_path)["candidate_gates"]["gates"][
+                "downloaded_asset"
+            ]["passed"]
+        )
+
+        appcast.write_text(appcast.read_text(encoding="utf-8") + "\n")
+        manifest.bind_appcast(
+            self.manifest_path,
+            tag="v0.5.0",
+            version="0.5.0",
+            appcast=appcast,
+            dmg=self.dmg,
+            release_url="https://example.test/releases",
+        )
+        self.assertFalse(
+            manifest.load_manifest(self.manifest_path)["candidate_gates"]["gates"][
+                "downloaded_asset"
+            ]["passed"]
+        )
+
+    def test_preflight_aggregates_appcast_and_artifact_gate_errors(self):
+        self.write_manifest()
+        self.qualified(self.dependencies)
+        appcast = self.write_appcast()
+        gate_map = write_candidate_gate_map(
+            self.release / "candidate-gates",
+            COMMIT,
+            "0.5.0",
+            {"app": manifest.digest(self.app), "dmg": manifest.digest(self.dmg)},
+            manifest.digest(appcast),
+        )
+        manifest.bind_candidate_gates(
+            self.manifest_path,
+            gate_map_path=gate_map,
+            source_revision=COMMIT,
+            version="0.5.0",
+            artifacts={"app": self.app, "dmg": self.dmg},
+            appcast_digest=manifest.digest(appcast),
+        )
+        recorded = manifest.load_manifest(self.manifest_path)
+        recorded["artifacts"].pop("dmg")
+        manifest.write_manifest(self.manifest_path, recorded)
+        appcast.unlink()
+        self.dmg.unlink()
+        with self.assertRaisesRegex(
+            manifest.ManifestError,
+            r"(?s)manifest has no valid dmg SHA-256.*"
+            r"candidate gate has no recorded dmg artifact digest.*"
+            r"cannot hash missing artifact.*appcast.xml",
+        ):
+            manifest.preflight_release(
+                self.manifest_path,
+                root=self.root,
+                tag="v0.5.0",
+                version="0.5.0",
+                artifacts={"app": self.app, "dmg": self.dmg},
+                dependencies=self.dependencies,
+                downloads=self.root / "downloads",
+                appcast=appcast,
+                release_url="https://example.test/releases",
+                capture=self.capture,
+                require_appcast=True,
+                require_candidate_gates=True,
+            )
 
     def test_failed_remote_branch_probe_is_not_treated_as_a_missing_tag(self):
         self.write_manifest()
@@ -792,6 +1126,8 @@ class ReleaseCommandTests(unittest.TestCase):
         self.qualification_observer = None
         self.bind_candidate_gates = True
         self.bind_appcast_failure = False
+        self.write_appcast_mock = Mock()
+        self.gate_timestamp = GATE_TIMESTAMP
 
     def write_appcast(self):
         signature = "ed" * 64
@@ -866,19 +1202,21 @@ class ReleaseCommandTests(unittest.TestCase):
         verify_failure=False,
         real_verify=False,
         bind_appcast_failure=False,
+        appcast_exists=True,
+        replace_candidate_gates=False,
     ):
         arguments = type("Arguments", (), {})()
         arguments.tag = "v0.5.0"
         arguments.draft = True
         arguments.notarized = False
         arguments.candidate_gate_map = self.release / "candidate-gates" / "map.json"
+        arguments.replace_candidate_gates = replace_candidate_gates
         self.bind_appcast_failure = bind_appcast_failure
+        if appcast_exists:
+            self.write_appcast()
 
         def release_dependencies(_ghostty):
             return self.dependencies
-
-        def write_appcast(_tag, _version):
-            self.write_appcast()
 
         def bind_gates(manifest_path, **kwargs):
             if self.bind_candidate_gates:
@@ -891,6 +1229,7 @@ class ReleaseCommandTests(unittest.TestCase):
                         "dmg": manifest.digest(self.dmg),
                     },
                     kwargs["appcast_digest"],
+                    timestamp=self.gate_timestamp,
                 )
             else:
                 gate_map_path = self.release / "candidate-gates" / "absent.json"
@@ -902,6 +1241,7 @@ class ReleaseCommandTests(unittest.TestCase):
                     version=kwargs["version"],
                     artifacts=kwargs["artifacts"],
                     appcast_digest=kwargs["appcast_digest"],
+                    replace=kwargs.get("replace", False),
                 )
             except manifest.ManifestError as error:
                 raise package.ManifestError(str(error)) from error
@@ -924,7 +1264,9 @@ class ReleaseCommandTests(unittest.TestCase):
             patch.object(package, "capture", side_effect=self.capture),
             patch.object(package, "ghostty_prefix", return_value=self.root / "ghostty"),
             patch.object(package, "release_dependencies", release_dependencies),
-            patch.object(package, "write_appcast", side_effect=write_appcast),
+            patch.object(
+                package, "write_appcast", return_value=self.write_appcast_mock
+            ),
             patch.object(package, "bind_appcast", side_effect=bind_release_appcast),
             patch.object(package, "bind_candidate_gates", side_effect=bind_gates),
         ]
@@ -951,7 +1293,8 @@ class ReleaseCommandTests(unittest.TestCase):
             self.invoke_release(verify_failure=True)
         self.assertFalse(self.published)
         self.assertEqual([command[0] for command in self.command_log], ["xcrun"])
-        self.assertFalse(self.appcast.exists())
+        self.write_appcast_mock.assert_not_called()
+        self.assertTrue(self.appcast.exists())
         self.assertFalse(
             manifest.load_manifest(self.manifest_path)
             .get("verification", {})
@@ -982,6 +1325,75 @@ class ReleaseCommandTests(unittest.TestCase):
         self.assertIsNone(unchanged.get("candidate_gates"))
         self.assertIsNone(unchanged.get("release"))
 
+    def test_staging_io_failure_reports_a_package_error(self):
+        with (
+            self.assertRaisesRegex(
+                package.PackageError, "cannot stage the release manifest"
+            ),
+            patch.object(
+                package.shutil,
+                "copy2",
+                side_effect=PermissionError("staging directory is read-only"),
+            ),
+        ):
+            self.invoke_release()
+        self.assertFalse(self.published)
+        unchanged = manifest.load_manifest(self.manifest_path)
+        self.assertIsNone(unchanged.get("release"))
+        self.assertIsNone(unchanged.get("candidate_gates"))
+
+    def test_published_manifest_binding_flushes_its_directory(self):
+        with patch.object(package, "sync_directory") as sync:
+            self.invoke_release()
+        self.assertTrue(self.published)
+        sync.assert_called_once_with(self.release)
+
+    def test_replace_flag_retains_the_previous_approved_binding(self):
+        self.invoke_release()
+        self.gate_timestamp = "2026-10-05T00:00:00Z"
+
+        self.invoke_release(replace_candidate_gates=True)
+
+        self.assertTrue(self.published)
+        recorded = manifest.load_manifest(self.manifest_path)
+        self.assertTrue(
+            all(
+                entry["passed"]
+                for entry in recorded["candidate_gates"]["gates"].values()
+            )
+        )
+        superseded = recorded["superseded_candidate_gates"]
+        self.assertEqual(len(superseded), 1)
+        self.assertTrue(
+            all(entry["passed"] for entry in superseded[0]["gates"].values())
+        )
+        self.assertEqual(
+            superseded[0]["gates"]["downloaded_asset"]["recorded_at"],
+            GATE_TIMESTAMP,
+        )
+
+    def test_release_binds_the_preexisting_appcast_without_minting_it(self):
+        self.write_appcast()
+        appcast_bytes = self.appcast.read_bytes()
+
+        self.invoke_release()
+
+        self.assertTrue(self.published)
+        self.assertEqual(self.appcast.read_bytes(), appcast_bytes)
+        self.write_appcast_mock.assert_not_called()
+        binding = manifest.load_manifest(self.manifest_path)["release"]["appcast"]
+        self.assertEqual(binding["sha256"], manifest.digest(self.appcast))
+
+    def test_release_requires_a_preexisting_appcast(self):
+        with self.assertRaisesRegex(
+            package.PackageError,
+            "write the appcast and record candidate gates",
+        ):
+            self.invoke_release(appcast_exists=False)
+        self.assertFalse(self.published)
+        self.assertFalse(self.appcast.exists())
+        self.write_appcast_mock.assert_not_called()
+
     def test_failed_appcast_binding_does_not_expose_staged_gates(self):
         self.bind_candidate_gates = True
         with self.assertRaisesRegex(
@@ -1001,7 +1413,7 @@ class ReleaseCommandTests(unittest.TestCase):
         with self.assertRaisesRegex(package.PackageError, "artifact dmg mismatch"):
             self.invoke_release()
         self.assertFalse(self.published)
-        self.assertFalse(self.appcast.exists())
+        self.write_appcast_mock.assert_not_called()
 
     def test_malformed_manifest_stops_before_staple_validation_writes(self):
         self.manifest_path.write_text("{}")

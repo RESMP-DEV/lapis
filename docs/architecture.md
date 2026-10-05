@@ -2962,6 +2962,39 @@ the validated review-repair working tree, the check results, and the remaining c
 is an enforcement receipt rather than a gate map instance, so it carries no
 gates and must never be passed to `release --candidate-gate-map`.
 
+#### R4 candidate-gate review repairs (October 5)
+
+The second PR #88 repair pass supersedes the October 4 timestamp and
+replacement statements above. A schema-1 gate receipt timestamp must match the
+full `YYYY-MM-DDTHH:MM:SS[.fraction]` form with an explicit `Z`, `z`,
+`+00:00`, or `-00:00` offset; arbitrary ISO separators remain invalid. Schema
+1 also accepts its former `appcast_sha256` spelling when `appcast_digest` is
+absent, emits a deprecation warning naming the rename, and rejects conflicting
+values. The manifest binding stores only the canonical `appcast_digest`.
+`digest()` binds a file's size, mode, and bytes; file names are part of tree
+digests only.
+
+The explicit `package_macos.py appcast --tag vX.Y.Z` command renders the stable
+feed after the DMG is stapled and before gate receipts are collected. Release
+consumes that already qualified appcast and never mints or rewrites it.
+Opening preflight leaves appcast-specific gate checks to final preflight when
+no appcast is supplied. A failed or revoked gate binding can be replaced
+without a flag; an approved binding is immutable unless its identical map is
+rebound or the new `release --replace-candidate-gates` flag is explicit. Every
+accepted, different replacement is retained in
+`superseded_candidate_gates` before the new binding is written. Binding a
+first appcast revokes existing gates unless every appcast-requiring gate
+already records that exact digest. The publication rename flushes its
+directory, and staging I/O failures are reported as package failures rather
+than raw tracebacks. Final preflight does not re-read receipt files; gate-map
+binding owns receipt-digest verification.
+
+The enforcement receipt no longer embeds a SHA-256 in the file that it hashes.
+It binds the other changed files directly, names its companion binding receipt,
+and the companion binds this receipt and the same changed files while relying
+on the follow-up commit to preserve its own bytes. Neither receipt contains its
+own digest.
+
 #### Minimum supported slice
 
 Start with an explicitly labelled macOS Apple Silicon early-access release:

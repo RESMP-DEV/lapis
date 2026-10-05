@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
+import warnings
 
 MANIFEST_SCHEMA_VERSION = 1
 MANIFEST_KIND = "lapis-macos-package"
@@ -39,6 +40,9 @@ CANDIDATE_GATES_REQUIRING_APPCAST = frozenset(
 CANDIDATE_GATE_ARTIFACTS = ("app", "dmg")
 SPARKLE_XMLNS = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_UTC_TIMESTAMP = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]00:00)"
+)
 
 
 class ManifestError(RuntimeError):
@@ -48,20 +52,24 @@ class ManifestError(RuntimeError):
 ManifestSink = Callable[[list[str | Path]], str]
 
 
-def _utc_timestamp(value: object) -> datetime | None:
-    """Return an ISO timestamp only when it explicitly resolves to UTC."""
+def _utc_timestamp(value: object) -> bool:
+    """Return whether value is an explicit UTC calendar date and time.
+
+    ``fromisoformat`` deliberately accepts a broad family of ISO 8601
+    spellings, including separators other than ``T``.  Gate evidence needs
+    one recognizable shape, so constrain the shape before asking Python to
+    validate the calendar value and its UTC offset.
+    """
     if not isinstance(value, str) or not value:
-        return None
+        return False
+    if _UTC_TIMESTAMP.fullmatch(value) is None:
+        return False
     normalized = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
-        return None
-    return (
-        parsed
-        if parsed.tzinfo is not None and parsed.utcoffset() == timedelta(0)
-        else None
-    )
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() == timedelta(0)
 
 
 def _git(root: Path, arguments: list[str], capture: ManifestSink) -> str:
@@ -311,6 +319,21 @@ def write_manifest(path: Path, manifest: dict[str, object]) -> None:
         raise
 
 
+def sync_directory(path: Path) -> None:
+    """Persist a directory entry after replacing a file in it."""
+    path = Path(path)
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError as error:
+        raise ManifestError(f"cannot flush directory {path}: {error}") from error
+    try:
+        _sync(descriptor)
+    except OSError as error:
+        raise ManifestError(f"cannot flush directory {path}: {error}") from error
+    finally:
+        os.close(descriptor)
+
+
 def _revoke_verification(manifest: dict[str, object]) -> None:
     """Stop a recorded qualification receipt from authorizing anything.
 
@@ -447,11 +470,33 @@ def bind_appcast(
     }
     manifest = load_manifest(path)
     previous = manifest.get("release")
-    if isinstance(previous, dict) and previous.get("appcast") != binding:
+    previous_appcast = previous.get("appcast") if isinstance(previous, dict) else None
+    if (
+        manifest.get("candidate_gates") is not None
+        and previous_appcast != binding
+        and not _candidate_gates_cover_appcast(manifest, binding.get("sha256"))
+    ):
         _revoke_candidate_gates(manifest)
     manifest["release"] = {"appcast": binding}
     write_manifest(path, manifest)
     return manifest
+
+
+def _candidate_gates_cover_appcast(
+    manifest: dict[str, object], appcast_digest: object
+) -> bool:
+    """Whether every appcast-requiring gate records this exact appcast."""
+    gates = manifest.get("candidate_gates")
+    if not isinstance(gates, dict):
+        return False
+    entries = gates.get("gates")
+    if not isinstance(entries, dict):
+        return False
+    return all(
+        isinstance(entries.get(name), dict)
+        and entries[name].get("appcast_digest") == appcast_digest
+        for name in CANDIDATE_GATES_REQUIRING_APPCAST
+    )
 
 
 def _equal(name: str, expected: object, actual: object, errors: list[str]) -> None:
@@ -469,6 +514,35 @@ def _load_candidate_json(path: Path, label: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ManifestError(f"{label} must be a JSON object")
     return value
+
+
+def _candidate_appcast_digest(value: dict[str, object], label: str) -> object:
+    """Read the appcast digest while accepting the schema-1 legacy name."""
+    canonical = value.get("appcast_digest")
+    legacy = value.get("appcast_sha256")
+    if legacy is not None:
+        warnings.warn(
+            f"{label} uses deprecated appcast_sha256; rename it to appcast_digest",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        if canonical is not None and canonical != legacy:
+            raise ManifestError(
+                f"{label} declares conflicting appcast_digest and legacy appcast_sha256"
+            )
+        if canonical is None:
+            canonical = legacy
+    return canonical
+
+
+def _canonicalize_candidate_identity(value: object, label: str) -> object:
+    """Return a copy with the legacy appcast field under its canonical name."""
+    if not isinstance(value, dict):
+        return value
+    canonicalized = dict(value)
+    canonicalized["appcast_digest"] = _candidate_appcast_digest(value, label)
+    canonicalized.pop("appcast_sha256", None)
+    return canonicalized
 
 
 def _validate_candidate_identity(
@@ -510,7 +584,7 @@ def _validate_candidate_fields(value: object, errors: list[str]) -> None:
     receipt_digest = value.get("receipt_sha256")
     if not isinstance(receipt_digest, str) or _SHA256.fullmatch(receipt_digest) is None:
         errors.append("candidate gate has no valid receipt SHA-256")
-    if _utc_timestamp(value.get("recorded_at")) is None:
+    if _utc_timestamp(value.get("recorded_at")) is not True:
         errors.append("candidate gate has no UTC timestamp")
     command = value.get("command")
     if not isinstance(command, str) or not command.strip():
@@ -560,7 +634,7 @@ def candidate_gate_binding(
     bound_gates = binding["gates"]
     assert isinstance(bound_gates, dict)
     for name in CANDIDATE_GATE_NAMES:
-        entry = gates[name]
+        entry = _canonicalize_candidate_identity(gates[name], f"candidate gate {name}")
         errors: list[str] = []
         expected_appcast = (
             appcast_digest if name in CANDIDATE_GATES_REQUIRING_APPCAST else None
@@ -592,9 +666,15 @@ def candidate_gate_binding(
             except (OSError, ValueError):
                 errors.append("candidate receipt escapes the gate-map directory")
             else:
-                receipt = _load_candidate_json(
-                    receipt_path, f"candidate gate {name} receipt"
+                receipt = _canonicalize_candidate_identity(
+                    _load_candidate_json(
+                        receipt_path, f"candidate gate {name} receipt"
+                    ),
+                    f"candidate gate {name} receipt",
                 )
+                if not isinstance(receipt, dict):
+                    errors.append(f"candidate gate {name} receipt is malformed")
+                    receipt = {}
                 if receipt.get("schema_version") != 1:
                     errors.append("candidate receipt has an unsupported schema")
                 if receipt.get("receipt_kind") != CANDIDATE_GATE_RECEIPT_KIND:
@@ -653,7 +733,11 @@ def candidate_gate_binding(
                     receipt_sha256,
                     errors,
                 )
-                bound = {key: value for key, value in entry.items() if key != "receipt"}
+                bound = {
+                    key: value
+                    for key, value in entry.items()
+                    if key not in {"receipt", "appcast_sha256"}
+                }
                 bound["receipt_sha256"] = receipt_sha256
                 bound["passed"] = True
                 bound_gates[name] = bound
@@ -676,9 +760,10 @@ def bind_candidate_gates(
 ) -> dict[str, object]:
     """Atomically record the complete, digest-bound candidate gate map.
 
-    ``replace=True`` is the operator escape hatch for a failed candidate run.
-    It is explicit, revalidates the complete replacement, and production
-    defaults to refusing to overwrite an existing binding.
+    A failed or revoked binding may be replaced without an operator flag.  An
+    approved binding can be rewritten only when the replacement is identical
+    or the caller passes ``replace=True``.  Every accepted, different
+    replacement first retains the old binding as superseded evidence.
     """
     binding = candidate_gate_binding(
         gate_map_path,
@@ -688,8 +773,38 @@ def bind_candidate_gates(
         appcast_digest=appcast_digest,
     )
     manifest = load_manifest(path)
-    if "candidate_gates" in manifest and not replace:
+    release = manifest.get("release")
+    bound_appcast = release.get("appcast") if isinstance(release, dict) else None
+    if (
+        isinstance(bound_appcast, dict)
+        and bound_appcast.get("sha256") != appcast_digest
+    ):
+        raise ManifestError(
+            "candidate gates do not cover the already-bound release appcast"
+        )
+    previous = manifest.get("candidate_gates")
+    if isinstance(previous, dict):
+        previous_gates = previous.get("gates")
+        previous_failed = (
+            isinstance(previous_gates, dict)
+            and bool(previous_gates)
+            and all(
+                isinstance(entry, dict) and entry.get("passed") is not True
+                for entry in previous_gates.values()
+            )
+        )
+        if not previous_failed and previous != binding and not replace:
+            raise ManifestError("candidate gates are already bound to this manifest")
+    elif previous is not None and not replace:
         raise ManifestError("candidate gates are already bound to this manifest")
+    if isinstance(previous, dict) and previous != binding:
+        history = manifest.get("superseded_candidate_gates")
+        if history is None:
+            history = []
+        elif not isinstance(history, list):
+            raise ManifestError("superseded candidate gates are malformed")
+        history.append(previous)
+        manifest["superseded_candidate_gates"] = history
     manifest["candidate_gates"] = binding
     write_manifest(path, manifest)
     return manifest
@@ -712,6 +827,13 @@ def _validate_candidate_gates(
     if not isinstance(gates, dict):
         errors.append("candidate gate map is malformed")
         return
+    if appcast is None:
+        # The opening release preflight runs before the operator-selected
+        # appcast is bound.  Candidate gates cover that exact feed, so final
+        # preflight owns every candidate check once the appcast is present.
+        if require_gates:
+            errors.append("candidate gates require the release appcast")
+        return
     if gates.get("schema_version") != CANDIDATE_GATE_MAP_SCHEMA_VERSION:
         errors.append("candidate gate map has an unsupported schema")
     if gates.get("map_kind") != CANDIDATE_GATE_MAP_KIND:
@@ -727,10 +849,18 @@ def _validate_candidate_gates(
             "candidate gate map must bind exactly: " + ", ".join(CANDIDATE_GATE_NAMES)
         )
         return
-    expected_artifacts = {
-        name: recorded_artifacts.get(name) for name in CANDIDATE_GATE_ARTIFACTS
-    }
-    appcast_digest = digest(appcast) if appcast is not None else None
+    expected_artifacts: dict[str, str] = {}
+    for name in CANDIDATE_GATE_ARTIFACTS:
+        recorded = recorded_artifacts.get(name)
+        if not isinstance(recorded, str) or _SHA256.fullmatch(recorded) is None:
+            errors.append(f"candidate gate has no recorded {name} artifact digest")
+        else:
+            expected_artifacts[name] = recorded
+    try:
+        appcast_digest = digest(appcast) if appcast is not None else None
+    except ManifestError as error:
+        errors.append(str(error))
+        return
     for name in CANDIDATE_GATE_NAMES:
         entry = entries.get(name)
         if not isinstance(entry, dict):
