@@ -76,6 +76,11 @@ class ProbeTests(unittest.IsolatedAsyncioTestCase):
             RuntimeError, r"missing migration details: plugins"
         ):
             probe.session_item([missing_detail], home)
+        unknown_and_missing = session_item()
+        unknown_and_missing["details"].pop("plugins")
+        unknown_and_missing["details"]["future"] = []
+        with self.assertRaisesRegex(RuntimeError, "unknown migration detail"):
+            probe.session_item([unknown_and_missing], home)
         memory_absent = session_item()
         memory_absent["details"].pop("memory")
         expected_memory_absent = deepcopy(memory_absent)

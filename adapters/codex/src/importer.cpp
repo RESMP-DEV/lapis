@@ -105,12 +105,6 @@ void validate_session_details(const QJsonObject& details, QSet<QString>& paths,
     };
     if (details.size() > allowed.size())
         throw std::runtime_error("Codex session item has unexpected migration details");
-    const auto required_keys = allowed - QSet{QStringLiteral("memory")};
-    for (const auto& required : required_keys) {
-        if (!details.contains(required))
-            throw std::runtime_error("Codex session item is missing migration details: " +
-                                     required.toStdString());
-    }
     for (const auto& name : details.keys()) {
         if (!allowed.contains(name))
             throw std::runtime_error("Codex session item has an unknown migration details key");
@@ -119,6 +113,12 @@ void validate_session_details(const QJsonObject& details, QSet<QString>& paths,
         const auto other = details.value(name);
         if (!other.isArray() || !other.toArray().isEmpty())
             throw std::runtime_error("Codex session item carries a non-session migration class");
+    }
+    const auto required_keys = allowed - QSet{QStringLiteral("memory")};
+    for (const auto& required : required_keys) {
+        if (!details.contains(required))
+            throw std::runtime_error("Codex session item is missing migration details: " +
+                                     required.toStdString());
     }
 
     const auto sessions_value = details.value(QStringLiteral("sessions"));

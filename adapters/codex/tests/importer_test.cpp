@@ -454,6 +454,28 @@ void incomplete_session_details_fail_closed() {
             "a session item must contain the complete expanded details shape");
 }
 
+void unknown_details_take_precedence_over_missing_details() {
+    Source source;
+    auto item = session_item();
+    auto details = item.value(QStringLiteral("details")).toObject();
+    details.remove(QStringLiteral("plugins"));
+    details.insert(QStringLiteral("future"), QJsonArray{});
+    item.insert(QStringLiteral("details"), details);
+    source.detection = QJsonObject{{QStringLiteral("items"), QJsonArray{item}}};
+    source.start();
+    Importer importer;
+    QString failure;
+    QObject::connect(&importer, &Importer::failed,
+                     [&](const QString& reason) { failure = reason; });
+    importer.start(source.path());
+    require(wait_for([&] { return importer.phase() == Importer::Phase::ready; }),
+            "unknown-and-missing fixture initializes");
+    require(importer.detect() &&
+                wait_for([&] { return importer.phase() == Importer::Phase::failed; }) &&
+                failure.contains(QStringLiteral("unknown migration details key")),
+            "unknown classes are diagnosed before missing core lists");
+}
+
 void memory_absent_session_details_remain_compatible() {
     Source source;
     auto item = session_item();
@@ -558,6 +580,7 @@ int run(int argc, char** argv) {
     completion_before_acceptance_is_replayed();
     non_session_migration_details_fail_closed();
     incomplete_session_details_fail_closed();
+    unknown_details_take_precedence_over_missing_details();
     memory_absent_session_details_remain_compatible();
     nonempty_memory_session_details_fail_closed();
     malformed_shape_fails_closed_without_retry();
