@@ -2,9 +2,9 @@
   "schema_version": 1,
   "recorded_on": "2026-10-05",
   "source": {
-    "baseline_revision": "705e7cd17d20149c70f28dc01a386361c5175be8",
+    "baseline_revision": "8e3df6478536bf1bc5392a0cdecaaaf0a8ca0287",
     "source_revision": "268e6d6907d219de6c63719a8e6618cb6c2dbdfa",
-    "integrated_revision": "469b2676980a17b1df10a0b2c51c49f2fa8f8a67",
+    "integrated_revision": "6722df132ca8762eb939ba3fe94d5a4c5b53a577",
     "ported_revision": "b5e0c55",
     "ported_open_choice_row_sha256": "a188fe4a722f837170ec9e82eb6271850d38d4e9c4b3eb601d11bbeb41b57146",
     "ported_review_section_sha256": "9b1169631c617e67c4ba9242f5ffb7d76ca29bba93f0a9e7c894a16d10742209",
@@ -40,6 +40,11 @@
       "command": "python3 scripts/lapis.py quality",
       "exit_code": 0,
       "result": "After merging main including PR #92, source/status, whitespace, Ruff, and 536 Python tests (7 skipped) passed on the parent host."
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "After merging main including the importer static-review repair, source/status, whitespace, Ruff, and 536 Python tests (7 skipped) passed."
     }
   ],
   "aggregate_passed": true,
