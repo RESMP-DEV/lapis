@@ -729,6 +729,7 @@ bool KeyMap::load() {
     accounts_ = parse_accounts(root.value(QStringLiteral("accounts")));
     limit_resets_ = parse_limit_resets(root.value(QStringLiteral("limitResets")));
     next_prompt_ = parse_next_prompt(root.value(QStringLiteral("nextPrompt")));
+    interaction_log_ = parse_interaction_log(root.value(QStringLiteral("interactionLog")));
 
     known_contents_ = contents;
     loaded_ = true;

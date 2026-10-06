@@ -94,6 +94,8 @@ OSStatus latest_attention_pressed(EventHandlerCallRef, EventRef, void*) {
 }
 } // namespace
 
+bool secure_input_enabled() { return IsSecureEventInputEnabled(); }
+
 QByteArray claude_code_credentials() {
     CFMutableDictionaryRef query = CFDictionaryCreateMutable(
         kCFAllocatorDefault, 4, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
