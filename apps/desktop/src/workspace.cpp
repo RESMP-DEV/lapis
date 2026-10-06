@@ -606,16 +606,43 @@ SessionPreview* Workspace::focusedSession() const {
 }
 
 void Workspace::nextSession(int delta) {
-    const auto list = categorySessions();
-    if (list.isEmpty())
+    QStringList strip;
+    for (const auto& value : categorySessions())
+        strip.append(value.value<SessionPreview*>()->sessionId());
+    auto* place = category(active_category_);
+    if (strip.isEmpty() || place == nullptr)
         return;
-    int current = 0;
-    for (int i = 0; i < list.size(); ++i)
-        if (list[i].value<SessionPreview*>() == focusedSession())
-            current = i;
-    const int count = static_cast<int>(list.size());
-    const int next = ((current + delta % count) % count + count) % count;
-    selectSession(list[next].value<SessionPreview*>()->sessionId());
+    const auto* focused = focusedSession();
+    const QString current = focused != nullptr ? focused->sessionId() : QString();
+    // Tiles first in reading order, then the strip; a walk continues while the
+    // stage is as its last step left it.
+    const bool continues = tile_walk_ && tile_walk_->category == place->id &&
+                           tile_walk_->selected == current &&
+                           tile_walk_->shown == place->tiles.toJson() &&
+                           tile_walk_->home.cycleOrder(strip) == tile_walk_->order;
+    if (!continues)
+        tile_walk_ = TileWalk{.category = place->id,
+                              .home = place->tiles,
+                              .order = place->tiles.cycleOrder(strip),
+                              .slot = {},
+                              .shown = place->tiles.toJson(),
+                              .selected = current};
+    auto& walk = tile_walk_.value();
+    const auto step = TileLayout::step(walk.home, walk.order, walk.slot, current, delta);
+    if (step.selected.isEmpty() || step.selected == current || !mutableRegistry())
+        return;
+    const auto previous = checkpoint();
+    const bool retiled = place->tiles.toJson() != step.layout.toJson();
+    place->tiles = step.layout;
+    place->selected = step.selected;
+    if (!commit(previous))
+        return;
+    walk.slot = step.slot;
+    walk.shown = place->tiles.toJson();
+    walk.selected = focusedSession() != nullptr ? focusedSession()->sessionId() : QString();
+    if (retiled)
+        emit tilesChanged();
+    emit focusChanged();
 }
 
 bool Workspace::nextAttention() {
