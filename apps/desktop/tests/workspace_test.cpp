@@ -774,6 +774,7 @@ void latestAttentionGoesToTheNewest() {
 // another agent waits; an agent at work is not waiting even with a guess.
 void tabGoesToTheReadyThenTheOldest() {
     Workspace workspace(WorkspaceMode::preview);
+    workspace.setTabAway({.learned = false});
     require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;

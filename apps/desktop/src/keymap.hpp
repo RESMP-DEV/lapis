@@ -5,6 +5,7 @@
 #include "interaction_log.hpp"
 #include "limit_resets.hpp"
 #include "next_prompt.hpp"
+#include "tab_ranker.hpp"
 #include <QFileSystemWatcher>
 #include <QHash>
 #include <QJsonValue>
@@ -266,6 +267,8 @@ class KeyMap final : public QObject {
     [[nodiscard]] const NextPromptSettings& nextPrompt() const { return next_prompt_; }
     // {"interactionLog": {...}}: the local log of input in lapis's windows.
     [[nodiscard]] const InteractionLogSettings& interactionLog() const { return interaction_log_; }
+    // {"tabAway": {...}}: how Tab ranks the next agent that needs you.
+    [[nodiscard]] const TabAwaySettings& tabAway() const { return tab_away_; }
     [[nodiscard]] static int terminalFontSizeMinimum() { return kTerminalFontSizeMinimum; }
     [[nodiscard]] static int terminalFontSizeMaximum() { return kTerminalFontSizeMaximum; }
     [[nodiscard]] static int terminalFontSizeDefault() { return kTerminalFontSizeDefault; }
@@ -332,6 +335,7 @@ class KeyMap final : public QObject {
     LimitResetSettings limit_resets_;
     NextPromptSettings next_prompt_;
     InteractionLogSettings interaction_log_;
+    TabAwaySettings tab_away_;
     QFileSystemWatcher watcher_;
     QTimer settle_;
     QByteArray known_contents_;

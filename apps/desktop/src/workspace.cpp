@@ -491,6 +491,12 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
       headless_(options.headless), update_timeout_ms_(std::max(qint64{1}, options.updateTimeoutMs)),
       preview_mode_(mode == WorkspaceMode::preview) {
     accounts_.setConfig(options.accounts);
+    // Before selecting clears the arriving agent's unseen mark, so a choice
+    // is recorded with the state the person chose from.
+    choice_settle_.setSingleShot(true);
+    choice_settle_.setInterval(2500);
+    connect(&choice_settle_, &QTimer::timeout, this, [this] { settleChoice(); });
+    connect(this, &Workspace::focusChanged, this, [this] { noteFocusMove(); });
     // Selecting an agent is looking at it.
     connect(this, &Workspace::focusChanged, this, [this] {
         if (auto* focused = focusedSession())
@@ -532,6 +538,8 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
                 ? QDir(rootDirectory()).filePath(QStringLiteral("runtime/workspace.json"))
                 : QFileInfo(options.storagePath).absoluteFilePath();
         restore();
+        // Tab's choices and model live beside the registry, owner-only.
+        tab_ranker_ = std::make_unique<TabRanker>(QFileInfo(storage_path_).absolutePath());
         restoreSelection();
         return;
     }
@@ -643,34 +651,100 @@ bool Workspace::latestAttention() {
             latest = item.get();
     return latest != nullptr && selectSession(latest->sessionId());
 }
-bool Workspace::nextPriorityAttention(const QVariantMap& ready) {
-    const auto rank = [&ready](const SessionPreview& item) {
-        const auto guess = ready.find(item.sessionId());
-        const auto kind = item.statusKind();
-        const bool waiting_for_prompt =
-            kind == QLatin1String("finished") || kind == QLatin1String("idle");
-        int tier = -1;
-        if (guess != ready.end() && waiting_for_prompt && !guess->toBool())
-            tier = 0;
-        else if (item.unseen() || item.attentionPending())
-            tier = 1;
-        else if (guess != ready.end() && waiting_for_prompt)
-            tier = 2;
-        return std::pair{tier, item.neededAtMs()};
-    };
-    const SessionPreview* best = nullptr;
-    std::pair<int, qint64> best_rank{};
-    const auto* const focused = focusedSession();
+// Truly waiting on the person: a request, or a turn its observer saw finish
+// with no background work in flight (a turn paused on its own background work
+// reads as working until it ends or its deadline passes) that is unseen or has
+// a guess. An agent at work, unknown, ended or closing never is, and neither
+// is one whose quiet is only an output estimate: silence is not a finished turn.
+std::vector<TabCandidate> Workspace::waitingCandidates(const QVariantMap& ready,
+                                                       const SessionPreview* exclude) const {
+    std::vector<TabCandidate> out;
+    const auto now = QDateTime::currentMSecsSinceEpoch();
     for (const auto& item : sessions_) {
-        const auto candidate = rank(*item);
-        if (item.get() == focused || candidate.first < 0)
+        if (item.get() == exclude || item->closing())
             continue;
-        if (best == nullptr || candidate < best_rank) {
-            best = item.get();
-            best_rank = candidate;
-        }
+        const auto kind = item->statusKind();
+        const auto guess = ready.find(item->sessionId());
+        const bool request = item->attentionPending();
+        const bool finished = kind == QLatin1String("finished") ||
+                              (kind == QLatin1String("idle") && item->hasAttentionSource());
+        if (!request && !(finished && (item->unseen() || guess != ready.end())))
+            continue;
+        const auto& id = item->sessionId();
+        const auto category = agents_.value(id).category;
+        bool work = false;
+        for (const auto& group : categories_)
+            if (group.id == category)
+                work = tab_away_.work.contains(group.name, Qt::CaseInsensitive);
+        const auto since = waiting_since_.value(id, item->neededAtMs());
+        const auto& starts = turn_starts_.value(id);
+        const auto hour = std::count_if(starts.begin(), starts.end(),
+                                        [now](qint64 at) { return now - at <= 3'600'000; });
+        out.push_back({id, category, work, request, item->unseen(), guess != ready.end(),
+                       guess != ready.end() && guess->toBool(),
+                       since > 0 ? static_cast<double>(now - since) / 60'000.0 : 0.0,
+                       static_cast<int>(hour),
+                       starts.empty() ? 1e9 : static_cast<double>(now - starts.back()) / 60'000.0});
     }
-    return best != nullptr && selectSession(best->sessionId());
+    return out;
+}
+bool Workspace::nextPriorityAttention(const QVariantMap& ready) {
+    const auto candidates = waitingCandidates(ready, focusedSession());
+    std::vector<double> scores;
+    const auto best = tab_ranker_->pick(candidates, &scores);
+    if (!best)
+        return false;
+    tab_ranker_->recordTab(candidates, scores, *best);
+    // Where the person settles after this move is the choice it learns from.
+    // A Tab before the last move settled passes over that agent: the choice
+    // stays among the agents waiting since they left the one before.
+    if (choice_)
+        choice_->add(candidates);
+    else
+        choice_ = PendingChoice{candidates, true};
+    choice_->viaTab = true;
+    return selectSession(candidates[*best].session);
+}
+void Workspace::setTabAway(const TabAwaySettings& settings) {
+    tab_away_ = settings;
+    tab_ranker_->setLearned(settings.learned);
+}
+// The person left an agent: remember who was waiting then. Moves before the
+// last one settled (a quick hop, or Tab's own move) add agents that began
+// waiting since, and keep those passed over.
+void Workspace::noteFocusMove() {
+    const auto* focused = focusedSession();
+    const auto id = focused != nullptr ? focused->sessionId() : QString();
+    if (id == last_focus_id_)
+        return;
+    auto fresh = waitingCandidates(guesses_ ? guesses_() : QVariantMap{}, session(last_focus_id_));
+    if (choice_)
+        choice_->add(fresh);
+    else
+        choice_ = PendingChoice{std::move(fresh), false};
+    last_focus_id_ = id;
+    choice_settle_.start();
+}
+void Workspace::PendingChoice::add(const std::vector<TabCandidate>& fresh) {
+    for (const auto& candidate : fresh)
+        if (std::none_of(candidates.begin(), candidates.end(), [&](const TabCandidate& known) {
+                return known.session == candidate.session;
+            }))
+            candidates.push_back(candidate);
+}
+// They stayed: the agent they are on is their choice among those waiting.
+void Workspace::settleChoice() {
+    if (!choice_)
+        return;
+    const auto [candidates, via_tab] = std::move(*choice_);
+    choice_.reset();
+    const auto chosen =
+        std::find_if(candidates.begin(), candidates.end(), [this](const TabCandidate& candidate) {
+            return candidate.session == last_focus_id_;
+        });
+    if (chosen != candidates.end())
+        tab_ranker_->learn(candidates, static_cast<std::size_t>(chosen - candidates.begin()),
+                           via_tab);
 }
 bool SessionPreview::addPreviewRequest(const QString& id, const QString& reason) {
     if (id.isEmpty() || id.size() > 64 || reason.size() > 256 || requests_.contains(id) ||
@@ -777,6 +851,33 @@ void Workspace::watch(SessionPreview* item) {
             [this, item] { emit turnFinished(item); });
     last_kind_.insert(item, item->statusKind());
     connect(item, &SessionPreview::statusChanged, this, [this, item] { noteStatus(item); });
+    // For Tab's ranking: when it began waiting, and when its turns started.
+    connect(item, &SessionPreview::statusChanged, this,
+            [this, item, kind = item->statusKind()]() mutable {
+                const auto now = item->statusKind();
+                const auto previous = std::exchange(kind, now);
+                const auto at = QDateTime::currentMSecsSinceEpoch();
+                const auto& id = item->sessionId();
+                if (now == QLatin1String("working") &&
+                    (previous == QLatin1String("finished") || previous == QLatin1String("idle"))) {
+                    auto& starts = turn_starts_[id];
+                    std::erase_if(starts,
+                                  [at](qint64 started) { return at - started > 3'600'000; });
+                    if (starts.size() < 256)
+                        starts.push_back(at);
+                    // A prompt sent to the agent shown settles the choice now.
+                    if (item == focusedSession() && choice_) {
+                        choice_settle_.stop();
+                        settleChoice();
+                    }
+                } else if (previous == QLatin1String("working") &&
+                           (now == QLatin1String("finished") || now == QLatin1String("idle"))) {
+                    waiting_since_.insert(id, at);
+                }
+            });
+    connect(item, &SessionPreview::attentionArrived, this, [this, item] {
+        waiting_since_.insert(item->sessionId(), QDateTime::currentMSecsSinceEpoch());
+    });
     connect(item, &SessionPreview::statusChanged, this, [this, id = item->sessionId()] {
         if (switching_.contains(id))
             QTimer::singleShot(0, this, [this] { switchWhenIdle(); });
@@ -1259,6 +1360,8 @@ bool Workspace::discardSession(const QString& id) {
     reloading_.remove(id);
     switching_.remove(id);
     last_kind_.remove(item);
+    waiting_since_.remove(id);
+    turn_starts_.remove(id);
     rememberClosed(closed_agent, closed_title);
     changed();
     // QML delegates can still hold the removed object during this call stack.
