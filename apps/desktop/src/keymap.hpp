@@ -2,6 +2,7 @@
 #define LAPIS_DESKTOP_KEYMAP_HPP
 
 #include "accounts.hpp"
+#include "interaction_log.hpp"
 #include "limit_resets.hpp"
 #include "next_prompt.hpp"
 #include <QFileSystemWatcher>
@@ -263,6 +264,8 @@ class KeyMap final : public QObject {
     [[nodiscard]] const LimitResetSettings& limitResets() const { return limit_resets_; }
     // {"nextPrompt": {...}}: when and how lapis predicts the next prompt.
     [[nodiscard]] const NextPromptSettings& nextPrompt() const { return next_prompt_; }
+    // {"interactionLog": {...}}: the local log of input in lapis's windows.
+    [[nodiscard]] const InteractionLogSettings& interactionLog() const { return interaction_log_; }
     [[nodiscard]] static int terminalFontSizeMinimum() { return kTerminalFontSizeMinimum; }
     [[nodiscard]] static int terminalFontSizeMaximum() { return kTerminalFontSizeMaximum; }
     [[nodiscard]] static int terminalFontSizeDefault() { return kTerminalFontSizeDefault; }
@@ -328,6 +331,7 @@ class KeyMap final : public QObject {
     PreparePlan prepare_plan_;
     LimitResetSettings limit_resets_;
     NextPromptSettings next_prompt_;
+    InteractionLogSettings interaction_log_;
     QFileSystemWatcher watcher_;
     QTimer settle_;
     QByteArray known_contents_;
