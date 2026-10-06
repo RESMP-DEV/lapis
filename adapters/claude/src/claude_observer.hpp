@@ -3,6 +3,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QStringList>
+#include <cstdint>
 #include <lapis/session/attention.hpp>
 #include <memory>
 
@@ -11,7 +12,12 @@ namespace lapis::claude {
 class Observer final : public QObject {
     Q_OBJECT
   public:
+    // Where hooks arrive: the private local socket this observer listens on,
+    // or frames another machine's relay printed to the agent's terminal,
+    // which the session service authenticates and passes to receiveRelayed.
+    enum class Transport : std::uint8_t { local_socket, terminal };
     explicit Observer(session::attention::State& state, QObject* parent = nullptr);
+    Observer(session::attention::State& state, Transport transport, QObject* parent = nullptr);
     ~Observer() override;
     [[nodiscard]] const QString& diagnostic() const;
     // The Claude Code session the hooks are bound to; empty before SessionStart
@@ -20,6 +26,10 @@ class Observer final : public QObject {
     [[nodiscard]] QJsonObject details(const session::attention::RequestId& id) const;
     [[nodiscard]] QStringList launchArguments(const QStringList& original,
                                               const QString& serviceExecutable);
+    // One authenticated hook input from a terminal relay: the hook's own JSON
+    // reduced to the relay's identity fields and background-work lists.
+    // Local-socket observers never need it.
+    void receiveRelayed(const QJsonObject& source);
     void stop();
     // How long a turn that ended with background work in flight waits for
     // that work's next turn before it counts as finished.

@@ -126,6 +126,8 @@ class SessionPreview final : public QObject {
     [[nodiscard]] qint64 neededAtMs() const { return needed_at_ms_; }
     // Where activity comes from: a service-side observer (the Codex app-server,
     // Claude Code's hook relay) or, for other CLIs, an output-timing estimate.
+    // An agent on another machine starts from the estimate; hooks relayed
+    // through its terminal then report what they observe (see estimated()).
     enum class StatusSource : std::uint8_t { observer, output };
     void setStatusSource(StatusSource source) { status_source_ = source; }
     [[nodiscard]] StatusSource statusSource() const { return status_source_; }
@@ -262,6 +264,10 @@ class SessionPreview final : public QObject {
     // few quiet seconds after that as a pause. Neither implies a finished task.
     void noteOutput();
     [[nodiscard]] QString unobservedStatusKind() const;
+    // Whether an output-estimated agent reads from that estimate now: no
+    // observer, one not synchronized, or one that does not know the activity
+    // (Codex on another machine reports only finished turns).
+    [[nodiscard]] bool estimated() const;
     // Shows the strip's view once its pages are here, fetching the next one
     // it lacks.
     void showStrip();

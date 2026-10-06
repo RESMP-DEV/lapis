@@ -3,7 +3,6 @@
 #include <QCryptographicHash>
 #include <QFile>
 #include <QHash>
-#include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocalServer>
 #include <QLocalSocket>
@@ -14,6 +13,7 @@
 #include <algorithm>
 #include <chrono>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -25,13 +25,6 @@ constexpr std::uint32_t connection_overflow_report_limit = 1024;
 constexpr qsizetype prompt_limit = 1024;
 constexpr qsizetype retired_source_limit = 1024;
 constexpr qsizetype completed_tool_limit = qsizetype{16} * 1024;
-const QStringList& hook_events() {
-    static const QStringList names{
-        "SessionStart", "UserPromptSubmit", "PermissionRequest",  "Notification",
-        "PreToolUse",   "PostToolUse",      "PostToolUseFailure", "Stop",
-        "SessionEnd"};
-    return names;
-}
 attention::Tick now() {
     return static_cast<attention::Tick>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                             std::chrono::steady_clock::now().time_since_epoch())
@@ -52,24 +45,32 @@ bool valid_event(const QJsonObject& event) {
             !it.value().isString() || it.value().toString().toUtf8().size() > 256 ||
             it.value().toString().contains(QChar::Null))
             return false;
-    return hook_events().contains(event.value("hook_event_name").toString()) &&
+    const auto name = event.value("hook_event_name").toString();
+    return std::any_of(hook_event_names.begin(), hook_event_names.end(),
+                       [&name](QStringView known) { return name == known; }) &&
            !event.value("session_id").toString().isEmpty();
 }
 } // namespace
 
 class Observer::Impl {
   public:
-    Impl(attention::State& state, Observer& owner)
-        : state_(state), owner_(owner), temporary_(QStringLiteral("/tmp/lapis-hook-XXXXXX")) {
-        if (!temporary_.isValid())
-            throw std::runtime_error("Cannot create private Claude hook directory");
-        socket_ = temporary_.filePath(QStringLiteral("events.sock"));
-        nonce_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        server_.setSocketOptions(QLocalServer::UserAccessOption);
-        server_.setMaxPendingConnections(static_cast<int>(connection_limit));
-        if (!server_.listen(socket_))
-            throw std::runtime_error("Cannot listen for Claude hooks");
-        QObject::connect(&server_, &QLocalServer::newConnection, &server_, [this] { accept(); });
+    Impl(attention::State& state, Observer& owner, Observer::Transport transport)
+        : state_(state), owner_(owner) {
+        // Hooks relayed through the terminal of another machine need no local
+        // listener or settings file; the service authenticates those frames.
+        if (transport == Observer::Transport::local_socket) {
+            temporary_.emplace(QStringLiteral("/tmp/lapis-hook-XXXXXX"));
+            if (!temporary_->isValid())
+                throw std::runtime_error("Cannot create private Claude hook directory");
+            socket_ = temporary_->filePath(QStringLiteral("events.sock"));
+            nonce_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            server_.setSocketOptions(QLocalServer::UserAccessOption);
+            server_.setMaxPendingConnections(static_cast<int>(connection_limit));
+            if (!server_.listen(socket_))
+                throw std::runtime_error("Cannot listen for Claude hooks");
+            QObject::connect(&server_, &QLocalServer::newConnection, &server_,
+                             [this] { accept(); });
+        }
         paused_.setSingleShot(true);
         paused_.setInterval(Observer::paused_turn_ms);
         QObject::connect(&paused_, &QTimer::timeout, &server_, [this] { background_timeout(); });
@@ -121,19 +122,12 @@ class Observer::Impl {
         notify();
     }
     QStringList launch(const QStringList& original, const QString& executable) {
-        if (stopped_ || executable.isEmpty() || executable.contains(QChar::Null))
+        if (stopped_ || !temporary_ || executable.isEmpty() || executable.contains(QChar::Null))
             throw std::invalid_argument("Claude hook receiver is unavailable");
-        QJsonObject hooks;
         const auto command = quote(executable) + QStringLiteral(" --claude-hook ") +
                              quote(socket_) + QLatin1Char(' ') + quote(nonce_);
-        for (const auto& event : hook_events())
-            hooks.insert(
-                event, QJsonArray{QJsonObject{{"hooks", QJsonArray{QJsonObject{{"type", "command"},
-                                                                               {"command", command},
-                                                                               {"timeout", 2}}}}}});
-        QFile settings(temporary_.filePath(QStringLiteral("settings.json")));
-        const auto data =
-            QJsonDocument(QJsonObject{{"hooks", hooks}}).toJson(QJsonDocument::Compact);
+        QFile settings(temporary_->filePath(QStringLiteral("settings.json")));
+        const auto data = hook_settings(command);
         if (!settings.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
             !settings.setPermissions(QFile::ReadOwner | QFile::WriteOwner) ||
             settings.write(data) != data.size() || !settings.flush())
@@ -194,6 +188,22 @@ class Observer::Impl {
             }
         }
         client->disconnectFromServer();
+    }
+    // A hook relayed by another machine's relay through the terminal. The
+    // caller has authenticated the frame; this derives the same bounded event
+    // a local relay sends and applies it exactly as one from the socket.
+    void relayed(const QJsonObject& source) {
+        if (stopped_ || failed_)
+            return;
+        const auto event = relay_event(source);
+        try {
+            if (!valid_event(event))
+                loss(QStringLiteral("Malformed authenticated Claude hook"));
+            else
+                receive(event);
+        } catch (const std::exception&) {
+            loss(QStringLiteral("Claude observation could not be applied"));
+        }
     }
     void loss(const QString& message) {
         state_.overflow();
@@ -479,7 +489,7 @@ class Observer::Impl {
     }
     attention::State& state_;
     Observer& owner_;
-    QTemporaryDir temporary_;
+    std::optional<QTemporaryDir> temporary_;
     QLocalServer server_;
     QHash<QLocalSocket*, QByteArray> clients_;
     QString socket_;
@@ -510,7 +520,9 @@ class Observer::Impl {
     }
 };
 Observer::Observer(attention::State& state, QObject* parent)
-    : QObject(parent), impl_(std::make_unique<Impl>(state, *this)) {}
+    : Observer(state, Transport::local_socket, parent) {}
+Observer::Observer(attention::State& state, Transport transport, QObject* parent)
+    : QObject(parent), impl_(std::make_unique<Impl>(state, *this, transport)) {}
 Observer::~Observer() = default;
 const QString& Observer::diagnostic() const { return impl_->diagnostic_; }
 const QString& Observer::sessionId() const { return impl_->pinned_; }
@@ -521,6 +533,7 @@ QJsonObject Observer::details(const attention::RequestId& id) const {
 QStringList Observer::launchArguments(const QStringList& original, const QString& executable) {
     return impl_->launch(original, executable);
 }
+void Observer::receiveRelayed(const QJsonObject& source) { impl_->relayed(source); }
 void Observer::stop() { impl_->stop(); }
 void Observer::setPausedTurnMsForTesting(int ms) { impl_->paused_.setInterval(ms); }
 } // namespace lapis::claude

@@ -79,8 +79,13 @@ configure_file(src/next_prompt_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/genera
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/plan_sign_in.py)
 file(READ src/plan_sign_in.py LAPIS_PLAN_SIGN_IN_SCRIPT)
 configure_file(src/plan_sign_in_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/plan_sign_in_script.hpp" @ONLY)
+# The hook relay a remote agent's python3 runs, compiled in the same way.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/remote_hook_relay.py)
+file(READ src/remote_hook_relay.py LAPIS_REMOTE_HOOK_RELAY)
+configure_file(src/remote_hook_relay.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/remote_hook_relay.hpp" @ONLY)
 target_include_directories(lapis_desktop_view PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options lapis_session_platform
+    lapis_claude_adapter
     PUBLIC lapis_terminal lapis_attention lapis_session_launch lapis_local_protocol
         Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network)
 if(LAPIS_PACKAGE)
@@ -199,6 +204,8 @@ if(BUILD_TESTING)
     add_test(NAME workspace-remote-accounts COMMAND lapis_workspace_tests
                                                    --case remote-accounts)
     set_tests_properties(workspace-remote-accounts PROPERTIES TIMEOUT 60)
+    add_test(NAME workspace-remote-hooks COMMAND lapis_workspace_tests --case remote-hooks)
+    set_tests_properties(workspace-remote-hooks PROPERTIES TIMEOUT 90)
     add_test(NAME workspace-remote-account-reset COMMAND lapis_workspace_tests
                                                         --case remote-account-reset)
     set_tests_properties(workspace-remote-account-reset PROPERTIES TIMEOUT 20)

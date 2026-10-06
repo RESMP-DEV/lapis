@@ -30,6 +30,14 @@ QString SessionPreview::unobservedStatusKind() const {
         return output_active_ ? QStringLiteral("working") : QStringLiteral("idle");
     return QStringLiteral("unknown");
 }
+bool SessionPreview::estimated() const {
+    if (!attention_)
+        return true;
+    return status_source_ == StatusSource::output &&
+           (!attention_->ready || !attention_->connected ||
+            (attention_->activity == session::attention::Activity::unknown &&
+             !attentionPending()));
+}
 QString SessionPreview::statusKind() const {
     if (live()) {
         if (connection_state_ == QStringLiteral("ended"))
@@ -39,7 +47,7 @@ QString SessionPreview::statusKind() const {
             return QStringLiteral("connecting");
         if (!input_ready_)
             return QStringLiteral("disconnected");
-        if (!attention_)
+        if (!attention_ || estimated())
             return unobservedStatusKind();
         if (!attention_->ready || !attention_->connected)
             return QStringLiteral("unknown");
@@ -68,7 +76,7 @@ QString SessionPreview::statusLabel() const {
     const auto kind = statusKind();
     if (closing_ && kind != QStringLiteral("ended"))
         return QStringLiteral("Ending agent");
-    if (!attention_ && status_source_ == StatusSource::output &&
+    if (status_source_ == StatusSource::output && estimated() &&
         (kind == QStringLiteral("working") || kind == QStringLiteral("idle")))
         return kind == QStringLiteral("working") ? QStringLiteral("Output active")
                                                  : QStringLiteral("Quiet");
