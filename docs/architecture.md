@@ -4177,6 +4177,18 @@ guess covers them but does not turn them off. Past transcripts do not record
 lapis's state, so the replay cannot measure what the other agents' state adds;
 the log can.
 
+**One guess, not three (October 6).** A benchmark on 1,522 held-out prompts from
+one person's traces (trained on 10,203 earlier ones) found that mixing a
+fine-tuned 8B model with Opus raised the share of prompts whose intent was in
+the top three guesses from 20.4% to 23.6%, while the first guess stayed at
+about 14.5%. Showing three guesses would collect that gain. It is left as an
+open option and deliberately not built: Tab is meant to run as close to
+autopilot as possible, which needs one guess the person can lock in with a
+key, and optimizing for "one of three is right" trains the candidates toward
+hedges instead of the single most likely prompt. Work goes to the first guess,
+starting with a small classifier that answers the short, low-stakes prompts
+(go, status) and leaves the rest to the large model.
+
 ### Claude Code 2.1.281 to 2.1.285 (September 29)
 
 A changelog watcher opens an issue per Claude Code release with its lapis
