@@ -35,7 +35,20 @@ NOT_TYPED = (
     "This session is being continued",
     "[Request interrupted",
     "# AGENTS.md instructions",
+    "<codex_internal_context",
+    "<turn_aborted",
+    "<subagent_notification",
+    "<recommended_plugins",
+    "<bash-input",
+    "<bash-stdout",
+    "<bash-stderr",
+    "<command-message",
+    "[Your previous response had no visible output",
 )
+# Codex attaches images as empty wrappers around the typed text.
+IMAGE_WRAPPER = re.compile(r"<image\b[^>]*>\s*</image>\s*", re.S)
+# Codex Desktop puts context headers before the request it was typed under.
+CODEX_REQUEST = "## My request for Codex:"
 CATEGORIES = ("approve", "status", "ship", "fix", "new", "question", "correct", "other")
 # Variables that would send a prediction to a metered key, another endpoint or
 # a cloud account instead of the plan the CLI is signed in to.
@@ -55,7 +68,11 @@ RECENT_HOURS = 6
 
 def typed(text):
     text = (text or "").strip()
-    return "" if not text or text.startswith(NOT_TYPED) else text
+    if not text or text.startswith(NOT_TYPED):
+        return ""
+    if text.startswith("# ") and CODEX_REQUEST in text:
+        text = text.split(CODEX_REQUEST, 1)[1]
+    return IMAGE_WRAPPER.sub("", text).strip()
 
 
 def records(path):

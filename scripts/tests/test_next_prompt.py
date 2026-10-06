@@ -134,6 +134,25 @@ class TranscriptTests(Homes):
             ],
         )
 
+    def test_injected_turns_and_wrappers_are_not_typed(self):
+        typed = next_prompt.typed
+        for injected in (
+            "<codex_internal_context>goal mode</codex_internal_context>",
+            "<turn_aborted>The user interrupted.</turn_aborted>",
+            "<subagent_notification>done</subagent_notification>",
+            "<bash-input>ls</bash-input>",
+            "[Your previous response had no visible output. Continue.]",
+        ):
+            self.assertEqual(typed(injected), "")
+        self.assertEqual(
+            typed('<image name="a.png"></image>\nwhat is this'), "what is this"
+        )
+        self.assertEqual(
+            typed("# In app browser\n- page\n## My request for Codex:\nfix it"),
+            "fix it",
+        )
+        self.assertEqual(typed("# heading I typed"), "# heading I typed")
+
     def test_codex_leaves_out_its_own_instructions(self):
         turns = next_prompt.codex_turns(str(self.codex_path))
         self.assertEqual(
