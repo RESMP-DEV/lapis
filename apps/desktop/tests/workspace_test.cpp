@@ -3932,6 +3932,113 @@ void alertsChimeWhileAnAgentWaits() {
             "it starts from silence and peaks near -12 dBFS");
 }
 
+// Away from the Mac, lapis in front no longer stands for being seen: a
+// finished turn notifies, and an agent left waiting notifies once more after
+// alerts.remindAfter, held until the person is back. Looking at it, or its
+// next turn starting, ends the wait.
+void notificationsReachYouWhenAway() {
+    namespace wire = lapis::session::wire;
+    QTemporaryDir directory;
+    require(directory.isValid(), "away directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    QFile config(root.filePath(QStringLiteral("lapis.json")));
+    require(config.open(QIODevice::WriteOnly), "write the away config");
+    config.write(
+        R"({"version": 1, "alerts": {"notify": true, "awayAfter": 5, "remindAfter": 9999}})");
+    config.close();
+    lapis::desktop::KeyMap keymap;
+    keymap.setSourcePathForTesting(config.fileName());
+    require(keymap.load() && keymap.awayAfterSeconds() == 15 && keymap.remindAfterMinutes() == 1440,
+            "awayAfter and remindAfter load within their bounds");
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    Workspace workspace(WorkspaceMode::live, options);
+    lapis::desktop::SessionPreview agent(QStringLiteral("agent"), root.path(), {}, QColor(), "");
+    agent.setHarnessId(QStringLiteral("claude"));
+    const auto activity = [&agent](lapis::session::attention::Activity now) {
+        wire::AttentionSnapshot state;
+        state.available = state.connected = state.ready = true;
+        state.source_epoch = 1;
+        state.activity = now;
+        agent.applyAttention(state);
+    };
+    activity(lapis::session::attention::Activity::turn_completed);
+    std::vector<QStringList> posted;
+    bool background = false;
+    bool present = true;
+    bool focused = false;
+    lapis::desktop::Notifier notifier(
+        workspace, keymap,
+        [&posted](const QString& id, const QString& title, const QString& body) {
+            posted.push_back({id, title, body});
+        },
+        [&background] { return background; });
+    notifier.setPresence([&present] { return present; },
+                         [&present, &focused](const auto*) { return present && focused; });
+    notifier.setTimingForTesting({.checkMs = 20, .remindMs = 150});
+    std::vector<QJsonObject> notes;
+    notifier.setLog([&notes](const QJsonObject& entry) { notes.push_back(entry); });
+    const auto decision = [&notes] {
+        return notes.back().value(QStringLiteral("decision")).toString();
+    };
+
+    // In front with someone there: no notification, as before, and watching
+    // the agent itself leaves nothing waiting.
+    focused = true;
+    emit workspace.turnFinished(&agent);
+    require(posted.empty() && decision() == QStringLiteral("none: lapis is in front"),
+            "in front and present, a finished turn posts nothing");
+    waitFor([] { return false; }, 300);
+    require(posted.empty(), "and the agent being watched is not reminded about");
+
+    // Nobody at the Mac: in front, even showing that agent, it posts.
+    present = false;
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 1 && posted[0][2] == QStringLiteral("Claude finished a turn") &&
+                decision() == QStringLiteral("posted: you are away"),
+            "away, a finished turn posts even with lapis in front on that agent");
+    // Still away when the reminder falls due: it waits for the person.
+    waitFor([] { return false; }, 300);
+    require(posted.size() == 1, "a reminder is held while the person is away");
+    present = true;
+    focused = false;
+    require(waitFor([&posted] { return posted.size() == 2; }, 1000) &&
+                posted[1][2].startsWith(QStringLiteral("Claude ")) &&
+                notes.back().value(QStringLiteral("event")).toString() ==
+                    QStringLiteral("still waiting") &&
+                decision() == QStringLiteral("posted: reminder"),
+            "back at the Mac, the agent still waiting reminds once");
+    waitFor([] { return false; }, 300);
+    require(posted.size() == 2, "one reminder per wait");
+
+    // Present but on another agent: the chime's moment, and a reminder later.
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 2 && decision() == QStringLiteral("none: lapis is in front"),
+            "present on another agent, no notification at the turn's end");
+    require(waitFor([&posted] { return posted.size() == 3; }, 1000) &&
+                decision() == QStringLiteral("posted: reminder"),
+            "but it reminds if left waiting");
+
+    // Looking at it, or its next turn starting, ends the wait.
+    emit workspace.turnFinished(&agent);
+    focused = true;
+    waitFor([] { return false; }, 300);
+    require(posted.size() == 3, "looking at the agent answers the wait");
+    focused = false;
+    emit workspace.turnFinished(&agent);
+    activity(lapis::session::attention::Activity::working);
+    waitFor([] { return false; }, 300);
+    require(posted.size() == 3, "a new turn answers the wait");
+    activity(lapis::session::attention::Activity::turn_completed);
+
+    // In the background nothing changes: it posts, present or not.
+    background = true;
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 4 && decision() == QStringLiteral("posted"),
+            "in the background a finished turn posts as before");
+    notifier.setLog({});
+}
+
 // The attention log's own behavior: owner-only however it starts, rotating
 // beside a single predecessor before a line would cross the cap, marking the
 // rotation, and stopping the write when the old file cannot move aside.
@@ -5562,6 +5669,7 @@ int main(int argc, char** argv) {
                 skippedClaudeUpdateReportsTheCurrentOperation();
             } else if (selected == QStringLiteral("chimes")) {
                 alertsChimeWhileAnAgentWaits();
+                notificationsReachYouWhenAway();
                 chimesPlayChosenFiles();
                 attentionLogStaysPrivateAndRotates();
             } else {
@@ -5640,6 +5748,7 @@ int main(int argc, char** argv) {
         unseenAgentsDecodeNothing();
         windowTakesTheWorkspaceFromTheHost();
         alertsChimeWhileAnAgentWaits();
+        notificationsReachYouWhenAway();
         chimesPlayChosenFiles();
         attentionLogStaysPrivateAndRotates();
         phoneSizeYieldsToTheDesktop();

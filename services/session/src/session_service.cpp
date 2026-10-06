@@ -2068,9 +2068,10 @@ int main(int argc, char** argv) {
     int application_argc = 1;
     QCoreApplication app(application_argc, argv);
     if (arguments.value(1) == QStringLiteral("--claude-hook")) {
-        if (arguments.size() != 4)
+        // A service started before relay contracts passes no fourth value.
+        if (arguments.size() != 4 && arguments.size() != 5)
             return 0;
-        return lapis::claude::run_hook_relay(arguments.at(2), arguments.at(3));
+        return lapis::claude::run_hook_relay(arguments.at(2), arguments.at(3), arguments.value(4));
     }
     try {
         auto options = parse_options(arguments);

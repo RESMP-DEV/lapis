@@ -125,7 +125,8 @@ class Observer::Impl {
             throw std::invalid_argument("Claude hook receiver is unavailable");
         QJsonObject hooks;
         const auto command = quote(executable) + QStringLiteral(" --claude-hook ") +
-                             quote(socket_) + QLatin1Char(' ') + quote(nonce_);
+                             quote(socket_) + QLatin1Char(' ') + quote(nonce_) + QLatin1Char(' ') +
+                             relay_contract.toString();
         for (const auto& event : hook_events())
             hooks.insert(
                 event, QJsonArray{QJsonObject{{"hooks", QJsonArray{QJsonObject{{"type", "command"},

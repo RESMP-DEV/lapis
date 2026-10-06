@@ -1269,6 +1269,19 @@ With both fields absent, the relay reports the legacy contract. This matches the
 qualified optional-field schema; a future field rename needs a new adapter probe
 and cannot be inferred from the absence of an optional field alone.
 
+The hook command runs whatever relay binary is installed at the service's path
+when Claude stops, so after an update a long-running service hears a newer
+relay. A service built before `in_flight` existed rejects that field as a
+malformed hook and stops observing for good: from September 30 to October 6 a
+set of agents restored on September 29 sent every `Stop` through such a relay
+and produced no finished-turn ping at all (51 of 311 final turn endings, 23 of
+the 61 the person answered more than 30 minutes late with no notification).
+The hook command therefore names its relay contract as a trailing argument
+(`2`); a command without one, written by an older service, gets identity
+fields only, the legacy shape that service reads. A relay never sends a field
+its listening service's contract lacks. Services that already lost observation
+this way stay lost until their agent is reloaded.
+
 Diagnostics compose the current lifecycle/transport status with a transient
 background-schema message. A known background count clears only that transient
 message, preserving transport-loss or connection-overflow evidence. The base
@@ -1786,6 +1799,34 @@ Decisions from these runs:
   still answers a Codex request through its adapter. The needs-you chime
   settings (`alertSound`, `alertRepeat`) and `Alerts::needsYou` are unused and
   due for removal with the phone's matching settings.
+- Pings reach a person who is away (October 6). The rule: a finished turn or
+  request posts a notification when lapis is in the background, as before, or
+  when nobody is at the Mac: no keyboard, mouse or trackpad input anywhere for
+  `alerts.awayAfter` seconds (default 120), read from the HID event source
+  (`CGEventSourceSecondsSinceLastEventType`; where it cannot be read, the
+  person counts as present). Being in front, or showing that very agent, counts
+  as seeing it only with someone present, and `SeenScreens` samples only then.
+  The chime still plays. An agent left waiting (no new turn, request still
+  open, not looked at while present) posts one reminder after
+  `alerts.remindAfter` minutes (default 30, 0 turns it off); one falling due
+  while the person is away waits until input resumes. Reminders log as event
+  `still waiting`, decision `posted: reminder`; away posts as
+  `posted: you are away`.
+  Evidence (dated; the author's attention log, interaction log and Claude
+  transcripts, September 30 to October 6): of 311 final turn endings under
+  lapis, the person answered 77 more than 30 minutes later, 61 of them with no
+  notification posted: 26 had no ping decision because of the relay/service
+  skew above (23 confirmed from live service start times, 3 probable), 10 were remote terminal agents with no turn signal yet, 21 were
+  logged "lapis is in front" or "you are looking at it" with only a chime, and
+  4 were the paused-turn fallback followed by a chime only. Replaying the rule
+  over that week (presence from the interaction log after October 5, from typed
+  prompts before) notifies for 54 of the 61, assuming the turn signals above
+  are restored, 13 at the turn's end and 41 by the reminder; the 7 left were
+  cases the prompt-based presence cannot place before the reply. It adds 16
+  away notifications for turns answered within 30 minutes and 47 reminders,
+  35 of them for conversations never answered again; in the interaction-logged
+  day, 2 reminders would have fired while the person was present. A second and
+  third reminder caught nothing more in the replay, so there is one.
 - Custom sound files preserve that shared finished cue. `ChimeSounds` owns
   asynchronous file loading separately from `Alerts` attention policy: at most
   two configured paths and two in-flight checks, with coalesced latest-path

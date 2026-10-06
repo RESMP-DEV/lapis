@@ -23,7 +23,17 @@ inline constexpr std::array<QStringView, 8> relay_identity_fields{
 };
 inline constexpr std::array<QStringView, 1> relay_derived_fields{relay_in_flight_field};
 
-int run_hook_relay(const QString& socket, const QString& nonce) noexcept;
+// The hook command names the frame shape its service reads, so a relay never
+// sends a field the listening service predates. The hook runs whatever binary
+// is installed at the command's path when Claude stops, which after an update
+// is newer than a service that kept running; an older service treats an
+// unknown field as a malformed hook and stops observing for good. A command
+// without a contract (from such a service) gets identity fields only, the
+// legacy shape; contract 2 adds the derived fields above.
+inline constexpr QStringView relay_contract{u"2"};
+
+int run_hook_relay(const QString& socket, const QString& nonce,
+                   const QString& contract = {}) noexcept;
 
 } // namespace lapis::claude
 

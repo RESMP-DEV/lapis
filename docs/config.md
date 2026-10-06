@@ -41,15 +41,29 @@ files do not restore repeating request chimes. Appearance has one switch and
 Play button for the shared cue, plus the background-notification switch.
 
 A turn that ends on what you already saw of that agent stays quiet: while lapis
-is in front, the screen of the agent you are looking at is noted every second,
-and a finished turn whose screen above Claude Code's input box is unchanged
-neither chimes nor notifies. A request still chimes and notifies even then.
+is in front and you are at the Mac, the screen of the agent you are looking at
+is noted every second, and a finished turn whose screen above Claude Code's
+input box is unchanged neither chimes nor notifies. A request still chimes and
+notifies even then.
+
+A notification posts when lapis is in the background or when you are away:
+no keyboard, mouse or trackpad input anywhere for `alerts.awayAfter` seconds
+(default 120, from 15 to 3600). Away, lapis in front, even showing that agent,
+does not count as you seeing it. An agent still waiting after
+`alerts.remindAfter` minutes (default 30, up to 1440; 0 for never), with no
+new turn and not looked at, notifies once more; if you are away then, the
+reminder comes when you are back.
+
+```json
+"alerts": {"notify": true, "awayAfter": 120, "remindAfter": 30}
+```
 
 Every decision — a chime or a notification, and each quiet reason — is logged,
 one JSON line each, to `runtime/attention.jsonl` in the lapis folder: the
 moment, the agent's conversation title, its CLI, the event (`needs you` or
-`finished`), a `kind` of chime or notification, and the `decision` (chimed,
-posted, or the quiet reason). The log is owner-only, and the title can be the
+`finished`, or `still waiting` for a reminder), a `kind` of chime or
+notification, and the `decision` (chimed, posted, `posted: you are away`,
+`posted: reminder`, or the quiet reason). The log is owner-only, and the title can be the
 conversation's first prompt, so the file is not for sharing. Before a line
 would cross 2 MiB the log rotates to `attention.jsonl.1` (one predecessor, the
 older one removed) and the fresh file opens with a `rotated` marker line.

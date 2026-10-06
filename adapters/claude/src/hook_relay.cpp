@@ -73,7 +73,9 @@ bool read_input(QByteArray& input, QDeadlineTimer& deadline) {
     return false;
 }
 } // namespace
-int run_hook_relay(const QString& socket, const QString& nonce) noexcept {
+// The command line fixes the order: socket, nonce, then contract.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+int run_hook_relay(const QString& socket, const QString& nonce, const QString& contract) noexcept {
     // Hook failure must never become a Claude permission decision or prompt text.
     try {
         if (!socket.startsWith(QLatin1Char('/')) || socket.size() > 100 || nonce.size() != 36 ||
@@ -92,7 +94,7 @@ int run_hook_relay(const QString& socket, const QString& nonce) noexcept {
         for (const auto& key : relay_identity_fields)
             if (object.contains(key))
                 event.insert(key, object.value(key));
-        const auto in_flight = background_work(object);
+        const auto in_flight = contract == relay_contract ? background_work(object) : QString();
         if (!in_flight.isNull())
             event.insert(relay_in_flight_field.toString(), in_flight);
         QJsonObject frame{{"nonce", nonce}, {"event", event}};
