@@ -526,7 +526,14 @@ int run(int argc, char** argv) {
     // Any service still running from this private home ends with the run,
     // however it ends.
     const auto end_services = qScopeGuard([&home] {
-        QProcess::execute(QStringLiteral("/usr/bin/pkill"), {QStringLiteral("-f"), home.path()});
+        const QStringList pattern{QStringLiteral("-f"), home.path()};
+        QProcess::execute(QStringLiteral("/usr/bin/pkill"), pattern);
+        // Ending services still write their logs; remove the home after them.
+        for (int wait = 0;
+             wait < 40 && QProcess::execute(QStringLiteral("/usr/bin/pgrep"),
+                                            QStringList{QStringLiteral("-q")} + pattern) == 0;
+             ++wait)
+            QThread::msleep(50);
     });
 
     QGuiApplication app(argc, argv);
