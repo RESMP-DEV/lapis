@@ -13,10 +13,12 @@
 
 #include <QCommandLineParser>
 #include <QCursor>
+#include <QDateTime>
 #include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -60,6 +62,29 @@ int print_deck(const QString& home) {
             << ")\n";
     out << published.agents.size() << " agents in the registry\n";
     return 0;
+}
+
+// One answer per line in runtime/ultratab_answers.jsonl, owner-only, the
+// same file the phone gateway appends to; past 16 MB it moves to `.1`.
+void log_answer(const QString& path, QJsonObject answer) {
+    constexpr qint64 limit = 16 * 1024 * 1024;
+    answer.insert(QStringLiteral("t"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    answer.insert(QStringLiteral("from"), QStringLiteral("mac"));
+    const auto line = QJsonDocument(answer).toJson(QJsonDocument::Compact) + '\n';
+    const QFileInfo info(path);
+    if (info.isSymLink())
+        return;
+    if (info.exists() && info.size() + line.size() > limit) {
+        QFile::remove(path + QStringLiteral(".1"));
+        QFile::rename(path, path + QStringLiteral(".1"));
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Append)) {
+        qWarning().noquote() << "Ultra Tab: answer not logged:" << file.errorString();
+        return;
+    }
+    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    file.write(line);
 }
 
 class Overlay final {
@@ -208,6 +233,10 @@ int main(int argc, char** argv) {
     PublishedSource source(home.isEmpty() ? QString()
                                           : QDir(home).filePath(QStringLiteral("runtime")));
     QObject::connect(&source, &PublishedSource::loaded, &deck, &Deck::setPublished);
+    if (!source.runtime().isEmpty())
+        deck.setAnswerLog(
+            [path = QDir(source.runtime()).filePath(QStringLiteral("ultratab_answers.jsonl"))](
+                const QJsonObject& answer) { log_answer(path, answer); });
 
     // Composed cards: runtime/ultratab_cards.json, beside what lapis publishes.
     const auto& runtime = source.runtime();

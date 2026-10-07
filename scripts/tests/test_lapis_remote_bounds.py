@@ -886,3 +886,37 @@ class TailnetAdmissionBoundsTests(unittest.TestCase):
         self.assertFalse(auth.allowed(addresses[-1]))
         self.assertEqual(len(tailscale.calls), remote.TailnetAuth.MAX_CACHE + 1)
         self.assertEqual(auth.cache[addresses[-1]][0], False)
+
+
+class AnswerLogBoundsTests(unittest.TestCase):
+    def test_answers_append_owner_only_and_roll_over(self):
+        folder = Path(tempfile.mkdtemp(prefix="lapis-answers-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        registry = folder / "workspace.json"
+        label = remote.answer_label(
+            {"how": "skipped", "key": "k" * 600, "proposal": "ship it", "x": 1}
+        )
+        self.assertEqual(
+            label, {"how": "skipped", "key": "k" * 512, "proposal": "ship it"}
+        )
+        self.assertEqual(remote.answer_label({"how": "deleted"}), {})
+        remote.log_answer(registry, {"agent": "a", **label})
+        log = folder / remote.ANSWERS_FILE
+        row = json.loads(log.read_text())
+        self.assertEqual(
+            (row["from"], row["how"], row["agent"]), ("phone", "skipped", "a")
+        )
+        self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+        with patch.object(remote, "ANSWERS_LIMIT", log.stat().st_size + 10):
+            remote.log_answer(registry, {"agent": "b", "how": "accepted"})
+        self.assertTrue((folder / (remote.ANSWERS_FILE + ".1")).exists())
+        self.assertEqual(json.loads(log.read_text())["agent"], "b")
+
+    def test_a_linked_log_is_never_followed(self):
+        folder = Path(tempfile.mkdtemp(prefix="lapis-answers-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        target = folder / "elsewhere"
+        target.write_text("")
+        (folder / remote.ANSWERS_FILE).symlink_to(target)
+        remote.log_answer(folder / "workspace.json", {"agent": "a", "how": "skipped"})
+        self.assertEqual(target.read_text(), "")

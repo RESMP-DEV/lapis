@@ -1931,6 +1931,59 @@ DECK_FILES = {
 }
 
 
+# Every answer given on a card, for learning what to propose and how to show
+# it: the card's key, what was proposed, and accepted, annotated (with the
+# text sent) or skipped. Kept beside the registry, owner-only, appended one
+# JSON line at a time; past the limit the file moves to `.1` and starts over.
+ANSWERS_FILE = "ultratab_answers.jsonl"
+ANSWERS_LIMIT = 16 * 1024 * 1024
+ANSWER_HOWS = ("accepted", "annotated", "skipped")
+ANSWERS_LOCK = threading.Lock()
+
+
+def answer_label(body):
+    """The card fields of an answer request, bounded; {} when there are none."""
+    if not isinstance(body, dict):
+        return {}
+    label = {}
+    how = body.get("how")
+    if how in ANSWER_HOWS:
+        label["how"] = how
+    for key, limit in (("key", 512), ("proposal", MAX_INPUT)):
+        value = body.get(key)
+        if isinstance(value, str) and value:
+            label[key] = value[:limit]
+    return label
+
+
+def log_answer(registry, record):
+    """Appends one answer to ultratab_answers.jsonl; a failure is printed and
+    never stops the answer itself."""
+    path = Path(registry).parent / ANSWERS_FILE
+    record = {
+        "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "from": "phone",
+        **record,
+    }
+    line = (json.dumps(record, ensure_ascii=False) + "\n").encode()
+    with ANSWERS_LOCK:
+        try:
+            try:
+                if os.lstat(path).st_size + len(line) > ANSWERS_LIMIT:
+                    os.replace(path, path.with_name(ANSWERS_FILE + ".1"))
+            except FileNotFoundError:
+                pass
+            fd = os.open(
+                path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600
+            )
+            try:
+                os.write(fd, line)
+            finally:
+                os.close(fd)
+        except OSError as error:
+            print(f"answer not logged: {error}", file=sys.stderr, flush=True)
+
+
 def bounded_json(path, limit):
     """The object in a regular file (not a link) within `limit` bytes; None
     when the file is absent, and a GatewayError when it is unreadable."""
@@ -2442,6 +2495,8 @@ class Handler(BaseHTTPRequestHandler):
             self.input(parts[2])
         elif agent_route(parts, "submit"):
             self.submit(parts[2])
+        elif agent_route(parts, "skip"):
+            self.skip(parts[2])
         elif parts == ["api", "agents"]:
             self.start_agent()
         elif agent_route(parts, "close"):
@@ -3164,9 +3219,42 @@ class Handler(BaseHTTPRequestHandler):
             self.fail(HTTPStatus.NOT_FOUND, "No such agent")
             return
         queued, message = submit_paste(agent, text)
+        label = answer_label(body)
+        if label:
+            log_answer(
+                self.gateway.registry,
+                {
+                    "agent": identifier,
+                    **label,
+                    "text": text,
+                    "outcome": "sent" if queued else "refused",
+                },
+            )
         if not queued:
             self.fail(HTTPStatus.CONFLICT, message or "the agent's session refused it")
             return
+        self.reply(HTTPStatus.OK, {"ok": True})
+
+    def skip(self, identifier):
+        """An Ultra Tab skip: nothing reaches the agent; the card and what it
+        proposed are logged as skipped (log_answer)."""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = -1
+        if not 0 < length <= MAX_INPUT * 2:
+            self.fail(HTTPStatus.BAD_REQUEST, "Invalid request size")
+            return
+        try:
+            body = json.loads(self.rfile.read(length))
+        except ValueError:
+            body = None
+        label = answer_label(body)
+        if "key" not in label:
+            self.fail(HTTPStatus.BAD_REQUEST, "No card key")
+            return
+        label["how"] = "skipped"
+        log_answer(self.gateway.registry, {"agent": identifier, **label})
         self.reply(HTTPStatus.OK, {"ok": True})
 
 

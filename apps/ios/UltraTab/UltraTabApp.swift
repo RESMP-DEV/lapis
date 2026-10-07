@@ -34,7 +34,6 @@ final class DeckStore {
     static let hostKey = "gatewayHost"
 
     let deck: Deck
-    let transcriber: Transcriber
     var host: String {
         didSet {
             UserDefaults.standard.set(host, forKey: DeckStore.hostKey)
@@ -50,14 +49,14 @@ final class DeckStore {
 
     init() {
         let defaults = UserDefaults.standard
+        // The UI tests' first launch (-resetTutorial YES): the tutorial shows
+        // again, and Got it is remembered as it is for a person.
+        if defaults.bool(forKey: "resetTutorial") {
+            defaults.removeObject(forKey: "tutorialSeen")
+        }
         let bundled = Bundle.main.object(forInfoDictionaryKey: "LapisDefaultHost") as? String
         let host = defaults.string(forKey: DeckStore.hostKey) ?? bundled ?? ""
         self.host = host
-        if let script = defaults.string(forKey: "scriptedSpeech") {
-            transcriber = ScriptedTranscriber(script)
-        } else {
-            transcriber = AppleTranscriber()
-        }
         pose = switch defaults.string(forKey: "swipePose") {
         case "accept": .accept
         case "skip": .skip
@@ -118,5 +117,17 @@ struct GatewaySender: Sender {
         } catch {
             return error.localizedDescription
         }
+    }
+
+    func submit(agentID: String, text: String, label: AnswerLabel) async -> String? {
+        do {
+            return try await DeckGateway(host: host).submit(agentID: agentID, text: text, label: label)
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    func skipped(agentID: String, label: AnswerLabel) async {
+        await (try? DeckGateway(host: host))?.skipped(agentID: agentID, label: label)
     }
 }

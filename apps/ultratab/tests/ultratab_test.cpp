@@ -336,6 +336,33 @@ void draftsKeepTheirCard() {
             "the next draft goes to the card in front");
 }
 
+// Every answer is logged with its card, once settled.
+void answersAreLogged() {
+    FakeSender sender;
+    Deck deck(sender);
+    std::vector<QJsonObject> logged;
+    deck.setAnswerLog([&logged](const QJsonObject& answer) { logged.push_back(answer); });
+    deck.setPublished(fixture());
+    require(deck.accept() && logged.empty(), "an accept is logged once the session answers");
+    sender.sent[0].done(true, {});
+    require(logged.size() == 1 && logged[0].value(QStringLiteral("how")) == QLatin1String("accepted") &&
+                logged[0].value(QStringLiteral("outcome")) == QLatin1String("sent") &&
+                logged[0].value(QStringLiteral("proposal")) == QLatin1String("merge it and install") &&
+                logged[0].value(QStringLiteral("agent")) == id('a') &&
+                !logged[0].value(QStringLiteral("key")).toString().isEmpty(),
+            "accepted, with its card and proposal");
+    require(deck.send(QStringLiteral("use the new address")), "a typed reply");
+    sender.sent[1].done(false, QStringLiteral("closed"));
+    require(logged.size() == 2 && logged[1].value(QStringLiteral("how")) == QLatin1String("annotated") &&
+                logged[1].value(QStringLiteral("outcome")) == QLatin1String("refused") &&
+                logged[1].value(QStringLiteral("text")) == QLatin1String("use the new address"),
+            "a typed reply is an annotation, refused here");
+    require(deck.skip() && logged.size() == 3 &&
+                logged[2].value(QStringLiteral("how")) == QLatin1String("skipped") &&
+                !logged[2].contains(QStringLiteral("text")),
+            "a skip is logged at once, with nothing sent");
+}
+
 void hotkeys() {
     const auto standard = parse_hotkey(QStringLiteral("Option-Space"));
     require(standard && standard->option && !standard->command && standard->key == "Space",
@@ -718,6 +745,7 @@ int main(int argc, char** argv) {
         sentencesAreShort();
         fourAnswers();
         draftsKeepTheirCard();
+        answersAreLogged();
         hotkeys();
         joinsBesideTheWindow();
         composedCardsParse();

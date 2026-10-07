@@ -137,6 +137,26 @@ enum DeckOrder {
 // attachment. Returns nil when the agent's session admitted it, else why not.
 protocol Sender: Sendable {
     func submit(agentID: String, text: String) async -> String?
+    // The same, with the card it answers, so the Mac logs the answer.
+    func submit(agentID: String, text: String, label: AnswerLabel) async -> String?
+    // A skip reaches no agent; only the Mac's answer log hears of it.
+    func skipped(agentID: String, label: AnswerLabel) async
+}
+
+// Which card an answer was for and what it proposed: the label that teaches
+// what to propose and how to show it (ultratab_answers.jsonl on the Mac).
+struct AnswerLabel: Sendable, Equatable {
+    let key: String
+    let how: String // accepted, annotated, skipped
+    let proposal: String
+}
+
+extension Sender {
+    func submit(agentID: String, text: String, label: AnswerLabel) async -> String? {
+        await submit(agentID: agentID, text: text)
+    }
+
+    func skipped(agentID: String, label: AnswerLabel) async {}
 }
 
 // What a swipe on the front card means.
@@ -278,6 +298,9 @@ final class Deck {
         refusals[card.key] = nil
         remember(card.name, how: "skipped", text: "", outcome: "skipped")
         message = ""
+        let sender = sender
+        let label = AnswerLabel(key: card.key, how: "skipped", proposal: card.proposal)
+        pending.append(Task { await sender.skipped(agentID: card.agentID, label: label) })
         return .skipped
     }
 
@@ -316,8 +339,9 @@ final class Deck {
         let id = remember(card.name, how: how, text: text, outcome: "sending")
         message = "Sending to \(card.name)"
         let sender = sender
+        let label = AnswerLabel(key: card.key, how: how, proposal: card.proposal)
         pending.append(Task { [weak self] in
-            let refused = await sender.submit(agentID: card.agentID, text: text)
+            let refused = await sender.submit(agentID: card.agentID, text: text, label: label)
             self?.finish(id: id, card: card, refused: refused)
         })
         return .sending

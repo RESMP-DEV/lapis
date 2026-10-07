@@ -10,8 +10,8 @@ Starts, all disposable and on this Mac:
   with every block type (text, list, table, diagram, link),
 - the gateway (apps/remote/lapis_remote.py) on 127.0.0.1 with --allow-local.
 
-Then it runs the UltraTabUITests (deal the deck, swipe, dictate with a
-scripted transcriber, a refused send, swipe poses) and the UltraTabTests
+Then it runs the UltraTabUITests (deal the deck, swipe, a
+typed note, a refused send, the first-run tutorial, swipe poses) and the UltraTabTests
 unit bundle on a headless simulator (no Simulator window), checks that the
 Mac-side clients received exactly the phone's answers and were never
 replaced or resized, and exports the screenshots to
@@ -704,6 +704,22 @@ def ui_check(args, udid, stamp, results):
                 ok = False
             if dealt and got != [expected[name]]:
                 ok = False
+        # Every answer, skips included, lands in the Mac's answer log.
+        log = runtime / lapis_remote.ANSWERS_FILE
+        lines = log.read_text().splitlines() if log.exists() else []
+        answers = [json.loads(line) for line in lines]
+        hows = [(row.get("how"), row.get("outcome")) for row in answers]
+        print(f"answer log: {hows}")
+        if dealt and hows != [
+            ("accepted", "sent"),
+            ("annotated", "sent"),
+            ("skipped", None),
+            ("accepted", "refused"),
+            ("skipped", None),
+        ]:
+            ok = False
+        if any(not row.get("key") for row in answers):
+            ok = False
         print(f"results {result}\nscreens {screens}")
         return outcome or (0 if ok else 1)
     finally:
