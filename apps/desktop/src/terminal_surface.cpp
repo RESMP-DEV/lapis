@@ -324,7 +324,7 @@ class AsciiAdvances {
     static constexpr char16_t kLast = 0x7e;
     QFont font_;
     std::array<std::optional<QFontMetricsF>, 4> metrics_;
-    std::array<std::array<qreal, kLast - kFirst + 1>, 4> advances_{};
+    std::array<std::array<qreal, kLast - kFirst + 1>, 4> advances_;
 };
 
 bool safe_ascii_cell(const session::TerminalCell& cell, const QString& value, AsciiAdvances& ascii,
