@@ -4960,3 +4960,32 @@ the production QML offscreen with software Quick from fixture files and drives
 all four answers with Qt events to that offscreen window; its captures are under
 `build/reports/ultratab/`. The join is exercised against a fake v6 service, not a
 live agent; the blur, the global key and native focus are not exercised.
+
+### Standalone app and composed cards (October 7)
+
+- **Identity.** The bundle is `Ultra Tab.app`, `dev.ultratab.app`, `LSUIElement`
+  (no Dock icon before the accessory policy is set). `LAPIS_BUILD_ULTRATAB`
+  builds it without the desktop (packaging); the desktop build still includes
+  it. `scripts/package_ultratab.py` reuses `package_macos.py`'s pinned Qt,
+  compiler flags, path scrubbing and signing identity; Qt SVG 6.11.2 (pinned
+  SHA-256) is staged in its own prefix so `lapis.app`'s `macdeployqt` never
+  picks it up. The icon is rendered from `apps/ultratab/icon/icon.svg`.
+- **Settings and window memory.** `ultratab.json` is read only (`hotkey`,
+  `startAtLogin`, default on). Positions are written to `ultratab-window.json`
+  per screen (name and geometry), clamped back on screen or recentered. The
+  window size is fixed per screen; it moves only by a background drag
+  (`startSystemMove`). The login item uses `SMAppService.mainAppService` and is
+  changed only for a bundle in an Applications folder, so builds and tests never
+  register.
+- **Composed cards.** `runtime/ultratab_cards.json` (version 1) comes from a
+  separate composer. A card is used only when its `key` equals the deck's card
+  key (`<id>|<turnAtMs>|<neededAtMs>|<offer key>|<requests>`, the id prefix
+  optional); otherwise the plain card shows. Parsing bounds every string,
+  keeps three valid blocks, and admits only `https:` and local `file:` links.
+  Diagrams are sanitized on load (no script, foreignObject, embedded content,
+  event attributes, DTD, processing instructions, or non-fragment references)
+  and drawn by `QSvgRenderer` through an image provider, never by a browser.
+  Links open only through `Deck::openLink`, which re-checks the parsed URL.
+- **Motion.** Deck state changes before any animation; a 180 ms slide/fade
+  follows it and restarts on the next key, so input is never deferred. Reduce
+  Motion (from `NSWorkspace`) removes the slide and the pulse.
