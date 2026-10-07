@@ -1,5 +1,7 @@
 #include "terminal_surface.hpp"
+
 #include "cell_shapes.hpp"
+#include "interaction_recorder.hpp"
 #include "platform/published_task.hpp"
 #include "workspace.hpp"
 #include <QScopeGuard>
@@ -1324,8 +1326,10 @@ void TerminalSurface::mouseReleaseEvent(QMouseEvent* event) {
         event->ignore();
         return;
     }
-    if (selecting_ && !selection_text_.isEmpty())
+    if (selecting_ && !selection_text_.isEmpty()) {
         QGuiApplication::clipboard()->setText(selection_text_);
+        interaction::copy(this, selection_text_, "select");
+    }
     selecting_ = false;
     event->accept();
 }
@@ -1356,8 +1360,10 @@ void TerminalSurface::mouseDoubleClickEvent(QMouseEvent* event) {
         while (last + 1 < grid->columns && !blank(last + 1))
             ++last;
         setSelection({first, cell.y()}, {last, cell.y()});
-        if (!selection_text_.isEmpty())
+        if (!selection_text_.isEmpty()) {
             QGuiApplication::clipboard()->setText(selection_text_);
+            interaction::copy(this, selection_text_, "double-click");
+        }
     }
     event->accept();
 }
@@ -1377,6 +1383,7 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
         wheel_remainder_ += event->angleDelta().y();
         const int steps = wheel_remainder_ / 120;
         wheel_remainder_ -= steps * 120;
+        interaction::wheel_outcome(QStringLiteral("program"), steps);
         if (steps != 0)
             scrollProgram(steps, cellAt(event->position()));
         return;
@@ -1394,6 +1401,7 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
         rows = wheel_remainder_ / 40;
         wheel_remainder_ -= rows * 40;
     }
+    interaction::wheel_outcome(QStringLiteral("history"), rows);
     if (rows != 0)
         document_->scrollHistory(rows);
 }
@@ -1494,8 +1502,10 @@ void TerminalSurface::clearSelection() {
 void TerminalSurface::resumeLiveForTyping(const QKeyEvent& event) {
     if (!interactive_ || !document_ || !document_->historyActive() || modifier_key(event.key()))
         return;
-    if ((event.modifiers() & Qt::MetaModifier) == 0 || event.matches(QKeySequence::Paste))
+    if ((event.modifiers() & Qt::MetaModifier) == 0 || event.matches(QKeySequence::Paste)) {
+        interaction::key_outcome({}, {{QStringLiteral("returnedLive"), true}});
         document_->returnToLive();
+    }
 }
 // Command-C on macOS; Control-Shift-C elsewhere, where Control-C belongs to
 // the terminal. Either copies the selection, and never reaches the agent.
@@ -1508,8 +1518,10 @@ bool TerminalSurface::copySelection(const QKeyEvent& event) {
 #endif
     if (!copy)
         return false;
-    if (!selection_text_.isEmpty())
+    if (!selection_text_.isEmpty()) {
         QGuiApplication::clipboard()->setText(selection_text_);
+        interaction::copy(this, selection_text_, "key");
+    }
     return true;
 }
 namespace {
@@ -1595,7 +1607,7 @@ void TerminalSurface::setSuggestionKey(const QString& key) {
     if (!key.isEmpty() && filled_ && filled_->offer != key)
         filled_.reset(); // The same words can still be a different offer.
     suggestion_key_ = key;
-    emit suggestionChanged();
+    emit suggestionKeyChanged();
     publishFrame(false);
 }
 
@@ -1719,6 +1731,7 @@ bool TerminalSurface::takeFilled(bool plain_tab) {
         return true;
     if (document_->attentionPending())
         return false; // Let Tab move to the request instead of swallowing it.
+    interaction::key_outcome(QStringLiteral("suggestion-send"));
     if (filled_->admitted)
         sendFilled();
     else
@@ -1731,6 +1744,8 @@ bool TerminalSurface::holdFilledOverRequest(bool plain_tab) {
         return false;
     // Ask QML once for a safer destination, but never fall through to the
     // program's Tab or reset the armed guess while a request is pending.
+    interaction::key_outcome(QStringLiteral("held-for-request"));
+    interaction::cause(QStringLiteral("tab-away"));
     if (tab_away_.isCallable())
         static_cast<void>(tab_away_.call());
     return true;
@@ -1749,13 +1764,19 @@ bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
         if (!suggestion_.isEmpty() && !document_->attentionPending()) {
             if (!fillSuggestion())
                 return false; // Nothing was typed; let Tab keep its old meaning.
+            interaction::key_outcome(QStringLiteral("suggestion-fill"));
             return true;
         }
     }
     if (holdFilledOverRequest(tab))
         return true;
-    if (tab && !typed_since_arrival_ && tab_away_.isCallable() && tab_away_.call().toBool())
-        return true;
+    if (tab && !typed_since_arrival_ && tab_away_.isCallable()) {
+        interaction::cause(QStringLiteral("tab-away"));
+        if (tab_away_.call().toBool()) {
+            interaction::key_outcome(QStringLiteral("tab-away"));
+            return true;
+        }
+    }
     // Return submits the line, so the prompt is empty again and Tab may move on.
     if ((event.key() == Qt::Key_Return || event.key() == Qt::Key_Enter) &&
         modifiers == Qt::NoModifier) {
@@ -1777,6 +1798,7 @@ bool TerminalSurface::fillSuggestion() {
         owner, owner->sessionId(), suggestion_key_, suggestion_, typed_while_offered_, 0, false,
         false};
     filled.request = pasteTextRequest(suggestion_, false);
+    interaction::paste(this, suggestion_, filled.request != 0, "suggestion");
     if (filled.request == 0)
         return false;
     setSuggestion({});
@@ -1829,6 +1851,7 @@ void TerminalSurface::sendFilled() {
 
 bool TerminalSurface::pasteText(const QString& text) {
     const quint64 request = pasteTextRequest(text, std::nullopt);
+    interaction::paste(this, text, request != 0, "paste");
     if (request != 0)
         noteTyped(); // A dropped file or other paste is no longer just the guess.
     return request != 0;
@@ -2122,11 +2145,13 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         updateLink(hover_position_, event->modifiers() | kLinkModifier);
     // Copying also works on a read-only history page.
     if (interactive_ && copySelection(*event)) {
+        interaction::key_outcome(QStringLiteral("copy"));
         event->accept();
         return;
     }
     resumeLiveForTyping(*event);
     if (!acceptsTerminalInput()) {
+        interaction::key_outcome(QStringLiteral("not-accepted"));
         event->ignore();
         return;
     }
@@ -2138,11 +2163,13 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         composition_state_ = CompositionState::idle;
     if (event->matches(QKeySequence::Paste)) {
         const QString text = QGuiApplication::clipboard()->text();
+        interaction::key_outcome(QStringLiteral("paste"));
         static_cast<void>(pasteText(text));
         event->accept();
         return;
     }
     if (!preedit_.isEmpty()) {
+        interaction::key_outcome(QStringLiteral("ime"));
         if (event->key() == Qt::Key_Escape) {
             ++ime_epoch_;
             resetInputContext();
@@ -2208,12 +2235,14 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         break;
     }
     if (key) {
+        interaction::key_outcome(QStringLiteral("agent"));
         const auto mods = event->modifiers();
         document_->sendKey(*key,
                            {mods.testFlag(Qt::ShiftModifier), mods.testFlag(Qt::ControlModifier),
                             mods.testFlag(Qt::AltModifier), false});
     } else {
         const auto text = terminal_text_key(*event);
+        interaction::key_outcome(text.isEmpty() ? QStringLiteral("none") : QStringLiteral("agent"));
         if (!text.isEmpty())
             document_->sendText(text);
     }
@@ -2229,6 +2258,9 @@ void TerminalSurface::commandKey(QKeyEvent& event) {
     const bool bare_command = (event.modifiers() & ~Qt::KeypadModifier) == Qt::MetaModifier;
     if (bare_command && (event.key() == Qt::Key_Left || event.key() == Qt::Key_Right)) {
         const bool line_start = event.key() == Qt::Key_Left;
+        interaction::key_outcome(QStringLiteral("agent"),
+                                 {{QStringLiteral("as"), line_start ? QStringLiteral("line-start")
+                                                                    : QStringLiteral("line-end")}});
         document_->sendText(QByteArray(1, line_start ? '\x01' : '\x05'));
         event.accept();
         return;
@@ -2238,6 +2270,10 @@ void TerminalSurface::commandKey(QKeyEvent& event) {
     // Command-Delete to the line end (Ctrl-K), as in iTerm2's natural text
     // editing and the shells' emacs bindings.
     if (bare_command && (event.key() == Qt::Key_Backspace || event.key() == Qt::Key_Delete)) {
+        interaction::key_outcome(QStringLiteral("agent"),
+                                 {{QStringLiteral("as"), event.key() == Qt::Key_Backspace
+                                                             ? QStringLiteral("delete-to-start")
+                                                             : QStringLiteral("delete-to-end")}});
         document_->sendText(QByteArray(1, event.key() == Qt::Key_Backspace ? '\x15' : '\x0b'));
         event.accept();
         return;
@@ -2245,6 +2281,7 @@ void TerminalSurface::commandKey(QKeyEvent& event) {
 #endif
     // Every other Command combination stays available to the window for
     // navigation and menu shortcuts.
+    interaction::key_outcome(QStringLiteral("window"));
     event.ignore();
 }
 void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
