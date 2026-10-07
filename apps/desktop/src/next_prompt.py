@@ -45,8 +45,24 @@ NOT_TYPED = (
     "<command-message",
     "[Your previous response had no visible output",
 )
-# Codex attaches images as empty wrappers around the typed text.
-IMAGE_WRAPPER = re.compile(r"<image\b[^>]*>\s*</image>\s*", re.S)
+# Codex attaches images as empty wrappers around the typed text, never inside.
+IMAGE_EDGES = re.compile(
+    r"\A(?:<image\b[^>]*>\s*</image>\s*)*"
+    r"(.*?)"
+    r"(?:\s*<image\b[^>]*>\s*</image>)*\Z",
+    re.S,
+)
+# Whole injected notes: tag elements and bracketed Codex notes. A request may
+# quote one; it is injected only when nothing else remains.
+NOTE_TAGS = "|".join(
+    sorted(
+        (prefix[1:] for prefix in NOT_TYPED if prefix.startswith("<")),
+        key=len,
+        reverse=True,
+    )
+)
+NOTE_ELEMENT = re.compile(r"<({})\b[^>]*(?:/>|>.*?</\1\s*>)".format(NOTE_TAGS), re.S)
+NOTE_BRACKET = re.compile(r"\[[^\[\]]*\]")
 # Codex Desktop puts context headers before the request it was typed under.
 CODEX_REQUEST = re.compile(r"^## My request for Codex:[ \t]*$", re.MULTILINE)
 CATEGORIES = ("approve", "status", "ship", "fix", "new", "question", "correct", "other")
@@ -66,18 +82,35 @@ CONTEXT_CHARS = 24000
 RECENT_HOURS = 6
 
 
+def whole_note(text):
+    """Whether stripped text is nothing but whole injected tag/bracket notes."""
+    rest = text
+    while rest:
+        note = NOTE_ELEMENT.match(rest) or NOTE_BRACKET.match(rest)
+        if not note:
+            return False
+        rest = rest[note.end() :].lstrip()
+    return True
+
+
 def typed(text):
     text = (text or "").strip()
+    peeled = False
     while text:
-        # Strip wrappers before deciding what remains was typed.
-        text = IMAGE_WRAPPER.sub("", text).strip()
-        if text.startswith(NOT_TYPED):
+        # Strip edge wrappers before deciding what remains was typed.
+        text = IMAGE_EDGES.sub(r"\1", text).strip()
+        if peeled:
+            if whole_note(text):
+                return ""
+        elif text.startswith(NOT_TYPED):
             return ""
         markers = list(CODEX_REQUEST.finditer(text))
         if not markers or not (text.startswith("# ") or CODEX_REQUEST.match(text)):
             break
-        # Repeated envelopes can hide another wrapper, note, or marker.
-        text = text[markers[-1].end() :].strip()
+        # Peel one envelope. A later sentinel stays unless the remainder is
+        # another envelope, which can hide another wrapper, note, or marker.
+        text = text[markers[0].end() :].strip()
+        peeled = True
     return text
 
 

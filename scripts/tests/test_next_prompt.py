@@ -153,6 +153,18 @@ class TranscriptTests(Homes):
             typed('<image name="a.png"></image>\nwhat is this'), "what is this"
         )
         self.assertEqual(
+            typed('what is this\n<image name="a.png"></image>'), "what is this"
+        )
+        self.assertEqual(
+            typed('use <image name="x.png"></image> here'),
+            'use <image name="x.png"></image> here',
+        )
+        for prose in (
+            "Caveat: keep the public API",
+            "This session is being continued from another conversation",
+        ):
+            self.assertEqual(typed(prose), "")
+        self.assertEqual(
             typed("# In app browser\n- page\n## My request for Codex:\nfix it"),
             "fix it",
         )
@@ -172,14 +184,22 @@ class TranscriptTests(Homes):
         )
         self.assertEqual(typed(wrapper + "what is this"), "what is this")
 
-    def test_codex_desktop_marker_is_extracted_by_line_and_last_marker_wins(self):
+    def test_codex_desktop_marker_is_extracted_by_line_and_envelopes_peel(self):
         typed = next_prompt.typed
         direct = "## My request for Codex:\nfix it"
         wrapped = '<image name="a.png"></image>\n' + direct
         self.assertEqual(typed(direct), "fix it")
         self.assertEqual(typed(wrapped), "fix it")
         self.assertEqual(
-            typed(direct + "\n## My request for Codex:\nship it"), "ship it"
+            typed(direct + "\n## My request for Codex:\nship it"),
+            "fix it\n## My request for Codex:\nship it",
+        )
+        self.assertEqual(
+            typed(
+                "# Files mentioned by the user:\n## My request for Codex:\n"
+                "# In app browser\n## My request for Codex:\nfix it"
+            ),
+            "fix it",
         )
         self.assertEqual(
             typed(
@@ -192,6 +212,32 @@ class TranscriptTests(Homes):
             "Read ## My request for Codex: and fix it",
         )
         self.assertEqual(typed("# heading I typed"), "# heading I typed")
+
+    def test_a_desktop_request_keeps_a_body_shaped_like_an_injected_turn(self):
+        typed = next_prompt.typed
+        self.assertEqual(
+            typed(
+                "# Files mentioned by the user:\n\n## My request for Codex:\n"
+                "# AGENTS.md instructions\n\nAdd a line about injected turns."
+            ),
+            "# AGENTS.md instructions\n\nAdd a line about injected turns.",
+        )
+        self.assertEqual(
+            typed("## My request for Codex:\nCaveat: keep the public API"),
+            "Caveat: keep the public API",
+        )
+        # A whole tag or bracket note stays an injection wherever a Desktop
+        # cut lands, but a body that continues past one is a request.
+        self.assertEqual(
+            typed("## My request for Codex:\n<bash-input>ls</bash-input> then tell me"),
+            "<bash-input>ls</bash-input> then tell me",
+        )
+        self.assertEqual(
+            typed("## My request for Codex:\n<bash-stdout>x</bash-stdout>"), ""
+        )
+        self.assertEqual(
+            typed("## My request for Codex:\n[Request interrupted by user]"), ""
+        )
 
     def test_codex_leaves_out_its_own_instructions(self):
         turns = next_prompt.codex_turns(str(self.codex_path))
