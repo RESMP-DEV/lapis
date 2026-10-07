@@ -1607,7 +1607,7 @@ void TerminalSurface::setSuggestionKey(const QString& key) {
     if (!key.isEmpty() && filled_ && filled_->offer != key)
         filled_.reset(); // The same words can still be a different offer.
     suggestion_key_ = key;
-    emit suggestionChanged();
+    emit suggestionKeyChanged();
     publishFrame(false);
 }
 

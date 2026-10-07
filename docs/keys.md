@@ -14,7 +14,7 @@ all. Terminal Control chords stay with the agent.
 | Command-Shift-T | Reopen the last agent you closed, resuming its conversation |
 | Command-O | Resume a past Claude Code or Codex conversation |
 | Command-1 to 9 | Go to one of the first nine categories |
-| Command-Shift-J / K, Command-Shift-Up / Down, Command-Option-Left / Right | Next or previous category |
+| Command-] / [, Command-Shift-J / K, Command-Shift-Up / Down, Command-Option-Left / Right | Next or previous category |
 | Command-Shift-[ / ] | Previous or next agent in the category; with tiles, see below |
 | Command-J | The next agent, in any category, that needs you |
 | Command-L | The agent that most recently needed you; again for the one before |
