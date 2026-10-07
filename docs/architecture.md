@@ -4954,6 +4954,24 @@ architecture instead of replacing it. Its boundaries:
   the app is an accessory (no Dock icon). These are macOS-only behind
   `platform_overlay.hpp`.
 
+- **Composed cards.** `Composer` (`apps/ultratab/src/composer.*`) owns
+  `runtime/ultratab_cards.json` (version 1, the renderer's contract in
+  [ultratab](ultratab.md)) and `runtime/ultratab_compose.jsonl`. A card's key is
+  the offer key, else `turn:<turnAtMs or neededAtMs>`; a waiting agent whose key
+  differs from its card's is queued after a 2 s re-arming debounce, deck order
+  first, at most two helper processes at a time, each in its own process group
+  under a per-card timeout. A guess for the turn already composed patches the
+  prompt and key without a model call. The held (front, overlay visible) card is
+  replaced only with a different key. The helper (`apps/ultratab/compose/
+  compose.py`) imports `next_prompt.py` for transcript discovery, parsing and the
+  plan-backed `claude -p` call (both embedded and written to
+  `runtime/ultratab_compose/`), adds the person's last look from the interaction
+  log and the HTML/Markdown files written or mentioned since, and validates the
+  model's JSON: bad blocks are dropped, sizes clipped, SVG reduced to drawing
+  elements with safe attributes and a viewBox, links limited to listed files and
+  mentioned URLs; total failure yields the last message as the tldr. A local
+  OpenAI-compatible endpoint is an opt-in alternative to the CLI.
+
 Evidence at this checkpoint: focused `ultratab`, `ultratab-overlay`,
 `agent-state`, `next-prompt` and `workspace` CTest cases. The overlay case loads
 the production QML offscreen with software Quick from fixture files and drives
