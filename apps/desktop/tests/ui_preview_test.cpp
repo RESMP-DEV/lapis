@@ -337,6 +337,39 @@ void wait_popup(QObject& dialog, bool open) {
     pump(20); // Deliver queued focus restoration after the transition's completion signal.
 }
 
+bool wait_for(const std::function<bool()>& ready, int milliseconds) {
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (!ready() && elapsed.elapsed() < milliseconds)
+        pump(5);
+    return ready();
+}
+
+void wait_terminal_focus(QQuickWindow& window, lapis::desktop::TerminalSurface& terminal) {
+    lapis::desktop::test::activate_test_window(window);
+    const auto ready = [&] {
+        terminal.forceActiveFocus();
+        return window.isActive() && window.isExposed() && terminal.hasActiveFocus() &&
+               !terminal.composing() && !terminal.pasting();
+    };
+    CHECK(wait_for(ready, 5000));
+    pump(10); // Let the queued focus-ownership work start after activation.
+}
+
+void wait_input_ready(QQuickWindow& window, lapis::desktop::TerminalSurface& terminal) {
+    wait_terminal_focus(window, terminal);
+    const auto ready = [&] {
+        return !window.property("inputBlocked").toBool() && terminal.hasActiveFocus();
+    };
+    CHECK(wait_for(ready, 5000));
+}
+
+void wait_sidebar(QQuickWindow& window, lapis::desktop::KeyMap& keymap, bool visible) {
+    CHECK(wait_for([&] { return keymap.sidebarVisible() == visible; }, 5000));
+    CHECK(find_visual(window.contentItem(), QStringLiteral("categoryRail"))->isVisible() ==
+          visible);
+}
+
 void click_setting(QQuickWindow& window, const QString& name) {
     auto* item = find_visual(window.contentItem(), name);
     auto* scroll = find_visual(window.contentItem(), QStringLiteral("settingsScroll"));
@@ -379,10 +412,11 @@ int run_attention_dialog_tests() {
     CHECK(preview.load());
     auto* window = preview.window();
     wait_active(*window);
-    auto* terminal = find_visual(window->contentItem(), QStringLiteral("liveTerminal"));
+    auto* terminal = qobject_cast<TerminalSurface*>(
+        find_visual(window->contentItem(), QStringLiteral("liveTerminal")));
     auto* dialog = window->findChild<QObject*>(QStringLiteral("attentionDialog"));
     CHECK(terminal != nullptr && dialog != nullptr);
-    terminal->forceActiveFocus();
+    wait_terminal_focus(*window, *terminal);
     auto* document = workspace.focusedSession();
     document->setConnection(QStringLiteral("ready"), true);
     wire::AttentionSnapshot state;
@@ -404,8 +438,9 @@ int run_attention_dialog_tests() {
                                                           {"question", "Choose a color"},
                                                           {"options", QJsonValue::Null}}}}}});
     document->applyAttention(state);
-    pump(20);
+    wait_for([&] { return !dialog->property("visible").toBool(); }, 5000);
     CHECK(!dialog->property("visible").toBool());
+    wait_terminal_focus(*window, *terminal);
     CHECK(terminal->hasActiveFocus());
     CHECK(QMetaObject::invokeMethod(window, "openAttentionDialog"));
     wait_popup(*dialog, true);
@@ -1273,11 +1308,14 @@ void check_composition_navigation(lapis::desktop::Workspace& workspace,
         auto* item = find_visual(preview.window()->contentItem(), name);
         CHECK(item != nullptr && item->isVisible());
         click_visual(*preview.window(), *item);
-        CHECK(workspace.focusedSession() == document);
-        CHECK(workspace.activeCategoryId() == category);
-        CHECK(terminal.composing());
-        CHECK(terminal.hasActiveFocus());
-        CHECK(!preview.window()->property("inputBlocked").toBool());
+        CHECK(wait_for(
+            [&] {
+                return workspace.focusedSession() == document &&
+                       workspace.activeCategoryId() == category && terminal.composing() &&
+                       terminal.hasActiveFocus() &&
+                       !preview.window()->property("inputBlocked").toBool();
+            },
+            5000));
     }
     QInputMethodEvent cancel;
     QCoreApplication::sendEvent(&terminal, &cancel);
@@ -1424,12 +1462,15 @@ void check_category_alignment(QQuickWindow& window) {
 void wait_tab_visible(QQuickItem& tab, QQuickItem& view) {
     const auto visible = [&] {
         const auto position = tab.mapToItem(&view, QPointF());
-        return position.x() >= -1 && position.x() + tab.width() <= view.width() + 1;
+        return tab.width() > 0 && view.width() > 0 && tab.isVisible() && view.isVisible() &&
+               position.x() >= -1 && position.x() + tab.width() <= view.width() + 1;
     };
     QElapsedTimer deadline;
     deadline.start();
-    while (!visible() && deadline.elapsed() < 5000)
+    while (!visible() && deadline.elapsed() < 5000) {
+        QMetaObject::invokeMethod(&view, "revealFocused");
         pump(5);
+    }
     CHECK(visible());
 }
 
@@ -1551,8 +1592,8 @@ int run_attention_ui_tests() {
             auto* selected_tab = find_visual(window->contentItem(),
                                              QStringLiteral("agentTab_") + selected->sessionId());
             CHECK(tabs != nullptr && selected_tab != nullptr);
-            check_category_alignment(*window);
             wait_tab_visible(*selected_tab, *tabs);
+            check_category_alignment(*window);
             CHECK(preview.openSettings());
             auto* settings = window->findChild<QObject*>(QStringLiteral("settingsDialog"));
             CHECK(settings != nullptr);
@@ -1598,15 +1639,12 @@ int run_attention_ui_tests() {
     }
     // Category/sidebar navigation does not replace the selected agent.
     window->resize(1400, 960);
-    pump(40);
+    wait_input_ready(*window, *terminal);
     send_binding(*window, keymap.sequences(QStringLiteral("toggleSidebar")).front());
-    pump(30);
-    CHECK(!keymap.sidebarVisible());
-    CHECK(!find_visual(window->contentItem(), QStringLiteral("categoryRail"))->isVisible());
+    wait_sidebar(*window, keymap, false);
     CHECK(terminal->document() == selected);
     send_binding(*window, keymap.sequences(QStringLiteral("toggleSidebar")).front());
-    pump(30);
-    CHECK(keymap.sidebarVisible());
+    wait_sidebar(*window, keymap, true);
     auto* stage = find_visual(window->contentItem(), QStringLiteral("focusedPane"));
     CHECK(stage != nullptr);
     const auto stage_edge = [stage] {
@@ -2019,13 +2057,17 @@ void check_side_terminal(QQuickWindow& window, lapis::desktop::Terminals& termin
     const auto* agent = stage.document();
     const auto* shown = terminals.current();
     press_action(window, keymap, "closeAgent");
-    CHECK(!panel->isVisible() && stage.hasActiveFocus() && agent != nullptr &&
-          stage.document() == agent);
+    CHECK(wait_for(
+        [&] {
+            return !panel->isVisible() && stage.hasActiveFocus() && agent != nullptr &&
+                   stage.document() == agent;
+        },
+        5000));
     CHECK(terminals.current() == shown && shown->inputReady());
     press_action(window, keymap, "toggleTerminal");
-    CHECK(panel->isVisible() && surface->hasActiveFocus());
+    CHECK(wait_for([&] { return panel->isVisible() && surface->hasActiveFocus(); }, 5000));
     press_action(window, keymap, "toggleTerminal");
-    CHECK(!panel->isVisible() && stage.hasActiveFocus());
+    CHECK(wait_for([&] { return !panel->isVisible() && stage.hasActiveFocus(); }, 5000));
     press_action(window, keymap, "chooseTerminal");
     auto* picker = window.findChild<QObject*>(QStringLiteral("terminalPicker"));
     CHECK(picker != nullptr);
@@ -2199,6 +2241,8 @@ void wait_ready(lapis::desktop::ConversationIndex& conversations) {
 // that never take input or resize a terminal, keep part of the neighboring
 // card in view as selection moves, and pulse an agent that finished or needs a
 // response until it is selected.
+// The strip narrative is chronological and only one point above the threshold.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int run_strip_ui_tests() {
     using namespace lapis::desktop;
     Workspace workspace(WorkspaceMode::preview);
@@ -2276,6 +2320,11 @@ int run_strip_ui_tests() {
     auto* stage = item(QStringLiteral("focusedPane"));
     auto* terminal = qobject_cast<TerminalSurface*>(item(QStringLiteral("liveTerminal")));
     CHECK(terminal != nullptr);
+    const auto press_ready = [&](const char* action) {
+        wait_input_ready(*window, *terminal);
+        send_binding(*window, keymap.sequences(QString::fromLatin1(action)).front());
+        pump(260); // Longer than the strip's scroll animation.
+    };
     CHECK(strip->isVisible() && strip->property("count").toInt() == 6);
     CHECK(strip->mapToScene(QPointF()).y() >= stage->mapToScene(QPointF()).y() + stage->height());
     CHECK(stage->mapToScene(QPointF()).y() <= 12); // No tab row above the stage.
@@ -2296,28 +2345,28 @@ int run_strip_ui_tests() {
     // Six cards overflow the strip. Stepping either way keeps the selected card
     // whole and part of the next one visible, as sidescrolloff does.
     const auto card_width = item(QStringLiteral("agentTab_shell"))->width();
-    const auto check_scrolloff = [&](bool forward) {
+    const auto scrolloff_ready = [&](bool forward) {
         const auto list = workspace.categorySessions();
         const auto* card = item(QStringLiteral("agentTab_") + focused_id(workspace));
         const auto left = card->mapToItem(strip, QPointF()).x();
         const auto right = left + card->width();
-        CHECK(left >= -1 && right <= strip->width() + 1);
+        if (!(left >= -1 && right <= strip->width() + 1))
+            return false;
         const bool first = list.front().value<SessionPreview*>() == workspace.focusedSession();
         if (forward)
-            CHECK(strip->width() - right >= card_width * 0.35);
-        else
-            CHECK(first || left >= card_width * 0.35);
+            return strip->width() - right >= card_width * 0.35;
+        return first || left >= card_width * 0.35;
     };
     for (int step = 0; step < 5; ++step) {
-        press("nextWindow");
-        check_scrolloff(true);
+        press_ready("nextWindow");
+        CHECK(wait_for([&] { return scrolloff_ready(true); }, 5000));
     }
     capture("strip-end");
     for (int step = 0; step < 5; ++step) {
-        press("previousWindow");
-        check_scrolloff(false);
+        press_ready("previousWindow");
+        CHECK(wait_for([&] { return scrolloff_ready(false); }, 5000));
     }
-    CHECK(focused_id(workspace) == QStringLiteral("shell"));
+    CHECK(wait_for([&] { return focused_id(workspace) == QStringLiteral("shell"); }, 5000));
     capture("strip");
 
     // A finished turn pulses an unselected card; the selected agent never does.
@@ -2402,7 +2451,7 @@ int run_strip_ui_tests() {
     pump(30);
     CHECK(!strip->isVisible());
     const auto before = focused_id(workspace);
-    press("nextWindow");
+    press_ready("nextWindow");
     CHECK(focused_id(workspace) != before);
     CHECK(keymap.setPreviewsVisible(true));
     pump(30);

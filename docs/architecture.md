@@ -4758,6 +4758,12 @@ account, sign-in, credential or password, is open. Files are `0600` in a
 `0700` folder, rotate by size into numbered predecessors, and the total is
 bounded by `maxFileMiB` × `maxFiles`.
 
+### 2026-10-07 - Desktop gate repair
+
+The desktop aggregate had accumulated real deterministic analyzer debt on main, not toolchain drift: unformatted `alerts.cpp` and `plan_sign_in.cpp` code plus stable clang-tidy and cppcheck findings across existing desktop/session files. The mechanical repair formats those files, applies explicit casts/moves/const-reference returns, removes dead state, and uses narrow documented suppressions for intentional test structure and three deferred session-service complexity refactors. The GUI flaky class was separately stabilized by waiting for native activation/exposure, terminal focus, clipboard readiness, shortcut arming, strip reveal, and frame-driven suggestion presentation instead of fixed `pump` windows. The ui-preview aggregate timeout moved from 20 to 30 seconds and its tab-position deadline from 2 to 5 seconds.
+
+At the final head, `just quality` passed all seven subchecks and `just desktop` passed configure, build, clang-format, cppcheck, all clang-tidy workers, and all 46 CTests. The two formerly flaky GUI tests passed eight consecutive native rounds. Evidence: `evidence/main-quality-gate-repair.json`.
+
 ## Contracts to preserve
 
 **Runtime tool status is read-only.** `ToolStatus` has exactly one row for every
