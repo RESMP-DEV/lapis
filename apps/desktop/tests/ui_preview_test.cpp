@@ -1865,7 +1865,7 @@ void check_agent_search(QQuickWindow& window, lapis::desktop::Workspace& workspa
     CHECK(finder != nullptr);
     wait_popup(*finder, true);
     auto* field = required_visual(window, QStringLiteral("agentSearchField"));
-    CHECK(field->hasActiveFocus());
+    CHECK(wait_for([&] { return field->hasActiveFocus(); }, 5000));
     field->setProperty("text", QStringLiteral("wsnotes"));
     pump(30);
     CHECK(required_visual(window, QStringLiteral("agentResult_notes")) != nullptr);

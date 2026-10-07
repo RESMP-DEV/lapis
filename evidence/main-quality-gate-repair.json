@@ -64,6 +64,29 @@
     "quality": "just quality exit 0 at the validated code tree",
     "desktop": "just desktop exit 0 at the validated code tree: configure, build, clang-format, cppcheck, all clang-tidy workers, and all 46 CTests",
     "bounded_parallel_adjustment": "The rebound presentation wait is 20 seconds and terminal-input CTest timeout 45 seconds; every other until deadline remains 8 seconds.",
-    "receipt_note": "This evidence commit is documentation-only after the validated code commit; it changes no source or test input."
+    "receipt_note": "This evidence commit is documentation-only after the validated code commit; it changes no source or test input.",
+    "native_validation": "not rerun for the serial-runner and offscreen-validation commit; an earlier full native pass is not reused across changed runner logic and test source."
+  },
+  "focus_safe_validation": {
+    "runner_change": "scripts/check_cpp.py now runs CTest serially, then starts the parallel analyzer pool only after tests finish. This prevents non-GUI tests and analyzers from starving frame-driven GUI fixtures.",
+    "offscreen_results": [
+      {
+        "suite": "ui-preview --background",
+        "rounds": 3,
+        "exit_code": 0
+      },
+      {
+        "suite": "terminal-input --background",
+        "rounds": 3,
+        "exit_code": 0
+      },
+      {
+        "suite": "tools-ui with QT_QPA_PLATFORM=offscreen",
+        "rounds": 3,
+        "exit_code": 0
+      }
+    ],
+    "quality_after_runner_change": "just quality exit 0 after one transient live-service stream fixture failure was reproduced as a focused pass and a second full quality run.",
+    "native_validation_policy": "No native window/focus/capture tests were run after the operator instruction to avoid cursor and focus capture. The canonical native desktop gate must be rerun before merge acceptance is claimed."
   }
 }
