@@ -378,7 +378,8 @@ void TabRanker::record(QJsonObject event) const {
         qWarning() << "Tab ranker: cannot write the log:" << file.errorString();
         return;
     }
-    file.write(encoded);
+    if (file.write(encoded) != encoded.size() || !file.flush())
+        qWarning() << "Tab ranker: cannot append the log:" << file.errorString();
 }
 
 bool TabRanker::refitting() const {

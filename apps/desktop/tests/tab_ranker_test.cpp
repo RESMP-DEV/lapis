@@ -10,11 +10,13 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QThreadPool>
 #include <QVariantMap>
 #include <exception>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace {
@@ -129,6 +131,24 @@ void learnsOnline() {
                                                QJsonObject{{"x", QJsonArray{1, 2}}}}}}});
     require(empty.decisions == 0 && empty.weights == TabRanker::prior(),
             "a decision with the wrong feature width keeps the prior");
+    // Choices made while a fit runs must queue exactly one fit that adopts
+    // the newest in-memory decisions before starting again.
+    for (int i = 0; i < 5; ++i)
+        ranker.learn({work, games}, 1, false);
+    require(waitFor([&] { return !ranker.refitting(); }), "the queued refits finished");
+    require(ranker.model().decisions == 45, "every queued choice was fitted");
+}
+
+// A fit may finish after the ranker is gone. The shared handoff owns only its
+// guarded state, never a dangling owner.
+void refitSurvivesDestruction() {
+    for (int round = 0; round < 8; ++round) {
+        TabRanker ranker;
+        auto work = agent("w", 3, "job");
+        auto games = agent("g", 3, "games");
+        ranker.learn({work, games}, 1, false);
+    }
+    require(QThreadPool::globalInstance()->waitForDone(5000), "retired fits drained");
 }
 
 // With a folder, every Tab move and choice is logged owner-only, the fitted
@@ -208,6 +228,38 @@ void tabAwayChoosesOnlyAgentsWaitingOnYou() {
         require(workspace.session(QStringLiteral("checks"))
                     ->addPreviewRequest(QStringLiteral("r1"), QStringLiteral("approve")),
                 "fixture request");
+        const auto unavailableRequest = [](const char* id) {
+            lapis::session::wire::AttentionSnapshot unavailable;
+            unavailable.available = true;
+            lapis::session::wire::AttentionItem request;
+            request.pending.request.id = std::string(id) + ":approval";
+            request.pending.request.reason = "approve";
+            unavailable.requests.push_back(request);
+            return unavailable;
+        };
+        auto* stale = workspace.session(QStringLiteral("service"));
+        stale->applyAttention(unavailableRequest("stale"));
+        stale->invalidateAttention();
+        auto* unknown = workspace.session(QStringLiteral("notes"));
+        lapis::session::wire::AttentionSnapshot unavailable;
+        unavailable = unavailableRequest("unknown");
+        unknown->applyAttention(unavailable);
+        unknown->invalidateAttention();
+        for (auto* unusable : {stale, unknown})
+            require(unusable->attentionPending() &&
+                        unusable->statusKind() == QLatin1String("unknown"),
+                    "fixture: a request without a usable observer");
+        require(workspace.nextPriorityAttention(guesses) &&
+                    workspace.focusedSession()->sessionId() == QLatin1String("checks"),
+                "ended and unknown agents are not request candidates");
+        // Restore the focused start for the next ranker mode.
+        require(workspace.selectSession(QStringLiteral("renderer")), "return to the start");
+        workspace.session(QStringLiteral("checks"))->clearPreviewRequests();
+        require(!workspace.nextPriorityAttention(guesses),
+                "only the still-unusable requests remain");
+        require(workspace.session(QStringLiteral("checks"))
+                    ->addPreviewRequest(QStringLiteral("r2"), QStringLiteral("approve")),
+                "restore a usable request");
         require(workspace.nextPriorityAttention(guesses) &&
                     workspace.focusedSession()->sessionId() == QLatin1String("checks"),
                 "a request is waiting on you");
@@ -296,6 +348,32 @@ void settings() {
     require(!fixed.learned && fixed.work == QStringList{QStringLiteral("Job")},
             "fixed rank and named work categories");
 }
+
+// An append failure must not pretend the choice was persisted.
+void appendFailureLeavesTheLogUnchanged() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary log directory");
+    TabRanker ranker(directory.path());
+    auto work = agent("w", 3, "job");
+    auto games = agent("g", 3, "games");
+    ranker.learn({work, games}, 1, false);
+    require(waitFor([&] { return !ranker.refitting(); }), "the first fit finished");
+    const auto path = directory.filePath(QStringLiteral("tab_away.jsonl"));
+    QFile log(path);
+    require(log.open(QIODevice::ReadOnly), "read the first choice");
+    const auto bytes = log.readAll();
+    log.close();
+    require(log.open(QIODevice::ReadWrite) && log.setPermissions(QFile::ReadOwner),
+            "make the log append-only failure fixture");
+    log.close();
+    ranker.learn({work, games}, 1, false);
+    require(waitFor([&] { return !ranker.refitting(); }), "the failure refit finished");
+    require(log.open(QIODevice::ReadOnly) && log.readAll() == bytes,
+            "a failed append leaves the previous log bytes");
+    log.close();
+    require(log.setPermissions(QFile::ReadOwner | QFile::WriteOwner),
+            "restore fixture permissions for cleanup");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -304,10 +382,12 @@ int main(int argc, char** argv) {
         priorOrder();
         fixedOrder();
         learnsOnline();
+        refitSurvivesDestruction();
         persists();
         settings();
         tabAwayChoosesOnlyAgentsWaitingOnYou();
         tabAwayPutsWorkFirstAndLearns();
+        appendFailureLeavesTheLogUnchanged();
         std::cout << "tab ranker tests passed\n";
         return 0;
     } catch (const std::exception& error) {

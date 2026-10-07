@@ -691,6 +691,8 @@ std::vector<TabCandidate> Workspace::waitingCandidates(const QVariantMap& ready,
         if (item.get() == exclude || item->closing())
             continue;
         const auto kind = item->statusKind();
+        if (kind == QLatin1String("ended") || kind == QLatin1String("unknown"))
+            continue;
         const auto guess = ready.find(item->sessionId());
         const bool request = item->attentionPending();
         const bool finished = kind == QLatin1String("finished") ||
@@ -721,6 +723,8 @@ bool Workspace::nextPriorityAttention(const QVariantMap& ready) {
     const auto best = tab_ranker_->pick(candidates, &scores);
     if (!best)
         return false;
+    if (!selectSession(candidates[*best].session))
+        return false;
     tab_ranker_->recordTab(candidates, scores, *best);
     // Where the person settles after this move is the choice it learns from.
     // A Tab before the last move settled passes over that agent: the choice
@@ -730,7 +734,7 @@ bool Workspace::nextPriorityAttention(const QVariantMap& ready) {
     else
         choice_ = PendingChoice{candidates, true};
     choice_->viaTab = true;
-    return selectSession(candidates[*best].session);
+    return true;
 }
 void Workspace::setTabAway(const TabAwaySettings& settings) {
     tab_away_ = settings;
@@ -749,6 +753,9 @@ void Workspace::noteFocusMove() {
         choice_->add(fresh);
     else
         choice_ = PendingChoice{std::move(fresh), false};
+    // Tab marks the pending choice itself after a successful move; any other
+    // focus change while it is pending belongs to the person.
+    choice_->viaTab = false;
     last_focus_id_ = id;
     choice_settle_.start();
 }

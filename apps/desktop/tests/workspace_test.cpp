@@ -807,6 +807,134 @@ void tabGoesToTheReadyThenTheOldest() {
             "nothing is waiting once the one with a guess is at work");
 }
 
+// Tab names the move, but only a later hand move does. The pending choice
+// remains one choice, with the agents that began waiting added to it.
+void tabAttributionFollowsTheNextHandMove() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "attribution directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QString first = QStringLiteral("ef715fac-a03a-45d4-8466-b0f2740c6b7b");
+    const QString second = QStringLiteral("e93750ef-ab0d-418a-b53f-25a601827e31");
+    QJsonArray agents;
+    for (const auto& id : {first, second})
+        agents.append(QJsonObject{{"id", id},
+                                  {"title", id},
+                                  {"category", "general"},
+                                  {"endpoint", QDir(canonical).filePath(id + ".sock")},
+                                  {"program", "/usr/bin/true"},
+                                  {"directory", canonical}});
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    options.headless = true;
+    QFile file(options.storagePath);
+    require(file.open(QIODevice::WriteOnly), "create attribution registry");
+    const auto bytes =
+        QJsonDocument(QJsonObject{{"version", 1},
+                                  {"activeCategory", "general"},
+                                  {"categories", QJsonArray{QJsonObject{{"id", "general"},
+                                                                        {"name", "General"},
+                                                                        {"selected", second}}}},
+                                  {"agents", agents}})
+            .toJson();
+    require(file.write(bytes) == bytes.size(), "write attribution registry");
+    file.close();
+    Workspace workspace(WorkspaceMode::live, options);
+    workspace.setChoiceSettleMsForTesting(20);
+    require(workspace.focusedSession()->sessionId() == second, "start on the source agent");
+    lapis::session::wire::AttentionSnapshot state;
+    state.available = state.connected = state.ready = true;
+    auto* target = workspace.session(first);
+    target->setConnection(QStringLiteral("ready"), true);
+    state.activity = lapis::session::attention::Activity::working;
+    target->applyAttention(state);
+    state.activity = lapis::session::attention::Activity::turn_completed;
+    target->applyAttention(state);
+    auto* source = workspace.session(second);
+    source->setConnection(QStringLiteral("ready"), true);
+    require(workspace.nextPriorityAttention({}) && workspace.focusedSession() == target,
+            "Tab moves to the waiting agent");
+    // The source begins a turn while Tab's move is on screen, so its finishing
+    // turn out of view is the second choice the person settles between.
+    state.activity = lapis::session::attention::Activity::working;
+    source->applyAttention(state);
+    state.activity = lapis::session::attention::Activity::turn_completed;
+    source->applyAttention(state);
+    require(source->unseen(), "a turn finished out of view marks the agent");
+    require(workspace.selectSession(second), "the person then moves back by hand");
+    require(waitFor(
+                [&] {
+                    return workspace.tabRanker().model().decisions == 1 &&
+                           !workspace.tabRanker().refitting();
+                },
+                5000),
+            "the Tab-and-hand sequence settles once");
+    QFile log(QFileInfo(options.storagePath).dir().filePath(QStringLiteral("tab_away.jsonl")));
+    require(log.open(QIODevice::ReadOnly), "read the attribution log");
+    QString via;
+    while (!log.atEnd()) {
+        const auto event = QJsonDocument::fromJson(log.readLine()).object();
+        if (event.value(QStringLiteral("event")).toString() == QLatin1String("choice"))
+            via = event.value(QStringLiteral("via")).toString();
+    }
+    require(via == QLatin1String("person"), "a hand move after Tab is the person's choice");
+}
+
+// A failed registry save must not teach a nonexistent Tab move or leave a
+// half-staged choice behind.
+void failedTabSelectionRecordsNothing() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "failed Tab directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QString source = QStringLiteral("51a90682-5ee6-4ffd-a356-f24f82e9db51");
+    const QString target = QStringLiteral("79858e34-34d8-4cf9-a2c1-25969a1a2d2f");
+    QJsonArray agents;
+    for (const auto& id : {source, target})
+        agents.append(QJsonObject{{"id", id},
+                                  {"title", id},
+                                  {"category", "general"},
+                                  {"endpoint", QDir(canonical).filePath(id + ".sock")},
+                                  {"program", "/usr/bin/true"},
+                                  {"directory", canonical}});
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    options.headless = true;
+    QFile file(options.storagePath);
+    require(file.open(QIODevice::WriteOnly), "create failed-tab registry");
+    const auto bytes =
+        QJsonDocument(QJsonObject{{"version", 1},
+                                  {"activeCategory", "general"},
+                                  {"categories", QJsonArray{QJsonObject{{"id", "general"},
+                                                                        {"name", "General"},
+                                                                        {"selected", source}}}},
+                                  {"agents", agents}})
+            .toJson();
+    require(file.write(bytes) == bytes.size(), "write failed-tab registry");
+    file.close();
+    Workspace workspace(WorkspaceMode::live, options);
+    auto* waiting = workspace.session(target);
+    require(waiting != nullptr && workspace.focusedSession()->sessionId() == source,
+            "load the failed-tab fixture");
+    waiting->setConnection(QStringLiteral("ready"), true);
+    lapis::session::wire::AttentionSnapshot state;
+    state.available = state.connected = state.ready = true;
+    state.activity = lapis::session::attention::Activity::working;
+    waiting->applyAttention(state);
+    state.activity = lapis::session::attention::Activity::turn_completed;
+    waiting->applyAttention(state);
+    require(QFile::setPermissions(canonical, QFile::ReadOwner | QFile::ExeOwner),
+            "make the registry parent unwritable");
+    require(!workspace.nextPriorityAttention({}), "the Tab selection fails with the registry");
+    require(workspace.focusedSession()->sessionId() == source,
+            "a failed Tab move leaves the source focused");
+    require(workspace.tabRanker().model().decisions == 0, "a failed Tab move teaches nothing");
+    require(!QFileInfo::exists(
+                QFileInfo(options.storagePath).dir().filePath(QStringLiteral("tab_away.jsonl"))),
+            "a failed Tab move writes no event log");
+    require(
+        QFile::setPermissions(canonical, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+        "restore registry parent permissions");
+}
+
 // Claude agents run under the service's Claude Code adapter and read their
 // status from its observer. Records saved before the adapter keep terminal
 // mode, the launch their running service was created with.
@@ -5588,6 +5716,8 @@ int main(int argc, char** argv) {
         unseenFollowsTurnsAndSelection();
         latestAttentionGoesToTheNewest();
         tabGoesToTheReadyThenTheOldest();
+        tabAttributionFollowsTheNextHandMove();
+        failedTabSelectionRecordsNothing();
         modelessAgentsGetTheDefaultMode();
         claudeAgentsUseServiceAdapter();
         agentArgumentsPersist();
