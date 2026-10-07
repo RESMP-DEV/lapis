@@ -302,6 +302,8 @@ class AsciiAdvances {
         for (auto& style : advances_)
             style.fill(-1);
     }
+    // Precondition: printable(character). The renderer gates every cell before
+    // this lookup; a range branch here would run for every drawn cell.
     qreal advance(char16_t character, bool bold, bool italic) {
         const std::size_t style = (bold ? 1U : 0U) + (italic ? 2U : 0U);
         auto& known = advances_.at(style).at(static_cast<std::size_t>(character - kFirst));
