@@ -308,6 +308,49 @@ QString TileLayout::neighbor(const QString& id, Edge direction) const {
     return best;
 }
 
+QStringList TileLayout::readingOrder() const {
+    auto all = tiles(QRectF(0, 0, 1, 1));
+    // Exact finite coordinates give the comparator a strict weak ordering.
+    // Approximate equality is transitive only by accident and can make a sort
+    // order depend on the tree's incidental tile order.
+    std::stable_sort(all.begin(), all.end(), [](const Tile& first, const Tile& second) {
+        if (first.rect.top() != second.rect.top())
+            return first.rect.top() < second.rect.top();
+        return first.rect.left() < second.rect.left();
+    });
+    QStringList result;
+    result.reserve(static_cast<qsizetype>(all.size()));
+    for (const auto& tile : all)
+        result.append(tile.session);
+    return result;
+}
+
+QStringList TileLayout::cycleOrder(const QStringList& strip) const {
+    auto result = readingOrder();
+    for (const auto& id : strip)
+        if (!contains(id))
+            result.append(id);
+    return result;
+}
+
+TileLayout::Step TileLayout::step(const TileLayout& home, const QStringList& order,
+                                  const QString& slot, const QString& current, int delta) {
+    if (order.isEmpty())
+        return {.selected = {}, .layout = home, .slot = {}};
+    const auto count = order.size();
+    const auto here = std::max<qsizetype>(order.indexOf(current), 0);
+    const auto& next = order.at(((here + delta % count) % count + count) % count);
+    if (home.empty() || home.contains(next))
+        return {.selected = next, .layout = home, .slot = {}};
+    // Leaving a tile of `home`, that tile shows the strip's agents in turn.
+    const QString shown_in = home.contains(current) ? current
+                             : home.contains(slot)  ? slot
+                                                    : home.readingOrder().front();
+    auto layout = home;
+    layout.replace(shown_in, next);
+    return {.selected = next, .layout = layout, .slot = shown_in};
+}
+
 QJsonObject TileLayout::toJson() const { return root_ ? to_json(*root_) : QJsonObject{}; }
 
 TileLayout TileLayout::fromJson(const QJsonObject& json, const QSet<QString>& known) {
