@@ -425,13 +425,13 @@ void navigation_defaults_preserve_terminal_editing() {
 #ifdef Q_OS_MACOS
     require(
         keymap.sequences(QStringLiteral("nextCategory")) ==
-                QStringList({QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down"),
-                             QStringLiteral("Meta+Shift+J")}) &&
+                QStringList({QStringLiteral("Meta+]"), QStringLiteral("Meta+Alt+Right"),
+                             QStringLiteral("Meta+Shift+Down"), QStringLiteral("Meta+Shift+J")}) &&
             keymap.sequences(QStringLiteral("previousCategory")) ==
-                QStringList({QStringLiteral("Meta+Alt+Left"), QStringLiteral("Meta+Shift+Up"),
-                             QStringLiteral("Meta+Shift+K")}),
-        "categories keep Command-Option-arrows and Command-Shift-arrows, and gain "
-        "Command-Shift-J/K on the home row");
+                QStringList({QStringLiteral("Meta+["), QStringLiteral("Meta+Alt+Left"),
+                             QStringLiteral("Meta+Shift+Up"), QStringLiteral("Meta+Shift+K")}),
+        "categories take Command-[ and ], keep Command-Option-arrows and "
+        "Command-Shift-arrows, and Command-Shift-J/K on the home row");
     require(keymap.sequences(QStringLiteral("newAgent")) == QStringList{QStringLiteral("Meta+T")} &&
                 keymap.sequences(QStringLiteral("newCategory")) ==
                     QStringList{QStringLiteral("Meta+N")},
