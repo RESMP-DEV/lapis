@@ -43,13 +43,13 @@ size_t SeenScreens::fingerprint(const SessionPreview* item) {
     // entirely with box-drawing characters. A single rule is a divider in the
     // agent's own output, not the box: only a found pair truncates.
     static const QString drawing = QStringLiteral(
-        "\u2500\u2501\u2550\u250c\u2510\u2514\u2518\u251c\u2524\u252c\u2534\u253c\u256d\u256e\u2570\u256f\u255e\u255f\u2560\u2563\u2561\u2562\u256a\u256b\u254b\u254c\u254d\u2504\u2505\u2508\u2509\u2574\u2576\u257a\u257c\u257d\u257e\u257f");
+        "\u2500\u2501\u2550\u250c\u2510\u2514\u2518\u251c\u2524\u252c\u2534\u253c\u256d\u256e\u2570"
+        "\u256f\u255e\u255f\u2560\u2563\u2561\u2562\u256a\u256b\u254b\u254c\u254d\u2504\u2505\u2508"
+        "\u2509\u2574\u2576\u257a\u257c\u257d\u257e\u257f");
     const auto rule = [&lines](qsizetype row) {
         const auto text = lines.at(row).trimmed();
-        return text.size() >= 3 &&
-               std::all_of(text.cbegin(), text.cend(), [](QChar glyph) {
-                   return drawing.contains(glyph);
-               });
+        return text.size() >= 3 && std::all_of(text.cbegin(), text.cend(),
+                                               [](QChar glyph) { return drawing.contains(glyph); });
     };
     qsizetype top = -1;
     int rules = 0;
@@ -227,11 +227,11 @@ AttentionLog attention_log(const QString& path) {
             }
             file.setFileName(path);
             if (file.open(QIODevice::WriteOnly, QFile::ReadOwner | QFile::WriteOwner)) {
-                file.write(QJsonDocument(QJsonObject{
-                                 {"at",
-                                  QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
-                                 {"event", QStringLiteral("rotated")},
-                             })
+                file.write(QJsonDocument(
+                               QJsonObject{
+                                   {"at", QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
+                                   {"event", QStringLiteral("rotated")},
+                               })
                                .toJson(QJsonDocument::Compact) +
                            '\n');
                 file.close();

@@ -1995,7 +1995,7 @@ QString Workspace::remoteAccountFailure(const AccountPool& accounts, const Agent
     }
     const QFileInfo auth(
         QDir(accountsRoot).filePath(QStringLiteral("codex/%1/auth.json").arg(account->name)));
-    if (!auth.isFile() || !auth.isReadable() || auth.size() > 1024 * 1024)
+    if (!auth.isFile() || !auth.isReadable() || auth.size() > qsizetype{1024} * 1024)
         return QStringLiteral("Codex plan %1 has no usable login.").arg(account->name);
     QFile file(auth.absoluteFilePath());
     if (!file.open(QIODevice::ReadOnly) ||

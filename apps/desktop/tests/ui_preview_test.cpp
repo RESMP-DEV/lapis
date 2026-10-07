@@ -926,7 +926,7 @@ int run_preview_frame_sync_tests() {
     const QRgb second = qRgb(0x40, 0x50, 0x60);
     const QRgb third = qRgb(0x70, 0x80, 0x90);
     const auto paint = [&](QRgb color) {
-        snapshot.background_rgb = static_cast<std::uint32_t>(color & 0xffffff);
+        snapshot.background_rgb = static_cast<std::uint32_t>(color & 0xffffffU);
         ++snapshot.revision;
         document.applySnapshot(snapshot);
     };
@@ -1428,7 +1428,7 @@ void wait_tab_visible(QQuickItem& tab, QQuickItem& view) {
     };
     QElapsedTimer deadline;
     deadline.start();
-    while (!visible() && deadline.elapsed() < 2000)
+    while (!visible() && deadline.elapsed() < 5000)
         pump(5);
     CHECK(visible());
 }

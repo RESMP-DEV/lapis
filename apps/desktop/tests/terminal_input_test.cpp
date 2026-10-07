@@ -966,7 +966,7 @@ void suggestions() {
     // The same words offered again are a new offer, seen again.
     surface.setSuggestionKey(QStringLiteral("a:2"));
     surface.setSuggestion(QStringLiteral("go now"));
-    settle();
+    until([&] { return seen == 4; });
     require(seen == 4, "A new offer with the same words was not seen again");
 
     // Typing is not a refusal: the suggestion stays, and what was typed first
