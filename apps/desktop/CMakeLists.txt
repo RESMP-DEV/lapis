@@ -31,6 +31,7 @@ add_library(lapis_desktop_view STATIC
     src/usage.cpp src/usage.hpp
     src/usage_limits.cpp src/usage_limits.hpp
     src/next_prompt.cpp src/next_prompt.hpp
+    src/agent_state.cpp src/agent_state.hpp src/attention_order.hpp
     src/plan_sign_in.cpp src/plan_sign_in.hpp
     src/harness_models.cpp src/harness_models.hpp
     src/attention_view.cpp
@@ -182,6 +183,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_next_prompt_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME next-prompt COMMAND lapis_next_prompt_tests)
     set_tests_properties(next-prompt PROPERTIES TIMEOUT 30)
+    add_executable(lapis_agent_state_tests tests/agent_state_test.cpp)
+    target_link_libraries(lapis_agent_state_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME agent-state COMMAND lapis_agent_state_tests)
+    set_tests_properties(agent-state PROPERTIES TIMEOUT 30)
     add_executable(lapis_plan_sign_in_tests tests/plan_sign_in_test.cpp)
     target_link_libraries(lapis_plan_sign_in_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME plan-sign-in COMMAND lapis_plan_sign_in_tests)

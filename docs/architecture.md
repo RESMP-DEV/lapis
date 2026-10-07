@@ -4924,3 +4924,96 @@ supervisor transition and production birth route, while the candidate lane now
 runs exact-P1 qualification. P2/P3 and the dedicated import-server/onboarding
 design wait for P1; tool status and the import protocol client remain available
 but dormant until their owners and qualification gates are ready.
+
+## Ultra Tab: a second app beside the window (October 6)
+
+Ultra Tab (`apps/ultratab/`, user page [ultratab](ultratab.md)) is the publishing
+name for the lapis V2 surface: an overlay, shown by a global key, that deals the
+agents that need you as a deck of cards with four answers (accept lapis's guess,
+speak, type, skip). Milestone 1 runs beside the existing window and borrows its
+architecture instead of replacing it. Its boundaries:
+
+- **Read-only toward lapis.** It never takes the registry lock and writes none of
+  lapis's files. It reads `runtime/workspace.json` and a new, smallest
+  publication: `runtime/agent_state.json` (version 1), written by
+  `AgentStatePublisher` in the window that holds the registry. Per agent it
+  carries the status kind, unseen mark, pending request count and first reason,
+  `neededAtMs`, the window-clock time of the last finished turn or request, and
+  the shown next-prompt offer with `said`, the agent's last reply it answers
+  (`NextPrompt::offerState`, clipped to 600 characters). Owner-only, replaced
+  atomically by one ordered writer thread, only on change, rate-limited
+  publish-to-publish at 250 ms. Nothing in lapis reads it back.
+- **Order.** `apps/desktop/src/attention_order.hpp` holds Tab's tier rule
+  (unseen guess, then unseen turns and requests, then seen guesses; oldest
+  `neededAtMs` first) for both `Workspace::nextPriorityAttention` and the deck.
+  The deck adds the eligibility the window does not yet apply: an agent at work
+  or in an unknown state is not a card; a pending request always is. The learned
+  Tab ranker is not on main; when it lands, the window should publish its order
+  and the deck should follow it rather than copy the model.
+- **Input through a join.** An answer opens a wire v6 `join` view with the
+  registry's launch fingerprint, acknowledges the first screen, submits the text
+  as one paste transaction with Return (`paste_request`, `submit`), and closes.
+  It never resizes, never answers requests (the service refuses a submitted
+  paste while one blocks), and never falls back to `discover`, which would take
+  the agent from the window.
+- **Keyboard ownership.** The overlay comes forward only on the person's key; a
+  card arriving never activates it. It hides when another app activates and
+  hands the keyboard back on Escape or the key.
+- **Platform.** Blur is an `NSVisualEffectView` (behind-window blending) made the
+  window's content view with Qt's view inside; the key is a Carbon hot key;
+  the app is an accessory (no Dock icon). These are macOS-only behind
+  `platform_overlay.hpp`.
+
+- **Composed cards.** `Composer` (`apps/ultratab/src/composer.*`) owns
+  `runtime/ultratab_cards.json` (version 1, the renderer's contract in
+  [ultratab](ultratab.md)) and `runtime/ultratab_compose.jsonl`. A card's key is
+  the offer key, else `turn:<turnAtMs or neededAtMs>`; a waiting agent whose key
+  differs from its card's is queued after a 2 s re-arming debounce, deck order
+  first, at most two helper processes at a time, each in its own process group
+  under a per-card timeout. A guess for the turn already composed patches the
+  prompt and key without a model call. The held (front, overlay visible) card is
+  replaced only with a different key. The helper (`apps/ultratab/compose/
+  compose.py`) imports `next_prompt.py` for transcript discovery, parsing and the
+  plan-backed `claude -p` call (both embedded and written to
+  `runtime/ultratab_compose/`), adds the person's last look from the interaction
+  log and the HTML/Markdown files written or mentioned since, and validates the
+  model's JSON: bad blocks are dropped, sizes clipped, SVG reduced to drawing
+  elements with safe attributes and a viewBox, links limited to listed files and
+  mentioned URLs; total failure yields the last message as the tldr. A local
+  OpenAI-compatible endpoint is an opt-in alternative to the CLI.
+
+Evidence at this checkpoint: focused `ultratab`, `ultratab-overlay`,
+`agent-state`, `next-prompt` and `workspace` CTest cases. The overlay case loads
+the production QML offscreen with software Quick from fixture files and drives
+all four answers with Qt events to that offscreen window; its captures are under
+`build/reports/ultratab/`. The join is exercised against a fake v6 service, not a
+live agent; the blur, the global key and native focus are not exercised.
+
+### Standalone app and composed cards (October 7)
+
+- **Identity.** The bundle is `Ultra Tab.app`, `dev.ultratab.app`, `LSUIElement`
+  (no Dock icon before the accessory policy is set). `LAPIS_BUILD_ULTRATAB`
+  builds it without the desktop (packaging); the desktop build still includes
+  it. `scripts/package_ultratab.py` reuses `package_macos.py`'s pinned Qt,
+  compiler flags, path scrubbing and signing identity; Qt SVG 6.11.2 (pinned
+  SHA-256) is staged in its own prefix so `lapis.app`'s `macdeployqt` never
+  picks it up. The icon is rendered from `apps/ultratab/icon/icon.svg`.
+- **Settings and window memory.** `ultratab.json` is read only (`hotkey`,
+  `startAtLogin`, default on). Positions are written to `ultratab-window.json`
+  per screen (name and geometry), clamped back on screen or recentered. The
+  window size is fixed per screen; it moves only by a background drag
+  (`startSystemMove`). The login item uses `SMAppService.mainAppService` and is
+  changed only for a bundle in an Applications folder, so builds and tests never
+  register.
+- **Composed cards.** `runtime/ultratab_cards.json` (version 1) comes from a
+  separate composer. A card is used only when its `key` equals the deck's card
+  key (`<id>|<turnAtMs>|<neededAtMs>|<offer key>|<requests>`, the id prefix
+  optional); otherwise the plain card shows. Parsing bounds every string,
+  keeps three valid blocks, and admits only `https:` and local `file:` links.
+  Diagrams are sanitized on load (no script, foreignObject, embedded content,
+  event attributes, DTD, processing instructions, or non-fragment references)
+  and drawn by `QSvgRenderer` through an image provider, never by a browser.
+  Links open only through `Deck::openLink`, which re-checks the parsed URL.
+- **Motion.** Deck state changes before any animation; a 180 ms slide/fade
+  follows it and restarts on the next key, so input is never deferred. Reduce
+  Motion (from `NSWorkspace`) removes the slide and the pulse.
