@@ -615,11 +615,16 @@ void Workspace::nextSession(int delta) {
     const auto* focused = focusedSession();
     const QString current = focused != nullptr ? focused->sessionId() : QString();
     // Tiles first in reading order, then the strip; a walk continues while the
-    // stage is as its last step left it.
+    // stage is as its last step left it. A tile whose agent has been closed or
+    // moved away leaves the walk: its starting layout would put that agent back
+    // on the stage, and `untile` cannot see a tile the walk displaced.
+    const auto in_strip = [&strip](const QString& id) { return strip.contains(id); };
+    const auto home_tiles = tile_walk_ ? tile_walk_->home.sessions() : QStringList{};
     const bool continues = tile_walk_ && tile_walk_->category == place->id &&
                            tile_walk_->selected == current &&
                            tile_walk_->shown == place->tiles.toJson() &&
-                           tile_walk_->home.cycleOrder(strip) == tile_walk_->order;
+                           tile_walk_->home.cycleOrder(strip) == tile_walk_->order &&
+                           std::all_of(home_tiles.cbegin(), home_tiles.cend(), in_strip);
     if (!continues)
         tile_walk_ = TileWalk{.category = place->id,
                               .home = place->tiles,

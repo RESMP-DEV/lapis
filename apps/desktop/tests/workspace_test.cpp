@@ -950,6 +950,118 @@ void directTileSelectionNormalizesAStaleTarget() {
             "an untiled direct selection replaces the first valid tile");
 }
 
+// The next and previous keys walk the tiles of the layout the walk started
+// from, but an agent can leave the category while the walk shows another agent
+// in its tile. Closing or moving it then finds no tile to remove, so the walk
+// must end instead of stepping onto the departed agent and putting it back.
+void tileWalkDropsDisplacedAgentsThatLeave() {
+    const auto make = [](const QString& directory, QString& left, QString& right,
+                         QString& untiled) {
+        const auto canonical = QFileInfo(directory).canonicalFilePath();
+        left = uuid();
+        right = uuid();
+        untiled = uuid();
+        auto agent = [&](const QString& id) { return agentRecord(canonical, id, "work"); };
+        WorkspaceOptions options;
+        options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+        writeRegistry(
+            options.storagePath,
+            QJsonObject{
+                {"version", 2},
+                {"activeCategory", "work"},
+                {"categories",
+                 QJsonArray{QJsonObject{{"id", "work"},
+                                        {"name", "Work"},
+                                        {"selected", right},
+                                        {"tiles",
+                                         QJsonObject{{"stacked", false},
+                                                     {"ratio", 0.5},
+                                                     {"children",
+                                                      QJsonArray{QJsonObject{{"agent", left}},
+                                                                 QJsonObject{{"agent", right}}}}}}},
+                            QJsonObject{{"id", "other"}, {"name", "Other"}}}},
+                {"agents", QJsonArray{agent(left), agent(right), agent(untiled)}}});
+        return std::make_unique<Workspace>(WorkspaceMode::live, options);
+    };
+    const auto stage = [](const Workspace& workspace) {
+        QStringList result;
+        for (const auto& tile : workspace.stageTiles())
+            result.append(tile.toMap().value(QStringLiteral("sessionId")).toString());
+        return result;
+    };
+    const auto tile_ids = [](const QJsonObject& tiles) {
+        QStringList result;
+        const std::function<void(const QJsonObject&)> walk = [&](const QJsonObject& node) {
+            const auto children = node.value(QStringLiteral("children")).toArray();
+            if (children.isEmpty()) {
+                result.append(node.value(QStringLiteral("agent")).toString());
+                return;
+            }
+            for (const auto& child : children)
+                walk(child.toObject());
+        };
+        walk(tiles);
+        return result;
+    };
+    const auto saved = [](const QString& path, const QString& category) {
+        const auto groups = QJsonDocument::fromJson(readRegistry(path))
+                                .object()
+                                .value(QStringLiteral("categories"))
+                                .toArray();
+        for (const auto& value : groups) {
+            const auto group = value.toObject();
+            if (group.value(QStringLiteral("id")).toString() == category)
+                return group.value(QStringLiteral("tiles")).toObject();
+        }
+        throw std::runtime_error("missing category in saved registry");
+    };
+
+    QTemporaryDir closed_directory;
+    require(closed_directory.isValid(), "closed-walk directory");
+    QString left;
+    QString right;
+    QString untiled;
+    auto closed = make(closed_directory.path(), left, right, untiled);
+    require(closed->workspaceError().isEmpty(), "load the closed-walk registry");
+    require(closed->focusedSession() == closed->session(right), "the walk starts from a tile");
+    closed->nextSession(1);
+    require(stage(*closed) == QStringList{left, untiled} &&
+                closed->focusedSession() == closed->session(untiled),
+            "the walk shows the untiled agent in the tile it displaced");
+    closed->session(right)->setConnection(QStringLiteral("ended"), false);
+    require(closed->removeSession(right), "close the displaced agent while the walk shows another");
+    require(stage(*closed) == QStringList{left, untiled},
+            "closing a displaced agent leaves the shown tiles alone");
+    closed->nextSession(-1);
+    require(closed->focusedSession() == closed->session(left) &&
+                stage(*closed) == QStringList{left, untiled},
+            "the walk ends instead of stepping onto the closed agent");
+    require(tile_ids(saved(closed->storagePath(), QStringLiteral("work"))) ==
+                QStringList{left, untiled},
+            "closing a displaced agent never saves its stale tile");
+
+    QTemporaryDir moved_directory;
+    require(moved_directory.isValid(), "moved-walk directory");
+    auto moved = make(moved_directory.path(), left, right, untiled);
+    require(moved->workspaceError().isEmpty(), "load the moved-walk registry");
+    moved->nextSession(1);
+    require(stage(*moved) == QStringList{left, untiled} &&
+                moved->focusedSession() == moved->session(untiled),
+            "the moved walk displaces its starting tile");
+    require(moved->moveSession(right, QStringLiteral("other")), "move the displaced agent away");
+    require(stage(*moved) == QStringList{left, untiled},
+            "moving a displaced agent leaves the shown tiles alone");
+    moved->nextSession(-1);
+    require(moved->focusedSession() == moved->session(left) &&
+                stage(*moved) == QStringList{left, untiled},
+            "the walk ends instead of showing the moved agent back");
+    require(!moved->categorySessions().contains(QVariant::fromValue(moved->session(right))),
+            "the moved agent stays out of its old category");
+    require(tile_ids(saved(moved->storagePath(), QStringLiteral("work"))) ==
+                QStringList{left, untiled},
+            "moving a displaced agent never saves its stale tile");
+}
+
 void unknownRegistryVersionsAreRejected() {
     QTemporaryDir directory;
     require(directory.isValid(), "version directory");
@@ -5591,6 +5703,7 @@ int main(int argc, char** argv) {
         claudeAgentsUseServiceAdapter();
         agentArgumentsPersist();
         directTileSelectionNormalizesAStaleTarget();
+        tileWalkDropsDisplacedAgentsThatLeave();
         outputEstimate();
         agentsStartWithoutParentSessionMarkers();
         restartRefusesClosingAgent();
