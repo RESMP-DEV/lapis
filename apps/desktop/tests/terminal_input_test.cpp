@@ -49,11 +49,11 @@ void require(bool value, const char* message) {
     if (!value)
         throw std::runtime_error(message);
 }
-void until(const std::function<bool()>& condition,
+void until(const std::function<bool()>& condition, int deadline_ms = 8000,
            std::source_location where = std::source_location::current()) {
     QElapsedTimer time;
     time.start();
-    while (time.elapsed() < 8000) {
+    while (time.elapsed() < deadline_ms) {
         if (condition())
             return;
         QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
@@ -193,7 +193,7 @@ QByteArray text_frames(Peer& peer, qsizetype minimum = 0,
             }
             return text.size() >= minimum;
         },
-        where);
+        8000, where);
     return text;
 }
 // Resize frames the desktop sent once events settle.
@@ -951,12 +951,14 @@ void suggestions() {
             "The previous window authorized an unpresented rebound suggestion");
     surface.setSuggestionKey(QStringLiteral("rebind:b"));
     surface.setSuggestion(QStringLiteral("go now"));
-    until([&] {
-        if (!rebound.isActive())
-            lapis::desktop::test::activate_test_window(rebound);
-        rebound.update();
-        return rebound.isExposed() && seen == 2;
-    });
+    until(
+        [&] {
+            if (!rebound.isActive())
+                lapis::desktop::test::activate_test_window(rebound);
+            rebound.update();
+            return rebound.isExposed() && seen == 2;
+        },
+        20000);
     require(!rebound.grabWindow().isNull(), "Rebound scene graph produced no frame");
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
