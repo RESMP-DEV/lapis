@@ -3710,6 +3710,38 @@ Frame submission (about 8.5 ms p50) is the next measured target. The audit
 findings and remaining Q03/Q04/Q05/Q02 rows are in
 `evidence/modularity-audit-20261007.json`.
 
+### Open PR consolidation plan (October 7)
+
+Eighteen PRs are open. `fix/main-quality-debt` (#121) must merge first: it
+repairs the pre-existing desktop-gate failures (clang-format, Cppcheck and
+seven clang-tidy findings in files this batch does not own) that every other
+branch currently inherits, and its two reviews are clean. Immediately after
+#121, merge this branch (#122), #113 (ASCII advance cache) and #110
+(switch benchmark): all four are CLEAN apart from main's inherited gate debt
+and touch largely disjoint areas (gate repair, pacing/budget, font metrics,
+benchmark tooling).
+
+The next independent batch is the feature/fix set that reports CLEAN and has
+no base dependency: #98 (smooth scrolling + app log), #105 (ping when
+unwatched), #107 (tile navigation), #111 (stage tile reuse), #115 (persist GUI
+state) and #116 (harness update switch). These should be merged one at a time
+with a rebase or merge refresh after each, because several touch
+`Main.qml`, `workspace.cpp` and `ui_preview_test.cpp`; the largest conflict
+risk is between #98, #107, #111 and #115.
+
+The Ultra Tab family is stacked and must be consolidated in graph order:
+#117 (deck) into main, then #119 (standalone UI, based on #117), then #118
+(composer, based on #117), then #120 (iPhone, based on the combined branch
+`feature/ultratab-combined`, which already carries #117/#118/#119). Its
+integration owner should rebase #120 onto the surviving #117/#118/#119
+sequence rather than merging `feature/ultratab-combined` directly, to avoid a
+duplicate-history merge.
+
+The remaining four (#99, #101, #109, #112) report UNSTABLE and each has two
+non-green checks. They are not blockers for the batches above, but each needs
+its failure investigated and repaired on its own branch before its own merge;
+do not use the consolidation wave to hide their specific regressions.
+
 ### Following milestones
 
 The [production delivery order](#production-delivery-order-september-30)
