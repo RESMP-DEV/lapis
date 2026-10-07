@@ -355,16 +355,39 @@ void SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers mod
     if (live_)
         live_->send(wire::Kind::key, bytes);
 }
-void SessionPreview::sendWheel(int steps, int column, int row) {
+bool SessionPreview::sendWheel(int steps, int column, int row) {
     decodeWaiting();
     if (history_active_ || history_request_pending_ || !live_snapshot_.accepts_wheel ||
         steps == 0 || !live_)
-        return;
+        return false;
     constexpr int limit = 64;
-    live_->send(wire::Kind::wheel,
-                wire::encode_wheel({static_cast<qint16>(std::clamp(steps, -limit, limit)),
-                                    static_cast<quint16>(std::clamp(column, 0, 0xFFFF)),
-                                    static_cast<quint16>(std::clamp(row, 0, 0xFFFF))}));
+    const int delivered = std::clamp(steps, -limit, limit);
+    if (!live_->send(wire::Kind::wheel,
+                     wire::encode_wheel({static_cast<qint16>(delivered),
+                                         static_cast<quint16>(std::clamp(column, 0, 0xFFFF)),
+                                         static_cast<quint16>(std::clamp(row, 0, 0xFFFF))})))
+        return false;
+    // Count only what actually went on the ordered connection, at the size
+    // the service can actually receive. A rejected wheel keeps prior debt.
+    program_wheel_debt_ = std::max(0, program_wheel_debt_ + delivered);
+    program_wheel_cell_ = {column, row};
+    return true;
+}
+// The same ordered connection replays forward before the next input. Keep
+// trying in service-sized chunks; a full queue leaves the remaining debt for
+// the next attempt.
+void SessionPreview::returnProgramToBottom() {
+    if (program_wheel_debt_ == 0)
+        return;
+    if (!live_snapshot_.alternate_screen || !live_snapshot_.accepts_wheel || history_active_ ||
+        history_request_pending_)
+        return;
+    while (program_wheel_debt_ > 0)
+    {
+        const int steps = std::min(64, program_wheel_debt_);
+        if (!sendWheel(-steps, program_wheel_cell_.x(), program_wheel_cell_.y()))
+            return;
+    }
 }
 void SessionPreview::claimTerminalSize() {
     if (live_ && !history_active_ && !history_request_pending_)

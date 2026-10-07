@@ -5073,6 +5073,9 @@ QJsonObject resumeArgumentsRecord(const ResumeArgumentsFixture& fixture,
         throw std::runtime_error("a managed retirement fixture must use a terminal checkpoint");
     auto record = agentRecord(fixture.root, id, "general");
     record.insert(QStringLiteral("harness"), variant.harness);
+    if (variant.harness == QLatin1String("codex"))
+        record.insert(QStringLiteral("program"),
+                      QDir(fixture.root).filePath(QStringLiteral("codex")));
     QJsonArray user_arguments = variant.config_arguments;
     user_arguments.append("--user");
     if (variant.explicit_resume) {
@@ -5115,16 +5118,30 @@ bool followsObserverResume(const ResumeArgumentsCase& variant) {
 QJsonArray expectedResumeArguments(const ResumeArgumentsCase& variant,
                                    const QJsonArray& base_arguments,
                                    const QJsonArray& user_arguments, const QString& id) {
-    QJsonArray expected;
-    if (variant.add_update_setting)
-        expected = {"-c", "check_for_update_on_startup=false"};
-    const auto retained = variant.managed_pair ? base_arguments : QJsonArray(user_arguments);
-    for (const auto& argument : retained)
-        expected.append(argument);
-    if (followsObserverResume(variant)) {
-        expected.append("resume");
-        expected.append(id);
+    const auto retained =
+        variant.managed_pair ? QJsonArray(base_arguments) : QJsonArray(user_arguments);
+    QJsonArray plan = retained;
+    if (followsObserverResume(variant) && plan.size() + 2 <= 64) {
+        plan.append(QStringLiteral("resume"));
+        plan.append(id);
     }
+    // A direct Codex launch takes the startup defaults the workspace applies: no
+    // update check, and an inline (non-alternate) screen. Both are prepended, and
+    // both are dropped rather than truncated once the saved argument limit is hit.
+    QJsonArray missing;
+    if (variant.harness == QLatin1String("codex")) {
+        if (variant.add_update_setting) {
+            missing.append(QStringLiteral("-c"));
+            missing.append(QStringLiteral("check_for_update_on_startup=false"));
+        }
+        if (!retained.contains("--no-alt-screen"))
+            missing.append(QStringLiteral("--no-alt-screen"));
+    }
+    if (missing.isEmpty() || plan.size() + missing.size() > 64)
+        return plan; // The launch is already at the saved argument limit.
+    QJsonArray expected = missing;
+    for (const auto& value : plan)
+        expected.append(value);
     return expected;
 }
 
@@ -5136,7 +5153,7 @@ void requireRestoredResumeArguments(const ResumeArgumentsCase& variant,
     const auto actual = restored_agent.value(QStringLiteral("arguments")).toArray();
     if (followsObserverResume(variant)) {
         const auto managed = restored_agent.value(QStringLiteral("managedResume")).toObject();
-        require(managed.value(QStringLiteral("index")).toInt(-1) == 3 &&
+        require(managed.value(QStringLiteral("index")).toInt(-1) == expected.size() - 2 &&
                     managed.value(QStringLiteral("identity")).toString() == id,
                 "Codex startup defaults shift managed provenance to the resume pair");
     }
@@ -5269,6 +5286,7 @@ void savedCodexDefaultsKeepTranscriptInline() {
         QStringList arguments;
         QStringList expected;
         bool managed{};
+        QString program{QStringLiteral("codex")};
     };
     const QString update = QStringLiteral("check_for_update_on_startup=false");
     const std::vector<Case> cases{
@@ -5278,9 +5296,17 @@ void savedCodexDefaultsKeepTranscriptInline() {
         {{"-c", "tui.alt_screen=\"always\"", "-c", update},
          {"-c", "tui.alt_screen=\"always\"", "-c", update}},
         {{"--", "--no-alt-screen"}, {"-c", update, "--no-alt-screen", "--", "--no-alt-screen"}},
+        {{"--alternate-screen"}, {"-c", update, "--no-alt-screen", "--alternate-screen"}},
+        {{"-c", "other.tui.alt_screen=\"always\"", "-c", update},
+         {"--no-alt-screen", "-c", "other.tui.alt_screen=\"always\"", "-c", update}},
         {{"resume", "conversation"},
          {"-c", update, "--no-alt-screen", "resume", "conversation"},
          true},
+        {{"-o", "ControlPath=none", "-t", "fixture", "codex"},
+         {"-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4", "-o", "ControlPath=none",
+          "-t", "fixture", "codex"},
+         false,
+         QStringLiteral("ssh")},
     };
     for (const auto& variant : cases) {
         QTemporaryDir directory(QStringLiteral("/tmp/lapis-codex-defaults-XXXXXX"));
@@ -5288,7 +5314,7 @@ void savedCodexDefaultsKeepTranscriptInline() {
         const QDir root(QFileInfo(directory.path()).canonicalFilePath());
         const auto id = uuid();
         auto record = agentRecord(root.path(), id, "general");
-        const auto program = root.filePath(QStringLiteral("codex"));
+        const auto program = root.filePath(variant.program);
         writeExecutable(program, "#!/usr/bin/env bash\nexit 0\n");
         record.insert(QStringLiteral("program"), program);
         record.insert(QStringLiteral("harness"), QStringLiteral("codex"));
@@ -5313,9 +5339,10 @@ void savedCodexDefaultsKeepTranscriptInline() {
                                    .toArray()
                                    .first()
                                    .toObject();
+            const auto expected = variant.expected;
             require(saved[QStringLiteral("arguments")].toArray() ==
-                        QJsonArray::fromStringList(variant.expected),
-                    "Codex restarts inline once, keeping explicit screen choices");
+                        QJsonArray::fromStringList(expected),
+                    "Codex defaults are direct-local once, keeping explicit screen choices");
             if (variant.managed)
                 require(saved[QStringLiteral("managedResume")]
                                 .toObject()[QStringLiteral("index")]

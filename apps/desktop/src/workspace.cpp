@@ -39,15 +39,11 @@
 
 namespace lapis::desktop {
 namespace {
-// Whether the person chose Codex's screen mode themselves.
-bool hasCodexScreenSetting(const QStringList& arguments) {
-    const auto separator = std::find(arguments.cbegin(), arguments.cend(), QStringLiteral("--"));
-    return std::any_of(arguments.cbegin(), separator, [](const QString& argument) {
-        return argument == QLatin1String("--no-alt-screen") ||
-               argument.contains(QLatin1String("alt_screen"));
-    });
+bool directCodexLaunch(const session::LaunchSpec& launch) {
+    return QFileInfo(launch.program).fileName() == QLatin1String("codex");
 }
-bool hasCodexUpdateSetting(const QStringList& arguments) {
+// A setting only before `--`; the rest are literal prompt words.
+bool hasCodexSetting(const QStringList& arguments, const char* key) {
     for (qsizetype index = 0; index < arguments.size(); ++index) {
         const auto& argument = arguments.at(index);
         if (argument == QLatin1String("--"))
@@ -60,11 +56,24 @@ bool hasCodexUpdateSetting(const QStringList& arguments) {
             setting = argument.sliced(9);
         else if (argument.startsWith(QLatin1String("-c")) && argument.size() > 2)
             setting = argument.sliced(2);
-        if (setting.section(QLatin1Char('='), 0, 0).trimmed() ==
-            QLatin1String("check_for_update_on_startup"))
+        if (setting.section(QLatin1Char('='), 0, 0).trimmed() == QLatin1String(key))
             return true;
     }
     return false;
+}
+// Any exact `tui.alt_screen` setting is the person's own choice, as is the
+// command-line shorthand; matching a substring would mistake unrelated text.
+bool hasCodexScreenSetting(const QStringList& arguments) {
+    for (const auto& argument : arguments) {
+        if (argument == QLatin1String("--"))
+            break;
+        if (argument == QLatin1String("--no-alt-screen"))
+            return true;
+    }
+    return hasCodexSetting(arguments, "tui.alt_screen");
+}
+bool hasCodexUpdateSetting(const QStringList& arguments) {
+    return hasCodexSetting(arguments, "check_for_update_on_startup");
 }
 // Returns true once the lock holder identifies itself as a helper, or false
 // if the lock becomes available before its marker is published.
@@ -2257,13 +2266,11 @@ void Workspace::applyStartupDefaults(const Agent& agent, ResumeLaunch& plan) {
             qWarning() << "Grok fullscreen default not added: saved argument limit reached";
         }
     }
-    if (agent.harness == QLatin1String("codex")) {
+    if (agent.harness == QLatin1String("codex") && directCodexLaunch(plan.launch)) {
         QStringList missing;
         if (!hasCodexUpdateSetting(plan.launch.arguments))
             missing << QStringLiteral("-c") << QStringLiteral("check_for_update_on_startup=false");
-        // Saved before Codex ran inline; a remote launch carries its own words.
-        if (QFileInfo(plan.launch.program).fileName() == QLatin1String("codex") &&
-            !hasCodexScreenSetting(plan.launch.arguments))
+        if (!hasCodexScreenSetting(plan.launch.arguments))
             missing << QStringLiteral("--no-alt-screen");
         if (!missing.isEmpty() &&
             plan.launch.arguments.size() + missing.size() <= max_saved_arguments) {

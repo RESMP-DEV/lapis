@@ -23,6 +23,7 @@
 #include <QMap>
 #include <QObject>
 #include <QPointer>
+#include <QPoint>
 #include <QSet>
 #include <QSize>
 #include <QString>
@@ -187,7 +188,10 @@ class SessionPreview final : public QObject {
     void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
     // A turn of the wheel for the program on the alternate screen, over a
     // viewport cell; only when its snapshot says the service accepts wheels.
-    void sendWheel(int steps, int column, int row);
+    // False means the clamped wheel was not queued.
+    bool sendWheel(int steps, int column, int row);
+    // Sends queued scroll-back debt forward in bounded wheel messages.
+    void returnProgramToBottom();
     void resizeTerminal(session::TerminalSize size);
     // Someone is at this window: take the size back from another device.
     void claimTerminalSize();
@@ -287,6 +291,11 @@ class SessionPreview final : public QObject {
     // pages; the rows to scroll back once the first page arrives; the oldest
     // page ID fetched, for a service that does not place its pages.
     std::optional<HistoryStrip> strip_;
+    // Full-screen scroll-back steps the service accepted, and the cell where
+    // they were delivered. This belongs to the session so a rebound surface
+    // cannot lose it; rejected wheels leave the previous debt intact.
+    int program_wheel_debt_{};
+    QPoint program_wheel_cell_{-1, -1};
     // The screen when browsing was asked for: the archive answering is at
     // least as new, so it can repeat rows the screen shows but never miss one.
     std::optional<session::TerminalSnapshot> strip_screen_;

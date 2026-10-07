@@ -1411,6 +1411,154 @@ void selection_and_scroll() {
     wire::Frame next;
     require(wire::take_frame(peer.bytes, next) && next.kind != wire::Kind::wheel,
             "A program already at the bottom was scrolled again");
+
+    // The debt belongs to the session, in service-sized turns. Rebinding a
+    // different surface cannot forget it, and a wheel rejected while history
+    // owns the view cannot erase it.
+    require(f.document.sendWheel(65, 1, 1), "The service accepted only part of one wheel turn");
+    const auto oversized = peer.read();
+    require(oversized.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(oversized.payload).payload).steps == 64,
+            "A wheel turn larger than one service message was not bounded");
+    require(f.document.sendWheel(1, 1, 1), "The remainder of the wheel turn was not queued");
+    static_cast<void>(peer.read());
+    surface.setDocument(nullptr);
+    surface.setDocument(&f.document);
+    surface.forceActiveFocus();
+    QKeyEvent batched(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QCoreApplication::sendEvent(&surface, &batched);
+    for (const int expected : {-64, -1}) {
+        const auto forward = peer.read();
+        require(forward.kind == wire::Kind::wheel &&
+                    wire::decode_wheel(wire::decode_control(forward.payload).payload).steps ==
+                        expected,
+                "Rebinding did not preserve the accepted scroll-back debt");
+    }
+    require(text_frames(peer, 1) == QByteArray("x"), "The key after batched return was lost");
+
+    f.document.sendWheel(1, 1, 1);
+    static_cast<void>(peer.read());
+    f.document.beginHistoryRequest();
+    require(!f.document.sendWheel(1, 1, 1), "History did not reject a program wheel");
+    f.document.returnToLive();
+    static_cast<void>(resize_frames(peer));
+    QKeyEvent rejected(QEvent::KeyPress, Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    QCoreApplication::sendEvent(&surface, &rejected);
+    const auto preserved = peer.read();
+    require(preserved.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(preserved.payload).payload).steps == -1,
+            "A rejected wheel erased the debt already accepted by the service");
+    require(text_frames(peer, 1) == QByteArray("y"), "The key after a rejected wheel was lost");
+
+    // These later cases need a service that offers confirmed paste transactions,
+    // which the older-service fixture above deliberately does not.
+    const auto wheel_steps = [](const wire::Frame& frame) {
+        return frame.kind == wire::Kind::wheel
+                   ? wire::decode_wheel(wire::decode_control(frame.payload).payload).steps
+                   : 0;
+    };
+    const auto payload = [](const wire::Frame& frame) {
+        return frame.kind == wire::Kind::paste_request
+                   ? wire::decode_paste_request(frame.payload).text
+                   : wire::decode_control(frame.payload).payload;
+    };
+    const auto is_enter = [](const wire::Frame& frame) {
+        return frame.kind == wire::Kind::key &&
+               static_cast<unsigned char>(wire::decode_control(frame.payload).payload.at(0)) ==
+                   static_cast<unsigned char>(lapis::session::TerminalKey::enter);
+    };
+    // These need a service that offers confirmed paste transactions, which the
+    // older-service fixture above deliberately does not.
+    Fixture transactional;
+    QQuickWindow confirming;
+    confirming.setGeometry(100, 100, 640, 360);
+    lapis::desktop::TerminalSurface confirming_surface(confirming.contentItem());
+    confirming_surface.setSize(QSizeF(640, 360));
+    confirming_surface.setHoldResize(true);
+    confirming_surface.setDocument(&transactional.document);
+    confirming_surface.setInteractive(true);
+    transactional.document.startLive(transactional.endpoint, transactional.launch,
+                                     wire::AttachMode::discover);
+    auto confirming_peer = transactional.accept();
+    static_cast<void>(transactional.request(confirming_peer));
+    transactional.hello(confirming_peer, 1, true);
+    transactional.screen(confirming_peer);
+    confirming.show();
+    until([&] { return confirming.isExposed(); });
+    lapis::desktop::test::activate_test_window(confirming);
+    until([&] { return confirming.isActive(); });
+    settle();
+    until([&] {
+        confirming_surface.forceActiveFocus();
+        return confirming_surface.hasActiveFocus();
+    });
+    static_cast<void>(text_frames(confirming_peer));
+    transactional.terminal.feed("\x1b[?1049h");
+    confirming_peer.send(wire::Kind::snapshot,
+                         wire::encode_snapshot_message(
+                             {{transactional.identity, 1}, 2, transactional.terminal.snapshot()}));
+    until([&] { return transactional.document.snapshot().alternate_screen; });
+    QJSEngine confirming_navigation;
+    confirming_navigation.globalObject().setProperty(QStringLiteral("moved"), true);
+    confirming_surface.setTabFlow(true);
+    confirming_surface.setTabAway(
+        confirming_navigation.evaluate(QStringLiteral("(function() { return moved; })")));
+    const auto confirming_press = [&confirming_surface](int key, Qt::KeyboardModifiers modifiers,
+                                                        const QString& text) {
+        QKeyEvent event(QEvent::KeyPress, key, modifiers, text);
+        QCoreApplication::sendEvent(&confirming_surface, &event);
+    };
+    const auto confirming_operations = [&confirming_peer](std::size_t count) {
+        return suggestion_operations(confirming_peer, count);
+    };
+
+    require(transactional.document.sendWheel(1, 1, 1),
+            "A wheel before Tab navigation was not queued");
+    static_cast<void>(confirming_peer.read());
+    confirming_press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    require(confirming_navigation.globalObject().property(QStringLiteral("moved")).toInt() == 1 &&
+                confirming_operations(0).empty(),
+            "Lapis Tab navigation scrolled the program or sent input");
+    confirming_press(Qt::Key_Z, Qt::NoModifier, QStringLiteral("z"));
+    auto confirming_ordered = confirming_operations(2);
+    require(confirming_ordered.size() == 2 && wheel_steps(confirming_ordered[0]) == -1 &&
+                payload(confirming_ordered[1]) == QByteArray("z"),
+            "Program input did not follow the return to the bottom");
+
+    confirming_surface.setSuggestion(QStringLiteral("run"));
+    require(transactional.document.sendWheel(1, 1, 1),
+            "A wheel before an offered suggestion was not queued");
+    static_cast<void>(confirming_peer.read());
+    confirming_press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    confirming_ordered = confirming_operations(2);
+    require(confirming_ordered.size() == 2 && wheel_steps(confirming_ordered[0]) == -1 &&
+                confirming_ordered[1].kind == wire::Kind::paste_request &&
+                wire::decode_paste_request(confirming_ordered[1].payload).text == QByteArray("run"),
+            "Tab did not return the program to the bottom before filling the suggestion");
+    require(transactional.document.sendWheel(1, 1, 1),
+            "A wheel before sending a suggestion was not queued");
+    static_cast<void>(confirming_peer.read());
+    confirming_press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    confirming_ordered = confirming_operations(2);
+    require(confirming_ordered.size() == 2 && wheel_steps(confirming_ordered[0]) == -1 &&
+                is_enter(confirming_ordered[1]),
+            "Sending an admitted suggestion did not follow the return to the bottom");
+
+    require(transactional.document.sendWheel(1, 1, 1), "A wheel before paste was not queued");
+    static_cast<void>(confirming_peer.read());
+    require(confirming_surface.pasteText(QStringLiteral("pasted")), "Fixture paste refused");
+    confirming_ordered = confirming_operations(2);
+    require(confirming_ordered.size() == 2 && wheel_steps(confirming_ordered[0]) == -1 &&
+                payload(confirming_ordered[1]) == QByteArray("pasted"),
+            "Paste did not follow the return to the bottom");
+
+    require(transactional.document.sendWheel(1, 1, 1), "A wheel before IME input was not queued");
+    static_cast<void>(confirming_peer.read());
+    composition(confirming_surface, {}, QStringLiteral("ime"));
+    confirming_ordered = confirming_operations(2);
+    require(confirming_ordered.size() == 2 && wheel_steps(confirming_ordered[0]) == -1 &&
+                payload(confirming_ordered[1]) == QByteArray("ime"),
+            "Committed IME text did not follow the return to the bottom");
 }
 } // namespace
 int main(int argc, char** argv) {
