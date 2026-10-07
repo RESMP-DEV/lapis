@@ -469,7 +469,8 @@ with the scope and measurement limits in the [receipt](../evidence/milestone-one
 
 The renderer places runs at engine cell coordinates. Printable ASCII batches
 only when styled advances match the grid, with kerning and optional ligatures
-disabled. Other graphemes shape locally at a common baseline. Backgrounds precede
+disabled; each surface measures those advances once per character and style
+for its font, not once per cell drawn. Other graphemes shape locally at a common baseline. Backgrounds precede
 glyphs, decorations follow, and unchanged rows retain their nodes. Native Vulkan
 regressions cover wide/combining characters, emoji, Hebrew/Arabic fallback,
 styles, resize and cursor movement. Cross-cell contextual shaping and curly
