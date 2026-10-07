@@ -4785,6 +4785,43 @@ current integration receipt is
 [attention-journal-integration](../evidence/attention-journal-integration.json);
 it does not claim native live-agent restart or decision-delivery qualification.
 
+## Local interaction log (October 5)
+
+An opt-in log of input to lapis's own windows (`interactionLog` in
+[config](config.md#interaction-log), off by default) records keys, IME and
+dictation commits, pastes, copies, mouse buttons, wheel gestures, sampled pointer
+movement, and navigation (selected agent and how, category, tiles, history
+position, dialogs, palette commands, window and app activation) as versioned
+JSON lines in the private `runtime/interaction.jsonl`. It exists to model how
+the user works with agents. It observes only; it never consumes, delays or
+reroutes input.
+
+`InteractionRecorder` is one application event filter, installed only in the
+normal workspace (never the isolated preview, a capture run, an explicit
+qualification launch or test fixtures without their own recorder), plus explicit
+hooks where lapis decides what a key did (`TerminalSurface`: sent to the agent,
+copy, paste, Tab suggestion fill/send, Tab-away, history return; the window's
+`Shortcut` objects name the action). A key press is held until its dispatch ends
+so its outcome is known, and records that happen meanwhile follow it with their
+own timestamps. Serialization, rotation and writes run on `InteractionWriter`'s
+thread with a bounded queue (16,384 records; overflow drops and counts). Pointer
+moves are coalesced to one record per `pointerSampleMs` (leading and trailing
+sample) and the hit test runs only for recorded samples. Measured in the focused
+`interaction-log` test (RelWithDebInfo, offscreen, M-series Mac): about 4 µs of
+GUI-thread time added per key event, 0.2 µs per coalesced pointer move, about
+7.5 µs per recorded pointer sample in the production window including Qt's own
+hover delivery, 0.5 µs for the 200-column secret-prompt check and 0.35 µs for
+the secure input query. This is not a native input-to-presentation measurement.
+
+Redaction: under macOS secure event input, or when the cursor row of the
+keyboard's terminal names a password, passphrase, passcode, PIN or OTP (or a
+one-time/verification code) or ends in `secret:`, `token:` or `key:`, character
+keys, IME text and pastes are recorded without text. Nothing at all is recorded
+while the plan sign-in or usage (accounts) dialog, or any dialog named for an
+account, sign-in, credential or password, is open. Files are `0600` in a
+`0700` folder, rotate by size into numbered predecessors, and the total is
+bounded by `maxFileMiB` × `maxFiles`.
+
 ## Contracts to preserve
 
 **Runtime tool status is read-only.** `ToolStatus` has exactly one row for every

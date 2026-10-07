@@ -71,6 +71,68 @@ cannot use falls back to the built-in cue at its normal gain. Format and native
 playback qualification are recorded in [status](status.md). If the built-in cue
 also cannot play, the diagnostic reports that chime playback is unavailable.
 
+## Interaction log
+
+`interactionLog` keeps a local record of what you do in lapis's own windows, to
+study later how you work with your agents (for example, to train a better
+next-prompt guesser). It is off unless you turn it on:
+
+```json
+"interactionLog": {"enabled": true, "pointerSampleMs": 50, "maxFileMiB": 64, "maxFiles": 8}
+```
+
+It records only input lapis's windows receive, never input to other apps.
+Records are JSON lines in `runtime/interaction.jsonl` in the lapis folder. The
+folder must be private to you (`0700`); lapis refuses one others can read rather
+than change it. The log itself is `0600`. Every record has a format version
+`v`, a `run` id for this launch, a gapless `seq`, `mono_us` (a monotonic clock in
+microseconds, comparable within one run) and `wall` (UTC, milliseconds). The
+kinds:
+
+- `key`: each press and release, with the key, its text, modifiers, auto-repeat,
+  what had the keyboard (the agent's lapis session id and CLI, or the named item)
+  and the selected agent, and `handled`: `agent` (sent to the program), a
+  `shortcut` and its `action`, `copy`, `paste`, `suggestion-fill`,
+  `suggestion-send`, `tab-away`, `held-for-request`, `ime`, `window` (a Command
+  chord left to the window), `not-accepted` or `delivered` (taken by another
+  item, such as a dialog's field). `returnedLive` marks a key that left history.
+- `ime`: composition and commits, including dictation. `paste`: every paste into
+  a terminal (Command-V, a dropped file, a Tab-filled guess) with its length and
+  text (up to 65,536 characters, then `truncated`). `copy`: text copied from a
+  terminal by Command-C, a drag or a double-click.
+- `mouse`: presses, releases and double-clicks with the position in the window
+  and what is under it (`target`: the named item and its named ancestors, the
+  `area` such as `stage`, `strip`, `side-terminal`, `categories` or `dialog`,
+  and the agent's session id where there is one). `wheel`: one record per scroll
+  gesture per interval with summed deltas and whether it scrolled lapis's
+  `history` or went to the `program`. `pointer`: the pointer's position and the
+  item under it, at most one record per `pointerSampleMs` while it moves; the
+  latest position wins and `folded` counts the moves it stands for. `0` records
+  no movement.
+- `agent-focus`, `category`, `tiles`, `history`, `dialog`, `command`, `shortcut`
+  (Command-` and the global Command-Option-L), `window` and `app`: the selected
+  agent, category and tiles with how each changed (`via`: `click`, `key`,
+  `shortcut`, `tab-away`, `notification`, `attention-key`, `terminal-key`,
+  `wheel` or `program`), the history position, dialogs and menus opening and
+  closing, the command run from the palette, window focus and app activation.
+
+Passwords stay out. While macOS secure input is on, or the line the cursor is on
+in the terminal that has the keyboard names a password, passphrase, passcode,
+PIN or OTP (also one-time and verification codes, any case, as whole words) or
+ends in `secret:`, `token:` or `key:`, typed characters, IME text and pastes are
+recorded as `redacted` with only their class or length; keys such as Return
+and Backspace keep their names. The rule reads the screen, so a prompt that
+mentions a password redacts your typing there too. While the plan sign-in or
+usage (accounts) dialog is open nothing at all is recorded; closing it leaves
+one `dialog` record with the unrecorded milliseconds.
+
+Each file rotates before it would pass `maxFileMiB` (1 to 1024): the current file
+becomes `interaction.jsonl.1`, older ones move up, and only `maxFiles` files (1
+to 64, the current one included) are kept, so the log never holds more than
+`maxFileMiB` × `maxFiles`. Records are written in the background; if the disk
+cannot keep up, records are dropped and a `dropped` record counts them, and
+typing never waits. The log holds what you typed and pasted, so do not share it.
+
 ## The rest
 
 - `editor` is the app that opens an agent's folder (else the first of Cursor, VS

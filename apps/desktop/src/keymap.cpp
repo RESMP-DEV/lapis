@@ -598,14 +598,15 @@ void KeyMap::apply_defaults() {
                      {QStringLiteral("Ctrl+Shift+~"), QStringLiteral("Ctrl+~")});
 #endif
 #ifdef Q_OS_MACOS
-    // Command-Shift-J/K walk the rail from the home row, down and up as in vi,
-    // beside Command-Shift-[ and ] for the agents across.
+    // Command-[ and ] walk the category rail up and down, beside
+    // Command-Shift-[ and ] for the agents across; Command-Shift-J/K do the
+    // same from the home row, as in vi.
     bindings_.insert(QStringLiteral("nextCategory"),
-                     {QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down"),
-                      QStringLiteral("Meta+Shift+J")});
+                     {QStringLiteral("Meta+]"), QStringLiteral("Meta+Alt+Right"),
+                      QStringLiteral("Meta+Shift+Down"), QStringLiteral("Meta+Shift+J")});
     bindings_.insert(QStringLiteral("previousCategory"),
-                     {QStringLiteral("Meta+Alt+Left"), QStringLiteral("Meta+Shift+Up"),
-                      QStringLiteral("Meta+Shift+K")});
+                     {QStringLiteral("Meta+["), QStringLiteral("Meta+Alt+Left"),
+                      QStringLiteral("Meta+Shift+Up"), QStringLiteral("Meta+Shift+K")});
     bindings_.insert(QStringLiteral("nextWindow"), {QStringLiteral("Meta+Shift+]")});
     bindings_.insert(QStringLiteral("previousWindow"), {QStringLiteral("Meta+Shift+[")});
     bindings_.insert(QStringLiteral("openCommands"), {QStringLiteral("Meta+Shift+P")});
@@ -729,6 +730,7 @@ bool KeyMap::load() {
     accounts_ = parse_accounts(root.value(QStringLiteral("accounts")));
     limit_resets_ = parse_limit_resets(root.value(QStringLiteral("limitResets")));
     next_prompt_ = parse_next_prompt(root.value(QStringLiteral("nextPrompt")));
+    interaction_log_ = parse_interaction_log(root.value(QStringLiteral("interactionLog")));
 
     known_contents_ = contents;
     loaded_ = true;

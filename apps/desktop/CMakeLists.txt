@@ -35,6 +35,8 @@ add_library(lapis_desktop_view STATIC
     src/harness_models.cpp src/harness_models.hpp
     src/attention_view.cpp
     src/keymap.cpp src/keymap.hpp
+    src/interaction_log.cpp src/interaction_log.hpp
+    src/interaction_recorder.cpp src/interaction_recorder.hpp
     src/live_connection.cpp src/live_connection.hpp
     src/platform/updater_process.cpp src/platform/updater_process.hpp
     src/platform/reset_journal.cpp src/platform/reset_journal.hpp
@@ -220,6 +222,14 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_live_connection_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME live-connection COMMAND lapis_live_connection_tests)
     set_tests_properties(live-connection PROPERTIES TIMEOUT 30)
+    add_executable(lapis_interaction_log_tests tests/interaction_log_test.cpp)
+    target_link_libraries(lapis_interaction_log_tests PRIVATE lapis_project_options lapis_desktop_view
+        Qt6::QuickControls2)
+    target_compile_definitions(lapis_interaction_log_tests PRIVATE
+        LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
+    add_test(NAME interaction-log COMMAND lapis_interaction_log_tests)
+    set_tests_properties(interaction-log PROPERTIES TIMEOUT 60
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Basic")
     add_executable(lapis_keymap_tests tests/keymap_test.cpp)
     target_link_libraries(lapis_keymap_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME keymap COMMAND lapis_keymap_tests)
