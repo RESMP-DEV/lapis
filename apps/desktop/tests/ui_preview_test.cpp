@@ -1105,11 +1105,27 @@ void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     CHECK(!terminal->holdResize() && !other->holdResize());
 
     // A strip agent that is not tiled takes the selected tile.
+    const QPointer<QQuickItem> changed_tile{item(QStringLiteral("tile_") + ids[0])};
+    const QPointer<QQuickItem> kept_tile{item(QStringLiteral("tile_") + ids[1])};
+    const QPointer<lapis::desktop::TerminalSurface> changed_surface{
+        qobject_cast<lapis::desktop::TerminalSurface*>(
+            item(QStringLiteral("tileTerminal_") + ids[0]))};
+    const QPointer<lapis::desktop::TerminalSurface> kept_surface{
+        qobject_cast<lapis::desktop::TerminalSurface*>(
+            item(QStringLiteral("tileTerminal_") + ids[1]))};
+    CHECK(changed_tile && kept_tile && changed_surface && kept_surface);
+    CHECK(changed_surface->document() == workspace.session(ids[0]));
+    CHECK(kept_surface->document() == workspace.session(ids[1]));
     click_visual(window, *item(QStringLiteral("agentTab_") + ids[2]));
     pump(40);
     auto tiled = workspace.stageTiles();
     CHECK(tiled.size() == 2 && workspace.focusedSession() == workspace.session(ids[2]));
     CHECK(tiled[0].toMap().value(QStringLiteral("sessionId")).toString() == ids[2]);
+    CHECK(changed_tile && kept_tile && changed_surface && kept_surface);
+    CHECK(changed_tile->objectName() == QStringLiteral("tile_") + ids[2]);
+    CHECK(kept_tile->objectName() == QStringLiteral("tile_") + ids[1]);
+    CHECK(changed_surface->document() == workspace.session(ids[2]));
+    CHECK(kept_surface->document() == workspace.session(ids[1]));
 
     // The selected tile can fill the stage and come back.
     key("zoomTile");
