@@ -34,7 +34,8 @@ None shows while an agent waits on a request such as a permission prompt.
 
 An agent on another machine reports its finished turns through its own
 terminal: lapis starts it with hooks (Claude Code) or a notify program (Codex)
-that run a small relay with that machine's `python3`. Nothing is installed or
+that run a small relay with that machine's `python3` (Python 3.11+ to preserve
+Codex's configured notify program through `tomllib`). Nothing is installed or
 left there. Without `python3` there, or for an agent started before this, its
 turns are not reported and no guess is made; restart it to add the hooks.
 

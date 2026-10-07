@@ -4222,7 +4222,8 @@ route uses the channel lapis already owns: the agent's terminal.
   `codex exec` probe on the Linux test host wrote its `agent-turn-complete`
   JSON to the terminal over ssh). The launch adds `-c notify=[...]` right
   after the program; the relay forwards `type`, `thread-id` and `turn-id`, then
-  runs the user's own `notify` from `$CODEX_HOME/config.toml` when one is set.
+  runs the user's own `notify` from `$CODEX_HOME/config.toml` when one is set;
+  preserving that setting uses `tomllib`, so it requires Python 3.11 there.
   `NotifyTurns` reports only finished turns. Submitted input (Return, or a
   paste with Return) returns the activity to unknown. It does not resynchronize
   after a stream it already reported; a fresh observation state uses the next
