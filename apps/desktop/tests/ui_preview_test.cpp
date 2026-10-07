@@ -1467,8 +1467,8 @@ void wait_tab_visible(QQuickItem& tab, QQuickItem& view) {
     };
     QElapsedTimer deadline;
     deadline.start();
+    QMetaObject::invokeMethod(&view, "revealFocused");
     while (!visible() && deadline.elapsed() < 5000) {
-        QMetaObject::invokeMethod(&view, "revealFocused");
         pump(5);
     }
     CHECK(visible());
