@@ -310,10 +310,13 @@ QString TileLayout::neighbor(const QString& id, Edge direction) const {
 
 QStringList TileLayout::readingOrder() const {
     auto all = tiles(QRectF(0, 0, 1, 1));
+    // Exact finite coordinates give the comparator a strict weak ordering.
+    // Approximate equality is transitive only by accident and can make a sort
+    // order depend on the tree's incidental tile order.
     std::stable_sort(all.begin(), all.end(), [](const Tile& first, const Tile& second) {
-        if (std::abs(first.rect.top() - second.rect.top()) > kEpsilon)
+        if (first.rect.top() != second.rect.top())
             return first.rect.top() < second.rect.top();
-        return first.rect.left() < second.rect.left() - kEpsilon;
+        return first.rect.left() < second.rect.left();
     });
     QStringList result;
     result.reserve(static_cast<qsizetype>(all.size()));

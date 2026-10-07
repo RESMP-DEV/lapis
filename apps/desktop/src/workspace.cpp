@@ -639,7 +639,7 @@ void Workspace::nextSession(int delta) {
         return;
     walk.slot = step.slot;
     walk.shown = place->tiles.toJson();
-    walk.selected = focusedSession() != nullptr ? focusedSession()->sessionId() : QString();
+    walk.selected = step.selected;
     if (retiled)
         emit tilesChanged();
     emit focusChanged();

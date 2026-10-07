@@ -179,6 +179,29 @@ void directions_follow_the_stage() {
             "only tiles overlapping the span count, the most in line first");
     require(offset.readingOrder() == QStringList({"a", "b", "c", "d"}),
             "misaligned rows still read by top edge");
+
+    // Three bottom tiles have tops 1.8, 0.9 and 0 microseconds apart while
+    // their left edges advance. Epsilon-equivalent tops make this comparator
+    // cyclic; exact coordinates keep reading order deterministic.
+    const auto leaf = [](const char* id) {
+        return QJsonObject{{QStringLiteral("agent"), QString::fromLatin1(id)}};
+    };
+    const auto row = [&leaf](const char* top, const char* bottom, qreal ratio) {
+        return QJsonObject{{QStringLiteral("stacked"), true},
+                           {QStringLiteral("ratio"), ratio},
+                           {QStringLiteral("children"), QJsonArray{leaf(top), leaf(bottom)}}};
+    };
+    const QJsonArray right{row("e", "b", 0.5000011), row("f", "c", 0.5000002)};
+    const QJsonObject nested{
+        {QStringLiteral("stacked"), false},
+        {QStringLiteral("ratio"), 1.0 / 3.0},
+        {QStringLiteral("children"),
+         QJsonArray{row("d", "a", 0.500002), QJsonObject{{QStringLiteral("stacked"), false},
+                                                         {QStringLiteral("ratio"), 0.5},
+                                                         {QStringLiteral("children"), right}}}}};
+    const auto exact = TileLayout::fromJson(nested, {"a", "b", "c", "d", "e", "f"});
+    require(exact.readingOrder() == QStringList({"d", "e", "f", "c", "b", "a"}),
+            "nearly coincident rows still have a strict order");
 }
 
 void next_and_previous_walk_the_tiles_first() {
