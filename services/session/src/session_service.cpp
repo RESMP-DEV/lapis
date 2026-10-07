@@ -515,6 +515,7 @@ class SessionService final : public QObject {
         pty_.start(terminal);
     }
     void receive_output(const QByteArray& output) {
+        timing_.pty_read_ns = monotonic_ns();
         QByteArray bytes = output;
         if (terminal_hooks_) {
             std::vector<TerminalHookEvent> hooks;
@@ -524,7 +525,6 @@ class SessionService final : public QObject {
             if (bytes.isEmpty())
                 return;
         }
-        timing_.pty_read_ns = monotonic_ns();
         pending_output_ += bytes;
         observe_output_pressure(bytes);
         if (output_pressure_) {
@@ -1475,7 +1475,9 @@ class SessionService final : public QObject {
         const auto decision = wire::decode_attention_decision(payload);
         if (claude_observer_ || notify_turns_) {
             allow_decision_retry(decision);
-            decision_error_ = QStringLiteral("Answer Claude requests in the terminal");
+            decision_error_ = notify_turns_ && !claude_observer_
+                                  ? QStringLiteral("Answer Codex requests in the terminal")
+                                  : QStringLiteral("Answer Claude requests in the terminal");
             attention_dirty_ = true;
             schedule_attention();
             return;

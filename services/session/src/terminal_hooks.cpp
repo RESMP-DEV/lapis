@@ -3,6 +3,7 @@
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <algorithm>
+#include <limits>
 
 namespace lapis::session {
 namespace {
@@ -26,6 +27,35 @@ QByteArray TerminalHookChannel::filter(QByteArrayView output,
                                        std::vector<TerminalHookEvent>& events) {
     QByteArray joined;
     QByteArrayView data = output;
+    qsizetype discard_from = 0;
+    if (discarding_) {
+        // An already oversized candidate cannot be shown or interpreted. Drop
+        // it through its terminator, then filter the remainder normally.
+        for (;;) {
+            if (discard_from == 0 && !data.isEmpty() && data.front() == '\\') {
+                discard_from = 1;
+                discarding_ = false;
+                break;
+            }
+            const auto bell = data.indexOf('\x07', discard_from);
+            const auto escape = data.indexOf('\x1b', discard_from);
+            if (bell >= 0 && (escape < 0 || bell < escape)) {
+                discard_from = bell + 1;
+                discarding_ = false;
+                break;
+            }
+            if (escape < 0)
+                return {};
+            if (escape + 1 == data.size())
+                return {};
+            if (data.at(escape + 1) == '\\') {
+                discard_from = escape + 2;
+                discarding_ = false;
+                break;
+            }
+            discard_from = escape + 1;
+        }
+    }
     if (!carry_.isEmpty()) {
         joined = carry_ + output.toByteArray();
         data = joined;
@@ -33,7 +63,7 @@ QByteArray TerminalHookChannel::filter(QByteArrayView output,
     }
     QByteArray kept;
     kept.reserve(data.size());
-    qsizetype from = 0;
+    qsizetype from = discard_from;
     for (;;) {
         const auto start = data.indexOf(marker, from);
         if (start < 0) {
@@ -63,7 +93,8 @@ QByteArray TerminalHookChannel::filter(QByteArrayView output,
         }
         if (end < 0) {
             if (data.size() - start > max_sequence) {
-                kept.append(data.sliced(start));
+                kept.chop(data.size() - start);
+                discarding_ = true;
                 return kept;
             }
             carry_ = data.sliced(start).toByteArray();
@@ -115,17 +146,25 @@ bool NotifyTurns::completed(const QJsonObject& source, attention::Tick now) {
         if (state_.begin_observation({1, sequence_}, now) != attention::Outcome::applied)
             return false;
     }
-    if (state_.activity() == attention::Activity::turn_completed)
+    if (!state_.ready() || state_.activity() == attention::Activity::turn_completed ||
+        sequence_ == std::numeric_limits<std::uint64_t>::max())
         return false;
-    return state_.activity({1, ++sequence_}, attention::Activity::turn_completed) ==
-           attention::Outcome::applied;
+    const auto result = state_.activity({1, sequence_ + 1}, attention::Activity::turn_completed);
+    if (result != attention::Outcome::applied)
+        return false;
+    sequence_ = sequence_ + 1;
+    return true;
 }
 
 bool NotifyTurns::submitted() {
-    if (!state_.ready() || state_.activity() == attention::Activity::unknown)
+    if (!state_.ready() || state_.activity() != attention::Activity::turn_completed ||
+        sequence_ == std::numeric_limits<std::uint64_t>::max())
         return false;
-    return state_.activity({1, ++sequence_}, attention::Activity::unknown) ==
-           attention::Outcome::applied;
+    const auto result = state_.activity({1, sequence_ + 1}, attention::Activity::unknown);
+    if (result != attention::Outcome::applied)
+        return false;
+    sequence_ = sequence_ + 1;
+    return true;
 }
 
 QString NotifyTurns::diagnostic() {

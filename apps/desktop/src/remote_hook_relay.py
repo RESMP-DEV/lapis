@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import stat
 import sys
 
 K = {
@@ -20,9 +21,9 @@ K = {
 
 def work(key, value):
     if not isinstance(value, list) or len(value) > 64:
-        return 0
+        return []
     if key == "session_crons":
-        return [{} if isinstance(t, dict) else 0 for t in value]
+        return [t if isinstance(t, dict) else {} for t in value]
     out = []
     for t in value:
         s = t.get("status") if isinstance(t, dict) else None
@@ -30,10 +31,14 @@ def work(key, value):
     return out
 
 
+def valid_nonce(value):
+    return len(value) == 32 and all(c in "0123456789abcdef" for c in value)
+
+
 def relay(cli, text):
     n = os.environ.get("LAPIS_HOOK_NONCE", "")
     source = json.loads(text)
-    if len(n) != 32 or not isinstance(source, dict):
+    if not valid_nonce(n) or not isinstance(source, dict):
         return
     event = {
         k: v
@@ -46,11 +51,18 @@ def relay(cli, text):
     body = base64.b64encode(json.dumps(event, separators=(",", ":")).encode())
     frame = b"\x1b]7717;lapis-event;" + n.encode() + b";" + body + b"\x07"
     path = os.environ.get("LAPIS_HOOK_TTY", "")
-    if not path.startswith("/dev/"):
+    if not path.startswith("/dev/") or os.path.realpath(path) != path:
         return
-    tty = os.open(path, os.O_WRONLY | os.O_NOCTTY)
+    tty = os.open(path, os.O_WRONLY | os.O_NOCTTY | os.O_NOFOLLOW)
     try:
-        os.write(tty, frame)
+        if not stat.S_ISCHR(os.fstat(tty).st_mode):
+            raise OSError("hook output is not a character device")
+        view = memoryview(frame)
+        while view:
+            count = os.write(tty, view)
+            if count <= 0:
+                raise OSError("short write")
+            view = view[count:]
     finally:
         os.close(tty)
 

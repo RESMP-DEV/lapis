@@ -28,6 +28,8 @@ struct TerminalHookEvent {
     QJsonObject source;
 };
 
+class NotifyTurnsTestAccess;
+
 class TerminalHookChannel {
   public:
     static constexpr qsizetype max_sequence = qsizetype{24} * 1024;
@@ -41,6 +43,7 @@ class TerminalHookChannel {
   private:
     void accept(QByteArrayView body, std::vector<TerminalHookEvent>& events);
     QByteArray carry_;
+    bool discarding_{};
     QByteArray nonce_;
     QString cli_;
 };
@@ -59,6 +62,8 @@ class NotifyTurns {
     [[nodiscard]] static QString diagnostic();
 
   private:
+    friend class NotifyTurnsTestAccess;
+
     attention::State& state_;
     std::uint64_t sequence_{};
 };
