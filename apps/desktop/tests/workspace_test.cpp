@@ -4080,6 +4080,24 @@ void notificationsReachYouWhenAway() {
                 notes.back().value(QStringLiteral("event")).toString() ==
                     QStringLiteral("still waiting"),
             "but a glance at an open request is not an answer: it still reminds");
+
+    // An immediate notification is not an answer either. Displaying an open
+    // request while it is visible still queues its reminder: once nobody is
+    // looking, an unresolved approval must come back.
+    focused = true;
+    background = true;
+    emit workspace.agentNeedsYou(&agent);
+    require(posted.size() == 7 &&
+                notes.back().value(QStringLiteral("event")).toString() ==
+                    QStringLiteral("needs you") &&
+                decision() == QStringLiteral("posted"),
+            "an open request shown in front posts immediately");
+    background = false;
+    focused = false;
+    require(waitFor([&posted] { return posted.size() == 8; }, 1000) &&
+                notes.back().value(QStringLiteral("event")).toString() ==
+                    QStringLiteral("still waiting"),
+            "and its immediate view does not answer the wait");
     notifier.setSeen(nullptr);
     notifier.setLog({});
 }

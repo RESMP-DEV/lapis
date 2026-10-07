@@ -216,10 +216,11 @@ void Notifier::notify(SessionPreview* item, bool needsYou) {
                     skipped != nullptr ? skipped
                     : background       ? "posted"
                                        : "posted: you are away");
-    // A turn ending on what was already seen, or in front of the person
-    // watching it, leaves nothing to come back to.
-    const bool seen =
-        (seen_ != nullptr && !needsYou && seen_->unchanged(item)) || (looking_ && looking_(item));
+    // A finished turn ending on what was already seen, or in front of the
+    // person watching it, leaves nothing to come back to. Seeing an open
+    // request is not answering it.
+    const bool seen = (seen_ != nullptr && !needsYou && seen_->unchanged(item)) ||
+                      (!needsYou && looking_ && looking_(item));
     if (config_.notify() && !seen)
         wait(item, needsYou);
     if (skipped != nullptr)
