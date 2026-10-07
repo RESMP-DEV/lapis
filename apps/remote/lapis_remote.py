@@ -1935,21 +1935,24 @@ def bounded_json(path, limit):
     """The object in a regular file (not a link) within `limit` bytes; None
     when the file is absent, and a GatewayError when it is unreadable."""
     name = Path(path).name
+    # Opened without following a link and checked on the open descriptor, so
+    # the file cannot be swapped between the check and the read.
     try:
-        info = os.lstat(path)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
         return None
     except OSError as error:
-        raise GatewayError(f"{name} is unreadable") from error
-    require(
-        stat.S_ISREG(info.st_mode) and info.st_size <= limit,
-        f"{name} is unreadable or too large",
-    )
-    try:
-        with open(path, "rb") as handle:
+        raise GatewayError(f"{name} is unreadable or too large") from error
+    with os.fdopen(fd, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        require(
+            stat.S_ISREG(info.st_mode) and info.st_size <= limit,
+            f"{name} is unreadable or too large",
+        )
+        try:
             data = json.loads(handle.read(limit + 1))
-    except (OSError, ValueError) as error:
-        raise GatewayError(f"{name} is unreadable") from error
+        except (OSError, ValueError) as error:
+            raise GatewayError(f"{name} is unreadable") from error
     require(isinstance(data, dict), f"{name} is not an object")
     return data
 

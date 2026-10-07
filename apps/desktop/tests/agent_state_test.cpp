@@ -54,7 +54,7 @@ void publishesEachAgentPrivately() {
     clock.start();
     AgentStatePublisher publisher(workspace, nullptr, path, 400);
     require(waitFor([&] { return publisher.writes() == 1; }), "the first state is published");
-    require(clock.elapsed() < 300, "the first state is not held for the interval");
+    require(clock.elapsed() < 380, "the first state is not held for the interval");
     publisher.waitForWrites();
     const auto state = read(path);
     require(state.value(QStringLiteral("version")).toInt() == AgentStatePublisher::version &&

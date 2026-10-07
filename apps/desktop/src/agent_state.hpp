@@ -42,7 +42,8 @@ class AgentStatePublisher final : public QObject {
     AgentStatePublisher& operator=(const AgentStatePublisher&) = delete;
 
     static constexpr int version = 1;
-    // The document as it would be written now.
+    // The state as it would be written now, without the publishedAtMs that
+    // only a changed state gets when it is written.
     [[nodiscard]] QByteArray document() const;
     // Writes are asynchronous; tests wait for them here.
     void waitForWrites();

@@ -10,6 +10,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QSet>
 #include <algorithm>
 #include <utility>
 
@@ -18,14 +19,15 @@ namespace {
 constexpr qsizetype kReasonLimit = 256;
 constexpr auto kOwnerOnly = QFile::ReadOwner | QFile::WriteOwner;
 
-void write_private(const QString& path, const QByteArray& bytes) {
+bool write_private(const QString& path, const QByteArray& bytes) {
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly) || !file.setPermissions(kOwnerOnly) ||
         file.write(bytes) != bytes.size() || !file.commit()) {
         qWarning().noquote() << "Agent state not published:" << file.errorString();
-        return;
+        return false;
     }
     QFile::setPermissions(path, kOwnerOnly);
+    return true;
 }
 } // namespace
 
@@ -57,10 +59,12 @@ AgentStatePublisher::AgentStatePublisher(Workspace& workspace, NextPrompt* next,
 AgentStatePublisher::~AgentStatePublisher() { writer_.waitForDone(); }
 
 void AgentStatePublisher::watchSessions() {
+    QSet<QString> live;
     for (const auto& value : workspace_.sessions()) {
         auto* item = value.value<SessionPreview*>();
         if (item == nullptr)
             continue;
+        live.insert(item->sessionId());
         connect(item, &SessionPreview::statusChanged, this, &AgentStatePublisher::changed,
                 Qt::UniqueConnection);
         connect(item, &SessionPreview::attentionChanged, this, &AgentStatePublisher::changed,
@@ -68,6 +72,8 @@ void AgentStatePublisher::watchSessions() {
         connect(item, &SessionPreview::unseenChanged, this, &AgentStatePublisher::changed,
                 Qt::UniqueConnection);
     }
+    // Agents that were removed keep no turn time.
+    turn_at_ms_.removeIf([&live](auto entry) { return !live.contains(entry.key()); });
 }
 
 void AgentStatePublisher::changed() {
@@ -117,8 +123,18 @@ void AgentStatePublisher::publish() {
     // rewritten just because the clock moved.
     object.insert(QStringLiteral("publishedAtMs"), QDateTime::currentMSecsSinceEpoch());
     ++writes_;
-    writer_.start([path = path_, out = QJsonDocument(object).toJson(QJsonDocument::Compact)] {
-        write_private(path, out);
+    writer_.start([this, path = path_,
+                   out = QJsonDocument(object).toJson(QJsonDocument::Compact)] {
+        if (write_private(path, out))
+            return;
+        // Not on disk: forget it so the same state is written again.
+        QMetaObject::invokeMethod(
+            this,
+            [this] {
+                last_.clear();
+                changed();
+            },
+            Qt::QueuedConnection);
     });
 }
 
