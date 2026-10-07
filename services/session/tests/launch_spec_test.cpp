@@ -6,6 +6,8 @@
 #include <QTemporaryDir>
 #include <iostream>
 #include <stdexcept>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <utility>
 
 namespace {
@@ -141,6 +143,28 @@ int main(int argc, char** argv) {
         const auto link = temporary.filePath(QStringLiteral("linked.sock"));
         require(QFile::link(endpoint, link));
         rejects([&] { static_cast<void>(posix::prepare_endpoint(link)); });
+        // A whole terminal screen must fit in one write: local sockets
+        // otherwise split a large snapshot across many round trips through
+        // both event loops, which dominated input-to-frame latency.
+        {
+            int pair[2] = {AF_UNIX, SOCK_STREAM};
+            require(::socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
+            int send_before{};
+            socklen_t length = sizeof(send_before);
+            require(::getsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &send_before, &length) == 0);
+            posix::widen_socket_buffers(pair[0]);
+            int send_after{};
+            length = sizeof(send_after);
+            require(::getsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &send_after, &length) == 0);
+            // A local socket defaults to 8 KiB here, so an unchanged buffer
+            // after this call means the repair is missing.
+            require(send_before < 1024 * 1024);
+            require(send_after >= 1024 * 1024);
+            // An invalid descriptor is ignored rather than crashing a caller.
+            posix::widen_socket_buffers(-1);
+            ::close(pair[0]);
+            ::close(pair[1]);
+        }
         std::cout << "Launch identities, bounds and private endpoints passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

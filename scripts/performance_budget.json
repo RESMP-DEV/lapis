@@ -1,0 +1,28 @@
+{
+  "name": "m4-max-120hz-input-to-frame",
+  "reference": "Apple M4 Max, 120 Hz reference display",
+  "max_ms": {
+    "p50_ms": 35.0,
+    "p95_ms": 55.0,
+    "p99_ms": 60.0
+  },
+  "budget_ms": {
+    "p50": 20.0,
+    "p95": 30.0,
+    "p99": 35.0
+  },
+  "observed_basis": "Four post-transport-repair runs on the M4 Max reference machine, 30 samples each: input-to-frame p50 15.81/15.83/15.81/15.89 ms, p95 20.88-23.96 ms, p99 23.96-25.27 ms. The budget keeps roughly 25-40 percent headroom over those runs.",
+  "measured_in": "build/desktop/apps/desktop/lapis_terminal_latency_probe --samples 30 --output <receipt.json>; checked with python3 scripts/lapis.py performance-check <receipt.json> or just latency-budget",
+  "history": [
+    {
+      "date": "2026-10-07",
+      "change": "Tightened after the transport repair: whole-screen socket buffers cut the snapshot stage from about 24.7 ms to about 1.7 ms and input-to-frame p50 from 32.2 ms to 15.8 ms.",
+      "previous_budget_ms": {
+        "p50": 35.0,
+        "p95": 55.0,
+        "p99": 60.0
+      },
+      "basis": "Four matched runs above."
+    }
+  ]
+}

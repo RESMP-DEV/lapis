@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-07T15:56:25.228975+00:00",
+  "scope": "Mechanical modularity audit against the component ownership table, plus the Q13 shared wire-fixture extraction",
+  "non_claims": [
+    "This audit does not implement Q03 typed adapter status, Q04 shared harness types, Q05 LiveConnection seams, or Q02 registry transaction ownership",
+    "No claim about future adapters beyond the two present",
+    "No claim about Linux portability; macOS is the active target"
+  ],
+  "boundaries": [
+    {
+      "boundary": "Service independence from desktop",
+      "result": "PASS",
+      "evidence": "no desktop file includes or links PTY/engine internals; only wire timing field named pty_read_ns"
+    },
+    {
+      "boundary": "Adapter independence",
+      "result": "PASS",
+      "evidence": "Codex and Claude adapter sources do not include each other; only lapis_session_service links both"
+    },
+    {
+      "boundary": "Renderer consumes immutable snapshots",
+      "result": "PASS",
+      "evidence": "render thread reads render_state_ under render_mutex_; updatePaintNode never reads document_"
+    },
+    {
+      "boundary": "Terminal engine behind lapis interface",
+      "result": "PASS",
+      "evidence": "no Ghostty include in apps/desktop"
+    },
+    {
+      "boundary": "Service validates desktop messages",
+      "result": "PASS",
+      "evidence": "decode_control checks attachment identity and readiness; per-kind bounds checked before terminal encoding"
+    },
+    {
+      "boundary": "Explicit build dependencies (Q11)",
+      "result": "PASS",
+      "evidence": "service does not link desktop; desktop declares session library deps directly"
+    }
+  ],
+  "open_rows": [
+    {
+      "row": "Q03 typed adapter observation",
+      "state": "decision recorded; implementation open",
+      "evidence": "attention_view.cpp still compares three exact diagnostic strings"
+    },
+    {
+      "row": "Q04 shared harness types",
+      "state": "open, gated behind Q03",
+      "evidence": "harness identity strings counted across workspace.cpp (50), harness_models.cpp (16), agent_checkpoint.cpp (4)"
+    },
+    {
+      "row": "Q05 LiveConnection seams",
+      "state": "open, needs recorded contract review",
+      "evidence": "657 lines across .cpp/.hpp"
+    },
+    {
+      "row": "Q02 registry transaction ownership",
+      "state": "decision open; reopen correctness fix landed",
+      "evidence": "reopenFailurePreservesTheRetryableManagedPlan regression exists"
+    }
+  ],
+  "extraction": {
+    "row": "Q13 shared wire peer",
+    "before": [
+      "apps/desktop/tests/terminal_input_test.cpp",
+      "apps/desktop/tests/live_connection_test.cpp"
+    ],
+    "after": [
+      "apps/desktop/tests/wire_fixture.hpp"
+    ],
+    "assertions": "each suite retains its own diagnostics and cases",
+    "hardening": "shared fixture adopts canonical directory validation and source-location-bearing waits"
+  },
+  "checks": [
+    {
+      "command": "ctest --preset desktop -R ^(live-connection|terminal-input)$ --output-on-failure",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 scripts/lapis.py build",
+      "exit_code": 0,
+      "note": "29/29 CTest, format, clang-tidy, cppcheck"
+    },
+    {
+      "command": "python3 -m unittest scripts.tests.test_lapis_remote.LiveServiceTests.test_the_phone_scrolls_back_through_history (10 runs)",
+      "exit_code": 0,
+      "note": "9 passed, 1 intermittent 10 s stream wait timeout; standalone rerun and full quality passed. Larger socket buffers cannot reduce stream throughput, and the Python client only raises the default."
+    },
+    {
+      "command": "python3 scripts/lapis.py quality (final rerun)",
+      "exit_code": 0,
+      "note": "intermittent live-service stream wait did not reproduce"
+    }
+  ],
+  "passed": true
+}

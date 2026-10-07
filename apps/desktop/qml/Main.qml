@@ -4187,6 +4187,11 @@ ApplicationWindow {
                 onCountChanged: Qt.callLater(revealFocused)
                 onWidthChanged: Qt.callLater(revealFocused)
                 onCurrentIndexChanged: Qt.callLater(revealFocused)
+                // Card geometry follows the strip height, so a font-size or
+                // density change re-lays the cards out without touching count,
+                // width, or selection. Without this the reveal keeps a stale
+                // scroll offset and the focused card can sit past the edge.
+                onHeightChanged: Qt.callLater(revealFocused)
                 NumberAnimation {
                     id: stripScroll
                     target: agentTabs
