@@ -124,8 +124,8 @@ void TerminalHookChannel::accept(QByteArrayView body, std::vector<TerminalHookEv
     }
     if (kind != QByteArrayView("event") || nonce_.isEmpty() || subject != nonce_)
         return;
-    const auto decoded = QByteArray::fromBase64Encoding(
-        value.toByteArray(), QByteArray::AbortOnBase64DecodingErrors);
+    const auto decoded = QByteArray::fromBase64Encoding(value.toByteArray(),
+                                                        QByteArray::AbortOnBase64DecodingErrors);
     if (!decoded)
         return;
     QJsonParseError error{};
@@ -141,15 +141,18 @@ bool NotifyTurns::completed(const QJsonObject& source, attention::Tick now) {
     if (!state_.ready()) {
         if (sequence_ != 0)
             return false; // lost synchronization stays visible
-        state_.connect(1, {true, false, false});
-        sequence_ = 1;
-        if (state_.begin_observation({1, sequence_}, now) != attention::Outcome::applied)
+        state_.connect(state_.epoch() + 1, {true, false, false});
+        // The adapter owns its position only once the service accepts it. A
+        // rejected initial observation leaves this at zero for the next event.
+        if (state_.begin_observation({state_.epoch(), 1}, now) != attention::Outcome::applied)
             return false;
+        sequence_ = 1;
     }
     if (!state_.ready() || state_.activity() == attention::Activity::turn_completed ||
         sequence_ == std::numeric_limits<std::uint64_t>::max())
         return false;
-    const auto result = state_.activity({1, sequence_ + 1}, attention::Activity::turn_completed);
+    const auto result =
+        state_.activity({state_.epoch(), sequence_ + 1}, attention::Activity::turn_completed);
     if (result != attention::Outcome::applied)
         return false;
     sequence_ = sequence_ + 1;
@@ -160,7 +163,8 @@ bool NotifyTurns::submitted() {
     if (!state_.ready() || state_.activity() != attention::Activity::turn_completed ||
         sequence_ == std::numeric_limits<std::uint64_t>::max())
         return false;
-    const auto result = state_.activity({1, sequence_ + 1}, attention::Activity::unknown);
+    const auto result =
+        state_.activity({state_.epoch(), sequence_ + 1}, attention::Activity::unknown);
     if (result != attention::Outcome::applied)
         return false;
     sequence_ = sequence_ + 1;

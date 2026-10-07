@@ -4224,8 +4224,9 @@ route uses the channel lapis already owns: the agent's terminal.
   after the program; the relay forwards `type`, `thread-id` and `turn-id`, then
   runs the user's own `notify` from `$CODEX_HOME/config.toml` when one is set.
   `NotifyTurns` reports only finished turns. Submitted input (Return, or a
-  paste with Return) returns the activity to unknown. A profile-level or
-  project-level `notify` is not chained.
+  paste with Return) returns the activity to unknown. It does not resynchronize
+  after a stream it already reported; a fresh observation state uses the next
+  source epoch. A profile-level or project-level `notify` is not chained.
 - **Desktop.** A remote agent keeps `StatusSource::output`. `estimated()` uses
   the output estimate while no observer is synchronized or its activity is
   unknown. Otherwise the observer's state applies. Since only an observer

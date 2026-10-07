@@ -120,6 +120,18 @@ void notify_turns() {
     state.overflow();
     require(!turns.completed({{"type", "agent-turn-complete"}}, 4));
     require(NotifyTurnsTestAccess::sequence(turns) == 4);
+
+    // A finished turn, then a lost stream, keeps the loss visible: the adapter
+    // never re-synchronizes on its own, and its sequence stays where it was.
+    attention::State lost("session", "codex-notify");
+    NotifyTurns reported(lost);
+    require(reported.completed({{"type", "agent-turn-complete"}}, 5));
+    require(lost.ready() && lost.activity() == attention::Activity::turn_completed);
+    lost.disconnect();
+    require(!reported.completed({{"type", "agent-turn-complete"}}, 6));
+    require(NotifyTurnsTestAccess::sequence(reported) == 2);
+    require(!reported.submitted());
+    require(NotifyTurnsTestAccess::sequence(reported) == 2);
 }
 } // namespace
 
