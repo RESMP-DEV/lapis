@@ -595,6 +595,26 @@ void malformed_values_fall_back() {
     require(!keymap.diagnostic().isEmpty(), "falling back should be reported");
 }
 
+// harnessUpdates turns off updates for the CLIs set to false; true, absent
+// and malformed entries leave a CLI updating, and malformed ones are reported.
+void harness_updates_can_be_turned_off() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    const QString path = write_config(
+        QDir(directory.path()),
+        R"({"harnessUpdates": {"omp": false, "claude": true, "grok": "no", "": false}})");
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "harness updates load with the rest of the file");
+    require(keymap.harnessUpdatesOff() == QSet<QString>{QStringLiteral("omp")},
+            "only a CLI set to false is pinned");
+    require(keymap.diagnostic().contains(QStringLiteral("harnessUpdates for 'grok'")),
+            "a non-boolean entry is reported");
+    const QString defaults = write_config(QDir(directory.path()), R"({"theme": "oled"})");
+    keymap.setSourcePathForTesting(defaults);
+    require(keymap.load() && keymap.harnessUpdatesOff().isEmpty(), "every CLI updates by default");
+}
+
 // Per-harness launch arguments are literal lists; malformed entries are
 // reported and dropped without affecting the valid ones or the rest of the file.
 void harness_arguments_are_literal_lists() {
@@ -1101,6 +1121,7 @@ int main(int argc, char** argv) {
         unknown_names_are_rejected();
         malformed_values_fall_back();
         harness_arguments_are_literal_lists();
+        harness_updates_can_be_turned_off();
         advertised_names_are_accepted();
         terminal_font_persists_and_rolls_back();
         remote_settings_are_transactional();

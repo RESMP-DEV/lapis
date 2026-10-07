@@ -1963,7 +1963,9 @@ than a live one) is the step that would let Codex update too. Restored and
 reattached agents are not updated.
 
 Explicit supported-CLI creation shares this queue, and `--no-harness-updates`
-disables it. Headless restore/serve keeps its existing no-update policy. Each
+disables it. `harnessUpdates` in lapis.json (`{"omp": false}`) pins listed CLIs:
+they skip the launch update and the explicit update-and-reload refuses them;
+an updater already running still holds its queued agents. Headless restore/serve keeps its existing no-update policy. Each
 updater has an isolated process group and a retained guard; timeout, leader exit
 and desktop teardown stop installer descendants too. A queued agent starts only
 after the leader exits and the guard acknowledges cleanup. Restart cannot bypass

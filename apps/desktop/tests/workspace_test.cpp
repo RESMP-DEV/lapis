@@ -1373,6 +1373,55 @@ void failedUpdaterStartClearsTheQueue() {
             "failed start is logged without waiting for finished");
 }
 
+// harnessUpdates in lapis.json pins a CLI: its agents start without an
+// update and the explicit command says updates are off, while every other
+// CLI still updates first.
+void pinnedCliIsNotUpdated() {
+    const QByteArray script = "#!/bin/sh\n"
+                              "if [ \"$1\" = update ]; then\n"
+                              "  echo \"${0##*/}\" >> \"$HOME/updates\"\n"
+                              "  exit 0\n"
+                              "fi\n"
+                              "echo ready\n"
+                              "exec /bin/sleep 600\n";
+    UpdaterFixture fixture(script, QStringLiteral("grok"));
+    writeExecutable(fixture.root.filePath(QStringLiteral("bin/claude")), script);
+    Workspace workspace(WorkspaceMode::live, fixture.options);
+    workspace.setHarnessUpdatesOff({QStringLiteral("grok")});
+    fixture.create(workspace);
+    auto* pinned = workspace.focusedSession();
+    require(pinned->statusLabel() != QStringLiteral("Updating Grok…"),
+            "a pinned CLI's agent does not wait for an update");
+    require(waitFor([pinned] { return pinned->inputReady(); }, 10000), "the pinned agent starts");
+    require(!QFileInfo::exists(fixture.root.filePath(QStringLiteral("updates"))),
+            "the pinned CLI was not updated on start");
+    require(workspace.createAgent(fixture.root.filePath(QStringLiteral("project")),
+                                  QStringLiteral("unpinned"), QStringLiteral("claude")),
+            "create an agent of a CLI that still updates");
+    auto* updated = workspace.focusedSession();
+    require(waitFor([updated] { return updated->inputReady(); }, 10000),
+            "the unpinned agent starts after its update");
+    require(fixture.read(QStringLiteral("updates")) == "claude\n",
+            "only the unpinned CLI was updated");
+    workspace.clearError();
+    require(workspace.canUpdateAgent(pinned->sessionId()) &&
+                workspace.updateAndReloadAgent(pinned->sessionId()) == 0 &&
+                workspace.workspaceError().contains(QStringLiteral("Updates are off for Grok")),
+            "the explicit update says updates are off for the pinned CLI");
+    require(pinned->statusLabel() != QStringLiteral("Updating Grok…") &&
+                fixture.read(QStringLiteral("updates")) == "claude\n",
+            "and does not run it");
+    workspace.setHarnessUpdatesOff({QStringLiteral("grok"), QStringLiteral("claude")});
+    require(workspace.updateClaudeAndReload() == 0 &&
+                workspace.workspaceError().contains(QStringLiteral("Updates are off for Claude")) &&
+                fixture.read(QStringLiteral("updates")) == "claude\n",
+            "a config change pins Claude for the Claude update command too");
+    for (const auto& id : {pinned->sessionId(), updated->sessionId()})
+        require(workspace.closeSession(id), "close a pinned-update fixture agent");
+    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "pinned-update fixture agents close");
+}
+
 void explicitLaunchesUseUpdaterPolicy() {
     UpdaterFixture fixture("#!/bin/sh\n"
                            "if [ \"$1\" = update ]; then\n"
@@ -5533,10 +5582,11 @@ int main(int argc, char** argv) {
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("launch-policy") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("updates-off") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes")),
                 "Usage: lapis_workspace_tests [--case "
                 "remote-options|accounts|remote-account-reset|reload|updater|"
-                "startup-defaults|launch-policy|chimes]");
+                "updates-off|startup-defaults|launch-policy|chimes]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("accounts")) {
                 incompleteCodexHomeNeverStartsAnAgent();
@@ -5557,9 +5607,12 @@ int main(int argc, char** argv) {
                 updaterLifecycle();
                 updaterOutputIsDrainedWithABoundedTail();
                 failedUpdaterStartClearsTheQueue();
+                pinnedCliIsNotUpdated();
                 updateReloadsAgentsAfterTheirCli();
                 startupAndManualUpdatesShareOneInstaller();
                 skippedClaudeUpdateReportsTheCurrentOperation();
+            } else if (selected == QStringLiteral("updates-off")) {
+                pinnedCliIsNotUpdated();
             } else if (selected == QStringLiteral("chimes")) {
                 alertsChimeWhileAnAgentWaits();
                 chimesPlayChosenFiles();
@@ -5601,6 +5654,7 @@ int main(int argc, char** argv) {
         updaterLifecycle();
         updaterOutputIsDrainedWithABoundedTail();
         failedUpdaterStartClearsTheQueue();
+        pinnedCliIsNotUpdated();
         savedArgumentCapKeepsRegistryLoadable();
         managedResumeFollowsRecovery();
         printedCheckpointsResumeButNeverOverrideTheObserver();

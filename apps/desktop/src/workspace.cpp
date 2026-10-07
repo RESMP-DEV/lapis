@@ -2572,8 +2572,10 @@ bool Workspace::deferForUpdate(const QString& id) {
     const auto key = harness + QLatin1Char('@');
     const bool running = cli_updates_.contains(key);
     constexpr qint64 fresh_ms = qint64{30} * 60 * 1000;
+    // An update already running still holds new agents until its installer
+    // stops, even if lapis.json turned that CLI's updates off meanwhile.
     if (!running &&
-        (!update_harnesses_ ||
+        (!update_harnesses_ || harness_updates_off_.contains(harness) ||
          QDateTime::currentMSecsSinceEpoch() - harness_checked_ms_.value(harness, 0) < fresh_ms))
         return false;
     auto& update = cli_updates_[key];
@@ -2645,9 +2647,21 @@ int Workspace::updateAndReloadAgent(const QString& id) {
         fail(QStringLiteral("lapis has no update command for this agent's CLI."));
         return 0;
     }
+    if (refuseUpdatesOff(agents_.value(id).harness))
+        return 0;
     return updateAndReload({id});
 }
+bool Workspace::refuseUpdatesOff(const QString& harness) {
+    if (!harness_updates_off_.contains(harness))
+        return false;
+    const auto* cli = find_harness(harness);
+    fail(QStringLiteral("Updates are off for %1 in lapis.json (harnessUpdates).")
+             .arg(cli != nullptr ? cli->label : harness));
+    return true;
+}
 int Workspace::updateClaudeAndReload() {
+    if (refuseUpdatesOff(QStringLiteral("claude")))
+        return 0;
     QStringList ids;
     for (const auto& item : sessions_)
         if (agents_.value(item->sessionId()).harness == QLatin1String("claude"))

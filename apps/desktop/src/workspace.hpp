@@ -567,6 +567,10 @@ class Workspace final : public QObject {
     void setHarnessArguments(QHash<QString, QStringList> arguments) {
         harness_arguments_ = std::move(arguments);
     }
+    // CLIs lapis.json pins: never updated on start nor by the update commands.
+    void setHarnessUpdatesOff(QSet<QString> harnesses) {
+        harness_updates_off_ = std::move(harnesses);
+    }
   signals:
     void focusChanged();
     // An agent has a new request for you. Requests ping as finished turns do
@@ -586,6 +590,7 @@ class Workspace final : public QObject {
     [[nodiscard]] static QString defaultEndpoint();
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     QHash<QString, QStringList> harness_arguments_;
+    QSet<QString> harness_updates_off_;
     AgentDefaults agent_defaults_;
     QString ssh_config_{QDir::home().filePath(QStringLiteral(".ssh/config"))};
     const HarnessModels* harness_models_{};
@@ -614,6 +619,8 @@ class Workspace final : public QObject {
     };
     QHash<QString, CliUpdate> cli_updates_;
     int updateAndReload(const QStringList& ids);
+    // Reports and returns true when lapis.json turned off this CLI's updates.
+    bool refuseUpdatesOff(const QString& harness);
     void finishCliUpdate(const QString& key, QProcess* process, const QString& outcome,
                          bool succeeded);
     void drainUpdater(QProcess* process);
