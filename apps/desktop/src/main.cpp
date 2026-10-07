@@ -47,6 +47,7 @@
 #include <QThread>
 #include <QTimer>
 #include <algorithm>
+#include <cstdio>
 #include <exception>
 #include <optional>
 #include <set>
@@ -309,14 +310,24 @@ void log_to_file(QtMsgType type, const QMessageLogContext&, const QString& messa
     const QMutexLocker lock(&mutex);
     constexpr qint64 kLimit = qint64{2} * 1024 * 1024;
     const auto& path = app_log_path();
+    if (path.isEmpty())
+        return;
     if (QFileInfo(path).size() > kLimit) {
-        QFile::remove(path + QStringLiteral(".1"));
-        QFile::rename(path, path + QStringLiteral(".1"));
+        // Rotation keeps one predecessor. If the rename fails, leave the oversized
+        // current log untouched and retry on a later message rather than losing it.
+        const auto backup = path + QStringLiteral(".1");
+        QFile::remove(backup);
+        if (!QFile::rename(path, backup)) {
+            // Qt logging cannot be re-entered from this handler. stderr is safe and
+            // remains useful when tests or a terminal launched the app.
+            std::fprintf(stderr, "Could not rotate app log: %s\n", backup.toUtf8().constData());
+            return;
+        }
     }
     QFile file(path);
     if (!file.open(QIODevice::Append | QIODevice::WriteOnly, QFile::ReadOwner | QFile::WriteOwner))
         return;
-    static const char* const levels[] = {"debug", "warning", "critical", "fatal", "info"};
+    static const char* const levels[] = {"debug", "info", "warning", "critical", "fatal"};
     const auto level = static_cast<std::size_t>(type) < std::size(levels) ? levels[type] : "log";
     file.write(QDateTime::currentDateTime().toString(Qt::ISODateWithMs).toUtf8() + ' ' + level +
                ": " + message.toUtf8() + '\n');
