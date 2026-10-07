@@ -2287,9 +2287,11 @@ are per category and the strip stays the navigation.
 - **Rendering.** The selected tile's terminal is the existing stage surface,
   moved to that tile, so focus, IME and every earlier stage behavior are
   unchanged. Other tiles are interactive surfaces with input disabled: they
-  size their agents and draw live, and a click selects them. Tile and divider
-  delegates are keyed by agent and split path and only move when a divider
-  does, so a drag never rebuilds a terminal. `holdResize` keeps every agent's
+  size their agents and draw live, and a click selects them. Tile delegates
+  are kept by place in the tile list and divider delegates by split path; they
+  only move when a divider does, so a drag never rebuilds a terminal, and an
+  agent picked into a tile changes only that tile's document instead of
+  rebuilding every tile's terminal. `holdResize` keeps every agent's
   size during a divider drag and sends one resize when it ends; a resize per
   cell would make each agent redraw many times a second.
 - **Dragging.** One mouse area per card or tile name bar turns a press into a

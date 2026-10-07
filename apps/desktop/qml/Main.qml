@@ -3227,8 +3227,10 @@ ApplicationWindow {
                 clip: true
 
                 // Tiles: two or more agents side by side or stacked, as the
-                // category keeps them. Delegates are keyed by agent and only move
-                // when a divider does, so a drag never rebuilds a terminal.
+                // category keeps them. Delegates are kept by place in the tile
+                // list and only move when a divider does, so a drag never
+                // rebuilds a terminal, and an agent the next/previous keys bring
+                // into a tile only changes what that tile's terminal shows.
                 readonly property var tiles: workspace.stageTiles
                 readonly property bool tiled: tiles.length > 1
                 readonly property bool zoomed: tiled && window.tileZoomed
@@ -3273,15 +3275,16 @@ ApplicationWindow {
                 readonly property rect focusedFrame: tiled ? frameOf(tileOf(focusedId)) : whole
 
                 Repeater {
-                    model: stage.tiled ? stage.tileIds : []
+                    model: stage.tiled ? stage.tileIds.length : 0
                     delegate: Item {
                         id: tileFrame
-                        required property string modelData
-                        readonly property var tile: stage.tileOf(modelData)
+                        required property int index
+                        readonly property string agentId: index < stage.tileIds.length ? stage.tileIds[index] : ""
+                        readonly property var tile: stage.tileOf(agentId)
                         readonly property var session: tile ? tile.session : null
-                        readonly property bool selectedTile: modelData === stage.focusedId
+                        readonly property bool selectedTile: agentId === stage.focusedId
                         readonly property rect frame: stage.frameOf(tile)
-                        objectName: "tile_" + modelData
+                        objectName: "tile_" + agentId
                         x: frame.x
                         y: frame.y
                         width: frame.width
@@ -3300,7 +3303,7 @@ ApplicationWindow {
                         // stage or back to the strip, or take it off the stage.
                         Item {
                             id: tileHeader
-                            objectName: "tileHeader_" + tileFrame.modelData
+                            objectName: "tileHeader_" + tileFrame.agentId
                             x: 1
                             y: 1
                             width: parent.width - 2
@@ -3345,7 +3348,7 @@ ApplicationWindow {
                                     verticalAlignment: Text.AlignVCenter
                                 }
                                 Rectangle {
-                                    objectName: "untile_" + tileFrame.modelData
+                                    objectName: "untile_" + tileFrame.agentId
                                     Layout.preferredWidth: stage.headerHeight - 6
                                     Layout.preferredHeight: stage.headerHeight - 6
                                     Layout.alignment: Qt.AlignVCenter
@@ -3362,7 +3365,7 @@ ApplicationWindow {
                                     HoverHandler { id: untileHover }
                                     TapHandler {
                                         enabled: window.interactionArmed
-                                        onTapped: workspace.untileSession(tileFrame.modelData)
+                                        onTapped: workspace.untileSession(tileFrame.agentId)
                                     }
                                     ToolTip.visible: untileHover.hovered
                                     ToolTip.delay: 600
@@ -3370,14 +3373,14 @@ ApplicationWindow {
                                 }
                             }
                             DragOrClick {
-                                objectName: "tilePress_" + tileFrame.modelData
+                                objectName: "tilePress_" + tileFrame.agentId
                                 anchors.fill: parent
                                 anchors.rightMargin: stage.headerHeight
                                 enabled: window.interactionArmed
                                 cursorShape: dragging ? Qt.ClosedHandCursor : Qt.ArrowCursor
-                                onTapped: function(modifiers) { window.clickAgent(tileFrame.modelData, 0) }
+                                onTapped: function(modifiers) { window.clickAgent(tileFrame.agentId, 0) }
                                 onDoubleClicked: window.tileZoomed = !window.tileZoomed
-                                onDragStarted: function(scene) { window.beginAgentDrag([tileFrame.modelData], "tile", scene) }
+                                onDragStarted: function(scene) { window.beginAgentDrag([tileFrame.agentId], "tile", scene) }
                                 onDragMoved: function(scene) { window.moveDragGhost(scene) }
                                 onDragEnded: window.endDrag()
                             }
@@ -3385,7 +3388,7 @@ ApplicationWindow {
                         // The other tiles' terminals: sized and drawn live, and a
                         // click selects the tile. The selected tile is liveTerminal.
                         TerminalSurface {
-                            objectName: "tileTerminal_" + tileFrame.modelData
+                            objectName: "tileTerminal_" + tileFrame.agentId
                             x: 4
                             y: stage.headerHeight
                             width: parent.width - 8
@@ -3400,7 +3403,7 @@ ApplicationWindow {
                         }
                         TapHandler {
                             enabled: window.interactionArmed && !tileFrame.selectedTile
-                            onTapped: window.clickAgent(tileFrame.modelData, 0)
+                            onTapped: window.clickAgent(tileFrame.agentId, 0)
                         }
                     }
                 }
