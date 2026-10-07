@@ -51,11 +51,30 @@ final class UltraTabUITests: XCTestCase {
     func testDeal() throws {
         launch()
         waitForFront("kernels")
-        for block in ["block-text", "block-list", "block-table", "proposal", "since"] {
+        for block in ["block-text", "block-list", "block-table", "proposal"] {
             XCTAssertTrue(element(block).waitForExistence(timeout: 5), "kernels shows \(block)")
         }
-        XCTAssertEqual(element("count").label, "4 waiting")
+        // The card is the screen: no title bar, count or since line.
+        for gone in ["count", "since", "settings"] {
+            XCTAssertFalse(element(gone).exists, "\(gone) is not shown over a card")
+        }
         snap("1-card-text-list-table")
+
+        // The keyboard comes up for the annotation and goes away on request.
+        // (the hide button shows exactly while the field has focus).
+        element("annotation").tap()
+        XCTAssertTrue(element("hide-keyboard").waitForExistence(timeout: 5), "typing focuses the field")
+        element("hide-keyboard").tap()
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+                                               object: element("hide-keyboard"))
+        XCTAssertEqual(XCTWaiter().wait(for: [hidden], timeout: 5), .completed, "the keyboard hides")
+        // Touching the card puts it away too.
+        element("annotation").tap()
+        XCTAssertTrue(element("hide-keyboard").waitForExistence(timeout: 5))
+        element("headline").tap()
+        let away = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+                                             object: element("hide-keyboard"))
+        XCTAssertEqual(XCTWaiter().wait(for: [away], timeout: 5), .completed, "a touch on the card hides it")
 
         // Swipe right: the proposed reply goes to kernels (the check reads
         // it on the Mac side) and the next card comes forward.
@@ -64,7 +83,7 @@ final class UltraTabUITests: XCTestCase {
         for block in ["block-diagram", "block-text", "block-link"] {
             XCTAssertTrue(element(block).waitForExistence(timeout: 5), "docs shows \(block)")
         }
-        XCTAssertTrue(element("no-proposal").exists)
+        XCTAssertFalse(element("proposal").exists, "no proposed reply, no reply box")
         XCTAssertFalse(element("accept").isEnabled)
         let message = element("message")
         XCTAssertTrue(message.waitForExistence(timeout: 5))

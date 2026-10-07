@@ -18,8 +18,7 @@ a quiet column on the right names the agents at work, each with a pulsing dot.
 A plain card's headline is one sentence of what happened (the start of the
 agent's last reply) and its proposed reply is lapis's guess at your next prompt
 ([suggestions](suggestions.md); with suggestions off, plain cards have no
-guess). A composed card (below) adds a dim "since" line above the headline, its
-own headline and up to three blocks: a paragraph, a short list, a table, a
+guess). A composed card (below) has its own headline and up to three blocks: a paragraph, a short list, a table, a
 diagram or a link, and its own proposed reply.
 
 Every card takes the same four answers, shown as keys along the bottom that
@@ -62,12 +61,14 @@ agents whose state is unknown, are never cards; a pending request always is.
 ## Composed cards
 
 For each agent that waits on you, Ultra Tab also composes a card meant to put
-you back in that thread in seconds: when you last looked at it and how many
-turns happened since, a one-line summary, and at most three blocks the model
+you back in that thread in seconds: a one-line summary and at most three blocks
+the model
 chooses (a short paragraph, a list, a table when there are numbers to compare,
 a small diagram when structure is the point, or a link to a report the agent
 wrote that you have not opened). Its proposed next message is lapis's guess
-when there is one.
+when there is one. When you last looked and how long the agent has waited
+frame the card but are not shown: a thread you looked at minutes ago gets only
+what changed, and one you have likely forgotten opens with what it is about.
 
 A card is composed when the agent has a newer finished turn or a new guess than
 the card was composed for, after two seconds of quiet, at most two at a time,
@@ -107,7 +108,6 @@ atomically, only when a card changes, at most 512 KiB):
 {"v": 1, "cards": {"<agent id>": {
   "key": "<the guess key, or turn:<ms> for the finished turn>",
   "composed": "2026-10-07T06:01:45Z", "model": "claude-opus-5-5",
-  "since": "You last looked 3 h ago; 2 turns since",
   "tldr": "<one line>",
   "blocks": [{"type": "text", "text": "..."}, {"type": "list", "items": ["..."]},
              {"type": "table", "columns": ["..."], "rows": [["..."]]},
@@ -208,7 +208,6 @@ typed, not as taken with Tab.
 ```json
 {"v": 1, "cards": {"<session id>": {
   "key": "<turn key>", "composed": "2026-10-06T21:04:00Z", "model": "...",
-  "since": "You last looked 3 h ago; 2 turns since",
   "tldr": "one line",
   "blocks": [
     {"type": "text", "text": "..."},
@@ -251,8 +250,11 @@ What is shown, and the limits applied on reading:
 
 Ultra Tab for iPhone (`apps/ios/UltraTab`) is a separate app with the same
 icon. It deals the same deck, in the same order, one card at a time: the
-agent's name, folder and category, the "since" line, the headline, up to three
-blocks (paragraph, list, table, diagram, link) and the proposed reply. It
+agent's name, the headline, up to three blocks (paragraph, list, table,
+diagram, link) and the proposed reply, in a gold-edged box. The category chips
+are the top of the screen; a dot marks one where something waits. Settings
+(the gateway address) open from the gear on the empty deck or from a
+connection notice. It
 reaches the Mac through the [phone gateway](phone.md), so it needs the same
 Tailscale or ZeroTier setup as the lapis phone app and nothing else.
 
@@ -265,7 +267,9 @@ Every card takes three answers:
 | The voice button | Annotate: tap to start and again to stop, or hold while speaking; the words land in the field above it |
 
 The annotation field is ordinary text: edit what was heard or type with the
-keyboard, then press the arrow to send it. Nothing is sent until then.
+keyboard, then press the arrow to send it. Nothing is sent until then. The
+keyboard goes away with the button beside the field, a touch on the card or a
+scroll of it.
 Dictation uses Apple's speech recognizer, on the iPhone when it supports that;
 the first use asks for speech recognition and microphone access. A tap on a
 web link opens it in the browser; a link to a file names it as being on the

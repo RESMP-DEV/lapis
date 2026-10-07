@@ -1,7 +1,9 @@
 import SwiftUI
 
 // The deck: categories on top, one card in front with the next peeking
-// behind, and the three answers below it. Swipe right sends the proposed
+// behind, and the three answers below it. Nothing else: the app's name, a
+// count and settings earn no space on a screen read in seconds; settings open
+// from the notice or the empty deck, where a connection problem shows. Swipe right sends the proposed
 // reply, swipe left skips, and the voice button annotates.
 struct DeckView: View {
     @Environment(DeckStore.self) private var store
@@ -12,23 +14,31 @@ struct DeckView: View {
     @State private var drag: CGSize = .zero
     @State private var leaving: Double = 0 // the answered card's slide
     @State private var settings = false
+    @FocusState private var typing: Bool
 
     var body: some View {
         VStack(spacing: 0) {
-            topBar
             rail
+                .padding(.top, 6)
             if !deck.notice.isEmpty {
-                Text(deck.notice)
+                Button(action: openSettings) {
+                    HStack(spacing: 6) {
+                        Text(deck.notice)
+                        Image(systemName: "gearshape")
+                    }
                     .font(.footnote)
                     .foregroundStyle(Theme.quiet)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("notice")
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 6)
+                .accessibilityIdentifier("notice")
             }
             stack
                 .padding(.horizontal, 16)
                 .padding(.top, 10)
+                // Touching the card puts the keyboard away.
+                .simultaneousGesture(TapGesture().onEnded { typing = false })
             Text(deck.message)
                 .font(.footnote)
                 .foregroundStyle(deck.message.hasPrefix("Not sent") ? Theme.skip : Theme.quiet)
@@ -37,7 +47,7 @@ struct DeckView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 4)
                 .accessibilityIdentifier("message")
-            AnnotateBar(answer: answer)
+            AnnotateBar(answer: answer, typing: $typing)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
         }
@@ -48,25 +58,9 @@ struct DeckView: View {
         }
     }
 
-    private var topBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "arrow.right.to.line")
-                .font(.headline.weight(.heavy))
-                .foregroundStyle(Theme.gold)
-            Text("Ultra Tab")
-                .font(.headline)
-            Spacer()
-            Text(deck.visible.isEmpty ? "" : "\(deck.visible.count) waiting")
-                .font(.footnote.monospacedDigit())
-                .foregroundStyle(Theme.quiet)
-                .accessibilityIdentifier("count")
-            Button { settings = true } label: {
-                Image(systemName: "gearshape").foregroundStyle(Theme.quiet)
-            }
-            .accessibilityIdentifier("settings")
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
+    private func openSettings() {
+        typing = false
+        settings = true
     }
 
     private var rail: some View {
@@ -79,8 +73,9 @@ struct DeckView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Text(entry.name)
+                            // Something waits here; how many is not the point.
                             if entry.count > 0 {
-                                Text("\(entry.count)").monospacedDigit().foregroundStyle(Theme.gold)
+                                Circle().fill(Theme.gold).frame(width: 6, height: 6)
                             }
                         }
                         .font(.footnote.weight(selected ? .semibold : .regular))
@@ -144,6 +139,12 @@ struct DeckView: View {
                 }
                 .padding(.top, 10)
             }
+            Button(action: openSettings) {
+                Image(systemName: "gearshape").foregroundStyle(Theme.quiet)
+            }
+            .padding(.top, 16)
+            .accessibilityLabel("Settings")
+            .accessibilityIdentifier("settings")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -220,13 +221,15 @@ struct AnnotateBar: View {
     }
 
     let answer: Actions
+    // Owned by the deck, so touching the card or opening settings puts the
+    // keyboard away and nothing brings it back on its own.
+    var typing: FocusState<Bool>.Binding
     @Environment(DeckStore.self) private var store
     @Environment(Deck.self) private var deck
     @State private var text = ""
     @State private var listening = false
     @State private var heldSince: Date?
     @State private var before = "" // the field's text when listening began
-    @FocusState private var typing: Bool
 
     var body: some View {
         let front = deck.front
@@ -235,19 +238,31 @@ struct AnnotateBar: View {
                 TextField(listening ? "Listening…" : "Annotate: hold the mic or type",
                           text: $text, axis: .vertical)
                     .lineLimit(1...5)
-                    .focused($typing)
+                    .focused(typing)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background(Theme.raised, in: .rect(cornerRadius: 18))
                     .overlay(RoundedRectangle(cornerRadius: 18)
                         .strokeBorder(listening ? Theme.gold : Theme.edge, lineWidth: 1))
                     .accessibilityIdentifier("annotation")
+                if typing.wrappedValue {
+                    Button {
+                        typing.wrappedValue = false
+                    } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                            .font(.system(size: 22))
+                            .foregroundStyle(Theme.quiet)
+                            .frame(width: 34, height: 40)
+                    }
+                    .accessibilityLabel("Hide the keyboard")
+                    .accessibilityIdentifier("hide-keyboard")
+                }
                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button {
                         stopListening()
                         if answer.send(text) {
                             text = ""
-                            typing = false
+                            typing.wrappedValue = false
                         }
                     } label: {
                         Image(systemName: "arrow.up.circle.fill")
@@ -334,7 +349,7 @@ struct AnnotateBar: View {
     private func startListening() {
         before = text.trimmingCharacters(in: .whitespacesAndNewlines)
         listening = true
-        typing = false
+        typing.wrappedValue = false
         Task {
             await store.transcriber.start(
                 text: { heard in
