@@ -53,6 +53,9 @@ class TabAwayEvalTest(unittest.TestCase):
         self.assertEqual(rows[1][6], 1.0, "stale after two hours")
         self.assertAlmostEqual(rows[1][8], 8.3714, places=3, msg="capped at three days")
 
+    def test_features_empty(self):
+        self.assertEqual(tab_away_eval.features([]), [])
+
     def test_fit_follows_choices_and_keeps_the_prior_without_them(self):
         weights, categories = tab_away_eval.fit([])
         self.assertEqual(tuple(weights), tab_away_eval.PRIOR)

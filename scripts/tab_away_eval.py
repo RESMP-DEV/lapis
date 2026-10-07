@@ -47,6 +47,8 @@ REFIT_EVERY = 10
 
 def features(candidates):
     """Rows as TabRanker::features computes them from raw candidate values."""
+    if not candidates:
+        return []
     newest = min(max(0.0, c["wait"]) for c in candidates)
     rows = []
     for c in candidates:

@@ -140,8 +140,8 @@ void writeModel(const QString& path, const TabRanker::Model& model) {
         return;
     }
     out.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
-    out.write(QJsonDocument(modelObject(model)).toJson(QJsonDocument::Compact));
-    if (!out.commit())
+    const auto encoded = QJsonDocument(modelObject(model)).toJson(QJsonDocument::Compact);
+    if (out.write(encoded) != encoded.size() || !out.commit())
         qWarning() << "Tab ranker: cannot write the model:" << out.errorString();
 }
 } // namespace
@@ -248,6 +248,9 @@ struct TabRanker::Shared {
     bool running{};
     bool again{};
     TabRanker* owner{};
+    // The decisions this process has made when there is no log to read them
+    // from; a refit worker reads them, so they live under this mutex.
+    std::vector<QJsonObject> memory;
 };
 
 TabRanker::TabRanker(QString folder, QObject* parent)
@@ -345,9 +348,10 @@ void TabRanker::learn(const std::vector<TabCandidate>& candidates, std::size_t c
         {QStringLiteral("chosen"), static_cast<int>(chosen)},
         {QStringLiteral("candidates"), loggedCandidates(candidates, nullptr)}};
     if (log_path_.isEmpty()) {
-        memory_.push_back(event);
-        if (memory_.size() > static_cast<std::size_t>(kMaxDecisions))
-            memory_.erase(memory_.begin());
+        const std::lock_guard lock(shared_->mutex);
+        shared_->memory.push_back(event);
+        if (shared_->memory.size() > static_cast<std::size_t>(kMaxDecisions))
+            shared_->memory.erase(shared_->memory.begin());
     }
     record(event);
     refit();
@@ -389,6 +393,7 @@ bool TabRanker::refitting() const {
 
 // One refit at a time; a choice made during one queues exactly one more.
 void TabRanker::refit() {
+    std::vector<QJsonObject> memory;
     {
         const std::lock_guard lock(shared_->mutex);
         if (shared_->running) {
@@ -396,9 +401,10 @@ void TabRanker::refit() {
             return;
         }
         shared_->running = true;
+        memory = shared_->memory;
     }
     QThreadPool::globalInstance()->start(platform::PublishedTask(
-        [shared = shared_, path = log_path_, model_path = model_path_, memory = memory_] {
+        [shared = shared_, path = log_path_, model_path = model_path_, memory = std::move(memory)] {
             auto model = fit_tab_ranker(path.isEmpty() ? memory : readDecisions(path));
             if (!model_path.isEmpty() && model.decisions > 0)
                 writeModel(model_path, model);

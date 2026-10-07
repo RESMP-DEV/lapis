@@ -104,6 +104,10 @@ class TabRanker final : public QObject {
   private:
     struct Shared;
     void record(QJsonObject event) const;
+    // Decisions made in this process when there is no log to read them from.
+    // The refit worker reads this under `shared_->mutex`, the thread that owns
+    // the ranker writes it there, so it is not plain GUI-thread state.
+    std::vector<QJsonObject> memory_;
     void refit();
     void adopt(Model model);
     bool learned_{true};
@@ -111,8 +115,6 @@ class TabRanker final : public QObject {
     QString log_path_;
     QString model_path_;
     Model model_;
-    // Decisions made in this process when there is no log to read them from.
-    std::vector<QJsonObject> memory_;
     std::shared_ptr<Shared> shared_;
 };
 
