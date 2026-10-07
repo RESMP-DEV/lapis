@@ -4711,6 +4711,43 @@ current integration receipt is
 [attention-journal-integration](../evidence/attention-journal-integration.json);
 it does not claim native live-agent restart or decision-delivery qualification.
 
+## Local interaction log (October 5)
+
+An opt-in log of input to lapis's own windows (`interactionLog` in
+[config](config.md#interaction-log), off by default) records keys, IME and
+dictation commits, pastes, copies, mouse buttons, wheel gestures, sampled pointer
+movement, and navigation (selected agent and how, category, tiles, history
+position, dialogs, palette commands, window and app activation) as versioned
+JSON lines in the private `runtime/interaction.jsonl`. It exists to model how
+the user works with agents. It observes only; it never consumes, delays or
+reroutes input.
+
+`InteractionRecorder` is one application event filter, installed only in the
+normal workspace (never the isolated preview, a capture run, an explicit
+qualification launch or test fixtures without their own recorder), plus explicit
+hooks where lapis decides what a key did (`TerminalSurface`: sent to the agent,
+copy, paste, Tab suggestion fill/send, Tab-away, history return; the window's
+`Shortcut` objects name the action). A key press is held until its dispatch ends
+so its outcome is known, and records that happen meanwhile follow it with their
+own timestamps. Serialization, rotation and writes run on `InteractionWriter`'s
+thread with a bounded queue (16,384 records; overflow drops and counts). Pointer
+moves are coalesced to one record per `pointerSampleMs` (leading and trailing
+sample) and the hit test runs only for recorded samples. Measured in the focused
+`interaction-log` test (RelWithDebInfo, offscreen, M-series Mac): about 4 µs of
+GUI-thread time added per key event, 0.2 µs per coalesced pointer move, about
+7.5 µs per recorded pointer sample in the production window including Qt's own
+hover delivery, 0.5 µs for the 200-column secret-prompt check and 0.35 µs for
+the secure input query. This is not a native input-to-presentation measurement.
+
+Redaction: under macOS secure event input, or when the cursor row of the
+keyboard's terminal names a password, passphrase, passcode, PIN or OTP (or a
+one-time/verification code) or ends in `secret:`, `token:` or `key:`, character
+keys, IME text and pastes are recorded without text. Nothing at all is recorded
+while the plan sign-in or usage (accounts) dialog, or any dialog named for an
+account, sign-in, credential or password, is open. Files are `0600` in a
+`0700` folder, rotate by size into numbered predecessors, and the total is
+bounded by `maxFileMiB` × `maxFiles`.
+
 ## Contracts to preserve
 
 **Runtime tool status is read-only.** `ToolStatus` has exactly one row for every
@@ -4843,3 +4880,37 @@ The later 32-session experiment records workload/output rates, display rate,
 p50/p95/p99 input/switch latency and frame times, memory growth and idle CPU/GPU
 use. Separate replay from real CLI agents and keep provisional targets distinct
 from results. Use [CONTRIBUTING.md](../CONTRIBUTING.md) for commands and evidence rules.
+
+### Recent integration reconciliation (October 5)
+
+The clean-main baseline at `7fa37a7422e77f1e24325d0ea18aaade50a4bf7c` passed
+the importer and Tools focused targets plus the repository quality gate; the
+consolidated observation is recorded in
+[recent integration baseline](../evidence/recent-integration-baseline.json).
+Runtime tool status is integrated as a read-only desktop surface and needs no
+further source integration in this cycle. Its receipt now records the exact
+architecture bytes from its declared source revision instead of a stale shared-
+plan digest.
+
+The external-agent importer now enforces the observed expanded SESSIONS details
+contract: unknown classes and missing core serialized lists fail closed, while
+the older `d10a1b29…` binary's omission of the newer `memory` list remains
+compatible. Synthetic regressions and a disposable live import are recorded in
+[import expanded-shape evidence](../evidence/codex-import-expanded-shape.json).
+This does not change its dormant integration boundary: no production server
+owner, exact-scope consent UI, launch record, duplicate reconciliation, or
+observer capability is claimed.
+
+The Codex upstream-review triage verified that the live PATH binary remains the
+older AlphaHENG build (`d10a1b29…`, source `ef0f5c6990`) while an exact clean
+candidate for RESMP-DEV/codex source `eba4e02df5e1962e4c001f837bf2ab6725d5b7a9`
+has now been built and hashed (`7f111501…`, version smoke `codex-cli 0.0.0`,
+`--worktree` help present, reviewed worktree symbols present). The existing
+local release artifact remains stale (`e1e083ab…`, September 24) and must not be
+used for P1. The candidate check does not run a worktree operation, app-server
+exchange, or adapter probe, so P1 itself remains unqualified. Integration
+proceeds on two bounded lanes: the lapis lane completes the per-session
+supervisor transition and production birth route, while the candidate lane now
+runs exact-P1 qualification. P2/P3 and the dedicated import-server/onboarding
+design wait for P1; tool status and the import protocol client remain available
+but dormant until their owners and qualification gates are ready.

@@ -3,6 +3,7 @@
 #include "app_paths.hpp"
 #include "conversation_index.hpp"
 #include "desktop_actions.hpp"
+#include "interaction_recorder.hpp"
 #include "keymap.hpp"
 #include "limit_resets.hpp"
 #include "next_prompt.hpp"
@@ -364,6 +365,7 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
     notifier->setSeen(&*seen);
     notifier->setLog(log);
     platform::on_notification_opened([&workspace, &shown](const QString& id) {
+        lapis::desktop::interaction::cause(QStringLiteral("notification"));
         if (!workspace.selectSession(id) || !shown)
             return;
         shown->show();
@@ -469,6 +471,9 @@ void route_terminal_keys(lapis::desktop::UiPreview& view, const lapis::desktop::
                                    : keys.contains(QStringLiteral("Meta+`"));
         if (window == nullptr || !window->isActive() || !bound)
             return false;
+        lapis::desktop::interaction::cause(QStringLiteral("terminal-key"));
+        if (auto* recorder = lapis::desktop::InteractionRecorder::active())
+            recorder->note(QStringLiteral("shortcut"), {{QStringLiteral("action"), action}});
         return QMetaObject::invokeMethod(window, shifted ? "chooseTerminal" : "toggleTerminal");
     });
 }
@@ -479,6 +484,11 @@ void route_latest_attention(lapis::desktop::UiPreview& view, lapis::desktop::Wor
     if (isolated || workspace.previewMode() || parser.isSet(QStringLiteral("capture")))
         return;
     const bool taken = lapis::desktop::platform::on_latest_attention_key([&view, &workspace] {
+        lapis::desktop::interaction::cause(QStringLiteral("attention-key"));
+        if (auto* recorder = lapis::desktop::InteractionRecorder::active())
+            recorder->note(QStringLiteral("shortcut"),
+                           {{QStringLiteral("action"), QStringLiteral("latestAttention")},
+                            {QStringLiteral("global"), true}});
         if (auto* window = view.window()) {
             window->show();
             window->raise();
@@ -488,6 +498,43 @@ void route_latest_attention(lapis::desktop::UiPreview& view, lapis::desktop::Wor
     });
     if (!taken)
         qWarning() << "Command-Option-L is held by another app; Command-L still works in lapis";
+}
+// The local interaction log (off unless lapis.json turns it on), only in the
+// person's own workspace: never in the isolated preview, a capture run or an
+// explicit qualification launch.
+std::unique_ptr<lapis::desktop::InteractionRecorder>
+interaction_recorder(lapis::desktop::Workspace& workspace, const lapis::desktop::KeyMap& keymap,
+                     const lapis::desktop::WorkspaceOptions& options, bool isolated,
+                     const QCommandLineParser& parser) {
+    using lapis::desktop::InteractionRecorder;
+    // restoreAgents marks the normal workspace, without an explicit launch.
+    if (isolated || !options.restoreAgents || workspace.previewMode() ||
+        parser.isSet(QStringLiteral("capture")))
+        return nullptr;
+    auto recorder = std::make_unique<InteractionRecorder>(
+        workspace,
+        QDir(lapis::desktop::data_directory())
+            .filePath(QStringLiteral("runtime/interaction.jsonl")),
+        InteractionRecorder::Hooks{.secureInput = &lapis::desktop::platform::secure_input_enabled,
+                                   .monotonicUs = {},
+                                   .wallMs = {}});
+    auto* raw = recorder.get();
+    const auto follow = [raw, &keymap] { raw->setSettings(keymap.interactionLog()); };
+    follow();
+    QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, raw, follow);
+    QObject::connect(
+        qGuiApp, &QGuiApplication::applicationStateChanged, raw, [raw](Qt::ApplicationState state) {
+            const auto name = state == Qt::ApplicationActive     ? "active"
+                              : state == Qt::ApplicationInactive ? "inactive"
+                              : state == Qt::ApplicationHidden   ? "hidden"
+                                                                 : "suspended";
+            raw->note(QStringLiteral("app"), {{QStringLiteral("state"), QLatin1String(name)}});
+        });
+    return recorder;
+}
+void watch_window(lapis::desktop::InteractionRecorder* recorder, QQuickWindow* window) {
+    if (recorder != nullptr)
+        recorder->watchWindow(window);
 }
 // A monitor must never outlive this scope. Clear it in reverse construction
 // order, including when load or exec unwinds after an exception.
@@ -958,6 +1005,8 @@ int main(int argc, char** argv) {
             follow_conversation_titles(workspace, *conversations);
             conversations->refresh();
         }
+        // Before the view, so the window callbacks never see it destroyed.
+        const auto recorder = interaction_recorder(workspace, keymap, options, isolated, parser);
         UiPreview view(workspace, {.source = qml_source(parser),
                                    .compact = parser.isSet(QStringLiteral("compact")),
                                    .screen = target_screen(parser),
@@ -983,6 +1032,7 @@ int main(int argc, char** argv) {
         QObject::connect(&view, &UiPreview::windowChanged, &view, [&](QQuickWindow* window) {
             shown = window;
             wire_window(*window, view, workspace, parser);
+            watch_window(recorder.get(), window);
             const auto update_chrome = [window] { style_window_chrome(*window); };
             QObject::connect(window, &QQuickWindow::colorChanged, window, update_chrome);
             QObject::connect(window, &QWindow::visibilityChanged, window, update_chrome);
@@ -991,6 +1041,7 @@ int main(int argc, char** argv) {
         if (!view.load())
             return 1;
         shown = view.window();
+        watch_window(recorder.get(), view.window());
         route_terminal_keys(view, keymap);
         route_latest_attention(view, workspace, isolated, parser);
         view.window()->requestActivate();

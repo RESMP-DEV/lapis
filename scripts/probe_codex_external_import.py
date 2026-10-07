@@ -75,8 +75,17 @@ def session_item(items: list[dict[str, Any]], home: Path) -> dict[str, Any]:
         "commands",
         "memory",
     }
-    if set(details) - allowed_details:
+    unknown_details = set(details) - allowed_details
+    # Core lists are required; memory is optional and normally omitted when
+    # empty, though an explicitly empty list remains compatible.
+    missing_details = allowed_details - {"memory"} - set(details)
+    if unknown_details:
         raise RuntimeError("Session item has an unknown migration detail")
+    if missing_details:
+        raise RuntimeError(
+            "Session item is missing migration details: "
+            + ", ".join(sorted(missing_details))
+        )
     for name, value in details.items():
         if name != "sessions" and (not isinstance(value, list) or value):
             raise RuntimeError("Session item carries a non-session migration class")

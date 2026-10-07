@@ -113,7 +113,7 @@ class TerminalSurface : public QQuickItem {
     // The offer the suggestion belongs to: one impression per offer, even when
     // two offers have the same words.
     Q_PROPERTY(
-        QString suggestionKey READ suggestionKey WRITE setSuggestionKey NOTIFY suggestionChanged)
+        QString suggestionKey READ suggestionKey WRITE setSuggestionKey NOTIFY suggestionKeyChanged)
     Q_PROPERTY(bool tabFlow READ tabFlow WRITE setTabFlow NOTIFY tabFlowChanged)
     // Called by Tab with nothing offered and nothing typed: moves to the next
     // agent that needs you and returns true, or returns false and Tab goes to
@@ -184,6 +184,9 @@ class TerminalSurface : public QQuickItem {
     // Command-click opened a URL or a file or folder's path.
     void linkOpened(const QString& target);
     void suggestionChanged();
+    // Separate from suggestionChanged: QML binds the key to the suggestion, so
+    // a shared signal would re-run that binding from its own write.
+    void suggestionKeyChanged();
     void tabFlowChanged();
     // The suggestion is on screen in the active window, once per suggestion.
     void suggestionSeen(const QString& sessionId, const QString& offerKey);
