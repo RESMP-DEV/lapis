@@ -315,11 +315,11 @@ AttentionLog attention_log(const QString& path) {
             }
             file.setFileName(path);
             if (file.open(QIODevice::WriteOnly, QFile::ReadOwner | QFile::WriteOwner)) {
-                file.write(QJsonDocument(QJsonObject{
-                                 {"at",
-                                  QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
-                                 {"event", QStringLiteral("rotated")},
-                             })
+                file.write(QJsonDocument(
+                               QJsonObject{
+                                   {"at", QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
+                                   {"event", QStringLiteral("rotated")},
+                               })
                                .toJson(QJsonDocument::Compact) +
                            '\n');
                 file.close();
