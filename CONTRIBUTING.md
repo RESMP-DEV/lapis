@@ -1390,6 +1390,28 @@ count is not a hardware GPU-utilization counter. These timings remain observatio
 not pass/fail performance thresholds. This probe does not measure cross-session
 switches or real agent turns.
 
+Agent and category switching has its own offscreen benchmark. It needs no
+desktop session or permission and opens no window:
+
+```sh
+cmake --build build/desktop --target lapis_switch_benchmark
+build/desktop/apps/desktop/lapis_switch_benchmark --output build/switch.json
+# Optional: --interaction-log, --agents 32, --categories 4, --switches 300, --trace
+```
+
+It starts disposable agents (a stand-in CLI that draws a screen of text and
+waits) under the real session service in a private `LAPIS_HOME`, ends them
+afterwards, tiles three agents in every other category, loads `Main.qml` with
+the software scene graph and switches through the keymap's own next-agent and
+next-category bindings, delivered as window-system key events, then clicks
+strip cards and moves the pointer. Each sample is GUI-thread time from the
+input to the end of its delivery (`dispatch`), to the end of the next frame's
+scene-graph sync (`synced`) and to its `frameSwapped` (`frame`), as
+p50/p95/p99; agent keys are also split by whether they changed the stage's
+tiles. Software rasterizing is included in `frame` only, and none of it is GPU
+presentation: compare runs of this tool with each other, on one machine, and
+profile the same run with `sample` or `xctrace` for causes.
+
 Native software input acceptance is automated on macOS; no physical typing is
 required. After `just desktop`, run this separately from every other GUI test:
 
