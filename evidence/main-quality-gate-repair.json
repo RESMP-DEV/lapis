@@ -47,10 +47,10 @@
     }
   ],
   "worker_evidence": {
-    "diagnosis_run_dir": "/Users/kearm/.cache/ccr-worker-runs/20261007-043157-c4_imu8b",
+    "diagnosis_run_dir": "<ccr-worker-cache>/20261007-043157-c4_imu8b",
     "diagnosis_verdict": "real-defect-on-main",
-    "phase1_run_dir": "/Users/kearm/.cache/ccr-worker-runs/20261007-045029-7nyfzg55",
-    "phase2_run_dir": "/Users/kearm/.cache/ccr-worker-runs/20261007-052020-_2t6tdit",
+    "phase1_run_dir": "<ccr-worker-cache>/20261007-045029-7nyfzg55",
+    "phase2_run_dir": "<ccr-worker-cache>/20261007-052020-_2t6tdit",
     "parent_integration": "Parent independently reran quality, full desktop, and eight native rounds before publication."
   },
   "non_claims": [

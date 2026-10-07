@@ -359,7 +359,8 @@ void wait_terminal_focus(QQuickWindow& window, lapis::desktop::TerminalSurface& 
 void wait_input_ready(QQuickWindow& window, lapis::desktop::TerminalSurface& terminal) {
     wait_terminal_focus(window, terminal);
     const auto ready = [&] {
-        return !window.property("inputBlocked").toBool() && terminal.hasActiveFocus();
+        return !window.property("inputBlocked").toBool() &&
+               window.property("shortcutsArmed").toBool() && terminal.hasActiveFocus();
     };
     CHECK(wait_for(ready, 5000));
 }
