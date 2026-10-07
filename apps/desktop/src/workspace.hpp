@@ -122,6 +122,9 @@ class SessionPreview final : public QObject {
     [[nodiscard]] bool updating() const { return !updating_.isEmpty(); }
     [[nodiscard]] bool unseen() const { return unseen_; }
     void setUnseen(bool unseen);
+    // A mark an earlier window saved: unseen or not, and when it began to
+    // need you. Restoring emits unseenChanged and nothing else.
+    void restoreUnseen(bool unseen, qint64 neededAtMs);
     // When it last began to need you (ms since the epoch); 0 before that.
     [[nodiscard]] qint64 neededAtMs() const { return needed_at_ms_; }
     // Where activity comes from: a service-side observer (the Codex app-server,
@@ -563,6 +566,17 @@ class Workspace final : public QObject {
     // where its CLI can, in its category, and shows it.
     Q_INVOKABLE bool reopenAgent();
     [[nodiscard]] bool canReopenAgent() const { return !closed_.empty(); }
+    // The window's own marks on each agent, for GuiState: unseen, when it
+    // began to need you, whether it was at work, and the conversation they
+    // belong to. Restoring skips agents that are gone or now in another
+    // conversation (as after /clear) and never pings. An agent that was at
+    // work and is found idle finished while no window watched: it is marked
+    // unseen and finishedWhileAway() says so, without a chime.
+    [[nodiscard]] QJsonObject saveMarks() const;
+    void restoreMarks(const QJsonObject& marks);
+    // The agents Command-Shift-T can bring back, for GuiState.
+    [[nodiscard]] QJsonArray saveClosed() const;
+    void restoreClosed(const QJsonArray& closed);
     // Arguments from lapis.json added to each new agent of a harness.
     void setHarnessArguments(QHash<QString, QStringList> arguments) {
         harness_arguments_ = std::move(arguments);
@@ -580,6 +594,10 @@ class Workspace final : public QObject {
     void errorChanged();
     void tilesChanged();
     void closedChanged();
+    // What saveMarks() returns may have changed.
+    void marksChanged();
+    // A turn that ended while no window watched (see restoreMarks).
+    void finishedWhileAway(lapis::desktop::SessionPreview* item);
 
   private:
     [[nodiscard]] static QString rootDirectory();
@@ -721,6 +739,9 @@ class Workspace final : public QObject {
     // Newest last; at most ten.
     std::vector<ClosedAgent> closed_;
     void rememberClosed(const Agent& agent, const QString& title);
+    // Marks an agent saved at work as finished if its first settled status
+    // after the restart is not work.
+    void watchFinishWhileAway(SessionPreview* item);
     [[nodiscard]] static bool serviceRunning(const QString& endpoint);
     void noteStatus(SessionPreview* item);
     QHash<const SessionPreview*, QString> last_kind_;

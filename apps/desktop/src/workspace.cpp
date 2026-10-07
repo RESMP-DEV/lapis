@@ -763,6 +763,9 @@ void Workspace::clearError() {
     emit errorChanged();
 }
 void Workspace::watch(SessionPreview* item) {
+    // Its unseen mark and whether it is at work outlive a window (GuiState).
+    connect(item, &SessionPreview::unseenChanged, this, &Workspace::marksChanged);
+    connect(item, &SessionPreview::statusChanged, this, &Workspace::marksChanged);
     connect(item, &SessionPreview::connectionChanged, this, [this, item] { finishClosing(item); });
     // The service reports why a session ended just after the state changes.
     connect(item, &SessionPreview::connectionChanged, this, [this, id = item->sessionId()] {
@@ -2853,6 +2856,13 @@ void Workspace::finishClosing(SessionPreview* item) {
         item->reconnect();
     }
 }
+void SessionPreview::restoreUnseen(bool unseen, qint64 neededAtMs) {
+    needed_at_ms_ = std::max<qint64>(0, neededAtMs);
+    if (unseen_ == unseen)
+        return;
+    unseen_ = unseen;
+    emit unseenChanged();
+}
 void SessionPreview::setUnseen(bool unseen) {
     if (unseen_ == unseen)
         return;
@@ -3117,5 +3127,155 @@ QString Workspace::splitAgent(const QString& edge) {
     if (!id.isEmpty())
         tileSession(id, beside, edge);
     return id;
+}
+
+// Window state a restart keeps -------------------------------------------------
+
+namespace {
+// A turn found finished after a restart counts as one that ended unwatched
+// only when the window saved it at work this recently (an install's restart);
+// after a longer absence the agent is simply idle.
+constexpr qint64 kFinishedWhileAwayMs = qint64{10} * 60 * 1000;
+bool settledKind(const QString& kind) {
+    return kind == QLatin1String("working") || kind == QLatin1String("idle") ||
+           kind == QLatin1String("finished") || kind == QLatin1String("waiting") ||
+           kind == QLatin1String("ended");
+}
+} // namespace
+
+QJsonObject Workspace::saveMarks() const {
+    QJsonObject agents;
+    for (const auto& item : sessions_) {
+        const bool working = item->statusKind() == QLatin1String("working");
+        if (!item->unseen() && !working && item->neededAtMs() == 0)
+            continue;
+        QJsonObject mark{{QStringLiteral("neededAtMs"), item->neededAtMs()}};
+        if (item->unseen())
+            mark.insert(QStringLiteral("unseen"), true);
+        if (working)
+            mark.insert(QStringLiteral("working"), true);
+        if (const auto conversation = agentConversation(item->sessionId()); !conversation.isEmpty())
+            mark.insert(QStringLiteral("conversation"), conversation);
+        agents.insert(item->sessionId(), mark);
+    }
+    return {{QStringLiteral("savedAtMs"), QDateTime::currentMSecsSinceEpoch()},
+            {QStringLiteral("agents"), agents}};
+}
+
+void Workspace::restoreMarks(const QJsonObject& marks) {
+    const auto saved_at = static_cast<qint64>(marks.value(QStringLiteral("savedAtMs")).toDouble());
+    const auto now = QDateTime::currentMSecsSinceEpoch();
+    const bool recent = saved_at > 0 && now >= saved_at && now - saved_at <= kFinishedWhileAwayMs;
+    const auto agents = marks.value(QStringLiteral("agents")).toObject();
+    for (auto entry = agents.constBegin(); entry != agents.constEnd(); ++entry) {
+        auto* item = session(entry.key());
+        if (item == nullptr)
+            continue;
+        const auto mark = entry.value().toObject();
+        const auto conversation = mark.value(QStringLiteral("conversation")).toString();
+        if (const auto current = agentConversation(entry.key());
+            !conversation.isEmpty() && !current.isEmpty() && conversation != current)
+            continue;
+        const auto needed =
+            static_cast<qint64>(mark.value(QStringLiteral("neededAtMs")).toDouble());
+        const bool unseen = mark.value(QStringLiteral("unseen")).toBool() &&
+                            item != focusedSession() && !item->unseen();
+        if (unseen || item->neededAtMs() == 0)
+            item->restoreUnseen(unseen || item->unseen(), std::min(needed, now));
+        if (recent && mark.value(QStringLiteral("working")).toBool())
+            watchFinishWhileAway(item);
+    }
+}
+
+void Workspace::watchFinishWhileAway(SessionPreview* item) {
+    auto connection = std::make_shared<QMetaObject::Connection>();
+    const auto check = [this, item, connection] {
+        const auto kind = item->statusKind();
+        if (!settledKind(kind))
+            return;
+        disconnect(*connection);
+        // Only an observer's word counts as a finished turn; quiet output
+        // from an estimated agent only marks it.
+        const bool observed = kind == QLatin1String("finished") ||
+                              (kind == QLatin1String("idle") &&
+                               item->statusSource() != SessionPreview::StatusSource::output);
+        if (kind != QLatin1String("finished") && kind != QLatin1String("idle"))
+            return;
+        if (item != focusedSession())
+            item->setUnseen(true);
+        if (observed)
+            emit finishedWhileAway(item);
+    };
+    *connection = connect(item, &SessionPreview::statusChanged, this, check);
+    // The status may already have arrived.
+    if (settledKind(item->statusKind()))
+        check();
+}
+
+QJsonArray Workspace::saveClosed() const {
+    QJsonArray saved;
+    for (const auto& closed : closed_) {
+        const auto& launch = closed.plan.launch;
+        saved.append(QJsonObject{
+            {QStringLiteral("category"), closed.category},
+            {QStringLiteral("title"), closed.title},
+            {QStringLiteral("harness"), closed.harness},
+            {QStringLiteral("remote"), closed.remote},
+            {QStringLiteral("program"), launch.program},
+            {QStringLiteral("arguments"), QJsonArray::fromStringList(launch.arguments)},
+            {QStringLiteral("directory"), launch.directory},
+            {QStringLiteral("mode"),
+             launch.agent == session::AgentMode::claude  ? QStringLiteral("claude")
+             : launch.agent == session::AgentMode::codex ? QStringLiteral("codex")
+                                                         : QStringLiteral("terminal")},
+            {QStringLiteral("managedResume"),
+             QJsonObject{{QStringLiteral("index"), closed.plan.managed_resume_index},
+                         {QStringLiteral("identity"), closed.plan.managed_resume_identity}}}});
+    }
+    return saved;
+}
+
+void Workspace::restoreClosed(const QJsonArray& closed) {
+    if (preview_mode_ || !closed_.empty())
+        return;
+    for (const auto& value : closed) {
+        try {
+            const auto object = value.toObject();
+            const auto harness = object.value(QStringLiteral("harness")).toString();
+            const auto title = object.value(QStringLiteral("title")).toString();
+            const auto mode = object.value(QStringLiteral("mode")).toString();
+            session::LaunchSpec launch{object.value(QStringLiteral("program")).toString(),
+                                       savedArguments(object.value(QStringLiteral("arguments"))),
+                                       object.value(QStringLiteral("directory")).toString(),
+                                       {100, 30},
+                                       mode == QLatin1String("claude") ? session::AgentMode::claude
+                                       : mode == QLatin1String("codex")
+                                           ? session::AgentMode::codex
+                                           : session::AgentMode::terminal};
+            if (!find_harness(harness) || !validName(title) ||
+                !QFileInfo(launch.program).isAbsolute() || launch.program.size() > 4096 ||
+                launch.program.contains(QChar::Null) || !QFileInfo(launch.directory).isAbsolute() ||
+                launch.directory.size() > 4096 || launch.directory.contains(QChar::Null))
+                continue;
+            // A resume pair lapis added stays lapis's only when it still matches.
+            const auto managed = object.value(QStringLiteral("managedResume")).toObject();
+            ResumeLaunch plan{launch, managed.value(QStringLiteral("index")).toInt(-1),
+                              managed.value(QStringLiteral("identity")).toString()};
+            if (!managedResumeMatches(plan.launch.arguments, plan.managed_resume_index,
+                                      resumeOption(harness), plan.managed_resume_identity)) {
+                plan.managed_resume_index = -1;
+                plan.managed_resume_identity.clear();
+            }
+            closed_.push_back({object.value(QStringLiteral("category")).toString().left(80), title,
+                               harness, std::move(plan),
+                               object.value(QStringLiteral("remote")).toBool()});
+        } catch (const std::exception&) {
+            continue; // savedArguments rejects malformed arguments
+        }
+        if (closed_.size() >= 10)
+            break;
+    }
+    if (!closed_.empty())
+        emit closedChanged();
 }
 } // namespace lapis::desktop

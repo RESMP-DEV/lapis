@@ -56,6 +56,12 @@ None shows while an agent waits on a request such as a permission prompt.
 
 Tab keeps its usual meaning in shells and in CLIs lapis does not guess for.
 
+A guess outlives a restart of the window (an install, say): it comes back,
+seen or not and under the same offer, once lapis has read the agent's
+conversation and found no prompt sent since. A guess still being made when the
+window went is made again, and a turn that ended while no window was open gets
+one, without a chime. See [config](config.md#window-state-across-restarts).
+
 ## What is recorded
 
 Every guess is kept, owner-only, in `~/.lapis/runtime/next_prompt.jsonl`: when it

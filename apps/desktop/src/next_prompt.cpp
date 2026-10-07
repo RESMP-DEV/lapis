@@ -160,7 +160,11 @@ void NextPrompt::setSettings(NextPromptSettings settings) {
     if (!settings_.automatic) {
         for (const auto& id : offers_.keys())
             withdraw(id, Withdrawal::off);
+        for (const auto& id : restoring_.keys())
+            dropRestored(id, "off");
+        owed_.clear();
         awaiting_.clear();
+        emit stateChanged();
         for (const auto& run : std::as_const(running_))
             if (run.process)
                 run.process->stopGroup();
@@ -180,6 +184,8 @@ bool NextPrompt::current(const QString& id, quint64 generation) const {
 void NextPrompt::turnFinished(const QString& id) {
     if (!settings_.automatic)
         return;
+    owed_.remove(id);
+    dropRestored(id, "new_turn");
     withdraw(id, Withdrawal::next_turn);
     const auto agent = lookup_(id);
     if (!agent || (agent->cli != QLatin1String("claude") && agent->cli != QLatin1String("codex")))
@@ -190,19 +196,33 @@ void NextPrompt::turnFinished(const QString& id) {
         return;
     const auto generation = ++generation_;
     running_.insert(id, {generation, *agent, {}});
-    QStringList words{
-        QStringLiteral("context"),  QStringLiteral("--cli"), agent->cli,
-        QStringLiteral("--folder"), agent->folder,           QStringLiteral("--conversation"),
-        agent->conversation};
+    emit stateChanged();
+    runContext(id, generation, *agent, Stage::context,
+               [this, id, generation](const QJsonObject& context) {
+                   settle(id, context);
+                   predict(id, generation, context);
+               });
+}
+
+QStringList NextPrompt::contextWords(const QString& id, const Agent& agent) const {
+    QStringList words{QStringLiteral("context"),
+                      QStringLiteral("--cli"),
+                      agent.cli,
+                      QStringLiteral("--folder"),
+                      agent.folder,
+                      QStringLiteral("--conversation"),
+                      agent.conversation};
     if (const auto waiting = awaiting_.constFind(id); waiting != awaiting_.cend())
         words << QStringLiteral("--answered") << QString::number(waiting->offer.turn);
-    const auto done = [this, id, generation](const QJsonObject& context) {
-        settle(id, context);
-        predict(id, generation, context);
-    };
-    if (agent->machine.isEmpty()) {
+    return words;
+}
+
+void NextPrompt::runContext(const QString& id, quint64 generation, const Agent& agent, Stage stage,
+                            const std::function<void(const QJsonObject&)>& done) {
+    const auto words = contextWords(id, agent);
+    if (agent.machine.isEmpty()) {
         start(id, generation, program_(QStringLiteral("python3")),
-              QStringList{script_path_} + words, {}, Stage::context, done);
+              QStringList{script_path_} + words, {}, stage, done);
         return;
     }
     // The helper goes on stdin, so nothing is left on the other machine.
@@ -213,8 +233,8 @@ void NextPrompt::turnFinished(const QString& id) {
           {QStringLiteral("-o"), QStringLiteral("BatchMode=yes"), QStringLiteral("-o"),
            QStringLiteral("ConnectTimeout=10"), QStringLiteral("-o"),
            QStringLiteral("ControlPath=none"), QStringLiteral("-T"), QStringLiteral("--"),
-           agent->machine, remote.join(QLatin1Char(' '))},
-          kNextPromptScript, Stage::context, done);
+           agent.machine, remote.join(QLatin1Char(' '))},
+          kNextPromptScript, stage, done);
 }
 
 bool NextPrompt::budgetAvailable(const QString& id) {
@@ -255,7 +275,11 @@ void NextPrompt::start(const QString& id, quint64 generation, const QString& pro
         const auto why = result->failure(*process, document, error);
         if (!why.isEmpty()) {
             const auto agent = running_.take(id).agent;
-            failed(id, agent, stage, why);
+            emit stateChanged();
+            if (stage == Stage::verify)
+                dropRestored(id, "unverified");
+            else
+                failed(id, agent, stage, why);
             return;
         }
         done(document.object());
@@ -280,12 +304,14 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
     if (claude.isEmpty()) {
         failed(id, running_.take(id).agent, Stage::predict,
                QStringLiteral("no Claude Code CLI on this Mac"));
+        emit stateChanged();
         return;
     }
     // Context extraction is concurrent. Reserve here too, otherwise several
     // contexts admitted below the cap could all launch after it was reached.
     if (!budgetAvailable(id)) {
         running_.remove(id);
+        emit stateChanged();
         return;
     }
     started_.push_back({clock_.elapsed(), generation});
@@ -308,6 +334,7 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
           Stage::predict, [this, id, agent, context](const QJsonObject& answer) {
               running_.remove(id);
               offer(id, agent, context, answer);
+              emit stateChanged();
           });
 }
 
@@ -399,6 +426,7 @@ void NextPrompt::seenOffer(const QVariantMap& identity) {
     auto event = about(*offer, id);
     event.insert(QStringLiteral("event"), QStringLiteral("seen"));
     record(event);
+    emit stateChanged();
 }
 
 void NextPrompt::used(const QString& id, bool sent, int typed_first, const QString& expectedKey) {
@@ -409,6 +437,7 @@ void NextPrompt::used(const QString& id, bool sent, int typed_first, const QStri
             (!expectedKey.isEmpty() && waiting->offer.key != expectedKey))
             return;
         waiting->tab_sent = true;
+        emit stateChanged();
         auto event = about(waiting->offer, id);
         event.insert(QStringLiteral("event"), QStringLiteral("used"));
         event.insert(QStringLiteral("sent"), true);
@@ -436,20 +465,25 @@ void NextPrompt::used(const QString& id, bool sent, int typed_first, const QStri
     offers_.remove(id);
     ++revision_;
     emit changed();
+    emit stateChanged();
 }
 
 void NextPrompt::withdraw(const QString& id, Withdrawal why) {
     const auto offer = offers_.take(id);
     if (offer.text.isEmpty())
         return;
-    auto event = about(offer, id);
-    event.insert(QStringLiteral("event"), QStringLiteral("withdrawn"));
-    event.insert(QStringLiteral("reason"),
-                 why == Withdrawal::off ? QStringLiteral("off") : QStringLiteral("new_turn"));
-    event.insert(QStringLiteral("seen"), offer.seen_ms != 0);
-    record(event);
+    recordWithdrawn(offer, id, why == Withdrawal::off ? "off" : "new_turn");
     ++revision_;
     emit changed();
+    emit stateChanged();
+}
+
+void NextPrompt::recordWithdrawn(const Offer& offer, const QString& id, const char* reason) const {
+    auto event = about(offer, id);
+    event.insert(QStringLiteral("event"), QStringLiteral("withdrawn"));
+    event.insert(QStringLiteral("reason"), QLatin1String(reason));
+    event.insert(QStringLiteral("seen"), offer.seen_ms != 0);
+    record(event);
 }
 
 namespace {
@@ -503,6 +537,7 @@ void NextPrompt::settle(const QString& id, const QJsonObject& context) {
     const auto conversation = context.value(QStringLiteral("conversation")).toString();
     if (!waiting->offer.conversation.isEmpty() && conversation != waiting->offer.conversation) {
         awaiting_.erase(waiting);
+        emit stateChanged();
         return;
     }
     const auto answered = context.value(QStringLiteral("answered")).toObject();
@@ -527,6 +562,7 @@ void NextPrompt::settle(const QString& id, const QJsonObject& context) {
     event.insert(QStringLiteral("sent_text"), sent.left(4000));
     awaiting_.erase(waiting);
     record(event);
+    emit stateChanged();
 }
 
 void NextPrompt::record(QJsonObject event) const {
@@ -568,6 +604,215 @@ void NextPrompt::record(QJsonObject event) const {
         return;
     }
     file.write(encoded);
+}
+
+// Saved state ------------------------------------------------------------------
+
+namespace {
+// Bounds on what is saved: agents per map, characters per guess, and all the
+// guesses' text together, so the state file stays small.
+constexpr qsizetype kSavedAgents = 128;
+constexpr qsizetype kSavedText = 8000;
+constexpr qsizetype kSavedTextTotal = qsizetype{256} * 1024;
+constexpr int kOwedTries = 20;
+constexpr int kOwedRetryMs = 500;
+bool chats(const QString& cli) {
+    return cli == QLatin1String("claude") || cli == QLatin1String("codex");
+}
+} // namespace
+
+QJsonObject NextPrompt::saveState() const {
+    qsizetype budget = kSavedTextTotal;
+    const auto encode = [&budget](const Offer& offer) -> QJsonObject {
+        if (offer.text.isEmpty() || offer.text.size() > kSavedText || offer.text.size() > budget)
+            return {};
+        budget -= offer.text.size();
+        return {{QStringLiteral("key"), offer.key},
+                {QStringLiteral("text"), offer.text},
+                {QStringLiteral("conversation"), offer.conversation},
+                {QStringLiteral("turn"), offer.turn},
+                {QStringLiteral("seenMs"), offer.seen_ms}};
+    };
+    QJsonObject offers;
+    for (const auto* map : {&offers_, &restoring_})
+        for (auto entry = map->cbegin(); entry != map->cend(); ++entry)
+            if (offers.size() < kSavedAgents)
+                if (const auto saved = encode(entry.value()); !saved.isEmpty())
+                    offers.insert(entry.key(), saved);
+    QJsonObject awaiting;
+    for (auto entry = awaiting_.cbegin(); entry != awaiting_.cend(); ++entry) {
+        auto saved = encode(entry->offer);
+        if (saved.isEmpty() || awaiting.size() >= kSavedAgents)
+            continue;
+        saved.insert(QStringLiteral("filled"), entry->filled);
+        saved.insert(QStringLiteral("tabSent"), entry->tab_sent);
+        awaiting.insert(entry.key(), saved);
+    }
+    QJsonObject owed;
+    for (auto entry = running_.cbegin(); entry != running_.cend(); ++entry)
+        if (!entry->verifying && owed.size() < kSavedAgents)
+            owed.insert(entry.key(),
+                        QJsonObject{{QStringLiteral("conversation"), entry->agent.conversation}});
+    for (auto entry = owed_.cbegin(); entry != owed_.cend(); ++entry)
+        if (!owed.contains(entry.key()) && owed.size() < kSavedAgents)
+            owed.insert(entry.key(), QJsonObject{{QStringLiteral("conversation"), entry.value()}});
+    return {{QStringLiteral("offers"), offers},
+            {QStringLiteral("awaiting"), awaiting},
+            {QStringLiteral("owed"), owed}};
+}
+
+void NextPrompt::restoreState(const QJsonObject& state) {
+    if (!settings_.automatic)
+        return;
+    // Awaiting first: a restored offer's check asks for its outcome too.
+    const bool awaiting = restoreAwaiting(state.value(QStringLiteral("awaiting")).toObject());
+    const bool offers = restoreOffers(state.value(QStringLiteral("offers")).toObject());
+    const bool owed = restoreOwed(state.value(QStringLiteral("owed")).toObject());
+    if (awaiting || offers || owed)
+        emit stateChanged();
+}
+
+auto NextPrompt::savedOffer(const QString& id, const QJsonValue& value) -> std::optional<Offer> {
+    const auto object = value.toObject();
+    Offer offer{object.value(QStringLiteral("key")).toString(),
+                object.value(QStringLiteral("text")).toString(),
+                object.value(QStringLiteral("conversation")).toString(),
+                object.value(QStringLiteral("turn")).toInt(-1),
+                static_cast<qint64>(object.value(QStringLiteral("seenMs")).toDouble(-1))};
+    if (id.isEmpty() || id.size() > 200 || !offer.key.startsWith(id + QLatin1Char(':')) ||
+        offer.key.size() > 400 || offer.text.isEmpty() || offer.text.size() > kSavedText ||
+        offer.conversation.size() > 200 || offer.turn < 0 || offer.seen_ms < 0)
+        return std::nullopt;
+    return offer;
+}
+
+// The agent still exists, runs a CLI lapis guesses for, and has not moved to
+// another conversation (as after /clear) as far as lapis knows yet.
+auto NextPrompt::restorable(const QString& id, QStringView conversation) const
+    -> std::optional<Agent> {
+    auto agent = lookup_(id);
+    if (!agent || !chats(agent->cli) ||
+        (!agent->conversation.isEmpty() && !conversation.isEmpty() &&
+         agent->conversation != conversation))
+        return std::nullopt;
+    return agent;
+}
+
+bool NextPrompt::restoreAwaiting(const QJsonObject& awaiting) {
+    bool restored = false;
+    for (auto entry = awaiting.constBegin(); entry != awaiting.constEnd(); ++entry) {
+        const auto offer = savedOffer(entry.key(), entry.value());
+        if (!offer || awaiting_.contains(entry.key()) ||
+            !restorable(entry.key(), offer->conversation))
+            continue;
+        const auto object = entry.value().toObject();
+        awaiting_.insert(entry.key(), {*offer, object.value(QStringLiteral("filled")).toBool(),
+                                       object.value(QStringLiteral("tabSent")).toBool()});
+        restored = true;
+    }
+    return restored;
+}
+
+bool NextPrompt::restoreOffers(const QJsonObject& offers) {
+    bool restored = false;
+    for (auto entry = offers.constBegin(); entry != offers.constEnd(); ++entry) {
+        const auto& id = entry.key();
+        const auto offer = savedOffer(id, entry.value());
+        if (!offer || offers_.contains(id) || restoring_.contains(id) || running_.contains(id))
+            continue;
+        const auto agent = restorable(id, offer->conversation);
+        if (!agent) {
+            recordWithdrawn(*offer, id, lookup_(id) ? "stale" : "gone");
+            continue;
+        }
+        verify(id, *agent, *offer);
+        restored = true;
+    }
+    return restored;
+}
+
+bool NextPrompt::restoreOwed(const QJsonObject& owed) {
+    bool restored = false;
+    for (auto entry = owed.constBegin(); entry != owed.constEnd(); ++entry) {
+        const auto& id = entry.key();
+        const auto conversation =
+            entry.value().toObject().value(QStringLiteral("conversation")).toString();
+        if (id.isEmpty() || id.size() > 200 || conversation.size() > 200 || owed_.contains(id) ||
+            offers_.contains(id) || restoring_.contains(id) || running_.contains(id) ||
+            !restorable(id, conversation))
+            continue;
+        owed_.insert(id, conversation);
+        restored = true;
+        QTimer::singleShot(0, this, [this, id] { resumeOwed(id, 0); });
+    }
+    return restored;
+}
+
+void NextPrompt::verify(const QString& id, const Agent& agent, const Offer& offer) {
+    const auto generation = ++generation_;
+    running_.insert(id, {generation, agent, {}, true});
+    restoring_.insert(id, offer);
+    runContext(id, generation, agent, Stage::verify, [this, id](const QJsonObject& context) {
+        // What was sent after an earlier guess may have reached the
+        // conversation while no window was watching.
+        settle(id, context);
+        confirm(id, context);
+    });
+}
+
+void NextPrompt::confirm(const QString& id, const QJsonObject& context) {
+    running_.remove(id);
+    const auto offer = restoring_.value(id);
+    if (offer.text.isEmpty())
+        return;
+    const auto conversation = context.value(QStringLiteral("conversation")).toString();
+    if (conversation != offer.conversation) {
+        dropRestored(id, "stale");
+        return;
+    }
+    if (context.value(QStringLiteral("turn")).toInt(-1) != offer.turn) {
+        dropRestored(id, "new_turn");
+        return;
+    }
+    restoring_.remove(id);
+    offers_.insert(id, offer);
+    ++revision_;
+    emit changed();
+    emit stateChanged();
+}
+
+void NextPrompt::dropRestored(const QString& id, const char* reason) {
+    const auto offer = restoring_.take(id);
+    if (offer.text.isEmpty())
+        return;
+    recordWithdrawn(offer, id, reason);
+    emit stateChanged();
+}
+
+void NextPrompt::resumeOwed(const QString& id, int tries) {
+    if (!owed_.contains(id) || !settings_.automatic)
+        return;
+    const auto agent = lookup_(id);
+    const auto conversation = owed_.value(id);
+    if (!agent || !chats(agent->cli) ||
+        (!agent->conversation.isEmpty() && !conversation.isEmpty() &&
+         agent->conversation != conversation)) {
+        owed_.remove(id);
+        emit stateChanged();
+        return;
+    }
+    // The guess reads the agent's screen, which the service sends again
+    // shortly after the window reattaches.
+    if (agent->screen.isEmpty() && tries < kOwedTries) {
+        QTimer::singleShot(kOwedRetryMs, this, [this, id, tries] { resumeOwed(id, tries + 1); });
+        return;
+    }
+    if (running_.contains(id) || offers_.contains(id)) {
+        owed_.remove(id);
+        emit stateChanged();
+        return;
+    }
+    turnFinished(id);
 }
 
 } // namespace lapis::desktop

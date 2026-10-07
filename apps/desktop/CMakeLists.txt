@@ -45,6 +45,7 @@ add_library(lapis_desktop_view STATIC
     src/cell_shapes.cpp src/cell_shapes.hpp
     src/tile_layout.cpp src/tile_layout.hpp
     src/history_strip.cpp src/history_strip.hpp
+    src/gui_state.cpp src/gui_state.hpp
     src/app_paths.cpp src/app_paths.hpp
     src/desktop_actions.cpp src/desktop_actions.hpp src/platform_desktop.hpp
     src/shell_environment.cpp src/shell_environment.hpp
@@ -162,6 +163,10 @@ if(BUILD_TESTING)
         # Mac; leave headroom for concurrent builds without changing app deadlines.
         set_tests_properties(limit-resets PROPERTIES TIMEOUT 60)
     endif()
+    add_executable(lapis_gui_state_tests tests/gui_state_test.cpp)
+    target_link_libraries(lapis_gui_state_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME gui-state COMMAND lapis_gui_state_tests)
+    set_tests_properties(gui-state PROPERTIES TIMEOUT 30)
     add_executable(lapis_history_strip_tests tests/history_strip_test.cpp)
     target_link_libraries(lapis_history_strip_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME history-strip COMMAND lapis_history_strip_tests)

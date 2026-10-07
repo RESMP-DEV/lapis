@@ -1,6 +1,8 @@
 #include "agent_search.hpp"
 #include "conversation_index.hpp"
+#include "gui_state.hpp"
 #include "keymap.hpp"
+#include "next_prompt.hpp"
 #include "plan_sign_in.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
@@ -2649,6 +2651,99 @@ int run_history_ui_tests() {
     return EXIT_SUCCESS;
 }
 
+// A restarted window brings back the guess at an agent's cursor: the state
+// file an earlier window wrote is read, the conversation (a stand-in helper)
+// is still at the offer's turn, and the guess is drawn and reported seen. The
+// window's own choices come back too.
+int run_restored_suggestion_tests() {
+    using namespace lapis::desktop;
+    QTemporaryDir config(QStringLiteral("/tmp/lapis-ui-XXXXXX"));
+    CHECK(config.isValid());
+    const QDir root(config.path());
+    CHECK(root.mkpath(QStringLiteral("bin")));
+    const auto python = root.filePath(QStringLiteral("bin/python3"));
+    {
+        QFile script(python);
+        CHECK(script.open(QIODevice::WriteOnly));
+        script.write("#!/bin/sh\nprintf '%s' '{\"conversation\":\"c\",\"turn\":3}'\n");
+    }
+    CHECK(QFile::setPermissions(python, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    Workspace workspace(WorkspaceMode::preview);
+    auto* agent = workspace.session(QStringLiteral("agent"));
+    CHECK(agent != nullptr);
+    agent->setHarnessId(QStringLiteral("claude"));
+    lapis::session::wire::AttentionSnapshot finished;
+    finished.available = finished.connected = finished.ready = true;
+    finished.activity = lapis::session::attention::Activity::turn_completed;
+    agent->applyAttention(finished);
+    CHECK(workspace.selectSession(QStringLiteral("agent")));
+    NextPrompt next(
+        [](const QString& id) -> std::optional<NextPrompt::Agent> {
+            if (id != QLatin1String("agent"))
+                return std::nullopt;
+            return NextPrompt::Agent{{},
+                                     QStringLiteral("~/x"),
+                                     QStringLiteral("claude"),
+                                     QStringLiteral("c"),
+                                     QStringLiteral("agent"),
+                                     QStringLiteral("general"),
+                                     QStringLiteral("> |")};
+        },
+        [] { return QJsonArray{}; },
+        [&root](const QString& name) { return root.filePath(QStringLiteral("bin/") + name); },
+        {root.filePath(QStringLiteral("runtime")),
+         root.filePath(QStringLiteral("runtime/next_prompt.jsonl"))});
+    NextPromptSettings on;
+    on.automatic = true;
+    next.setSettings(on);
+    const auto path = root.filePath(QStringLiteral("runtime/gui_state.json"));
+    {
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly));
+        file.write(R"({"version": 1, "sections": {
+            "window": {"lastHarness": "codex", "lastMode": "edits"},
+            "nextPrompt": {"offers": {"agent": {"key": "agent:earlier.1",
+                "text": "run the tests", "conversation": "c", "turn": 3, "seenMs": 0}}}}})");
+    }
+    GuiState state(path);
+    CHECK(state.load());
+    next.restoreState(state.section(QStringLiteral("nextPrompt")).toObject());
+    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+                                  .compact = false,
+                                  .screen = QString(),
+                                  .nextPrompt = &next,
+                                  .guiState = &state});
+    CHECK(preview.load());
+    auto* window = preview.window();
+    window->resize(1400, 960);
+    wait_active(*window);
+    CHECK(window->property("lastHarness").toString() == QStringLiteral("codex") &&
+          window->property("lastMode").toString() == QStringLiteral("edits"));
+    auto* terminal = qobject_cast<TerminalSurface*>(
+        find_visual(window->contentItem(), QStringLiteral("liveTerminal")));
+    CHECK(terminal != nullptr && terminal->document() == agent);
+    CHECK(pump_until([&] { return terminal->suggestion() == QStringLiteral("run the tests"); },
+                     5000));
+    CHECK(terminal->suggestionKey() == QStringLiteral("agent:earlier.1"));
+    // Drawn: on screen, it is reported seen under the restored offer's key.
+    CHECK(pump_until([&] { return next.readyAgents().value(QStringLiteral("agent")).toBool(); },
+                     5000));
+    pump(60);
+    const auto shown = window->grabWindow();
+    if (const auto prefix = qEnvironmentVariable("LAPIS_WORKSPACE_CAPTURE_PREFIX");
+        !prefix.isEmpty())
+        CHECK(shown.save(prefix + QStringLiteral("restored-suggestion.png")));
+    next.used(QStringLiteral("agent"), false, 0, QStringLiteral("agent:earlier.1"));
+    CHECK(pump_until([&] { return terminal->suggestion().isEmpty(); }, 2000));
+    pump(60);
+    const auto plain = window->grabWindow();
+    CHECK(shown.size() == plain.size() && shown != plain);
+    // A choice made now is kept for the next window.
+    window->setProperty("lastHarness", QStringLiteral("claude"));
+    CHECK(state.value(QStringLiteral("lastHarness")).toString() == QStringLiteral("claude"));
+    return EXIT_SUCCESS;
+}
+
 int main(int argc, char** argv) {
     bool background = false;
     bool shortcuts_only = false;
@@ -2711,7 +2806,8 @@ int main(int argc, char** argv) {
                    run_preview_frame_sync_tests() != EXIT_SUCCESS ||
                    run_attention_dialog_tests() != EXIT_SUCCESS ||
                    run_attention_ui_tests() != EXIT_SUCCESS ||
-                   run_strip_ui_tests() != EXIT_SUCCESS || run_history_ui_tests() != EXIT_SUCCESS)
+                   run_strip_ui_tests() != EXIT_SUCCESS || run_history_ui_tests() != EXIT_SUCCESS ||
+                   run_restored_suggestion_tests() != EXIT_SUCCESS)
             return EXIT_FAILURE;
         std::cout << "ui_preview_test: PASS"
                   << (background ? " (offscreen/software; not native input or GPU acceptance)" : "")

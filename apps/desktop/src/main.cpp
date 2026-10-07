@@ -3,6 +3,7 @@
 #include "app_paths.hpp"
 #include "conversation_index.hpp"
 #include "desktop_actions.hpp"
+#include "gui_state.hpp"
 #include "interaction_recorder.hpp"
 #include "keymap.hpp"
 #include "limit_resets.hpp"
@@ -735,7 +736,52 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
                          if (item != nullptr)
                              next.turnFinished(item->sessionId());
                      });
+    // A turn that ended while no window watched still gets its guess.
+    QObject::connect(&workspace, &lapis::desktop::Workspace::finishedWhileAway, &next,
+                     [&next](SessionPreview* item) {
+                         if (item != nullptr)
+                             next.turnFinished(item->sessionId());
+                     });
     return &next;
+}
+
+// What the window knows that a restart should keep (see GuiState), beside the
+// workspace registry in runtime/: guesses, unseen marks, what was seen,
+// closed agents and the window's own choices. Restored once every owner
+// exists; restoring never pings. A turn that ended while no window watched
+// is guessed for, without a chime.
+std::unique_ptr<lapis::desktop::GuiState>
+keep_gui_state(lapis::desktop::Workspace& workspace,
+               std::optional<lapis::desktop::NextPrompt>& nextPrompt,
+               std::optional<lapis::desktop::SeenScreens>& seenScreens, bool isolated) {
+    using lapis::desktop::GuiState;
+    using lapis::desktop::Workspace;
+    if (isolated || workspace.storagePath().isEmpty())
+        return nullptr;
+    auto* const next = nextPrompt ? &*nextPrompt : nullptr;
+    auto* const seen = seenScreens ? &*seenScreens : nullptr;
+    auto state = std::make_unique<GuiState>(QDir(QFileInfo(workspace.storagePath()).absolutePath())
+                                                .filePath(QStringLiteral("gui_state.json")));
+    auto* store = state.get();
+    state->load();
+    workspace.restoreMarks(state->section(QStringLiteral("marks")).toObject());
+    workspace.restoreClosed(state->section(QStringLiteral("closed")).toArray());
+    state->addSection(QStringLiteral("marks"), [&workspace] { return workspace.saveMarks(); });
+    state->addSection(QStringLiteral("closed"), [&workspace] { return workspace.saveClosed(); });
+    QObject::connect(&workspace, &Workspace::marksChanged, store, &GuiState::touch);
+    QObject::connect(&workspace, &Workspace::closedChanged, store, &GuiState::touch);
+    if (seen != nullptr) {
+        seen->restoreState(state->section(QStringLiteral("seen")).toObject());
+        state->addSection(QStringLiteral("seen"), [seen] { return seen->saveState(); });
+        QObject::connect(seen, &lapis::desktop::SeenScreens::changed, store, &GuiState::touch);
+    }
+    if (next != nullptr) {
+        next->restoreState(state->section(QStringLiteral("nextPrompt")).toObject());
+        state->addSection(QStringLiteral("nextPrompt"), [next] { return next->saveState(); });
+        QObject::connect(next, &lapis::desktop::NextPrompt::stateChanged, store, &GuiState::touch);
+    }
+    QObject::connect(qApp, &QCoreApplication::aboutToQuit, store, &GuiState::flush);
+    return state;
 }
 
 // The quick-command terminals beside this workspace, with ssh hosts from the
@@ -960,6 +1006,8 @@ int main(int argc, char** argv) {
             follow_conversation_titles(workspace, *conversations);
             conversations->refresh();
         }
+        // After every owner it saves for, so it is written before they go.
+        const auto guiState = keep_gui_state(workspace, nextPrompt, seen, isolated);
         // Before the view, so the window callbacks never see it destroyed.
         const auto recorder = interaction_recorder(workspace, keymap, options, isolated, parser);
         UiPreview view(workspace, {.source = qml_source(parser),
@@ -976,6 +1024,7 @@ int main(int argc, char** argv) {
                                    .limitResets = resetsForQml,
                                    .nextPrompt = nextForQml,
                                    .planSignIn = signInForQml,
+                                   .guiState = guiState.get(),
                                    .persistGeometry = !isolated && !options.launch &&
                                                       options.endpoint.isEmpty() &&
                                                       !parser.isSet(QStringLiteral("capture")),

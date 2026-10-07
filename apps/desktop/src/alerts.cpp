@@ -9,6 +9,7 @@
 #include <QJsonDocument>
 #include <QStringList>
 #include <algorithm>
+#include <cstdint>
 #include <utility>
 
 namespace lapis::desktop {
@@ -60,7 +61,13 @@ size_t SeenScreens::fingerprint(const SessionPreview* item) {
         }
     if (rules == 2)
         lines = lines.mid(0, top);
-    return qHash(lines.join(QLatin1Char('\n')));
+    // FNV-1a: unlike qHash, unseeded, so it holds across launches.
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (const QChar unit : lines.join(QLatin1Char('\n'))) {
+        hash ^= unit.unicode();
+        hash *= 1099511628211ULL;
+    }
+    return static_cast<size_t>(hash);
 }
 
 void SeenScreens::see(const SessionPreview* item) {
@@ -68,7 +75,31 @@ void SeenScreens::see(const SessionPreview* item) {
         return;
     if (!seen_.contains(item))
         connect(item, &QObject::destroyed, this, [this, item] { seen_.remove(item); });
-    seen_.insert(item, fingerprint(item));
+    const auto print = fingerprint(item);
+    if (seen_.contains(item) && seen_.value(item) == print)
+        return;
+    seen_.insert(item, print);
+    emit changed();
+}
+
+QJsonObject SeenScreens::saveState() const {
+    QJsonObject state;
+    for (auto entry = seen_.cbegin(); entry != seen_.cend(); ++entry)
+        state.insert(entry.key()->sessionId(),
+                     QString::number(static_cast<std::uint64_t>(entry.value()), 16));
+    return state;
+}
+
+void SeenScreens::restoreState(const QJsonObject& state) {
+    for (auto entry = state.constBegin(); entry != state.constEnd(); ++entry) {
+        const auto* item = workspace_.session(entry.key());
+        bool valid = false;
+        const auto print = entry.value().toString().toULongLong(&valid, 16);
+        if (item == nullptr || !valid || seen_.contains(item))
+            continue;
+        connect(item, &QObject::destroyed, this, [this, item] { seen_.remove(item); });
+        seen_.insert(item, static_cast<size_t>(print));
+    }
 }
 
 void SeenScreens::sample() {

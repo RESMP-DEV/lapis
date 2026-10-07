@@ -285,7 +285,10 @@ ApplicationWindow {
     // The home list shown when nothing is open: actions, then recent
     // conversations, then the other categories that have agents.
     ListModel { id: homeModel }
-    Component.onCompleted: homeRebuild.restart()
+    Component.onCompleted: {
+        homeRebuild.restart()
+        recallWindowMemory()
+    }
     property var homeRuns: []
     function rebuildHome() {
         if (workspace.focusedSession !== null && homeModel.count > 0)
@@ -694,6 +697,39 @@ ApplicationWindow {
     property string lastMachine: ""
     property string lastMode: ""
     property var lastModels: ({})
+    // The window's own choices outlive a restart of the window (guiState;
+    // absent in fixtures): the new-agent form's, the side terminal's and a
+    // zoomed tile.
+    readonly property var windowMemory: typeof guiState !== "undefined" ? guiState : null
+    function remember(key, value) {
+        if (windowMemory !== null)
+            windowMemory.setValue(key, value)
+    }
+    onLastHarnessChanged: remember("lastHarness", lastHarness)
+    onLastMachineChanged: remember("lastMachine", lastMachine)
+    onLastModeChanged: remember("lastMode", lastMode)
+    onLastModelsChanged: remember("lastModels", lastModels)
+    onLastTerminalMachineChanged: remember("lastTerminalMachine", lastTerminalMachine)
+    onTileZoomedChanged: remember("tileZoomed", tileZoomed)
+    onSideTerminalOpenChanged: remember("sideTerminalOpen", sideTerminalOpen)
+    function recallWindowMemory() {
+        if (windowMemory === null)
+            return
+        const text = key => {
+            const value = windowMemory.value(key)
+            return typeof value === "string" ? value : ""
+        }
+        lastHarness = text("lastHarness")
+        lastMachine = text("lastMachine")
+        lastMode = text("lastMode")
+        lastTerminalMachine = text("lastTerminalMachine")
+        const models = windowMemory.value("lastModels")
+        if (models !== null && typeof models === "object" && !Array.isArray(models))
+            lastModels = models
+        tileZoomed = windowMemory.value("tileZoomed") === true
+        if (windowMemory.value("sideTerminalOpen") === true)
+            Qt.callLater(() => openTerminalOn(lastTerminalMachine))
+    }
     function openNewAgentDialog() {
         if (terminalBusy)
             return
