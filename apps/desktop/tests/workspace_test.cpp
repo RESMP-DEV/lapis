@@ -4036,6 +4036,51 @@ void notificationsReachYouWhenAway() {
     emit workspace.turnFinished(&agent);
     require(posted.size() == 4 && decision() == QStringLiteral("posted"),
             "in the background a finished turn posts as before");
+
+    // A look SeenScreens already recorded answers a finished wait even after
+    // the person moves on: a glance of a few seconds hits the 1s sample and
+    // usually misses the 5s check. A recorded look is not an answer for an
+    // open request, which still reminds.
+    waitFor([] { return false; }, 300);
+    require(posted.size() == 5, "the background wait resolves before the seen coverage");
+    background = false;
+    bool watching = false;
+    lapis::desktop::SeenScreens seen(workspace, [&watching](const auto*) { return watching; });
+    notifier.setSeen(&seen);
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 5 && decision() == QStringLiteral("none: lapis is in front"),
+            "the finished wait queues before anything records the screen");
+    watching = true;
+    seen.see(&agent); // what the 1s sampler records while the agent is shown
+    watching = false;
+    waitFor([] { return false; }, 300);
+    require(posted.size() == 5, "a look SeenScreens recorded answers the wait once they leave");
+
+    wire::AttentionSnapshot pending;
+    pending.available = pending.connected = pending.ready = true;
+    pending.source_epoch = 1;
+    lapis::session::attention::Pending request_item;
+    request_item.request = {.id = std::int64_t{1},
+                            .thread_id = "t",
+                            .turn_id = "u",
+                            .item_id = "i",
+                            .reason = "Approval",
+                            .summary = "Run tests",
+                            .choices = {"accept"}};
+    request_item.source_epoch = request_item.revision = 1;
+    pending.requests.push_back({request_item, QJsonObject{}});
+    agent.applyAttention(pending);
+    emit workspace.agentNeedsYou(&agent);
+    require(posted.size() == 5 && decision() == QStringLiteral("none: lapis is in front"),
+            "an open request queues its wait on the recorded screen too");
+    watching = true;
+    seen.see(&agent);
+    watching = false;
+    require(waitFor([&posted] { return posted.size() == 6; }, 1000) &&
+                notes.back().value(QStringLiteral("event")).toString() ==
+                    QStringLiteral("still waiting"),
+            "but a glance at an open request is not an answer: it still reminds");
+    notifier.setSeen(nullptr);
     notifier.setLog({});
 }
 

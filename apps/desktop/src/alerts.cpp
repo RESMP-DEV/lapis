@@ -254,14 +254,17 @@ void Notifier::wait(SessionPreview* item, bool needsYou) {
 
 void Notifier::check() {
     const auto remind = remindMs();
-    // Answered (a new turn, or the request resolved), looked at, ended or
-    // closed: nothing is waiting any more.
+    // Answered (a new turn, or the request resolved), looked at now or
+    // already seen, ended or closed: nothing is waiting any more. A look
+    // SeenScreens recorded answers a finished wait even after the person
+    // moves on; an open request still counts as waiting until it resolves.
     std::erase_if(waiting_, [this](const Waiting& waiting) {
         if (!waiting.item)
             return true;
         const auto kind = waiting.item->statusKind();
         return kind == QLatin1String("working") || kind == QLatin1String("ended") ||
                (waiting.needsYou && waiting.item->attentionCount() == 0) ||
+               (!waiting.needsYou && seen_ != nullptr && seen_->unchanged(waiting.item)) ||
                (looking_ && looking_(waiting.item));
     });
     if (remind <= 0 || !config_.notify())

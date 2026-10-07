@@ -51,7 +51,8 @@ no keyboard, mouse or trackpad input anywhere for `alerts.awayAfter` seconds
 (default 120, from 15 to 3600). Away, lapis in front, even showing that agent,
 does not count as you seeing it. An agent still waiting after
 `alerts.remindAfter` minutes (default 30, up to 1440; 0 for never), with no
-new turn and not looked at, notifies once more; if you are away then, the
+new turn and not looked at (a look already recorded by the screen sampler
+counts, even after you move on), notifies once more; if you are away then, the
 reminder comes when you are back.
 
 ```json

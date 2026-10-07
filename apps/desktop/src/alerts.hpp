@@ -124,9 +124,12 @@ class Notifier final : public QObject {
     static constexpr int kCheckMs = 5000;
     Notifier(Workspace& workspace, const KeyMap& config, Post post, Background background,
              QObject* parent = nullptr);
+    // The same record the chime uses: a finished turn whose screen is still
+    // what was seen there is answered, even after the person moves on.
     void setSeen(const SeenScreens* seen) { seen_ = seen; }
     void setLog(AttentionLog log) { log_ = std::move(log); }
-    // Without these the person always counts as present and nothing reminds.
+    // Without these the person always counts as present, so a reminder
+    // falling due does not wait for them; it still follows remindAfter.
     void setPresence(Present present, Looking looking);
     struct Timing {
         int checkMs;

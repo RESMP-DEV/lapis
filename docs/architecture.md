@@ -1807,11 +1807,12 @@ Decisions from these runs:
   person counts as present). Being in front, or showing that very agent, counts
   as seeing it only with someone present, and `SeenScreens` samples only then.
   The chime still plays. An agent left waiting (no new turn, request still
-  open, not looked at while present) posts one reminder after
-  `alerts.remindAfter` minutes (default 30, 0 turns it off); one falling due
-  while the person is away waits until input resumes. Reminders log as event
-  `still waiting`, decision `posted: reminder`; away posts as
-  `posted: you are away`.
+  open, not looked at while present; a look `SeenScreens` already recorded
+  answers a finished wait even after the person moves on, while an open
+  request keeps reminding) posts one reminder after `alerts.remindAfter`
+  minutes (default 30, 0 turns it off); one falling due while the person is
+  away waits until input resumes. Reminders log as event `still waiting`,
+  decision `posted: reminder`; away posts as `posted: you are away`.
   Evidence (dated; the author's attention log, interaction log and Claude
   transcripts, September 30 to October 6): of 311 final turn endings under
   lapis, the person answered 77 more than 30 minutes later, 61 of them with no
