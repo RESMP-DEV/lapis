@@ -140,10 +140,15 @@ class TranscriptTests(Homes):
             "<codex_internal_context>goal mode</codex_internal_context>",
             "<turn_aborted>The user interrupted.</turn_aborted>",
             "<subagent_notification>done</subagent_notification>",
+            "<recommended_plugins>one</recommended_plugins>",
             "<bash-input>ls</bash-input>",
+            "<bash-stdout>file.txt</bash-stdout>",
+            "<bash-stderr>missing</bash-stderr>",
+            "<command-message>review</command-message>",
             "[Your previous response had no visible output. Continue.]",
         ):
             self.assertEqual(typed(injected), "")
+            self.assertEqual(typed('<image name="a.png"></image>\n' + injected), "")
         self.assertEqual(
             typed('<image name="a.png"></image>\nwhat is this'), "what is this"
         )
