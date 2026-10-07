@@ -153,6 +153,41 @@ class TranscriptTests(Homes):
         )
         self.assertEqual(typed("# heading I typed"), "# heading I typed")
 
+    def test_image_wrappers_are_stripped_before_injected_classification(self):
+        typed = next_prompt.typed
+        wrapper = '<image name="a.png"></image>\n'
+        self.assertEqual(
+            typed(
+                wrapper + "<codex_internal_context>goal mode</codex_internal_context>"
+            ),
+            "",
+        )
+        self.assertEqual(
+            typed(wrapper + "<turn_aborted>The user interrupted.</turn_aborted>"), ""
+        )
+        self.assertEqual(typed(wrapper + "what is this"), "what is this")
+
+    def test_codex_desktop_marker_is_extracted_by_line_and_last_marker_wins(self):
+        typed = next_prompt.typed
+        direct = "## My request for Codex:\nfix it"
+        wrapped = '<image name="a.png"></image>\n' + direct
+        self.assertEqual(typed(direct), "fix it")
+        self.assertEqual(typed(wrapped), "fix it")
+        self.assertEqual(
+            typed(direct + "\n## My request for Codex:\nship it"), "ship it"
+        )
+        self.assertEqual(
+            typed(
+                "## My request for Codex:\n<codex_internal_context>goal</codex_internal_context>"
+            ),
+            "",
+        )
+        self.assertEqual(
+            typed("Read ## My request for Codex: and fix it"),
+            "Read ## My request for Codex: and fix it",
+        )
+        self.assertEqual(typed("# heading I typed"), "# heading I typed")
+
     def test_codex_leaves_out_its_own_instructions(self):
         turns = next_prompt.codex_turns(str(self.codex_path))
         self.assertEqual(

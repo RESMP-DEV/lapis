@@ -48,7 +48,7 @@ NOT_TYPED = (
 # Codex attaches images as empty wrappers around the typed text.
 IMAGE_WRAPPER = re.compile(r"<image\b[^>]*>\s*</image>\s*", re.S)
 # Codex Desktop puts context headers before the request it was typed under.
-CODEX_REQUEST = "## My request for Codex:"
+CODEX_REQUEST = re.compile(r"^## My request for Codex:[ \t]*$", re.MULTILINE)
 CATEGORIES = ("approve", "status", "ship", "fix", "new", "question", "correct", "other")
 # Variables that would send a prediction to a metered key, another endpoint or
 # a cloud account instead of the plan the CLI is signed in to.
@@ -68,11 +68,17 @@ RECENT_HOURS = 6
 
 def typed(text):
     text = (text or "").strip()
-    if not text or text.startswith(NOT_TYPED):
-        return ""
-    if text.startswith("# ") and CODEX_REQUEST in text:
-        text = text.split(CODEX_REQUEST, 1)[1]
-    return IMAGE_WRAPPER.sub("", text).strip()
+    while text:
+        # Strip wrappers before deciding what remains was typed.
+        text = IMAGE_WRAPPER.sub("", text).strip()
+        if text.startswith(NOT_TYPED):
+            return ""
+        markers = list(CODEX_REQUEST.finditer(text))
+        if not markers or not (text.startswith("# ") or CODEX_REQUEST.match(text)):
+            break
+        # Repeated envelopes can hide another wrapper, note, or marker.
+        text = text[markers[-1].end() :].strip()
+    return text
 
 
 def records(path):
