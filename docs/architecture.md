@@ -4914,3 +4914,49 @@ supervisor transition and production birth route, while the candidate lane now
 runs exact-P1 qualification. P2/P3 and the dedicated import-server/onboarding
 design wait for P1; tool status and the import protocol client remain available
 but dormant until their owners and qualification gates are ready.
+
+## Ultra Tab: a second app beside the window (October 6)
+
+Ultra Tab (`apps/ultratab/`, user page [ultratab](ultratab.md)) is the publishing
+name for the lapis V2 surface: an overlay, shown by a global key, that deals the
+agents that need you as a deck of cards with four answers (accept lapis's guess,
+speak, type, skip). Milestone 1 runs beside the existing window and borrows its
+architecture instead of replacing it. Its boundaries:
+
+- **Read-only toward lapis.** It never takes the registry lock and writes none of
+  lapis's files. It reads `runtime/workspace.json` and a new, smallest
+  publication: `runtime/agent_state.json` (version 1), written by
+  `AgentStatePublisher` in the window that holds the registry. Per agent it
+  carries the status kind, unseen mark, pending request count and first reason,
+  `neededAtMs`, the window-clock time of the last finished turn or request, and
+  the shown next-prompt offer with `said`, the agent's last reply it answers
+  (`NextPrompt::offerState`, clipped to 600 characters). Owner-only, replaced
+  atomically by one ordered writer thread, only on change, rate-limited
+  publish-to-publish at 250 ms. Nothing in lapis reads it back.
+- **Order.** `apps/desktop/src/attention_order.hpp` holds Tab's tier rule
+  (unseen guess, then unseen turns and requests, then seen guesses; oldest
+  `neededAtMs` first) for both `Workspace::nextPriorityAttention` and the deck.
+  The deck adds the eligibility the window does not yet apply: an agent at work
+  or in an unknown state is not a card; a pending request always is. The learned
+  Tab ranker is not on main; when it lands, the window should publish its order
+  and the deck should follow it rather than copy the model.
+- **Input through a join.** An answer opens a wire v6 `join` view with the
+  registry's launch fingerprint, acknowledges the first screen, submits the text
+  as one paste transaction with Return (`paste_request`, `submit`), and closes.
+  It never resizes, never answers requests (the service refuses a submitted
+  paste while one blocks), and never falls back to `discover`, which would take
+  the agent from the window.
+- **Keyboard ownership.** The overlay comes forward only on the person's key; a
+  card arriving never activates it. It hides when another app activates and
+  hands the keyboard back on Escape or the key.
+- **Platform.** Blur is an `NSVisualEffectView` (behind-window blending) made the
+  window's content view with Qt's view inside; the key is a Carbon hot key;
+  the app is an accessory (no Dock icon). These are macOS-only behind
+  `platform_overlay.hpp`.
+
+Evidence at this checkpoint: focused `ultratab`, `ultratab-overlay`,
+`agent-state`, `next-prompt` and `workspace` CTest cases. The overlay case loads
+the production QML offscreen with software Quick from fixture files and drives
+all four answers with Qt events to that offscreen window; its captures are under
+`build/reports/ultratab/`. The join is exercised against a fake v6 service, not a
+live agent; the blur, the global key and native focus are not exercised.

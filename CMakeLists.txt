@@ -53,4 +53,5 @@ endif()
 
 if(LAPIS_BUILD_DESKTOP)
     add_subdirectory(apps/desktop)
+    add_subdirectory(apps/ultratab)
 endif()
