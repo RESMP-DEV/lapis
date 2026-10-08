@@ -5125,17 +5125,15 @@ QJsonArray expectedResumeArguments(const ResumeArgumentsCase& variant,
         plan.append(QStringLiteral("resume"));
         plan.append(id);
     }
-    // A direct Codex launch takes the startup defaults the workspace applies: no
-    // update check, and an inline (non-alternate) screen. Both are prepended, and
-    // both are dropped rather than truncated once the saved argument limit is hit.
+    // A direct Codex launch takes the startup default the workspace applies: no
+    // update check, prepended, and dropped rather than truncated once the saved
+    // argument limit is hit. Its screen stays full screen.
     QJsonArray missing;
     if (variant.harness == QLatin1String("codex")) {
         if (variant.add_update_setting) {
             missing.append(QStringLiteral("-c"));
             missing.append(QStringLiteral("check_for_update_on_startup=false"));
         }
-        if (!retained.contains("--no-alt-screen"))
-            missing.append(QStringLiteral("--no-alt-screen"));
     }
     if (missing.isEmpty() || plan.size() + missing.size() > 64)
         return plan; // The launch is already at the saved argument limit.
@@ -5279,9 +5277,10 @@ void savedGrokDefaultsPreserveLaunchOwnership() {
     }
 }
 
-// Saved Codex launches gain the inline screen (and the update setting) once at
-// restart, before any owned resume pair, unless the person chose either.
-void savedCodexDefaultsKeepTranscriptInline() {
+// Saved Codex launches gain the update setting once at restart, before any
+// owned resume pair, unless the person chose it; lapis never picks the screen
+// mode, so a screen setting of the person's own stays as written.
+void savedCodexDefaultsKeepTheScreenMode() {
     struct Case {
         QStringList arguments;
         QStringList expected;
@@ -5290,18 +5289,13 @@ void savedCodexDefaultsKeepTranscriptInline() {
     };
     const QString update = QStringLiteral("check_for_update_on_startup=false");
     const std::vector<Case> cases{
-        {{}, {"-c", update, "--no-alt-screen"}},
-        {{"-c", update}, {"--no-alt-screen", "-c", update}},
+        {{}, {"-c", update}},
+        {{"-c", update}, {"-c", update}},
         {{"--no-alt-screen"}, {"-c", update, "--no-alt-screen"}},
         {{"-c", "tui.alt_screen=\"always\"", "-c", update},
          {"-c", "tui.alt_screen=\"always\"", "-c", update}},
-        {{"--", "--no-alt-screen"}, {"-c", update, "--no-alt-screen", "--", "--no-alt-screen"}},
-        {{"--alternate-screen"}, {"-c", update, "--no-alt-screen", "--alternate-screen"}},
-        {{"-c", "other.tui.alt_screen=\"always\"", "-c", update},
-         {"--no-alt-screen", "-c", "other.tui.alt_screen=\"always\"", "-c", update}},
-        {{"resume", "conversation"},
-         {"-c", update, "--no-alt-screen", "resume", "conversation"},
-         true},
+        {{"--", "--no-alt-screen"}, {"-c", update, "--", "--no-alt-screen"}},
+        {{"resume", "conversation"}, {"-c", update, "resume", "conversation"}, true},
         {{"-o", "ControlPath=none", "-t", "fixture", "codex"},
          {"-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4", "-o", "ControlPath=none",
           "-t", "fixture", "codex"},
@@ -5640,7 +5634,7 @@ int main(int argc, char** argv) {
                 remoteClaudeReconnectsToItsConversation();
             } else if (selected == QStringLiteral("startup-defaults")) {
                 savedGrokDefaultsPreserveLaunchOwnership();
-                savedCodexDefaultsKeepTranscriptInline();
+                savedCodexDefaultsKeepTheScreenMode();
             } else if (selected == QStringLiteral("launch-policy")) {
                 modelessAgentsGetTheDefaultMode();
                 resumingAConversationStartsItsCli();

@@ -61,17 +61,6 @@ bool hasCodexSetting(const QStringList& arguments, const char* key) {
     }
     return false;
 }
-// Any exact `tui.alt_screen` setting is the person's own choice, as is the
-// command-line shorthand; matching a substring would mistake unrelated text.
-bool hasCodexScreenSetting(const QStringList& arguments) {
-    for (const auto& argument : arguments) {
-        if (argument == QLatin1String("--"))
-            break;
-        if (argument == QLatin1String("--no-alt-screen"))
-            return true;
-    }
-    return hasCodexSetting(arguments, "tui.alt_screen");
-}
 bool hasCodexUpdateSetting(const QStringList& arguments) {
     return hasCodexSetting(arguments, "check_for_update_on_startup");
 }
@@ -2270,8 +2259,6 @@ void Workspace::applyStartupDefaults(const Agent& agent, ResumeLaunch& plan) {
         QStringList missing;
         if (!hasCodexUpdateSetting(plan.launch.arguments))
             missing << QStringLiteral("-c") << QStringLiteral("check_for_update_on_startup=false");
-        if (!hasCodexScreenSetting(plan.launch.arguments))
-            missing << QStringLiteral("--no-alt-screen");
         if (!missing.isEmpty() &&
             plan.launch.arguments.size() + missing.size() <= max_saved_arguments) {
             plan.launch.arguments = missing + plan.launch.arguments;

@@ -60,8 +60,7 @@ void shares_harness_identity_and_configuration() {
     require(codex != nullptr && codex->offered &&
                 codex->defaultArguments() ==
                     QStringList({QStringLiteral("-c"),
-                                 QStringLiteral("check_for_update_on_startup=false"),
-                                 QStringLiteral("--no-alt-screen")}) &&
+                                 QStringLiteral("check_for_update_on_startup=false")}) &&
                 codex->resumeOption == QStringLiteral("resume") &&
                 codex->modelArguments(QStringLiteral("gpt-6-astra")) ==
                     QStringList({QStringLiteral("-m"), QStringLiteral("gpt-6-astra")}),

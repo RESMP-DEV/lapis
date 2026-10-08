@@ -19,12 +19,8 @@ QString harnessExecutable(const HarnessDescriptor& harness) {
 } // namespace
 
 QStringList HarnessDescriptor::defaultArguments() const {
-    // Codex's transcript stays in the terminal's own history (no alternate
-    // screen), where lapis scrolls it smoothly with a scrollbar; full screen,
-    // Codex redraws itself a few rows per wheel step.
     if (id == QLatin1String("codex"))
-        return {QStringLiteral("-c"), QStringLiteral("check_for_update_on_startup=false"),
-                QStringLiteral("--no-alt-screen")};
+        return {QStringLiteral("-c"), QStringLiteral("check_for_update_on_startup=false")};
     // Full screen, as lapis's resizes need; see CLAUDE_CODE_NO_FLICKER in main.
     if (id == QLatin1String("grok"))
         return {QStringLiteral("--fullscreen")};
