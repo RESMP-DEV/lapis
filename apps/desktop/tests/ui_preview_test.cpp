@@ -2439,6 +2439,15 @@ int run_strip_ui_tests() {
         pump(30);
         CHECK(focused_id(workspace) == target);
     }
+    // The stage terminal is a focused, editable text field to accessibility
+    // clients: Wispr Flow pastes into a text field at once and falls back to
+    // a slow paste when the focused element is the bare window.
+    {
+        auto* face = QAccessible::queryAccessibleInterface(terminal);
+        CHECK(face != nullptr && face->role() == QAccessible::EditableText);
+        CHECK(face->state().focusable && face->state().editable);
+        CHECK(!terminal->hasActiveFocus() || face->state().focused);
+    }
 
     // Short windows keep the strip with shorter cards.
     window->resize(640, 480);
