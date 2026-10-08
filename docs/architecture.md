@@ -99,6 +99,7 @@ for ownership, shared contracts and integration checks across large changes.
 | Engine | Pinned Ghostty `libghostty-vt` selected for the first adapter | Eight-case macOS/Linux replay passes; isolate unstable C API and resolve dependency-notice gaps |
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
 | Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging, attention messages and retained workspace entries | Automatic service recovery remains deferred |
+| Adapter observation status | The desktop still infers pre-prompt state from exact Codex diagnostic strings; the recorded decision is to add a typed observation field and move the shared wire VERSION in the same lockstep change, after which diagnostics become display-only | Q03 extraction needs the typed field, observers, service publisher, desktop consumer and in-repo Python/Swift wire peers together, with replay-equivalent adapter states |
 | Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
 | Codex multi-thread sessions | Upstream worktree tools (#50148) make attached tasks routine in one TUI; lapis binds a single persistent TUI thread and disables structured responses on a second | A disposable two-thread live session (worktree-created attached task) proving per-thread event delivery, response ownership and `thread/resume`+`thread/read` reconciliation, recorded in the Codex capability matrix; see the [October 2 review](#codex-upstream-integration-review-october-2) |
 | Codex external-agent import | Session-only protocol importer and isolated qualification probe are implemented; no service/desktop onboarding task yet | Finish the separate explicit flow on a requalified Codex build: exact scope consent, dedicated server ownership, imported-thread launch/resume, duplicate reconciliation and failure recovery; never a per-session observer capability |
@@ -3664,6 +3665,82 @@ results):
 - **P3 permission-catalog smoke.** Managed TUI with lapis's declared
   provider/model: confirm approval requests and shortcuts render and route as
   before. Gate: no behavioral delta recorded, or an explicit adapter note.
+
+### Pacing helper, latency budget and modularity audit (October 7)
+
+The transport widening and both publish-to-publish pacing repairs have landed
+through earlier branches. Two follow-ups keep them from regressing and close
+the remaining audit rows that were ready:
+
+- `services/session/src/transport/update_pacing.hpp` owns the tested
+  publish-to-publish rate limit once. The screen-snapshot and attention
+  publishers previously carried two inline copies of the same since-publish
+  arithmetic; both now share `UpdatePace`, whose unit test pins first-of-burst
+  freshness, remainder-only arming, a deadline pinned to the last publish, and
+  reset for a replacement stream.
+- `launch-spec` asserts the socket-buffer contract on a real socket pair: the
+  default buffer is smaller than a screen, `widen_socket_buffers` raises it,
+  and removing the widening fails the test.
+- `scripts/check_performance_budget.py`,
+  `scripts/performance_budget.json`, `just latency-budget` and
+  `python3 scripts/lapis.py performance-check` gate latency receipts against
+  the reviewed 20/30/35 ms p50/p95/p99 budget. The checker rejects stale,
+  old-schema or uncorrelated-input receipts, records non-claims, and leaves a
+  failure receipt rather than a stale PASS. The pre-repair control fails the
+  budget.
+- Q13 is closed: the duplicated fake-service peer in
+  `terminal_input_test.cpp` and `live_connection_test.cpp` moved to
+  `apps/desktop/tests/wire_fixture.hpp`; each suite keeps its own assertions.
+- The ownership table was audited mechanically: service independence, adapter
+  independence, renderer isolation, Ghostty isolation, service-side message
+  validation and explicit build dependencies all hold.
+- The strip's `revealFocused` now also runs on height changes. With a 24 px
+  terminal font the card width grows with strip height without count, width
+  or selection changing; the stale scroll offset previously left the focused
+  card past the edge after the full 2 s wait (measured x 545 + width 274
+  against view width 684). The intermittent run passed five consecutive runs
+  after the fix.
+
+Measurements that motivate the budget are recorded in
+`evidence/update-pacing-latency-budget-20261007.json`: matched Qt-input p50
+48.9 ms to 32.2 ms after pacing, four post-transport runs at p50
+15.81/15.83/15.81/15.89 ms with transport about 1.7 ms, and OS-injected
+native input at p50 13.2 ms, p95 19.9 ms, p99 21.0 ms over 100 samples.
+Frame submission (about 8.5 ms p50) is the next measured target. The audit
+findings and remaining Q03/Q04/Q05/Q02 rows are in
+`evidence/modularity-audit-20261007.json`.
+
+### Open PR consolidation plan (October 7)
+
+Eighteen PRs are open. `fix/main-quality-debt` (#121) must merge first: it
+repairs the pre-existing desktop-gate failures (clang-format, Cppcheck and
+seven clang-tidy findings in files this batch does not own) that every other
+branch currently inherits, and its two reviews are clean. Immediately after
+#121, merge this branch (#122), #113 (ASCII advance cache) and #110
+(switch benchmark): all four are CLEAN apart from main's inherited gate debt
+and touch largely disjoint areas (gate repair, pacing/budget, font metrics,
+benchmark tooling).
+
+The next independent batch is the feature/fix set that reports CLEAN and has
+no base dependency: #98 (smooth scrolling + app log), #105 (ping when
+unwatched), #107 (tile navigation), #111 (stage tile reuse), #115 (persist GUI
+state) and #116 (harness update switch). These should be merged one at a time
+with a rebase or merge refresh after each, because several touch
+`Main.qml`, `workspace.cpp` and `ui_preview_test.cpp`; the largest conflict
+risk is between #98, #107, #111 and #115.
+
+The Ultra Tab family is stacked and must be consolidated in graph order:
+#117 (deck) into main, then #119 (standalone UI, based on #117), then #118
+(composer, based on #117), then #120 (iPhone, based on the combined branch
+`feature/ultratab-combined`, which already carries #117/#118/#119). Its
+integration owner should rebase #120 onto the surviving #117/#118/#119
+sequence rather than merging `feature/ultratab-combined` directly, to avoid a
+duplicate-history merge.
+
+The remaining four (#99, #101, #109, #112) report UNSTABLE and each has two
+non-green checks. They are not blockers for the batches above, but each needs
+its failure investigated and repaired on its own branch before its own merge;
+do not use the consolidation wave to hide their specific regressions.
 
 ### Following milestones
 
