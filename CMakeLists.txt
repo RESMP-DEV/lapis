@@ -15,7 +15,7 @@ include(cmake/ProjectOptions.cmake)
 option(LAPIS_BUILD_DESKTOP "Build the live desktop preview and local session service" OFF)
 option(LAPIS_BUILD_SESSION "Build the existing session service and its terminal dependency" ON)
 option(LAPIS_PACKAGE "Build the desktop as the downloadable app (see scripts/package_macos.py)" OFF)
-option(LAPIS_BUILD_ULTRATAB "Build Ultra Tab (on with the desktop; alone for packaging)" OFF)
+option(LAPIS_BUILD_ULTRATAB "Build Ultra Tab (on with a desktop development build; alone for packaging)" OFF)
 option(LAPIS_BUILD_SUPERVISOR_STATE "Build the focused supervisor state-core test target" OFF)
 option(LAPIS_BUILD_SUPERVISOR_RUNTIME "Build the experimental one-session supervisor runtime" OFF)
 
@@ -58,6 +58,8 @@ endif()
 if(LAPIS_BUILD_DESKTOP)
     add_subdirectory(apps/desktop)
 endif()
-if(LAPIS_BUILD_DESKTOP OR LAPIS_BUILD_ULTRATAB)
+# The downloadable lapis app does not contain Ultra Tab, which needs Qt Svg and
+# is packaged on its own (scripts/package_ultratab.py turns this on).
+if((LAPIS_BUILD_DESKTOP AND NOT LAPIS_PACKAGE) OR LAPIS_BUILD_ULTRATAB)
     add_subdirectory(apps/ultratab)
 endif()
