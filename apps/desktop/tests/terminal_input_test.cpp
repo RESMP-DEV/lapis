@@ -1,6 +1,7 @@
 #include "clipboard_backup.hpp"
 #include "session_descriptor.hpp"
 #include "transport/local_protocol.hpp"
+#include "wire_fixture.hpp"
 
 #include "link_receiver.hpp"
 #include "platform/window_activation.hpp"
@@ -44,31 +45,12 @@
 
 namespace {
 namespace wire = lapis::session::wire;
+using lapis::desktop::tests::require;
+using lapis::desktop::tests::settle;
+using lapis::desktop::tests::until;
+using Fixture = lapis::desktop::tests::WireFixture;
+using Peer = lapis::desktop::tests::WirePeer;
 using lapis::desktop::SessionPreview;
-void require(bool value, const char* message) {
-    if (!value)
-        throw std::runtime_error(message);
-}
-void until(const std::function<bool()>& condition, int deadline_ms = 8000,
-           std::source_location where = std::source_location::current()) {
-    QElapsedTimer time;
-    time.start();
-    while (time.elapsed() < deadline_ms) {
-        if (condition())
-            return;
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
-        QThread::msleep(1);
-    }
-    throw std::runtime_error("Event deadline expired at line " + std::to_string(where.line()));
-}
-void settle() {
-    QElapsedTimer time;
-    time.start();
-    while (time.elapsed() < 50) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
-        QThread::msleep(1);
-    }
-}
 void wait_terminal_focus(lapis::desktop::TerminalSurface& surface) {
     auto* window = surface.window();
     require(window != nullptr, "Terminal focus fixture has no window");
@@ -81,99 +63,6 @@ void wait_clipboard_text(QClipboard& clipboard, const QString& expected) {
     clipboard.setText(expected);
     until([&] { return clipboard.text() == expected; });
 }
-struct Peer {
-    QLocalSocket* socket{}; // QLocalServer owns accepted sockets.
-    QByteArray bytes;
-    wire::Frame read() {
-        wire::Frame frame;
-        bool received = false;
-        until([&] {
-            bytes += socket->readAll();
-            received = wire::take_frame(bytes, frame);
-            return received;
-        });
-        return frame;
-    }
-    void send(wire::Kind kind, const QByteArray& payload) {
-        const auto encoded = wire::frame(kind, payload);
-        require(socket->write(encoded) == encoded.size(), "Could not send fixture frame");
-        socket->flush();
-    }
-};
-struct Fixture {
-    QLocalServer server;
-    QTemporaryDir directory{QStringLiteral("/tmp/lapis-v4-XXXXXX")};
-    lapis::session::LaunchSpec launch;
-    wire::SessionIdentity identity{wire::new_id(), wire::new_id()};
-    lapis::session::Terminal terminal{{4, 2}};
-    QString endpoint;
-    quint64 generation_{1};
-    SessionPreview document{
-        QStringLiteral("test"), QStringLiteral("/tmp"), {}, QColor(Qt::white), ""};
-    Fixture() {
-        require(directory.isValid(), "Temporary directory failed");
-        endpoint = QDir(directory.path()).absoluteFilePath(QStringLiteral("session.sock"));
-        launch = lapis::session::validate_launch({.program = QStringLiteral("/bin/cat"),
-                                                  .arguments = {},
-                                                  .directory = directory.path()});
-        server.setSocketOptions(QLocalServer::UserAccessOption);
-        require(server.listen(endpoint), "Fixture listener failed");
-        terminal.feed("screen");
-    }
-    ~Fixture() { server.close(); }
-    Peer accept() {
-        until([&] { return server.hasPendingConnections(); });
-        return {server.nextPendingConnection(), {}};
-    }
-    wire::AttachRequest request(Peer& peer) {
-        const auto frame = peer.read();
-        require(frame.kind == wire::Kind::attach, "Expected attachment request");
-        const auto request = wire::decode_attach(frame.payload);
-        require(request.fingerprint == lapis::session::launch_fingerprint(launch),
-                "Wrong launch fingerprint");
-        return request;
-    }
-    void hello(Peer& peer, quint64 generation = 1, bool paste_transactions = false) {
-        generation_ = generation;
-        peer.send(wire::Kind::hello,
-                  wire::encode_hello({{identity, generation}, 123, paste_transactions}));
-        until([&] { return document.connectionState() == QStringLiteral("synchronizing"); });
-        require(!document.inputReady(), "Hello enabled input before the screen");
-    }
-    void screen(Peer& peer, quint64 generation = 1, quint64 sequence = 1) {
-        peer.send(
-            wire::Kind::snapshot,
-            wire::encode_snapshot_message({{identity, generation}, sequence, terminal.snapshot()}));
-        until([&] { return document.connectionState() == QStringLiteral("ready"); });
-        const auto ack = peer.read();
-        require(ack.kind == wire::Kind::ready, "Screen was not acknowledged before input");
-        const auto ready = wire::decode_ready(ack.payload);
-        require(ready.attachment == wire::Attachment{identity, generation} &&
-                    ready.sequence == sequence,
-                "Invalid synchronization acknowledgement");
-        const auto resize = peer.read();
-        require(resize.kind == wire::Kind::resize, "Expected post-synchronization resize");
-    }
-    wire::HistoryRequest historyRequest(Peer& peer) {
-        const auto frame = peer.read();
-        require(frame.kind == wire::Kind::history_request, "Expected history request");
-        const auto control = wire::decode_control(frame.payload);
-        require(control.attachment == wire::Attachment{identity, generation_},
-                "History request lacked current attachment");
-        return wire::decode_history_request(control.payload);
-    }
-    void historyReply(Peer& peer, quint64 request_id, quint64 page_id,
-                      const lapis::session::TerminalSnapshot& snapshot = {},
-                      const QString& message = {}, const wire::Attachment& attachment = {}) {
-        peer.send(wire::Kind::history_page,
-                  wire::encode_history_reply(
-                      {attachment == wire::Attachment{} ? wire::Attachment{identity, generation_}
-                                                        : attachment,
-                       request_id, page_id, message,
-                       page_id == 0 ? std::nullopt : std::optional(snapshot)}));
-    }
-};
-
 QByteArray text_frames(Peer& peer, qsizetype minimum = 0,
                        std::source_location where = std::source_location::current()) {
     if (minimum == 0)
@@ -193,7 +82,7 @@ QByteArray text_frames(Peer& peer, qsizetype minimum = 0,
             }
             return text.size() >= minimum;
         },
-        8000, where);
+        where, 8000);
     return text;
 }
 // Resize frames the desktop sent once events settle.
@@ -958,7 +847,7 @@ void suggestions() {
             rebound.update();
             return rebound.isExposed() && seen == 2;
         },
-        20000);
+        std::source_location::current(), 20000);
     require(!rebound.grabWindow().isNull(), "Rebound scene graph produced no frame");
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);

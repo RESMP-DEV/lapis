@@ -1,4 +1,4 @@
-# XcodeGen spec for the lapis iPhone app. Generate with `xcodegen` here.
+# XcodeGen spec for the lapis and Ultra Tab iPhone apps. Generate with `xcodegen` here.
 name: Lapis
 options:
   bundleIdPrefix: dev.lapis
@@ -73,6 +73,69 @@ targets:
         SWIFT_VERSION: "5.0"
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
+  # Ultra Tab for iPhone: the deck of agents that need you (docs/ultratab.md).
+  UltraTab:
+    type: application
+    platform: iOS
+    sources: [UltraTab]
+    info:
+      path: UltraTab/Info.plist
+      properties:
+        CFBundleDisplayName: Ultra Tab
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIUserInterfaceStyle: Dark
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        LapisDefaultHost: $(LAPIS_DEFAULT_HOST)
+        NSLocalNetworkUsageDescription: Ultra Tab connects to the lapis gateway on your Mac over Tailscale or ZeroTier.
+        NSSpeechRecognitionUsageDescription: Ultra Tab turns what you say into an annotation for an agent; recognition stays on this iPhone when it can.
+        NSMicrophoneUsageDescription: Ultra Tab listens while you hold the voice button to dictate an annotation.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            ts.net:
+              NSIncludesSubdomains: true
+              NSExceptionAllowsInsecureHTTPLoads: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.lapis.ultratab
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: NO
+  UltraTabUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UltraTabUITests]
+    dependencies:
+      - target: UltraTab
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.lapis.ultratab.uitests
+        TEST_TARGET_NAME: UltraTab
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+  # The app's logic compiled with its tests, as scripts/check_ultratab_ios.py
+  # builds them.
+  UltraTabTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - UltraTabTests
+      - UltraTab/Cards.swift
+      - UltraTab/Deck.swift
+      - UltraTab/DeckGateway.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.lapis.ultratab.unittests
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   Lapis:
     build:
@@ -82,3 +145,11 @@ schemes:
         LapisTests: [test]
     test:
       targets: [LapisUITests, LapisTests]
+  UltraTab:
+    build:
+      targets:
+        UltraTab: all
+        UltraTabUITests: [test]
+        UltraTabTests: [test]
+    test:
+      targets: [UltraTabUITests, UltraTabTests]

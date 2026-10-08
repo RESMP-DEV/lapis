@@ -1,6 +1,7 @@
 #include "terminal_surface.hpp"
 #include "workspace.hpp"
 #include <QCommandLineParser>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QGuiApplication>
@@ -364,6 +365,8 @@ QJsonObject run_probe(int samples, bool native) {
     rusage usage{};
     require(::getrusage(RUSAGE_SELF, &usage) == 0, "Memory usage unavailable");
     return {{QStringLiteral("schema"), QStringLiteral("lapis.terminal-latency/1")},
+            {QStringLiteral("recorded_at"),
+             QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
             {QStringLiteral("input"), input_label(native)},
             {QStringLiteral("endpoint"),
              QStringLiteral("frameSwapped after the matching snapshot revision synchronized; "
@@ -418,17 +421,56 @@ int main(int argc, char** argv) {
                       QStringLiteral("count"), QStringLiteral("100")});
     parser.addOption(
         {QStringLiteral("native"), QStringLiteral("Use OS-injected Return via cliclick")});
+    parser.addOption({QStringLiteral("p95-budget-ms"),
+                      QStringLiteral("Fail when input-to-frame p95 exceeds this budget"),
+                      QStringLiteral("milliseconds")});
+    parser.addOption({QStringLiteral("p99-budget-ms"),
+                      QStringLiteral("Fail when input-to-frame p99 exceeds this budget"),
+                      QStringLiteral("milliseconds")});
     parser.process(app);
     try {
         bool valid{};
         const int samples = parser.value(QStringLiteral("samples")).toInt(&valid);
-        require(valid && samples >= 1 && samples <= 1000, "Sample count must be 1..1000");
+        require(valid && samples >= 10 && samples <= 1000, "Sample count must be 10..1000");
         require(!parser.value(QStringLiteral("output")).isEmpty(), "An output path is required");
         const auto result = run_probe(samples, parser.isSet(QStringLiteral("native")));
+        QJsonObject budgets;
+        bool within_budget = true;
+        const auto apply_budget = [&](const QString& option, QLatin1String percentile) {
+            const auto requested = parser.value(option);
+            if (requested.isEmpty())
+                return;
+            bool valid{};
+            const double budget = requested.toDouble(&valid);
+            require(valid && budget > 0.0, "Latency budgets must be positive milliseconds");
+            const auto measured_value =
+                result.value(QLatin1String("input_to_frame")).toObject().value(percentile);
+            require(!measured_value.isUndefined() && !measured_value.isNull(),
+                    "Missing input-to-frame samples for the budget");
+            const double measured = measured_value.toDouble();
+            require(measured > 0.0, "Input-to-frame samples must be positive");
+            const bool passed = measured <= budget;
+            budgets.insert(option, QJsonObject{{QStringLiteral("budget_ms"), budget},
+                                               {QStringLiteral("measured_ms"), measured},
+                                               {QStringLiteral("passed"), passed}});
+            if (!passed)
+                within_budget = false;
+        };
+        apply_budget(QStringLiteral("p95-budget-ms"), QLatin1String("p95_ms"));
+        apply_budget(QStringLiteral("p99-budget-ms"), QLatin1String("p99_ms"));
+        auto receipt = result;
+        if (!budgets.isEmpty()) {
+            receipt.insert(QStringLiteral("budgets"), budgets);
+            receipt.insert(QStringLiteral("within_budget"), within_budget);
+        }
         QFile file(parser.value(QStringLiteral("output")));
         require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "Cannot write receipt");
-        const auto bytes = QJsonDocument(result).toJson();
+        const auto bytes = QJsonDocument(receipt).toJson();
         require(file.write(bytes) == bytes.size(), "Incomplete receipt write");
+        if (!within_budget) {
+            std::cerr << "Input-to-frame latency exceeded the requested budget\n";
+            return 2;
+        }
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

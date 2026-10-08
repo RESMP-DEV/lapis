@@ -100,6 +100,27 @@ notifications and plan usage, saved to the Mac's `lapis.json`.
 data under `runtime/phone-captures/`, for debugging what the phone drew; failures
 show in the same alert as delivery results.
 
+## Ultra Tab
+
+[Ultra Tab for iPhone](ultratab.md#on-the-iphone) uses the same gateway, with
+the same admission (the owner's devices over Tailscale or the Mac's ZeroTier
+networks, the `X-Lapis-Client` header, no browsers) and the same port. Two
+routes serve it:
+
+- `GET /api/deck` returns, read-only, the registry's categories and agents
+  (id, title, category, folder and CLI; no launch commands), the lapis window's
+  `agent_state.json` and the composed `ultratab_cards.json` as published
+  beside the registry, whether that window still runs, and a version. With
+  `?after=<version>` it answers once one of those files changes, or after at
+  most eight seconds. A missing file is `null`; a linked, oversized or
+  unreadable one is `null` with a line in `problems`.
+- `POST /api/agents/<id>/submit` with `{"text": "..."}` joins the agent's
+  session as an extra view, sends the text as one paste followed by Return,
+  and leaves; it never resizes the terminal or replaces the window's
+  connection. It answers `{"ok": true}` once the session admits the paste, and
+  409 with the session's reason when it does not (a pending request, a session
+  that cannot be joined or is not running).
+
 ## Testing
 
 ```sh

@@ -99,6 +99,7 @@ for ownership, shared contracts and integration checks across large changes.
 | Engine | Pinned Ghostty `libghostty-vt` selected for the first adapter | Eight-case macOS/Linux replay passes; isolate unstable C API and resolve dependency-notice gaps |
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
 | Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging, attention messages and retained workspace entries | Automatic service recovery remains deferred |
+| Adapter observation status | The desktop still infers pre-prompt state from exact Codex diagnostic strings; the recorded decision is to add a typed observation field and move the shared wire VERSION in the same lockstep change, after which diagnostics become display-only | Q03 extraction needs the typed field, observers, service publisher, desktop consumer and in-repo Python/Swift wire peers together, with replay-equivalent adapter states |
 | Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
 | Codex multi-thread sessions | Upstream worktree tools (#50148) make attached tasks routine in one TUI; lapis binds a single persistent TUI thread and disables structured responses on a second | A disposable two-thread live session (worktree-created attached task) proving per-thread event delivery, response ownership and `thread/resume`+`thread/read` reconciliation, recorded in the Codex capability matrix; see the [October 2 review](#codex-upstream-integration-review-october-2) |
 | Codex external-agent import | Session-only protocol importer and isolated qualification probe are implemented; no service/desktop onboarding task yet | Finish the separate explicit flow on a requalified Codex build: exact scope consent, dedicated server ownership, imported-thread launch/resume, duplicate reconciliation and failure recovery; never a per-session observer capability |
@@ -3666,6 +3667,82 @@ results):
   provider/model: confirm approval requests and shortcuts render and route as
   before. Gate: no behavioral delta recorded, or an explicit adapter note.
 
+### Pacing helper, latency budget and modularity audit (October 7)
+
+The transport widening and both publish-to-publish pacing repairs have landed
+through earlier branches. Two follow-ups keep them from regressing and close
+the remaining audit rows that were ready:
+
+- `services/session/src/transport/update_pacing.hpp` owns the tested
+  publish-to-publish rate limit once. The screen-snapshot and attention
+  publishers previously carried two inline copies of the same since-publish
+  arithmetic; both now share `UpdatePace`, whose unit test pins first-of-burst
+  freshness, remainder-only arming, a deadline pinned to the last publish, and
+  reset for a replacement stream.
+- `launch-spec` asserts the socket-buffer contract on a real socket pair: the
+  default buffer is smaller than a screen, `widen_socket_buffers` raises it,
+  and removing the widening fails the test.
+- `scripts/check_performance_budget.py`,
+  `scripts/performance_budget.json`, `just latency-budget` and
+  `python3 scripts/lapis.py performance-check` gate latency receipts against
+  the reviewed 20/30/35 ms p50/p95/p99 budget. The checker rejects stale,
+  old-schema or uncorrelated-input receipts, records non-claims, and leaves a
+  failure receipt rather than a stale PASS. The pre-repair control fails the
+  budget.
+- Q13 is closed: the duplicated fake-service peer in
+  `terminal_input_test.cpp` and `live_connection_test.cpp` moved to
+  `apps/desktop/tests/wire_fixture.hpp`; each suite keeps its own assertions.
+- The ownership table was audited mechanically: service independence, adapter
+  independence, renderer isolation, Ghostty isolation, service-side message
+  validation and explicit build dependencies all hold.
+- The strip's `revealFocused` now also runs on height changes. With a 24 px
+  terminal font the card width grows with strip height without count, width
+  or selection changing; the stale scroll offset previously left the focused
+  card past the edge after the full 2 s wait (measured x 545 + width 274
+  against view width 684). The intermittent run passed five consecutive runs
+  after the fix.
+
+Measurements that motivate the budget are recorded in
+`evidence/update-pacing-latency-budget-20261007.json`: matched Qt-input p50
+48.9 ms to 32.2 ms after pacing, four post-transport runs at p50
+15.81/15.83/15.81/15.89 ms with transport about 1.7 ms, and OS-injected
+native input at p50 13.2 ms, p95 19.9 ms, p99 21.0 ms over 100 samples.
+Frame submission (about 8.5 ms p50) is the next measured target. The audit
+findings and remaining Q03/Q04/Q05/Q02 rows are in
+`evidence/modularity-audit-20261007.json`.
+
+### Open PR consolidation plan (October 7)
+
+Eighteen PRs are open. `fix/main-quality-debt` (#121) must merge first: it
+repairs the pre-existing desktop-gate failures (clang-format, Cppcheck and
+seven clang-tidy findings in files this batch does not own) that every other
+branch currently inherits, and its two reviews are clean. Immediately after
+#121, merge this branch (#122), #113 (ASCII advance cache) and #110
+(switch benchmark): all four are CLEAN apart from main's inherited gate debt
+and touch largely disjoint areas (gate repair, pacing/budget, font metrics,
+benchmark tooling).
+
+The next independent batch is the feature/fix set that reports CLEAN and has
+no base dependency: #98 (smooth scrolling + app log), #105 (ping when
+unwatched), #107 (tile navigation), #111 (stage tile reuse), #115 (persist GUI
+state) and #116 (harness update switch). These should be merged one at a time
+with a rebase or merge refresh after each, because several touch
+`Main.qml`, `workspace.cpp` and `ui_preview_test.cpp`; the largest conflict
+risk is between #98, #107, #111 and #115.
+
+The Ultra Tab family is stacked and must be consolidated in graph order:
+#117 (deck) into main, then #119 (standalone UI, based on #117), then #118
+(composer, based on #117), then #120 (iPhone, based on the combined branch
+`feature/ultratab-combined`, which already carries #117/#118/#119). Its
+integration owner should rebase #120 onto the surviving #117/#118/#119
+sequence rather than merging `feature/ultratab-combined` directly, to avoid a
+duplicate-history merge.
+
+The remaining four (#99, #101, #109, #112) report UNSTABLE and each has two
+non-green checks. They are not blockers for the batches above, but each needs
+its failure investigated and repaired on its own branch before its own merge;
+do not use the consolidation wave to hide their specific regressions.
+
 ### Following milestones
 
 The [production delivery order](#production-delivery-order-september-30)
@@ -4931,3 +5008,96 @@ supervisor transition and production birth route, while the candidate lane now
 runs exact-P1 qualification. P2/P3 and the dedicated import-server/onboarding
 design wait for P1; tool status and the import protocol client remain available
 but dormant until their owners and qualification gates are ready.
+
+## Ultra Tab: a second app beside the window (October 6)
+
+Ultra Tab (`apps/ultratab/`, user page [ultratab](ultratab.md)) is the publishing
+name for the lapis V2 surface: an overlay, shown by a global key, that deals the
+agents that need you as a deck of cards with four answers (accept lapis's guess,
+speak, type, skip). Milestone 1 runs beside the existing window and borrows its
+architecture instead of replacing it. Its boundaries:
+
+- **Read-only toward lapis.** It never takes the registry lock and writes none of
+  lapis's files. It reads `runtime/workspace.json` and a new, smallest
+  publication: `runtime/agent_state.json` (version 1), written by
+  `AgentStatePublisher` in the window that holds the registry. Per agent it
+  carries the status kind, unseen mark, pending request count and first reason,
+  `neededAtMs`, the window-clock time of the last finished turn or request, and
+  the shown next-prompt offer with `said`, the agent's last reply it answers
+  (`NextPrompt::offerState`, clipped to 600 characters). Owner-only, replaced
+  atomically by one ordered writer thread, only on change, rate-limited
+  publish-to-publish at 250 ms. Nothing in lapis reads it back.
+- **Order.** `apps/desktop/src/attention_order.hpp` holds Tab's tier rule
+  (unseen guess, then unseen turns and requests, then seen guesses; oldest
+  `neededAtMs` first) for both `Workspace::nextPriorityAttention` and the deck.
+  The deck adds the eligibility the window does not yet apply: an agent at work
+  or in an unknown state is not a card; a pending request always is. The learned
+  Tab ranker is not on main; when it lands, the window should publish its order
+  and the deck should follow it rather than copy the model.
+- **Input through a join.** An answer opens a wire v6 `join` view with the
+  registry's launch fingerprint, acknowledges the first screen, submits the text
+  as one paste transaction with Return (`paste_request`, `submit`), and closes.
+  It never resizes, never answers requests (the service refuses a submitted
+  paste while one blocks), and never falls back to `discover`, which would take
+  the agent from the window.
+- **Keyboard ownership.** The overlay comes forward only on the person's key; a
+  card arriving never activates it. It hides when another app activates and
+  hands the keyboard back on Escape or the key.
+- **Platform.** Blur is an `NSVisualEffectView` (behind-window blending) made the
+  window's content view with Qt's view inside; the key is a Carbon hot key;
+  the app is an accessory (no Dock icon). These are macOS-only behind
+  `platform_overlay.hpp`.
+
+- **Composed cards.** `Composer` (`apps/ultratab/src/composer.*`) owns
+  `runtime/ultratab_cards.json` (version 1, the renderer's contract in
+  [ultratab](ultratab.md)) and `runtime/ultratab_compose.jsonl`. A card's key is
+  the offer key, else `turn:<turnAtMs or neededAtMs>`; a waiting agent whose key
+  differs from its card's is queued after a 2 s re-arming debounce, deck order
+  first, at most two helper processes at a time, each in its own process group
+  under a per-card timeout. A guess for the turn already composed patches the
+  prompt and key without a model call. The held (front, overlay visible) card is
+  replaced only with a different key. The helper (`apps/ultratab/compose/
+  compose.py`) imports `next_prompt.py` for transcript discovery, parsing and the
+  plan-backed `claude -p` call (both embedded and written to
+  `runtime/ultratab_compose/`), adds the person's last look from the interaction
+  log and the HTML/Markdown files written or mentioned since, and validates the
+  model's JSON: bad blocks are dropped, sizes clipped, SVG reduced to drawing
+  elements with safe attributes and a viewBox, links limited to listed files and
+  mentioned URLs; total failure yields the last message as the tldr. A local
+  OpenAI-compatible endpoint is an opt-in alternative to the CLI.
+
+Evidence at this checkpoint: focused `ultratab`, `ultratab-overlay`,
+`agent-state`, `next-prompt` and `workspace` CTest cases. The overlay case loads
+the production QML offscreen with software Quick from fixture files and drives
+all four answers with Qt events to that offscreen window; its captures are under
+`build/reports/ultratab/`. The join is exercised against a fake v6 service, not a
+live agent; the blur, the global key and native focus are not exercised.
+
+### Standalone app and composed cards (October 7)
+
+- **Identity.** The bundle is `Ultra Tab.app`, `dev.ultratab.app`, `LSUIElement`
+  (no Dock icon before the accessory policy is set). `LAPIS_BUILD_ULTRATAB`
+  builds it without the desktop (packaging); the desktop build still includes
+  it. `scripts/package_ultratab.py` reuses `package_macos.py`'s pinned Qt,
+  compiler flags, path scrubbing and signing identity; Qt SVG 6.11.2 (pinned
+  SHA-256) is staged in its own prefix so `lapis.app`'s `macdeployqt` never
+  picks it up. The icon is rendered from `apps/ultratab/icon/icon.svg`.
+- **Settings and window memory.** `ultratab.json` is read only (`hotkey`,
+  `startAtLogin`, default on). Positions are written to `ultratab-window.json`
+  per screen (name and geometry), clamped back on screen or recentered. The
+  window size is fixed per screen; it moves only by a background drag
+  (`startSystemMove`). The login item uses `SMAppService.mainAppService` and is
+  changed only for a bundle in an Applications folder, so builds and tests never
+  register.
+- **Composed cards.** `runtime/ultratab_cards.json` (version 1) comes from a
+  separate composer. A card is used only when its `key` equals the deck's card
+  key (`<id>|<turnAtMs>|<neededAtMs>|<offer key>|<requests>`, the id prefix
+  optional); otherwise the plain card shows. Parsing bounds every string,
+  keeps three valid blocks, and admits only `https:` and local `file:` links.
+  Diagrams are sanitized on load (no script, foreignObject, embedded content,
+  event attributes, DTD, processing instructions, or non-fragment references)
+  and drawn by `QSvgRenderer` through an image provider, never by a browser.
+  Links open only through `Deck::openLink`, which re-checks the parsed URL.
+- **Motion.** Deck state changes before any animation; a 180 ms slide/fade
+  follows it and restarts on the next key, so input is never deferred. Reduce
+  Motion (from `NSWorkspace`) removes the slide and the pulse.
