@@ -103,6 +103,7 @@ for ownership, shared contracts and integration checks across large changes.
 | Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
 | Codex multi-thread sessions | Upstream worktree tools (#50148) make attached tasks routine in one TUI; lapis binds a single persistent TUI thread and disables structured responses on a second | A disposable two-thread live session (worktree-created attached task) proving per-thread event delivery, response ownership and `thread/resume`+`thread/read` reconciliation, recorded in the Codex capability matrix; see the [October 2 review](#codex-upstream-integration-review-october-2) |
 | Codex external-agent import | Session-only protocol importer and isolated qualification probe are implemented; no service/desktop onboarding task yet | Finish the separate explicit flow on a requalified Codex build: exact scope consent, dedicated server ownership, imported-thread launch/resume, duplicate reconciliation and failure recovery; never a per-session observer capability |
+| Session-service analyzer complexity | Narrow documented suppressions hold `codex_permission`, `codex_arguments`, and `parse_options` while their CLI grammar remains one reviewable narrative | Refactor only after behavior-preserving tests cover each option path and `just desktop` remains green |
 | Web surfaces | CEF 8037 (Chromium 154) provisional candidate for service-owned, CLI-drivable web views; September 29 design only, runtime pin awaits W0 | [Web surfaces section](#web-surfaces-september-29) owns the engine gate, wire contract, injection determinism and import consent |
 
 The [research receipt](../evidence/terminal-research.json) retains pinned upstream
@@ -4834,6 +4835,12 @@ while the plan sign-in or usage (accounts) dialog, or any dialog named for an
 account, sign-in, credential or password, is open. Files are `0600` in a
 `0700` folder, rotate by size into numbered predecessors, and the total is
 bounded by `maxFileMiB` × `maxFiles`.
+
+### 2026-10-07 - Desktop gate repair
+
+The desktop aggregate had accumulated real deterministic analyzer debt on main, not toolchain drift: unformatted `alerts.cpp` and `plan_sign_in.cpp` code plus stable clang-tidy and cppcheck findings across existing desktop/session files. The mechanical repair formats those files, applies explicit casts/moves/const-reference returns, removes dead state, and uses narrow documented suppressions for intentional test structure and three deferred session-service complexity refactors. The GUI flaky class was separately stabilized by waiting for native activation/exposure, terminal focus, clipboard readiness, shortcut arming, strip reveal, and frame-driven suggestion presentation instead of fixed `pump` windows. The ui-preview aggregate timeout moved from 20 to 30 seconds and its tab-position deadline from 2 to 5 seconds.
+
+At the final head, `just quality` passed all seven subchecks and `just desktop` passed configure, build, clang-format, cppcheck, all clang-tidy workers, and all 46 CTests. The two formerly flaky GUI tests passed eight consecutive native rounds. Evidence: `evidence/main-quality-gate-repair.json`.
 
 ## Contracts to preserve
 

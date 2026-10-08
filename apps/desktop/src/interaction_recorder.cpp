@@ -222,9 +222,9 @@ InteractionRecorder::~InteractionRecorder() {
         g_active = nullptr;
     try {
         setSettings({}); // writes the stop mark and waits for the writer
-    } catch (...) {
-        // Shutdown must not throw; whatever was queued is already on its way.
-        static_cast<void>(0);
+    } catch (...) {      // NOLINT(bugprone-empty-catch) destructor must not throw;
+        // a failed settings write cannot be handled here and queued records
+        // still reach the writer.
     }
 }
 

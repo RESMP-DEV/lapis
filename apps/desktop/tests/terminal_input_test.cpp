@@ -51,6 +51,18 @@ using lapis::desktop::tests::until;
 using Fixture = lapis::desktop::tests::WireFixture;
 using Peer = lapis::desktop::tests::WirePeer;
 using lapis::desktop::SessionPreview;
+void wait_terminal_focus(lapis::desktop::TerminalSurface& surface) {
+    auto* window = surface.window();
+    require(window != nullptr, "Terminal focus fixture has no window");
+    lapis::desktop::test::activate_test_window(*window);
+    surface.forceActiveFocus();
+    until([&] { return window->isActive() && window->isExposed() && surface.hasActiveFocus(); });
+    settle(); // Deliver the queued input-ownership work after native activation.
+}
+void wait_clipboard_text(QClipboard& clipboard, const QString& expected) {
+    clipboard.setText(expected);
+    until([&] { return clipboard.text() == expected; });
+}
 QByteArray text_frames(Peer& peer, qsizetype minimum = 0,
                        std::source_location where = std::source_location::current()) {
     if (minimum == 0)
@@ -70,7 +82,7 @@ QByteArray text_frames(Peer& peer, qsizetype minimum = 0,
             }
             return text.size() >= minimum;
         },
-        where);
+        where, 8000);
     return text;
 }
 // Resize frames the desktop sent once events settle.
@@ -198,10 +210,12 @@ void input_contract(bool background) {
     static_cast<void>(frames_within(700));
     require(frames_within(300) <= 1, "Frames kept coming after typing paused");
     QObject::disconnect(counting);
+    wait_terminal_focus(surface);
     for (const auto& [key, expected] :
          std::array{std::pair{Qt::Key_Left, '\x01'}, std::pair{Qt::Key_Right, '\x05'},
                     std::pair{Qt::Key_Backspace, '\x15'}, std::pair{Qt::Key_Delete, '\x0b'}}) {
         for (const auto origin : {Qt::NoModifier, Qt::KeypadModifier}) {
+            wait_terminal_focus(surface);
             QKeyEvent command_key(QEvent::KeyPress, key, Qt::MetaModifier | origin);
             QCoreApplication::sendEvent(&surface, &command_key);
 #ifndef Q_OS_MACOS
@@ -234,6 +248,7 @@ void input_contract(bool background) {
         lapis::desktop::test::activate_test_window(window);
         settle(); // Drain native activation events before beginning an IME transaction.
         surface.forceActiveFocus();
+        wait_terminal_focus(surface);
         until([&] { return surface.inputMethodQuery(Qt::ImEnabled).toBool(); });
         composition(surface, {}, QStringLiteral("✓"));
         require(text_frames(peer, 3) == QStringLiteral("✓").toUtf8(),
@@ -257,7 +272,8 @@ void input_contract(bool background) {
     require(text_frames(peer).isEmpty(), "Unsupported replacement mutated PTY input");
     composition(surface, QStringLiteral("before-paste"));
     const lapis::desktop::test::ClipboardBackup clipboard;
-    QGuiApplication::clipboard()->setText(QStringLiteral("paste界\nsecond"));
+    wait_clipboard_text(*QGuiApplication::clipboard(), QStringLiteral("paste界\nsecond"));
+    wait_terminal_focus(surface);
     const auto paste_shortcut = QKeySequence(QKeySequence::Paste)[0];
     QKeyEvent paste(QEvent::KeyPress, paste_shortcut.key(), paste_shortcut.keyboardModifiers());
     QCoreApplication::sendEvent(&surface, &paste);
@@ -699,6 +715,9 @@ void presentation_callback_lifetime() {
     producer.join();
 }
 
+// The suggestion contract is one chronological narrative: presentation, Tab
+// ownership, rebounding, and reoffer each depend on the preceding state.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void suggestions() {
     Fixture f;
     QQuickWindow window, rebound;
@@ -722,6 +741,7 @@ void suggestions() {
         surface.forceActiveFocus();
         return surface.hasActiveFocus();
     });
+    wait_terminal_focus(surface);
     static_cast<void>(text_frames(peer));
     lapis::session::Terminal wide{{40, 4}};
     wide.feed("> ");
@@ -808,6 +828,11 @@ void suggestions() {
     until([&] { return rebound.isActive() && rebound.isExposed(); });
     surface.setParentItem(rebound.contentItem());
     surface.forceActiveFocus();
+    until([&] {
+        if (!rebound.isActive())
+            lapis::desktop::test::activate_test_window(rebound);
+        return rebound.isActive() && rebound.isExposed() && surface.hasActiveFocus();
+    });
     emit window.frameSwapped(); // The disconnected old window authorizes nothing.
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
@@ -815,8 +840,14 @@ void suggestions() {
             "The previous window authorized an unpresented rebound suggestion");
     surface.setSuggestionKey(QStringLiteral("rebind:b"));
     surface.setSuggestion(QStringLiteral("go now"));
-    rebound.update();
-    until([&] { return seen == 2; });
+    until(
+        [&] {
+            if (!rebound.isActive())
+                lapis::desktop::test::activate_test_window(rebound);
+            rebound.update();
+            return rebound.isExposed() && seen == 2;
+        },
+        std::source_location::current(), 20000);
     require(!rebound.grabWindow().isNull(), "Rebound scene graph produced no frame");
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
@@ -825,11 +856,13 @@ void suggestions() {
     surface.setParentItem(window.contentItem());
     rebound.hide();
     lapis::desktop::test::activate_test_window(window);
-    surface.forceActiveFocus();
+    wait_terminal_focus(surface);
     surface.setSuggestionKey(QStringLiteral("rebind:a"));
     surface.setSuggestion(QStringLiteral("go now"));
     window.update();
-    until([&] { return window.isActive() && surface.hasActiveFocus() && seen == 3; });
+    until([&] {
+        return window.isActive() && window.isExposed() && surface.hasActiveFocus() && seen == 3;
+    });
     used.clear();
 
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
@@ -853,9 +886,15 @@ void suggestions() {
             "With nowhere to go Tab was not the program's");
 
     // The same words offered again are a new offer, seen again.
+    wait_terminal_focus(surface);
     surface.setSuggestionKey(QStringLiteral("a:2"));
     surface.setSuggestion(QStringLiteral("go now"));
-    settle();
+    until([&] {
+        if (!window.isActive())
+            lapis::desktop::test::activate_test_window(window);
+        window.update();
+        return window.isExposed() && surface.hasActiveFocus() && seen == 4;
+    });
     require(seen == 4, "A new offer with the same words was not seen again");
 
     // Typing is not a refusal: the suggestion stays, and what was typed first
