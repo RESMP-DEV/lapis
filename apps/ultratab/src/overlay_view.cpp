@@ -60,6 +60,7 @@ bool load_overlay(QQuickView& view, Deck& deck, const ViewOptions& options) {
     context->setContextProperty(QStringLiteral("deck"), &deck);
     context->setContextProperty(QStringLiteral("backdrop"), options.backdrop);
     context->setContextProperty(QStringLiteral("reducedMotion"), options.reduced_motion);
+    context->setContextProperty(QStringLiteral("host"), new OverlayHost(&view));
     view.setSource(QUrl(QStringLiteral("qrc:/ultratab/qml/Overlay.qml")));
     if (view.status() != QQuickView::Ready) {
         for (const auto& error : view.errors())

@@ -132,6 +132,12 @@ class Overlay final {
                     hide(false);
             });
         });
+        if (auto* host = view_.findChild<OverlayHost*>()) {
+            QObject::connect(host, &OverlayHost::contentSizeChanged, &view_,
+                             [this] { follow_content(); });
+            QObject::connect(host, &OverlayHost::panelChanged, &view_,
+                             [this] { follow_panel(); });
+        }
         // Dragged by its background: remember where, per screen, once it rests.
         remember_.setSingleShot(true);
         remember_.setInterval(400);
@@ -154,9 +160,9 @@ class Overlay final {
         if (screen == nullptr)
             return;
         const auto area = screen->availableGeometry();
-        // The window keeps one size per screen; only where it sits changes.
-        const QSize size(std::min(1500, area.width() * 82 / 100),
-                         std::min(900, area.height() * 84 / 100));
+        // As large as the panel and its peeking cards; it grows and shrinks
+        // with the card from its top edge.
+        const QSize size = wanted_size(area);
         const auto key = screen_key(screen->name(), screen->geometry());
         const auto saved = positions_.constFind(key);
         placing_ = true;
@@ -167,6 +173,7 @@ class Overlay final {
         view_.show();
         if (!translucent_)
             translucent_ = platform::make_translucent(view_);
+        follow_panel();
         platform::activate();
         view_.requestActivate();
         source_.reload();
@@ -186,6 +193,28 @@ class Overlay final {
 
   private:
     static constexpr qint64 settle_ms = 600;
+    [[nodiscard]] QSize wanted_size(const QRect& area) const {
+        auto* host = view_.findChild<OverlayHost*>();
+        const auto wanted = host != nullptr && host->contentSize().isValid()
+                                ? host->contentSize()
+                                : QSize(720, 400);
+        return wanted.boundedTo({area.width(), area.height() * 3 / 4});
+    }
+    void follow_content() {
+        auto* screen = view_.screen();
+        if (screen == nullptr || !view_.isVisible())
+            return;
+        const auto size = wanted_size(screen->availableGeometry());
+        if (size != view_.size()) {
+            placing_ = true;
+            view_.resize(size);
+            placing_ = false;
+        }
+    }
+    void follow_panel() {
+        if (auto* host = view_.findChild<OverlayHost*>(); host != nullptr && translucent_)
+            platform::set_blur_rect(view_, host->panel(), host->radius());
+    }
     void moved() {
         if (!placing_ && view_.isVisible())
             remember_.start();

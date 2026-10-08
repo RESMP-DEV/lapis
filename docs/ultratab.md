@@ -1,9 +1,10 @@
 # Ultra Tab
 
 Ultra Tab is a small standalone app that runs beside lapis. It sits in the
-background with no Dock icon; press its key from any app and a translucent
-overlay deals the agents that need you as a deck of cards: one in front, at most
-one peeking behind. Answer the front card and the next comes forward. lapis
+background with no Dock icon; press its key from any app and a compact command
+bar, about 680 points wide and a fifth of the way down the screen, deals the
+agents that need you as a deck of cards: one in the panel, the next two peeking
+out under it. Answer the card and the next comes forward. lapis
 keeps running as it is; Ultra Tab only reads what lapis publishes and types to
 an agent the way the phone does.
 
@@ -11,9 +12,21 @@ It works from a build of this repository; it is not part of the downloaded app.
 
 ## A card
 
-Each card shows the agent's name, its folder and category, a headline and the
-proposed reply. The top rail lists categories with how many agents wait in each;
-a quiet column on the right names the agents at work, each with a pulsing dot.
+The top line is the reply: the agent's mark (its CLI's letter on its
+category's colour, red for a pending request) and lapis's guess as grey ghost
+text, which Tab sends; typing replaces it. Below it the card shows the agent's
+name, a headline and any blocks. Who comes next is shown, not written: the
+next two agents peek out under the panel as edges in their colours, and the
+footer's queue shows the current mark, an arrow and the marks that follow. A
+sent reply says so by leaving; only a refused send, a notice or a hint is
+written in the footer.
+
+When a card is answered, a copy of it slides off, right with a green edge for
+an accept or a send and left with a red edge for a skip, while the nearest
+edge rises into the panel in its colour, the new card's content slides up into
+place and the panel eases to its height. The deck has already changed: the
+motion never holds a key back, and Reduce Motion turns it off. Only the panel
+is blurred; the window is as tall as the card and its edges.
 
 A plain card's headline is one sentence of what happened (the start of the
 agent's last reply) and its proposed reply is lapis's guess at your next prompt
@@ -34,7 +47,7 @@ light up when pressed:
 While you are typing, the left arrow moves the cursor, Delete erases and Escape
 clears the text.
 Escape with nothing typed puts the overlay away, as does clicking another app.
-Command-[ and Command-] move through the categories on the rail. Command-O opens
+Command-[ and Command-] show one category at a time (all, then each in turn). Command-O opens
 the card's first link and Command-click opens any link, with the system's
 default handler; the card stays. A plain click on a link opens nothing.
 

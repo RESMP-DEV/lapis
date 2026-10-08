@@ -26,6 +26,7 @@ struct Card {
     QString folder;
     QString category_id;
     QString category_name;
+    QString harness;  // the agent's CLI (claude, codex, ...)
     QString line;     // what happened, one sentence
     QString proposal; // the proposed reply (composed, else lapis's guess); may be empty
     bool request{};   // a request (such as a permission prompt) is pending
@@ -81,6 +82,9 @@ class Deck final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantMap front READ front NOTIFY changed)
     Q_PROPERTY(QVariantMap behind READ behind NOTIFY changed)
+    // The cards after the front one, in order, as marks only (key, mark,
+    // hue, request): the overlay's peeking edges and its queue.
+    Q_PROPERTY(QVariantList queue READ queue NOTIFY changed)
     Q_PROPERTY(QVariantList rail READ rail NOTIFY changed)
     Q_PROPERTY(QVariantList running READ running NOTIFY changed)
     Q_PROPERTY(QVariantList history READ history NOTIFY changed)
@@ -106,6 +110,8 @@ class Deck final : public QObject {
 
     [[nodiscard]] QVariantMap front() const;
     [[nodiscard]] QVariantMap behind() const;
+    [[nodiscard]] QVariantList queue() const;
+    static constexpr int queue_limit = 6;
     [[nodiscard]] QVariantList rail() const;
     [[nodiscard]] QVariantList running() const;
     [[nodiscard]] QVariantList history() const;
@@ -156,7 +162,10 @@ class Deck final : public QObject {
         QString outcome; // sending, sent, not sent, skipped
     };
     [[nodiscard]] const Agent* agent(const QString& id) const;
-    [[nodiscard]] static QVariantMap describe(const Card& card);
+    [[nodiscard]] QVariantMap describe(const Card& card) const;
+    // The card's colour: the category's place on the rail, or -1 for a
+    // pending request (the overlay draws it red).
+    [[nodiscard]] int hue(const Card& card) const;
     [[nodiscard]] static QVariantList describe_blocks(const ComposedCard& composed);
     bool answer(const Card& card, const QString& how, const QString& text);
     void remember(Answer answer);

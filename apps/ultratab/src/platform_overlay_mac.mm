@@ -8,7 +8,7 @@
 
 namespace lapis::ultratab::platform {
 namespace {
-constexpr CGFloat kCornerRadius = 18;
+constexpr CGFloat kCornerRadius = 14;
 
 std::function<void()>& hotkey_handler() {
     static std::function<void()> handler;
@@ -73,23 +73,36 @@ UInt32 key_code(const QString& key, bool* known) {
     return *known ? *found : 0;
 }
 
-NSImage* rounded_mask() {
-    const CGFloat side = kCornerRadius * 2 + 1;
+NSImage* rounded_mask(CGFloat radius) {
+    const CGFloat side = radius * 2 + 1;
     NSImage* mask = [NSImage imageWithSize:NSMakeSize(side, side)
                                    flipped:NO
                             drawingHandler:^BOOL(NSRect rect) {
                               [NSColor.blackColor set];
                               [[NSBezierPath bezierPathWithRoundedRect:rect
-                                                               xRadius:kCornerRadius
-                                                               yRadius:kCornerRadius] fill];
+                                                               xRadius:radius
+                                                               yRadius:radius] fill];
                               return YES;
                             }];
-    mask.capInsets = NSEdgeInsetsMake(kCornerRadius, kCornerRadius, kCornerRadius, kCornerRadius);
+    mask.capInsets = NSEdgeInsetsMake(radius, radius, radius, radius);
     mask.resizingMode = NSImageResizingModeStretch;
     return mask;
 }
-} // namespace
 
+} // namespace
+} // namespace lapis::ultratab::platform
+
+// Top-left origin, as Qt's window coordinates, so the blur keeps its place
+// at the top while the window grows or shrinks below it.
+@interface UltraTabFlippedView : NSView
+@end
+@implementation UltraTabFlippedView
+- (BOOL)isFlipped {
+    return YES;
+}
+@end
+
+namespace lapis::ultratab::platform {
 bool make_translucent(QWindow& window) {
     // Qt exposes its native NSView through WId; a borrowed view in Qt's window.
     // NOLINTNEXTLINE(performance-no-int-to-ptr)
@@ -103,23 +116,49 @@ bool make_translucent(QWindow& window) {
     // Shown over full-screen apps and on whichever Space is current.
     host.collectionBehavior =
         NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
-    if ([host.contentView isKindOfClass:NSVisualEffectView.class])
+    if ([host.contentView isKindOfClass:UltraTabFlippedView.class])
         return true;
+    UltraTabFlippedView* container =
+        [[[UltraTabFlippedView alloc] initWithFrame:host.contentView.frame] autorelease];
+    // The blur sits under Qt's view and covers only the panel (set_blur_rect).
     NSVisualEffectView* blur =
-        [[[NSVisualEffectView alloc] initWithFrame:host.contentView.frame] autorelease];
+        [[[NSVisualEffectView alloc] initWithFrame:container.bounds] autorelease];
     blur.material = NSVisualEffectMaterialHUDWindow;
     blur.blendingMode = NSVisualEffectBlendingModeBehindWindow;
     blur.state = NSVisualEffectStateActive;
-    blur.maskImage = rounded_mask();
-    blur.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    blur.maskImage = rounded_mask(kCornerRadius);
+    blur.identifier = @"ultratab-blur";
     [qt_view retain];
     [qt_view removeFromSuperview];
-    host.contentView = blur;
-    qt_view.frame = blur.bounds;
+    host.contentView = container;
+    [container addSubview:blur];
+    qt_view.frame = container.bounds;
     qt_view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    [blur addSubview:qt_view];
+    [container addSubview:qt_view];
     [qt_view release];
     return true;
+}
+
+void set_blur_rect(QWindow& window, const QRectF& rect, qreal radius) {
+    // NOLINTNEXTLINE(performance-no-int-to-ptr)
+    auto* qt_view = reinterpret_cast<NSView*>(window.winId());
+    NSVisualEffectView* blur = nil;
+    for (NSView* sibling in qt_view.superview.subviews)
+        if ([sibling.identifier isEqualToString:@"ultratab-blur"] &&
+            [sibling isKindOfClass:NSVisualEffectView.class])
+            blur = static_cast<NSVisualEffectView*>(sibling);
+    if (blur == nil)
+        return;
+    const NSRect frame = NSMakeRect(rect.x(), rect.y(), rect.width(), rect.height());
+    if (!NSEqualRects(blur.frame, frame))
+        blur.frame = frame;
+    static CGFloat masked = kCornerRadius;
+    if (masked != radius) {
+        blur.maskImage = rounded_mask(radius);
+        masked = radius;
+    }
+    // The shadow follows what is drawn; recompute it for the new shape.
+    [qt_view.window invalidateShadow];
 }
 
 bool register_hotkey(const Hotkey& hotkey, const std::function<void()>& pressed) {

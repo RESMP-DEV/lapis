@@ -434,6 +434,15 @@ void motionNeverDelaysInput() {
     const QDir reports(QStringLiteral(ULTRATAB_CAPTURE_DIR));
     require(!image.isNull() && image.save(reports.filePath(QStringLiteral("overlay-motion.png"))),
             "the mid-slide capture is saved");
+    // A skip, frame by frame: the card leaves left as the next edge rises.
+    settle(400);
+    key(view, Qt::Key_Left, {}, Qt::KeypadModifier);
+    for (int frame = 1; frame <= 4; ++frame) {
+        settle(55);
+        require(view.grabWindow().save(
+                    reports.filePath(QStringLiteral("overlay-skip-%1.png").arg(frame))),
+                "the skip frames are saved");
+    }
 }
 } // namespace
 

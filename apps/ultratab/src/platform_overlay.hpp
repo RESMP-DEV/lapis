@@ -2,6 +2,7 @@
 #define LAPIS_ULTRATAB_PLATFORM_OVERLAY_HPP
 #include "hotkey.hpp"
 
+#include <QRectF>
 #include <QString>
 #include <QtGlobal>
 #include <functional>
@@ -15,6 +16,10 @@ namespace lapis::ultratab::platform {
 // Real blur behind a transparent window: an NSVisualEffectView (behind-window
 // blending) becomes the window's content view, with Qt's view inside it.
 bool make_translucent(QWindow& window);
+// Limits the blur to `rect` (window coordinates, top-left origin) with
+// rounded corners; outside it the window is clear, so what is drawn there
+// (the overlay's peeking cards) sits over the plain desktop.
+void set_blur_rect(QWindow& window, const QRectF& rect, qreal radius);
 // Runs `pressed` when the key goes down in any app. False when the key could
 // not be taken (another app holds it). An empty handler releases it.
 bool register_hotkey(const Hotkey& hotkey, const std::function<void()>& pressed);
@@ -33,6 +38,7 @@ bool reduce_motion();
 QString set_start_at_login(bool on);
 #else
 inline bool make_translucent(QWindow&) { return false; }
+inline void set_blur_rect(QWindow&, const QRectF&, qreal) {}
 inline bool register_hotkey(const Hotkey&, const std::function<void()>&) { return false; }
 inline void become_accessory() {}
 inline void activate() {}

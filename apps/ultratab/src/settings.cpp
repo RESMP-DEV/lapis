@@ -85,8 +85,12 @@ bool write_positions(const QString& home, const Positions& positions) {
 
 QRect place_window(const QRect& available, const QSize& size, const std::optional<QPoint>& saved) {
     const QSize fitted = size.boundedTo(available.size());
+    // Centered across, a fifth of the way down, as a command bar sits.
     QRect centered(QPoint(), fitted);
     centered.moveCenter(available.center());
+    centered.moveTop(std::max(available.top(),
+                              std::min(available.top() + available.height() / 5,
+                                       available.bottom() - fitted.height() + 1)));
     if (!saved)
         return centered;
     QRect rect(*saved, fitted);

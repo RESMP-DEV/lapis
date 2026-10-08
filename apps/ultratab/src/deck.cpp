@@ -72,6 +72,7 @@ std::optional<Card> card_for(const Agent& agent, const AgentState& state, int po
     card.folder = folder_label(agent.directory);
     card.category_id = agent.category;
     card.category_name = category_name(published, agent.category);
+    card.harness = agent.harness;
     card.line = what_happened(state);
     card.proposal = request || !state.offer ? QString() : state.offer->text;
     card.request = request;
@@ -239,10 +240,45 @@ QVariantList Deck::describe_blocks(const ComposedCard& composed) {
     return blocks;
 }
 
-QVariantMap Deck::describe(const Card& card) {
+namespace {
+// One letter for the agent's CLI, as its mark on the overlay.
+QString harness_mark(const QString& harness) {
+    if (harness == QLatin1String("codex"))
+        return QStringLiteral("X");
+    if (harness.isEmpty())
+        return QStringLiteral("?");
+    return harness.left(1).toUpper();
+}
+} // namespace
+
+int Deck::hue(const Card& card) const {
+    if (card.request)
+        return -1;
+    for (qsizetype index = 0; index < published_.categories.size(); ++index)
+        if (published_.categories.at(index).id == card.category_id)
+            return static_cast<int>(index);
+    return 0;
+}
+
+QVariantList Deck::queue() const {
+    const auto shown = visible();
+    QVariantList marks;
+    for (std::size_t index = 1; index < shown.size() && marks.size() < queue_limit; ++index) {
+        const auto& card = shown.at(index);
+        marks.append(QVariantMap{{QStringLiteral("key"), card.key},
+                                 {QStringLiteral("mark"), harness_mark(card.harness)},
+                                 {QStringLiteral("hue"), hue(card)},
+                                 {QStringLiteral("request"), card.request}});
+    }
+    return marks;
+}
+
+QVariantMap Deck::describe(const Card& card) const {
     const auto& composed = card.composed;
     const auto headline = composed && !composed->tldr.isEmpty() ? composed->tldr : card.line;
     return {{QStringLiteral("key"), card.key},
+            {QStringLiteral("mark"), harness_mark(card.harness)},
+            {QStringLiteral("hue"), hue(card)},
             {QStringLiteral("composed"), composed.has_value()},
             {QStringLiteral("since"), composed ? composed->since : QString()},
             {QStringLiteral("headline"), headline},
