@@ -175,6 +175,10 @@ class Terminal {
     [[nodiscard]] TerminalHistory history_metadata();
     [[nodiscard]] TerminalSnapshot history_snapshot(std::size_t offset);
     [[nodiscard]] TerminalSnapshot snapshot();
+    // Whether the program is inside a synchronized update (DEC private mode
+    // 2026): it has begun a frame and not yet ended it, so the screen may be
+    // half drawn.
+    [[nodiscard]] bool synchronizing();
     [[nodiscard]] std::string encode_key(TerminalKey key, KeyModifiers modifiers = {});
     // Pure text encoding: sanitizes unsafe control bytes and uses current mode.
     // It neither accesses a clipboard nor grants an application's request.

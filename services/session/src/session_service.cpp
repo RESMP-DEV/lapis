@@ -1014,6 +1014,8 @@ class SessionService final : public QObject {
                 pending_output_.remove(0, size);
                 mark_dirty();
                 timing_.parse_end_ns = monotonic_ns();
+                if (follow_synchronized_update())
+                    break; // a whole frame is on screen: show it before the next one starts
             }
             const auto replies = terminal_.take_replies();
             if (!replies.empty() && pty_.processId() != 0 &&
@@ -1289,7 +1291,38 @@ class SessionService final : public QObject {
             timer_.start(since >= frame_ms ? 0 : static_cast<int>(frame_ms - since));
         }
     }
+    // Full-screen programs such as Claude Code bracket each repaint in a
+    // synchronized update (DEC mode 2026). A screen published inside one is
+    // half drawn: scrolling such a program showed its transcript being
+    // painted in. Returns true when an update just ended, so the caller
+    // publishes that whole frame before feeding more output.
+    bool follow_synchronized_update() {
+        const bool now = terminal_.synchronizing();
+        if (now == in_sync_)
+            return false;
+        in_sync_ = now;
+        if (now) {
+            sync_since_.start();
+            return false;
+        }
+        sync_since_.invalidate();
+        // The frame goes out now unless one went out within the last frame.
+        if (!last_publish_.isValid() || last_publish_.elapsed() >= frame_ms) {
+            timer_.stop();
+            publish();
+        } else {
+            schedule();
+        }
+        return true;
+    }
     void publish() {
+        // Mid-update: hold the screen until the update ends (which publishes
+        // at once) or until sync_hold_ms, so a program that never ends one
+        // cannot freeze its views.
+        if (in_sync_ && sync_since_.isValid() && sync_since_.elapsed() < sync_hold_ms) {
+            timer_.start(static_cast<int>(sync_hold_ms - sync_since_.elapsed()));
+            return;
+        }
         last_publish_.start();
         publish_views();
         publish_client();
@@ -1918,6 +1951,9 @@ class SessionService final : public QObject {
     QTimer output_admission_timer_;
     QElapsedTimer last_publish_;
     static constexpr qint64 frame_ms = 16;
+    QElapsedTimer sync_since_; // when the current synchronized update began
+    bool in_sync_{};
+    static constexpr qint64 sync_hold_ms = 250;
     QElapsedTimer last_attention_publish_;
     QTimer ack_timer_;
     quint64 generation_{};
