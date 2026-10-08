@@ -36,11 +36,50 @@ def load_receipt(path: Path) -> dict[str, Any]:
     return receipt
 
 
-def verified_measurements(receipt: dict[str, Any]) -> dict[str, float]:
+def load_budget(path: Path) -> dict[str, Any]:
+    try:
+        budget = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        fail(f"cannot read performance budget {path}: {error}")
+    if not isinstance(budget, dict):
+        fail("performance budget is not a JSON object")
+    for key in ("name", "reference"):
+        if not isinstance(budget.get(key), str) or not budget[key]:
+            fail(f"performance budget is missing {key}")
+    thresholds = budget.get("max_ms")
+    if not isinstance(thresholds, dict) or not thresholds:
+        fail("performance budget has no max_ms entries")
+    for percentile, maximum in thresholds.items():
+        if (
+            not isinstance(maximum, (int, float))
+            or isinstance(maximum, bool)
+            or maximum <= 0
+        ):
+            fail(f"performance budget max_ms.{percentile} is not a positive number")
+    minimum = budget.get("min_samples")
+    if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 1:
+        fail("performance budget min_samples must be a positive integer")
+    return budget
+
+
+def verified_measurements(
+    receipt: dict[str, Any], minimum_samples: int
+) -> dict[str, float]:
+    samples = receipt.get("samples")
+    if not isinstance(samples, int) or isinstance(samples, bool):
+        fail("receipt has no sample count")
+    if samples < minimum_samples:
+        fail(
+            f"receipt has {samples} samples; the budget needs at least {minimum_samples} "
+            "for its percentiles to mean anything"
+        )
     if receipt.get("schema") != PROBE_SCHEMA:
         fail(f"unexpected latency schema: {receipt.get('schema')!r}")
     if not any(prefix in str(receipt.get("input", "")) for prefix in ACCEPTED_INPUTS):
         fail("receipt does not use a correlated input mode")
+    recorded = receipt.get("recorded_at")
+    if not isinstance(recorded, str) or not recorded:
+        fail("receipt has no recorded_at timestamp; re-run the probe before checking")
     distribution = receipt.get("input_to_frame")
     if not isinstance(distribution, dict):
         fail("receipt has no input_to_frame distribution")
@@ -57,7 +96,7 @@ def verified_measurements(receipt: dict[str, Any]) -> dict[str, float]:
 
 def check(path: Path, budget: dict[str, Any]) -> dict[str, Any]:
     receipt = load_receipt(path)
-    measured = verified_measurements(receipt)
+    measured = verified_measurements(receipt, budget["min_samples"])
     checks: list[dict[str, Any]] = []
     passed = True
     for percentile, maximum in budget["max_ms"].items():
@@ -87,6 +126,7 @@ def check(path: Path, budget: dict[str, Any]) -> dict[str, Any]:
         "refresh_hz": receipt.get("refresh_hz"),
         "budget_name": budget["name"],
         "reference": budget["reference"],
+        "min_samples": budget["min_samples"],
         "checks": checks,
         "passed": passed,
     }
@@ -106,9 +146,9 @@ def main() -> int:
     arguments.output.unlink(missing_ok=True)
     budget_path = ROOT / "scripts/performance_budget.json"
     try:
-        budget = json.loads(budget_path.read_text(encoding="utf-8"))
-        if not isinstance(budget.get("max_ms"), dict) or not budget["max_ms"]:
-            fail("performance budget has no max_ms entries")
+        budget = load_budget(budget_path)
+        if arguments.output.resolve() == arguments.receipt.resolve():
+            fail("the output receipt must not overwrite the measured receipt")
         result = check(arguments.receipt, budget)
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(

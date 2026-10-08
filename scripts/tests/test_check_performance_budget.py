@@ -12,6 +12,7 @@ def receipt(**overrides):
     values = {
         "schema": "lapis.terminal-latency/1",
         "input": "synthetic Qt Return",
+        "recorded_at": "2026-10-07T16:00:00Z",
         "samples": 100,
         "refresh_hz": 120,
         "input_to_frame": {
@@ -30,6 +31,7 @@ class PerformanceBudgetTests(unittest.TestCase):
         budget = {
             "name": "m4-max-120hz-input-to-frame",
             "reference": "Apple M4 Max, 120 Hz reference display",
+            "min_samples": 20,
             "max_ms": {"p50_ms": 50.0, "p95_ms": 60.0, "p99_ms": 70.0},
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -51,6 +53,7 @@ class PerformanceBudgetTests(unittest.TestCase):
         budget = {
             "name": "fixture",
             "reference": "fixture",
+            "min_samples": 20,
             "max_ms": {"p50_ms": 39.0, "p95_ms": 60.0, "p99_ms": 70.0},
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -62,10 +65,17 @@ class PerformanceBudgetTests(unittest.TestCase):
         self.assertTrue(result["checks"][1]["passed"])
 
     def test_unverified_receipt_shapes_are_rejected(self):
-        budget = {"name": "fixture", "reference": "fixture", "max_ms": {"p95_ms": 60.0}}
+        budget = {
+            "name": "fixture",
+            "reference": "fixture",
+            "min_samples": 20,
+            "max_ms": {"p95_ms": 60.0},
+        }
         cases = (
             {"schema": "lapis.terminal-latency/0"},
             {"input": "Synthetic marker replay"},
+            {"recorded_at": ""},
+            {"samples": 19},
             {"input_to_frame": {"p95_ms": 0}},
             {"input_to_frame": {"p50_ms": 40.0, "p95_ms": 30.0, "p99_ms": 20.0}},
         )
@@ -80,6 +90,11 @@ class PerformanceBudgetTests(unittest.TestCase):
         path = Path(__file__).resolve().parents[1] / "performance_budget.json"
         budget = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(set(budget["max_ms"]), {"p50_ms", "p95_ms", "p99_ms"})
+        self.assertEqual(
+            budget["max_ms"], {"p50_ms": 20.0, "p95_ms": 30.0, "p99_ms": 35.0}
+        )
+        self.assertGreaterEqual(budget["min_samples"], 20)
+        self.assertNotIn("budget_ms", budget)
         self.assertTrue(all(value > 0 for value in budget["max_ms"].values()))
         self.assertTrue(budget["name"])
         self.assertTrue(budget["reference"])

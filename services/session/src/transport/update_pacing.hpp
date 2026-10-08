@@ -3,6 +3,8 @@
 
 #include <QtGlobal>
 
+#include <algorithm>
+
 namespace lapis::session::wire {
 
 // Publish-to-publish pacing for coalesced service and view publishers.
@@ -21,7 +23,10 @@ class UpdatePace final {
     [[nodiscard]] qint64 wait_ms(qint64 now_ms) const {
         if (interval_ms_ <= 0 || last_publish_ms_ < 0)
             return 0;
-        const qint64 since = now_ms - last_publish_ms_;
+        // Clamp a backward clock to zero elapsed time. The service clock is
+        // monotonic, but this helper must never return more than its interval
+        // or otherwise misbehave for a test-injected clock.
+        const qint64 since = std::max(qint64{0}, now_ms - last_publish_ms_);
         return since >= interval_ms_ ? 0 : interval_ms_ - since;
     }
     // The next deadline in absolute terms, for a timeout deadline that never

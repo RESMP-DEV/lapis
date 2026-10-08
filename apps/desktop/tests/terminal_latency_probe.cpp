@@ -1,6 +1,7 @@
 #include "terminal_surface.hpp"
 #include "workspace.hpp"
 #include <QCommandLineParser>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QGuiApplication>
@@ -364,6 +365,8 @@ QJsonObject run_probe(int samples, bool native) {
     rusage usage{};
     require(::getrusage(RUSAGE_SELF, &usage) == 0, "Memory usage unavailable");
     return {{QStringLiteral("schema"), QStringLiteral("lapis.terminal-latency/1")},
+            {QStringLiteral("recorded_at"),
+             QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
             {QStringLiteral("input"), input_label(native)},
             {QStringLiteral("endpoint"),
              QStringLiteral("frameSwapped after the matching snapshot revision synchronized; "
@@ -428,7 +431,7 @@ int main(int argc, char** argv) {
     try {
         bool valid{};
         const int samples = parser.value(QStringLiteral("samples")).toInt(&valid);
-        require(valid && samples >= 1 && samples <= 1000, "Sample count must be 1..1000");
+        require(valid && samples >= 10 && samples <= 1000, "Sample count must be 10..1000");
         require(!parser.value(QStringLiteral("output")).isEmpty(), "An output path is required");
         const auto result = run_probe(samples, parser.isSet(QStringLiteral("native")));
         QJsonObject budgets;
@@ -440,11 +443,12 @@ int main(int argc, char** argv) {
             bool valid{};
             const double budget = requested.toDouble(&valid);
             require(valid && budget > 0.0, "Latency budgets must be positive milliseconds");
-            const double measured = result.value(QLatin1String("input_to_frame"))
-                                        .toObject()
-                                        .value(percentile)
-                                        .toDouble();
-            require(measured > 0.0, "Missing input-to-frame samples for the budget");
+            const auto measured_value =
+                result.value(QLatin1String("input_to_frame")).toObject().value(percentile);
+            require(!measured_value.isUndefined() && !measured_value.isNull(),
+                    "Missing input-to-frame samples for the budget");
+            const double measured = measured_value.toDouble();
+            require(measured > 0.0, "Input-to-frame samples must be positive");
             const bool passed = measured <= budget;
             budgets.insert(option, QJsonObject{{QStringLiteral("budget_ms"), budget},
                                                {QStringLiteral("measured_ms"), measured},

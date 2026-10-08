@@ -303,7 +303,7 @@
         "SO_SNDBUF": 8192,
         "SO_RCVBUF": 8192
       },
-      "fix": "posix::widen_socket_buffers requests at least 1 MiB and never shrinks; applied at the desktop client, the service primary client and joined-view accepts, and the Python remote gateway",
+      "fix": "posix::widen_socket_buffers requests at least 1 MiB and never shrinks an already larger buffer; applied at the desktop client, the service primary client and joined-view accepts, and the Python remote gateway",
       "regression_test": "launch-spec asserts the widened buffer on a real socket pair and fails when the widening is removed (verified by negative control)"
     },
     "native_after_repairs": {

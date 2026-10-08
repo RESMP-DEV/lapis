@@ -35,10 +35,11 @@ inline void require(bool value, const char* message) {
 // The test side of the service wire. Both transport and input suites drive the
 // same frame contract; suite-local assertions stay in each test.
 inline void until(const std::function<bool()>& condition,
-                  std::source_location where = std::source_location::current()) {
+                  std::source_location where = std::source_location::current(),
+                  int timeout_ms = 8000) {
     QElapsedTimer time;
     time.start();
-    while (time.elapsed() < 8000) {
+    while (time.elapsed() < timeout_ms) {
         if (condition())
             return;
         QCoreApplication::processEvents(QEventLoop::AllEvents, 5);

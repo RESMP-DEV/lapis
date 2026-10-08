@@ -147,19 +147,28 @@ int main(int argc, char** argv) {
         // otherwise split a large snapshot across many round trips through
         // both event loops, which dominated input-to-frame latency.
         {
-            int pair[2] = {AF_UNIX, SOCK_STREAM};
+            int pair[2]{};
             require(::socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
+            // Pin a small buffer first so the assertion also holds on a host
+            // whose default exceeds the widened size.
+            int small = 4096;
+            require(::setsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &small, sizeof(small)) == 0);
             int send_before{};
             socklen_t length = sizeof(send_before);
             require(::getsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &send_before, &length) == 0);
+            require(send_before < 1024 * 1024);
             posix::widen_socket_buffers(pair[0]);
             int send_after{};
             length = sizeof(send_after);
             require(::getsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &send_after, &length) == 0);
-            // A local socket defaults to 8 KiB here, so an unchanged buffer
-            // after this call means the repair is missing.
-            require(send_before < 1024 * 1024);
             require(send_after >= 1024 * 1024);
+            // An already larger buffer must not shrink back to the floor.
+            int large = 4 * 1024 * 1024;
+            require(::setsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &large, sizeof(large)) == 0);
+            posix::widen_socket_buffers(pair[0]);
+            length = sizeof(send_after);
+            require(::getsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &send_after, &length) == 0);
+            require(send_after >= large);
             // An invalid descriptor is ignored rather than crashing a caller.
             posix::widen_socket_buffers(-1);
             ::close(pair[0]);

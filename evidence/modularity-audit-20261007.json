@@ -58,7 +58,7 @@
     {
       "row": "Q02 registry transaction ownership",
       "state": "decision open; reopen correctness fix landed",
-      "evidence": "reopenFailurePreservesTheRetryableManagedPlan regression exists"
+      "evidence": "reopen correctness and retry-state behavior are covered by workspace tests; only the broader registry transaction ownership decision remains"
     }
   ],
   "extraction": {
