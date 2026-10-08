@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -59,12 +59,33 @@ def load_budget(path: Path) -> dict[str, Any]:
     minimum = budget.get("min_samples")
     if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 1:
         fail("performance budget min_samples must be a positive integer")
+    max_age = budget.get("max_receipt_age_hours")
+    if (
+        not isinstance(max_age, (int, float))
+        or isinstance(max_age, bool)
+        or max_age <= 0
+    ):
+        fail("performance budget max_receipt_age_hours must be positive")
     return budget
 
 
 def verified_measurements(
-    receipt: dict[str, Any], minimum_samples: int
+    receipt: dict[str, Any], minimum_samples: int, max_age_hours: float
 ) -> dict[str, float]:
+    try:
+        recorded = datetime.fromisoformat(str(receipt["recorded_at"]))
+    except (KeyError, ValueError) as error:
+        fail(f"receipt recorded_at is missing or not ISO-8601: {error}")
+    if recorded.tzinfo is None:
+        fail("receipt recorded_at must include a timezone")
+    age = datetime.now(timezone.utc) - recorded.astimezone(timezone.utc)
+    if age < timedelta(0):
+        fail("receipt recorded_at is in the future")
+    if age > timedelta(hours=max_age_hours):
+        fail(
+            f"latency receipt is {age.total_seconds() / 3600:.1f} hours old; the budget "
+            f"accepts at most {max_age_hours} hours. Re-run the probe."
+        )
     samples = receipt.get("samples")
     if not isinstance(samples, int) or isinstance(samples, bool):
         fail("receipt has no sample count")
@@ -77,9 +98,6 @@ def verified_measurements(
         fail(f"unexpected latency schema: {receipt.get('schema')!r}")
     if not any(prefix in str(receipt.get("input", "")) for prefix in ACCEPTED_INPUTS):
         fail("receipt does not use a correlated input mode")
-    recorded = receipt.get("recorded_at")
-    if not isinstance(recorded, str) or not recorded:
-        fail("receipt has no recorded_at timestamp; re-run the probe before checking")
     distribution = receipt.get("input_to_frame")
     if not isinstance(distribution, dict):
         fail("receipt has no input_to_frame distribution")
@@ -96,7 +114,9 @@ def verified_measurements(
 
 def check(path: Path, budget: dict[str, Any]) -> dict[str, Any]:
     receipt = load_receipt(path)
-    measured = verified_measurements(receipt, budget["min_samples"])
+    measured = verified_measurements(
+        receipt, budget["min_samples"], budget["max_receipt_age_hours"]
+    )
     checks: list[dict[str, Any]] = []
     passed = True
     for percentile, maximum in budget["max_ms"].items():
@@ -127,6 +147,7 @@ def check(path: Path, budget: dict[str, Any]) -> dict[str, Any]:
         "budget_name": budget["name"],
         "reference": budget["reference"],
         "min_samples": budget["min_samples"],
+        "max_receipt_age_hours": budget["max_receipt_age_hours"],
         "checks": checks,
         "passed": passed,
     }

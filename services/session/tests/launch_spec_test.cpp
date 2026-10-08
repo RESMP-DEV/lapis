@@ -15,6 +15,10 @@ void require(bool value) {
     if (!value)
         throw std::runtime_error("Launch contract expectation failed");
 }
+void require(bool value, const char* message) {
+    if (!value)
+        throw std::runtime_error(message);
+}
 template <typename Operation> void rejects(Operation operation) {
     try {
         operation();
@@ -148,27 +152,35 @@ int main(int argc, char** argv) {
         // both event loops, which dominated input-to-frame latency.
         {
             int pair[2]{};
-            require(::socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
-            // Pin a small buffer first so the assertion also holds on a host
-            // whose default exceeds the widened size.
+            require(::socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0,
+                    "cannot create fixture socket");
+            // Pin a small buffer first, then compare against what the kernel
+            // actually granted. Absolute byte floors are host-dependent: Linux
+            // doubles the request and caps it at net.core.wmem_max.
             int small = 4096;
-            require(::setsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &small, sizeof(small)) == 0);
+            static_cast<void>(::setsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &small, sizeof(small)));
             int send_before{};
             socklen_t length = sizeof(send_before);
-            require(::getsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &send_before, &length) == 0);
-            require(send_before < 1024 * 1024);
+            require(::getsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &send_before, &length) == 0,
+                    "cannot read the pinned buffer");
             posix::widen_socket_buffers(pair[0]);
             int send_after{};
             length = sizeof(send_after);
-            require(::getsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &send_after, &length) == 0);
-            require(send_after >= 1024 * 1024);
-            // An already larger buffer must not shrink back to the floor.
+            require(::getsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &send_after, &length) == 0,
+                    "cannot read the widened buffer");
+            require(send_after > send_before, "socket buffer was not widened");
+            // An already larger grant must not shrink back to the floor.
             int large = 4 * 1024 * 1024;
-            require(::setsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &large, sizeof(large)) == 0);
+            static_cast<void>(::setsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &large, sizeof(large)));
+            int granted{};
+            length = sizeof(granted);
+            require(::getsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &granted, &length) == 0,
+                    "cannot read the pre-existing buffer");
             posix::widen_socket_buffers(pair[0]);
             length = sizeof(send_after);
-            require(::getsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &send_after, &length) == 0);
-            require(send_after >= large);
+            require(::getsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &send_after, &length) == 0,
+                    "cannot read the widened buffer");
+            require(send_after >= granted, "widening shrank an existing buffer");
             // An invalid descriptor is ignored rather than crashing a caller.
             posix::widen_socket_buffers(-1);
             ::close(pair[0]);

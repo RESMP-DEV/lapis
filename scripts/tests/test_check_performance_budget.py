@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+from datetime import datetime, timedelta, timezone
 import unittest
 from pathlib import Path
 
@@ -12,7 +13,7 @@ def receipt(**overrides):
     values = {
         "schema": "lapis.terminal-latency/1",
         "input": "synthetic Qt Return",
-        "recorded_at": "2026-10-07T16:00:00Z",
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
         "samples": 100,
         "refresh_hz": 120,
         "input_to_frame": {
@@ -32,6 +33,7 @@ class PerformanceBudgetTests(unittest.TestCase):
             "name": "m4-max-120hz-input-to-frame",
             "reference": "Apple M4 Max, 120 Hz reference display",
             "min_samples": 20,
+            "max_receipt_age_hours": 24,
             "max_ms": {"p50_ms": 50.0, "p95_ms": 60.0, "p99_ms": 70.0},
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -54,6 +56,7 @@ class PerformanceBudgetTests(unittest.TestCase):
             "name": "fixture",
             "reference": "fixture",
             "min_samples": 20,
+            "max_receipt_age_hours": 24,
             "max_ms": {"p50_ms": 39.0, "p95_ms": 60.0, "p99_ms": 70.0},
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -69,12 +72,24 @@ class PerformanceBudgetTests(unittest.TestCase):
             "name": "fixture",
             "reference": "fixture",
             "min_samples": 20,
+            "max_receipt_age_hours": 24,
             "max_ms": {"p95_ms": 60.0},
         }
         cases = (
             {"schema": "lapis.terminal-latency/0"},
             {"input": "Synthetic marker replay"},
-            {"recorded_at": ""},
+            {"recorded_at": "not-a-timestamp"},
+            {"recorded_at": "yesterday"},
+            {
+                "recorded_at": (
+                    datetime.now(timezone.utc) - timedelta(hours=25)
+                ).isoformat()
+            },
+            {
+                "recorded_at": (
+                    datetime.now(timezone.utc) + timedelta(hours=1)
+                ).isoformat()
+            },
             {"samples": 19},
             {"input_to_frame": {"p95_ms": 0}},
             {"input_to_frame": {"p50_ms": 40.0, "p95_ms": 30.0, "p99_ms": 20.0}},
@@ -94,6 +109,7 @@ class PerformanceBudgetTests(unittest.TestCase):
             budget["max_ms"], {"p50_ms": 20.0, "p95_ms": 30.0, "p99_ms": 35.0}
         )
         self.assertGreaterEqual(budget["min_samples"], 20)
+        self.assertGreater(budget["max_receipt_age_hours"], 0)
         self.assertNotIn("budget_ms", budget)
         self.assertTrue(all(value > 0 for value in budget["max_ms"].values()))
         self.assertTrue(budget["name"])

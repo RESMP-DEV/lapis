@@ -1252,6 +1252,11 @@ class SessionService final : public QObject {
         client_paste_transactions_ = paste_transactions;
         client_paste_id_ = 0;
         client_wanted_.reset();
+        // A replacement stream is first-of-burst: do not let the previous
+        // client's last publish defer this client's opening screen or
+        // attention snapshot by up to a frame.
+        snapshot_pace_.reset();
+        attention_pace_.reset();
         attention_dirty_ = true;
         if (codex_observer_ && pty_requested_ && !codex_state_->connected() &&
             codex_backend_.state() == QProcess::Running)

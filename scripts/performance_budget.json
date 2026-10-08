@@ -7,6 +7,7 @@
     "p99_ms": 35.0
   },
   "min_samples": 20,
+  "max_receipt_age_hours": 24,
   "observed_basis": "Four post-transport-repair runs on the M4 Max reference machine, 30 samples each: input-to-frame p50 15.81/15.83/15.81/15.89 ms, p95 20.88-23.96 ms, p99 23.96-25.27 ms. The budget keeps roughly 25-40 percent headroom over those runs.",
   "measured_in": "build/desktop/apps/desktop/lapis_terminal_latency_probe --samples 30 --output <receipt.json>; checked with python3 scripts/lapis.py performance-check <receipt.json> or just latency-budget",
   "history": [
