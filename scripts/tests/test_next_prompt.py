@@ -134,6 +134,175 @@ class TranscriptTests(Homes):
             ],
         )
 
+    def test_injected_turns_and_wrappers_are_not_typed(self):
+        typed = next_prompt.typed
+        for injected in (
+            "<codex_internal_context>goal mode</codex_internal_context>",
+            "<turn_aborted>The user interrupted.</turn_aborted>",
+            "<subagent_notification>done</subagent_notification>",
+            "<recommended_plugins>one</recommended_plugins>",
+            "<bash-input>ls</bash-input>",
+            "<bash-stdout>file.txt</bash-stdout>",
+            "<bash-stderr>missing</bash-stderr>",
+            "<command-message>review</command-message>",
+            "[Your previous response had no visible output. Continue.]",
+        ):
+            self.assertEqual(typed(injected), "")
+            self.assertEqual(typed('<image name="a.png"></image>\n' + injected), "")
+        self.assertEqual(
+            typed('<image name="a.png"></image>\nwhat is this'), "what is this"
+        )
+        self.assertEqual(
+            typed('what is this\n<image name="a.png"></image>'), "what is this"
+        )
+        self.assertEqual(
+            typed('use <image name="x.png"></image> here'),
+            'use <image name="x.png"></image> here',
+        )
+        for prose in (
+            "Caveat: keep the public API",
+            "This session is being continued from another conversation",
+        ):
+            self.assertEqual(typed(prose), "")
+        self.assertEqual(
+            typed("# In app browser\n- page\n## My request for Codex:\nfix it"),
+            "fix it",
+        )
+        self.assertEqual(typed("# heading I typed"), "# heading I typed")
+
+    def test_image_wrappers_are_stripped_before_injected_classification(self):
+        typed = next_prompt.typed
+        wrapper = '<image name="a.png"></image>\n'
+        self.assertEqual(
+            typed(
+                wrapper + "<codex_internal_context>goal mode</codex_internal_context>"
+            ),
+            "",
+        )
+        self.assertEqual(
+            typed(wrapper + "<turn_aborted>The user interrupted.</turn_aborted>"), ""
+        )
+        self.assertEqual(typed(wrapper + "what is this"), "what is this")
+
+    def test_tag_elements_use_exact_names_and_can_be_quoted(self):
+        typed = next_prompt.typed
+        tags = (
+            "<command-name>/compact</command-name>",
+            "<local-command-caveat>read this</local-command-caveat>",
+            "<local-command-stdout>done</local-command-stdout>",
+            "<environment_context>cwd</environment_context>",
+            "<system-reminder>be careful</system-reminder>",
+            "<task-notification>finished</task-notification>",
+        )
+        marker = "## My request for Codex:\n"
+        for tag in tags:
+            self.assertEqual(typed(tag), "")
+            self.assertEqual(typed('<image name="a.png"></image>\n' + tag), "")
+            self.assertEqual(typed(marker + tag), "")
+
+        # A tag name must end at XML-name whitespace or its closing angle, and
+        # a person may quote a known tag and continue their request.
+        self.assertEqual(
+            typed("<bash-input-extended>x</bash-input>"),
+            "<bash-input-extended>x</bash-input>",
+        )
+        quoted = "<bash-input>ls</bash-input> why does this fail?"
+        self.assertEqual(typed(quoted), quoted)
+        self.assertEqual(typed(marker + quoted), quoted)
+
+    def test_only_known_bracket_notes_are_injected(self):
+        typed = next_prompt.typed
+        marker = "## My request for Codex:\n"
+        self.assertEqual(typed("[Request interrupted by user]"), "")
+        self.assertEqual(typed(marker + "[Request interrupted by user]"), "")
+        self.assertEqual(
+            typed(marker + "[Your previous response had no visible output.]"), ""
+        )
+
+        for request in (
+            "[ship it]",
+            "[note] [todo]",
+            "[yes]\n[LGTM]",
+            "[ship <codex_internal_context]",
+        ):
+            self.assertEqual(typed(request), request)
+            self.assertEqual(typed(marker + request), request)
+
+    def test_a_request_can_quote_an_injected_turn_outside_desktop(self):
+        typed = next_prompt.typed
+        request = "<turn_aborted>tried already</turn_aborted> please retry"
+        self.assertEqual(typed(request), request)
+
+    def test_codex_desktop_marker_is_extracted_by_line_and_envelopes_peel(self):
+        typed = next_prompt.typed
+        direct = "## My request for Codex:\nfix it"
+        wrapped = '<image name="a.png"></image>\n' + direct
+        self.assertEqual(typed(direct), "fix it")
+        self.assertEqual(typed(wrapped), "fix it")
+        self.assertEqual(
+            typed(direct + "\n## My request for Codex:\nship it"),
+            "fix it\n## My request for Codex:\nship it",
+        )
+        self.assertEqual(
+            typed("## My request for Codex:\n" + direct),
+            direct,
+        )
+        self.assertEqual(
+            typed(direct + "\n# Notes\nsaid:\n## My request for Codex:\nship it"),
+            "fix it\n# Notes\nsaid:\n## My request for Codex:\nship it",
+        )
+        self.assertEqual(
+            typed(
+                "# Notes\nThe file said:\n## My request for Codex:\n"
+                "old text\n## My request for Codex:\nship it"
+            ),
+            "ship it",
+        )
+        self.assertEqual(
+            typed(
+                "# Files mentioned by the user:\n## My request for Codex:\n"
+                "# In app browser\n## My request for Codex:\nfix it"
+            ),
+            "fix it",
+        )
+        self.assertEqual(
+            typed(
+                "## My request for Codex:\n<codex_internal_context>goal</codex_internal_context>"
+            ),
+            "",
+        )
+        self.assertEqual(
+            typed("Read ## My request for Codex: and fix it"),
+            "Read ## My request for Codex: and fix it",
+        )
+        self.assertEqual(typed("# heading I typed"), "# heading I typed")
+
+    def test_a_desktop_request_keeps_a_body_shaped_like_an_injected_turn(self):
+        typed = next_prompt.typed
+        self.assertEqual(
+            typed(
+                "# Files mentioned by the user:\n\n## My request for Codex:\n"
+                "# AGENTS.md instructions\n\nAdd a line about injected turns."
+            ),
+            "# AGENTS.md instructions\n\nAdd a line about injected turns.",
+        )
+        self.assertEqual(
+            typed("## My request for Codex:\nCaveat: keep the public API"),
+            "Caveat: keep the public API",
+        )
+        # A whole tag or bracket note stays an injection wherever a Desktop
+        # cut lands, but a body that continues past one is a request.
+        self.assertEqual(
+            typed("## My request for Codex:\n<bash-input>ls</bash-input> then tell me"),
+            "<bash-input>ls</bash-input> then tell me",
+        )
+        self.assertEqual(
+            typed("## My request for Codex:\n<bash-stdout>x</bash-stdout>"), ""
+        )
+        self.assertEqual(
+            typed("## My request for Codex:\n[Request interrupted by user]"), ""
+        )
+
     def test_codex_leaves_out_its_own_instructions(self):
         turns = next_prompt.codex_turns(str(self.codex_path))
         self.assertEqual(

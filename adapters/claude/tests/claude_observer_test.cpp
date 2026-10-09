@@ -413,6 +413,18 @@ void background_work_pauses_the_turn() {
     paused.raw(QJsonDocument(last).toJson(QJsonDocument::Compact));
     require(paused.state.activity() == attention::Activity::turn_completed);
 
+    // A service names its relay contract in the hook command. The command an
+    // older service wrote has none, and the installed relay then sends only
+    // identity fields: a derived field that service predates would read as a
+    // malformed hook and end its observation for good.
+    require(paused.command.endsWith(QLatin1Char(' ') + lapis::claude::relay_contract.toString()));
+    Fixture older;
+    older.command.chop(lapis::claude::relay_contract.size() + 1);
+    older.begin();
+    older.raw(QJsonDocument(stop).toJson(QJsonDocument::Compact));
+    require(older.state.ready() && older.state.activity() == attention::Activity::turn_completed &&
+            older.observer.diagnostic().contains(QLatin1String("legacy")));
+
     // A claimed count from the hook itself is ignored; the relay derives it.
     Fixture forged;
     forged.begin();
@@ -553,10 +565,45 @@ void privacy_bounds_and_transport() {
     f.raw("{}"); // Dead receiver cannot block or turn into an approval decision.
 }
 } // namespace
+// Hooks relayed through another machine's terminal: no local listener or
+// settings file, the same relay derivation (a claimed count is ignored and a
+// running task pauses the turn), and the same identity rules.
+void terminal_transport() {
+    attention::State state{"session", "claude-code"};
+    lapis::claude::Observer observer(state, lapis::claude::Observer::Transport::terminal);
+    bool refused = false;
+    try {
+        static_cast<void>(observer.launchArguments({}, QStringLiteral("/bin/true")));
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    require(refused);
+    observer.receiveRelayed(event("Stop")); // nothing bound yet
+    require(!state.ready());
+    observer.receiveRelayed(event("SessionStart"));
+    observer.receiveRelayed(event("UserPromptSubmit"));
+    require(state.ready() && state.activity() == attention::Activity::working);
+    auto stop = event("Stop");
+    stop.insert("in_flight", "0");
+    stop.insert("background_tasks", QJsonArray{QJsonObject{{"status", "running"}}});
+    observer.receiveRelayed(stop);
+    require(state.activity() == attention::Activity::working);
+    observer.receiveRelayed(event("UserPromptSubmit", {}, {}, "turn-2"));
+    auto last = event("Stop", {}, {}, "turn-2");
+    last.insert("background_tasks", QJsonArray{});
+    observer.receiveRelayed(last);
+    require(state.activity() == attention::Activity::turn_completed);
+    auto other = event("UserPromptSubmit", {}, {}, "turn-3");
+    other.insert("session_id", "another-source");
+    observer.receiveRelayed(other);
+    require(state.activity() == attention::Activity::turn_completed);
+    observer.stop();
+}
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     if (app.arguments().value(1) == QStringLiteral("--claude-hook"))
-        return lapis::claude::run_hook_relay(app.arguments().value(2), app.arguments().value(3));
+        return lapis::claude::run_hook_relay(app.arguments().value(2), app.arguments().value(3),
+                                             app.arguments().value(4));
     try {
         callback_shutdown();
         callback_destruction();
@@ -570,6 +617,7 @@ int main(int argc, char** argv) {
         session_replacement();
         background_work_pauses_the_turn();
         privacy_bounds_and_transport();
+        terminal_transport();
         std::cout << "Claude live relay, identity, retirement, bounds, privacy and deadline cases "
                      "passed\n";
         return 0;

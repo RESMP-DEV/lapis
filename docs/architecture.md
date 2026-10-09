@@ -99,9 +99,11 @@ for ownership, shared contracts and integration checks across large changes.
 | Engine | Pinned Ghostty `libghostty-vt` selected for the first adapter | Eight-case macOS/Linux replay passes; isolate unstable C API and resolve dependency-notice gaps |
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
 | Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging, attention messages and retained workspace entries | Automatic service recovery remains deferred |
+| Adapter observation status | The desktop still infers pre-prompt state from exact Codex diagnostic strings; the recorded decision is to add a typed observation field and move the shared wire VERSION in the same lockstep change, after which diagnostics become display-only | Q03 extraction needs the typed field, observers, service publisher, desktop consumer and in-repo Python/Swift wire peers together, with replay-equivalent adapter states |
 | Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
 | Codex multi-thread sessions | Upstream worktree tools (#50148) make attached tasks routine in one TUI; lapis binds a single persistent TUI thread and disables structured responses on a second | A disposable two-thread live session (worktree-created attached task) proving per-thread event delivery, response ownership and `thread/resume`+`thread/read` reconciliation, recorded in the Codex capability matrix; see the [October 2 review](#codex-upstream-integration-review-october-2) |
 | Codex external-agent import | Session-only protocol importer and isolated qualification probe are implemented; no service/desktop onboarding task yet | Finish the separate explicit flow on a requalified Codex build: exact scope consent, dedicated server ownership, imported-thread launch/resume, duplicate reconciliation and failure recovery; never a per-session observer capability |
+| Session-service analyzer complexity | Narrow documented suppressions hold `codex_permission`, `codex_arguments`, and `parse_options` while their CLI grammar remains one reviewable narrative | Refactor only after behavior-preserving tests cover each option path and `just desktop` remains green |
 | Web surfaces | CEF 8037 (Chromium 154) provisional candidate for service-owned, CLI-drivable web views; September 29 design only, runtime pin awaits W0 | [Web surfaces section](#web-surfaces-september-29) owns the engine gate, wire contract, injection determinism and import consent |
 
 The [research receipt](../evidence/terminal-research.json) retains pinned upstream
@@ -469,7 +471,8 @@ with the scope and measurement limits in the [receipt](../evidence/milestone-one
 
 The renderer places runs at engine cell coordinates. Printable ASCII batches
 only when styled advances match the grid, with kerning and optional ligatures
-disabled. Other graphemes shape locally at a common baseline. Backgrounds precede
+disabled; each surface measures those advances once per character and style
+for its font, not once per cell drawn. Other graphemes shape locally at a common baseline. Backgrounds precede
 glyphs, decorations follow, and unchanged rows retain their nodes. Native Vulkan
 regressions cover wide/combining characters, emoji, Hebrew/Arabic fallback,
 styles, resize and cursor movement. Cross-cell contextual shaping and curly
@@ -1269,6 +1272,19 @@ With both fields absent, the relay reports the legacy contract. This matches the
 qualified optional-field schema; a future field rename needs a new adapter probe
 and cannot be inferred from the absence of an optional field alone.
 
+The hook command runs whatever relay binary is installed at the service's path
+when Claude stops, so after an update a long-running service hears a newer
+relay. A service built before `in_flight` existed rejects that field as a
+malformed hook and stops observing for good: from September 30 to October 6 a
+set of agents restored on September 29 sent every `Stop` through such a relay
+and produced no finished-turn ping at all (51 of 311 final turn endings, 23 of
+the 61 the person answered more than 30 minutes late with no notification).
+The hook command therefore names its relay contract as a trailing argument
+(`2`); a command without one, written by an older service, gets identity
+fields only, the legacy shape that service reads. A relay never sends a field
+its listening service's contract lacks. Services that already lost observation
+this way stay lost until their agent is reloaded.
+
 Diagnostics compose the current lifecycle/transport status with a transient
 background-schema message. A known background count clears only that transient
 message, preserving transport-loss or connection-overflow evidence. The base
@@ -1786,6 +1802,35 @@ Decisions from these runs:
   still answers a Codex request through its adapter. The needs-you chime
   settings (`alertSound`, `alertRepeat`) and `Alerts::needsYou` are unused and
   due for removal with the phone's matching settings.
+- Pings reach a person who is away (October 6). The rule: a finished turn or
+  request posts a notification when lapis is in the background, as before, or
+  when nobody is at the Mac: no keyboard, mouse or trackpad input anywhere for
+  `alerts.awayAfter` seconds (default 120), read from the HID event source
+  (`CGEventSourceSecondsSinceLastEventType`; where it cannot be read, the
+  person counts as present). Being in front, or showing that very agent, counts
+  as seeing it only with someone present, and `SeenScreens` samples only then.
+  The chime still plays. An agent left waiting (no new turn, request still
+  open, not looked at while present; a look `SeenScreens` already recorded
+  answers a finished wait even after the person moves on, while an open
+  request keeps reminding) posts one reminder after `alerts.remindAfter`
+  minutes (default 30, 0 turns it off); one falling due while the person is
+  away waits until input resumes. Reminders log as event `still waiting`,
+  decision `posted: reminder`; away posts as `posted: you are away`.
+  Evidence (dated; the author's attention log, interaction log and Claude
+  transcripts, September 30 to October 6): of 311 final turn endings under
+  lapis, the person answered 77 more than 30 minutes later, 61 of them with no
+  notification posted: 26 had no ping decision because of the relay/service
+  skew above (23 confirmed from live service start times, 3 probable), 10 were remote terminal agents with no turn signal yet, 21 were
+  logged "lapis is in front" or "you are looking at it" with only a chime, and
+  4 were the paused-turn fallback followed by a chime only. Replaying the rule
+  over that week (presence from the interaction log after October 5, from typed
+  prompts before) notifies for 54 of the 61, assuming the turn signals above
+  are restored, 13 at the turn's end and 41 by the reminder; the 7 left were
+  cases the prompt-based presence cannot place before the reply. It adds 16
+  away notifications for turns answered within 30 minutes and 47 reminders,
+  35 of them for conversations never answered again; in the interaction-logged
+  day, 2 reminders would have fired while the person was present. A second and
+  third reminder caught nothing more in the replay, so there is one.
 - Custom sound files preserve that shared finished cue. `ChimeSounds` owns
   asynchronous file loading separately from `Alerts` attention policy: at most
   two configured paths and two in-flight checks, with coalesced latest-path
@@ -1963,13 +2008,16 @@ than a live one) is the step that would let Codex update too. Restored and
 reattached agents are not updated.
 
 Explicit supported-CLI creation shares this queue, and `--no-harness-updates`
-disables it. Headless restore/serve keeps its existing no-update policy. Each
-updater has an isolated process group and a retained guard; timeout, leader exit
-and desktop teardown stop installer descendants too. A queued agent starts only
-after the leader exits and the guard acknowledges cleanup. Restart cannot bypass
-the queue. Output is drained while the updater runs into an 8 KiB tail. Restored
-Codex launches receive the qualified-binary update setting only after the old
-service is gone, preserving explicit configuration and resume-argument provenance.
+disables it. `harnessUpdates` in lapis.json (`{"omp": false}`) pins listed CLIs:
+they skip the launch update and the explicit update-and-reload refuses them;
+an updater already running still holds its queued agents. Headless
+restore/serve keeps its existing no-update policy. Each updater has an isolated
+process group and a retained guard; timeout, leader exit and desktop teardown
+stop installer descendants too. A queued agent starts only after the leader
+exits and the guard acknowledges cleanup. Restart cannot bypass the queue.
+Output is drained while the updater runs into an 8 KiB tail. Restored Codex
+launches receive the qualified-binary update setting only after the old service
+is gone, preserving explicit configuration and resume-argument provenance.
 
 Phone access (September 23, requested for use on the go without signing in).
 A prototype, deliberately simpler than the SSH design first proposed:
@@ -2284,12 +2332,29 @@ are per category and the strip stays the navigation.
 - **Selection.** The selected agent is always one of the tiles. Clicking a strip
   agent that is not tiled puts it in the selected tile, as selecting a card
   always showed it on the stage; its previous agent stays in the strip.
+- **Keyboard navigation (October 6).** Command-Control-arrows move focus
+  spatially: `TileLayout::neighbor` takes the nearest tile on that side among
+  those overlapping the selected tile's span across the move, the most in line
+  first, with no wraparound. In a binary split of the stage some tile always
+  overlaps when any lies on that side, so there is no non-overlapping fallback.
+  The next and previous agent keys used to walk strip order, which ignored the
+  stage and, with a tile showing each strip agent in turn, could alternate
+  between two agents forever. They now walk `TileLayout::cycleOrder`: tiles in
+  reading order (top edge, then left edge), then untiled agents in strip order.
+  `TileLayout::step` is the pure rule: an untiled agent is shown in the tile the
+  walk left (as a strip click would), and stepping back onto a tile restores the
+  layout the walk started from. Workspace keeps that starting layout while the
+  stage, selection and strip are as its last step left them; any other change
+  starts a new walk. Shortcuts stay disarmed during dialogs, composition and
+  paste, so these keys never move focus while the terminal owns input.
 - **Rendering.** The selected tile's terminal is the existing stage surface,
   moved to that tile, so focus, IME and every earlier stage behavior are
   unchanged. Other tiles are interactive surfaces with input disabled: they
-  size their agents and draw live, and a click selects them. Tile and divider
-  delegates are keyed by agent and split path and only move when a divider
-  does, so a drag never rebuilds a terminal. `holdResize` keeps every agent's
+  size their agents and draw live, and a click selects them. Tile delegates
+  are kept by place in the tile list and divider delegates by split path; they
+  only move when a divider does, so a drag never rebuilds a terminal, and an
+  agent picked into a tile changes only that tile's document instead of
+  rebuilding every tile's terminal. `holdResize` keeps every agent's
   size during a divider drag and sends one resize when it ends; a resize per
   cell would make each agent redraw many times a second.
 - **Dragging.** One mouse area per card or tile name bar turns a press into a
@@ -3665,6 +3730,82 @@ results):
   provider/model: confirm approval requests and shortcuts render and route as
   before. Gate: no behavioral delta recorded, or an explicit adapter note.
 
+### Pacing helper, latency budget and modularity audit (October 7)
+
+The transport widening and both publish-to-publish pacing repairs have landed
+through earlier branches. Two follow-ups keep them from regressing and close
+the remaining audit rows that were ready:
+
+- `services/session/src/transport/update_pacing.hpp` owns the tested
+  publish-to-publish rate limit once. The screen-snapshot and attention
+  publishers previously carried two inline copies of the same since-publish
+  arithmetic; both now share `UpdatePace`, whose unit test pins first-of-burst
+  freshness, remainder-only arming, a deadline pinned to the last publish, and
+  reset for a replacement stream.
+- `launch-spec` asserts the socket-buffer contract on a real socket pair: the
+  default buffer is smaller than a screen, `widen_socket_buffers` raises it,
+  and removing the widening fails the test.
+- `scripts/check_performance_budget.py`,
+  `scripts/performance_budget.json`, `just latency-budget` and
+  `python3 scripts/lapis.py performance-check` gate latency receipts against
+  the reviewed 20/30/35 ms p50/p95/p99 budget. The checker rejects stale,
+  old-schema or uncorrelated-input receipts, records non-claims, and leaves a
+  failure receipt rather than a stale PASS. The pre-repair control fails the
+  budget.
+- Q13 is closed: the duplicated fake-service peer in
+  `terminal_input_test.cpp` and `live_connection_test.cpp` moved to
+  `apps/desktop/tests/wire_fixture.hpp`; each suite keeps its own assertions.
+- The ownership table was audited mechanically: service independence, adapter
+  independence, renderer isolation, Ghostty isolation, service-side message
+  validation and explicit build dependencies all hold.
+- The strip's `revealFocused` now also runs on height changes. With a 24 px
+  terminal font the card width grows with strip height without count, width
+  or selection changing; the stale scroll offset previously left the focused
+  card past the edge after the full 2 s wait (measured x 545 + width 274
+  against view width 684). The intermittent run passed five consecutive runs
+  after the fix.
+
+Measurements that motivate the budget are recorded in
+`evidence/update-pacing-latency-budget-20261007.json`: matched Qt-input p50
+48.9 ms to 32.2 ms after pacing, four post-transport runs at p50
+15.81/15.83/15.81/15.89 ms with transport about 1.7 ms, and OS-injected
+native input at p50 13.2 ms, p95 19.9 ms, p99 21.0 ms over 100 samples.
+Frame submission (about 8.5 ms p50) is the next measured target. The audit
+findings and remaining Q03/Q04/Q05/Q02 rows are in
+`evidence/modularity-audit-20261007.json`.
+
+### Open PR consolidation plan (October 7)
+
+Eighteen PRs are open. `fix/main-quality-debt` (#121) must merge first: it
+repairs the pre-existing desktop-gate failures (clang-format, Cppcheck and
+seven clang-tidy findings in files this batch does not own) that every other
+branch currently inherits, and its two reviews are clean. Immediately after
+#121, merge this branch (#122), #113 (ASCII advance cache) and #110
+(switch benchmark): all four are CLEAN apart from main's inherited gate debt
+and touch largely disjoint areas (gate repair, pacing/budget, font metrics,
+benchmark tooling).
+
+The next independent batch is the feature/fix set that reports CLEAN and has
+no base dependency: #98 (smooth scrolling + app log), #105 (ping when
+unwatched), #107 (tile navigation), #111 (stage tile reuse), #115 (persist GUI
+state) and #116 (harness update switch). These should be merged one at a time
+with a rebase or merge refresh after each, because several touch
+`Main.qml`, `workspace.cpp` and `ui_preview_test.cpp`; the largest conflict
+risk is between #98, #107, #111 and #115.
+
+The Ultra Tab family is stacked and must be consolidated in graph order:
+#117 (deck) into main, then #119 (standalone UI, based on #117), then #118
+(composer, based on #117), then #120 (iPhone, based on the combined branch
+`feature/ultratab-combined`, which already carries #117/#118/#119). Its
+integration owner should rebase #120 onto the surviving #117/#118/#119
+sequence rather than merging `feature/ultratab-combined` directly, to avoid a
+duplicate-history merge.
+
+The remaining four (#99, #101, #109, #112) report UNSTABLE and each has two
+non-green checks. They are not blockers for the batches above, but each needs
+its failure investigated and repaired on its own branch before its own merge;
+do not use the consolidation wave to hide their specific regressions.
+
 ### Following milestones
 
 The [production delivery order](#production-delivery-order-september-30)
@@ -3774,7 +3915,8 @@ agent, and a `claude` typed in the side terminal, draws full screen; a remote
 Claude agent's command exports it unless that machine's login shell sets it.
 Grok gets `--fullscreen`, which overrides a minimal `screen_mode` in its
 config. Codex's TUI uses the alternate screen unless given `--no-alt-screen`,
-which lapis never passes, and OpenCode is always full screen. Kimi, OMP and
+which lapis never passes: full screen is the chosen mode, and lapis shows only
+whole frames of its repaints. OpenCode is always full screen. Kimi, OMP and
 Antigravity have no full-screen mode, so for them and every other CLI the
 stage's terminal grid is the launch size: a new agent, a restart and a start
 after a CLI update begin at the size the stage shows, with no resize after
@@ -4065,7 +4207,9 @@ to measure that threshold. The helper normalizes an unscored candidate to
 without a numeric probability, and the predicted event records `top_scored`.
 
 - **Where it runs.** `NextPrompt` follows `Workspace::turnFinished`, which covers
-  Codex and Claude turns and requests but not terminal agents' output pauses.
+  Codex and Claude turns and requests, including those of agents on another
+  machine ([remote turns](#turns-of-agents-on-another-machine-october-5)), but
+  not terminal agents' output pauses.
   `next_prompt.py context` reads the conversation where the agent runs (the
   CLI's transcript, by the conversation id lapis knows, else the newest
   interactive one in its folder), sent over ssh with the helper on stdin for
@@ -4176,6 +4320,92 @@ Claude Code 2.1.285 has its own prompt suggestions (on unless
 guess covers them but does not turn them off. Past transcripts do not record
 lapis's state, so the replay cannot measure what the other agents' state adds;
 the log can.
+
+### Turns of agents on another machine (October 5)
+
+An agent on another machine runs in terminal mode behind `ssh -t`, so neither
+the local Claude hook socket nor a lapis-owned Codex app-server reaches it. Its
+status was the output estimate, which never emits `turnFinished`, so remote
+agents had no finished-turn ping and no next-prompt guess. Three routes were
+weighed. Running a session service on the other machine means installing and
+qualifying a Linux service there. A Codex app-server there needs a forwarded
+endpoint and the pinned-binary qualification, which another machine's binary
+does not have. A reverse-forwarded Unix socket depends on the remote sshd
+allowing stream-local forwarding and leaves a socket file behind. The chosen
+route uses the channel lapis already owns: the agent's terminal.
+
+- **Sequences.** The remote login shell makes a 32-hex-digit nonce from
+  `/dev/urandom`, exports it with its terminal's device and lapis's relay
+  script, and prints `ESC ] 7717 ; lapis-init ; <cli> ; <nonce> BEL` before
+  starting the CLI. Each hook then writes `ESC ] 7717 ; lapis-event ; <nonce> ;
+  <base64 JSON> BEL` to that device. Claude Code 2.1.290 runs hooks without a
+  controlling terminal (observed on the Linux test host), so the relay writes
+  to the device the login shell recorded, not `/dev/tty`. The session service
+  enables `TerminalHookChannel` only for ssh-transport terminal launches. The
+  first init binds the nonce; later inits and events without it are ignored,
+  so displayed text cannot pose as a hook. Every lapis sequence is removed
+  before the terminal engine sees it, including one split across reads. A
+  legitimate relay frame is bounded below the 24 KiB sequence limit. An
+  unterminated candidate larger than that limit is quarantined without
+  discarding output that preceded it; only BEL or ST ends quarantine. If a
+  malformed candidate still has no terminator after 96 KiB, the parser emits a
+  one-line recovery notice and resumes filtering subsequent output.
+- **Nothing on the other machine.** The nonce is on no command line and in no
+  file. The relay goes in the environment; no file is written or left behind.
+  The relay sends only the existing relay identity fields (and, for Claude,
+  background task statuses and cron counts) and never prompts or tool input.
+  Cron objects are reduced to counts, so identities and schedules never cross
+  the terminal. It always exits 0 and prints nothing, so a missing `python3`, a hook
+  failure or an unwritable device changes only status, never a permission
+  decision. Status then stays estimated from output.
+- **Claude Code.** The launch passes the same nine hooks through `--settings`
+  (built by `claude::hook_settings`, shared with local launches). The service
+  creates a `claude::Observer` with the terminal transport on the first
+  authenticated event and gives it each event through `relay_event`, so the
+  background-work count is derived exactly as the local relay derives it. The
+  remote launch still names its conversation with `s=`; the observer records
+  no resume identity, so restore never appends resume options to ssh.
+- **Codex.** Codex hooks require per-hook trust, and a hook passed with `-c`
+  did not run in a probe of Codex 0.159.2. Its `notify` program does run (a
+  `codex exec` probe on the Linux test host wrote its `agent-turn-complete`
+  JSON to the terminal over ssh). The launch adds `-c notify=[...]` right
+  after the program; the relay forwards `type`, `thread-id` and `turn-id`, then
+  runs the user's own `notify` from `$CODEX_HOME/config.toml` when one is set;
+  preserving that setting uses `tomllib`, so it requires Python 3.11 there.
+  That executable path is user-owned configuration with the same trust as
+  Codex's own `notify`; writing `CODEX_HOME/config.toml` already controls a
+  command Codex can run, so lapis adds no superficial path allowlist.
+  `NotifyTurns` reports only finished turns. Submitted input (Return, or a
+  paste with Return) returns the activity to unknown. A second Return while
+  that prompt is still active marks its next completion as in flight and does
+  not apply it; the following completion resumes normal reporting. It does not
+  resynchronize after a stream it already reported; a fresh observation state
+  uses the next source epoch. A rejected first observation retries in the same
+  epoch. A profile-level or project-level `notify` is not chained.
+- **Desktop.** A remote agent keeps `StatusSource::output`. `estimated()` uses
+  the output estimate while no observer is synchronized or its activity is
+  unknown. Otherwise the observer's state applies. Since only an observer
+  reports `finished` for such an agent, `noteStatus` emits `turnFinished` on a
+  change to `finished` from working or quiet. A change from unknown or
+  connecting does not emit, so reattaching never pings. A Codex turn too
+  short to register as output activity right after connecting is therefore
+  not pinged.
+- **Saved agents.** A remote Claude Code or Codex agent saved before this
+  gains the hooks when it next starts (restart, reload or reconnect), as it
+  gains connection options. A running one keeps its old command until then.
+  Commands with `--settings`, `--bare`, `--safe-mode`, `--` or their own
+  `notify` are left alone.
+
+`lapis_workspace_tests --case remote-hooks` runs both CLIs as stand-ins behind
+a stand-in ssh that executes the command locally. Its hooks run without a
+controlling terminal, as Claude Code's do. `terminal-hooks` covers sequence
+parsing, read boundaries and nonce binding. On October 5 a disposable Claude
+Code 2.1.290 session on the Linux test host, run through this build's
+workspace, session service and `NextPrompt`, reported SessionStart about 1 s
+after launch. UserPromptSubmit set it working, and its Stop finished the turn
+and pinged. A guess was offered about 5 s later, and no sequence reached the
+screen. Codex's remote route has stand-in and `codex exec` evidence, not a live
+TUI turn through lapis.
 
 **One guess, not three (October 6).** Showing three guesses could collect more
 intent matches than one; that comparison stays an open option, deliberately not
@@ -4757,6 +4987,12 @@ while the plan sign-in or usage (accounts) dialog, or any dialog named for an
 account, sign-in, credential or password, is open. Files are `0600` in a
 `0700` folder, rotate by size into numbered predecessors, and the total is
 bounded by `maxFileMiB` × `maxFiles`.
+
+### 2026-10-07 - Desktop gate repair
+
+The desktop aggregate had accumulated real deterministic analyzer debt on main, not toolchain drift: unformatted `alerts.cpp` and `plan_sign_in.cpp` code plus stable clang-tidy and cppcheck findings across existing desktop/session files. The mechanical repair formats those files, applies explicit casts/moves/const-reference returns, removes dead state, and uses narrow documented suppressions for intentional test structure and three deferred session-service complexity refactors. The GUI flaky class was separately stabilized by waiting for native activation/exposure, terminal focus, clipboard readiness, shortcut arming, strip reveal, and frame-driven suggestion presentation instead of fixed `pump` windows. The ui-preview aggregate timeout moved from 20 to 30 seconds and its tab-position deadline from 2 to 5 seconds.
+
+At the final head, `just quality` passed all seven subchecks and `just desktop` passed configure, build, clang-format, cppcheck, all clang-tidy workers, and all 46 CTests. The two formerly flaky GUI tests passed eight consecutive native rounds. Evidence: `evidence/main-quality-gate-repair.json`.
 
 ## Contracts to preserve
 
