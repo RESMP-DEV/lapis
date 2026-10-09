@@ -48,7 +48,6 @@ PROSE_NOT_TYPED = (
 )
 BRACKET_NOT_TYPED = (
     "[Request interrupted",
-    "<codex_internal_context",
     "[Your previous response had no visible output",
 )
 NOT_TYPED = TAG_NOT_TYPED + PROSE_NOT_TYPED + BRACKET_NOT_TYPED

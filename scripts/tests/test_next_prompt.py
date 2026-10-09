@@ -219,7 +219,12 @@ class TranscriptTests(Homes):
             typed(marker + "[Your previous response had no visible output.]"), ""
         )
 
-        for request in ("[ship it]", "[note] [todo]", "[yes]\n[LGTM]"):
+        for request in (
+            "[ship it]",
+            "[note] [todo]",
+            "[yes]\n[LGTM]",
+            "[ship <codex_internal_context]",
+        ):
             self.assertEqual(typed(request), request)
             self.assertEqual(typed(marker + request), request)
 
