@@ -4,10 +4,12 @@
 #include "app_paths.hpp"
 #include "conversation_index.hpp"
 #include "desktop_actions.hpp"
+#include "gui_state.hpp"
 #include "interaction_recorder.hpp"
 #include "keymap.hpp"
 #include "limit_resets.hpp"
 #include "next_prompt.hpp"
+#include "open_request.hpp"
 #include "plan_sign_in.hpp"
 #include "platform_desktop.hpp"
 #include "platform_preferences.hpp"
@@ -822,10 +824,67 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
     // A guess held back as a repeat is made when the person shows the agent.
     QObject::connect(&workspace, &lapis::desktop::Workspace::focusChanged, &next,
                      [&next, &workspace] {
-                         if (const auto* item = workspace.focusedSession())
-                             next.focused(item->sessionId());
+                         const auto* item = workspace.focusedSession();
+                         next.focused(item != nullptr ? item->sessionId() : QString());
+                     });
+    // A turn that ended while no window watched still gets its guess.
+    QObject::connect(&workspace, &lapis::desktop::Workspace::finishedWhileAway, &next,
+                     [&next](SessionPreview* item) {
+                         if (item != nullptr)
+                             next.turnFinished(item->sessionId());
                      });
     return &next;
+}
+
+// Activating an already-focused window gives no Workspace focus signal, but a
+// repeat guess still needs to know that the person is looking at that agent.
+void focus_next_prompt_on_activation(lapis::desktop::NextPrompt& next,
+                                     lapis::desktop::Workspace& workspace, QQuickWindow& window) {
+    QObject::connect(&window, &QQuickWindow::activeChanged, &next, [&window, &next, &workspace] {
+        if (!window.isActive())
+            return;
+        if (const auto* item = workspace.focusedSession())
+            next.focused(item->sessionId());
+    });
+}
+
+// What the window knows that a restart should keep (see GuiState), beside the
+// workspace registry in runtime/: guesses, unseen marks, what was seen,
+// closed agents and the window's own choices. Restored once every owner
+// exists; restoring never pings. A turn that ended while no window watched
+// is guessed for, without a chime.
+std::unique_ptr<lapis::desktop::GuiState>
+keep_gui_state(lapis::desktop::Workspace& workspace,
+               std::optional<lapis::desktop::NextPrompt>& nextPrompt,
+               std::optional<lapis::desktop::SeenScreens>& seenScreens, bool isolated) {
+    using lapis::desktop::GuiState;
+    using lapis::desktop::Workspace;
+    if (isolated || workspace.storagePath().isEmpty())
+        return nullptr;
+    auto* const next = nextPrompt ? &*nextPrompt : nullptr;
+    auto* const seen = seenScreens ? &*seenScreens : nullptr;
+    auto state = std::make_unique<GuiState>(QDir(QFileInfo(workspace.storagePath()).absolutePath())
+                                                .filePath(QStringLiteral("gui_state.json")));
+    auto* store = state.get();
+    state->load();
+    workspace.restoreMarks(state->section(QStringLiteral("marks")).toObject());
+    workspace.restoreClosed(state->section(QStringLiteral("closed")).toArray());
+    state->addSection(QStringLiteral("marks"), [&workspace] { return workspace.saveMarks(); });
+    state->addSection(QStringLiteral("closed"), [&workspace] { return workspace.saveClosed(); });
+    QObject::connect(&workspace, &Workspace::marksChanged, store, &GuiState::touch);
+    QObject::connect(&workspace, &Workspace::closedChanged, store, &GuiState::touch);
+    if (seen != nullptr) {
+        seen->restoreState(state->section(QStringLiteral("seen")).toObject());
+        state->addSection(QStringLiteral("seen"), [seen] { return seen->saveState(); });
+        QObject::connect(seen, &lapis::desktop::SeenScreens::changed, store, &GuiState::touch);
+    }
+    if (next != nullptr) {
+        next->restoreState(state->section(QStringLiteral("nextPrompt")).toObject());
+        state->addSection(QStringLiteral("nextPrompt"), [next] { return next->saveState(); });
+        QObject::connect(next, &lapis::desktop::NextPrompt::stateChanged, store, &GuiState::touch);
+    }
+    QObject::connect(qApp, &QCoreApplication::aboutToQuit, store, &GuiState::flush);
+    return state;
 }
 
 // What this window knows about each agent, for Ultra Tab (apps/ultratab),
@@ -838,6 +897,31 @@ void keep_agent_state(std::optional<lapis::desktop::AgentStatePublisher>& kept,
     kept.emplace(workspace, next ? &*next : nullptr,
                  QDir(QFileInfo(workspace.storagePath()).absolutePath())
                      .filePath(QStringLiteral("agent_state.json")));
+}
+
+// Ultra Tab's "show it in lapis" (Command-L on a card): select that agent and
+// bring the window forward, as clicking its notification does.
+void follow_open_requests(std::optional<lapis::desktop::OpenRequests>& kept,
+                          lapis::desktop::Workspace& workspace, QPointer<QQuickWindow>& shown,
+                          bool isolated) {
+    if (isolated || !workspace.holdsRegistry())
+        return;
+    kept.emplace(QDir(QFileInfo(workspace.storagePath()).absolutePath())
+                     .filePath(QStringLiteral("ultratab_open.json")),
+                 [&workspace, &shown](const QString& id) {
+                     lapis::desktop::interaction::cause(QStringLiteral("ultratab"));
+                     // Select first: a request naming an agent this window does
+                     // not hold must not steal focus from the other app.
+                     if (!workspace.selectSession(id) || !shown)
+                         return;
+                     // Ultra Tab is a different application, so its request
+                     // arrives while lapis is inactive; show/raise alone would
+                     // order a window in an application macOS never foregrounds.
+                     lapis::desktop::platform::activate_application();
+                     shown->show();
+                     shown->raise();
+                     shown->requestActivate();
+                 });
 }
 
 // The quick-command terminals beside this workspace, with ssh hosts from the
@@ -944,6 +1028,7 @@ void wire_window(QQuickWindow& window, lapis::desktop::UiPreview& view,
                         .smoke_input = parser.isSet(QStringLiteral("smoke-input"))});
 }
 } // namespace
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int main(int argc, char** argv) {
     QStringList arguments;
     for (int index = 0; index < argc; ++index)
@@ -1076,6 +1161,8 @@ int main(int argc, char** argv) {
         }
         std::optional<lapis::desktop::AgentStatePublisher> agentState;
         keep_agent_state(agentState, workspace, nextPrompt, isolated);
+        std::optional<lapis::desktop::OpenRequests> openRequests;
+        follow_open_requests(openRequests, workspace, shown, isolated);
         std::optional<lapis::desktop::PlanSignIn> planSignIn;
         QObject* const signInForQml = keep_plan_sign_in(planSignIn, keymap, isolated);
         const auto conversations = conversation_index(workspace);
@@ -1083,6 +1170,8 @@ int main(int argc, char** argv) {
             follow_conversation_titles(workspace, *conversations);
             conversations->refresh();
         }
+        // After every owner it saves for, so it is written before they go.
+        const auto guiState = keep_gui_state(workspace, nextPrompt, seen, isolated);
         // Before the view, so the window callbacks never see it destroyed.
         const auto recorder = interaction_recorder(workspace, keymap, options, isolated, parser);
         UiPreview view(workspace, {.source = qml_source(parser),
@@ -1099,12 +1188,15 @@ int main(int argc, char** argv) {
                                    .limitResets = resetsForQml,
                                    .nextPrompt = nextForQml,
                                    .planSignIn = signInForQml,
+                                   .guiState = guiState.get(),
                                    .persistGeometry = !isolated && !options.launch &&
                                                       options.endpoint.isEmpty() &&
                                                       !parser.isSet(QStringLiteral("capture")),
                                    .hideOnClose = hide_on_close});
         view.setSystemReducedMotion(system_reduced_motion());
         view.setReducedMotion(parser.isSet(QStringLiteral("reduced-motion")));
+        if (auto* window = view.window(); window != nullptr && nextPrompt)
+            focus_next_prompt_on_activation(*nextPrompt, workspace, *window);
         follow_activation(app, view, shown, hide_on_close);
         const TerminalKeyMonitorGuard terminal_key_monitor;
         QObject::connect(&view, &UiPreview::windowChanged, &view, [&](QQuickWindow* window) {

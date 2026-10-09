@@ -583,7 +583,14 @@ def ask_endpoint(system, prompt, endpoint, model, timeout=60):
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         body = json.loads(response.read(1 << 20))
-    return body["choices"][0]["message"]["content"], {}
+    choices = body.get("choices") if isinstance(body, dict) else None
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("no choices in endpoint response")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str):
+        raise ValueError("no message content in endpoint response")
+    return content.strip(), {}
 
 
 def ask(system, prompt, model, effort="", claude="claude", timeout=150):

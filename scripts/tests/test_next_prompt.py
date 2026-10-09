@@ -521,6 +521,45 @@ class ModelTests(unittest.TestCase):
             [("huge", 0.0, False)],
         )
 
+    def test_endpoint_answers_must_have_message_content(self):
+        import urllib.request
+
+        class Reply:
+            def __init__(self, body):
+                self.body = body
+
+            def read(self, limit):
+                return json.dumps(self.body).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+        for body in (
+            {},
+            {"choices": []},
+            {"choices": [{"message": {"content": None}}]},
+        ):
+            with patch.object(urllib.request, "urlopen", return_value=Reply(body)):
+                with self.assertRaisesRegex(ValueError, "endpoint response"):
+                    next_prompt.ask_endpoint(
+                        "system", "prompt", "http://127.0.0.1", "model"
+                    )
+
+        with patch.object(
+            urllib.request,
+            "urlopen",
+            return_value=Reply({"choices": [{"message": {"content": " hello "}}]}),
+        ):
+            self.assertEqual(
+                next_prompt.ask_endpoint(
+                    "system", "prompt", "http://127.0.0.1", "model"
+                ),
+                ("hello", {}),
+            )
+
     def test_the_model_runs_on_the_plan_with_tools_off(self):
         folder = Path(tempfile.mkdtemp(prefix="lapis-claude-"))
         self.addCleanup(shutil.rmtree, folder)

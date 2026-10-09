@@ -307,6 +307,12 @@ void input_modes() {
     require(terminal.encode_key(lapis::session::TerminalKey::up) == "\x1b[A" &&
                 terminal.encode_paste("echo hi") == "echo hi",
             "input modes did not reset");
+    // A synchronized update (mode 2026), as Claude Code brackets each repaint.
+    require(!terminal.synchronizing(), "no update before one begins");
+    terminal.feed("\x1b[?2026hhalf");
+    require(terminal.synchronizing(), "an update in progress is reported");
+    terminal.feed("whole\x1b[?2026l");
+    require(!terminal.synchronizing(), "an ended update is reported");
 }
 
 // The wheel reaches a full-screen program as it asked: mouse wheel events in

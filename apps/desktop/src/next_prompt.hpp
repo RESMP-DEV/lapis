@@ -134,9 +134,25 @@ class NextPrompt final : public QObject {
                           const QString& expectedKey = {});
     [[nodiscard]] int revision() const { return revision_; }
     [[nodiscard]] bool enabled() const { return settings_.automatic; }
+    // What a restarted window needs to carry on (see GuiState): the offers
+    // shown, each with its key, conversation, turn and whether it was seen;
+    // the guesses whose outcome is still to be read from the conversation;
+    // and the agents a guess was still being made for.
+    [[nodiscard]] QJsonObject saveState() const;
+    // Restores that state for agents that still exist, in the same
+    // conversation. An offer shows again only once its conversation, read
+    // where the agent runs, is still at the offer's turn; otherwise it is
+    // recorded as withdrawn. A guess still owed is made again once the agent's
+    // screen is back. Restoring offers nothing to send and pings nothing.
+    void restoreState(const QJsonObject& state);
+
+    // Tests: shorten the wait for a reattached terminal screen.
+    void setOwedRetryForTesting(int tries, int retryMs);
 
   signals:
     void changed();
+    // Anything saveState() returns changed, including what QML never shows.
+    void stateChanged();
     // An offer was first seen; readyAgents() changed without a new revision.
     void seenChanged();
     // The guessing model's judgement of whether the agent needs the person
@@ -149,6 +165,7 @@ class NextPrompt final : public QObject {
         quint64 generation{};
         Agent agent;
         QPointer<UpdaterProcess> process;
+        bool verifying{}; // reading the conversation for a restored offer
     };
     struct Offer {
         QString key; // "<agent>:<launch>.<n>", on each of its log records
@@ -167,6 +184,7 @@ class NextPrompt final : public QObject {
     };
     QHash<QString, Previous> previous_;
     QSet<QString> deferred_;
+    QSet<QString> pending_show_;
     void run(const QString& id, bool force);
     // The last offer shown to an agent, until the prompt the person sends
     // after it is read from the conversation.
@@ -179,8 +197,9 @@ class NextPrompt final : public QObject {
     // Records what the person sent after the agent's last offer, once the
     // conversation (`context`) holds it.
     void settle(const QString& id, const QJsonObject& context);
-    // Reading the conversation where the agent runs, then the model here.
-    enum class Stage : std::uint8_t { context, predict };
+    // Reading the conversation where the agent runs, then the model here;
+    // or reading it to check a restored offer.
+    enum class Stage : std::uint8_t { context, predict, verify };
     void start(const QString& id, quint64 generation, const QString& program,
                const QStringList& arguments, const QByteArray& input, Stage stage,
                const std::function<void(const QJsonObject&)>& done);
@@ -192,6 +211,30 @@ class NextPrompt final : public QObject {
     // setting was turned off.
     enum class Withdrawal : std::uint8_t { next_turn, off };
     void withdraw(const QString& id, Withdrawal why);
+    void recordWithdrawn(const Offer& offer, const QString& id, const char* reason) const;
+    // The conversation's arguments for the helper's context mode.
+    [[nodiscard]] QStringList contextWords(const QString& id, const Agent& agent) const;
+    void runContext(const QString& id, quint64 generation, const Agent& agent, Stage stage,
+                    const std::function<void(const QJsonObject&)>& done);
+    // A restored offer: shown once its conversation proves it current.
+    void verify(const QString& id, const Agent& agent, const Offer& offer);
+    void confirm(const QString& id, const QJsonObject& context);
+    void dropRestored(const QString& id, const char* reason);
+    // Parts of restoreState: a saved offer, if well formed; the agent it may
+    // be restored for; and each saved map. True when anything came back.
+    [[nodiscard]] static std::optional<Offer> savedOffer(const QString& id,
+                                                         const QJsonValue& value);
+    [[nodiscard]] QJsonObject encodeOffer(const Offer& offer, qsizetype& budget) const;
+    [[nodiscard]] QJsonObject savedOffers(qsizetype& budget) const;
+    [[nodiscard]] QJsonObject savedAwaiting(qsizetype& budget) const;
+    [[nodiscard]] QJsonObject savedOwed() const;
+    [[nodiscard]] std::optional<Agent> restorable(const QString& id,
+                                                  QStringView conversation) const;
+    bool restoreAwaiting(const QJsonObject& awaiting);
+    bool restoreOffers(const QJsonObject& offers);
+    bool restoreOwed(const QJsonObject& owed);
+    // A restored owed guess, made once the agent's screen is back.
+    void resumeOwed(const QString& id, int tries);
     void record(QJsonObject event) const;
     bool budgetAvailable(const QString& id);
     [[nodiscard]] bool current(const QString& id, quint64 generation) const;
@@ -204,6 +247,8 @@ class NextPrompt final : public QObject {
     QHash<QString, Run> running_; // by agent id
     QHash<QString, Offer> offers_;
     QHash<QString, Awaiting> awaiting_; // by agent id
+    QHash<QString, Offer> restoring_;   // restored offers being checked
+    QHash<QString, QString> owed_;      // restored owed guesses: their conversation
     struct Attempt {
         qint64 at;
         quint64 generation;
@@ -214,6 +259,8 @@ class NextPrompt final : public QObject {
     QString run_; // this launch, in offer ids
     quint64 offers_made_{};
     int revision_{};
+    int owed_tries_{20};
+    int owed_retry_ms_{500};
 };
 
 } // namespace lapis::desktop

@@ -4671,9 +4671,15 @@ void pingsFollowTheJudgement() {
     emit workspace.turnFinished(&agent);
     require(waitFor([&posted] { return posted.size() == 2; }, 1000),
             "without a judgement in time it notifies as before");
+    // An inactive fast path replaces an older hold without leaving its timer
+    // to emit a second, empty judgement.
+    judge.setActive([] { return true; });
+    emit workspace.turnFinished(&agent);
     judge.setActive([] { return false; });
     emit workspace.turnFinished(&agent);
     require(posted.size() == 3, "with guessing off nothing waits");
+    QThread::msleep(200);
+    require(posted.size() == 3, "the replaced hold does not notify again");
     notifier.setLog({});
 }
 

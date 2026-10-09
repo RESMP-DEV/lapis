@@ -2,14 +2,18 @@
 // runtime/agent_state.json for other local apps (Ultra Tab): owner-only,
 // replaced atomically, rate-limited publish-to-publish, and only on change.
 #include "agent_state.hpp"
+#include "open_request.hpp"
 #include "workspace.hpp"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
+#include <QStringList>
 #include <QTemporaryDir>
 
 #include <functional>
@@ -100,11 +104,90 @@ void publishesEachAgentPrivately() {
 }
 } // namespace
 
+// Ultra Tab's request to show an agent: each fresh one opens it once; old,
+// repeated, malformed and linked requests open nothing.
+void followsOpenRequests() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "request directory");
+    const auto path = directory.filePath(QStringLiteral("ultratab_open.json"));
+    QStringList opened;
+    lapis::desktop::OpenRequests requests(path,
+                                          [&opened](const QString& id) { opened.append(id); });
+    const auto id = QStringLiteral("00000000-0000-4000-8000-000000000001");
+    const auto put = [&path](const QJsonObject& object) {
+        QSaveFile file(path);
+        require(file.open(QIODevice::WriteOnly), "write a request");
+        file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
+        require(file.commit(), "commit the request");
+    };
+    const auto now = [] { return QDateTime::currentMSecsSinceEpoch(); };
+    put({{QStringLiteral("agent"), id}, {QStringLiteral("atMs"), static_cast<double>(now())}});
+    require(waitFor([&] { return opened.size() == 1; }) && opened.front() == id,
+            "a fresh request opens its agent");
+    requests.check();
+    require(opened.size() == 1, "the same request opens it once");
+    put({{QStringLiteral("agent"), id},
+         {QStringLiteral("atMs"), static_cast<double>(now() - 60000)}});
+    requests.check();
+    put({{QStringLiteral("agent"), QStringLiteral("not an id")},
+         {QStringLiteral("atMs"), static_cast<double>(now() + 10)}});
+    requests.check();
+    require(opened.size() == 1, "stale and malformed requests open nothing");
+
+    // A request that only has to be rejected for being linked, not for its
+    // age, so the symlink guard itself is what rejects it.
+    const auto linked = directory.filePath(QStringLiteral("linked.json"));
+    require(QFile::remove(path) || !QFile::exists(path), "clear the request file");
+    require(QFile::link(directory.filePath(QStringLiteral("missing.json")), linked),
+            "make a symlinked request");
+    put({});
+    require(QFile::remove(linked), "clear the symlink");
+    require(QFile::link(path, linked), "link the fresh request");
+    requests.check();
+    require(opened.size() == 1, "a linked request opens nothing");
+    require(QFile::remove(linked), "remove the symlink");
+
+    // An out-of-range or non-finite timestamp is external input: it must be
+    // refused, never cast.
+    const QByteArray original =
+        QByteArrayLiteral("{\"agent\":\"") + id.toUtf8() + QByteArrayLiteral("\",\"atMs\":1e300}");
+    require(QFile::remove(path), "clear the request file");
+    QFile huge(path);
+    require(huge.open(QIODevice::WriteOnly), "write an out-of-range request");
+    huge.write(original);
+    huge.close();
+    requests.check();
+    require(opened.size() == 1, "an out-of-range timestamp opens nothing");
+    require(QFile::remove(path), "clear the out-of-range request");
+
+    // A file that grew past the 4 KiB contract after the size check still
+    // opens nothing, even with a valid request at its start.
+    QFile oversized(path);
+    require(oversized.open(QIODevice::WriteOnly), "write an oversized request");
+    oversized.write(QByteArrayLiteral("{\"agent\":\"") + id.toUtf8() +
+                    QByteArrayLiteral("\",\"atMs\":") + QByteArray::number(now()) +
+                    QByteArrayLiteral(",\"pad\":\"") + QByteArray(8192, 'x') +
+                    QByteArrayLiteral("\"}"));
+    oversized.close();
+    // A stale timestamp is not what rejects this one: write it fresh.
+    QFile fresh(path);
+    require(fresh.open(QIODevice::WriteOnly), "write a fresh oversized request");
+    fresh.write(QByteArrayLiteral("{\"agent\":\"") + id.toUtf8() +
+                QByteArrayLiteral("\",\"atMs\":") + QByteArray::number(now() + 1) +
+                QByteArrayLiteral(",\"pad\":\"") + QByteArray(8192, 'x') +
+                QByteArrayLiteral("\"}"));
+    fresh.close();
+    requests.check();
+    require(opened.size() == 1, "a request past the size contract opens nothing");
+    require(QFile::remove(path), "clear the oversized request");
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("lapis"));
     try {
         publishesEachAgentPrivately();
+        followsOpenRequests();
     } catch (const std::exception& error) {
         std::cerr << "agent state test failed: " << error.what() << '\n';
         return 1;

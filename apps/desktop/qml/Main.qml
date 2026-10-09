@@ -285,7 +285,10 @@ ApplicationWindow {
     // The home list shown when nothing is open: actions, then recent
     // conversations, then the other categories that have agents.
     ListModel { id: homeModel }
-    Component.onCompleted: homeRebuild.restart()
+    Component.onCompleted: {
+        homeRebuild.restart()
+        recallWindowMemory()
+    }
     property var homeRuns: []
     function rebuildHome() {
         if (workspace.focusedSession !== null && homeModel.count > 0)
@@ -696,6 +699,55 @@ ApplicationWindow {
     property string lastMachine: ""
     property string lastMode: ""
     property var lastModels: ({})
+    // The window's own choices outlive a restart of the window (guiState;
+    // absent in fixtures): the new-agent form's, the side terminal's and a
+    // zoomed tile.
+    readonly property var windowMemory: typeof guiState !== "undefined" ? guiState : null
+    // QML initializes its properties after the state is loaded; remember only
+    // after recall has read it, or those writes would erase loaded choices.
+    property bool windowMemoryReady: false
+    function remember(key, value) {
+        if (windowMemory !== null && windowMemoryReady)
+            windowMemory.setValue(key, value)
+    }
+    onLastHarnessChanged: remember("lastHarness", lastHarness)
+    onLastMachineChanged: remember("lastMachine", lastMachine)
+    onLastModeChanged: remember("lastMode", lastMode)
+    onLastModelsChanged: remember("lastModels", lastModels)
+    onLastTerminalMachineChanged: remember("lastTerminalMachine", lastTerminalMachine)
+    onTileZoomedChanged: remember("tileZoomed", tileZoomed)
+    onSideTerminalOpenChanged: remember("sideTerminalOpen", sideTerminalOpen)
+    function recallWindowMemory() {
+        if (windowMemory === null)
+            return
+        const catalog = workspace.availableHarnesses()
+        const text = key => {
+            const value = windowMemory.value(key)
+            return typeof value === "string" ? value : ""
+        }
+        const harnesses = catalog
+        const harness = harnesses.find(candidate => candidate.id === text("lastHarness"))
+        lastHarness = harness ? harness.id : ""
+        const machines = [""].concat(workspace.sshMachines())
+        lastMachine = machines.includes(text("lastMachine")) ? text("lastMachine") : ""
+        const mode = text("lastMode")
+        lastMode =
+            harness && harness.modes.some(candidate => candidate.id === mode) ? mode : ""
+        const models = windowMemory.value("lastModels")
+        if (models !== null && typeof models === "object" && !Array.isArray(models)) {
+            const validModels = {}
+            for (const candidate of harnesses)
+                if (typeof models[candidate.id] === "string")
+                    validModels[candidate.id] = models[candidate.id]
+            lastModels = validModels
+        }
+        tileZoomed = windowMemory.value("tileZoomed") === true
+        lastTerminalMachine = machines.includes(text("lastTerminalMachine"))
+                                 ? text("lastTerminalMachine") : ""
+        if (windowMemory.value("sideTerminalOpen") === true)
+            Qt.callLater(() => openTerminalOn(lastTerminalMachine))
+        windowMemoryReady = true
+    }
     function openNewAgentDialog() {
         if (terminalBusy)
             return
@@ -1342,7 +1394,8 @@ ApplicationWindow {
     Connections {
         target: workspace
         function onTilesChanged() {
-            if (workspace.stageTiles.length < 2)
+            const tiled = workspace.stageTiles.length > 1
+            if (!tiled && window.tileZoomed)
                 window.tileZoomed = false
         }
         function onCategoryChanged() {
@@ -3416,6 +3469,15 @@ ApplicationWindow {
                     ToolTip.text: hoveredLink
                     ToolTip.delay: 250
                     objectName: "liveTerminal"
+                    // A focused, editable text field to macOS accessibility, so
+                    // dictation apps such as Wispr Flow paste into it at once;
+                    // seen as the bare window, Wispr Flow falls back to a paste
+                    // that can wait seconds. Not multiLine: on a multi-line
+                    // editable item Qt keeps Command-` from the window.
+                    Accessible.role: Accessible.EditableText
+                    Accessible.name: qsTr("Terminal")
+                    Accessible.editable: interactive
+                    Accessible.focusable: true
                     x: stage.tiled ? stage.focusedFrame.x + 4 : stage.inset
                     y: stage.tiled ? stage.focusedFrame.y + stage.headerHeight : stage.inset
                     width: stage.tiled ? stage.focusedFrame.width - 8 : stage.width - 2 * stage.inset
@@ -4402,6 +4464,10 @@ ApplicationWindow {
                 ToolTip.text: hoveredLink
                 ToolTip.delay: 250
                 objectName: "sideTerminalSurface"
+                Accessible.role: Accessible.EditableText
+                Accessible.name: qsTr("Side terminal")
+                Accessible.editable: interactive
+                Accessible.focusable: true
                 onPasteRefused: (reason) => {
                     sidePanel.pasteReason = reason
                     sidePasteTimer.restart()
