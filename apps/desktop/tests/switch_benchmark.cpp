@@ -43,6 +43,7 @@
 #include <qpa/qwindowsysteminterface.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -88,6 +89,8 @@ void until(const std::function<bool()>& condition, int timeout, const char* what
     require(wait_for(condition, timeout), std::string("timed out waiting for ") + what);
 }
 QQuickItem* find_visual(QQuickItem* parent, const QString& name) {
+    if (parent == nullptr)
+        return nullptr;
     if (parent->objectName() == name && parent->isVisible())
         return parent;
     for (auto* child : parent->childItems())
@@ -97,20 +100,25 @@ QQuickItem* find_visual(QQuickItem* parent, const QString& name) {
 }
 QString title(const SessionPreview* item) { return item != nullptr ? item->title() : QString(); }
 
-// A stand-in CLI: a screen of distinct, colored text, then a quiet wait.
+// A stand-in CLI: a screen of distinct, colored text, then a quiet wait. It
+// remains this script process, so cleanup can identify it by the private home.
 void write_agent(const QString& path) {
     QFile file(path);
     require(file.open(QIODevice::WriteOnly), "write stand-in agent");
-    file.write(R"sh(#!/bin/sh
-i=0
-while [ $i -lt 120 ]; do
-  printf '\033[3%dm%04d\033[0m %s agent output line with some text to shape and draw %s\n' \
-    $((i % 7 + 1)) $i "$$" "$(date +%S)"
-  i=$((i + 1))
-done
-printf '\033[1m> \033[0m'
-exec sleep 100000
-)sh");
+    file.write(R"py(#!/usr/bin/env python3
+import sys
+import time
+
+for index in range(120):
+    sys.stdout.write(
+        f"\033[3{index % 7 + 1}m{index:04d}\033[0m agent output line "
+        "with some text to shape and draw\n"
+    )
+sys.stdout.write("\033[1m> \033[0m")
+sys.stdout.flush()
+while True:
+    time.sleep(1)
+)py");
     file.close();
     QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
 }
@@ -120,6 +128,7 @@ struct Stats {
     std::vector<double> synced;   // the next frame's polish and scene-graph sync done
     std::vector<double> frame;    // that frame swapped (software rasterizing included)
     int unchanged{};
+    int timeouts{};
     void add(double delivered, double sync, double swapped) {
         dispatch.push_back(delivered);
         synced.push_back(sync);
@@ -155,7 +164,8 @@ QJsonObject report(const Stats& stats) {
     return {{"dispatch", summary(stats.dispatch)},
             {"synced", summary(stats.synced)},
             {"frame", summary(stats.frame)},
-            {"unchanged", stats.unchanged}};
+            {"unchanged", stats.unchanged},
+            {"timeouts", stats.timeouts}};
 }
 
 struct Options {
@@ -185,7 +195,9 @@ std::vector<std::vector<QString>> start_agents(Workspace& workspace, const Optio
                                           QStringLiteral("agent %1.%2").arg(category).arg(index),
                                           QStringLiteral("opencode")),
                     "create agent: " + workspace.workspaceError().toStdString());
-            agents.back().push_back(workspace.focusedSession()->sessionId());
+            auto* const created = workspace.focusedSession();
+            require(created != nullptr, "new agent focused");
+            agents.back().push_back(created->sessionId());
         }
     }
     until(
@@ -211,20 +223,23 @@ void tile_categories(Workspace& workspace, const std::vector<std::vector<QString
     }
 }
 
-class Bench {
+class Bench : public QObject {
   public:
     Bench(Workspace& workspace, const lapis::desktop::KeyMap& keymap, QQuickWindow& window,
           const Options& options)
-        : workspace_(workspace), keymap_(keymap), window_(window), options_(options) {
-        QObject::connect(&window, &QQuickWindow::frameSwapped, &window, [this] { ++swaps_; });
+        : QObject(nullptr), workspace_(workspace), keymap_(keymap), window_(window),
+          options_(options) {
+        QObject::connect(&window, &QQuickWindow::frameSwapped, this,
+                         [this] { swaps_.fetch_add(1, std::memory_order_relaxed); });
         QObject::connect(
-            &window, &QQuickWindow::afterSynchronizing, &window,
+            &window, &QQuickWindow::afterSynchronizing, this,
             [this] {
-                ++syncs_;
-                synced_at_ = now_ms();
+                syncs_.fetch_add(1, std::memory_order_relaxed);
+                synced_at_.store(now_ms(), std::memory_order_relaxed);
             },
             Qt::DirectConnection);
-        QObject::connect(&workspace, &Workspace::tilesChanged, &workspace, [this] { ++retiles_; });
+        QObject::connect(&workspace, &Workspace::tilesChanged, this,
+                         [this] { retiles_.fetch_add(1, std::memory_order_relaxed); });
     }
 
     void run() {
@@ -258,25 +273,30 @@ class Bench {
     [[nodiscard]] int unchangedKeys() const {
         return agent_keys_.unchanged + category_keys_.unchanged;
     }
+    [[nodiscard]] int frameTimeouts() const {
+        return agent_keys_.timeouts + category_keys_.timeouts + clicks_.timeouts;
+    }
 
   private:
     // Delivered as the platform plugin delivers input, synchronously: Qt's
     // shortcut map first, then the key event.
-    void key(const QString& binding, QEvent::Type type) {
+    bool key(const QString& binding, QEvent::Type type) {
         const auto combination = QKeySequence(binding)[0];
         const auto when = timestamp_++;
         if (type == QEvent::KeyPress && QWindowSystemInterface::handleShortcutEvent(
                                             &window_, when, combination.key(),
                                             combination.keyboardModifiers(), 0, 0, 0, QString()))
-            return;
+            return true;
         QWindowSystemInterface::handleKeyEvent<QWindowSystemInterface::SynchronousDelivery>(
             &window_, when, type, combination.key(), combination.keyboardModifiers());
+        return false;
     }
     std::function<void()> press(const char* action) {
         const auto binding = keymap_.sequences(QString::fromLatin1(action)).value(0);
         require(!binding.isEmpty(), std::string("binding for ") + action);
         return [this, binding] {
-            key(binding, QEvent::KeyPress);
+            if (key(binding, QEvent::KeyPress))
+                return;
             key(binding, QEvent::KeyRelease);
         };
     }
@@ -285,27 +305,33 @@ class Bench {
             &window_, timestamp_++, at, window_.mapToGlobal(at), buttons, button, type);
     }
 
-    // Returns whether the input drew a frame, and so made a sample.
+    // Returns whether a frame completed. A timeout is counted and the run continues.
     bool measure(const std::function<void()>& act, Stats* into, bool may_draw_nothing = false) {
-        const int retiles = retiles_;
+        const int retiles = retiles_.load(std::memory_order_relaxed);
         const auto* was = workspace_.focusedSession();
-        const int swaps = swaps_;
-        const int syncs = syncs_;
+        const int swaps = swaps_.load(std::memory_order_relaxed);
+        const int syncs = syncs_.load(std::memory_order_relaxed);
         const double start = now_ms();
         act();
         const double dispatched = now_ms();
-        if (!wait_for([this, swaps] { return swaps_ > swaps; }, 5000)) {
+        if (!wait_for([this, swaps] { return swaps_.load(std::memory_order_relaxed) > swaps; },
+                      5000)) {
             if (may_draw_nothing && workspace_.focusedSession() == was)
                 return false;
-            throw std::runtime_error("no frame after a switch from " + title(was).toStdString() +
-                                     " to " + title(workspace_.focusedSession()).toStdString());
+            if (into != nullptr)
+                ++into->timeouts;
+            pump(options_.gap);
+            return false;
         }
         const double framed = now_ms();
-        retiled_last_ = retiles_ > retiles;
+        retiled_last_ = retiles_.load(std::memory_order_relaxed) > retiles;
         if (options_.trace)
             trace(was);
         if (into != nullptr)
-            into->add(dispatched - start, syncs_ > syncs ? synced_at_ - start : framed - start,
+            into->add(dispatched - start,
+                      syncs_.load(std::memory_order_relaxed) > syncs
+                          ? synced_at_.load(std::memory_order_relaxed) - start
+                          : framed - start,
                       framed - start);
         pump(options_.gap);
         return true;
@@ -324,8 +350,10 @@ class Bench {
     void agentKey(const std::function<void()>& next_agent) {
         const auto* before = workspace_.focusedSession();
         const bool tiled = !workspace_.stageTiles().isEmpty();
-        measure(next_agent, &agent_keys_);
+        const bool sampled = measure(next_agent, &agent_keys_);
         agent_keys_.unchanged += workspace_.focusedSession() == before ? 1 : 0;
+        if (!sampled)
+            return;
         auto& group = retiled_last_ ? retiled_ : tiled ? tiled_ : untiled_;
         group.add(agent_keys_.dispatch.back(), agent_keys_.synced.back(), agent_keys_.frame.back());
     }
@@ -343,13 +371,18 @@ class Bench {
     void clickCard(int index) {
         const auto list = workspace_.categorySessions();
         const SessionPreview* target = nullptr;
-        for (qsizetype step = 0; step < list.size() && target == nullptr; ++step) {
-            const auto* item =
-                list.at((index * 3 + 1 + step) % list.size()).value<SessionPreview*>();
-            if (item != workspace_.focusedSession() && cardOnScreen(item))
-                target = item;
-        }
-        require(target != nullptr, "an on-screen strip card to click");
+        until(
+            [&] {
+                target = nullptr;
+                for (qsizetype step = 0; step < list.size() && target == nullptr; ++step) {
+                    const auto* item =
+                        list.at((index * 3 + 1 + step) % list.size()).value<SessionPreview*>();
+                    if (item != workspace_.focusedSession() && cardOnScreen(item))
+                        target = item;
+                }
+                return target != nullptr;
+            },
+            2000, "an on-screen strip card to click");
         const auto name = QStringLiteral("cardPress_") + target->sessionId();
         const auto* before = workspace_.focusedSession();
         const bool sampled = measure(
@@ -390,10 +423,10 @@ class Bench {
     const lapis::desktop::KeyMap& keymap_;
     QQuickWindow& window_;
     Options options_;
-    int swaps_{};
-    int syncs_{};
-    int retiles_{};
-    double synced_at_{};
+    std::atomic<int> swaps_{0};
+    std::atomic<int> syncs_{0};
+    std::atomic<int> retiles_{0};
+    std::atomic<double> synced_at_{0.0};
     bool retiled_last_{};
     ulong timestamp_{1};
     Stats agent_keys_;
@@ -411,7 +444,10 @@ Options parse(const QCoreApplication& app) {
     parser.addOptions({
         {"agents", "Agents in all (default 32).", "n", "32"},
         {"categories", "Categories (default 4).", "n", "4"},
-        {"switches", "Measured switches of each kind (default 300).", "n", "300"},
+        {"switches",
+         "Agent-key samples; category keys every fourth, card clicks half as many, and pointer "
+         "moves fixed at 1200 (default 300).",
+         "n", "300"},
         {"gap-ms", "Idle time between switches (default 60).", "ms", "60"},
         {"warmup", "Unmeasured switches first (default 40).", "n", "40"},
         {"interaction-log", "Record with the interaction log, as lapis.json can turn on."},
@@ -427,8 +463,10 @@ Options parse(const QCoreApplication& app) {
                           .log = parser.isSet("interaction-log"),
                           .trace = parser.isSet("trace"),
                           .output = parser.value("output")};
-    require(options.categories > 0 && options.agents >= options.categories,
-            "at least one agent per category");
+    require(options.categories >= 2 && options.agents >= options.categories * 2,
+            "at least two categories and two agents per category");
+    require(options.switches > 0 && options.warmup >= 0 && options.gap >= 0,
+            "positive switches with nonnegative warmup and gap");
 #ifndef LAPIS_BENCH_INTERACTION_LOG
     require(!options.log, "this revision has no interaction log");
 #endif
@@ -498,6 +536,8 @@ QJsonObject measure(const Options& options, const QTemporaryDir& home) {
     result.insert("schema", "lapis.switch-benchmark/1");
     result.insert("mode", "offscreen/software; GUI-thread delivery, scene-graph sync and next "
                           "frameSwapped, not GPU presentation");
+    result.insert("pointerMoveMode", "delivery only; not comparable with keyed or clicked frames");
+    result.insert("frameTimeouts", bench.frameTimeouts());
     result.insert("agents", options.agents);
     result.insert("categories", options.categories);
     result.insert("tiledCategories", (options.categories + 1) / 2);

@@ -1411,6 +1411,10 @@ p50/p95/p99; agent keys are also split by whether they changed the stage's
 tiles. Software rasterizing is included in `frame` only, and none of it is GPU
 presentation: compare runs of this tool with each other, on one machine, and
 profile the same run with `sample` or `xctrace` for causes.
+Pointer-move samples measure event delivery only; they are not comparable with
+the frame-complete keyed and clicked samples. The cleanup path is POSIX-only
+and probes processes by the private temporary home; run the tool on a supported
+POSIX development host.
 
 Native software input acceptance is automated on macOS; no physical typing is
 required. After `just desktop`, run this separately from every other GUI test:
