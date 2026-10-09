@@ -308,6 +308,62 @@ QString TileLayout::neighbor(const QString& id, Edge direction) const {
     return best;
 }
 
+QStringList TileLayout::readingOrder() const {
+    auto all = tiles(QRectF(0, 0, 1, 1));
+    // Bucket coordinates at the layout comparison resolution: a pair of tiles
+    // in one visual row can differ by floating-point noise, while an epsilon
+    // comparator alone would not give stable_sort a strict weak ordering.
+    std::stable_sort(all.begin(), all.end(), [](const Tile& first, const Tile& second) {
+        const auto first_row = std::llround(first.rect.top() * 1'000'000.0);
+        const auto second_row = std::llround(second.rect.top() * 1'000'000.0);
+        if (first_row != second_row)
+            return first_row < second_row;
+        return first.rect.left() < second.rect.left();
+    });
+    QStringList result;
+    result.reserve(static_cast<qsizetype>(all.size()));
+    for (const auto& tile : all)
+        result.append(tile.session);
+    return result;
+}
+
+QStringList TileLayout::cycleOrder(const QStringList& strip) const {
+    auto result = readingOrder();
+    for (const auto& id : strip)
+        if (!contains(id))
+            result.append(id);
+    return result;
+}
+
+TileLayout::Step TileLayout::step(const TileLayout& home, const QStringList& order,
+                                  const QString& slot, const QString& current, int delta) {
+    if (order.isEmpty())
+        return {.selected = {}, .layout = home, .slot = {}};
+    const int count = static_cast<int>(order.size());
+    const int here = static_cast<int>(order.indexOf(current));
+    if (here < 0)
+        return {.selected = {}, .layout = home, .slot = {}};
+    const int offset = (here + delta) % count;
+    const auto& next = order.at(offset < 0 ? offset + count : offset);
+    if (home.empty() || home.contains(next))
+        return {.selected = next, .layout = home, .slot = {}};
+    // Leaving a tile of `home`, that tile shows the strip's agents in turn.
+    QString shown_in;
+    if (home.contains(current))
+        shown_in = current;
+    else if (home.contains(slot))
+        shown_in = slot;
+    else {
+        const auto first = home.readingOrder();
+        if (first.isEmpty())
+            return {.selected = {}, .layout = home, .slot = {}};
+        shown_in = first.front();
+    }
+    auto layout = home;
+    layout.replace(shown_in, next);
+    return {.selected = next, .layout = layout, .slot = shown_in};
+}
+
 QJsonObject TileLayout::toJson() const { return root_ ? to_json(*root_) : QJsonObject{}; }
 
 TileLayout TileLayout::fromJson(const QJsonObject& json, const QSet<QString>& known) {

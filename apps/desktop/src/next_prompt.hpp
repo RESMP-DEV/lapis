@@ -94,6 +94,12 @@ class NextPrompt final : public QObject {
     Q_INVOKABLE [[nodiscard]] QString suggestion(const QString& id) const;
     // The agents with a suggestion offered, each true once it was seen.
     Q_INVOKABLE [[nodiscard]] QVariantMap readyAgents() const;
+    // The offer shown for the agent, for readers outside this window
+    // (AgentStatePublisher): {key, text, seen, said}, where `said` is the
+    // agent's last reply the guess answers, at most `said_limit` characters.
+    // Empty when nothing is offered.
+    static constexpr qsizetype said_limit = 600;
+    [[nodiscard]] QJsonObject offerState(const QString& id) const;
     // The id of the offer shown for the agent, or empty.
     Q_INVOKABLE [[nodiscard]] QString offerKey(const QString& id) const;
     // The suggestion is on screen in the active window: an impression.
@@ -124,6 +130,8 @@ class NextPrompt final : public QObject {
     void changed();
     // Anything saveState() returns changed, including what QML never shows.
     void stateChanged();
+    // An offer was first seen; readyAgents() changed without a new revision.
+    void seenChanged();
 
   private:
     struct Run {
@@ -138,6 +146,7 @@ class NextPrompt final : public QObject {
         QString conversation;
         int turn{};
         qint64 seen_ms{}; // when first on screen; 0 while unseen
+        QString said;     // the agent's last reply, clipped to said_limit
     };
     // The last offer shown to an agent, until the prompt the person sends
     // after it is read from the conversation.

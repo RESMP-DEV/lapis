@@ -32,6 +32,13 @@ and your latest prompts elsewhere. The model's top guess shows dim after the
 agent's cursor whenever the helper returns one and it passes `minConfidence`.
 None shows while an agent waits on a request such as a permission prompt.
 
+An agent on another machine reports its finished turns through its own
+terminal: lapis starts it with hooks (Claude Code) or a notify program (Codex)
+that run a small relay with that machine's `python3` (Python 3.11+ to preserve
+Codex's configured notify program through `tomllib`). Nothing is installed or
+left there. Without `python3` there, or for an agent started before this, its
+turns are not reported and no guess is made; restart it to add the hooks.
+
 ## Tab
 
 - **Tab** types the guess at the prompt and stops there, for you to edit.
