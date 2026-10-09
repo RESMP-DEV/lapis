@@ -950,6 +950,188 @@ void directTileSelectionNormalizesAStaleTarget() {
             "an untiled direct selection replaces the first valid tile");
 }
 
+// The next and previous keys walk the tiles of the layout the walk started
+// from, but an agent can leave the category while the walk shows another agent
+// in its tile. Closing or moving it then finds no tile to remove, so the walk
+// must end instead of stepping onto the departed agent and putting it back.
+void tileWalkDropsDisplacedAgentsThatLeave() {
+    const auto make = [](const QString& directory, QString& left, QString& right,
+                         QString& untiled) {
+        const auto canonical = QFileInfo(directory).canonicalFilePath();
+        left = uuid();
+        right = uuid();
+        untiled = uuid();
+        auto agent = [&](const QString& id) { return agentRecord(canonical, id, "work"); };
+        WorkspaceOptions options;
+        options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+        writeRegistry(
+            options.storagePath,
+            QJsonObject{
+                {"version", 2},
+                {"activeCategory", "work"},
+                {"categories",
+                 QJsonArray{QJsonObject{{"id", "work"},
+                                        {"name", "Work"},
+                                        {"selected", right},
+                                        {"tiles",
+                                         QJsonObject{{"stacked", false},
+                                                     {"ratio", 0.5},
+                                                     {"children",
+                                                      QJsonArray{QJsonObject{{"agent", left}},
+                                                                 QJsonObject{{"agent", right}}}}}}},
+                            QJsonObject{{"id", "other"}, {"name", "Other"}}}},
+                {"agents", QJsonArray{agent(left), agent(right), agent(untiled)}}});
+        return std::make_unique<Workspace>(WorkspaceMode::live, options);
+    };
+    const auto stage = [](const Workspace& workspace) {
+        QStringList result;
+        for (const auto& tile : workspace.stageTiles())
+            result.append(tile.toMap().value(QStringLiteral("sessionId")).toString());
+        return result;
+    };
+    const auto tile_ids = [](const QJsonObject& tiles) {
+        QStringList result;
+        const std::function<void(const QJsonObject&)> walk = [&](const QJsonObject& node) {
+            const auto children = node.value(QStringLiteral("children")).toArray();
+            if (children.isEmpty()) {
+                result.append(node.value(QStringLiteral("agent")).toString());
+                return;
+            }
+            for (const auto& child : children)
+                walk(child.toObject());
+        };
+        walk(tiles);
+        return result;
+    };
+    const auto saved = [](const QString& path, const QString& category) {
+        const auto groups = QJsonDocument::fromJson(readRegistry(path))
+                                .object()
+                                .value(QStringLiteral("categories"))
+                                .toArray();
+        for (const auto& value : groups) {
+            const auto group = value.toObject();
+            if (group.value(QStringLiteral("id")).toString() == category)
+                return group.value(QStringLiteral("tiles")).toObject();
+        }
+        throw std::runtime_error("missing category in saved registry");
+    };
+
+    QTemporaryDir closed_directory;
+    require(closed_directory.isValid(), "closed-walk directory");
+    QString left;
+    QString right;
+    QString untiled;
+    auto closed = make(closed_directory.path(), left, right, untiled);
+    require(closed->workspaceError().isEmpty(), "load the closed-walk registry");
+    require(closed->focusedSession() == closed->session(right), "the walk starts from a tile");
+    closed->nextSession(1);
+    require(stage(*closed) == QStringList{left, untiled} &&
+                closed->focusedSession() == closed->session(untiled),
+            "the walk shows the untiled agent in the tile it displaced");
+    closed->session(right)->setConnection(QStringLiteral("ended"), false);
+    require(closed->removeSession(right), "close the displaced agent while the walk shows another");
+    require(stage(*closed) == QStringList{left, untiled},
+            "closing a displaced agent leaves the shown tiles alone");
+    closed->nextSession(-1);
+    require(closed->focusedSession() == closed->session(left) &&
+                stage(*closed) == QStringList{left, untiled},
+            "the walk ends instead of stepping onto the closed agent");
+    require(tile_ids(saved(closed->storagePath(), QStringLiteral("work"))) ==
+                QStringList{left, untiled},
+            "closing a displaced agent never saves its stale tile");
+
+    QTemporaryDir moved_directory;
+    require(moved_directory.isValid(), "moved-walk directory");
+    auto moved = make(moved_directory.path(), left, right, untiled);
+    require(moved->workspaceError().isEmpty(), "load the moved-walk registry");
+    moved->nextSession(1);
+    require(stage(*moved) == QStringList{left, untiled} &&
+                moved->focusedSession() == moved->session(untiled),
+            "the moved walk displaces its starting tile");
+    require(moved->moveSession(right, QStringLiteral("other")), "move the displaced agent away");
+    require(stage(*moved) == QStringList{left, untiled},
+            "moving a displaced agent leaves the shown tiles alone");
+    moved->nextSession(-1);
+    require(moved->focusedSession() == moved->session(left) &&
+                stage(*moved) == QStringList{left, untiled},
+            "the walk ends instead of showing the moved agent back");
+    require(!moved->categorySessions().contains(QVariant::fromValue(moved->session(right))),
+            "the moved agent stays out of its old category");
+    require(tile_ids(saved(moved->storagePath(), QStringLiteral("work"))) ==
+                QStringList{left, untiled},
+            "moving a displaced agent never saves its stale tile");
+}
+
+// A walk belongs to its category. A no-op or real step elsewhere must not
+// replace the saved home layout that lets the original walk restore its tiles.
+void tileWalkSurvivesAnotherCategory() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "cross-category walk directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const QString left = uuid();
+    const QString right = uuid();
+    const QString untiled = uuid();
+    const QString alone = uuid();
+    const QString first_away = uuid();
+    const QString second_away = uuid();
+    const auto agent = [&](const QString& id, const char* category) {
+        return agentRecord(root.path(), id, category);
+    };
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{
+            {"version", 2},
+            {"activeCategory", "work"},
+            {"categories",
+             QJsonArray{QJsonObject{
+                            {"id", "work"},
+                            {"name", "Work"},
+                            {"selected", right},
+                            {"tiles",
+                             QJsonObject{{"stacked", false},
+                                         {"ratio", 0.5},
+                                         {"children", QJsonArray{QJsonObject{{"agent", left}},
+                                                                 QJsonObject{{"agent", right}}}}}}},
+                        QJsonObject{{"id", "solo"}, {"name", "Solo"}, {"selected", alone}},
+                        QJsonObject{{"id", "away"}, {"name", "Away"}, {"selected", first_away}}}},
+            {"agents", QJsonArray{agent(left, "work"), agent(right, "work"), agent(untiled, "work"),
+                                  agent(alone, "solo"), agent(first_away, "away"),
+                                  agent(second_away, "away")}}});
+    Workspace workspace(WorkspaceMode::live, options);
+    const auto stage = [](const Workspace& item) {
+        QStringList result;
+        for (const auto& tile : item.stageTiles())
+            result.append(tile.toMap().value(QStringLiteral("sessionId")).toString());
+        return result;
+    };
+    require(workspace.workspaceError().isEmpty(), "load the cross-category walk registry");
+    workspace.nextSession(1);
+    require(stage(workspace) == QStringList{left, untiled} &&
+                workspace.focusedSession() == workspace.session(untiled),
+            "the original walk displaces a home tile");
+
+    require(workspace.selectCategory(QStringLiteral("solo")), "visit a one-agent category");
+    workspace.nextSession(1);
+    require(workspace.focusedSession() == workspace.session(alone),
+            "a one-agent category's next key is a no-op");
+    require(workspace.selectCategory(QStringLiteral("away")), "visit a two-agent category");
+    workspace.nextSession(1);
+    require(workspace.focusedSession() == workspace.session(second_away),
+            "another category can take a real step");
+
+    require(workspace.selectCategory(QStringLiteral("work")), "return to the original walk");
+    require(workspace.focusedSession() == workspace.session(untiled) &&
+                stage(workspace) == QStringList{left, untiled},
+            "returning preserves the original walk's shown stage");
+    workspace.nextSession(1);
+    require(workspace.focusedSession() == workspace.session(left),
+            "the original walk restores its selected home tile");
+    require(stage(workspace) == QStringList{left, right},
+            "the original walk restores its saved home tiles");
+}
+
 void unknownRegistryVersionsAreRejected() {
     QTemporaryDir directory;
     require(directory.isValid(), "version directory");
@@ -1373,6 +1555,55 @@ void failedUpdaterStartClearsTheQueue() {
             "failed start is logged without waiting for finished");
 }
 
+// harnessUpdates in lapis.json pins a CLI: its agents start without an
+// update and the explicit command says updates are off, while every other
+// CLI still updates first.
+void pinnedCliIsNotUpdated() {
+    const QByteArray script = "#!/bin/sh\n"
+                              "if [ \"$1\" = update ]; then\n"
+                              "  echo \"${0##*/}\" >> \"$HOME/updates\"\n"
+                              "  exit 0\n"
+                              "fi\n"
+                              "echo ready\n"
+                              "exec /bin/sleep 600\n";
+    UpdaterFixture fixture(script, QStringLiteral("grok"));
+    writeExecutable(fixture.root.filePath(QStringLiteral("bin/claude")), script);
+    Workspace workspace(WorkspaceMode::live, fixture.options);
+    workspace.setHarnessUpdatesOff({QStringLiteral("grok")});
+    fixture.create(workspace);
+    auto* pinned = workspace.focusedSession();
+    require(pinned->statusLabel() != QStringLiteral("Updating Grok…"),
+            "a pinned CLI's agent does not wait for an update");
+    require(waitFor([pinned] { return pinned->inputReady(); }, 10000), "the pinned agent starts");
+    require(!QFileInfo::exists(fixture.root.filePath(QStringLiteral("updates"))),
+            "the pinned CLI was not updated on start");
+    require(workspace.createAgent(fixture.root.filePath(QStringLiteral("project")),
+                                  QStringLiteral("unpinned"), QStringLiteral("claude")),
+            "create an agent of a CLI that still updates");
+    auto* updated = workspace.focusedSession();
+    require(waitFor([updated] { return updated->inputReady(); }, 10000),
+            "the unpinned agent starts after its update");
+    require(fixture.read(QStringLiteral("updates")) == "claude\n",
+            "only the unpinned CLI was updated");
+    workspace.clearError();
+    require(workspace.canUpdateAgent(pinned->sessionId()) &&
+                workspace.updateAndReloadAgent(pinned->sessionId()) == 0 &&
+                workspace.workspaceError().contains(QStringLiteral("Updates are off for Grok")),
+            "the explicit update says updates are off for the pinned CLI");
+    require(pinned->statusLabel() != QStringLiteral("Updating Grok…") &&
+                fixture.read(QStringLiteral("updates")) == "claude\n",
+            "and does not run it");
+    workspace.setHarnessUpdatesOff({QStringLiteral("grok"), QStringLiteral("claude")});
+    require(workspace.updateClaudeAndReload() == 0 &&
+                workspace.workspaceError().contains(QStringLiteral("Updates are off for Claude")) &&
+                fixture.read(QStringLiteral("updates")) == "claude\n",
+            "a config change pins Claude for the Claude update command too");
+    for (const auto& id : {pinned->sessionId(), updated->sessionId()})
+        require(workspace.closeSession(id), "close a pinned-update fixture agent");
+    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "pinned-update fixture agents close");
+}
+
 void explicitLaunchesUseUpdaterPolicy() {
     UpdaterFixture fixture("#!/bin/sh\n"
                            "if [ \"$1\" = update ]; then\n"
@@ -1455,6 +1686,26 @@ void explicitLaunchesUseUpdaterPolicy() {
     require(workspace.closeSession(agent->sessionId()) &&
                 waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
             "update-disabled fixture closes");
+
+    options.updateHarnesses = true;
+    options.harnessUpdatesOff = {QStringLiteral("claude")};
+    options.endpoint = fixture.root.filePath(QStringLiteral("pinned.sock"));
+    {
+        Workspace pinnedWorkspace(WorkspaceMode::live, options);
+        auto* pinnedAgent = pinnedWorkspace.focusedSession();
+        require(pinnedAgent && pinnedAgent->statusLabel() != QStringLiteral("Updating Claude…"),
+                "constructor-supplied update pins skip the startup update");
+        require(waitFor([pinnedAgent] { return pinnedAgent->inputReady(); }, 10000),
+                "the constructor-pinned agent starts");
+        require(!QFileInfo::exists(fixture.root.filePath(QStringLiteral("updates"))),
+                "constructor-supplied update pins do not create the update marker");
+        require(!QFileInfo::exists(fixture.root.filePath(QStringLiteral("harness-updates.log"))),
+                "constructor-supplied update pins do not log a startup update");
+        require(
+            pinnedWorkspace.closeSession(pinnedAgent->sessionId()) &&
+                waitFor([&pinnedWorkspace] { return pinnedWorkspace.sessions().isEmpty(); }, 10000),
+            "constructor-pinned fixture agent closes");
+    }
 }
 
 // The login helper (lapis_desktop --restore-agents) holds the workspace only
@@ -2223,6 +2474,9 @@ void remoteAccountsRefuseBeforeReplacement() {
     // Keep this filename short: QLocalServer rejects Unix paths over the
     // platform sockaddr limit, while a saved agent ID remains a UUID.
     const auto reload_endpoint = root.filePath(QStringLiteral("reload.sock"));
+    // Fixture-local builder with one call site; argument order is the record's
+    // own field order, and distinct wrapper types add no safety here.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     const auto remoteAgent = [&](const QString& harness, const QString& command,
                                  const QString& id) {
         auto record = agentRecord(root.path(), id, "general");
@@ -5703,10 +5957,11 @@ int main(int argc, char** argv) {
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("launch-policy") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("updates-off") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes")),
                 "Usage: lapis_workspace_tests [--case "
                 "remote-options|accounts|remote-account-reset|reload|updater|"
-                "startup-defaults|launch-policy|chimes]");
+                "updates-off|startup-defaults|launch-policy|chimes]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("accounts")) {
                 incompleteCodexHomeNeverStartsAnAgent();
@@ -5727,9 +5982,12 @@ int main(int argc, char** argv) {
                 updaterLifecycle();
                 updaterOutputIsDrainedWithABoundedTail();
                 failedUpdaterStartClearsTheQueue();
+                pinnedCliIsNotUpdated();
                 updateReloadsAgentsAfterTheirCli();
                 startupAndManualUpdatesShareOneInstaller();
                 skippedClaudeUpdateReportsTheCurrentOperation();
+            } else if (selected == QStringLiteral("updates-off")) {
+                pinnedCliIsNotUpdated();
             } else if (selected == QStringLiteral("chimes")) {
                 alertsChimeWhileAnAgentWaits();
                 notificationsReachYouWhenAway();
@@ -5762,6 +6020,8 @@ int main(int argc, char** argv) {
         claudeAgentsUseServiceAdapter();
         agentArgumentsPersist();
         directTileSelectionNormalizesAStaleTarget();
+        tileWalkDropsDisplacedAgentsThatLeave();
+        tileWalkSurvivesAnotherCategory();
         outputEstimate();
         agentsStartWithoutParentSessionMarkers();
         restartRefusesClosingAgent();
@@ -5772,6 +6032,7 @@ int main(int argc, char** argv) {
         updaterLifecycle();
         updaterOutputIsDrainedWithABoundedTail();
         failedUpdaterStartClearsTheQueue();
+        pinnedCliIsNotUpdated();
         savedArgumentCapKeepsRegistryLoadable();
         managedResumeFollowsRecovery();
         printedCheckpointsResumeButNeverOverrideTheObserver();

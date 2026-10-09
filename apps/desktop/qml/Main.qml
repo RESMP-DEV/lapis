@@ -420,7 +420,9 @@ ApplicationWindow {
     function gaugeColor(left) {
         return left < 10 ? scarceColor : left < 30 ? attentionColor : plentyColor
     }
-    readonly property var commandEntries: {
+    // Built when a dialog that lists them is open: as a property it would be
+    // rebuilt, and the closed lists' delegates with it, on every switch.
+    function commandEntries() {
         const agent = workspace.focusedSession
         const hasAgent = agent !== null
         const needAgent = qsTr("Select an agent first")
@@ -511,7 +513,7 @@ ApplicationWindow {
     }
     function runCommand(id) {
         if (!interactionArmed) return
-        const command = commandEntries.find(entry => entry.id === id)
+        const command = commandEntries().find(entry => entry.id === id)
         if (command && command.enabled) command.run()
     }
 
@@ -1178,7 +1180,7 @@ ApplicationWindow {
 
     Commands {
         id: commandsDialog
-        commands: window.commandEntries
+        commands: visible ? window.commandEntries() : []
         surfaceColor: window.surfaceColor
         textColor: window.textColor
         mutedColor: window.mutedTextColor
@@ -1725,8 +1727,8 @@ ApplicationWindow {
         loginAvailable: window.desktopAvailable && desktop.launchAtLoginAvailable
         launchAtLogin: window.desktopAvailable && desktop.launchAtLogin
         updatesAvailable: window.desktopAvailable && desktop.updatesAvailable
-        shortcutRows: window.commandEntries.filter(entry => entry.shortcut.length > 0)
-                                           .map(entry => ({label: entry.label, keys: entry.shortcut}))
+        shortcutRows: visible ? window.commandEntries().filter(entry => entry.shortcut.length > 0)
+                                         .map(entry => ({label: entry.label, keys: entry.shortcut})) : []
         onNotifyChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setNotify(on) }
         onLaunchAtLoginChosen: function(on) { if (window.desktopAvailable) desktop.setLaunchAtLogin(on) }
         onCheckUpdates: if (window.desktopAvailable) desktop.checkForUpdates()
@@ -3227,8 +3229,10 @@ ApplicationWindow {
                 clip: true
 
                 // Tiles: two or more agents side by side or stacked, as the
-                // category keeps them. Delegates are keyed by agent and only move
-                // when a divider does, so a drag never rebuilds a terminal.
+                // category keeps them. Delegates are kept by place in the tile
+                // list and only move when a divider does, so a drag never
+                // rebuilds a terminal, and an agent the next/previous keys bring
+                // into a tile only changes what that tile's terminal shows.
                 readonly property var tiles: workspace.stageTiles
                 readonly property bool tiled: tiles.length > 1
                 readonly property bool zoomed: tiled && window.tileZoomed
@@ -3273,15 +3277,16 @@ ApplicationWindow {
                 readonly property rect focusedFrame: tiled ? frameOf(tileOf(focusedId)) : whole
 
                 Repeater {
-                    model: stage.tiled ? stage.tileIds : []
+                    model: stage.tiled ? stage.tileIds.length : 0
                     delegate: Item {
                         id: tileFrame
-                        required property string modelData
-                        readonly property var tile: stage.tileOf(modelData)
+                        required property int index
+                        readonly property string agentId: index < stage.tileIds.length ? stage.tileIds[index] : ""
+                        readonly property var tile: stage.tileOf(agentId)
                         readonly property var session: tile ? tile.session : null
-                        readonly property bool selectedTile: modelData === stage.focusedId
+                        readonly property bool selectedTile: agentId === stage.focusedId
                         readonly property rect frame: stage.frameOf(tile)
-                        objectName: "tile_" + modelData
+                        objectName: "tile_" + agentId
                         x: frame.x
                         y: frame.y
                         width: frame.width
@@ -3300,7 +3305,7 @@ ApplicationWindow {
                         // stage or back to the strip, or take it off the stage.
                         Item {
                             id: tileHeader
-                            objectName: "tileHeader_" + tileFrame.modelData
+                            objectName: "tileHeader_" + tileFrame.agentId
                             x: 1
                             y: 1
                             width: parent.width - 2
@@ -3345,7 +3350,7 @@ ApplicationWindow {
                                     verticalAlignment: Text.AlignVCenter
                                 }
                                 Rectangle {
-                                    objectName: "untile_" + tileFrame.modelData
+                                    objectName: "untile_" + tileFrame.agentId
                                     Layout.preferredWidth: stage.headerHeight - 6
                                     Layout.preferredHeight: stage.headerHeight - 6
                                     Layout.alignment: Qt.AlignVCenter
@@ -3362,7 +3367,7 @@ ApplicationWindow {
                                     HoverHandler { id: untileHover }
                                     TapHandler {
                                         enabled: window.interactionArmed
-                                        onTapped: workspace.untileSession(tileFrame.modelData)
+                                        onTapped: workspace.untileSession(tileFrame.agentId)
                                     }
                                     ToolTip.visible: untileHover.hovered
                                     ToolTip.delay: 600
@@ -3370,14 +3375,14 @@ ApplicationWindow {
                                 }
                             }
                             DragOrClick {
-                                objectName: "tilePress_" + tileFrame.modelData
+                                objectName: "tilePress_" + tileFrame.agentId
                                 anchors.fill: parent
                                 anchors.rightMargin: stage.headerHeight
                                 enabled: window.interactionArmed
                                 cursorShape: dragging ? Qt.ClosedHandCursor : Qt.ArrowCursor
-                                onTapped: function(modifiers) { window.clickAgent(tileFrame.modelData, 0) }
+                                onTapped: function(modifiers) { window.clickAgent(tileFrame.agentId, 0) }
                                 onDoubleClicked: window.tileZoomed = !window.tileZoomed
-                                onDragStarted: function(scene) { window.beginAgentDrag([tileFrame.modelData], "tile", scene) }
+                                onDragStarted: function(scene) { window.beginAgentDrag([tileFrame.agentId], "tile", scene) }
                                 onDragMoved: function(scene) { window.moveDragGhost(scene) }
                                 onDragEnded: window.endDrag()
                             }
@@ -3385,7 +3390,7 @@ ApplicationWindow {
                         // The other tiles' terminals: sized and drawn live, and a
                         // click selects the tile. The selected tile is liveTerminal.
                         TerminalSurface {
-                            objectName: "tileTerminal_" + tileFrame.modelData
+                            objectName: "tileTerminal_" + tileFrame.agentId
                             x: 4
                             y: stage.headerHeight
                             width: parent.width - 8
@@ -3400,7 +3405,7 @@ ApplicationWindow {
                         }
                         TapHandler {
                             enabled: window.interactionArmed && !tileFrame.selectedTile
-                            onTapped: window.clickAgent(tileFrame.modelData, 0)
+                            onTapped: window.clickAgent(tileFrame.agentId, 0)
                         }
                     }
                 }
@@ -4187,6 +4192,11 @@ ApplicationWindow {
                 onCountChanged: Qt.callLater(revealFocused)
                 onWidthChanged: Qt.callLater(revealFocused)
                 onCurrentIndexChanged: Qt.callLater(revealFocused)
+                // Card geometry follows the strip height, so a font-size or
+                // density change re-lays the cards out without touching count,
+                // width, or selection. Without this the reveal keeps a stale
+                // scroll offset and the focused card can sit past the edge.
+                onHeightChanged: Qt.callLater(revealFocused)
                 NumberAnimation {
                     id: stripScroll
                     target: agentTabs

@@ -10,6 +10,7 @@
 #include "platform/posix/pty_process.hpp"
 #include "transport/attention_protocol.hpp"
 #include "transport/local_protocol.hpp"
+#include "transport/update_pacing.hpp"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -139,11 +140,11 @@ struct CodexPermission {
 };
 struct CodexPermissionSpec {
     QString key;
-    bool cli_option;
+    bool cli_option = false;
     QStringList shared_values;
     QStringList config_only_values;
 
-    [[nodiscard]] QStringList option_values() const { return shared_values; }
+    [[nodiscard]] const QStringList& option_values() const { return shared_values; }
     [[nodiscard]] QStringList config_values() const { return shared_values + config_only_values; }
 };
 const std::vector<CodexPermissionSpec>& codex_permission_specs() {
@@ -180,6 +181,9 @@ QString codex_permission_key_pattern() {
 bool codex_permission_value_valid(const QStringList& values, const QString& value) {
     return std::find(values.cbegin(), values.cend(), value) != values.cend();
 }
+// Option scanning mirrors Codex's own CLI grammar; splitting it hides the
+// grammar from review. Defer the split to the dedicated complexity phase.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 CodexPermission codex_permission(const QStringList& arguments, qsizetype index) {
     const auto& argument = arguments.at(index);
     if (argument == QStringLiteral("--dangerously-bypass-approvals-and-sandbox"))
@@ -294,7 +298,7 @@ CodexPermission codex_permission_config(const QStringList& arguments, qsizetype 
                         .arg(key)};
         configured = quoted_match.capturedView(1).toString();
     } else {
-        configured = rhs;
+        configured = std::move(rhs);
     }
     const auto accepted = spec->config_values();
     if (!codex_permission_value_valid(accepted, configured))
@@ -365,6 +369,8 @@ class SessionService final : public QObject {
             !S_ISSOCK(bound_socket.st_mode) || bound_socket.st_uid != ::getuid() ||
             (static_cast<unsigned int>(bound_socket.st_mode) & 0077U) != 0U)
             throw std::runtime_error("Bound socket is not private to the current user");
+        snapshot_clock_.start();
+        attention_clock_.start();
         timer_.setSingleShot(true);
         connect(&timer_, &QTimer::timeout, this, [this] { publish(); });
         ack_timer_.setSingleShot(true);
@@ -538,9 +544,8 @@ class SessionService final : public QObject {
     void schedule_attention() {
         if (attention_state() && attention_dirty_ && client_ && ready_ && !stopping_ &&
             !attention_timer_.isActive()) {
-            const auto since =
-                last_attention_publish_.isValid() ? last_attention_publish_.elapsed() : frame_ms;
-            attention_timer_.start(since >= frame_ms ? 0 : static_cast<int>(frame_ms - since));
+            attention_timer_.start(
+                static_cast<int>(attention_pace_.wait_ms(attention_clock_.elapsed())));
         }
     }
     // The durable audit trail for attention requests. A decision is recorded
@@ -623,7 +628,7 @@ class SessionService final : public QObject {
             if (destination->bytesToWrite() + bytes.size() > wire::max_frame_bytes ||
                 destination->write(bytes) != bytes.size())
                 throw std::runtime_error("Attention output queue unavailable");
-            last_attention_publish_.start();
+            attention_pace_.published(attention_clock_.elapsed());
             attention_dirty_ = false;
         } catch (const std::exception& error) {
             if (client_ == destination && attachment_ == owner) {
@@ -686,6 +691,9 @@ class SessionService final : public QObject {
         pty_requested_ = true;
         pty_.start(tui);
     }
+    // One argument list per launch mode encodes the Codex app-server and TUI
+    // contracts; the dedicated complexity phase owns any split.
+    // NOLINTNEXTLINE(readability-function-cognitive-complexity)
     static QStringList codex_arguments(const LaunchSpec& launch, const QString& backend_socket) {
         QStringList arguments{QStringLiteral("app-server"), QStringLiteral("--listen"),
                               QStringLiteral("unix://") + backend_socket};
@@ -1250,6 +1258,11 @@ class SessionService final : public QObject {
         client_paste_transactions_ = paste_transactions;
         client_paste_id_ = 0;
         client_wanted_.reset();
+        // A replacement stream is first-of-burst: do not let the previous
+        // client's last publish defer this client's opening screen or
+        // attention snapshot by up to a frame.
+        snapshot_pace_.reset();
+        attention_pace_.reset();
         attention_dirty_ = true;
         if (codex_observer_ && pty_requested_ && !codex_state_->connected() &&
             codex_backend_.state() == QProcess::Running)
@@ -1284,13 +1297,11 @@ class SessionService final : public QObject {
     void schedule() {
         if (!process_started_ || stopping_ || timer_.isActive())
             return;
-        if ((client_ && (!snapshot_in_flight_ || ready_) && dirty_) || views_due()) {
-            const auto since = last_publish_.isValid() ? last_publish_.elapsed() : frame_ms;
-            timer_.start(since >= frame_ms ? 0 : static_cast<int>(frame_ms - since));
-        }
+        if ((client_ && (!snapshot_in_flight_ || ready_) && dirty_) || views_due())
+            timer_.start(static_cast<int>(snapshot_pace_.wait_ms(snapshot_clock_.elapsed())));
     }
     void publish() {
-        last_publish_.start();
+        snapshot_pace_.published(snapshot_clock_.elapsed());
         publish_views();
         publish_client();
     }
@@ -1916,9 +1927,11 @@ class SessionService final : public QObject {
     QByteArray buffer_;
     QTimer timer_;
     QTimer output_admission_timer_;
-    QElapsedTimer last_publish_;
     static constexpr qint64 frame_ms = 16;
-    QElapsedTimer last_attention_publish_;
+    QElapsedTimer attention_clock_;
+    wire::UpdatePace attention_pace_{frame_ms};
+    QElapsedTimer snapshot_clock_;
+    wire::UpdatePace snapshot_pace_{frame_ms};
     QTimer ack_timer_;
     quint64 generation_{};
     quint64 snapshot_sequence_{};
@@ -2019,6 +2032,9 @@ struct ServiceOptions {
     std::optional<TerminalSize> size;
     qsizetype socket{1};
 };
+// Argument parsing follows the service's documented option grammar; the
+// dedicated complexity phase owns any split.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 ServiceOptions parse_options(const QStringList& arguments) {
     ServiceOptions options;
     const auto value = [&arguments, &options](const char* usage) {

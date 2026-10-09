@@ -1,4 +1,5 @@
 #include "agent_search.hpp"
+#include "agent_state.hpp"
 #include "alerts.hpp"
 #include "app_paths.hpp"
 #include "conversation_index.hpp"
@@ -746,6 +747,18 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
     return &next;
 }
 
+// What this window knows about each agent, for Ultra Tab (apps/ultratab),
+// beside the registry; only from the window that owns the workspace.
+void keep_agent_state(std::optional<lapis::desktop::AgentStatePublisher>& kept,
+                      lapis::desktop::Workspace& workspace,
+                      std::optional<lapis::desktop::NextPrompt>& next, bool isolated) {
+    if (isolated || !workspace.holdsRegistry())
+        return;
+    kept.emplace(workspace, next ? &*next : nullptr,
+                 QDir(QFileInfo(workspace.storagePath()).absolutePath())
+                     .filePath(QStringLiteral("agent_state.json")));
+}
+
 // The quick-command terminals beside this workspace, with ssh hosts from the
 // user's ssh config; those still running come back.
 std::unique_ptr<lapis::desktop::Terminals>
@@ -904,9 +917,11 @@ int main(int argc, char** argv) {
         keymap.load();
         auto options = workspace_options(parser, isolated);
         options.accounts = keymap.accounts();
+        options.harnessUpdatesOff = keymap.harnessUpdatesOff();
         Workspace workspace(isolated ? WorkspaceMode::preview : WorkspaceMode::live, options);
         const auto configure = [&] {
             workspace.setHarnessArguments(keymap.harnessArguments());
+            workspace.setHarnessUpdatesOff(keymap.harnessUpdatesOff());
             workspace.setAgentDefaults(keymap.agentDefaults());
             workspace.setAccounts(keymap.accounts());
         };
@@ -961,6 +976,8 @@ int main(int argc, char** argv) {
         QObject* const resetsForQml = keep_limit_resets(limitResets, workspace, keymap, isolated);
         std::optional<NextPrompt> nextPrompt;
         QObject* const nextForQml = keep_next_prompt(nextPrompt, workspace, keymap, isolated);
+        std::optional<lapis::desktop::AgentStatePublisher> agentState;
+        keep_agent_state(agentState, workspace, nextPrompt, isolated);
         std::optional<lapis::desktop::PlanSignIn> planSignIn;
         QObject* const signInForQml = keep_plan_sign_in(planSignIn, keymap, isolated);
         const auto conversations = conversation_index(workspace);

@@ -3,10 +3,10 @@
 #include "plan_sign_in_script.hpp"
 #include "platform/updater_process.hpp"
 
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
@@ -71,6 +71,9 @@ constexpr qint64 kMaximumTokenBytes = qint64{64} * 1024;
 // ends the stream. The tail starts at a line boundary so whatever the cut
 // split (a credential body, half a sentence) is dropped whole, and everything
 // retained is masked before a diagnostic line is selected.
+// The head/tail order is positionally meaningful at this single call site;
+// distinct wrapper types belong to the later API phase.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 [[nodiscard]] QString copyReason(const QByteArray& head, const QByteArray& tail,
                                  const QString& fallback) {
     static const QRegularExpression token(QStringLiteral("sk-ant-oat01-[A-Za-z0-9_-]+"));
@@ -451,8 +454,8 @@ void PlanSignIn::copyTo(const CopyLaunch& launch) {
                 copied_unregistered_ << machine;
                 // The panel summary carries one bounded line per machine; the
                 // full masked context stays diagnosable in the log.
-                qWarning().noquote() << "Plan sign-in: recording" << machine
-                                     << "failed:" << safeReason(reason);
+                qWarning().noquote()
+                    << "Plan sign-in: recording" << machine << "failed:" << safeReason(reason);
                 const auto line = reasonLine(reason);
                 copyReasons_[machine] =
                     line.isEmpty() ? tr("configuration could not be saved") : line;

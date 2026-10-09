@@ -10,6 +10,7 @@
 #include <QJsonValue>
 #include <QKeyCombination>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -201,6 +202,9 @@ class KeyMap final : public QObject {
     [[nodiscard]] const QHash<QString, QStringList>& harnessArguments() const {
         return harness_arguments_;
     }
+    // CLIs whose automatic and explicit updates lapis skips, from
+    // {"harnessUpdates": {"omp": false}}; every other CLI updates as before.
+    [[nodiscard]] const QSet<QString>& harnessUpdatesOff() const { return harness_updates_off_; }
     Q_INVOKABLE bool setAlertSound(bool on);
     Q_INVOKABLE bool setFinishSound(bool on);
     Q_INVOKABLE bool setAlertRepeat(int times);
@@ -292,6 +296,7 @@ class KeyMap final : public QObject {
     void apply_defaults();
     void load_terminal_font(const QJsonValue& value);
     void load_harness_arguments(const QJsonValue& value);
+    void load_harness_updates(const QJsonValue& value);
     void load_alerts(const QJsonObject& root);
     void load_usage(const QJsonObject& root);
     void load_agent_defaults(const QJsonValue& value);
@@ -314,6 +319,7 @@ class KeyMap final : public QObject {
     QString terminal_font_family_;
     int terminal_font_size_{kTerminalFontSizeDefault};
     QHash<QString, QStringList> harness_arguments_;
+    QSet<QString> harness_updates_off_;
     bool loaded_{};
     bool sidebar_visible_{true};
     bool previews_visible_{true};
