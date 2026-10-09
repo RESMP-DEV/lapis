@@ -11,6 +11,7 @@
 #include <QThreadPool>
 
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <exception>
 #include <mutex>
@@ -18,6 +19,11 @@
 #include <utility>
 
 namespace lapis::desktop {
+namespace {
+// A healthy write is a small local file; these bound shutdown and tests only.
+constexpr int kExitWaitMs = 5000;
+constexpr int kTestWaitMs = 30000;
+} // namespace
 
 // One write at a time, off the GUI thread; a newer state waiting replaces an
 // older one that has not started.
@@ -73,7 +79,10 @@ GuiState::~GuiState() {
         // write() also runs on aboutToQuit; this destructor call is a last
         // chance for owners destroyed before that signal.
         write();
-        waitForTesting();
+        // Shutdown waits only as long as a healthy write takes; a writer stuck
+        // on a stuck filesystem must not hold the window open.
+        if (!waitForWrites(kExitWaitMs))
+            qWarning().noquote() << "Window state write still in flight at exit";
     } catch (const std::exception& error) {
         qWarning().noquote() << "Window state not saved at exit:" << error.what();
     }
@@ -188,10 +197,13 @@ void GuiState::flush() {
     waitForTesting();
 }
 
-void GuiState::waitForTesting() const {
+bool GuiState::waitForWrites(int timeout_ms) const {
     std::unique_lock lock(writer_->mutex);
-    writer_->idle.wait(lock, [this] { return !writer_->busy; });
+    return writer_->idle.wait_for(lock, std::chrono::milliseconds(timeout_ms),
+                                  [this] { return !writer_->busy; });
 }
+
+void GuiState::waitForTesting() const { static_cast<void>(waitForWrites(kTestWaitMs)); }
 
 int GuiState::writesForTesting() const {
     const std::scoped_lock lock(writer_->mutex);

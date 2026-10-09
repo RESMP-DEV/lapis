@@ -75,6 +75,8 @@ class GuiState final : public QObject {
     [[nodiscard]] int writesForTesting() const;
     // Waits for writes in flight.
     void waitForTesting() const;
+    // True once no write is in flight, or after the bounded wait.
+    [[nodiscard]] bool waitForWrites(int timeout_ms) const;
 
   private:
     struct Writer;
