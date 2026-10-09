@@ -193,3 +193,26 @@ Tab moves are kept in `runtime/tab_away.jsonl` and the fitted model in
 - `usage`, `accounts` and `limitResets` are described in [usage](usage.md).
 - `nextPrompt` turns on guessed next prompts; see [suggestions](suggestions.md).
 - Key bindings are listed in [keys](keys.md); Appearance shows and edits them.
+
+## Window state across restarts
+
+The agents run in their session services, so a restart of the window (an
+install swaps the app and opens it again) leaves them running. What only the
+window knew is kept in `runtime/gui_state.json` in the lapis folder and comes
+back with it: the guessed next prompts at each agent's cursor (whether you saw
+them, a guess Tab typed in, a guess still being made), the unseen marks on
+cards and categories and when each agent began to need you (Tab's and
+Command-L's order), what you last saw of each agent (so a turn ending on it
+stays quiet), the agents Command-Shift-T can reopen, and the new-agent form's
+last choices, the side terminal and a zoomed tile.
+
+The file is private to you (`0600`), versioned, replaced whole on each write
+and at most 1 MiB. Writes are at most one every two seconds, with the newest
+state, and finish when lapis quits. A missing, unreadable, corrupt, oversized or
+other-version file is ignored with a warning. Nothing restored pings or acts on
+an agent: marks for agents that are gone or now in another conversation (after
+`/clear`) are dropped, a guess shows again only while its conversation is
+still at the turn it was made for, rejected entries are pruned from the saved
+state, and the new-agent form and side-terminal machines are checked against the
+available choices before they are recalled. Delete the file to start the window
+fresh.

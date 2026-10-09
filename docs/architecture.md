@@ -5234,7 +5234,45 @@ runs exact-P1 qualification. P2/P3 and the dedicated import-server/onboarding
 design wait for P1; tool status and the import protocol client remain available
 but dormant until their owners and qualification gates are ready.
 
-## Ultra Tab: a second app beside the window (October 6)
+### Window state across restarts (October 6)
+
+The session service owns running agents, so a window restart (an install's
+relaunch) kept every agent but lost what lived only in the window. An audit of
+the desktop sorted that state three ways. Re-derived after reattaching: screens,
+history, requests and activity (service snapshots), conversation titles
+(`runtime/conversations.json`), plan loads and usage, harness model lists, tool
+status, and the workspace registry's categories, order, selections, tiles and
+plans. Lost and visible, now kept: next-prompt offers, their seen time and
+outcome bookkeeping, predictions in flight, unseen marks and when each agent
+began to need you, `SeenScreens` fingerprints, closed agents for Command-Shift-T,
+and the new-agent form, side terminal and tile zoom. Left transient: kept-history
+browsing (a view of service pages, reopened on demand), in-flight updates,
+reloads and plan switches (re-derived from service and usage state), the
+hourly prediction budget, Tab's pending learning choice, chime repeats and
+reminder timers (restoring them would ping on restore alone).
+
+`GuiState` owns one file, `runtime/gui_state.json`: owner-only, versioned
+(`version` 1), atomic `QSaveFile` writes off the GUI thread, bounded at 1 MiB
+(saved identifiers, conversations and guess text use the restore-side bounds).
+Owners register named sections; any change calls `touch()`, rate-limited
+publish-to-publish at two seconds with the newest state, and the file is flushed
+when the application quits. Each owner validates its own section on restore:
+`Workspace::restoreMarks` drops marks for missing agents or a different
+conversation (from the resume record) and never marks the shown agent; an agent
+saved at work within the last ten minutes whose first settled status is a
+finished turn emits `finishedWhileAway`, which marks it unseen and asks for a
+guess without the `turnFinished` chime. `NextPrompt::restoreState` keeps offer
+keys and turns so Tab, seen records and outcomes continue under the original
+offer; a restored offer is shown only after the helper's `context` mode
+confirms the same conversation and turn, otherwise it is logged as withdrawn
+(`new_turn`, `stale`, `gone`, `moved`, `unsupported` or `unverified`); rejected
+and malformed entries are pruned by the next state write. An owed guess with no
+reattached screen stays owed rather than predicting from context alone.
+`SeenScreens` uses an unseeded FNV-1a fingerprint so saved fingerprints match
+after a restart. Open PR state not on main (Tab-away candidate timing and
+reminder schedules) is not yet saved.
+
+### Ultra Tab: a second app beside the window (October 6)
 
 Ultra Tab (`apps/ultratab/`, user page [ultratab](ultratab.md)) is the publishing
 name for the lapis V2 surface: an overlay, shown by a global key, that deals the

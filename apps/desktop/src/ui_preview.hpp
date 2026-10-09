@@ -39,6 +39,7 @@ struct UiPreviewOptions {
     QObject* limitResets{};   // exposed to QML as `limitResets`
     QObject* nextPrompt{};    // exposed to QML as `nextPrompt`
     QObject* planSignIn{};    // exposed to QML as `planSignIn`
+    QObject* guiState{};      // exposed to QML as `guiState` (a restart keeps it)
     // Only the normal workspace restores user geometry; tests opt in with an isolated path.
     bool persistGeometry{};
     QString geometryPath{};

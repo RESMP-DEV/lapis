@@ -34,7 +34,17 @@ class SeenScreens final : public QObject {
     [[nodiscard]] bool unchanged(const SessionPreview* item) const;
     // Records what is on `item`'s screen now as seen.
     void see(const SessionPreview* item);
+    // The same from one launch to the next, so a restarted window still
+    // knows what was seen.
     [[nodiscard]] static size_t fingerprint(const SessionPreview* item);
+    // What was seen of each agent, by agent id, for GuiState; restoring
+    // skips agents that are gone.
+    [[nodiscard]] QJsonObject saveState() const;
+    void restoreState(const QJsonObject& state);
+
+  signals:
+    // What saveState() returns changed.
+    void changed();
 
   private:
     void sample();
