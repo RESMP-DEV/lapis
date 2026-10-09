@@ -70,7 +70,7 @@ int print_deck(const QString& home) {
 // One answer per line in runtime/ultratab_answers.jsonl, owner-only, the
 // same file the phone gateway appends to; past 16 MB it moves to `.1`.
 void log_answer(const QString& path, QJsonObject answer) {
-    constexpr qint64 limit = 16 * 1024 * 1024;
+    constexpr qint64 limit = qint64{16} * 1024 * 1024;
     answer.insert(QStringLiteral("t"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
     answer.insert(QStringLiteral("from"), QStringLiteral("mac"));
     const auto line = QJsonDocument(answer).toJson(QJsonDocument::Compact) + '\n';
