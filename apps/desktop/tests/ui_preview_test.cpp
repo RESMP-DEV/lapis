@@ -2,8 +2,8 @@
 #include "conversation_index.hpp"
 #include "gui_state.hpp"
 #include "keymap.hpp"
-#include "next_prompt.hpp"
 #include "model_change_recorder.hpp"
+#include "next_prompt.hpp"
 #include "plan_sign_in.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
@@ -2964,7 +2964,9 @@ int run_restored_suggestion_tests() {
         QFile file(path);
         CHECK(file.open(QIODevice::WriteOnly));
         file.write(R"({"version": 1, "sections": {
-            "window": {"lastHarness": "codex", "lastMode": "edits"},
+            "window": {"lastHarness": "codex", "lastMode": "edits",
+                "lastModels": {"codex": 7, "claude": "custom"},
+                "sideTerminalOpen": true},
             "nextPrompt": {"offers": {"agent": {"key": "agent:earlier.1",
                 "text": "run the tests", "conversation": "c", "turn": 3, "seenMs": 0}}}}})");
     }
@@ -2982,6 +2984,17 @@ int run_restored_suggestion_tests() {
     wait_active(*window);
     CHECK(window->property("lastHarness").toString() == QStringLiteral("codex") &&
           window->property("lastMode").toString() == QStringLiteral("edits"));
+    // A routine tiles signal without tiling does not clear restored zoom.
+    window->setProperty("tileZoomed", true);
+    CHECK(workspace.selectSession(QStringLiteral("checks")));
+    pump(2);
+    CHECK(workspace.selectSession(QStringLiteral("agent")));
+    pump(2);
+    CHECK(window->property("tileZoomed").toBool());
+    const auto remembered = window->property("lastModels").toMap();
+    CHECK(remembered.value(QStringLiteral("claude")).toString() == QLatin1String("custom") &&
+          !remembered.contains(QStringLiteral("codex")) &&
+          !remembered.contains(QStringLiteral("ghost")));
     auto* terminal = qobject_cast<TerminalSurface*>(
         find_visual(window->contentItem(), QStringLiteral("liveTerminal")));
     CHECK(terminal != nullptr && terminal->document() == agent);

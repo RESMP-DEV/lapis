@@ -70,7 +70,10 @@ GuiState::GuiState(QString path, QObject* parent)
 
 GuiState::~GuiState() {
     try {
-        flush();
+        // write() also runs on aboutToQuit; this destructor call is a last
+        // chance for owners destroyed before that signal.
+        write();
+        waitForTesting();
     } catch (const std::exception& error) {
         qWarning().noquote() << "Window state not saved at exit:" << error.what();
     }
@@ -87,13 +90,16 @@ bool GuiState::load() {
     };
     if (info.isSymLink() || !info.isFile())
         return ignored("is not a regular file");
-    if (info.size() > kMaxBytes)
-        return ignored("is too large");
     QFile file(path_);
     if (!file.open(QIODevice::ReadOnly))
         return ignored("is unreadable");
+    // Read the limit, not the stat result: another process can grow the file
+    // between stat and read, and the owner-only contract still has to hold.
+    const auto bytes = file.read(kMaxBytes + 1);
+    if (bytes.size() > kMaxBytes || !file.atEnd())
+        return ignored("is too large");
     QJsonParseError error{};
-    const auto document = QJsonDocument::fromJson(file.read(kMaxBytes + 1), &error);
+    const auto document = QJsonDocument::fromJson(bytes, &error);
     if (error.error != QJsonParseError::NoError || !document.isObject())
         return ignored("is not valid JSON");
     const auto root = document.object();
@@ -113,6 +119,10 @@ QJsonValue GuiState::section(const QString& name) const {
 }
 
 void GuiState::addSection(const QString& name, Save save) {
+    if (name == QLatin1String("window")) {
+        qWarning().noquote() << "Window state section name is reserved:" << name;
+        return;
+    }
     sections_.emplace_back(name, std::move(save));
 }
 

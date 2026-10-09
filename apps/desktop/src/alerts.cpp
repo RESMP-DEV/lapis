@@ -91,6 +91,7 @@ QJsonObject SeenScreens::saveState() const {
 }
 
 void SeenScreens::restoreState(const QJsonObject& state) {
+    bool restored = false;
     for (auto entry = state.constBegin(); entry != state.constEnd(); ++entry) {
         const auto* item = workspace_.session(entry.key());
         bool valid = false;
@@ -99,7 +100,10 @@ void SeenScreens::restoreState(const QJsonObject& state) {
             continue;
         connect(item, &QObject::destroyed, this, [this, item] { seen_.remove(item); });
         seen_.insert(item, static_cast<size_t>(print));
+        restored = true;
     }
+    if (restored)
+        emit changed();
 }
 
 void SeenScreens::sample() {

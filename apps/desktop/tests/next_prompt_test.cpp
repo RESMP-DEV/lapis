@@ -607,10 +607,47 @@ void outcomesCompareWhatWasSent() {
             "a long prompt's shared suffix contributes to bounded similarity");
 }
 
+// The save and restore sides use the same durable bounds; an offer outside
+// them is not written and then silently discarded on the next launch.
+void savedEntriesRespectRestoreBounds() {
+    QTemporaryDir directory;
+    const QDir root(directory.path());
+    require(root.mkpath(QStringLiteral("bin")), "fixture bin");
+    standIns(root);
+    const auto conversation = QString(201, QLatin1Char('c'));
+    write(root.filePath(QStringLiteral("context.reply")),
+          QStringLiteral(R"json({"conversation":"%1","turn":3})json").arg(conversation).toUtf8());
+    write(root.filePath(QStringLiteral("predict.reply")),
+          R"({"candidates":[{"text":"go on","p":0.8}]})");
+    NextPrompt next(
+        [&](const QString& id) -> std::optional<NextPrompt::Agent> {
+            if (id != QLatin1String("a"))
+                return std::nullopt;
+            NextPrompt::Agent agent;
+            agent.cli = QStringLiteral("claude");
+            agent.folder = QStringLiteral("~/x");
+            agent.conversation = conversation;
+            agent.screen = QStringLiteral("> |");
+            return agent;
+        },
+        [] { return QJsonArray{}; },
+        [&root](const QString& name) { return root.filePath(QStringLiteral("bin/") + name); },
+        NextPrompt::Files{root.path(), {}});
+    next.setSettings(on(60));
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] { return !next.suggestion(QStringLiteral("a")).isEmpty(); }),
+            "an offer too long to save is still live");
+    require(next.saveState().value(QStringLiteral("offers")).toObject().isEmpty(),
+            "an over-limit conversation is not saved for a restore that would drop it");
+}
+
 // A restarted window brings back its offers, each shown again only once the
 // conversation proves it current; the guesses whose outcome is still to be
 // read; and a guess still being made. Nothing is shown or used for an agent
 // that is gone, has moved to another conversation or started a new turn.
+// The cases share one fixture and append-only log, so the sequential function
+// intentionally remains one test case.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void restoredStateIsChecked() {
     QTemporaryDir directory;
     const QDir root(directory.path());
@@ -624,10 +661,11 @@ void restoredStateIsChecked() {
         if (!conversations.contains(id))
             return std::nullopt;
         NextPrompt::Agent agent;
-        agent.cli = QStringLiteral("claude");
+        agent.cli =
+            id == QLatin1String("unsupported") ? QStringLiteral("kimi") : QStringLiteral("claude");
         agent.folder = QStringLiteral("~/x");
         agent.conversation = conversations.value(id);
-        agent.screen = QStringLiteral("> |");
+        agent.screen = id == QLatin1String("unscreened") ? QString() : QStringLiteral("> |");
         return agent;
     };
     const auto make = [&] {
@@ -745,11 +783,25 @@ void restoredStateIsChecked() {
         conversations.insert(QStringLiteral("a"), QStringLiteral("d"));
         conversations.remove(QStringLiteral("b"));
         conversations.remove(QStringLiteral("c"));
+        conversations.insert(QStringLiteral("unsupported"), QStringLiteral("c"));
         QFile::remove(root.filePath(QStringLiteral("context.args")));
         auto next = make();
+        const auto unsupported_key = QStringLiteral("unsupported:%1.1").arg(key.section(':', 1));
+        auto with_unsupported = saved;
+        with_unsupported.insert(
+            QStringLiteral("offers"),
+            QJsonObject{{QStringLiteral("unsupported"),
+                         QJsonObject{{QStringLiteral("key"), unsupported_key},
+                                     {QStringLiteral("text"), QStringLiteral("x")},
+                                     {QStringLiteral("conversation"), QStringLiteral("c")},
+                                     {QStringLiteral("turn"), 3},
+                                     {QStringLiteral("seenMs"), 0}}}});
         next->restoreState(saved);
+        next->restoreState(with_unsupported);
         QCoreApplication::processEvents();
-        require(withdrawn(key) == QLatin1String("stale"), "another conversation drops the offer");
+        require(withdrawn(key) == QLatin1String("moved"), "another conversation drops the offer");
+        require(withdrawn(unsupported_key) == QLatin1String("unsupported"),
+                "a CLI lapis cannot guess for is named in the durable log");
         require(next->suggestion(QStringLiteral("a")).isEmpty() &&
                     next->saveState().value(QStringLiteral("awaiting")).toObject().isEmpty() &&
                     next->saveState().value(QStringLiteral("owed")).toObject().isEmpty(),
@@ -759,25 +811,61 @@ void restoredStateIsChecked() {
     }
 
     // Malformed entries and the setting off restore nothing.
-    {
-        conversations.insert(QStringLiteral("a"), QStringLiteral("c"));
-        auto next = make();
-        next->restoreState(QJsonObject{
-            {QStringLiteral("offers"),
-             QJsonObject{{QStringLiteral("a"), QJsonObject{{QStringLiteral("key"), "other:1"},
-                                                           {QStringLiteral("text"), "x"},
-                                                           {QStringLiteral("turn"), 1},
-                                                           {QStringLiteral("seenMs"), 0}}}}},
-            {QStringLiteral("awaiting"), QJsonArray{}}});
-        QCoreApplication::processEvents();
-        require(next->saveState().value(QStringLiteral("offers")).toObject().isEmpty(),
-                "an offer whose key is not the agent's is ignored");
-        next->setSettings({});
-        next->restoreState(saved);
-        QCoreApplication::processEvents();
-        require(next->saveState().value(QStringLiteral("offers")).toObject().isEmpty(),
-                "nothing comes back while the setting is off");
-    }
+    const auto malformed = [&] {
+        {
+            conversations.insert(QStringLiteral("a"), QStringLiteral("c"));
+            auto next = make();
+            int pruning_changes = 0;
+            QObject::connect(next.get(), &NextPrompt::stateChanged,
+                             [&pruning_changes] { ++pruning_changes; });
+            next->restoreState(QJsonObject{
+                {QStringLiteral("offers"),
+                 QJsonObject{{QStringLiteral("a"), QJsonObject{{QStringLiteral("key"), "other:1"},
+                                                               {QStringLiteral("text"), "x"},
+                                                               {QStringLiteral("turn"), 1},
+                                                               {QStringLiteral("seenMs"), 0}}}}},
+                {QStringLiteral("awaiting"), QJsonArray{}}});
+            QCoreApplication::processEvents();
+            require(pruning_changes > 0, "a rejected saved entry still asks for one new snapshot");
+            require(next->saveState().value(QStringLiteral("offers")).toObject().isEmpty(),
+                    "an offer whose key is not the agent's is ignored");
+        }
+    };
+    malformed();
+
+    // A screen that has not reattached does not become a context-only guess.
+    const auto unscreened = [&] {
+        {
+            conversations.insert(QStringLiteral("unscreened"), QStringLiteral("c"));
+            auto next = make();
+            next->setOwedRetryForTesting(1, 1);
+            next->restoreState(QJsonObject{
+                {QStringLiteral("owed"), QJsonObject{{QStringLiteral("unscreened"),
+                                                      QJsonObject{{QStringLiteral("conversation"),
+                                                                   QStringLiteral("c")}}}}}});
+            QFile::remove(root.filePath(QStringLiteral("predict.args")));
+            QElapsedTimer wait;
+            wait.start();
+            while (wait.elapsed() < 50)
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+            require(next->suggestion(QStringLiteral("unscreened")).isEmpty() &&
+                        !next->saveState()
+                             .value(QStringLiteral("owed"))
+                             .toObject()
+                             .value(QStringLiteral("unscreened"))
+                             .toObject()
+                             .isEmpty(),
+                    "a guess with no reattached screen stays owed");
+            require(QFileInfo(root.filePath(QStringLiteral("predict.args"))).exists() == false,
+                    "and does not call the model");
+            next->setSettings({});
+            next->restoreState(saved);
+            QCoreApplication::processEvents();
+            require(next->saveState().value(QStringLiteral("offers")).toObject().isEmpty(),
+                    "nothing comes back while the setting is off");
+        }
+    };
+    unscreened();
 }
 
 int main(int argc, char** argv) {
@@ -789,6 +877,7 @@ int main(int argc, char** argv) {
         missingProbabilityIsNotOffered();
         predictsAndOffers();
         outcomesCompareWhatWasSent();
+        savedEntriesRespectRestoreBounds();
         restoredStateIsChecked();
     } catch (const std::exception& error) {
         std::cerr << "next_prompt_test: " << error.what() << '\n';

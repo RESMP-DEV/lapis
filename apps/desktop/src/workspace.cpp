@@ -3354,8 +3354,12 @@ void Workspace::restoreMarks(const QJsonObject& marks) {
             static_cast<qint64>(mark.value(QStringLiteral("neededAtMs")).toDouble());
         const bool unseen = mark.value(QStringLiteral("unseen")).toBool() &&
                             item != focusedSession() && !item->unseen();
+        // An already-unseen agent keeps its newer timestamp: a second restore
+        // or a status that marked it must not turn Tab's ordering backward.
         if (unseen || item->neededAtMs() == 0)
-            item->restoreUnseen(unseen || item->unseen(), std::min(needed, now));
+            item->restoreUnseen(unseen || item->unseen(), item->neededAtMs() == 0
+                                                              ? std::min(needed, now)
+                                                              : item->neededAtMs());
         if (recent && mark.value(QStringLiteral("working")).toBool())
             watchFinishWhileAway(item);
     }
@@ -3440,6 +3444,9 @@ void Workspace::restoreClosed(const QJsonArray& closed) {
                 plan.managed_resume_index = -1;
                 plan.managed_resume_identity.clear();
             }
+            // The program may have moved or the folder deleted while no window
+            // was open; validate_launch owns that refusal, like the registry.
+            plan.launch = session::validate_launch(plan.launch);
             closed_.push_back({object.value(QStringLiteral("category")).toString().left(80), title,
                                harness, std::move(plan),
                                object.value(QStringLiteral("remote")).toBool()});

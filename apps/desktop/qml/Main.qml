@@ -703,8 +703,11 @@ ApplicationWindow {
     // absent in fixtures): the new-agent form's, the side terminal's and a
     // zoomed tile.
     readonly property var windowMemory: typeof guiState !== "undefined" ? guiState : null
+    // QML initializes its properties after the state is loaded; remember only
+    // after recall has read it, or those writes would erase loaded choices.
+    property bool windowMemoryReady: false
     function remember(key, value) {
-        if (windowMemory !== null)
+        if (windowMemory !== null && windowMemoryReady)
             windowMemory.setValue(key, value)
     }
     onLastHarnessChanged: remember("lastHarness", lastHarness)
@@ -717,20 +720,33 @@ ApplicationWindow {
     function recallWindowMemory() {
         if (windowMemory === null)
             return
+        const catalog = workspace.availableHarnesses()
         const text = key => {
             const value = windowMemory.value(key)
             return typeof value === "string" ? value : ""
         }
-        lastHarness = text("lastHarness")
-        lastMachine = text("lastMachine")
-        lastMode = text("lastMode")
-        lastTerminalMachine = text("lastTerminalMachine")
+        const harnesses = catalog
+        const harness = harnesses.find(candidate => candidate.id === text("lastHarness"))
+        lastHarness = harness ? harness.id : ""
+        const machines = [""].concat(workspace.sshMachines())
+        lastMachine = machines.includes(text("lastMachine")) ? text("lastMachine") : ""
+        const mode = text("lastMode")
+        lastMode =
+            harness && harness.modes.some(candidate => candidate.id === mode) ? mode : ""
         const models = windowMemory.value("lastModels")
-        if (models !== null && typeof models === "object" && !Array.isArray(models))
-            lastModels = models
+        if (models !== null && typeof models === "object" && !Array.isArray(models)) {
+            const validModels = {}
+            for (const candidate of harnesses)
+                if (typeof models[candidate.id] === "string")
+                    validModels[candidate.id] = models[candidate.id]
+            lastModels = validModels
+        }
         tileZoomed = windowMemory.value("tileZoomed") === true
+        lastTerminalMachine = machines.includes(text("lastTerminalMachine"))
+                                 ? text("lastTerminalMachine") : ""
         if (windowMemory.value("sideTerminalOpen") === true)
             Qt.callLater(() => openTerminalOn(lastTerminalMachine))
+        windowMemoryReady = true
     }
     function openNewAgentDialog() {
         if (terminalBusy)
@@ -1378,7 +1394,8 @@ ApplicationWindow {
     Connections {
         target: workspace
         function onTilesChanged() {
-            if (workspace.stageTiles.length < 2)
+            const tiled = workspace.stageTiles.length > 1
+            if (!tiled && window.tileZoomed)
                 window.tileZoomed = false
         }
         function onCategoryChanged() {

@@ -5180,7 +5180,7 @@ reminder timers (restoring them would ping on restore alone).
 
 `GuiState` owns one file, `runtime/gui_state.json`: owner-only, versioned
 (`version` 1), atomic `QSaveFile` writes off the GUI thread, bounded at 1 MiB
-(saved guess text is capped at 8,000 characters each and 256 KiB in total).
+(saved identifiers, conversations and guess text use the restore-side bounds).
 Owners register named sections; any change calls `touch()`, rate-limited
 publish-to-publish at two seconds with the newest state, and the file is flushed
 when the application quits. Each owner validates its own section on restore:
@@ -5192,9 +5192,12 @@ guess without the `turnFinished` chime. `NextPrompt::restoreState` keeps offer
 keys and turns so Tab, seen records and outcomes continue under the original
 offer; a restored offer is shown only after the helper's `context` mode
 confirms the same conversation and turn, otherwise it is logged as withdrawn
-(`new_turn`, `stale`, `gone` or `unverified`). `SeenScreens` uses an unseeded
-FNV-1a fingerprint so saved fingerprints match after a restart. Open PR state
-not on main (Tab-away candidate timing and reminder schedules) is not yet saved.
+(`new_turn`, `stale`, `gone`, `moved`, `unsupported` or `unverified`); rejected
+and malformed entries are pruned by the next state write. An owed guess with no
+reattached screen stays owed rather than predicting from context alone.
+`SeenScreens` uses an unseeded FNV-1a fingerprint so saved fingerprints match
+after a restart. Open PR state not on main (Tab-away candidate timing and
+reminder schedules) is not yet saved.
 
 ### Ultra Tab: a second app beside the window (October 6)
 ## Ultra Tab: a second app beside the window (October 6)

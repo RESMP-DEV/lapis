@@ -134,6 +134,22 @@ void corruptOrOtherFilesAreIgnored() {
     require(!state.load(), "a symlink is not followed");
 }
 
+void reservedWindowSectionIsRejected() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "fixture directory");
+    const auto path = QDir(directory.path()).filePath(QStringLiteral("gui_state.json"));
+    GuiState state(path);
+    state.setValue(QStringLiteral("choice"), QStringLiteral("kept"));
+    state.addSection(QStringLiteral("window"), [] { return QStringLiteral("intruder"); });
+    state.flush();
+    const auto sections = readFile(path).value(QStringLiteral("sections")).toObject();
+    require(sections.value(QStringLiteral("window"))
+                    .toObject()
+                    .value(QStringLiteral("choice"))
+                    .toString() == QLatin1String("kept"),
+            "the window's choices are not overwritten by a reserved section name");
+}
+
 void writesAreCoalesced() {
     QTemporaryDir directory;
     require(directory.isValid(), "fixture directory");
@@ -226,6 +242,10 @@ void marksComeBack() {
     setActivity(*checks, lapis::session::attention::Activity::working);
     setActivity(*checks, lapis::session::attention::Activity::turn_completed);
     require(away == 1 && pings == 1, "later turns ping as usual");
+    agent->restoreUnseen(true, needed + 1);
+    after.restoreMarks(marks);
+    require(agent->neededAtMs() == needed + 1,
+            "an already-unseen agent keeps its newer ordering time");
 
     // Saved long ago: an idle agent is just idle.
     marks.insert(QStringLiteral("savedAtMs"),
@@ -318,6 +338,10 @@ void marksFollowTheConversation() {
                     {"harness", "codex"},
                     {"program", "true"},
                     {"directory", canonical}},
+        QJsonObject{{"title", "moved"},
+                    {"harness", "codex"},
+                    {"program", "/no/such/lapis-agent"},
+                    {"directory", canonical}},
         QJsonObject{{"title", "unknown"},
                     {"harness", "no-such-cli"},
                     {"program", "/usr/bin/true"},
@@ -358,11 +382,14 @@ void seenScreensComeBack() {
     saved.insert(QStringLiteral("gone"), QStringLiteral("abc"));
     Workspace after(WorkspaceMode::preview);
     SeenScreens seen(after, [](const SessionPreview*) { return false; });
+    int restored_changes = 0;
+    QObject::connect(&seen, &SeenScreens::changed, [&restored_changes] { ++restored_changes; });
     seen.restoreState(saved);
     require(seen.unchanged(after.session(QStringLiteral("agent"))),
             "what was seen before the restart still counts as seen");
     require(!seen.unchanged(after.session(QStringLiteral("checks"))),
             "an agent never seen stays unseen");
+    require(restored_changes == 1, "a restored fingerprint asks for one save");
 }
 } // namespace
 
@@ -372,6 +399,7 @@ int main(int argc, char** argv) {
     try {
         savesAndRestoresSections();
         corruptOrOtherFilesAreIgnored();
+        reservedWindowSectionIsRejected();
         writesAreCoalesced();
         marksComeBack();
         marksFollowTheConversation();

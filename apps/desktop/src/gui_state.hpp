@@ -58,7 +58,8 @@ class GuiState final : public QObject {
     bool load();
     // A loaded section, or undefined.
     [[nodiscard]] QJsonValue section(const QString& name) const;
-    // Adds an owner's section, written with every save.
+    // Adds an owner's section, written with every save. "window" is reserved
+    // for the window's own choices.
     void addSection(const QString& name, Save save);
     // Something changed: write soon.
     Q_INVOKABLE void touch();

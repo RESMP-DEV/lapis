@@ -647,51 +647,67 @@ namespace {
 constexpr qsizetype kSavedAgents = 128;
 constexpr qsizetype kSavedText = 8000;
 constexpr qsizetype kSavedTextTotal = qsizetype{256} * 1024;
-constexpr int kOwedTries = 20;
-constexpr int kOwedRetryMs = 500;
 bool chats(const QString& cli) {
     return cli == QLatin1String("claude") || cli == QLatin1String("codex");
 }
 } // namespace
 
-QJsonObject NextPrompt::saveState() const {
-    qsizetype budget = kSavedTextTotal;
-    const auto encode = [&budget](const Offer& offer) -> QJsonObject {
-        if (offer.text.isEmpty() || offer.text.size() > kSavedText || offer.text.size() > budget)
-            return {};
-        budget -= offer.text.size();
-        return {{QStringLiteral("key"), offer.key},
-                {QStringLiteral("text"), offer.text},
-                {QStringLiteral("conversation"), offer.conversation},
-                {QStringLiteral("turn"), offer.turn},
-                {QStringLiteral("seenMs"), offer.seen_ms}};
-    };
-    QJsonObject offers;
+QJsonObject NextPrompt::encodeOffer(const Offer& offer, qsizetype& budget) const {
+    if (offer.key.size() > 400 || offer.conversation.size() > 200 || offer.text.isEmpty() ||
+        offer.text.size() > kSavedText || offer.text.size() > budget)
+        return {};
+    budget -= offer.text.size();
+    return {{QStringLiteral("key"), offer.key},
+            {QStringLiteral("text"), offer.text},
+            {QStringLiteral("conversation"), offer.conversation},
+            {QStringLiteral("turn"), offer.turn},
+            {QStringLiteral("seenMs"), offer.seen_ms}};
+}
+
+QJsonObject NextPrompt::savedOffers(qsizetype& budget) const {
+    QJsonObject saved;
     for (const auto* map : {&offers_, &restoring_})
         for (auto entry = map->cbegin(); entry != map->cend(); ++entry)
-            if (offers.size() < kSavedAgents)
-                if (const auto saved = encode(entry.value()); !saved.isEmpty())
-                    offers.insert(entry.key(), saved);
-    QJsonObject awaiting;
+            if (!entry.key().isEmpty() && entry.key().size() <= 200 && saved.size() < kSavedAgents)
+                if (const auto value = encodeOffer(entry.value(), budget); !value.isEmpty())
+                    saved.insert(entry.key(), value);
+    return saved;
+}
+
+QJsonObject NextPrompt::savedAwaiting(qsizetype& budget) const {
+    QJsonObject saved;
     for (auto entry = awaiting_.cbegin(); entry != awaiting_.cend(); ++entry) {
-        auto saved = encode(entry->offer);
-        if (saved.isEmpty() || awaiting.size() >= kSavedAgents)
+        if (entry.key().isEmpty() || entry.key().size() > 200)
             continue;
-        saved.insert(QStringLiteral("filled"), entry->filled);
-        saved.insert(QStringLiteral("tabSent"), entry->tab_sent);
-        awaiting.insert(entry.key(), saved);
+        auto value = encodeOffer(entry->offer, budget);
+        if (value.isEmpty() || saved.size() >= kSavedAgents)
+            continue;
+        value.insert(QStringLiteral("filled"), entry->filled);
+        value.insert(QStringLiteral("tabSent"), entry->tab_sent);
+        saved.insert(entry.key(), value);
     }
-    QJsonObject owed;
+    return saved;
+}
+
+QJsonObject NextPrompt::savedOwed() const {
+    QJsonObject saved;
     for (auto entry = running_.cbegin(); entry != running_.cend(); ++entry)
-        if (!entry->verifying && owed.size() < kSavedAgents)
-            owed.insert(entry.key(),
-                        QJsonObject{{QStringLiteral("conversation"), entry->agent.conversation}});
+        if (!entry->verifying && !entry.key().isEmpty() && entry.key().size() <= 200 &&
+            entry->agent.conversation.size() <= 200 && saved.size() < kSavedAgents)
+            saved.insert(entry.key(),
+                         QJsonObject{{QStringLiteral("conversation"), entry->agent.conversation}});
     for (auto entry = owed_.cbegin(); entry != owed_.cend(); ++entry)
-        if (!owed.contains(entry.key()) && owed.size() < kSavedAgents)
-            owed.insert(entry.key(), QJsonObject{{QStringLiteral("conversation"), entry.value()}});
-    return {{QStringLiteral("offers"), offers},
-            {QStringLiteral("awaiting"), awaiting},
-            {QStringLiteral("owed"), owed}};
+        if (!entry.key().isEmpty() && entry.key().size() <= 200 && entry.value().size() <= 200 &&
+            !saved.contains(entry.key()) && saved.size() < kSavedAgents)
+            saved.insert(entry.key(), QJsonObject{{QStringLiteral("conversation"), entry.value()}});
+    return saved;
+}
+
+QJsonObject NextPrompt::saveState() const {
+    qsizetype budget = kSavedTextTotal;
+    return {{QStringLiteral("offers"), savedOffers(budget)},
+            {QStringLiteral("awaiting"), savedAwaiting(budget)},
+            {QStringLiteral("owed"), savedOwed()}};
 }
 
 void NextPrompt::restoreState(const QJsonObject& state) {
@@ -707,11 +723,12 @@ void NextPrompt::restoreState(const QJsonObject& state) {
 
 auto NextPrompt::savedOffer(const QString& id, const QJsonValue& value) -> std::optional<Offer> {
     const auto object = value.toObject();
-    Offer offer{object.value(QStringLiteral("key")).toString(),
-                object.value(QStringLiteral("text")).toString(),
-                object.value(QStringLiteral("conversation")).toString(),
-                object.value(QStringLiteral("turn")).toInt(-1),
-                static_cast<qint64>(object.value(QStringLiteral("seenMs")).toDouble(-1))};
+    Offer offer;
+    offer.key = object.value(QStringLiteral("key")).toString();
+    offer.text = object.value(QStringLiteral("text")).toString();
+    offer.conversation = object.value(QStringLiteral("conversation")).toString();
+    offer.turn = object.value(QStringLiteral("turn")).toInt(-1);
+    offer.seen_ms = static_cast<qint64>(object.value(QStringLiteral("seenMs")).toDouble(-1));
     if (id.isEmpty() || id.size() > 200 || !offer.key.startsWith(id + QLatin1Char(':')) ||
         offer.key.size() > 400 || offer.text.isEmpty() || offer.text.size() > kSavedText ||
         offer.conversation.size() > 200 || offer.turn < 0 || offer.seen_ms < 0)
@@ -720,7 +737,9 @@ auto NextPrompt::savedOffer(const QString& id, const QJsonValue& value) -> std::
 }
 
 // The agent still exists, runs a CLI lapis guesses for, and has not moved to
-// another conversation (as after /clear) as far as lapis knows yet.
+// another conversation (as after /clear) as far as lapis knows yet. Either
+// conversation may be empty because that side does not know it yet; the helper
+// verifies the actual conversation before a restored offer is shown.
 auto NextPrompt::restorable(const QString& id, QStringView conversation) const
     -> std::optional<Agent> {
     auto agent = lookup_(id);
@@ -732,53 +751,73 @@ auto NextPrompt::restorable(const QString& id, QStringView conversation) const
 }
 
 bool NextPrompt::restoreAwaiting(const QJsonObject& awaiting) {
-    bool restored = false;
+    bool changed = false;
     for (auto entry = awaiting.constBegin(); entry != awaiting.constEnd(); ++entry) {
         const auto offer = savedOffer(entry.key(), entry.value());
         if (!offer || awaiting_.contains(entry.key()) ||
-            !restorable(entry.key(), offer->conversation))
+            !restorable(entry.key(), offer->conversation)) {
+            changed = true; // the rejected entry must leave the saved state too
             continue;
+        }
         const auto object = entry.value().toObject();
-        awaiting_.insert(entry.key(), {*offer, object.value(QStringLiteral("filled")).toBool(),
-                                       object.value(QStringLiteral("tabSent")).toBool()});
-        restored = true;
+        Awaiting restored;
+        restored.offer = *offer;
+        restored.filled = object.value(QStringLiteral("filled")).toBool();
+        restored.tab_sent = object.value(QStringLiteral("tabSent")).toBool();
+        awaiting_.insert(entry.key(), restored);
+        changed = true;
     }
-    return restored;
+    return changed;
 }
 
 bool NextPrompt::restoreOffers(const QJsonObject& offers) {
-    bool restored = false;
+    bool changed = false;
     for (auto entry = offers.constBegin(); entry != offers.constEnd(); ++entry) {
         const auto& id = entry.key();
         const auto offer = savedOffer(id, entry.value());
-        if (!offer || offers_.contains(id) || restoring_.contains(id) || running_.contains(id))
-            continue;
-        const auto agent = restorable(id, offer->conversation);
-        if (!agent) {
-            recordWithdrawn(*offer, id, lookup_(id) ? "stale" : "gone");
+        if (!offer || offers_.contains(id) || restoring_.contains(id) || running_.contains(id)) {
+            changed = true; // malformed or duplicate saved entries are pruned
             continue;
         }
-        verify(id, *agent, *offer);
-        restored = true;
+        // lapis may not know the saved conversation; the helper's verify step
+        // checks the actual conversation and turn before the offer is shown.
+        const auto known = lookup_(id);
+        const char* reason = "gone";
+        if (known != std::nullopt) {
+            if (!chats(known->cli))
+                reason = "unsupported";
+            else if (!known->conversation.isEmpty() && !offer->conversation.isEmpty() &&
+                     known->conversation != offer->conversation)
+                reason = "moved";
+            else {
+                verify(id, *known, *offer);
+                changed = true;
+                continue;
+            }
+        }
+        recordWithdrawn(*offer, id, reason);
+        changed = true;
     }
-    return restored;
+    return changed;
 }
 
 bool NextPrompt::restoreOwed(const QJsonObject& owed) {
-    bool restored = false;
+    bool changed = false;
     for (auto entry = owed.constBegin(); entry != owed.constEnd(); ++entry) {
         const auto& id = entry.key();
         const auto conversation =
             entry.value().toObject().value(QStringLiteral("conversation")).toString();
         if (id.isEmpty() || id.size() > 200 || conversation.size() > 200 || owed_.contains(id) ||
             offers_.contains(id) || restoring_.contains(id) || running_.contains(id) ||
-            !restorable(id, conversation))
+            !restorable(id, conversation)) {
+            changed = true; // the rejected entry must leave the saved state too
             continue;
+        }
         owed_.insert(id, conversation);
-        restored = true;
+        changed = true;
         QTimer::singleShot(0, this, [this, id] { resumeOwed(id, 0); });
     }
-    return restored;
+    return changed;
 }
 
 void NextPrompt::verify(const QString& id, const Agent& agent, const Offer& offer) {
@@ -835,9 +874,15 @@ void NextPrompt::resumeOwed(const QString& id, int tries) {
         return;
     }
     // The guess reads the agent's screen, which the service sends again
-    // shortly after the window reattaches.
-    if (agent->screen.isEmpty() && tries < kOwedTries) {
-        QTimer::singleShot(kOwedRetryMs, this, [this, id, tries] { resumeOwed(id, tries + 1); });
+    // shortly after the window reattaches. A screen that has still not
+    // arrived leaves the guess owed; predicting from context alone would
+    // invent a prompt for an unknown screen.
+    if (agent->screen.isEmpty()) {
+        if (tries < owed_tries_)
+            QTimer::singleShot(owed_retry_ms_, this,
+                               [this, id, tries] { resumeOwed(id, tries + 1); });
+        // After the retry budget, the entry stays owed rather than degrading
+        // the guess; the next window restart can retry it with a screen.
         return;
     }
     if (running_.contains(id) || offers_.contains(id)) {
@@ -846,6 +891,11 @@ void NextPrompt::resumeOwed(const QString& id, int tries) {
         return;
     }
     turnFinished(id);
+}
+
+void NextPrompt::setOwedRetryForTesting(int tries, int retryMs) {
+    owed_tries_ = std::max(0, tries);
+    owed_retry_ms_ = std::max(0, retryMs);
 }
 
 } // namespace lapis::desktop

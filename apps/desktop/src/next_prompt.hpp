@@ -126,6 +126,9 @@ class NextPrompt final : public QObject {
     // screen is back. Restoring offers nothing to send and pings nothing.
     void restoreState(const QJsonObject& state);
 
+    // Tests: shorten the wait for a reattached terminal screen.
+    void setOwedRetryForTesting(int tries, int retryMs);
+
   signals:
     void changed();
     // Anything saveState() returns changed, including what QML never shows.
@@ -186,6 +189,10 @@ class NextPrompt final : public QObject {
     // be restored for; and each saved map. True when anything came back.
     [[nodiscard]] static std::optional<Offer> savedOffer(const QString& id,
                                                          const QJsonValue& value);
+    [[nodiscard]] QJsonObject encodeOffer(const Offer& offer, qsizetype& budget) const;
+    [[nodiscard]] QJsonObject savedOffers(qsizetype& budget) const;
+    [[nodiscard]] QJsonObject savedAwaiting(qsizetype& budget) const;
+    [[nodiscard]] QJsonObject savedOwed() const;
     [[nodiscard]] std::optional<Agent> restorable(const QString& id,
                                                   QStringView conversation) const;
     bool restoreAwaiting(const QJsonObject& awaiting);
@@ -217,6 +224,8 @@ class NextPrompt final : public QObject {
     QString run_; // this launch, in offer ids
     quint64 offers_made_{};
     int revision_{};
+    int owed_tries_{20};
+    int owed_retry_ms_{500};
 };
 
 } // namespace lapis::desktop

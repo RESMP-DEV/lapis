@@ -188,8 +188,11 @@ last choices, the side terminal and a zoomed tile.
 
 The file is private to you (`0600`), versioned, replaced whole on each write
 and at most 1 MiB. Writes are at most one every two seconds, with the newest
-state, and finish when lapis quits. A missing, unreadable, corrupt or
+state, and finish when lapis quits. A missing, unreadable, corrupt, oversized or
 other-version file is ignored with a warning. Nothing restored pings or acts on
 an agent: marks for agents that are gone or now in another conversation (after
-`/clear`) are dropped, and a guess shows again only while its conversation is
-still at the turn it was made for. Delete the file to start the window fresh.
+`/clear`) are dropped, a guess shows again only while its conversation is
+still at the turn it was made for, rejected entries are pruned from the saved
+state, and the new-agent form and side-terminal machines are checked against the
+available choices before they are recalled. Delete the file to start the window
+fresh.
