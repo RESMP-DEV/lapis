@@ -527,7 +527,11 @@ Item {
         onHeightChanged: root.tellHost()
         onXChanged: root.tellHost()
         radius: 14
-        color: Qt.rgba(22 / 255, 24 / 255, 30 / 255, 0.80)
+        // A light tint over the window's blur, as Raycast's default: the
+        // desktop's colours show through, softened. Captures, which have no
+        // real blur, draw it heavier.
+        color: backdrop ? Qt.rgba(22 / 255, 24 / 255, 30 / 255, 0.80)
+                        : Qt.rgba(16 / 255, 17 / 255, 22 / 255, 0.38)
         border.width: root.pushing ? 1.5 : 1
         border.color: root.pushing ? Qt.rgba(239 / 255, 91 / 255, 79 / 255, 0.6) : "#17ffffff"
         clip: true

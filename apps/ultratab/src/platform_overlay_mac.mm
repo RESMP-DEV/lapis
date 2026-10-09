@@ -123,9 +123,12 @@ bool make_translucent(QWindow& window) {
     // The blur sits under Qt's view and covers only the panel (set_blur_rect).
     NSVisualEffectView* blur =
         [[[NSVisualEffectView alloc] initWithFrame:container.bounds] autorelease];
+    // As Raycast's default window: a dark, vibrant blur of what is behind,
+    // active even when another app has the keyboard.
     blur.material = NSVisualEffectMaterialHUDWindow;
     blur.blendingMode = NSVisualEffectBlendingModeBehindWindow;
     blur.state = NSVisualEffectStateActive;
+    blur.appearance = [NSAppearance appearanceNamed:NSAppearanceNameVibrantDark];
     blur.maskImage = rounded_mask(kCornerRadius);
     blur.identifier = @"ultratab-blur";
     [qt_view retain];
