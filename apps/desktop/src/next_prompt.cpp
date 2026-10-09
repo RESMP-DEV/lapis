@@ -10,6 +10,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <QRandomGenerator>
 #include <QSaveFile>
 #include <QTimer>
 #include <QUuid>
@@ -116,6 +117,17 @@ NextPromptSettings parse_next_prompt(const QJsonValue& value) {
         settings.minConfidence = std::clamp(p.toDouble(), 0.0, 1.0);
     if (const auto cap = object.value(QStringLiteral("maxPerHour")); cap.isDouble())
         settings.maxPerHour = std::max(0, cap.toInt());
+    if (const auto share = object.value(QStringLiteral("experiment")); share.isDouble())
+        settings.experimentShare = std::clamp(share.toDouble(), 0.0, 1.0);
+    if (const auto models = object.value(QStringLiteral("experimentModels")); models.isArray()) {
+        settings.experimentModels.clear();
+        for (const auto& model : models.toArray())
+            if (const auto name = model.toString().trimmed(); !name.isEmpty())
+                settings.experimentModels.append(name.left(100));
+    }
+    settings.localEndpoint =
+        object.value(QStringLiteral("localEndpoint")).toString().trimmed().left(200);
+    settings.localModel = object.value(QStringLiteral("localModel")).toString().trimmed().left(100);
     return settings;
 }
 
@@ -196,9 +208,21 @@ bool NextPrompt::current(const QString& id, quint64 generation) const {
     return run != running_.cend() && run->generation == generation;
 }
 
-void NextPrompt::turnFinished(const QString& id) {
+void NextPrompt::turnFinished(const QString& id) { run(id, false); }
+
+void NextPrompt::focused(const QString& id) {
+    if (deferred_.remove(id))
+        run(id, true);
+}
+
+double NextPrompt::confidence(const QString& id) const { return offers_.value(id).p; }
+
+void NextPrompt::run(const QString& id, bool force) {
     if (!settings_.automatic)
         return;
+    if (const auto shown = offers_.constFind(id); shown != offers_.cend())
+        previous_.insert(id, {shown->conversation, shown->turn, shown->seen_ms != 0});
+    deferred_.remove(id);
     withdraw(id, Withdrawal::next_turn);
     const auto agent = lookup_(id);
     if (!agent || (agent->cli != QLatin1String("claude") && agent->cli != QLatin1String("codex")))
@@ -215,8 +239,22 @@ void NextPrompt::turnFinished(const QString& id) {
         agent->conversation};
     if (const auto waiting = awaiting_.constFind(id); waiting != awaiting_.cend())
         words << QStringLiteral("--answered") << QString::number(waiting->offer.turn);
-    const auto done = [this, id, generation](const QJsonObject& context) {
+    const auto done = [this, id, generation, force](const QJsonObject& context) {
         settle(id, context);
+        // A repeat: the person has sent nothing since the last guess and never
+        // saw it. Guess again when they show this agent, not now.
+        const auto last = previous_.value(id);
+        if (!force && !last.seen && last.turn >= 0 &&
+            last.conversation == context.value(QStringLiteral("conversation")).toString() &&
+            last.turn == context.value(QStringLiteral("turn")).toInt()) {
+            running_.remove(id);
+            deferred_.insert(id);
+            record({{QStringLiteral("event"), QStringLiteral("skipped")},
+                    {QStringLiteral("agent"), id},
+                    {QStringLiteral("reason"), QStringLiteral("unseen_repeat")}});
+            emit judged(id, {});
+            return;
+        }
         predict(id, generation, context);
     };
     if (agent->machine.isEmpty()) {
@@ -310,6 +348,7 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
     started_.push_back({clock_.elapsed(), generation});
     const auto agent = running_.value(id).agent;
     QJsonObject about{{QStringLiteral("title"), agent.title},
+                      {QStringLiteral("folder"), agent.folder},
                       {QStringLiteral("cli"), agent.cli},
                       {QStringLiteral("machine"), agent.machine},
                       {QStringLiteral("category"), agent.category}};
@@ -319,19 +358,41 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
                              {QStringLiteral("agents"), agents_()},
                              {QStringLiteral("time"), QDateTime::currentDateTime().toString(
                                                           QStringLiteral("ddd h:mm ap"))}};
-    QStringList arguments{script_path_,    QStringLiteral("predict"),  QStringLiteral("--model"),
-                          settings_.model, QStringLiteral("--claude"), claude};
-    if (!settings_.effort.isEmpty())
+    // Most guesses come from the chosen model; a share goes to an experiment
+    // arm, evenly among the other models and the local endpoint.
+    QString arm = QStringLiteral("control");
+    QString model = settings_.model;
+    QString endpoint;
+    QStringList arms;
+    for (const auto& other : settings_.experimentModels)
+        if (other != settings_.model)
+            arms << other;
+    if (!settings_.localEndpoint.isEmpty() && !settings_.localModel.isEmpty())
+        arms << QStringLiteral("local");
+    if (!arms.isEmpty() &&
+        QRandomGenerator::global()->generateDouble() < settings_.experimentShare) {
+        const auto pick = arms.at(QRandomGenerator::global()->bounded(arms.size()));
+        arm = pick == QLatin1String("local") ? pick : QStringLiteral("model");
+        model = pick == QLatin1String("local") ? settings_.localModel : pick;
+        if (pick == QLatin1String("local"))
+            endpoint = settings_.localEndpoint;
+    }
+    QStringList arguments{script_path_, QStringLiteral("predict"),  QStringLiteral("--model"),
+                          model,        QStringLiteral("--claude"), claude};
+    if (!settings_.effort.isEmpty() && endpoint.isEmpty() && model == settings_.model)
         arguments << QStringLiteral("--effort") << settings_.effort;
+    if (!endpoint.isEmpty())
+        arguments << QStringLiteral("--endpoint") << endpoint << QStringLiteral("--style")
+                  << QStringLiteral("personal");
     start(id, generation, program_(QStringLiteral("python3")), arguments, line(bundle),
-          Stage::predict, [this, id, agent, context](const QJsonObject& answer) {
+          Stage::predict, [this, id, agent, context, arm, model](const QJsonObject& answer) {
               running_.remove(id);
-              offer(id, agent, context, answer);
+              offer(id, agent, context, answer, arm, model);
           });
 }
 
 void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject& context,
-                       const QJsonObject& answer) {
+                       const QJsonObject& answer, const QString& arm, const QString& model) {
     const auto candidates = answer.value(QStringLiteral("candidates")).toArray();
     const auto top = candidates.isEmpty() ? QJsonObject() : candidates.first().toObject();
     const auto text = top.value(QStringLiteral("text")).toString();
@@ -348,12 +409,15 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
                      context.value(QStringLiteral("conversation")).toString(),
                      context.value(QStringLiteral("turn")).toInt(),
                      0,
-                     last_reply(context)};
+                     last_reply(context),
+                     probability.toDouble()};
     auto event = about(made, id);
     event.insert(QStringLiteral("event"), QStringLiteral("predicted"));
     event.insert(QStringLiteral("machine"), agent.machine);
     event.insert(QStringLiteral("cli"), agent.cli);
-    event.insert(QStringLiteral("model"), settings_.model);
+    event.insert(QStringLiteral("model"), model);
+    event.insert(QStringLiteral("arm"), arm);
+    event.insert(QStringLiteral("attention"), answer.value(QStringLiteral("attention")));
     event.insert(QStringLiteral("category"), answer.value(QStringLiteral("category")));
     event.insert(QStringLiteral("candidates"), candidates);
     event.insert(QStringLiteral("top_scored"), top.value(QStringLiteral("scored")).toBool());
@@ -361,6 +425,7 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     event.insert(QStringLiteral("min_confidence"), settings_.minConfidence);
     event.insert(QStringLiteral("ms"), answer.value(QStringLiteral("ms")));
     record(event);
+    emit judged(id, answer.value(QStringLiteral("attention")).toString());
     if (!shown)
         return;
     offers_.insert(id, made);
@@ -389,6 +454,7 @@ void NextPrompt::failed(const QString& id, const Agent& agent, Stage stage, cons
             {QStringLiteral("stage"),
              stage == Stage::predict ? QStringLiteral("predict") : QStringLiteral("context")},
             {QStringLiteral("error"), reason}});
+    emit judged(id, {});
 }
 
 QVariantMap NextPrompt::readyAgents() const {

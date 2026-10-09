@@ -819,6 +819,12 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
                          if (item != nullptr)
                              next.turnFinished(item->sessionId());
                      });
+    // A guess held back as a repeat is made when the person shows the agent.
+    QObject::connect(&workspace, &lapis::desktop::Workspace::focusChanged, &next,
+                     [&next, &workspace] {
+                         if (const auto* item = workspace.focusedSession())
+                             next.focused(item->sessionId());
+                     });
     return &next;
 }
 
@@ -1054,6 +1060,20 @@ int main(int argc, char** argv) {
         QObject* const resetsForQml = keep_limit_resets(limitResets, workspace, keymap, isolated);
         std::optional<NextPrompt> nextPrompt;
         QObject* const nextForQml = keep_next_prompt(nextPrompt, workspace, keymap, isolated);
+        // Finished turns ping only when the guessing model judged they need
+        // the person (alerts.judge).
+        std::optional<lapis::desktop::PingJudge> pingJudge;
+        if (alerts || notifier) {
+            pingJudge.emplace(workspace, keymap);
+            pingJudge->setActive([&nextPrompt] { return nextPrompt && nextPrompt->enabled(); });
+            if (alerts)
+                alerts->judgeBy(*pingJudge);
+            if (notifier)
+                notifier->judgeBy(*pingJudge);
+            if (nextPrompt)
+                QObject::connect(&*nextPrompt, &NextPrompt::judged, &*pingJudge,
+                                 &lapis::desktop::PingJudge::verdict);
+        }
         std::optional<lapis::desktop::AgentStatePublisher> agentState;
         keep_agent_state(agentState, workspace, nextPrompt, isolated);
         std::optional<lapis::desktop::PlanSignIn> planSignIn;

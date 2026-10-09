@@ -32,8 +32,10 @@ class Observer final : public QObject {
     void receiveRelayed(const QJsonObject& source);
     void stop();
     // How long a turn that ended with background work in flight waits for
-    // that work's next turn before it counts as finished.
-    static constexpr int paused_turn_ms = 10 * 60 * 1000;
+    // that work's next turn before it counts as finished. An hour: at ten
+    // minutes, 40% of next-prompt guesses (Oct 3 to 9) went to agents still
+    // busy with that work, and only 31% of those were ever seen.
+    static constexpr int paused_turn_ms = 60 * 60 * 1000;
     void setPausedTurnMsForTesting(int ms);
   signals:
     // State changes immediately; notifications are coalesced on the event loop.

@@ -54,6 +54,38 @@ using AttentionLog = std::function<void(const QJsonObject&)>;
 // the log cannot be made private or the old file cannot move aside.
 [[nodiscard]] AttentionLog attention_log(const QString& path);
 
+// Holds each finished turn until the next-prompt model has judged it
+// ("needs", "steer" or "fyi", NextPrompt::judged), at most kWaitMs, then
+// passes it on with that judgement; empty when none came. A turn ending on an
+// open request needs the person and passes at once, as does every turn while
+// alerts.judge is off.
+class PingJudge final : public QObject {
+    Q_OBJECT
+  public:
+    static constexpr int kWaitMs = 25000;
+    PingJudge(Workspace& workspace, const KeyMap& config, QObject* parent = nullptr);
+    void verdict(const QString& id, const QString& attention);
+    void setWaitForTesting(int ms) { wait_ms_ = ms; }
+    // Whether a judgement will come at all (guessing is on); without one,
+    // turns pass at once rather than wait out kWaitMs.
+    void setActive(std::function<bool()> active) { active_ = std::move(active); }
+
+  signals:
+    void turnJudged(SessionPreview* item, const QString& attention);
+
+  private:
+    void hold(SessionPreview* item);
+    void release(const QString& id, const QString& attention);
+    struct Held {
+        QPointer<SessionPreview> item;
+        QPointer<QTimer> timer;
+    };
+    const KeyMap& config_;
+    QHash<QString, Held> held_;
+    int wait_ms_{kWaitMs};
+    std::function<bool()> active_;
+};
+
 // Production requests and completed turns share one finished cue. The legacy
 // explicit needsYou signal retains its repeat behavior for existing callers;
 // it is not re-enabled by custom sound files.
@@ -73,6 +105,9 @@ class Alerts final : public QObject {
     void setSeen(SeenScreens* seen) { seen_ = seen; }
     void setLog(AttentionLog log) { log_ = std::move(log); }
 
+    // Finished turns come judged from here instead: one judged "steer" or
+    // "fyi" stays quiet.
+    void judgeBy(PingJudge& judge);
     // Plays a chime now, for the settings' Play buttons.
     Q_INVOKABLE void preview(bool needsYou);
     struct Timing {
@@ -103,6 +138,7 @@ class Alerts final : public QObject {
     QTimer repeat_;
     QElapsedTimer last_;
     int quiet_ms_{kQuietMs};
+    QMetaObject::Connection finished_;
 };
 // A system notification when an agent needs you or finishes a turn while you
 // are not watching lapis: it is in the background, or you are away from the
@@ -131,6 +167,8 @@ class Notifier final : public QObject {
     // Without these the person always counts as present, so a reminder
     // falling due does not wait for them; it still follows remindAfter.
     void setPresence(Present present, Looking looking);
+    // Finished turns come judged from here instead (see Alerts::judgeBy).
+    void judgeBy(PingJudge& judge);
     struct Timing {
         int checkMs;
         qint64 remindMs;
@@ -159,6 +197,7 @@ class Notifier final : public QObject {
     std::vector<Waiting> waiting_;
     QTimer check_;
     std::optional<qint64> remind_ms_;
+    QMetaObject::Connection finished_;
 };
 } // namespace lapis::desktop
 #endif

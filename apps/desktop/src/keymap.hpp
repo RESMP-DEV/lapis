@@ -252,6 +252,9 @@ class KeyMap final : public QObject {
     // An agent still waiting this long after its finished turn
     // (alerts.remindAfter, in minutes; 0 for never) notifies once more.
     [[nodiscard]] int remindAfterMinutes() const { return remind_after_min_; }
+    // A finished turn chimes or notifies only when the next-prompt model
+    // judged that the agent needs the person (alerts.judge, on by default).
+    [[nodiscard]] bool judgePings() const { return judge_pings_; }
     [[nodiscard]] const QString& editor() const { return editor_; }
     [[nodiscard]] bool keepAwake() const { return keep_awake_; }
     [[nodiscard]] bool showUsage() const { return show_usage_; }
@@ -335,6 +338,7 @@ class KeyMap final : public QObject {
     bool notify_{true};
     int away_after_s_{kAwayAfterDefault};
     int remind_after_min_{kRemindAfterDefault};
+    bool judge_pings_{true};
     QString editor_;
     bool show_usage_{true};
     QStringList usage_meter_;

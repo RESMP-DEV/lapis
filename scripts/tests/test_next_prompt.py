@@ -486,6 +486,14 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(
             next_prompt.parse('{"category": "vibes"}')["category"], "other"
         )
+        self.assertEqual(
+            next_prompt.parse('{"attention": "needs", "candidates": []}')["attention"],
+            "needs",
+        )
+        self.assertEqual(
+            next_prompt.parse('{"attention": "URGENT", "candidates": []}')["attention"],
+            "",
+        )
         non_numeric = next_prompt.parse(
             '{"candidates":[{"text":"quoted","p":"0.9"},{"text":"boolean","p":true},'
             '{"text":"nan","p":NaN}]}'

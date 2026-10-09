@@ -30,6 +30,7 @@ NextPromptSettings on(int max_per_hour = 60, const QString& effort = {}) {
     settings.automatic = true;
     settings.maxPerHour = max_per_hour;
     settings.effort = effort;
+    settings.experimentShare = 0; // the chosen model every time
     return settings;
 }
 void require(bool condition, const char* message) {
@@ -448,6 +449,79 @@ void predictsAndOffers() {
 // What the person sent after an offer is recorded beside it once the
 // conversation holds it: typed in by Tab and changed, their own words, or the
 // guess unchanged. A turn the agent starts itself waits; /clear drops it.
+// A turn with no new prompt since an unseen guess is a repeat: nothing is
+// guessed until the agent is shown, and then once. The guess carries the
+// model's judgement and its probability; experiments pick another arm.
+void repeatsWaitUntilShown() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-next-XXXXXX"));
+    require(directory.isValid(), "fixture directory");
+    const QDir root(directory.path());
+    require(root.mkpath(QStringLiteral("bin")), "fixture bin");
+    standIns(root);
+    write(root.filePath(QStringLiteral("context.reply")),
+          R"({"conversation": "c1", "turn": 7, "turns": [{"role": "agent", "text": "Done."}]})");
+    write(root.filePath(QStringLiteral("predict.reply")),
+          R"({"attention": "fyi", "candidates": [{"text": "go", "p": 0.6}]})");
+    const auto log = root.filePath(QStringLiteral("logs/next_prompt.jsonl"));
+    NextPrompt next(
+        [](const QString&) -> std::optional<NextPrompt::Agent> {
+            return NextPrompt::Agent{{},
+                                     QStringLiteral("~/x"),
+                                     QStringLiteral("claude"),
+                                     QStringLiteral("c1"),
+                                     QStringLiteral("paste fix"),
+                                     QStringLiteral("lapis"),
+                                     {}};
+        },
+        [] { return QJsonArray{}; },
+        [&root](const QString& name) { return fixtureProgram(root, name); }, {root.path(), log});
+    next.setSettings(on());
+    QStringList judged;
+    QObject::connect(&next, &NextPrompt::judged,
+                     [&judged](const QString&, const QString& attention) { judged << attention; });
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] { return !next.suggestion(QStringLiteral("a")).isEmpty(); }) &&
+                judged == QStringList{QStringLiteral("fyi")} &&
+                next.confidence(QStringLiteral("a")) > 0.59,
+            "a guess, its judgement and its probability");
+    const auto skipped = [&] {
+        int count = 0;
+        for (const auto& event : events(log))
+            if (event.value(QStringLiteral("reason")) == QLatin1String("unseen_repeat"))
+                ++count;
+        return count;
+    };
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] { return skipped() == 1; }) &&
+                next.suggestion(QStringLiteral("a")).isEmpty(),
+            "an unseen repeat is not guessed");
+    next.focused(QStringLiteral("a"));
+    require(waitFor([&] { return !next.suggestion(QStringLiteral("a")).isEmpty(); }),
+            "shown, the agent gets its guess");
+    next.focused(QStringLiteral("a"));
+    QCoreApplication::processEvents();
+    int predicted = 0;
+    for (const auto& event : events(log))
+        if (event.value(QStringLiteral("event")) == QLatin1String("predicted"))
+            ++predicted;
+    require(predicted == 2, "once");
+
+    // Experiments: every guess from the other model, logged as its arm.
+    auto settings = on();
+    settings.experimentShare = 1;
+    settings.experimentModels = {QStringLiteral("claude-sonnet-5-5")};
+    next.setSettings(settings);
+    next.seen(QStringLiteral("a"));
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] {
+                const auto last = events(log).last();
+                return last.value(QStringLiteral("event")) == QLatin1String("predicted") &&
+                       last.value(QStringLiteral("arm")) == QLatin1String("model") &&
+                       last.value(QStringLiteral("model")) == QLatin1String("claude-sonnet-5-5");
+            }),
+            "an experiment's guess is logged with its arm and model");
+}
+
 void outcomesCompareWhatWasSent() {
     QTemporaryDir directory;
     const QDir root(directory.path());
@@ -475,6 +549,10 @@ void outcomesCompareWhatWasSent() {
         write(root.filePath(QStringLiteral("context.reply")), context);
         write(root.filePath(QStringLiteral("predict.reply")),
               R"({"candidates":[{"text":")" + guess + R"(","p":0.3}]})");
+        // Seen, so a turn without a new prompt is guessed again (an unseen
+        // repeat waits for the agent to be shown; repeatsWaitUntilShown).
+        if (!next.suggestion(QStringLiteral("a")).isEmpty())
+            next.seen(QStringLiteral("a"));
         next.turnFinished(QStringLiteral("a"));
         require(waitFor([&] {
                     return next.suggestion(QStringLiteral("a")) == QString::fromUtf8(guess);
@@ -613,6 +691,7 @@ int main(int argc, char** argv) {
         concurrentContextsRespectCap();
         missingProbabilityIsNotOffered();
         predictsAndOffers();
+        repeatsWaitUntilShown();
         outcomesCompareWhatWasSent();
     } catch (const std::exception& error) {
         std::cerr << "next_prompt_test: " << error.what() << '\n';

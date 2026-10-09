@@ -629,6 +629,7 @@ void KeyMap::apply_defaults() {
     notify_ = true;
     away_after_s_ = kAwayAfterDefault;
     remind_after_min_ = kRemindAfterDefault;
+    judge_pings_ = true;
     keep_awake_ = true;
     editor_.clear();
     show_usage_ = true;
@@ -827,6 +828,7 @@ void KeyMap::load_alerts(const QJsonObject& root) {
         std::clamp(alerts.value(QStringLiteral("awayAfter")).toInt(kAwayAfterDefault), 15, 3600);
     remind_after_min_ =
         std::clamp(alerts.value(QStringLiteral("remindAfter")).toInt(kRemindAfterDefault), 0, 1440);
+    judge_pings_ = alerts.value(QStringLiteral("judge")).toBool(true);
     // "~/" is the home folder and a relative path starts beside lapis.json.
     // File checks and reads belong to ChimeSounds' bounded background work.
     const auto sound_file = [this, &alerts](const QString& key) {

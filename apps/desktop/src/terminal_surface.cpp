@@ -475,7 +475,7 @@ namespace {
 // only under what is drawn.
 void add_suggestion(QSGNode& overlays, QQuickWindow& window,
                     const session::TerminalSnapshot& snapshot, const QFont& font,
-                    const QString& suggestion, qreal cell_width, qreal row_height) {
+                    const QString& suggestion, bool confident, qreal cell_width, qreal row_height) {
     const QFontMetricsF metrics(font);
     const auto layout = lay_out_suggestion(snapshot, metrics, suggestion);
     if (layout.shown.isEmpty())
@@ -496,7 +496,8 @@ void add_suggestion(QSGNode& overlays, QQuickWindow& window,
         node->addTextLayout(at, &text);
         overlays.appendChildNode(node.release());
     };
-    write(layout.shown, origin, 0.5);
+    // A guess the model is confident in reads nearly as text; others stay dim.
+    write(layout.shown, origin, confident ? 0.82 : 0.5);
     if (!layout.keys.isEmpty())
         write(layout.keys, origin + QPointF(metrics.horizontalAdvance(layout.shown), 0), 0.3);
 }
@@ -714,6 +715,7 @@ struct TerminalSurface::RenderState {
     std::optional<std::pair<QPoint, QPoint>> selection;
     std::vector<TerminalMatch> link;
     QString suggestion;
+    bool suggestion_confident{};
     QString session_id;
     QString offer_key;
 };
@@ -736,6 +738,7 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
     frame->preedit = preedit_;
     if (document_ && !document_->attentionPending()) {
         frame->suggestion = suggestion_;
+        frame->suggestion_confident = suggestion_confident_;
         frame->session_id = document_->sessionId();
         frame->offer_key = suggestion_key_;
     }
@@ -1046,8 +1049,8 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
         delete child;
     }
     if (!frame->suggestion.isEmpty() && frame->preedit.isEmpty())
-        add_suggestion(*root->overlays, *window(), snapshot, font, frame->suggestion, cell_width,
-                       row_height);
+        add_suggestion(*root->overlays, *window(), snapshot, font, frame->suggestion,
+                       frame->suggestion_confident, cell_width, row_height);
     add_cursor(*root->overlays, *window(), snapshot, font, cell_width, row_height);
     if (frame->selection)
         add_selection(*root->overlays, snapshot, frame->selection->first, frame->selection->second,
@@ -1617,6 +1620,14 @@ void TerminalSurface::setSuggestion(const QString& suggestion) {
     suggestion_ = suggestion;
     typed_while_offered_ = 0;
     emit suggestionChanged();
+    publishFrame(false);
+}
+
+void TerminalSurface::setSuggestionConfident(bool confident) {
+    if (suggestion_confident_ == confident)
+        return;
+    suggestion_confident_ = confident;
+    emit suggestionConfidentChanged();
     publishFrame(false);
 }
 

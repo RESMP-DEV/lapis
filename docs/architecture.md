@@ -1263,7 +1263,7 @@ with work in flight leaves the agent working, so no finished-turn chime or
 notification fires; the task's notification arrives as a new prompt (a
 `UserPromptSubmit` with a fresh `prompt_id`, observed live) and that turn's
 `Stop` with nothing in flight finishes it. Pausing retires that turn's notices.
-A paused turn with no new prompt within ten minutes (a server left running,
+A paused turn with no new prompt within an hour (a server left running,
 say) finishes then; duplicate Stop hooks never extend this deadline. Malformed
 background lists or unknown task statuses report schema unavailability and use
 the bounded pause fallback. When one optional list is present, the absent
