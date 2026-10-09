@@ -3915,7 +3915,8 @@ agent, and a `claude` typed in the side terminal, draws full screen; a remote
 Claude agent's command exports it unless that machine's login shell sets it.
 Grok gets `--fullscreen`, which overrides a minimal `screen_mode` in its
 config. Codex's TUI uses the alternate screen unless given `--no-alt-screen`,
-which lapis never passes, and OpenCode is always full screen. Kimi, OMP and
+which lapis never passes: full screen is the chosen mode, and lapis shows only
+whole frames of its repaints. OpenCode is always full screen. Kimi, OMP and
 Antigravity have no full-screen mode, so for them and every other CLI the
 stage's terminal grid is the launch size: a new agent, a restart and a start
 after a CLI update begin at the size the stage shows, with no resize after
@@ -4206,7 +4207,9 @@ to measure that threshold. The helper normalizes an unscored candidate to
 without a numeric probability, and the predicted event records `top_scored`.
 
 - **Where it runs.** `NextPrompt` follows `Workspace::turnFinished`, which covers
-  Codex and Claude turns and requests but not terminal agents' output pauses.
+  Codex and Claude turns and requests, including those of agents on another
+  machine ([remote turns](#turns-of-agents-on-another-machine-october-5)), but
+  not terminal agents' output pauses.
   `next_prompt.py context` reads the conversation where the agent runs (the
   CLI's transcript, by the conversation id lapis knows, else the newest
   interactive one in its folder), sent over ssh with the helper on stdin for
@@ -4317,6 +4320,92 @@ Claude Code 2.1.285 has its own prompt suggestions (on unless
 guess covers them but does not turn them off. Past transcripts do not record
 lapis's state, so the replay cannot measure what the other agents' state adds;
 the log can.
+
+### Turns of agents on another machine (October 5)
+
+An agent on another machine runs in terminal mode behind `ssh -t`, so neither
+the local Claude hook socket nor a lapis-owned Codex app-server reaches it. Its
+status was the output estimate, which never emits `turnFinished`, so remote
+agents had no finished-turn ping and no next-prompt guess. Three routes were
+weighed. Running a session service on the other machine means installing and
+qualifying a Linux service there. A Codex app-server there needs a forwarded
+endpoint and the pinned-binary qualification, which another machine's binary
+does not have. A reverse-forwarded Unix socket depends on the remote sshd
+allowing stream-local forwarding and leaves a socket file behind. The chosen
+route uses the channel lapis already owns: the agent's terminal.
+
+- **Sequences.** The remote login shell makes a 32-hex-digit nonce from
+  `/dev/urandom`, exports it with its terminal's device and lapis's relay
+  script, and prints `ESC ] 7717 ; lapis-init ; <cli> ; <nonce> BEL` before
+  starting the CLI. Each hook then writes `ESC ] 7717 ; lapis-event ; <nonce> ;
+  <base64 JSON> BEL` to that device. Claude Code 2.1.290 runs hooks without a
+  controlling terminal (observed on the Linux test host), so the relay writes
+  to the device the login shell recorded, not `/dev/tty`. The session service
+  enables `TerminalHookChannel` only for ssh-transport terminal launches. The
+  first init binds the nonce; later inits and events without it are ignored,
+  so displayed text cannot pose as a hook. Every lapis sequence is removed
+  before the terminal engine sees it, including one split across reads. A
+  legitimate relay frame is bounded below the 24 KiB sequence limit. An
+  unterminated candidate larger than that limit is quarantined without
+  discarding output that preceded it; only BEL or ST ends quarantine. If a
+  malformed candidate still has no terminator after 96 KiB, the parser emits a
+  one-line recovery notice and resumes filtering subsequent output.
+- **Nothing on the other machine.** The nonce is on no command line and in no
+  file. The relay goes in the environment; no file is written or left behind.
+  The relay sends only the existing relay identity fields (and, for Claude,
+  background task statuses and cron counts) and never prompts or tool input.
+  Cron objects are reduced to counts, so identities and schedules never cross
+  the terminal. It always exits 0 and prints nothing, so a missing `python3`, a hook
+  failure or an unwritable device changes only status, never a permission
+  decision. Status then stays estimated from output.
+- **Claude Code.** The launch passes the same nine hooks through `--settings`
+  (built by `claude::hook_settings`, shared with local launches). The service
+  creates a `claude::Observer` with the terminal transport on the first
+  authenticated event and gives it each event through `relay_event`, so the
+  background-work count is derived exactly as the local relay derives it. The
+  remote launch still names its conversation with `s=`; the observer records
+  no resume identity, so restore never appends resume options to ssh.
+- **Codex.** Codex hooks require per-hook trust, and a hook passed with `-c`
+  did not run in a probe of Codex 0.159.2. Its `notify` program does run (a
+  `codex exec` probe on the Linux test host wrote its `agent-turn-complete`
+  JSON to the terminal over ssh). The launch adds `-c notify=[...]` right
+  after the program; the relay forwards `type`, `thread-id` and `turn-id`, then
+  runs the user's own `notify` from `$CODEX_HOME/config.toml` when one is set;
+  preserving that setting uses `tomllib`, so it requires Python 3.11 there.
+  That executable path is user-owned configuration with the same trust as
+  Codex's own `notify`; writing `CODEX_HOME/config.toml` already controls a
+  command Codex can run, so lapis adds no superficial path allowlist.
+  `NotifyTurns` reports only finished turns. Submitted input (Return, or a
+  paste with Return) returns the activity to unknown. A second Return while
+  that prompt is still active marks its next completion as in flight and does
+  not apply it; the following completion resumes normal reporting. It does not
+  resynchronize after a stream it already reported; a fresh observation state
+  uses the next source epoch. A rejected first observation retries in the same
+  epoch. A profile-level or project-level `notify` is not chained.
+- **Desktop.** A remote agent keeps `StatusSource::output`. `estimated()` uses
+  the output estimate while no observer is synchronized or its activity is
+  unknown. Otherwise the observer's state applies. Since only an observer
+  reports `finished` for such an agent, `noteStatus` emits `turnFinished` on a
+  change to `finished` from working or quiet. A change from unknown or
+  connecting does not emit, so reattaching never pings. A Codex turn too
+  short to register as output activity right after connecting is therefore
+  not pinged.
+- **Saved agents.** A remote Claude Code or Codex agent saved before this
+  gains the hooks when it next starts (restart, reload or reconnect), as it
+  gains connection options. A running one keeps its old command until then.
+  Commands with `--settings`, `--bare`, `--safe-mode`, `--` or their own
+  `notify` are left alone.
+
+`lapis_workspace_tests --case remote-hooks` runs both CLIs as stand-ins behind
+a stand-in ssh that executes the command locally. Its hooks run without a
+controlling terminal, as Claude Code's do. `terminal-hooks` covers sequence
+parsing, read boundaries and nonce binding. On October 5 a disposable Claude
+Code 2.1.290 session on the Linux test host, run through this build's
+workspace, session service and `NextPrompt`, reported SessionStart about 1 s
+after launch. UserPromptSubmit set it working, and its Stop finished the turn
+and pinged. A guess was offered about 5 s later, and no sequence reached the
+screen. Codex's remote route has stand-in and `codex exec` evidence, not a live
+TUI turn through lapis.
 
 **One guess, not three (October 6).** Showing three guesses could collect more
 intent matches than one; that comparison stays an open option, deliberately not

@@ -4,9 +4,11 @@
 #include "attention_order.hpp"
 #include "conversation_index.hpp"
 #include "harness_catalog.hpp"
+#include "hook_relay.hpp"
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "platform/updater_process.hpp"
+#include "remote_hook_relay.hpp"
 #include "terminals.hpp"
 #include "workspace_control.hpp"
 
@@ -40,7 +42,11 @@
 
 namespace lapis::desktop {
 namespace {
-bool hasCodexUpdateSetting(const QStringList& arguments) {
+bool directCodexLaunch(const session::LaunchSpec& launch) {
+    return QFileInfo(launch.program).fileName() == QLatin1String("codex");
+}
+// A setting only before `--`; the rest are literal prompt words.
+bool hasCodexSetting(const QStringList& arguments, const char* key) {
     for (qsizetype index = 0; index < arguments.size(); ++index) {
         const auto& argument = arguments.at(index);
         if (argument == QLatin1String("--"))
@@ -53,11 +59,13 @@ bool hasCodexUpdateSetting(const QStringList& arguments) {
             setting = argument.sliced(9);
         else if (argument.startsWith(QLatin1String("-c")) && argument.size() > 2)
             setting = argument.sliced(2);
-        if (setting.section(QLatin1Char('='), 0, 0).trimmed() ==
-            QLatin1String("check_for_update_on_startup"))
+        if (setting.section(QLatin1Char('='), 0, 0).trimmed() == QLatin1String(key))
             return true;
     }
     return false;
+}
+bool hasCodexUpdateSetting(const QStringList& arguments) {
+    return hasCodexSetting(arguments, "check_for_update_on_startup");
 }
 // Returns true once the lock holder identifies itself as a helper, or false
 // if the lock becomes available before its marker is published.
@@ -323,6 +331,104 @@ QString savedAccount(const QJsonValue& value) {
     const auto text = value.toString();
     return name.match(text).hasMatch() ? text : QString();
 }
+// An agent on another machine reports its turns through its own terminal,
+// since lapis's hook socket and app-server are on this Mac (the session
+// service's terminal_hooks.hpp has the sequence format). Its login shell
+// makes a nonce that stays in the CLI's environment, prints the sequence that
+// binds it, and keeps lapis's relay and its terminal's device in the
+// environment too; Claude Code's hooks and Codex's notify program run that
+// relay with the machine's python3, which writes each event's bounded
+// metadata to that device. Claude Code runs hooks without a controlling
+// terminal, so /dev/tty would not reach it (observed with 2.1.290). Nothing is
+// written to that machine, and a missing python3 or a failing hook changes
+// nothing but the status, which then stays estimated from output.
+QString remoteHookPreamble(const QString& cli) {
+    return QStringLiteral(
+               R"sh(export LAPIS_HOOK_NONCE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" )sh"
+               R"sh(LAPIS_HOOK_TTY="$(tty)" )sh"
+               R"sh(LAPIS_HOOK_RELAY=%1; printf '\033]7717;lapis-init;%2;%s\007' "$LAPIS_HOOK_NONCE";)sh")
+        .arg(shellWord(QString::fromUtf8(kRemoteHookRelay)), cli);
+}
+// One past the shell word (plain, or single-quoted as shellWord writes it)
+// starting at `start`; the end of the text when it does not close.
+qsizetype shellWordEnd(const QString& text, qsizetype start) {
+    if (!text.mid(start).startsWith(QLatin1Char('\''))) {
+        const auto space = text.indexOf(QLatin1Char(' '), start);
+        return space < 0 ? text.size() : space;
+    }
+    auto end = start + 1;
+    while (end < text.size()) {
+        if (text.at(end) != QLatin1Char('\''))
+            ++end;
+        else if (text.mid(end, 4) == QStringLiteral(R"('\'')"))
+            end += 4;
+        else
+            return end + 1;
+    }
+    return text.size();
+}
+// The text of the shell word shellWord wrote.
+QString unquotedWord(QString word) {
+    if (!word.startsWith(QLatin1Char('\'')) || word.size() < 2 || !word.endsWith(QLatin1Char('\'')))
+        return word;
+    word = word.mid(1, word.size() - 2);
+    word.replace(QStringLiteral(R"('\'')"), QStringLiteral("'"));
+    return word;
+}
+// The words of a remote login shell's command (`<exports>; <cli> <args>`,
+// with a trailing space when the conversation id follows) with that
+// preamble, plus the hook settings (Claude Code) or notify program (Codex).
+// A command that has them, or whose arguments would conflict, is unchanged.
+QString withRemoteHooks(const QString& words, const QString& harness) {
+    if (words.contains(QStringLiteral("LAPIS_HOOK_NONCE")) ||
+        words.contains(QStringLiteral(" -- ")))
+        return words;
+    if (harness == QLatin1String("claude")) {
+        for (const auto* option : {"--settings", "--bare", "--safe-mode"})
+            if (words.contains(QLatin1String(option)))
+                return words;
+        const bool trailing = words.endsWith(QLatin1Char(' '));
+        const auto command =
+            QStringLiteral(R"(python3 -c "$LAPIS_HOOK_RELAY" claude 2>/dev/null || true)");
+        return remoteHookPreamble(harness) + QLatin1Char(' ') +
+               (trailing ? words.chopped(1) : words) + QStringLiteral(" --settings ") +
+               shellWord(QString::fromUtf8(claude::hook_settings(command))) +
+               (trailing ? QStringLiteral(" ") : QString());
+    }
+    if (harness == QLatin1String("codex")) {
+        if (words.contains(QStringLiteral("notify")))
+            return words;
+        // Codex takes -c before any subcommand: right after its program word.
+        const auto end = shellWordEnd(words, 0);
+        const auto notify = QStringLiteral(
+            R"(notify=["sh","-c","exec python3 -c \"$LAPIS_HOOK_RELAY\" codex \"$1\" 2>/dev/null","lapis"])");
+        return remoteHookPreamble(harness) + QLatin1Char(' ') + words.left(end) +
+               QStringLiteral(" -c ") + shellWord(notify) + words.mid(end);
+    }
+    return words;
+}
+// A saved remote Claude Code or Codex agent gains the hooks above when it
+// starts again, as it gains connection options: the login shell's command is
+// the shell word after `-lic `, single-quoted unless it is one plain word.
+void addRemoteHooks(session::LaunchSpec& launch, const QString& harness) {
+    const auto remote = remoteCommand(launch);
+    if (!remote)
+        return;
+    const auto& line = remote->second;
+    const QString lead = QStringLiteral("-lic ");
+    const auto start = line.indexOf(lead) + lead.size();
+    if (start < lead.size() || start >= line.size())
+        return;
+    const auto end = shellWordEnd(line, start);
+    const auto word = line.mid(start, end - start);
+    const auto words = unquotedWord(word);
+    if (shellWord(words) != word)
+        return; // not a word shellWord wrote
+    const auto hooked = withRemoteHooks(words, harness);
+    if (hooked == words)
+        return;
+    launch.arguments.last() = line.left(start) + shellWord(hooked) + line.mid(end);
+}
 // Options every agent's ssh starts with. Its own connection: one shared
 // through the user's ControlMaster ends with the ssh that opened it, so
 // closing one agent ended every other session to that machine. Keepalives end
@@ -373,7 +479,7 @@ QString remoteLaunch(const AgentRequest& request, const QString& command, QStrin
     const auto line =
         conversation.isEmpty()
             ? QStringLiteral(R"(cd %1 && exec "${SHELL:-/bin/sh}" -lic %2)")
-                  .arg(folder, shellWord(words.join(' ')))
+                  .arg(folder, shellWord(withRemoteHooks(words.join(' '), request.harness)))
             : QStringLiteral(
                   R"(cd %1 && s=%2 && p="[-]-(resume|session-id) $s" && o=--session-id && { )"
                   R"(pkill -HUP -f "$p"; n=0; )"
@@ -382,7 +488,9 @@ QString remoteLaunch(const AgentRequest& request, const QString& command, QStrin
                   R"(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" -maxdepth 2 -name "$s.jsonl" 2>/dev/null )"
                   R"(| grep -q . && o=--resume; )"
                   R"(exec "${SHELL:-/bin/sh}" -lic %3"$o $s"; })")
-                  .arg(folder, conversation, shellWord(words.join(' ') + QLatin1Char(' ')));
+                  .arg(folder, conversation,
+                       shellWord(
+                           withRemoteHooks(words.join(' ') + QLatin1Char(' '), request.harness)));
     launch = session::validate_launch(
         {ssh,
          remoteOptions() + QStringList{QStringLiteral("-t"), request.machine, line},
@@ -418,6 +526,22 @@ void addRemoteOptions(session::LaunchSpec& launch) {
     }
     launch.arguments = missing + launch.arguments;
     return;
+}
+// Keep restored direct Codex launches beside the catalog used by new ones.
+void applyCodexStartupDefault(session::LaunchSpec& launch, int& managed_resume_index) {
+    if (!directCodexLaunch(launch) || hasCodexUpdateSetting(launch.arguments))
+        return;
+    const auto* descriptor = find_harness(QLatin1String("codex"));
+    const auto missing = descriptor ? descriptor->defaultArguments() : QStringList();
+    if (missing.isEmpty())
+        return;
+    if (launch.arguments.size() + missing.size() > max_saved_arguments) {
+        qWarning() << "Codex startup setting not added: saved argument limit reached";
+        return;
+    }
+    launch.arguments = missing + launch.arguments;
+    if (managed_resume_index >= 0)
+        managed_resume_index += static_cast<int>(missing.size());
 }
 constexpr qint64 updater_output_tail_bytes = 8192;
 } // namespace
@@ -2284,16 +2408,8 @@ void Workspace::applyStartupDefaults(const Agent& agent, ResumeLaunch& plan) {
             qWarning() << "Grok fullscreen default not added: saved argument limit reached";
         }
     }
-    if (agent.harness == QLatin1String("codex") && !hasCodexUpdateSetting(plan.launch.arguments)) {
-        if (plan.launch.arguments.size() + 2 <= max_saved_arguments) {
-            const auto* descriptor = find_harness(agent.harness);
-            plan.launch.arguments = (descriptor ? descriptor->defaultArguments() : QStringList()) +
-                                    plan.launch.arguments;
-            if (plan.managed_resume_index >= 0)
-                plan.managed_resume_index += 2;
-        } else {
-            qWarning() << "Codex startup setting not added: saved argument limit reached";
-        }
+    if (agent.harness == QLatin1String("codex")) {
+        applyCodexStartupDefault(plan.launch, plan.managed_resume_index);
     }
 }
 
@@ -2308,6 +2424,7 @@ auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
             !QFileInfo(launch.program).isExecutable())
             launch.program = harness_program(harness->id);
         addRemoteOptions(launch);
+        addRemoteHooks(launch, agent.harness);
         if (launch.program.isEmpty() || !QFileInfo(launch.directory).isDir())
             return std::nullopt;
         const auto option = resumeOption(agent.harness);
@@ -2941,9 +3058,17 @@ void Workspace::noteStatus(SessionPreview* item) {
         return;
     const bool finished = previous == QStringLiteral("working") &&
                           (now == QStringLiteral("finished") || now == QStringLiteral("idle"));
-    if (finished && item->statusSource() != SessionPreview::StatusSource::output)
+    // Quiet output is not proof a turn ended. A finished turn the service
+    // observed is, even after an agent on another machine had gone quiet:
+    // only an observer reports "finished" for an output-estimated agent.
+    const bool observed =
+        item->statusSource() != SessionPreview::StatusSource::output
+            ? finished
+            : now == QStringLiteral("finished") &&
+                  (previous == QStringLiteral("working") || previous == QStringLiteral("idle"));
+    if (observed)
         emit turnFinished(item);
-    if (finished && item != focusedSession())
+    if ((finished || observed) && item != focusedSession())
         item->setUnseen(true);
 }
 SessionPreview::StatusSource Workspace::statusSource(const Agent& agent) {

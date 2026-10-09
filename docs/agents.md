@@ -55,7 +55,10 @@ start as top-level sessions: if lapis itself was opened from inside another
 agent's terminal, that agent's session markers (Claude Code's child-session and
 transcript flags, and Grok, OpenCode, OMP and Codex sandbox markers) are removed
 first. No approval settings or global hooks are changed; a Claude agent's hooks
-are passed to that one process by its service.
+are passed to that one process by its service. An agent on another machine
+gets its hooks (Claude Code) or notify program (Codex) on its command line, and
+reports its turns through its own terminal, so its finished turns ping and get
+suggestions as a local agent's do; that needs `python3` there.
 
 ## What lapis knows about an agent
 

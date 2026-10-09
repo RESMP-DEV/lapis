@@ -565,6 +565,40 @@ void privacy_bounds_and_transport() {
     f.raw("{}"); // Dead receiver cannot block or turn into an approval decision.
 }
 } // namespace
+// Hooks relayed through another machine's terminal: no local listener or
+// settings file, the same relay derivation (a claimed count is ignored and a
+// running task pauses the turn), and the same identity rules.
+void terminal_transport() {
+    attention::State state{"session", "claude-code"};
+    lapis::claude::Observer observer(state, lapis::claude::Observer::Transport::terminal);
+    bool refused = false;
+    try {
+        static_cast<void>(observer.launchArguments({}, QStringLiteral("/bin/true")));
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    require(refused);
+    observer.receiveRelayed(event("Stop")); // nothing bound yet
+    require(!state.ready());
+    observer.receiveRelayed(event("SessionStart"));
+    observer.receiveRelayed(event("UserPromptSubmit"));
+    require(state.ready() && state.activity() == attention::Activity::working);
+    auto stop = event("Stop");
+    stop.insert("in_flight", "0");
+    stop.insert("background_tasks", QJsonArray{QJsonObject{{"status", "running"}}});
+    observer.receiveRelayed(stop);
+    require(state.activity() == attention::Activity::working);
+    observer.receiveRelayed(event("UserPromptSubmit", {}, {}, "turn-2"));
+    auto last = event("Stop", {}, {}, "turn-2");
+    last.insert("background_tasks", QJsonArray{});
+    observer.receiveRelayed(last);
+    require(state.activity() == attention::Activity::turn_completed);
+    auto other = event("UserPromptSubmit", {}, {}, "turn-3");
+    other.insert("session_id", "another-source");
+    observer.receiveRelayed(other);
+    require(state.activity() == attention::Activity::turn_completed);
+    observer.stop();
+}
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     if (app.arguments().value(1) == QStringLiteral("--claude-hook"))
@@ -583,6 +617,7 @@ int main(int argc, char** argv) {
         session_replacement();
         background_work_pauses_the_turn();
         privacy_bounds_and_transport();
+        terminal_transport();
         std::cout << "Claude live relay, identity, retirement, bounds, privacy and deadline cases "
                      "passed\n";
         return 0;

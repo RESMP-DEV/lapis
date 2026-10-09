@@ -1982,8 +1982,10 @@ exec sleep 600
                                             "-o\nServerAliveCountMax=4\n-t\ndevbox\n")) &&
                 first.contains(QStringLiteral("cd ~/dev/far && s=")) &&
                 !conversation(first).isEmpty() &&
+                first.contains(QStringLiteral(R"(-lic 'export LAPIS_HOOK_NONCE=)")) &&
                 first.contains(QStringLiteral(
-                    R"(-lic 'export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}"; claude --permission-mode bypassPermissions '"$o $s")")),
+                    R"(export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}"; claude --permission-mode bypassPermissions --settings )")) &&
+                first.contains(QStringLiteral(R"(}'\'' '"$o $s")")),
             "ssh has its own connection, kept alive, and names the conversation; with no mode "
             "asked for, Claude Code starts in Full access, as the forms default, not auto mode");
         require(workspace.agentPlace(id).value(QStringLiteral("place")) ==
@@ -2082,6 +2084,162 @@ exec sleep 600
         require(calls(QStringLiteral("typo")) == 1, "a connection that never worked stays ended");
         // The unreachable one is abandoned; the others end.
         for (const auto& closing : {older_id, id, split, typo->sessionId()})
+            require(workspace.closeSession(closing, true), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agents close");
+    }
+    qputenv("PATH", path);
+}
+
+// An agent on another machine reports its turns through its own terminal.
+// A stand-in ssh runs the command it is given here, as that machine would,
+// in a stand-in login shell with a fixture home; stand-in CLIs run the hooks
+// (Claude Code) and notify program (Codex) from their command lines. Each
+// finished turn pings as a local agent's does, the sequences never reach the
+// screen, and a remote agent saved before the hooks gains them on restart.
+void remoteAgentsReportTurnsThroughTheirTerminal() {
+    using lapis::desktop::SessionPreview;
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-remote-hooks-XXXXXX"));
+    require(directory.isValid(), "remote hooks directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    require(root.mkpath(QStringLiteral("home")), "a home on the other machine");
+    writeExecutable(root.filePath(QStringLiteral("bin/ssh")), R"(#!/bin/sh
+for last; do :; done
+d=$(cd "$(dirname "$0")/.." && pwd)
+export HOME="$d/home" SHELL="$d/bin/login-shell"
+cd "$HOME" && exec /bin/sh -c "$last"
+)");
+    // Its login shell keeps this PATH, where a real one would read profiles.
+    writeExecutable(root.filePath(QStringLiteral("bin/login-shell")),
+                    R"(#!/bin/sh
+[ "$1" = -lic ] && exec /bin/sh -c "$2"
+exit 64
+)");
+    writeExecutable(root.filePath(QStringLiteral("bin/claude")), R"(#!/usr/bin/env python3
+import json, subprocess, sys
+args = sys.argv[1:]
+hooks = json.loads(args[args.index("--settings") + 1])["hooks"]
+session = args[args.index("--session-id") + 1] if "--session-id" in args else "restored"
+def fire(event, **fields):
+    payload = dict(hook_event_name=event, session_id=session, **fields)
+    for group in hooks[event]:
+        for hook in group["hooks"]:
+            # As Claude Code does: no controlling terminal, so no /dev/tty.
+            subprocess.run(["sh", "-c", hook["command"]], input=json.dumps(payload).encode(),
+                           start_new_session=True)
+fire("SessionStart", source="startup")
+print("claude ready", flush=True)
+for n, line in enumerate(sys.stdin, 1):
+    fire("UserPromptSubmit", prompt_id=f"p{n}", prompt=line.strip())
+    print("thinking", flush=True)
+    fire("Stop", prompt_id=f"p{n}", background_tasks=[], session_crons=[])
+    print("turn done", flush=True)
+)");
+    writeExecutable(root.filePath(QStringLiteral("bin/codex")), R"(#!/usr/bin/env python3
+import json, subprocess, sys, time
+args = sys.argv[1:]
+notify = next(json.loads(a.split("=", 1)[1]) for a in args if a.startswith("notify="))
+print("codex ready", flush=True)
+for n, line in enumerate(sys.stdin, 1):
+    for i in range(30):
+        print(f"working {i}", flush=True)
+        time.sleep(0.05)
+    done = {"type": "agent-turn-complete", "turn-id": f"t{n}", "input-messages": [line]}
+    subprocess.run(notify + [json.dumps(done)], start_new_session=True)
+    print("turn done", flush=True)
+)");
+    QFile config(root.filePath(QStringLiteral("ssh_config")));
+    require(config.open(QIODevice::WriteOnly), "write an ssh config");
+    config.write("Host devbox\n");
+    config.close();
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    options.restoreAgents = true;
+    // Saved before remote agents carried hooks.
+    const auto older_id = QStringLiteral("5a1d0000-0000-4000-8000-000000000002");
+    auto older = agentRecord(root.path(), older_id, "general");
+    older.insert(QStringLiteral("title"), QStringLiteral("older"));
+    older.insert(QStringLiteral("program"), root.filePath(QStringLiteral("bin/ssh")));
+    older.insert(QStringLiteral("directory"), QDir::homePath());
+    older.insert(QStringLiteral("harness"), QStringLiteral("claude"));
+    older.insert(
+        QStringLiteral("arguments"),
+        QJsonArray{
+            "-o", "ControlPath=none", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4",
+            "-t", "devbox",
+            R"(cd ~ && exec "${SHELL:-/bin/sh}" -lic 'claude --permission-mode bypassPermissions')"});
+    writeRegistry(options.storagePath,
+                  QJsonObject{{"version", 2},
+                              {"activeCategory", "general"},
+                              {"categories", QJsonArray{QJsonObject{{"id", "general"},
+                                                                    {"name", "General"},
+                                                                    {"selected", older_id}}}},
+                              {"agents", QJsonArray{older}}});
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        workspace.setSshConfigForTesting(config.fileName());
+        QHash<QString, int> pings;
+        QObject::connect(&workspace, &Workspace::turnFinished,
+                         [&pings](SessionPreview* item) { ++pings[item->sessionId()]; });
+        const auto shows = [](SessionPreview* item, const QString& text) {
+            return screenText(item->snapshot()).contains(text);
+        };
+        const auto clean = [](SessionPreview* item) {
+            const auto text = screenText(item->snapshot());
+            return !text.contains(QStringLiteral("7717")) &&
+                   !text.contains(QStringLiteral("lapis-"));
+        };
+        auto* restored = workspace.session(older_id);
+        require(restored != nullptr &&
+                    waitFor([&] { return shows(restored, QStringLiteral("claude ready")); }, 15000),
+                "a saved remote Claude Code agent starts with the hooks it lacked");
+        require(workspace.createAgent(QStringLiteral("~"), QStringLiteral("far claude"),
+                                      QStringLiteral("claude"), {}, {}, QStringLiteral("devbox")),
+                "a Claude Code agent on another machine");
+        auto* claude = workspace.focusedSession();
+        require(claude != nullptr, "the remote Claude Code agent is shown");
+        require(claude != restored &&
+                    claude->statusSource() == SessionPreview::StatusSource::output,
+                "it starts from the output estimate");
+        require(waitFor(
+                    [&] {
+                        return claude->inputReady() &&
+                               shows(claude, QStringLiteral("claude ready"));
+                    },
+                    15000),
+                "the remote Claude Code stand-in starts");
+        for (int turn = 1; turn <= 2; ++turn) {
+            require(claude->sendText("next prompt\r"), "type a prompt");
+            require(waitFor([&] { return pings.value(claude->sessionId()) == turn; }, 15000) &&
+                        claude->statusKind() == QStringLiteral("finished"),
+                    "each Stop hook from the other machine finishes its turn and pings once");
+        }
+        require(clean(claude) && shows(claude, QStringLiteral("turn done")),
+                "hook sequences never reach the screen");
+        require(restored->sendText("hello\r") &&
+                    waitFor([&] { return pings.value(older_id) == 1; }, 15000),
+                "the restored agent's hooks reach lapis too");
+        require(workspace.createAgent(QStringLiteral("~"), QStringLiteral("far codex"),
+                                      QStringLiteral("codex"), {}, {}, QStringLiteral("devbox")),
+                "a Codex agent on another machine");
+        auto* codex = workspace.focusedSession();
+        require(codex != nullptr, "the Codex agent is shown");
+        require(codex != claude && codex != restored, "the Codex agent is distinct");
+        codex->setOutputTimingForTesting({.settle_ms = 0, .burst_ms = 1500, .quiet_ms = 4000});
+        require(
+            waitFor(
+                [&] { return codex->inputReady() && shows(codex, QStringLiteral("codex ready")); },
+                15000),
+            "the remote Codex stand-in starts");
+        for (int turn = 1; turn <= 2; ++turn) {
+            require(codex->sendText("next prompt\r"), "type a Codex prompt");
+            require(waitFor([&] { return pings.value(codex->sessionId()) == turn; }, 15000) &&
+                        codex->statusKind() == QStringLiteral("finished"),
+                    "Codex's notify program finishes each turn once; a prompt starts the next");
+        }
+        require(clean(codex), "notify sequences never reach the screen");
+        for (const auto& closing : {older_id, claude->sessionId(), codex->sessionId()})
             require(workspace.closeSession(closing, true), "close the stand-in agents");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "the stand-in agents close");
@@ -5606,6 +5764,12 @@ QJsonObject resumeArgumentsRecord(const ResumeArgumentsFixture& fixture,
         throw std::runtime_error("a managed retirement fixture must use a terminal checkpoint");
     auto record = agentRecord(fixture.root, id, "general");
     record.insert(QStringLiteral("harness"), variant.harness);
+    if (variant.harness == QLatin1String("codex")) {
+        writeExecutable(QDir(fixture.root).filePath(QStringLiteral("codex")),
+                        "#!/usr/bin/env bash\nexit 0\n");
+        record.insert(QStringLiteral("program"),
+                      QDir(fixture.root).filePath(QStringLiteral("codex")));
+    }
     QJsonArray user_arguments = variant.config_arguments;
     user_arguments.append("--user");
     if (variant.explicit_resume) {
@@ -5648,16 +5812,28 @@ bool followsObserverResume(const ResumeArgumentsCase& variant) {
 QJsonArray expectedResumeArguments(const ResumeArgumentsCase& variant,
                                    const QJsonArray& base_arguments,
                                    const QJsonArray& user_arguments, const QString& id) {
-    QJsonArray expected;
-    if (variant.add_update_setting)
-        expected = {"-c", "check_for_update_on_startup=false"};
-    const auto retained = variant.managed_pair ? base_arguments : QJsonArray(user_arguments);
-    for (const auto& argument : retained)
-        expected.append(argument);
-    if (followsObserverResume(variant)) {
-        expected.append("resume");
-        expected.append(id);
+    const auto retained =
+        variant.managed_pair ? QJsonArray(base_arguments) : QJsonArray(user_arguments);
+    QJsonArray plan = retained;
+    if (followsObserverResume(variant) && plan.size() + 2 <= 64) {
+        plan.append(QStringLiteral("resume"));
+        plan.append(id);
     }
+    // A direct Codex launch takes the startup default the workspace applies: no
+    // update check, prepended, and dropped rather than truncated once the saved
+    // argument limit is hit. Its screen stays full screen.
+    QJsonArray missing;
+    if (variant.harness == QLatin1String("codex")) {
+        if (variant.add_update_setting) {
+            missing.append(QStringLiteral("-c"));
+            missing.append(QStringLiteral("check_for_update_on_startup=false"));
+        }
+    }
+    if (missing.isEmpty() || plan.size() + missing.size() > 64)
+        return plan; // The launch is already at the saved argument limit.
+    QJsonArray expected = missing;
+    for (const auto& value : plan)
+        expected.append(value);
     return expected;
 }
 
@@ -5669,7 +5845,7 @@ void requireRestoredResumeArguments(const ResumeArgumentsCase& variant,
     const auto actual = restored_agent.value(QStringLiteral("arguments")).toArray();
     if (followsObserverResume(variant)) {
         const auto managed = restored_agent.value(QStringLiteral("managedResume")).toObject();
-        require(managed.value(QStringLiteral("index")).toInt(-1) == 3 &&
+        require(managed.value(QStringLiteral("index")).toInt(-1) == expected.size() - 2 &&
                     managed.value(QStringLiteral("identity")).toString() == id,
                 "Codex startup defaults shift managed provenance to the resume pair");
     }
@@ -5791,6 +5967,75 @@ void savedGrokDefaultsPreserveLaunchOwnership() {
                                 .toObject()[QStringLiteral("index")]
                                 .toInt(-1) == 3,
                         "the owned resume pair shifts exactly once with the default");
+        }
+    }
+}
+
+// Saved Codex launches gain the update setting once at restart, before any
+// owned resume pair, unless the person chose it; lapis never picks the screen
+// mode, so a screen setting of the person's own stays as written.
+void savedCodexDefaultsKeepTheScreenMode() {
+    struct Case {
+        QStringList arguments;
+        QStringList expected;
+        bool managed{};
+        QString program{QStringLiteral("codex")};
+    };
+    const QString update = QStringLiteral("check_for_update_on_startup=false");
+    const std::vector<Case> cases{
+        {{}, {"-c", update}},
+        {{"-c", update}, {"-c", update}},
+        {{"--no-alt-screen"}, {"-c", update, "--no-alt-screen"}},
+        {{"-c", "tui.alt_screen=\"always\"", "-c", update},
+         {"-c", "tui.alt_screen=\"always\"", "-c", update}},
+        {{"--", "--no-alt-screen"}, {"-c", update, "--", "--no-alt-screen"}},
+        {{"resume", "conversation"}, {"-c", update, "resume", "conversation"}, true},
+        {{"-o", "ControlPath=none", "-t", "fixture", "codex"},
+         {"-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4", "-o", "ControlPath=none",
+          "-t", "fixture", "codex"},
+         false,
+         QStringLiteral("ssh")},
+    };
+    for (const auto& variant : cases) {
+        QTemporaryDir directory(QStringLiteral("/tmp/lapis-codex-defaults-XXXXXX"));
+        require(directory.isValid(), "Codex defaults directory");
+        const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+        const auto id = uuid();
+        auto record = agentRecord(root.path(), id, "general");
+        const auto program = root.filePath(variant.program);
+        writeExecutable(program, "#!/usr/bin/env bash\nexit 0\n");
+        record.insert(QStringLiteral("program"), program);
+        record.insert(QStringLiteral("harness"), QStringLiteral("codex"));
+        record.insert(QStringLiteral("arguments"), QJsonArray::fromStringList(variant.arguments));
+        if (variant.managed)
+            record.insert(QStringLiteral("managedResume"),
+                          QJsonObject{{"index", 0}, {"identity", "conversation"}});
+        WorkspaceOptions options;
+        options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+        options.restoreAgents = true;
+        writeRegistry(
+            options.storagePath,
+            {{"version", 2},
+             {"activeCategory", "general"},
+             {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+             {"agents", QJsonArray{record}}});
+        for (int pass = 0; pass < 2; ++pass) {
+            Workspace workspace(WorkspaceMode::live, options);
+            require(workspace.workspaceError().isEmpty(), "restore saved Codex launch");
+            const auto saved = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                   .object()[QStringLiteral("agents")]
+                                   .toArray()
+                                   .first()
+                                   .toObject();
+            const auto expected = variant.expected;
+            require(saved[QStringLiteral("arguments")].toArray() ==
+                        QJsonArray::fromStringList(expected),
+                    "Codex defaults are direct-local once, keeping explicit screen choices");
+            if (variant.managed)
+                require(saved[QStringLiteral("managedResume")]
+                                .toObject()[QStringLiteral("index")]
+                                .toInt(-1) == 2,
+                        "the owned resume pair shifts exactly once with the defaults");
         }
     }
 }
@@ -6061,6 +6306,7 @@ int main(int argc, char** argv) {
                     (QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("accounts") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-accounts") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-hooks") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-account-reset") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("launch-policy") ||
@@ -6069,7 +6315,7 @@ int main(int argc, char** argv) {
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("updates-off") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes")),
                 "Usage: lapis_workspace_tests [--case "
-                "remote-options|accounts|remote-account-reset|reload|updater|"
+                "remote-options|remote-hooks|accounts|remote-account-reset|reload|updater|"
                 "updates-off|startup-defaults|launch-policy|chimes]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("accounts")) {
@@ -6082,8 +6328,11 @@ int main(int argc, char** argv) {
             } else if (selected == QStringLiteral("remote-options")) {
                 remoteOptionsRespectTheArgumentLimit();
                 remoteClaudeReconnectsToItsConversation();
+            } else if (selected == QStringLiteral("remote-hooks")) {
+                remoteAgentsReportTurnsThroughTheirTerminal();
             } else if (selected == QStringLiteral("startup-defaults")) {
                 savedGrokDefaultsPreserveLaunchOwnership();
+                savedCodexDefaultsKeepTheScreenMode();
             } else if (selected == QStringLiteral("launch-policy")) {
                 modelessAgentsGetTheDefaultMode();
                 resumingAConversationStartsItsCli();
@@ -6166,6 +6415,7 @@ int main(int argc, char** argv) {
         phoneStartsAnAgentInItsCategory();
         remoteOptionsRespectTheArgumentLimit();
         remoteClaudeReconnectsToItsConversation();
+        remoteAgentsReportTurnsThroughTheirTerminal();
         reloadStartsAgentsAgain();
         incompleteCodexHomeNeverStartsAnAgent();
         plansFollowTheirLoad();
