@@ -931,8 +931,13 @@ Item {
         ]
         ParallelAnimation {
             id: leave
-            // Off quickly, so the next card is never hidden for long.
-            NumberAnimation { target: ghostShift; property: "x"; from: 0; to: ghost.direction * 260; duration: root.motion + 20; easing.type: Easing.OutQuad }
+            // Off quickly, so the next card is never hidden for long. The
+            // copy is drawn in this window, so it can only travel as far as
+            // the room past the panel's edge on its side: farther would be
+            // clipped, not leaving.
+            property real room: ghost.direction < 0 ? panel.x
+                                                    : root.width - panel.x - panel.width
+            NumberAnimation { target: ghostShift; property: "x"; from: 0; to: ghost.direction * Math.max(8, leave.room - 8); duration: root.motion + 20; easing.type: Easing.OutQuad }
             NumberAnimation { target: ghostShift; property: "y"; from: 0; to: -8; duration: root.motion + 20; easing.type: Easing.OutCubic }
             NumberAnimation { target: ghostTurn; property: "angle"; from: 0; to: ghost.direction * 5; duration: root.motion + 20; easing.type: Easing.OutQuad }
             NumberAnimation { target: ghostSize; properties: "xScale,yScale"; from: 1; to: 0.94; duration: root.motion + 20; easing.type: Easing.OutQuad }

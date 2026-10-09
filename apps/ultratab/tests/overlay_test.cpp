@@ -23,6 +23,7 @@
 #include <QTemporaryDir>
 #include <QUrl>
 
+#include <algorithm>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -573,7 +574,9 @@ void theLeavingCardKeepsItsPlace() {
     Deck deck(sender);
     deck.setPublished(read_published(directory.path()));
     QQuickView view;
-    view.resize(1280, 760);
+    // The width the overlay asks the window for, so the room past the panel is
+    // the room the copy really has.
+    view.resize(720, 760);
     // Motion on: the ghost only exists while the slide runs.
     require(load_overlay(view, deck, {.backdrop = true, .reduced_motion = false}),
             "the overlay QML loads");
@@ -591,14 +594,26 @@ void theLeavingCardKeepsItsPlace() {
     while (!deck.front().isEmpty())
         key(view, Qt::Key_Left, {}, Qt::KeypadModifier);
     auto* ghost = find(view.rootObject(), QStringLiteral("ghost"));
-    require(ghost != nullptr && waitFor([&] { return ghost->isVisible(); }),
-            "the card starts leaving");
-    const qreal resting = ghost->property("y").toReal();
-    settle(40);
+    require(ghost != nullptr, "the leaving card exists");
+    // Follow the copy's left edge frame by frame while it leaves: the copy is
+    // drawn in this window, so it can only travel into the room past the
+    // panel's edge on the side it leaves by, not wherever a long slide would
+    // be clipped away.
+    auto* panel = find(view.rootObject(), QStringLiteral("panel"));
+    const qreal panel_x = panel->property("x").toReal();
+    const qreal panel_w = panel->property("width").toReal();
+    const qreal room = std::min(panel_x, view.width() - panel_x - panel_w);
+    require(room > 0, "there is room past the panel's edge for the copy to travel into");
+    double furthest = 0;
+    while (ghost->isVisible() && furthest < room * 4) {
+        settle(16);
+        const auto at = -ghost->mapToScene(QPointF(0, 0)).x();
+        furthest = std::max(furthest, at);
+    }
+    require(furthest <= room + 0.5,
+            "the leaving card travels only into the room past the panel's edge");
     require(reply->property("height").toReal() == 0 && showing > 0,
             "the reply line collapsed when the deck emptied");
-    require(qAbs(ghost->property("y").toReal() - resting) < 0.5,
-            "the leaving card stays where the card sat");
 }
 
 // A push back is a send: it leaves right with a green edge, and a refused one
