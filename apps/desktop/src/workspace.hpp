@@ -673,14 +673,13 @@ class Workspace final : public QObject {
     // the layout it started from, its order, the tile showing untiled agents,
     // and the stage it left. Any other change to the stage starts a new walk.
     struct TileWalk {
-        QString category;
         TileLayout home;
         QStringList order;
         QString slot;
         QJsonObject shown;
         QString selected;
     };
-    std::optional<TileWalk> tile_walk_;
+    QHash<QString, TileWalk> tile_walks_;
     QString insertCategory(const QString& name, bool select);
     // Starts an agent from a finished launch; the rest of startAgent. A
     // managed resume plan is committed in the same registry save as the

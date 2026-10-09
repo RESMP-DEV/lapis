@@ -620,20 +620,19 @@ void Workspace::nextSession(int delta) {
     // moved away leaves the walk: its starting layout would put that agent back
     // on the stage, and `untile` cannot see a tile the walk displaced.
     const auto in_strip = [&strip](const QString& id) { return strip.contains(id); };
-    const auto home_tiles = tile_walk_ ? tile_walk_->home.sessions() : QStringList{};
-    const bool continues = tile_walk_ && tile_walk_->category == place->id &&
-                           tile_walk_->selected == current &&
-                           tile_walk_->shown == place->tiles.toJson() &&
-                           tile_walk_->home.cycleOrder(strip) == tile_walk_->order &&
+    const auto existing = tile_walks_.constFind(place->id);
+    const auto home_tiles =
+        existing != tile_walks_.cend() ? existing->home.sessions() : QStringList{};
+    const bool continues = existing != tile_walks_.cend() && existing->selected == current &&
+                           existing->shown == place->tiles.toJson() &&
+                           existing->home.cycleOrder(strip) == existing->order &&
                            std::all_of(home_tiles.cbegin(), home_tiles.cend(), in_strip);
-    if (!continues)
-        tile_walk_ = TileWalk{.category = place->id,
-                              .home = place->tiles,
-                              .order = place->tiles.cycleOrder(strip),
-                              .slot = {},
-                              .shown = place->tiles.toJson(),
-                              .selected = current};
-    auto& walk = tile_walk_.value();
+    const TileWalk candidate{.home = place->tiles,
+                             .order = place->tiles.cycleOrder(strip),
+                             .slot = {},
+                             .shown = place->tiles.toJson(),
+                             .selected = current};
+    const TileWalk& walk = continues ? existing.value() : candidate;
     const auto step = TileLayout::step(walk.home, walk.order, walk.slot, current, delta);
     if (step.selected.isEmpty() || step.selected == current || !mutableRegistry())
         return;
@@ -643,9 +642,14 @@ void Workspace::nextSession(int delta) {
     place->selected = step.selected;
     if (!commit(previous))
         return;
-    walk.slot = step.slot;
-    walk.shown = place->tiles.toJson();
-    walk.selected = step.selected;
+    if (!continues)
+        tile_walks_.insert(place->id, candidate);
+    auto saved_walk = tile_walks_.find(place->id);
+    if (saved_walk == tile_walks_.end())
+        return;
+    saved_walk->slot = step.slot;
+    saved_walk->shown = place->tiles.toJson();
+    saved_walk->selected = step.selected;
     if (retiled)
         emit tilesChanged();
     emit focusChanged();
@@ -965,6 +969,7 @@ bool Workspace::removeCategory(const QString& id) {
         active_category_ = categories_.front().id;
     if (!commit(previous))
         return false;
+    tile_walks_.remove(id);
     changed();
     return true;
 }

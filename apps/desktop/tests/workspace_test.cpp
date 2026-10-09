@@ -1062,6 +1062,76 @@ void tileWalkDropsDisplacedAgentsThatLeave() {
             "moving a displaced agent never saves its stale tile");
 }
 
+// A walk belongs to its category. A no-op or real step elsewhere must not
+// replace the saved home layout that lets the original walk restore its tiles.
+void tileWalkSurvivesAnotherCategory() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "cross-category walk directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const QString left = uuid();
+    const QString right = uuid();
+    const QString untiled = uuid();
+    const QString alone = uuid();
+    const QString first_away = uuid();
+    const QString second_away = uuid();
+    const auto agent = [&](const QString& id, const char* category) {
+        return agentRecord(root.path(), id, category);
+    };
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{
+            {"version", 2},
+            {"activeCategory", "work"},
+            {"categories",
+             QJsonArray{QJsonObject{
+                            {"id", "work"},
+                            {"name", "Work"},
+                            {"selected", right},
+                            {"tiles",
+                             QJsonObject{{"stacked", false},
+                                         {"ratio", 0.5},
+                                         {"children", QJsonArray{QJsonObject{{"agent", left}},
+                                                                 QJsonObject{{"agent", right}}}}}}},
+                        QJsonObject{{"id", "solo"}, {"name", "Solo"}, {"selected", alone}},
+                        QJsonObject{{"id", "away"}, {"name", "Away"}, {"selected", first_away}}}},
+            {"agents", QJsonArray{agent(left, "work"), agent(right, "work"), agent(untiled, "work"),
+                                  agent(alone, "solo"), agent(first_away, "away"),
+                                  agent(second_away, "away")}}});
+    Workspace workspace(WorkspaceMode::live, options);
+    const auto stage = [](const Workspace& item) {
+        QStringList result;
+        for (const auto& tile : item.stageTiles())
+            result.append(tile.toMap().value(QStringLiteral("sessionId")).toString());
+        return result;
+    };
+    require(workspace.workspaceError().isEmpty(), "load the cross-category walk registry");
+    workspace.nextSession(1);
+    require(stage(workspace) == QStringList{left, untiled} &&
+                workspace.focusedSession() == workspace.session(untiled),
+            "the original walk displaces a home tile");
+
+    require(workspace.selectCategory(QStringLiteral("solo")), "visit a one-agent category");
+    workspace.nextSession(1);
+    require(workspace.focusedSession() == workspace.session(alone),
+            "a one-agent category's next key is a no-op");
+    require(workspace.selectCategory(QStringLiteral("away")), "visit a two-agent category");
+    workspace.nextSession(1);
+    require(workspace.focusedSession() == workspace.session(second_away),
+            "another category can take a real step");
+
+    require(workspace.selectCategory(QStringLiteral("work")), "return to the original walk");
+    require(workspace.focusedSession() == workspace.session(untiled) &&
+                stage(workspace) == QStringList{left, untiled},
+            "returning preserves the original walk's shown stage");
+    workspace.nextSession(1);
+    require(workspace.focusedSession() == workspace.session(left),
+            "the original walk restores its selected home tile");
+    require(stage(workspace) == QStringList{left, right},
+            "the original walk restores its saved home tiles");
+}
+
 void unknownRegistryVersionsAreRejected() {
     QTemporaryDir directory;
     require(directory.isValid(), "version directory");
@@ -5707,6 +5777,7 @@ int main(int argc, char** argv) {
         agentArgumentsPersist();
         directTileSelectionNormalizesAStaleTarget();
         tileWalkDropsDisplacedAgentsThatLeave();
+        tileWalkSurvivesAnotherCategory();
         outputEstimate();
         agentsStartWithoutParentSessionMarkers();
         restartRefusesClosingAgent();
