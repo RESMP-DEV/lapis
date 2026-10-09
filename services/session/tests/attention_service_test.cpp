@@ -28,6 +28,9 @@ class AttentionServiceTestAccess final {
 
     static void use_client(SessionService& service, QLocalSocket* client) {
         service.client_ = client;
+        service.ready_ = true;
+        service.snapshot_in_flight_ = false;
+        service.dirty_ = true;
         wire::Attachment attachment;
         attachment.identity.session_id = QByteArray(16, 's');
         attachment.identity.epoch = QByteArray(16, 'e');
@@ -56,6 +59,29 @@ class AttentionServiceTestAccess final {
 
     [[nodiscard]] static quint64 pty_read_ns(const SessionService& service) {
         return service.timing_.pty_read_ns;
+    }
+
+    [[nodiscard]] static qsizetype sync_limit(const QByteArray& output) {
+        return SessionService::synchronized_output_limit(output);
+    }
+
+    static void feed_output(SessionService& service, const QByteArray& output) {
+        service.pending_output_ = output;
+        service.process_output();
+    }
+
+    [[nodiscard]] static bool in_sync(const SessionService& service) { return service.in_sync_; }
+
+    static void defer_next_snapshot(SessionService& service) {
+        service.snapshot_pace_.published(service.snapshot_clock_.elapsed());
+    }
+
+    [[nodiscard]] static bool publish_timer_active(const SessionService& service) {
+        return service.timer_.isActive();
+    }
+
+    [[nodiscard]] static const QByteArray& pending_output(const SessionService& service) {
+        return service.pending_output_;
     }
 
     [[nodiscard]] static bool request_pending(const SessionService& service,
@@ -175,6 +201,93 @@ void filtered_output_still_records_pty_timing() {
         service, "\x1b]7717;lapis-init;codex;not-bound\x07");
     require(lapis::session::AttentionServiceTestAccess::pty_read_ns(service) != 0);
 }
+
+void parser_carries_a_split_synchronized_marker() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    const QByteArray begin = QByteArrayLiteral("\x1b[?2026h");
+    const QByteArray end = QByteArrayLiteral("\x1b[?2026l");
+    require(Access::sync_limit(QByteArrayLiteral("plain output")) == 12);
+    require(Access::sync_limit(begin + QByteArrayLiteral("frame")) == begin.size());
+    require(Access::sync_limit(begin + QByteArrayLiteral("frame") + end +
+                               QByteArrayLiteral("next")) == begin.size());
+    require(Access::sync_limit(begin.left(4)) == -begin.size());
+    require(Access::sync_limit(QByteArrayLiteral("x") + begin.left(4)) == -begin.size());
+}
+
+void adjacent_updates_do_not_hide_a_finished_frame() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-sync-XXXXXX")};
+    require(directory.isValid());
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    Access::use_client(service, &client);
+
+    const QByteArray begin = QByteArrayLiteral("\x1b[?2026h");
+    const QByteArray end = QByteArrayLiteral("\x1b[?2026l");
+    Access::feed_output(service,
+                        begin + QByteArrayLiteral("ONE") + end + begin + QByteArrayLiteral("TWO"));
+    require(client.bytesToWrite() > 0);
+    require(!Access::in_sync(service));
+    QCoreApplication::processEvents();
+    require(Access::in_sync(service));
+}
+
+void a_completed_frame_publishes_even_after_a_recent_frame() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-sync-XXXXXX")};
+    require(directory.isValid());
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    Access::use_client(service, &client);
+    Access::defer_next_snapshot(service);
+
+    Access::feed_output(service, QByteArrayLiteral("\x1b[?2026hWHOLE\x1b[?2026l"));
+    require(client.bytesToWrite() > 0);
+    require(!Access::publish_timer_active(service));
+}
+
+void a_split_marker_waits_when_the_client_snapshot_is_in_flight() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-sync-XXXXXX")};
+    require(directory.isValid());
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    Access::use_client(service, &client);
+    const QByteArray large(static_cast<qsizetype>(1024 * 1024), '0');
+    require(client.write(large) > 0);
+    require(client.bytesToWrite() > 0);
+
+    const QByteArray output = QByteArrayLiteral("x\x1b[?202");
+    Access::feed_output(service, output);
+    require(Access::pending_output(service) == output);
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -183,6 +296,10 @@ int main(int argc, char** argv) {
         failed_journal_refuses_decision();
         notify_only_rejection_names_codex();
         filtered_output_still_records_pty_timing();
+        parser_carries_a_split_synchronized_marker();
+        adjacent_updates_do_not_hide_a_finished_frame();
+        a_completed_frame_publishes_even_after_a_recent_frame();
+        a_split_marker_waits_when_the_client_snapshot_is_in_flight();
         std::cout << "attention-service: ok\n";
         return 0;
     } catch (const std::exception& error) {

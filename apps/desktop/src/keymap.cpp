@@ -735,6 +735,7 @@ bool KeyMap::load() {
     limit_resets_ = parse_limit_resets(root.value(QStringLiteral("limitResets")));
     next_prompt_ = parse_next_prompt(root.value(QStringLiteral("nextPrompt")));
     interaction_log_ = parse_interaction_log(root.value(QStringLiteral("interactionLog")));
+    tab_away_ = parse_tab_away(root.value(QStringLiteral("tabAway")));
 
     known_contents_ = contents;
     loaded_ = true;

@@ -4237,11 +4237,11 @@ without a numeric probability, and the predicted event records `top_scored`.
   follows that operation. It requires the negotiated receipt; older services
   refuse visibly until upgraded/restarted. Typing does not withdraw a guess;
   keys typed first are counted. With nothing offered and nothing typed since
-  arriving or the last Return, Tab calls QML's
-  `tabAway`, which asks `Workspace::nextPriorityAttention` for a guess not yet
-  seen, then an unseen turn or a request, then a guess already seen (the longest
-  waiting within each, so Tab cannot bounce between two guesses while another
-  agent waits); when nothing waits, Tab goes to the program. Tab keeps its
+  arriving or the last Return (or the second Tab's send), Tab calls QML's
+  `tabAway`, which asks `Workspace::nextPriorityAttention` for the next agent
+  truly waiting, ranked by `TabRanker` (see
+  [Tab's next agent](#tabs-next-agent-is-learned-october-6)); when nothing
+  waits, Tab goes to the program. Tab keeps its
   meaning after typing (completion, Codex's queue) and without the flow (shells,
   and CLIs such as OpenCode that switch modes with Tab). Surfacing never sends:
   the person's key does, keeping "surfacing never approves" when agent output
@@ -4463,6 +4463,79 @@ a 2.1.288 print-mode probe. Lapis qualification remains pinned at 2.1.286
 because the router-dependent hook check and an unrelated parallel-approval
 fixture did not pass here; the version-dependent user guidance above is not a
 claim that those suites were promoted.
+
+### Tab's next agent is learned (October 6)
+
+Tab with nothing to type moves to the next agent that needs the person. Which
+agents qualify is a fixed rule; their order is learned.
+
+- **Eligibility.** `Workspace::waitingCandidates`: a pending request, or a turn
+  its observer saw finish (`finished`, or an observer's `idle`) that is unseen
+  or has a guess. The Claude observer holds a turn that ended with background
+  tasks, subagents or wakeups in flight as working until the next turn or its
+  ten-minute deadline, so a paused agent never qualifies; neither does one at
+  work, unknown, ended, closing, or quiet only by the output estimate. An
+  agent already looked at, with no guess, stays out, so Tab does not cycle
+  through conversations the person left. Keyboard ownership is unchanged: only
+  the Tab key moves, with nothing typed since arriving.
+- **Ranking.** `TabRanker` scores each candidate with a linear softmax ranker:
+  work category, request, unseen, guess offered, log minutes waiting, newest
+  of the candidates, waiting over two hours, log turns started in the last
+  hour, log minutes since its last turn started, plus one learned weight per
+  category id. The prior (`TabRanker::prior`) is work first, then requests,
+  then unseen turns, then the newest, as weights: about an hour more of waiting
+  outweighs one step, so an old work turn does not hold Tab forever. Work
+  categories are named in `tabAway.work` (default `work`). `"rank": "fixed"`
+  restores the earlier order (a guess not yet seen, an unseen turn or request,
+  a guess already seen, longest waiting within each), with the same
+  eligibility.
+- **Learning.** When the selected agent changes, the workspace keeps the
+  agents waiting at that moment (minus the one left, before the arriving
+  agent's unseen mark clears). When the person stays 2.5 s, or sends a prompt
+  to the agent shown, the agent they are on is their choice among those; moves
+  before that add agents that began waiting and keep the ones passed over, so
+  a Tab followed by another move teaches against Tab's pick. Each choice and
+  each Tab move (candidates' features and scores) is appended to
+  `runtime/tab_away.jsonl` (owner-only, 4 MiB with one backup). A thread-pool
+  job refits on the newest 1000 choices (150 gradient steps on mean negative
+  log-likelihood plus 0.1 times the squared distance from the prior), writes
+  `runtime/tab_away_model.json` and publishes the weights to the GUI thread;
+  one refit runs at a time and a choice during it queues one more. Picking is a
+  few dot products on the GUI thread; nothing blocks Tab.
+
+Evidence (dated; the author's logs and Claude Code transcripts on the Mac,
+September 29 to October 6, from `scripts/tab_away_eval.py history`): an
+agent's turn waits from its end (a `predicted` or `failed` record) to the next
+prompt typed to it; the first time the person reached it (the guess was seen,
+or they replied) while two or more others waited, excluding the agent they had
+last typed to, is a choice. 168 choices, 16.5 waiting agents on average;
+fitted on the first 117, scored on the newest 51:
+
+| Ranker | Top-1 | MRR |
+| --- | ---: | ---: |
+| Random | 0.065 | 0.214 |
+| Oldest first | 0.000 | 0.069 |
+| Work, then oldest | 0.098 | 0.244 |
+| Fixed (earlier order) | 0.000 | 0.300 |
+| Newest first | 0.608 | 0.760 |
+| Prior | 0.667 | 0.798 |
+| Learned, refitted every 10 choices | 0.745 | 0.852 |
+
+The person almost always went to an agent that had just finished; the
+earlier order's longest-waiting rule ranked that agent first in none of the
+scored choices. Learned category weights moved against the work category the
+prior favours, so the prior's work weight is the person's stated priority, not
+a fitted one. Limits: 51 scored choices put about ±0.07 on top-1; "unseen" is
+true of every chosen agent by construction (a choice is the first arrival), so
+its offline weight is overstated; requests were absent (agents ran with
+permissions bypassed); hand-moves after October 6 are logged as they happen.
+An LLM ranker (`claude -p`, Opus 5.5 at low effort, a compact state of each
+waiting agent's title, category, wait, seen, guess and ping) on the same
+held-out choices of an earlier snapshot reached top-1 0.30 and MRR 0.43 told
+the stated priorities (work first), and 0.52 and 0.69 told only to predict
+where the person goes, at a median 2.9 to 3.1 s per call. It is not used: it is
+less accurate than the learned ranker and would have to be precomputed in the
+background on every state change.
 
 ### Update pacing audit (September 28)
 

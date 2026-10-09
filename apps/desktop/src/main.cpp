@@ -809,6 +809,10 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
         NextPrompt::Files{data.filePath(QStringLiteral("runtime")), log});
     const auto follow = [&next, &keymap] { next.setSettings(keymap.nextPrompt()); };
     follow();
+    // Tab learns from moves made by hand too, with the guesses then on offer.
+    workspace.setGuesses([&next] { return next.readyAgents(); });
+    QObject::connect(&next, &QObject::destroyed, &workspace,
+                     [&workspace] { workspace.setGuesses({}); });
     QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &next, follow);
     QObject::connect(&workspace, &lapis::desktop::Workspace::turnFinished, &next,
                      [&next](SessionPreview* item) {
@@ -997,6 +1001,7 @@ int main(int argc, char** argv) {
             workspace.setHarnessUpdatesOff(keymap.harnessUpdatesOff());
             workspace.setAgentDefaults(keymap.agentDefaults());
             workspace.setAccounts(keymap.accounts());
+            workspace.setTabAway(keymap.tabAway());
         };
         configure();
         QObject::connect(&keymap, &KeyMap::changed, &workspace, configure);

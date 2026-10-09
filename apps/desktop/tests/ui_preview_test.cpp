@@ -1210,6 +1210,7 @@ QStringList strip_ids(const lapis::desktop::Workspace& workspace) {
 }
 
 // Tiles and drags, through the window as a person would use them.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& workspace,
                            lapis::desktop::KeyMap& keymap) {
     const auto item = [&window](const QString& name) {
@@ -1272,6 +1273,12 @@ void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     };
     const auto shows_selection = [&](const QString& id) {
         auto* frame = item(QStringLiteral("tile_") + id);
+        CHECK(frame->property("selectedTile").toBool());
+        CHECK(scene_rect(*frame).contains(scene_rect(*terminal)));
+        CHECK(terminal->document() == workspace.session(id));
+        for (const auto& other_id : tile_ids())
+            CHECK(other_id == id ||
+                  !item(QStringLiteral("tile_") + other_id)->property("selectedTile").toBool());
         CHECK(frame != nullptr);
         CHECK(frame->property("selectedTile").toBool());
         CHECK(scene_rect(*frame).contains(scene_rect(*terminal)));

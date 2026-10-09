@@ -31,6 +31,7 @@ add_library(lapis_desktop_view STATIC
     src/usage.cpp src/usage.hpp
     src/usage_limits.cpp src/usage_limits.hpp
     src/next_prompt.cpp src/next_prompt.hpp
+    src/tab_ranker.cpp src/tab_ranker.hpp
     src/agent_state.cpp src/agent_state.hpp src/attention_order.hpp
     src/plan_sign_in.cpp src/plan_sign_in.hpp
     src/harness_models.cpp src/harness_models.hpp
@@ -189,6 +190,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_next_prompt_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME next-prompt COMMAND lapis_next_prompt_tests)
     set_tests_properties(next-prompt PROPERTIES TIMEOUT 30)
+    add_executable(lapis_tab_ranker_tests tests/tab_ranker_test.cpp)
+    target_link_libraries(lapis_tab_ranker_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME tab-ranker COMMAND lapis_tab_ranker_tests)
+    set_tests_properties(tab-ranker PROPERTIES TIMEOUT 30)
     add_executable(lapis_agent_state_tests tests/agent_state_test.cpp)
     target_link_libraries(lapis_agent_state_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME agent-state COMMAND lapis_agent_state_tests)
@@ -293,6 +298,18 @@ target_link_libraries(lapis_workspace_live_probe PRIVATE lapis_project_options l
 target_compile_definitions(lapis_workspace_live_probe PRIVATE
     LAPIS_SESSION_SERVICE_PATH="$<TARGET_FILE:lapis_session_service>")
 add_dependencies(lapis_workspace_live_probe lapis_session_service)
+
+# Opt-in agent and category switching measurement (offscreen); not in CTest.
+set(QT_NO_PRIVATE_MODULE_WARNING ON) # the benchmark is pinned to this exact Qt
+find_package(Qt6 6.11.2 EXACT QUIET COMPONENTS GuiPrivate)
+if(TARGET Qt6::GuiPrivate)
+    add_executable(lapis_switch_benchmark tests/switch_benchmark.cpp)
+    target_link_libraries(lapis_switch_benchmark PRIVATE lapis_project_options lapis_desktop_view
+                                                         Qt6::QuickControls2 Qt6::GuiPrivate)
+    target_compile_definitions(lapis_switch_benchmark PRIVATE
+        LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
+    add_dependencies(lapis_switch_benchmark lapis_session_service)
+endif()
 
 # Opt-in measurement, not a timing gate in CTest.
 add_executable(lapis_terminal_latency_probe tests/terminal_latency_probe.cpp)
