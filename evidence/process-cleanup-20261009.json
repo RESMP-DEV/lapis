@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-09T14:50:00Z",
+  "inventory_taken_at": "2026-10-09T14:42:16Z",
+  "cleanup_completed_at": "2026-10-09T14:44:13Z",
+  "platform": "darwin",
+  "source_revision": "d814427b1fbd7dcd3ba79abd0bd315d1a6e8c15f",
+  "scope": "Second live orphan-process cleanup after branch consolidation. This receipt covers only processes from obsolete Lapis test worktrees and temporary fixtures; it does not modify or stop installed Lapis.app sessions, their Codex app servers, or the phone gateway.",
+  "removed": [
+    {
+      "source": "/private/tmp/lapis-pr107-repair",
+      "kind": "lapis_session_service and test shell",
+      "started": "2026-10-08T20:13:48-07:00",
+      "elapsed_at_inventory": "11h28m28s",
+      "parent_pid": 1,
+      "processes": 3
+    },
+    {
+      "source": ".worktrees/pr111-accept",
+      "kind": "lapis_session_service and test shell",
+      "started": "2026-10-07T03:19:43-07:00",
+      "elapsed_at_inventory": "2d4h22m33s",
+      "parent_pid": 1,
+      "processes": 3
+    },
+    {
+      "source": ".worktrees/main-quality-repair",
+      "kind": "lapis_session_service and test shell",
+      "started": "2026-10-07T05:36:58-07:00",
+      "elapsed_at_inventory": "2d2h5m18s",
+      "parent_pid": 1,
+      "processes": 3
+    },
+    {
+      "source": "/private/tmp/lapis-restore-QghrLq",
+      "kind": "lapis_session_service and fixture agent shells",
+      "started": "2026-10-07T07:17:06-07:00",
+      "elapsed_at_inventory": "2d0h25m10s",
+      "parent_pid": 1,
+      "processes": 6
+    }
+  ],
+  "method": [
+    "Selected exact process IDs after a live command-line inventory.",
+    "Sent SIGTERM to 15 processes in the four obsolete fixture trees.",
+    "Waited two seconds and verified all 15 had exited.",
+    "No SIGKILL was needed.",
+    "Re-ran the Lapis process inventory; only installed Lapis.app sessions and the phone gateway remained."
+  ],
+  "process_count": 15,
+  "preserved": [
+    "Two installed Lapis.app Codex session service trees and their app servers.",
+    "The Android/phone lapis_remote.py gateway."
+  ],
+  "checks": [
+    "Post-cleanup ps inventory found no processes referencing the four removed fixture paths.",
+    "The previous 18-process cleanup is recorded separately in evidence/branch-consolidation-20261009.json."
+  ],
+  "non_claims": "This does not prove process-leak root causes fixed on current main, qualify service shutdown behavior, or modify installed Lapis.app state."
+}
