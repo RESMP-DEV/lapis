@@ -1,6 +1,5 @@
 #include "agent_search.hpp"
 #include "agent_state.hpp"
-#include "open_request.hpp"
 #include "alerts.hpp"
 #include "app_paths.hpp"
 #include "conversation_index.hpp"
@@ -10,6 +9,7 @@
 #include "keymap.hpp"
 #include "limit_resets.hpp"
 #include "next_prompt.hpp"
+#include "open_request.hpp"
 #include "plan_sign_in.hpp"
 #include "platform_desktop.hpp"
 #include "platform_preferences.hpp"
@@ -892,6 +892,10 @@ void follow_open_requests(std::optional<lapis::desktop::OpenRequests>& kept,
                      .filePath(QStringLiteral("ultratab_open.json")),
                  [&workspace, &shown](const QString& id) {
                      lapis::desktop::interaction::cause(QStringLiteral("ultratab"));
+                     // Ultra Tab is a different application, so its request
+                     // arrives while lapis is inactive; show/raise alone would
+                     // order a window in an application macOS never foregrounds.
+                     platform::activate_application();
                      if (!workspace.selectSession(id) || !shown)
                          return;
                      shown->show();

@@ -82,6 +82,17 @@ std::function<void()>& latest_attention_handler() {
     static std::function<void()> handler;
     return handler;
 }
+
+} // namespace
+
+void activate_application() {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [NSApp activateIgnoringOtherApps:YES];
+#pragma clang diagnostic pop
+}
+
+namespace {
 // A registered hot key reaches the app from whichever app is in front.
 OSStatus latest_attention_pressed(EventHandlerCallRef, EventRef, void*) {
     if (const auto& handler = latest_attention_handler()) {

@@ -6,13 +6,14 @@
 #include "workspace.hpp"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
-#include <QDateTime>
+#include <QStringList>
 #include <QTemporaryDir>
 
 #include <functional>
@@ -132,6 +133,32 @@ void followsOpenRequests() {
          {QStringLiteral("atMs"), static_cast<double>(now() + 10)}});
     requests.check();
     require(opened.size() == 1, "stale and malformed requests open nothing");
+
+    // A request that only has to be rejected for being linked, not for its
+    // age, so the symlink guard itself is what rejects it.
+    const auto linked = directory.filePath(QStringLiteral("linked.json"));
+    require(QFile::remove(path) || !QFile::exists(path), "clear the request file");
+    require(QFile::link(directory.filePath(QStringLiteral("missing.json")), linked),
+            "make a symlinked request");
+    put({});
+    require(QFile::remove(linked), "clear the symlink");
+    require(QFile::link(path, linked), "link the fresh request");
+    requests.check();
+    require(opened.size() == 1, "a linked request opens nothing");
+    require(QFile::remove(linked), "remove the symlink");
+
+    // An out-of-range or non-finite timestamp is external input: it must be
+    // refused, never cast.
+    const QByteArray original =
+        QByteArrayLiteral("{\"agent\":\"") + id.toUtf8() + QByteArrayLiteral("\",\"atMs\":1e300}");
+    require(QFile::remove(path), "clear the request file");
+    QFile huge(path);
+    require(huge.open(QIODevice::WriteOnly), "write an out-of-range request");
+    huge.write(original);
+    huge.close();
+    requests.check();
+    require(opened.size() == 1, "an out-of-range timestamp opens nothing");
+    require(QFile::remove(path), "clear the out-of-range request");
 }
 
 int main(int argc, char** argv) {

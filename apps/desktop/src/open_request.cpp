@@ -9,8 +9,7 @@
 #include <utility>
 
 namespace lapis::desktop {
-OpenRequests::OpenRequests(QString path, std::function<void(const QString&)> open,
-                           QObject* parent)
+OpenRequests::OpenRequests(QString path, std::function<void(const QString&)> open, QObject* parent)
     : QObject(parent), path_(std::move(path)), open_(std::move(open)) {
     // Written by renaming, so the folder changes, not the old file.
     watcher_.addPath(QFileInfo(path_).absolutePath());
@@ -28,11 +27,16 @@ void OpenRequests::check() {
         return;
     const auto object = QJsonDocument::fromJson(file.read(4096)).object();
     const auto agent = object.value(QStringLiteral("agent")).toString();
-    const auto at = static_cast<qint64>(object.value(QStringLiteral("atMs")).toDouble());
+    // atMs is external input: read it as an integer, never as a double whose
+    // out-of-range or non-finite cast is undefined behavior.
+    if (!object.value(QStringLiteral("atMs")).isDouble())
+        return;
+    const auto at = object.value(QStringLiteral("atMs")).toInteger(-1);
+    if (at < 0)
+        return;
     const auto now = QDateTime::currentMSecsSinceEpoch();
     if (agent.isEmpty() || QUuid::fromString(agent).isNull() || at <= last_at_ms_ ||
-        at < started_ms_ ||
-        now - at > max_age_ms || at > now + 1000)
+        at < started_ms_ || now - at > max_age_ms || at > now + 1000)
         return;
     last_at_ms_ = at;
     open_(agent);
