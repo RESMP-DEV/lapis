@@ -3504,6 +3504,9 @@ ApplicationWindow {
                     suggestion: predicting && nextPrompt.revision >= 0 && !document.historyActive
                                 && ["finished", "idle"].indexOf(document.statusKind) >= 0
                                 ? nextPrompt.suggestion(document.sessionId) : ""
+                    suggestionConfident: predicting && nextPrompt.revision >= 0 && document !== null
+                                         && nextPrompt.confidence(document.sessionId) >=
+                                         nextPrompt.confidentThreshold
                     onSuggestionSeen: (sessionId, offerKey) => {
                         if (typeof nextPrompt !== "undefined" && nextPrompt !== null)
                             nextPrompt.seenOffer({session: sessionId, offer: offerKey})

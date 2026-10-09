@@ -110,6 +110,9 @@ class TerminalSurface : public QQuickItem {
     // cursor. With `tabFlow`, Tab sends it (Option-Tab only types it), and
     // Tab with nothing offered and nothing typed moves to the next agent.
     Q_PROPERTY(QString suggestion READ suggestion WRITE setSuggestion NOTIFY suggestionChanged)
+    // Draw the suggestion nearly as bright as text: the model is confident.
+    Q_PROPERTY(bool suggestionConfident READ suggestionConfident WRITE setSuggestionConfident NOTIFY
+                   suggestionConfidentChanged)
     // The offer the suggestion belongs to: one impression per offer, even when
     // two offers have the same words.
     Q_PROPERTY(
@@ -149,6 +152,8 @@ class TerminalSurface : public QQuickItem {
     [[nodiscard]] bool pasting() const { return pasting_; }
     [[nodiscard]] const QString& suggestion() const { return suggestion_; }
     void setSuggestion(const QString& suggestion);
+    [[nodiscard]] bool suggestionConfident() const { return suggestion_confident_; }
+    void setSuggestionConfident(bool confident);
     [[nodiscard]] const QString& suggestionKey() const { return suggestion_key_; }
     void setSuggestionKey(const QString& key);
     [[nodiscard]] bool tabFlow() const { return tab_flow_; }
@@ -184,6 +189,7 @@ class TerminalSurface : public QQuickItem {
     // Command-click opened a URL or a file or folder's path.
     void linkOpened(const QString& target);
     void suggestionChanged();
+    void suggestionConfidentChanged();
     // Separate from suggestionChanged: QML binds the key to the suggestion, so
     // a shared signal would re-run that binding from its own write.
     void suggestionKeyChanged();
@@ -297,6 +303,7 @@ class TerminalSurface : public QQuickItem {
     qint64 last_output_publish_ms_{};
     bool pasting_{};
     QString preedit_;
+    bool suggestion_confident_{};
     QString suggestion_;
     QString suggestion_key_;
     QString seen_;

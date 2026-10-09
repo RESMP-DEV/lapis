@@ -4623,6 +4623,75 @@ void alertsChimeWhileAnAgentWaits() {
             "it starts from silence and peaks near -12 dBFS");
 }
 
+// A finished turn pings only when the guessing model judged that it needs the
+// person: "steer" and "fyi" stay quiet, "needs" pings, no judgement in time
+// pings as before, and a turn ending on an open request never waits.
+void pingsFollowTheJudgement() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "judge directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    QFile config(root.filePath(QStringLiteral("lapis.json")));
+    require(config.open(QIODevice::WriteOnly), "write the judge config");
+    config.write(R"({"version": 1, "alerts": {"notify": true}})");
+    config.close();
+    lapis::desktop::KeyMap keymap;
+    keymap.setSourcePathForTesting(config.fileName());
+    require(keymap.load() && keymap.judgePings(), "pings are judged by default");
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    Workspace workspace(WorkspaceMode::live, options);
+    lapis::desktop::SessionPreview agent(QStringLiteral("agent"), root.path(), {}, QColor(), "");
+    agent.setHarnessId(QStringLiteral("claude"));
+    std::vector<QStringList> posted;
+    lapis::desktop::Notifier notifier(
+        workspace, keymap,
+        [&posted](const QString& id, const QString& title, const QString& body) {
+            posted.push_back({id, title, body});
+        },
+        [] { return true; });
+    std::vector<QJsonObject> notes;
+    notifier.setLog([&notes](const QJsonObject& entry) { notes.push_back(entry); });
+    lapis::desktop::PingJudge judge(workspace, keymap);
+    judge.setWaitForTesting(150);
+    notifier.judgeBy(judge);
+    const auto id = agent.sessionId();
+    lapis::session::wire::AttentionSnapshot attention;
+    attention.available = attention.connected = attention.ready = true;
+    attention.requests.emplace_back();
+    agent.applyAttention(attention);
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 1, "a turn ending on an open request never waits");
+    attention.requests.clear();
+    agent.applyAttention(attention);
+    posted.clear();
+
+    emit workspace.turnFinished(&agent);
+    require(posted.empty(), "a finished turn waits for its judgement");
+    judge.verdict(id, QStringLiteral("fyi"));
+    require(posted.empty() && notes.back().value(QStringLiteral("decision")).toString() ==
+                                  QStringLiteral("none: judged fyi"),
+            "judged fyi, it stays quiet and says why");
+    emit workspace.turnFinished(&agent);
+    judge.verdict(id, QStringLiteral("steer"));
+    require(posted.empty(), "judged steer, it stays quiet");
+    emit workspace.turnFinished(&agent);
+    judge.verdict(id, QStringLiteral("needs"));
+    require(posted.size() == 1, "judged needs, it notifies");
+    emit workspace.turnFinished(&agent);
+    require(waitFor([&posted] { return posted.size() == 2; }, 1000),
+            "without a judgement in time it notifies as before");
+    // An inactive fast path replaces an older hold without leaving its timer
+    // to emit a second, empty judgement.
+    judge.setActive([] { return true; });
+    emit workspace.turnFinished(&agent);
+    judge.setActive([] { return false; });
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 3, "with guessing off nothing waits");
+    QThread::msleep(200);
+    require(posted.size() == 3, "the replaced hold does not notify again");
+    notifier.setLog({});
+}
+
 // Away from the Mac, lapis in front no longer stands for being seen: a
 // finished turn notifies, and an agent left waiting notifies once more after
 // alerts.remindAfter, held until the person is back. Looking at it, or its
@@ -6628,6 +6697,7 @@ int main(int argc, char** argv) {
             } else if (selected == QStringLiteral("chimes")) {
                 alertsChimeWhileAnAgentWaits();
                 notificationsReachYouWhenAway();
+                pingsFollowTheJudgement();
                 notificationsHoldLiveRequestsWhileViewed();
                 chimesPlayChosenFiles();
                 attentionLogStaysPrivateAndRotates();
@@ -6717,6 +6787,7 @@ int main(int argc, char** argv) {
         windowTakesTheWorkspaceFromTheHost();
         alertsChimeWhileAnAgentWaits();
         notificationsReachYouWhenAway();
+        pingsFollowTheJudgement();
         notificationsHoldLiveRequestsWhileViewed();
         chimesPlayChosenFiles();
         attentionLogStaysPrivateAndRotates();

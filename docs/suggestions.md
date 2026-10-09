@@ -28,9 +28,27 @@ lapis's.
 When a Claude Code or Codex agent finishes a turn, lapis reads its conversation
 where it runs (over ssh for another machine) and asks the model, on this Mac,
 with your `~/.claude/CLAUDE.md`, the agent's screen, every other agent's state
-and your latest prompts elsewhere. The model's top guess shows dim after the
-agent's cursor whenever the helper returns one and it passes `minConfidence`.
-None shows while an agent waits on a request such as a permission prompt.
+and your latest prompts elsewhere. The model writes one guess, preferring a
+short reply when that would do, with its probability, and judges whether the
+agent needs you ("needs", "steer" or "fyi"; see alerts.judge in
+[config](config.md)). The guess shows after the agent's cursor whenever it
+passes `minConfidence`: dim, or nearly as bright as text when the probability
+is 0.45 or more (from Oct 3 to 9, guesses scored that high were taken 65% of
+the time, against 25 to 34% below). None shows while an agent waits on a
+request such as a permission prompt.
+
+A turn the agent ends on its own, with no prompt from you since a guess you
+never saw (an agent woken by its background work), is not guessed at once: the
+guess is made when you next show that agent. From Oct 7 to 9 such repeats were
+44% of guesses, and 72% of them went unseen.
+
+Experiments: `experiment` (default 0.2) of guesses go to another arm, chosen
+evenly from `experimentModels` (default `["claude-sonnet-5-5"]`, through the
+same CLI) and, when `localEndpoint` and `localModel` are set, a local model
+behind an OpenAI-compatible endpoint (for example
+`"localEndpoint": "http://tetra:8000/v1"`). Each guess's `arm` (`control`,
+`model` or `local`) and `model` are in `next_prompt.jsonl`, so arms can be
+compared on what you then sent. Set `experiment` to 0 to always use `model`.
 
 An agent on another machine reports its finished turns through its own
 terminal: lapis starts it with hooks (Claude Code) or a notify program (Codex)

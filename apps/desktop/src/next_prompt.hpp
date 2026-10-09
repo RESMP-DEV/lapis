@@ -9,6 +9,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QProcess>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariantMap>
@@ -32,6 +33,15 @@ struct NextPromptSettings {
     QString effort;            // empty: the CLI's own
     double minConfidence{0.0}; // every probability-bearing guess is offered
     int maxPerHour{60};
+    // Experiments: this share of guesses goes to another arm, picked evenly
+    // from `experimentModels` (other Claude models, through the same CLI)
+    // and, when `localEndpoint` is set, a local model behind an
+    // OpenAI-compatible endpoint. Each guess records its arm, so arms can be
+    // compared on what the person then sent.
+    double experimentShare{0.2};
+    QStringList experimentModels{QStringLiteral("claude-sonnet-5-5")};
+    QString localEndpoint; // e.g. http://host:8000/v1; empty: no local arm
+    QString localModel;
     bool operator==(const NextPromptSettings&) const = default;
 };
 [[nodiscard]] NextPromptSettings parse_next_prompt(const QJsonValue& value);
@@ -60,6 +70,7 @@ class NextPrompt final : public QObject {
     // Changes with every suggestion offered or withdrawn, for QML bindings.
     Q_PROPERTY(int revision READ revision NOTIFY changed)
     Q_PROPERTY(bool enabled READ enabled NOTIFY changed)
+    Q_PROPERTY(double confidentThreshold READ confidentThreshold CONSTANT)
   public:
     struct Agent {
         QString machine;      // an ssh host; empty for this Mac
@@ -88,8 +99,19 @@ class NextPrompt final : public QObject {
 
     void setSettings(NextPromptSettings settings);
     [[nodiscard]] const NextPromptSettings& settings() const { return settings_; }
-    // The agent finished a turn: withdraw its suggestion and predict anew.
+    // The agent finished a turn: withdraw its suggestion and predict anew,
+    // unless it is a repeat: no new prompt from the person since the last
+    // guess, and that guess was never seen (an agent waking itself). A repeat
+    // is guessed when the person next shows that agent (focused).
     void turnFinished(const QString& id);
+    // The person shows this agent: a guess deferred as a repeat runs now.
+    void focused(const QString& id);
+    // The shown guess's probability (0 to 1), for how boldly it is drawn.
+    Q_INVOKABLE [[nodiscard]] double confidence(const QString& id) const;
+    // At or above this, the guess is drawn bright: the model's own score
+    // separated taken guesses (65%) from the rest (25 to 34%), Oct 3 to 9.
+    static constexpr double confident = 0.45;
+    [[nodiscard]] double confidentThreshold() const { return confident; }
     // The suggestion offered for the agent, or empty.
     Q_INVOKABLE [[nodiscard]] QString suggestion(const QString& id) const;
     // The agents with a suggestion offered, each true once it was seen.
@@ -135,6 +157,10 @@ class NextPrompt final : public QObject {
     void stateChanged();
     // An offer was first seen; readyAgents() changed without a new revision.
     void seenChanged();
+    // The guessing model's judgement of whether the agent needs the person
+    // after a turn: "needs", "steer" or "fyi"; empty when there is none
+    // (no guess was made, or it failed). One per turnFinished.
+    void judged(const QString& id, const QString& attention);
 
   private:
     struct Run {
@@ -150,7 +176,21 @@ class NextPrompt final : public QObject {
         int turn{};
         qint64 seen_ms{}; // when first on screen; 0 while unseen
         QString said;     // the agent's last reply, clipped to said_limit
+        double p{};       // the model's probability for it
     };
+    // The last guess made for an agent, to tell a repeat (see turnFinished).
+    struct Previous {
+        QString conversation;
+        // The verdict to report when this guess turns out to be an unseen
+        // repeat: the model's own answer, so a self-woken agent stays quiet.
+        std::function<void(const QString&)> attention;
+        int turn{-1};
+        bool seen{};
+    };
+    QHash<QString, Previous> previous_;
+    QSet<QString> deferred_;
+    QSet<QString> pending_show_;
+    void run(const QString& id, bool force);
     // The last offer shown to an agent, until the prompt the person sends
     // after it is read from the conversation.
     struct Awaiting {
@@ -171,7 +211,7 @@ class NextPrompt final : public QObject {
     void failed(const QString& id, const Agent& agent, Stage stage, const QString& why);
     void predict(const QString& id, quint64 generation, const QJsonObject& context);
     void offer(const QString& id, const Agent& agent, const QJsonObject& context,
-               const QJsonObject& answer);
+               const QJsonObject& answer, const QString& arm, const QString& model);
     // Why an offer went unused: the next turn's guess replaced it, or the
     // setting was turned off.
     enum class Withdrawal : std::uint8_t { next_turn, off };

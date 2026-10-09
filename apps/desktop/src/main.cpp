@@ -821,6 +821,12 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
                          if (item != nullptr)
                              next.turnFinished(item->sessionId());
                      });
+    // A guess held back as a repeat is made when the person shows the agent.
+    QObject::connect(&workspace, &lapis::desktop::Workspace::focusChanged, &next,
+                     [&next, &workspace] {
+                         const auto* item = workspace.focusedSession();
+                         next.focused(item != nullptr ? item->sessionId() : QString());
+                     });
     // A turn that ended while no window watched still gets its guess.
     QObject::connect(&workspace, &lapis::desktop::Workspace::finishedWhileAway, &next,
                      [&next](SessionPreview* item) {
@@ -828,6 +834,18 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
                              next.turnFinished(item->sessionId());
                      });
     return &next;
+}
+
+// Activating an already-focused window gives no Workspace focus signal, but a
+// repeat guess still needs to know that the person is looking at that agent.
+void focus_next_prompt_on_activation(lapis::desktop::NextPrompt& next,
+                                     lapis::desktop::Workspace& workspace, QQuickWindow& window) {
+    QObject::connect(&window, &QQuickWindow::activeChanged, &next, [&window, &next, &workspace] {
+        if (!window.isActive())
+            return;
+        if (const auto* item = workspace.focusedSession())
+            next.focused(item->sessionId());
+    });
 }
 
 // What the window knows that a restart should keep (see GuiState), beside the
@@ -1010,6 +1028,7 @@ void wire_window(QQuickWindow& window, lapis::desktop::UiPreview& view,
                         .smoke_input = parser.isSet(QStringLiteral("smoke-input"))});
 }
 } // namespace
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int main(int argc, char** argv) {
     QStringList arguments;
     for (int index = 0; index < argc; ++index)
@@ -1126,6 +1145,20 @@ int main(int argc, char** argv) {
         QObject* const resetsForQml = keep_limit_resets(limitResets, workspace, keymap, isolated);
         std::optional<NextPrompt> nextPrompt;
         QObject* const nextForQml = keep_next_prompt(nextPrompt, workspace, keymap, isolated);
+        // Finished turns ping only when the guessing model judged they need
+        // the person (alerts.judge).
+        std::optional<lapis::desktop::PingJudge> pingJudge;
+        if (alerts || notifier) {
+            pingJudge.emplace(workspace, keymap);
+            pingJudge->setActive([&nextPrompt] { return nextPrompt && nextPrompt->enabled(); });
+            if (alerts)
+                alerts->judgeBy(*pingJudge);
+            if (notifier)
+                notifier->judgeBy(*pingJudge);
+            if (nextPrompt)
+                QObject::connect(&*nextPrompt, &NextPrompt::judged, &*pingJudge,
+                                 &lapis::desktop::PingJudge::verdict);
+        }
         std::optional<lapis::desktop::AgentStatePublisher> agentState;
         keep_agent_state(agentState, workspace, nextPrompt, isolated);
         std::optional<lapis::desktop::OpenRequests> openRequests;
@@ -1162,6 +1195,8 @@ int main(int argc, char** argv) {
                                    .hideOnClose = hide_on_close});
         view.setSystemReducedMotion(system_reduced_motion());
         view.setReducedMotion(parser.isSet(QStringLiteral("reduced-motion")));
+        if (auto* window = view.window(); window != nullptr && nextPrompt)
+            focus_next_prompt_on_activation(*nextPrompt, workspace, *window);
         follow_activation(app, view, shown, hide_on_close);
         const TerminalKeyMonitorGuard terminal_key_monitor;
         QObject::connect(&view, &UiPreview::windowChanged, &view, [&](QQuickWindow* window) {

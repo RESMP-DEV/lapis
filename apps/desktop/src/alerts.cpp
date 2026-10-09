@@ -130,7 +130,65 @@ Alerts::Alerts(Workspace& workspace, const KeyMap& config, Player play, Looking 
     repeat_.setInterval(kRepeatMs);
     connect(&repeat_, &QTimer::timeout, this, &Alerts::tick);
     connect(&workspace, &Workspace::agentNeedsYou, this, &Alerts::needsYou);
-    connect(&workspace, &Workspace::turnFinished, this, &Alerts::finished);
+    finished_ = connect(&workspace, &Workspace::turnFinished, this, &Alerts::finished);
+}
+
+void Alerts::judgeBy(PingJudge& judge) {
+    disconnect(finished_);
+    finished_ = connect(&judge, &PingJudge::turnJudged, this,
+                        [this](SessionPreview* item, const QString& attention) {
+                            if (attention == QLatin1String("steer"))
+                                return record(item, "finished", "quiet: judged steer");
+                            if (attention == QLatin1String("fyi"))
+                                return record(item, "finished", "quiet: judged fyi");
+                            finished(item);
+                        });
+}
+
+PingJudge::PingJudge(Workspace& workspace, const KeyMap& config, QObject* parent)
+    : QObject(parent), config_(config) {
+    connect(&workspace, &Workspace::turnFinished, this, &PingJudge::hold);
+}
+
+void PingJudge::hold(SessionPreview* item) {
+    if (item == nullptr)
+        return;
+    const auto id = item->sessionId();
+    const auto disarm = [this, id] {
+        const auto held = held_.take(id);
+        if (held.timer)
+            held.timer->deleteLater();
+    };
+    if (item->attentionCount() > 0) {
+        disarm(); // the older hold must not emit a second judgement later
+        emit turnJudged(item, QStringLiteral("needs"));
+        return;
+    }
+    if (!config_.judgePings() || (active_ && !active_())) {
+        disarm();
+        emit turnJudged(item, {});
+        return;
+    }
+    release(id, {}); // an older turn still held passes as unjudged
+    auto* timer = new QTimer(this);
+    timer->setSingleShot(true);
+    connect(timer, &QTimer::timeout, this, [this, id] { release(id, {}); });
+    held_.insert(id, {item, timer});
+    timer->start(wait_ms_);
+}
+
+void PingJudge::verdict(const QString& id, const QString& attention) {
+    if (held_.contains(id))
+        release(id, attention);
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+void PingJudge::release(const QString& id, const QString& attention) {
+    const auto held = held_.take(id);
+    if (held.timer)
+        held.timer->deleteLater();
+    if (held.item)
+        emit turnJudged(held.item, attention);
 }
 
 void Alerts::preview(bool needsYou) {
@@ -212,8 +270,23 @@ Notifier::Notifier(Workspace& workspace, const KeyMap& config, Post post, Backgr
     connect(&check_, &QTimer::timeout, this, &Notifier::check);
     connect(&workspace, &Workspace::agentNeedsYou, this,
             [this](SessionPreview* item) { notify(item, true); });
-    connect(&workspace, &Workspace::turnFinished, this,
-            [this](SessionPreview* item) { notify(item, false); });
+    finished_ = connect(&workspace, &Workspace::turnFinished, this,
+                        [this](SessionPreview* item) { notify(item, false); });
+}
+
+void Notifier::judgeBy(PingJudge& judge) {
+    disconnect(finished_);
+    finished_ =
+        connect(&judge, &PingJudge::turnJudged, this,
+                [this](SessionPreview* item, const QString& attention) {
+                    if (attention == QLatin1String("steer") || attention == QLatin1String("fyi")) {
+                        record_decision(log_, item, "notification", "finished",
+                                        attention == QLatin1String("fyi") ? "none: judged fyi"
+                                                                          : "none: judged steer");
+                        return;
+                    }
+                    notify(item, false);
+                });
 }
 
 void Notifier::setPresence(Present present, Looking looking) {

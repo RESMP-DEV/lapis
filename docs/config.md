@@ -71,8 +71,17 @@ new turn and not looked at (a look already recorded by the screen sampler
 counts, even after you move on), notifies once more; if you are away then, the
 reminder comes when you are back.
 
+While next-prompt guesses are on, a finished turn chimes or notifies only when
+the guessing model judged that the agent needs you (`alerts.judge`, default
+true): it reads the end of the conversation and answers "needs" (a question,
+a decision or approval), "steer" (would take direction but can go on) or "fyi"
+(waiting on background work, subagents, a job or someone else, or only a
+report). Steer and fyi stay quiet and are logged as `quiet: judged steer` and
+the like; a turn ending on a request never waits; with no judgement within 25
+seconds the turn pings as before.
+
 ```json
-"alerts": {"notify": true, "awayAfter": 120, "remindAfter": 30}
+"alerts": {"notify": true, "awayAfter": 120, "remindAfter": 30, "judge": true}
 ```
 
 Every decision — a chime or a notification, and each quiet reason — is logged,
