@@ -21,6 +21,7 @@
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPropertyAnimation>
 #include <QQuickView>
 #include <QSaveFile>
 #include <QScreen>
@@ -141,6 +142,8 @@ class Overlay final {
             QObject::connect(host, &OverlayHost::dragRequested, &view_,
                              [this, host](QPoint to, bool done) { drag(*host, to, done); });
         }
+        fade_.setDuration(110);
+        fade_.setEasingCurve(QEasingCurve::OutCubic);
         // Dragged by its background: remember where, per screen, once it rests.
         remember_.setSingleShot(true);
         remember_.setInterval(400);
@@ -157,6 +160,11 @@ class Overlay final {
             show();
     }
     void show() {
+        // The deck is read before the first frame, and the card's own motion
+        // is held back: opening is one short fade of the whole window.
+        if (auto* host = view_.findChild<OverlayHost*>())
+            emit host->appearing();
+        source_.reload();
         auto* screen = QGuiApplication::screenAt(QCursor::pos());
         if (screen == nullptr)
             screen = QGuiApplication::primaryScreen();
@@ -173,13 +181,20 @@ class Overlay final {
             area, size, saved == positions_.cend() ? std::nullopt : std::optional<QPoint>(*saved)));
         placing_ = false;
         shown_.start();
+        if (!reduce_motion_) {
+            view_.setOpacity(0.0);
+            fade_.stop();
+            fade_.setStartValue(0.0);
+            fade_.setEndValue(1.0);
+        }
         view_.show();
         if (!translucent_)
             translucent_ = platform::make_translucent(view_);
         follow_panel();
         platform::activate();
         view_.requestActivate();
-        source_.reload();
+        if (!reduce_motion_)
+            fade_.start();
         source_.setPolling(true);
     }
     void hide(bool give_back) {
@@ -254,6 +269,9 @@ class Overlay final {
     bool placing_{};
     bool translucent_{};
     QElapsedTimer shown_;
+    const bool reduce_motion_ = platform::reduce_motion();
+    // Opening: the whole window, blur included, fades in.
+    QPropertyAnimation fade_{&view_, "opacity"};
 };
 } // namespace
 

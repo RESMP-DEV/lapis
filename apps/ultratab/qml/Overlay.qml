@@ -90,7 +90,7 @@ Item {
     Connections {
         target: panel
         function onTargetHeightChanged() {
-            if (panel.targetHeight >= root.windowPanelHeight)
+            if (root.settling || panel.targetHeight >= root.windowPanelHeight)
                 root.windowPanelHeight = panel.targetHeight
             else
                 shrinkLater.restart()
@@ -109,6 +109,33 @@ Item {
             return
         host.setContentSize(720, contentHeight)
         host.setPanel(Qt.rect(panel.x, panel.y, panel.width, panel.height), panel.radius)
+    }
+
+    // Opening: everything settles where it belongs with no card motion; the
+    // window fades in as a whole. Answers after that animate as usual.
+    property bool settling: false
+    Connections {
+        target: typeof host !== "undefined" ? host : null
+        ignoreUnknownSignals: true
+        function onAppearing() {
+            root.settling = true
+            arrive.stop()
+            leave.stop()
+            ghost.opacity = 0
+            riser.opacity = 0
+            arrivalLine.opacity = 0
+            glow.opacity = 0
+            frontBody.opacity = 1
+            arriveShift.y = 0
+            edgeShift.y = 0
+            root.windowPanelHeight = panel.targetHeight
+            settled.restart()
+        }
+    }
+    Timer {
+        id: settled
+        interval: 200
+        onTriggered: root.settling = false
     }
 
     // Captures only: what the real window's blur would show through.
@@ -553,7 +580,7 @@ Item {
         readonly property real targetHeight: Math.min(column.implicitHeight, root.tallest)
         height: targetHeight
         Behavior on height {
-            enabled: !reducedMotion
+            enabled: !reducedMotion && !root.settling
             NumberAnimation { duration: root.motion; easing.type: Easing.OutCubic }
         }
         onHeightChanged: root.tellHost()
@@ -1011,7 +1038,7 @@ Item {
         leave.restart()
     }
     function arrived() {
-        if (reducedMotion || !hasFront)
+        if (reducedMotion || settling || !hasFront)
             return
         riser.tint = weightColor(front.weight)
         arrivalLine.color = riser.tint

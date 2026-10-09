@@ -60,6 +60,9 @@ class OverlayHost final : public QObject {
     [[nodiscard]] QSize contentSize() const { return size_; }
 
   signals:
+    // The window is about to show: the overlay settles at once, without the
+    // card-change motion, since opening is the window's own fade.
+    void appearing();
     void dragRequested(QPoint to, bool done);
     void snapChanged();
     void panelChanged();
