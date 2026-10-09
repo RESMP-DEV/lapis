@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-10-09T07:20:00Z",
-  "scope": "Parent validation and merge evidence for Lapis PRs 98, 99, 101, 105, 109, 110, 115, and 124. This does not validate later open PRs or claim native VoiceOver, CoreSimulator, or GPU-presentation qualification.",
+  "recorded_at": "2026-10-09T08:05:00Z",
+  "scope": "Parent validation and merge evidence for Lapis PRs 98, 99, 101, 105, 109, 110, 115, 124, 125, 129, 133, and this evidence receipt. This does not validate the still-open PR 130 or PR 135, and does not claim native VoiceOver, CoreSimulator, or GPU-presentation qualification.",
   "reviewers": {
     "coderabbit": "Invoked by GitHub review state on every PR; completed where reported, and explicit rate-limit/skip states were treated as unavailable rather than approval.",
     "kilo": "Queued or pending states were optional and not merge gates.",
@@ -101,6 +101,54 @@
         "worker Swift app/views/unit tests against iOS Simulator SDK: PASS"
       ],
       "non_claims": "CoreSimulator integration execution was unavailable in the worker sandbox and is not claimed."
+    },
+    {
+      "number": 125,
+      "validated_head": "9c0349bb3ec5ac2c65f6341207e6b9968f8b060e",
+      "merge_commit": "6a90298489769e991868ef3fa517caf13e0e5164",
+      "threads_unresolved_before_merge": 0,
+      "checks": [
+        "full desktop configure/build/ctest/clang-format/clang-tidy/cppcheck: PASS (132 checks)",
+        "focused attention-service CTest: PASS",
+        "scripts/check_sync_output.py --output: PASS (frames=5, screens_seen=10, stuck_shown_ms=253)",
+        "scripts.tests.test_check_sync_output: PASS",
+        "umask 0022 just quality: PASS"
+      ],
+      "notes": "Rounds: worker repair 05a5629, parent tidy follow-up fa16f7b, then two review rounds b0a6dfa and 9c0349b covering burst snapshot recording, partial-marker progress and PTY resume, chunk-boundary marker splits, paced frame publication, trailing ESC/CSI prefixes, and in-flight snapshot overwrite."
+    },
+    {
+      "number": 129,
+      "validated_head": "ac10a51e7a167066acb6ce3230901dbb9bc9cb49",
+      "merge_commit": "c0e74b34a4b98a35dde3072dceb38e323e89b4c5",
+      "threads_unresolved_before_merge": 1,
+      "checks": [
+        "umask 0022 just quality: PASS",
+        "ui-preview CTest: FAIL, reproduced identically on current main (pre-existing, not this PR)"
+      ],
+      "notes": "The one open thread records a native screen-reader qualification gap, not a code defect; it was answered and left open deliberately. Not claimed: a new accessibility text interface, VoiceOver qualification, or dictation-app behavior."
+    },
+    {
+      "number": 133,
+      "validated_head": "8fb96edaaae185bb3ed99e92df4f995583af3c9f",
+      "merge_commit": "fb8fece6b2b2a0dca9d86db3d1c92a5d43449d19",
+      "threads_unresolved_before_merge": 0,
+      "checks": [
+        "focused agent-state CTest: PASS",
+        "changed-file clang-format and clang-tidy: PASS",
+        "umask 0022 just quality: PASS",
+        "git diff --check: PASS"
+      ],
+      "notes": "Repairs: integer-only atMs parsing, bounded read past the 4 KiB contract, symlink and oversized request regressions, explicit NSApp activation for cross-app requests, and select-before-activate so a stale request cannot steal focus."
+    },
+    {
+      "number": 136,
+      "validated_head": "7d5bff1",
+      "merge_commit": "ff52c8d2f1162c6b894532633c01b1db7dd6c67d",
+      "threads_unresolved_before_merge": 0,
+      "checks": [
+        "python3 -m json.tool on the receipt: PASS"
+      ],
+      "notes": "Evidence-only receipt for this wave."
     }
   ]
 }
