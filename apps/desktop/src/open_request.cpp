@@ -9,6 +9,10 @@
 #include <utility>
 
 namespace lapis::desktop {
+namespace {
+// The request file is a tiny private sidecar; read only this much of it.
+constexpr qsizetype max_bytes = 4096;
+} // namespace
 OpenRequests::OpenRequests(QString path, std::function<void(const QString&)> open, QObject* parent)
     : QObject(parent), path_(std::move(path)), open_(std::move(open)) {
     // Written by renaming, so the folder changes, not the old file.
@@ -20,12 +24,17 @@ OpenRequests::OpenRequests(QString path, std::function<void(const QString&)> ope
 
 void OpenRequests::check() {
     const QFileInfo info(path_);
-    if (!info.exists() || info.isSymLink() || !info.isFile() || info.size() > 4096)
+    if (!info.exists() || info.isSymLink() || !info.isFile() || info.size() > max_bytes)
         return;
     QFile file(path_);
     if (!file.open(QIODevice::ReadOnly))
         return;
-    const auto object = QJsonDocument::fromJson(file.read(4096)).object();
+    // The size check is a snapshot; read one byte past the bound so a file
+    // that grew or was replaced after it still fails the 4 KiB contract.
+    const auto bytes = file.read(max_bytes + 1);
+    if (bytes.size() > max_bytes)
+        return;
+    const auto object = QJsonDocument::fromJson(bytes).object();
     const auto agent = object.value(QStringLiteral("agent")).toString();
     // atMs is external input: read it as an integer, never as a double whose
     // out-of-range or non-finite cast is undefined behavior.

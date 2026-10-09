@@ -892,12 +892,14 @@ void follow_open_requests(std::optional<lapis::desktop::OpenRequests>& kept,
                      .filePath(QStringLiteral("ultratab_open.json")),
                  [&workspace, &shown](const QString& id) {
                      lapis::desktop::interaction::cause(QStringLiteral("ultratab"));
+                     // Select first: a request naming an agent this window does
+                     // not hold must not steal focus from the other app.
+                     if (!workspace.selectSession(id) || !shown)
+                         return;
                      // Ultra Tab is a different application, so its request
                      // arrives while lapis is inactive; show/raise alone would
                      // order a window in an application macOS never foregrounds.
-                     platform::activate_application();
-                     if (!workspace.selectSession(id) || !shown)
-                         return;
+                     lapis::desktop::platform::activate_application();
                      shown->show();
                      shown->raise();
                      shown->requestActivate();

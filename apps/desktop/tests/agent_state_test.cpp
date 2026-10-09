@@ -159,6 +159,27 @@ void followsOpenRequests() {
     requests.check();
     require(opened.size() == 1, "an out-of-range timestamp opens nothing");
     require(QFile::remove(path), "clear the out-of-range request");
+
+    // A file that grew past the 4 KiB contract after the size check still
+    // opens nothing, even with a valid request at its start.
+    QFile oversized(path);
+    require(oversized.open(QIODevice::WriteOnly), "write an oversized request");
+    oversized.write(QByteArrayLiteral("{\"agent\":\"") + id.toUtf8() +
+                    QByteArrayLiteral("\",\"atMs\":") + QByteArray::number(now()) +
+                    QByteArrayLiteral(",\"pad\":\"") + QByteArray(8192, 'x') +
+                    QByteArrayLiteral("\"}"));
+    oversized.close();
+    // A stale timestamp is not what rejects this one: write it fresh.
+    QFile fresh(path);
+    require(fresh.open(QIODevice::WriteOnly), "write a fresh oversized request");
+    fresh.write(QByteArrayLiteral("{\"agent\":\"") + id.toUtf8() +
+                QByteArrayLiteral("\",\"atMs\":") + QByteArray::number(now() + 1) +
+                QByteArrayLiteral(",\"pad\":\"") + QByteArray(8192, 'x') +
+                QByteArrayLiteral("\"}"));
+    fresh.close();
+    requests.check();
+    require(opened.size() == 1, "a request past the size contract opens nothing");
+    require(QFile::remove(path), "clear the oversized request");
 }
 
 int main(int argc, char** argv) {
