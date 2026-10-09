@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-07T13:00:57.835828Z",
+  "agent": "Codex with CCR GLM-5.3-FlashX workers",
+  "platform": "macOS-26.7.1-arm64-arm-64bit-Mach-O",
+  "work": "Repaired the lapis desktop aggregate's deterministic analyzer failures and stabilized its two nondeterministic GUI tests.",
+  "baseline_revision": "4982aa135b7a97ee03c923b6b257f7e94770692e",
+  "deterministic_checkpoint_revision": "4c1795bd11e2495e6c8894a4fdac5dae8d5e87fd",
+  "scope": [
+    "Mechanical clang-format and analyzer repairs across existing main sources.",
+    "Narrow NOLINTs with rationale where the checker warning was intentional or deferred to a dedicated complexity phase.",
+    "Condition/deadline synchronization for ui-preview and terminal-input; no product behavior changed by these test edits.",
+    "Raised only ui-preview's aggregate timeout from 20 to 30 seconds and its tab-position deadline from 2 to 5 seconds."
+  ],
+  "findings": [
+    "The deterministic gate failures were real main debt, not toolchain drift: clang-format violations reproduced identically under LLVM 20, 21, and 23, and clang-tidy/cppcheck findings reproduced on clean origin/main.",
+    "ui-preview failures varied across at least 11 assertions. Fixed pump windows raced dialog focus, sidebar shortcut arming, strip reveal, config watcher debounce, and frame presentation.",
+    "terminal-input failures varied among paste, command-chord, and suggestion-presentation deadlines. Native activation/exposure, terminal focus, clipboard readiness, and frame-driven seen state were not established immediately before input."
+  ],
+  "checks": [
+    {
+      "command": "just quality",
+      "exit_code": 0,
+      "result": "PASS; all seven quality subchecks, including 536 Python tests.",
+      "receipt": "build/reports/quality/receipt.json"
+    },
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<verified local prefix> just desktop",
+      "exit_code": 0,
+      "result": "PASS; configure, build, clang-format, cppcheck, all 107 clang-tidy workers, and all 46 CTests.",
+      "receipt": "build/reports/desktop/receipt.json"
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R '^(ui-preview|terminal-input)$' --output-on-failure (eight final rounds)",
+      "exit_code": 0,
+      "result": "8/8 rounds passed after final focus/frame synchronization; earlier intermediate rounds document the pre-repair flakiness.",
+      "logs": [
+        "build/stab4-1.log",
+        "build/stab4-2.log",
+        "build/stab4-3.log",
+        "build/stab4-4.log",
+        "build/stab4-5.log",
+        "build/stab4-6.log",
+        "build/stab4-7.log",
+        "build/stab4-8.log"
+      ]
+    }
+  ],
+  "worker_evidence": {
+    "diagnosis_run_dir": "<ccr-worker-cache>/20261007-043157-c4_imu8b",
+    "diagnosis_verdict": "real-defect-on-main",
+    "phase1_run_dir": "<ccr-worker-cache>/20261007-045029-7nyfzg55",
+    "phase2_run_dir": "<ccr-worker-cache>/20261007-052020-_2t6tdit",
+    "parent_integration": "Parent independently reran quality, full desktop, and eight native rounds before publication."
+  },
+  "non_claims": [
+    "The three session_service cognitive-complexity suppressions defer refactors to a dedicated phase; this PR does not claim those functions were simplified.",
+    "The small NOLINTs for fixture-local argument order and the intentional white-box .cpp include document existing test constraints rather than changing behavior.",
+    "No sanitizer, native-input, CLI-launch, iOS, packaging, or release gate was run.",
+    "The desktop pass uses the local logged-in GUI and an already validated pinned Ghostty prefix; it does not re-bootstrap that dependency."
+  ],
+  "validated_code_commit": "66157d292080abcf1ebd818e77cb9c6355109a8f",
+  "final_validation": {
+    "quality": "just quality exit 0 at the validated code tree",
+    "desktop": "just desktop exit 0 at the validated code tree: configure, build, clang-format, cppcheck, all clang-tidy workers, and all 46 CTests",
+    "bounded_parallel_adjustment": "The rebound presentation wait is 20 seconds and terminal-input CTest timeout 45 seconds; every other until deadline remains 8 seconds.",
+    "receipt_note": "This evidence commit is documentation-only after the validated code commit; it changes no source or test input.",
+    "native_validation": "not rerun for the serial-runner and offscreen-validation commit; an earlier full native pass is not reused across changed runner logic and test source."
+  },
+  "focus_safe_validation": {
+    "runner_change": "scripts/check_cpp.py now runs CTest serially, then starts the parallel analyzer pool only after tests finish. This prevents non-GUI tests and analyzers from starving frame-driven GUI fixtures.",
+    "offscreen_results": [
+      {
+        "suite": "ui-preview --background",
+        "rounds": 3,
+        "exit_code": 0
+      },
+      {
+        "suite": "terminal-input --background",
+        "rounds": 3,
+        "exit_code": 0
+      },
+      {
+        "suite": "tools-ui with QT_QPA_PLATFORM=offscreen",
+        "rounds": 3,
+        "exit_code": 0
+      }
+    ],
+    "quality_after_runner_change": "just quality exit 0 after one transient live-service stream fixture failure was reproduced as a focused pass and a second full quality run.",
+    "native_validation_policy": "No native window/focus/capture tests were run after the operator instruction to avoid cursor and focus capture. The canonical native desktop gate must be rerun before merge acceptance is claimed."
+  }
+}
