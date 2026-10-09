@@ -23,18 +23,15 @@ import tempfile
 import time
 from datetime import datetime, timezone
 
-# Tags and notes the CLIs add as user turns, which nobody typed.
-NOT_TYPED = (
+# Tags and notes the CLIs add as user turns, which nobody typed. Tag notes are
+# recognized as complete elements so a request can quote one and continue.
+TAG_NOT_TYPED = (
     "<command-name>",
     "<local-command-caveat>",
     "<local-command-stdout>",
     "<environment_context>",
     "<system-reminder>",
     "<task-notification>",
-    "Caveat:",
-    "This session is being continued",
-    "[Request interrupted",
-    "# AGENTS.md instructions",
     "<codex_internal_context",
     "<turn_aborted",
     "<subagent_notification",
@@ -43,8 +40,18 @@ NOT_TYPED = (
     "<bash-stdout",
     "<bash-stderr",
     "<command-message",
+)
+PROSE_NOT_TYPED = (
+    "Caveat:",
+    "This session is being continued",
+    "# AGENTS.md instructions",
+)
+BRACKET_NOT_TYPED = (
+    "[Request interrupted",
+    "<codex_internal_context",
     "[Your previous response had no visible output",
 )
+NOT_TYPED = TAG_NOT_TYPED + PROSE_NOT_TYPED + BRACKET_NOT_TYPED
 # Codex attaches images as empty wrappers around the typed text, never inside.
 IMAGE_EDGES = re.compile(
     r"\A(?:<image\b[^>]*>\s*</image>\s*)*"
@@ -56,13 +63,22 @@ IMAGE_EDGES = re.compile(
 # quote one; it is injected only when nothing else remains.
 NOTE_TAGS = "|".join(
     sorted(
-        (prefix[1:] for prefix in NOT_TYPED if prefix.startswith("<")),
+        (prefix[1:].removesuffix(">") for prefix in TAG_NOT_TYPED),
         key=len,
         reverse=True,
     )
 )
-NOTE_ELEMENT = re.compile(r"<({})\b[^>]*(?:/>|>.*?</\1\s*>)".format(NOTE_TAGS), re.S)
-NOTE_BRACKET = re.compile(r"\[[^\[\]]*\]")
+NOTE_ELEMENT = re.compile(
+    r"<({})(?=[\s/>])[^>]*(?:/>|>.*?</\1\s*>)".format(NOTE_TAGS),
+    re.S,
+)
+NOTE_BRACKET = re.compile(
+    "|".join(
+        "{}[^\\[\\]]*\\]".format(re.escape(prefix))
+        for prefix in sorted(BRACKET_NOT_TYPED, key=len, reverse=True)
+    ),
+    re.S,
+)
 # Codex Desktop puts context headers before the request it was typed under.
 CODEX_REQUEST = re.compile(r"^## My request for Codex:[ \t]*$", re.MULTILINE)
 CATEGORIES = ("approve", "status", "ship", "fix", "new", "question", "correct", "other")
@@ -99,17 +115,20 @@ def typed(text):
     while text:
         # Strip edge wrappers before deciding what remains was typed.
         text = IMAGE_EDGES.sub(r"\1", text).strip()
-        if peeled:
-            if whole_note(text):
-                return ""
-        elif text.startswith(NOT_TYPED):
+        # A request may quote an injected tag or bracket note; it is injected
+        # only when nothing else remains. Prose notes have no reliable end.
+        if whole_note(text):
+            return ""
+        if not peeled and text.startswith(PROSE_NOT_TYPED):
             return ""
         markers = list(CODEX_REQUEST.finditer(text))
         if not markers or not (text.startswith("# ") or CODEX_REQUEST.match(text)):
             break
-        # Peel one envelope. A later sentinel stays unless the remainder is
-        # another envelope, which can hide another wrapper, note, or marker.
-        text = text[markers[0].end() :].strip()
+        # A '# ' preamble may quote or contain the sentinel in attached text,
+        # so its request starts after the last line-anchored marker. A direct
+        # marker starts the request, and later markers in it remain typed text.
+        marker = markers[-1] if text.startswith("# ") else markers[0]
+        text = text[marker.end() :].strip()
         peeled = True
     return text
 

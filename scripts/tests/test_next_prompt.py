@@ -184,6 +184,50 @@ class TranscriptTests(Homes):
         )
         self.assertEqual(typed(wrapper + "what is this"), "what is this")
 
+    def test_tag_elements_use_exact_names_and_can_be_quoted(self):
+        typed = next_prompt.typed
+        tags = (
+            "<command-name>/compact</command-name>",
+            "<local-command-caveat>read this</local-command-caveat>",
+            "<local-command-stdout>done</local-command-stdout>",
+            "<environment_context>cwd</environment_context>",
+            "<system-reminder>be careful</system-reminder>",
+            "<task-notification>finished</task-notification>",
+        )
+        marker = "## My request for Codex:\n"
+        for tag in tags:
+            self.assertEqual(typed(tag), "")
+            self.assertEqual(typed('<image name="a.png"></image>\n' + tag), "")
+            self.assertEqual(typed(marker + tag), "")
+
+        # A tag name must end at XML-name whitespace or its closing angle, and
+        # a person may quote a known tag and continue their request.
+        self.assertEqual(
+            typed("<bash-input-extended>x</bash-input>"),
+            "<bash-input-extended>x</bash-input>",
+        )
+        quoted = "<bash-input>ls</bash-input> why does this fail?"
+        self.assertEqual(typed(quoted), quoted)
+        self.assertEqual(typed(marker + quoted), quoted)
+
+    def test_only_known_bracket_notes_are_injected(self):
+        typed = next_prompt.typed
+        marker = "## My request for Codex:\n"
+        self.assertEqual(typed("[Request interrupted by user]"), "")
+        self.assertEqual(typed(marker + "[Request interrupted by user]"), "")
+        self.assertEqual(
+            typed(marker + "[Your previous response had no visible output.]"), ""
+        )
+
+        for request in ("[ship it]", "[note] [todo]", "[yes]\n[LGTM]"):
+            self.assertEqual(typed(request), request)
+            self.assertEqual(typed(marker + request), request)
+
+    def test_a_request_can_quote_an_injected_turn_outside_desktop(self):
+        typed = next_prompt.typed
+        request = "<turn_aborted>tried already</turn_aborted> please retry"
+        self.assertEqual(typed(request), request)
+
     def test_codex_desktop_marker_is_extracted_by_line_and_envelopes_peel(self):
         typed = next_prompt.typed
         direct = "## My request for Codex:\nfix it"
@@ -193,6 +237,13 @@ class TranscriptTests(Homes):
         self.assertEqual(
             typed(direct + "\n## My request for Codex:\nship it"),
             "fix it\n## My request for Codex:\nship it",
+        )
+        self.assertEqual(
+            typed(
+                "# Notes\nThe file said:\n## My request for Codex:\n"
+                "old text\n## My request for Codex:\nship it"
+            ),
+            "ship it",
         )
         self.assertEqual(
             typed(
