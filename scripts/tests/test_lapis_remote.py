@@ -1870,6 +1870,29 @@ class DeckTests(unittest.TestCase):
             self.assertEqual(status, 409)
             self.assertIn("not reachable", body["error"])
 
+    def test_skip_refuses_unknown_agents_and_missing_card_keys(self):
+        with Server(self, self.registry, self.runtime) as server:
+            path = f"/api/agents/{self.AGENT}/skip"
+            status, _ = server.request("POST", path, {"key": "k1"})
+            self.assertEqual(status, 200)
+            row = json.loads((self.runtime / remote.ANSWERS_FILE).read_text())
+            self.assertEqual(
+                (row["agent"], row["how"], row["key"]), (self.AGENT, "skipped", "k1")
+            )
+            os.remove(self.runtime / remote.ANSWERS_FILE)
+            # An agent the registry does not name, and a body with no card
+            # key: neither is logged.
+            status, _ = server.request(
+                "POST", "/api/agents/terminal-x/skip", {"key": "k1"}
+            )
+            self.assertEqual(status, 404)
+            status, _ = server.request("POST", path, {"proposal": "ship it"})
+            self.assertEqual(status, 400)
+            self.assertFalse(
+                (self.runtime / remote.ANSWERS_FILE).exists(),
+                "invalid answers stay out",
+            )
+
 
 class MachineTests(unittest.TestCase):
     def setUp(self):

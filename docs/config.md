@@ -33,6 +33,22 @@ lapis's selected model, approval mode and resume options. Configured approval
 flags take precedence for a request with no explicit mode. Shell aliases do not
 apply because lapis starts the executable directly.
 
+## CLI updates
+
+`harnessUpdates` turns off lapis's automatic update for the CLIs set to
+`false`, so a version you chose stays installed:
+
+```json
+"harnessUpdates": {"omp": false}
+```
+
+New agents of a listed CLI start without running its update first, and **Update
+this tab's CLI and reload it** says updates are off for that CLI instead of
+running one. An update already running when you add the key still finishes
+before its waiting agents start. Every CLI that is absent or set to `true` keeps
+updating as before; `--no-harness-updates` still turns off updates for all of
+them. See [keeping CLIs current](agents.md#keeping-clis-current).
+
 ## Alerts
 
 An unseen completed turn or request plays one quiet cue when `alerts.finished`
@@ -41,15 +57,30 @@ files do not restore repeating request chimes. Appearance has one switch and
 Play button for the shared cue, plus the background-notification switch.
 
 A turn that ends on what you already saw of that agent stays quiet: while lapis
-is in front, the screen of the agent you are looking at is noted every second,
-and a finished turn whose screen above Claude Code's input box is unchanged
-neither chimes nor notifies. A request still chimes and notifies even then.
+is in front and you are at the Mac, the screen of the agent you are looking at
+is noted every second, and a finished turn whose screen above Claude Code's
+input box is unchanged neither chimes nor notifies. A request still chimes and
+notifies even then.
+
+A notification posts when lapis is in the background or when you are away:
+no keyboard, mouse or trackpad input anywhere for `alerts.awayAfter` seconds
+(default 120, from 15 to 3600). Away, lapis in front, even showing that agent,
+does not count as you seeing it. An agent still waiting after
+`alerts.remindAfter` minutes (default 30, up to 1440; 0 for never), with no
+new turn and not looked at (a look already recorded by the screen sampler
+counts, even after you move on), notifies once more; if you are away then, the
+reminder comes when you are back.
+
+```json
+"alerts": {"notify": true, "awayAfter": 120, "remindAfter": 30}
+```
 
 Every decision — a chime or a notification, and each quiet reason — is logged,
 one JSON line each, to `runtime/attention.jsonl` in the lapis folder: the
 moment, the agent's conversation title, its CLI, the event (`needs you` or
-`finished`), a `kind` of chime or notification, and the `decision` (chimed,
-posted, or the quiet reason). The log is owner-only, and the title can be the
+`finished`, or `still waiting` for a reminder), a `kind` of chime or
+notification, and the `decision` (chimed, posted, `posted: you are away`,
+`posted: reminder`, or the quiet reason). The log is owner-only, and the title can be the
 conversation's first prompt, so the file is not for sharing. Before a line
 would cross 2 MiB the log rotates to `attention.jsonl.1` (one predecessor, the
 older one removed) and the fresh file opens with a `rotated` marker line.
@@ -133,6 +164,26 @@ to 64, the current one included) are kept, so the log never holds more than
 cannot keep up, records are dropped and a `dropped` record counts them, and
 typing never waits. The log holds what you typed and pasted, so do not share it.
 
+## Tab's next agent
+
+`tabAway` sets how Tab, with nothing to type, picks the next agent that needs
+you (see [suggestions](suggestions.md#tab)):
+
+```json
+"tabAway": {"rank": "learned", "work": ["work"]}
+```
+
+`rank` is `learned` (the default) or `fixed`. Learned starts from a prior (work
+first, then requests, then turns you have not seen, then the newest) and fits it
+to where you go: each time you settle on a waiting agent, by Tab or by hand.
+`fixed` keeps the earlier order: a guess not yet seen, then an unseen turn or a
+request, then a guess already seen, the longest waiting first. `work` lists the
+categories, by name and without case, that count as work; the default matches a
+category called `work`. Either way only agents truly waiting on you qualify: a
+request, or a turn that finished with no background work in flight. Choices and
+Tab moves are kept in `runtime/tab_away.jsonl` and the fitted model in
+`runtime/tab_away_model.json`, both owner-only.
+
 ## The rest
 
 - `editor` is the app that opens an agent's folder (else the first of Cursor, VS
@@ -142,3 +193,26 @@ typing never waits. The log holds what you typed and pasted, so do not share it.
 - `usage`, `accounts` and `limitResets` are described in [usage](usage.md).
 - `nextPrompt` turns on guessed next prompts; see [suggestions](suggestions.md).
 - Key bindings are listed in [keys](keys.md); Appearance shows and edits them.
+
+## Window state across restarts
+
+The agents run in their session services, so a restart of the window (an
+install swaps the app and opens it again) leaves them running. What only the
+window knew is kept in `runtime/gui_state.json` in the lapis folder and comes
+back with it: the guessed next prompts at each agent's cursor (whether you saw
+them, a guess Tab typed in, a guess still being made), the unseen marks on
+cards and categories and when each agent began to need you (Tab's and
+Command-L's order), what you last saw of each agent (so a turn ending on it
+stays quiet), the agents Command-Shift-T can reopen, and the new-agent form's
+last choices, the side terminal and a zoomed tile.
+
+The file is private to you (`0600`), versioned, replaced whole on each write
+and at most 1 MiB. Writes are at most one every two seconds, with the newest
+state, and finish when lapis quits. A missing, unreadable, corrupt, oversized or
+other-version file is ignored with a warning. Nothing restored pings or acts on
+an agent: marks for agents that are gone or now in another conversation (after
+`/clear`) are dropped, a guess shows again only while its conversation is
+still at the turn it was made for, rejected entries are pruned from the saved
+state, and the new-agent form and side-terminal machines are checked against the
+available choices before they are recalled. Delete the file to start the window
+fresh.

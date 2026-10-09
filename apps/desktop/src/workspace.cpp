@@ -4,9 +4,11 @@
 #include "attention_order.hpp"
 #include "conversation_index.hpp"
 #include "harness_catalog.hpp"
+#include "hook_relay.hpp"
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "platform/updater_process.hpp"
+#include "remote_hook_relay.hpp"
 #include "terminals.hpp"
 #include "workspace_control.hpp"
 
@@ -40,7 +42,11 @@
 
 namespace lapis::desktop {
 namespace {
-bool hasCodexUpdateSetting(const QStringList& arguments) {
+bool directCodexLaunch(const session::LaunchSpec& launch) {
+    return QFileInfo(launch.program).fileName() == QLatin1String("codex");
+}
+// A setting only before `--`; the rest are literal prompt words.
+bool hasCodexSetting(const QStringList& arguments, const char* key) {
     for (qsizetype index = 0; index < arguments.size(); ++index) {
         const auto& argument = arguments.at(index);
         if (argument == QLatin1String("--"))
@@ -53,11 +59,13 @@ bool hasCodexUpdateSetting(const QStringList& arguments) {
             setting = argument.sliced(9);
         else if (argument.startsWith(QLatin1String("-c")) && argument.size() > 2)
             setting = argument.sliced(2);
-        if (setting.section(QLatin1Char('='), 0, 0).trimmed() ==
-            QLatin1String("check_for_update_on_startup"))
+        if (setting.section(QLatin1Char('='), 0, 0).trimmed() == QLatin1String(key))
             return true;
     }
     return false;
+}
+bool hasCodexUpdateSetting(const QStringList& arguments) {
+    return hasCodexSetting(arguments, "check_for_update_on_startup");
 }
 // Returns true once the lock holder identifies itself as a helper, or false
 // if the lock becomes available before its marker is published.
@@ -323,6 +331,104 @@ QString savedAccount(const QJsonValue& value) {
     const auto text = value.toString();
     return name.match(text).hasMatch() ? text : QString();
 }
+// An agent on another machine reports its turns through its own terminal,
+// since lapis's hook socket and app-server are on this Mac (the session
+// service's terminal_hooks.hpp has the sequence format). Its login shell
+// makes a nonce that stays in the CLI's environment, prints the sequence that
+// binds it, and keeps lapis's relay and its terminal's device in the
+// environment too; Claude Code's hooks and Codex's notify program run that
+// relay with the machine's python3, which writes each event's bounded
+// metadata to that device. Claude Code runs hooks without a controlling
+// terminal, so /dev/tty would not reach it (observed with 2.1.290). Nothing is
+// written to that machine, and a missing python3 or a failing hook changes
+// nothing but the status, which then stays estimated from output.
+QString remoteHookPreamble(const QString& cli) {
+    return QStringLiteral(
+               R"sh(export LAPIS_HOOK_NONCE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" )sh"
+               R"sh(LAPIS_HOOK_TTY="$(tty)" )sh"
+               R"sh(LAPIS_HOOK_RELAY=%1; printf '\033]7717;lapis-init;%2;%s\007' "$LAPIS_HOOK_NONCE";)sh")
+        .arg(shellWord(QString::fromUtf8(kRemoteHookRelay)), cli);
+}
+// One past the shell word (plain, or single-quoted as shellWord writes it)
+// starting at `start`; the end of the text when it does not close.
+qsizetype shellWordEnd(const QString& text, qsizetype start) {
+    if (!text.mid(start).startsWith(QLatin1Char('\''))) {
+        const auto space = text.indexOf(QLatin1Char(' '), start);
+        return space < 0 ? text.size() : space;
+    }
+    auto end = start + 1;
+    while (end < text.size()) {
+        if (text.at(end) != QLatin1Char('\''))
+            ++end;
+        else if (text.mid(end, 4) == QStringLiteral(R"('\'')"))
+            end += 4;
+        else
+            return end + 1;
+    }
+    return text.size();
+}
+// The text of the shell word shellWord wrote.
+QString unquotedWord(QString word) {
+    if (!word.startsWith(QLatin1Char('\'')) || word.size() < 2 || !word.endsWith(QLatin1Char('\'')))
+        return word;
+    word = word.mid(1, word.size() - 2);
+    word.replace(QStringLiteral(R"('\'')"), QStringLiteral("'"));
+    return word;
+}
+// The words of a remote login shell's command (`<exports>; <cli> <args>`,
+// with a trailing space when the conversation id follows) with that
+// preamble, plus the hook settings (Claude Code) or notify program (Codex).
+// A command that has them, or whose arguments would conflict, is unchanged.
+QString withRemoteHooks(const QString& words, const QString& harness) {
+    if (words.contains(QStringLiteral("LAPIS_HOOK_NONCE")) ||
+        words.contains(QStringLiteral(" -- ")))
+        return words;
+    if (harness == QLatin1String("claude")) {
+        for (const auto* option : {"--settings", "--bare", "--safe-mode"})
+            if (words.contains(QLatin1String(option)))
+                return words;
+        const bool trailing = words.endsWith(QLatin1Char(' '));
+        const auto command =
+            QStringLiteral(R"(python3 -c "$LAPIS_HOOK_RELAY" claude 2>/dev/null || true)");
+        return remoteHookPreamble(harness) + QLatin1Char(' ') +
+               (trailing ? words.chopped(1) : words) + QStringLiteral(" --settings ") +
+               shellWord(QString::fromUtf8(claude::hook_settings(command))) +
+               (trailing ? QStringLiteral(" ") : QString());
+    }
+    if (harness == QLatin1String("codex")) {
+        if (words.contains(QStringLiteral("notify")))
+            return words;
+        // Codex takes -c before any subcommand: right after its program word.
+        const auto end = shellWordEnd(words, 0);
+        const auto notify = QStringLiteral(
+            R"(notify=["sh","-c","exec python3 -c \"$LAPIS_HOOK_RELAY\" codex \"$1\" 2>/dev/null","lapis"])");
+        return remoteHookPreamble(harness) + QLatin1Char(' ') + words.left(end) +
+               QStringLiteral(" -c ") + shellWord(notify) + words.mid(end);
+    }
+    return words;
+}
+// A saved remote Claude Code or Codex agent gains the hooks above when it
+// starts again, as it gains connection options: the login shell's command is
+// the shell word after `-lic `, single-quoted unless it is one plain word.
+void addRemoteHooks(session::LaunchSpec& launch, const QString& harness) {
+    const auto remote = remoteCommand(launch);
+    if (!remote)
+        return;
+    const auto& line = remote->second;
+    const QString lead = QStringLiteral("-lic ");
+    const auto start = line.indexOf(lead) + lead.size();
+    if (start < lead.size() || start >= line.size())
+        return;
+    const auto end = shellWordEnd(line, start);
+    const auto word = line.mid(start, end - start);
+    const auto words = unquotedWord(word);
+    if (shellWord(words) != word)
+        return; // not a word shellWord wrote
+    const auto hooked = withRemoteHooks(words, harness);
+    if (hooked == words)
+        return;
+    launch.arguments.last() = line.left(start) + shellWord(hooked) + line.mid(end);
+}
 // Options every agent's ssh starts with. Its own connection: one shared
 // through the user's ControlMaster ends with the ssh that opened it, so
 // closing one agent ended every other session to that machine. Keepalives end
@@ -373,7 +479,7 @@ QString remoteLaunch(const AgentRequest& request, const QString& command, QStrin
     const auto line =
         conversation.isEmpty()
             ? QStringLiteral(R"(cd %1 && exec "${SHELL:-/bin/sh}" -lic %2)")
-                  .arg(folder, shellWord(words.join(' ')))
+                  .arg(folder, shellWord(withRemoteHooks(words.join(' '), request.harness)))
             : QStringLiteral(
                   R"(cd %1 && s=%2 && p="[-]-(resume|session-id) $s" && o=--session-id && { )"
                   R"(pkill -HUP -f "$p"; n=0; )"
@@ -382,7 +488,9 @@ QString remoteLaunch(const AgentRequest& request, const QString& command, QStrin
                   R"(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" -maxdepth 2 -name "$s.jsonl" 2>/dev/null )"
                   R"(| grep -q . && o=--resume; )"
                   R"(exec "${SHELL:-/bin/sh}" -lic %3"$o $s"; })")
-                  .arg(folder, conversation, shellWord(words.join(' ') + QLatin1Char(' ')));
+                  .arg(folder, conversation,
+                       shellWord(
+                           withRemoteHooks(words.join(' ') + QLatin1Char(' '), request.harness)));
     launch = session::validate_launch(
         {ssh,
          remoteOptions() + QStringList{QStringLiteral("-t"), request.machine, line},
@@ -418,6 +526,22 @@ void addRemoteOptions(session::LaunchSpec& launch) {
     }
     launch.arguments = missing + launch.arguments;
     return;
+}
+// Keep restored direct Codex launches beside the catalog used by new ones.
+void applyCodexStartupDefault(session::LaunchSpec& launch, int& managed_resume_index) {
+    if (!directCodexLaunch(launch) || hasCodexUpdateSetting(launch.arguments))
+        return;
+    const auto* descriptor = find_harness(QLatin1String("codex"));
+    const auto missing = descriptor ? descriptor->defaultArguments() : QStringList();
+    if (missing.isEmpty())
+        return;
+    if (launch.arguments.size() + missing.size() > max_saved_arguments) {
+        qWarning() << "Codex startup setting not added: saved argument limit reached";
+        return;
+    }
+    launch.arguments = missing + launch.arguments;
+    if (managed_resume_index >= 0)
+        managed_resume_index += static_cast<int>(missing.size());
 }
 constexpr qint64 updater_output_tail_bytes = 8192;
 } // namespace
@@ -492,6 +616,14 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
       headless_(options.headless), update_timeout_ms_(std::max(qint64{1}, options.updateTimeoutMs)),
       preview_mode_(mode == WorkspaceMode::preview) {
     accounts_.setConfig(options.accounts);
+    // Before selecting clears the arriving agent's unseen mark, so a choice
+    // is recorded with the state the person chose from.
+    choice_settle_.setSingleShot(true);
+    choice_settle_.setInterval(2500);
+    connect(&choice_settle_, &QTimer::timeout, this, [this] { settleChoice(); });
+    // Only intent-driven selection and navigation below call noteFocusMove;
+    // structural changes may reassign focus without a person's move.
+    harness_updates_off_ = options.harnessUpdatesOff;
     // Selecting an agent is looking at it.
     connect(this, &Workspace::focusChanged, this, [this] {
         if (auto* focused = focusedSession())
@@ -522,6 +654,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
             watch(sessions_.front().get());
             update_log_directory_ = QFileInfo(endpoint).absolutePath();
             restoreSelection();
+            rememberInitialFocus();
             if (options.mode == session::wire::AttachMode::create &&
                 deferForUpdate(QStringLiteral("shell")))
                 return;
@@ -533,7 +666,10 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
                 ? QDir(rootDirectory()).filePath(QStringLiteral("runtime/workspace.json"))
                 : QFileInfo(options.storagePath).absoluteFilePath();
         restore();
+        // Tab's choices and model live beside the registry, owner-only.
+        tab_ranker_ = std::make_unique<TabRanker>(QFileInfo(storage_path_).absolutePath());
         restoreSelection();
+        rememberInitialFocus();
         return;
     }
     add("Codex", "lapis", "UI preview", "#87cbac", "~/lapis\r\n\r\n> Ready for the next step.\r\n");
@@ -591,6 +727,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
         watch(item.get());
     }
     restoreSelection();
+    rememberInitialFocus();
 }
 
 QVariantList Workspace::sessions() const {
@@ -607,16 +744,53 @@ SessionPreview* Workspace::focusedSession() const {
 }
 
 void Workspace::nextSession(int delta) {
-    const auto list = categorySessions();
-    if (list.isEmpty())
+    QStringList strip;
+    for (const auto& value : categorySessions())
+        strip.append(value.value<SessionPreview*>()->sessionId());
+    auto* place = category(active_category_);
+    if (strip.isEmpty() || place == nullptr)
         return;
-    int current = 0;
-    for (int i = 0; i < list.size(); ++i)
-        if (list[i].value<SessionPreview*>() == focusedSession())
-            current = i;
-    const int count = static_cast<int>(list.size());
-    const int next = ((current + delta % count) % count + count) % count;
-    selectSession(list[next].value<SessionPreview*>()->sessionId());
+    const auto* focused = focusedSession();
+    const QString current = focused != nullptr ? focused->sessionId() : QString();
+    // Tiles first in reading order, then the strip; a walk continues while the
+    // stage is as its last step left it. A tile whose agent has been closed or
+    // moved away leaves the walk: its starting layout would put that agent back
+    // on the stage, and `untile` cannot see a tile the walk displaced.
+    const auto in_strip = [&strip](const QString& id) { return strip.contains(id); };
+    const auto existing = tile_walks_.constFind(place->id);
+    const auto home_tiles =
+        existing != tile_walks_.cend() ? existing->home.sessions() : QStringList{};
+    const bool continues = existing != tile_walks_.cend() && existing->selected == current &&
+                           existing->shown == place->tiles.toJson() &&
+                           existing->home.cycleOrder(strip) == existing->order &&
+                           std::all_of(home_tiles.cbegin(), home_tiles.cend(), in_strip);
+    const TileWalk candidate{.home = place->tiles,
+                             .order = place->tiles.cycleOrder(strip),
+                             .slot = {},
+                             .shown = place->tiles.toJson(),
+                             .selected = current};
+    const TileWalk& walk = continues ? existing.value() : candidate;
+    const auto step = TileLayout::step(walk.home, walk.order, walk.slot, current, delta);
+    if (step.selected.isEmpty() || step.selected == current || !mutableRegistry())
+        return;
+    const auto previous = checkpoint();
+    const bool retiled = place->tiles.toJson() != step.layout.toJson();
+    place->tiles = step.layout;
+    place->selected = step.selected;
+    if (!commit(previous))
+        return;
+    if (!continues)
+        tile_walks_.insert(place->id, candidate);
+    auto saved_walk = tile_walks_.find(place->id);
+    if (saved_walk == tile_walks_.end())
+        return;
+    saved_walk->slot = step.slot;
+    saved_walk->shown = place->tiles.toJson();
+    saved_walk->selected = step.selected;
+    if (retiled)
+        emit tilesChanged();
+    noteFocusMove();
+    emit focusChanged();
 }
 
 bool Workspace::nextAttention() {
@@ -644,30 +818,107 @@ bool Workspace::latestAttention() {
             latest = item.get();
     return latest != nullptr && selectSession(latest->sessionId());
 }
-bool Workspace::nextPriorityAttention(const QVariantMap& ready) {
-    const auto rank = [&ready](const SessionPreview& item) {
-        const auto guess = ready.find(item.sessionId());
-        const auto kind = item.statusKind();
-        const int tier = waiting_tier({.guessed = guess != ready.end(),
-                                       .guess_seen = guess != ready.end() && guess->toBool(),
-                                       .status = kind,
-                                       .unseen = item.unseen(),
-                                       .request = item.attentionPending()});
-        return std::pair{tier, item.neededAtMs()};
-    };
-    const SessionPreview* best = nullptr;
-    std::pair<int, qint64> best_rank{};
-    const auto* const focused = focusedSession();
+// Truly waiting on the person: a request, or a turn its observer saw finish
+// with no background work in flight (a turn paused on its own background work
+// reads as working until it ends or its deadline passes) that is unseen or has
+// a guess. An agent at work, unknown, ended or closing never is, and neither
+// is one whose quiet is only an output estimate: silence is not a finished turn.
+std::vector<TabCandidate> Workspace::waitingCandidates(const QVariantMap& ready,
+                                                       const SessionPreview* exclude) const {
+    std::vector<TabCandidate> out;
+    const auto now = QDateTime::currentMSecsSinceEpoch();
     for (const auto& item : sessions_) {
-        const auto candidate = rank(*item);
-        if (item.get() == focused || candidate.first < 0)
+        if (item.get() == exclude || item->closing())
             continue;
-        if (best == nullptr || candidate < best_rank) {
-            best = item.get();
-            best_rank = candidate;
-        }
+        const auto kind = item->statusKind();
+        if (kind == QLatin1String("ended") || kind == QLatin1String("unknown"))
+            continue;
+        const auto guess = ready.find(item->sessionId());
+        const bool request = item->attentionPending();
+        const bool finished = kind == QLatin1String("finished") ||
+                              (kind == QLatin1String("idle") && item->hasAttentionSource());
+        if (!request && !(finished && (item->unseen() || guess != ready.end())))
+            continue;
+        const auto& id = item->sessionId();
+        const auto category = agents_.value(id).category;
+        bool work = false;
+        for (const auto& group : categories_)
+            if (group.id == category)
+                work = tab_away_.work.contains(group.name, Qt::CaseInsensitive);
+        const auto since = waiting_since_.value(id, item->neededAtMs());
+        const auto& starts = turn_starts_.value(id);
+        const auto hour = std::count_if(starts.begin(), starts.end(),
+                                        [now](qint64 at) { return now - at <= 3'600'000; });
+        out.push_back({id, category, work, request, item->unseen(), guess != ready.end(),
+                       guess != ready.end() && guess->toBool(),
+                       since > 0 ? static_cast<double>(now - since) / 60'000.0 : 0.0,
+                       static_cast<int>(hour),
+                       starts.empty() ? 1e9 : static_cast<double>(now - starts.back()) / 60'000.0});
     }
-    return best != nullptr && selectSession(best->sessionId());
+    return out;
+}
+bool Workspace::nextPriorityAttention(const QVariantMap& ready) {
+    const auto candidates = waitingCandidates(ready, focusedSession());
+    std::vector<double> scores;
+    const auto best = tab_ranker_->pick(candidates, &scores);
+    if (!best)
+        return false;
+    if (!selectSession(candidates[*best].session))
+        return false;
+    tab_ranker_->recordTab(candidates, scores, *best);
+    // Where the person settles after this move is the choice it learns from.
+    // A Tab before the last move settled passes over that agent: the choice
+    // stays among the agents waiting since they left the one before.
+    if (choice_)
+        choice_->add(candidates);
+    else
+        choice_ = PendingChoice{candidates, true};
+    choice_->viaTab = true;
+    return true;
+}
+void Workspace::setTabAway(const TabAwaySettings& settings) {
+    tab_away_ = settings;
+    tab_ranker_->setLearned(settings.learned);
+}
+// The person left an agent: remember who was waiting then. Moves before the
+// last one settled (a quick hop, or Tab's own move) add agents that began
+// waiting since, and keep those passed over.
+void Workspace::noteFocusMove() {
+    const auto* focused = focusedSession();
+    const auto id = focused != nullptr ? focused->sessionId() : QString();
+    if (id == last_focus_id_)
+        return;
+    auto fresh = waitingCandidates(guesses_ ? guesses_() : QVariantMap{}, session(last_focus_id_));
+    if (choice_)
+        choice_->add(fresh);
+    else
+        choice_ = PendingChoice{std::move(fresh), false};
+    // Tab marks the pending choice itself after a successful move; any other
+    // focus change while it is pending belongs to the person.
+    choice_->viaTab = false;
+    last_focus_id_ = id;
+    choice_settle_.start();
+}
+void Workspace::PendingChoice::add(const std::vector<TabCandidate>& fresh) {
+    for (const auto& candidate : fresh)
+        if (std::none_of(candidates.begin(), candidates.end(), [&](const TabCandidate& known) {
+                return known.session == candidate.session;
+            }))
+            candidates.push_back(candidate);
+}
+// They stayed: the agent they are on is their choice among those waiting.
+void Workspace::settleChoice() {
+    if (!choice_)
+        return;
+    const auto [candidates, via_tab] = std::move(*choice_);
+    choice_.reset();
+    const auto chosen =
+        std::find_if(candidates.begin(), candidates.end(), [this](const TabCandidate& candidate) {
+            return candidate.session == last_focus_id_;
+        });
+    if (chosen != candidates.end())
+        tab_ranker_->learn(candidates, static_cast<std::size_t>(chosen - candidates.begin()),
+                           via_tab);
 }
 bool SessionPreview::addPreviewRequest(const QString& id, const QString& reason) {
     if (id.isEmpty() || id.size() > 64 || reason.size() > 256 || requests_.contains(id) ||
@@ -759,7 +1010,23 @@ void Workspace::clearError() {
     error_.clear();
     emit errorChanged();
 }
+void Workspace::rememberInitialFocus() {
+    const auto* focused = focusedSession();
+    last_focus_id_ = focused != nullptr ? focused->sessionId() : QString{};
+}
+// A moved, closed or re-tiled agent can reassign focus, but that is not the
+// person choosing an agent. Drop any pending choice and restart attribution
+// from the structural focus.
+void Workspace::noteStructuralFocus() {
+    choice_.reset();
+    choice_settle_.stop();
+    const auto* focused = focusedSession();
+    last_focus_id_ = focused != nullptr ? focused->sessionId() : QString{};
+}
 void Workspace::watch(SessionPreview* item) {
+    // Its unseen mark and whether it is at work outlive a window (GuiState).
+    connect(item, &SessionPreview::unseenChanged, this, &Workspace::marksChanged);
+    connect(item, &SessionPreview::statusChanged, this, &Workspace::marksChanged);
     connect(item, &SessionPreview::connectionChanged, this, [this, item] { finishClosing(item); });
     // The service reports why a session ended just after the state changes.
     connect(item, &SessionPreview::connectionChanged, this, [this, id = item->sessionId()] {
@@ -774,6 +1041,33 @@ void Workspace::watch(SessionPreview* item) {
             [this, item] { emit turnFinished(item); });
     last_kind_.insert(item, item->statusKind());
     connect(item, &SessionPreview::statusChanged, this, [this, item] { noteStatus(item); });
+    // For Tab's ranking: when it began waiting, and when its turns started.
+    connect(item, &SessionPreview::statusChanged, this,
+            [this, item, kind = item->statusKind()]() mutable {
+                const auto now = item->statusKind();
+                const auto previous = std::exchange(kind, now);
+                const auto at = QDateTime::currentMSecsSinceEpoch();
+                const auto& id = item->sessionId();
+                if (now == QLatin1String("working") &&
+                    (previous == QLatin1String("finished") || previous == QLatin1String("idle"))) {
+                    auto& starts = turn_starts_[id];
+                    std::erase_if(starts,
+                                  [at](qint64 started) { return at - started > 3'600'000; });
+                    if (starts.size() < 256)
+                        starts.push_back(at);
+                    // A prompt sent to the agent shown settles the choice now.
+                    if (item == focusedSession() && choice_) {
+                        choice_settle_.stop();
+                        settleChoice();
+                    }
+                } else if (previous == QLatin1String("working") &&
+                           (now == QLatin1String("finished") || now == QLatin1String("idle"))) {
+                    waiting_since_.insert(id, at);
+                }
+            });
+    connect(item, &SessionPreview::attentionArrived, this, [this, item] {
+        waiting_since_.insert(item->sessionId(), QDateTime::currentMSecsSinceEpoch());
+    });
     connect(item, &SessionPreview::statusChanged, this, [this, id = item->sessionId()] {
         if (switching_.contains(id))
             QTimer::singleShot(0, this, [this] { switchWhenIdle(); });
@@ -850,6 +1144,7 @@ void Workspace::restoreSelection() {
 }
 void Workspace::changed() {
     restoreSelection();
+    noteStructuralFocus();
     emit categoriesChanged();
     emit categoryChanged();
     emit sessionsChanged();
@@ -933,6 +1228,7 @@ bool Workspace::removeCategory(const QString& id) {
         active_category_ = categories_.front().id;
     if (!commit(previous))
         return false;
+    tile_walks_.remove(id);
     changed();
     return true;
 }
@@ -948,6 +1244,7 @@ bool Workspace::selectCategory(const QString& id) {
     active_category_ = id;
     if (!commit(previous))
         return false;
+    noteFocusMove();
     emit categoryChanged();
     emit sessionsChanged();
     emit tilesChanged();
@@ -987,6 +1284,7 @@ bool Workspace::selectSession(const QString& id) {
         }
     if (!commit(previous))
         return false;
+    noteFocusMove();
     if (category_changed) {
         emit categoryChanged();
         emit sessionsChanged();
@@ -1256,6 +1554,11 @@ bool Workspace::discardSession(const QString& id) {
     reloading_.remove(id);
     switching_.remove(id);
     last_kind_.remove(item);
+    waiting_since_.remove(id);
+    turn_starts_.remove(id);
+    if (choice_)
+        std::erase_if(choice_->candidates,
+                      [&id](const TabCandidate& candidate) { return candidate.session == id; });
     rememberClosed(closed_agent, closed_title);
     changed();
     // QML delegates can still hold the removed object during this call stack.
@@ -2246,16 +2549,8 @@ void Workspace::applyStartupDefaults(const Agent& agent, ResumeLaunch& plan) {
             qWarning() << "Grok fullscreen default not added: saved argument limit reached";
         }
     }
-    if (agent.harness == QLatin1String("codex") && !hasCodexUpdateSetting(plan.launch.arguments)) {
-        if (plan.launch.arguments.size() + 2 <= max_saved_arguments) {
-            const auto* descriptor = find_harness(agent.harness);
-            plan.launch.arguments = (descriptor ? descriptor->defaultArguments() : QStringList()) +
-                                    plan.launch.arguments;
-            if (plan.managed_resume_index >= 0)
-                plan.managed_resume_index += 2;
-        } else {
-            qWarning() << "Codex startup setting not added: saved argument limit reached";
-        }
+    if (agent.harness == QLatin1String("codex")) {
+        applyCodexStartupDefault(plan.launch, plan.managed_resume_index);
     }
 }
 
@@ -2270,6 +2565,7 @@ auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
             !QFileInfo(launch.program).isExecutable())
             launch.program = harness_program(harness->id);
         addRemoteOptions(launch);
+        addRemoteHooks(launch, agent.harness);
         if (launch.program.isEmpty() || !QFileInfo(launch.directory).isDir())
             return std::nullopt;
         const auto option = resumeOption(agent.harness);
@@ -2569,8 +2865,10 @@ bool Workspace::deferForUpdate(const QString& id) {
     const auto key = harness + QLatin1Char('@');
     const bool running = cli_updates_.contains(key);
     constexpr qint64 fresh_ms = qint64{30} * 60 * 1000;
+    // An update already running still holds new agents until its installer
+    // stops, even if lapis.json turned that CLI's updates off meanwhile.
     if (!running &&
-        (!update_harnesses_ ||
+        (!update_harnesses_ || harness_updates_off_.contains(harness) ||
          QDateTime::currentMSecsSinceEpoch() - harness_checked_ms_.value(harness, 0) < fresh_ms))
         return false;
     auto& update = cli_updates_[key];
@@ -2642,9 +2940,21 @@ int Workspace::updateAndReloadAgent(const QString& id) {
         fail(QStringLiteral("lapis has no update command for this agent's CLI."));
         return 0;
     }
+    if (refuseUpdatesOff(agents_.value(id).harness))
+        return 0;
     return updateAndReload({id});
 }
+bool Workspace::refuseUpdatesOff(const QString& harness) {
+    if (!harness_updates_off_.contains(harness))
+        return false;
+    const auto* cli = find_harness(harness);
+    fail(QStringLiteral("Updates are off for %1 in lapis.json (harnessUpdates).")
+             .arg(cli != nullptr ? cli->label : harness));
+    return true;
+}
 int Workspace::updateClaudeAndReload() {
+    if (refuseUpdatesOff(QStringLiteral("claude")))
+        return 0;
     QStringList ids;
     for (const auto& item : sessions_)
         if (agents_.value(item->sessionId()).harness == QLatin1String("claude"))
@@ -2850,6 +3160,13 @@ void Workspace::finishClosing(SessionPreview* item) {
         item->reconnect();
     }
 }
+void SessionPreview::restoreUnseen(bool unseen, qint64 neededAtMs) {
+    needed_at_ms_ = std::max<qint64>(0, neededAtMs);
+    if (unseen_ == unseen)
+        return;
+    unseen_ = unseen;
+    emit unseenChanged();
+}
 void SessionPreview::setUnseen(bool unseen) {
     if (unseen_ == unseen)
         return;
@@ -2889,9 +3206,17 @@ void Workspace::noteStatus(SessionPreview* item) {
         return;
     const bool finished = previous == QStringLiteral("working") &&
                           (now == QStringLiteral("finished") || now == QStringLiteral("idle"));
-    if (finished && item->statusSource() != SessionPreview::StatusSource::output)
+    // Quiet output is not proof a turn ended. A finished turn the service
+    // observed is, even after an agent on another machine had gone quiet:
+    // only an observer reports "finished" for an output-estimated agent.
+    const bool observed =
+        item->statusSource() != SessionPreview::StatusSource::output
+            ? finished
+            : now == QStringLiteral("finished") &&
+                  (previous == QStringLiteral("working") || previous == QStringLiteral("idle"));
+    if (observed)
         emit turnFinished(item);
-    if (finished && item != focusedSession())
+    if ((finished || observed) && item != focusedSession())
         item->setUnseen(true);
 }
 SessionPreview::StatusSource Workspace::statusSource(const Agent& agent) {
@@ -3114,5 +3439,162 @@ QString Workspace::splitAgent(const QString& edge) {
     if (!id.isEmpty())
         tileSession(id, beside, edge);
     return id;
+}
+
+// Window state a restart keeps -------------------------------------------------
+
+namespace {
+// A turn found finished after a restart counts as one that ended unwatched
+// only when the window saved it at work this recently (an install's restart);
+// after a longer absence the agent is simply idle.
+constexpr qint64 kFinishedWhileAwayMs = qint64{10} * 60 * 1000;
+bool settledKind(const QString& kind) {
+    return kind == QLatin1String("working") || kind == QLatin1String("idle") ||
+           kind == QLatin1String("finished") || kind == QLatin1String("waiting") ||
+           kind == QLatin1String("ended");
+}
+} // namespace
+
+QJsonObject Workspace::saveMarks() const {
+    QJsonObject agents;
+    for (const auto& item : sessions_) {
+        const bool working = item->statusKind() == QLatin1String("working");
+        if (!item->unseen() && !working && item->neededAtMs() == 0)
+            continue;
+        QJsonObject mark{{QStringLiteral("neededAtMs"), item->neededAtMs()}};
+        if (item->unseen())
+            mark.insert(QStringLiteral("unseen"), true);
+        if (working)
+            mark.insert(QStringLiteral("working"), true);
+        if (const auto conversation = agentConversation(item->sessionId()); !conversation.isEmpty())
+            mark.insert(QStringLiteral("conversation"), conversation);
+        agents.insert(item->sessionId(), mark);
+    }
+    return {{QStringLiteral("savedAtMs"), QDateTime::currentMSecsSinceEpoch()},
+            {QStringLiteral("agents"), agents}};
+}
+
+void Workspace::restoreMarks(const QJsonObject& marks) {
+    const auto saved_at = static_cast<qint64>(marks.value(QStringLiteral("savedAtMs")).toDouble());
+    const auto now = QDateTime::currentMSecsSinceEpoch();
+    const bool recent = saved_at > 0 && now >= saved_at && now - saved_at <= kFinishedWhileAwayMs;
+    const auto agents = marks.value(QStringLiteral("agents")).toObject();
+    for (auto entry = agents.constBegin(); entry != agents.constEnd(); ++entry) {
+        auto* item = session(entry.key());
+        if (item == nullptr)
+            continue;
+        const auto mark = entry.value().toObject();
+        const auto conversation = mark.value(QStringLiteral("conversation")).toString();
+        if (const auto current = agentConversation(entry.key());
+            !conversation.isEmpty() && !current.isEmpty() && conversation != current)
+            continue;
+        const auto needed =
+            static_cast<qint64>(mark.value(QStringLiteral("neededAtMs")).toDouble());
+        const bool unseen = mark.value(QStringLiteral("unseen")).toBool() &&
+                            item != focusedSession() && !item->unseen();
+        // An already-unseen agent keeps its newer timestamp: a second restore
+        // or a status that marked it must not turn Tab's ordering backward.
+        if (unseen || item->neededAtMs() == 0)
+            item->restoreUnseen(unseen || item->unseen(), item->neededAtMs() == 0
+                                                              ? std::min(needed, now)
+                                                              : item->neededAtMs());
+        if (recent && mark.value(QStringLiteral("working")).toBool())
+            watchFinishWhileAway(item);
+    }
+}
+
+void Workspace::watchFinishWhileAway(SessionPreview* item) {
+    auto connection = std::make_shared<QMetaObject::Connection>();
+    const auto check = [this, item, connection] {
+        const auto kind = item->statusKind();
+        if (!settledKind(kind))
+            return;
+        disconnect(*connection);
+        // Only an observer's word counts as a finished turn; quiet output
+        // from an estimated agent only marks it.
+        const bool observed = kind == QLatin1String("finished") ||
+                              (kind == QLatin1String("idle") &&
+                               item->statusSource() != SessionPreview::StatusSource::output);
+        if (kind != QLatin1String("finished") && kind != QLatin1String("idle"))
+            return;
+        if (item != focusedSession())
+            item->setUnseen(true);
+        if (observed)
+            emit finishedWhileAway(item);
+    };
+    *connection = connect(item, &SessionPreview::statusChanged, this, check);
+    // The status may already have arrived.
+    if (settledKind(item->statusKind()))
+        check();
+}
+
+QJsonArray Workspace::saveClosed() const {
+    QJsonArray saved;
+    for (const auto& closed : closed_) {
+        const auto& launch = closed.plan.launch;
+        saved.append(QJsonObject{
+            {QStringLiteral("category"), closed.category},
+            {QStringLiteral("title"), closed.title},
+            {QStringLiteral("harness"), closed.harness},
+            {QStringLiteral("remote"), closed.remote},
+            {QStringLiteral("program"), launch.program},
+            {QStringLiteral("arguments"), QJsonArray::fromStringList(launch.arguments)},
+            {QStringLiteral("directory"), launch.directory},
+            {QStringLiteral("mode"),
+             launch.agent == session::AgentMode::claude  ? QStringLiteral("claude")
+             : launch.agent == session::AgentMode::codex ? QStringLiteral("codex")
+                                                         : QStringLiteral("terminal")},
+            {QStringLiteral("managedResume"),
+             QJsonObject{{QStringLiteral("index"), closed.plan.managed_resume_index},
+                         {QStringLiteral("identity"), closed.plan.managed_resume_identity}}}});
+    }
+    return saved;
+}
+
+void Workspace::restoreClosed(const QJsonArray& closed) {
+    if (preview_mode_ || !closed_.empty())
+        return;
+    for (const auto& value : closed) {
+        try {
+            const auto object = value.toObject();
+            const auto harness = object.value(QStringLiteral("harness")).toString();
+            const auto title = object.value(QStringLiteral("title")).toString();
+            const auto mode = object.value(QStringLiteral("mode")).toString();
+            session::LaunchSpec launch{object.value(QStringLiteral("program")).toString(),
+                                       savedArguments(object.value(QStringLiteral("arguments"))),
+                                       object.value(QStringLiteral("directory")).toString(),
+                                       {100, 30},
+                                       mode == QLatin1String("claude") ? session::AgentMode::claude
+                                       : mode == QLatin1String("codex")
+                                           ? session::AgentMode::codex
+                                           : session::AgentMode::terminal};
+            if (!find_harness(harness) || !validName(title) ||
+                !QFileInfo(launch.program).isAbsolute() || launch.program.size() > 4096 ||
+                launch.program.contains(QChar::Null) || !QFileInfo(launch.directory).isAbsolute() ||
+                launch.directory.size() > 4096 || launch.directory.contains(QChar::Null))
+                continue;
+            // A resume pair lapis added stays lapis's only when it still matches.
+            const auto managed = object.value(QStringLiteral("managedResume")).toObject();
+            ResumeLaunch plan{launch, managed.value(QStringLiteral("index")).toInt(-1),
+                              managed.value(QStringLiteral("identity")).toString()};
+            if (!managedResumeMatches(plan.launch.arguments, plan.managed_resume_index,
+                                      resumeOption(harness), plan.managed_resume_identity)) {
+                plan.managed_resume_index = -1;
+                plan.managed_resume_identity.clear();
+            }
+            // The program may have moved or the folder deleted while no window
+            // was open; validate_launch owns that refusal, like the registry.
+            plan.launch = session::validate_launch(plan.launch);
+            closed_.push_back({object.value(QStringLiteral("category")).toString().left(80), title,
+                               harness, std::move(plan),
+                               object.value(QStringLiteral("remote")).toBool()});
+        } catch (const std::exception&) {
+            continue; // savedArguments rejects malformed arguments
+        }
+        if (closed_.size() >= 10)
+            break;
+    }
+    if (!closed_.empty())
+        emit closedChanged();
 }
 } // namespace lapis::desktop

@@ -1272,6 +1272,19 @@ With both fields absent, the relay reports the legacy contract. This matches the
 qualified optional-field schema; a future field rename needs a new adapter probe
 and cannot be inferred from the absence of an optional field alone.
 
+The hook command runs whatever relay binary is installed at the service's path
+when Claude stops, so after an update a long-running service hears a newer
+relay. A service built before `in_flight` existed rejects that field as a
+malformed hook and stops observing for good: from September 30 to October 6 a
+set of agents restored on September 29 sent every `Stop` through such a relay
+and produced no finished-turn ping at all (51 of 311 final turn endings, 23 of
+the 61 the person answered more than 30 minutes late with no notification).
+The hook command therefore names its relay contract as a trailing argument
+(`2`); a command without one, written by an older service, gets identity
+fields only, the legacy shape that service reads. A relay never sends a field
+its listening service's contract lacks. Services that already lost observation
+this way stay lost until their agent is reloaded.
+
 Diagnostics compose the current lifecycle/transport status with a transient
 background-schema message. A known background count clears only that transient
 message, preserving transport-loss or connection-overflow evidence. The base
@@ -1789,6 +1802,35 @@ Decisions from these runs:
   still answers a Codex request through its adapter. The needs-you chime
   settings (`alertSound`, `alertRepeat`) and `Alerts::needsYou` are unused and
   due for removal with the phone's matching settings.
+- Pings reach a person who is away (October 6). The rule: a finished turn or
+  request posts a notification when lapis is in the background, as before, or
+  when nobody is at the Mac: no keyboard, mouse or trackpad input anywhere for
+  `alerts.awayAfter` seconds (default 120), read from the HID event source
+  (`CGEventSourceSecondsSinceLastEventType`; where it cannot be read, the
+  person counts as present). Being in front, or showing that very agent, counts
+  as seeing it only with someone present, and `SeenScreens` samples only then.
+  The chime still plays. An agent left waiting (no new turn, request still
+  open, not looked at while present; a look `SeenScreens` already recorded
+  answers a finished wait even after the person moves on, while an open
+  request keeps reminding) posts one reminder after `alerts.remindAfter`
+  minutes (default 30, 0 turns it off); one falling due while the person is
+  away waits until input resumes. Reminders log as event `still waiting`,
+  decision `posted: reminder`; away posts as `posted: you are away`.
+  Evidence (dated; the author's attention log, interaction log and Claude
+  transcripts, September 30 to October 6): of 311 final turn endings under
+  lapis, the person answered 77 more than 30 minutes later, 61 of them with no
+  notification posted: 26 had no ping decision because of the relay/service
+  skew above (23 confirmed from live service start times, 3 probable), 10 were remote terminal agents with no turn signal yet, 21 were
+  logged "lapis is in front" or "you are looking at it" with only a chime, and
+  4 were the paused-turn fallback followed by a chime only. Replaying the rule
+  over that week (presence from the interaction log after October 5, from typed
+  prompts before) notifies for 54 of the 61, assuming the turn signals above
+  are restored, 13 at the turn's end and 41 by the reminder; the 7 left were
+  cases the prompt-based presence cannot place before the reply. It adds 16
+  away notifications for turns answered within 30 minutes and 47 reminders,
+  35 of them for conversations never answered again; in the interaction-logged
+  day, 2 reminders would have fired while the person was present. A second and
+  third reminder caught nothing more in the replay, so there is one.
 - Custom sound files preserve that shared finished cue. `ChimeSounds` owns
   asynchronous file loading separately from `Alerts` attention policy: at most
   two configured paths and two in-flight checks, with coalesced latest-path
@@ -1966,13 +2008,16 @@ than a live one) is the step that would let Codex update too. Restored and
 reattached agents are not updated.
 
 Explicit supported-CLI creation shares this queue, and `--no-harness-updates`
-disables it. Headless restore/serve keeps its existing no-update policy. Each
-updater has an isolated process group and a retained guard; timeout, leader exit
-and desktop teardown stop installer descendants too. A queued agent starts only
-after the leader exits and the guard acknowledges cleanup. Restart cannot bypass
-the queue. Output is drained while the updater runs into an 8 KiB tail. Restored
-Codex launches receive the qualified-binary update setting only after the old
-service is gone, preserving explicit configuration and resume-argument provenance.
+disables it. `harnessUpdates` in lapis.json (`{"omp": false}`) pins listed CLIs:
+they skip the launch update and the explicit update-and-reload refuses them;
+an updater already running still holds its queued agents. Headless
+restore/serve keeps its existing no-update policy. Each updater has an isolated
+process group and a retained guard; timeout, leader exit and desktop teardown
+stop installer descendants too. A queued agent starts only after the leader
+exits and the guard acknowledges cleanup. Restart cannot bypass the queue.
+Output is drained while the updater runs into an 8 KiB tail. Restored Codex
+launches receive the qualified-binary update setting only after the old service
+is gone, preserving explicit configuration and resume-argument provenance.
 
 Phone access (September 23, requested for use on the go without signing in).
 A prototype, deliberately simpler than the SSH design first proposed:
@@ -2287,6 +2332,21 @@ are per category and the strip stays the navigation.
 - **Selection.** The selected agent is always one of the tiles. Clicking a strip
   agent that is not tiled puts it in the selected tile, as selecting a card
   always showed it on the stage; its previous agent stays in the strip.
+- **Keyboard navigation (October 6).** Command-Control-arrows move focus
+  spatially: `TileLayout::neighbor` takes the nearest tile on that side among
+  those overlapping the selected tile's span across the move, the most in line
+  first, with no wraparound. In a binary split of the stage some tile always
+  overlaps when any lies on that side, so there is no non-overlapping fallback.
+  The next and previous agent keys used to walk strip order, which ignored the
+  stage and, with a tile showing each strip agent in turn, could alternate
+  between two agents forever. They now walk `TileLayout::cycleOrder`: tiles in
+  reading order (top edge, then left edge), then untiled agents in strip order.
+  `TileLayout::step` is the pure rule: an untiled agent is shown in the tile the
+  walk left (as a strip click would), and stepping back onto a tile restores the
+  layout the walk started from. Workspace keeps that starting layout while the
+  stage, selection and strip are as its last step left them; any other change
+  starts a new walk. Shortcuts stay disarmed during dialogs, composition and
+  paste, so these keys never move focus while the terminal owns input.
 - **Rendering.** The selected tile's terminal is the existing stage surface,
   moved to that tile, so focus, IME and every earlier stage behavior are
   unchanged. Other tiles are interactive surfaces with input disabled: they
@@ -3855,7 +3915,8 @@ agent, and a `claude` typed in the side terminal, draws full screen; a remote
 Claude agent's command exports it unless that machine's login shell sets it.
 Grok gets `--fullscreen`, which overrides a minimal `screen_mode` in its
 config. Codex's TUI uses the alternate screen unless given `--no-alt-screen`,
-which lapis never passes, and OpenCode is always full screen. Kimi, OMP and
+which lapis never passes: full screen is the chosen mode, and lapis shows only
+whole frames of its repaints. OpenCode is always full screen. Kimi, OMP and
 Antigravity have no full-screen mode, so for them and every other CLI the
 stage's terminal grid is the launch size: a new agent, a restart and a start
 after a CLI update begin at the size the stage shows, with no resize after
@@ -4146,7 +4207,9 @@ to measure that threshold. The helper normalizes an unscored candidate to
 without a numeric probability, and the predicted event records `top_scored`.
 
 - **Where it runs.** `NextPrompt` follows `Workspace::turnFinished`, which covers
-  Codex and Claude turns and requests but not terminal agents' output pauses.
+  Codex and Claude turns and requests, including those of agents on another
+  machine ([remote turns](#turns-of-agents-on-another-machine-october-5)), but
+  not terminal agents' output pauses.
   `next_prompt.py context` reads the conversation where the agent runs (the
   CLI's transcript, by the conversation id lapis knows, else the newest
   interactive one in its folder), sent over ssh with the helper on stdin for
@@ -4174,11 +4237,11 @@ without a numeric probability, and the predicted event records `top_scored`.
   follows that operation. It requires the negotiated receipt; older services
   refuse visibly until upgraded/restarted. Typing does not withdraw a guess;
   keys typed first are counted. With nothing offered and nothing typed since
-  arriving or the last Return, Tab calls QML's
-  `tabAway`, which asks `Workspace::nextPriorityAttention` for a guess not yet
-  seen, then an unseen turn or a request, then a guess already seen (the longest
-  waiting within each, so Tab cannot bounce between two guesses while another
-  agent waits); when nothing waits, Tab goes to the program. Tab keeps its
+  arriving or the last Return (or the second Tab's send), Tab calls QML's
+  `tabAway`, which asks `Workspace::nextPriorityAttention` for the next agent
+  truly waiting, ranked by `TabRanker` (see
+  [Tab's next agent](#tabs-next-agent-is-learned-october-6)); when nothing
+  waits, Tab goes to the program. Tab keeps its
   meaning after typing (completion, Codex's queue) and without the flow (shells,
   and CLIs such as OpenCode that switch modes with Tab). Surfacing never sends:
   the person's key does, keeping "surfacing never approves" when agent output
@@ -4258,6 +4321,92 @@ guess covers them but does not turn them off. Past transcripts do not record
 lapis's state, so the replay cannot measure what the other agents' state adds;
 the log can.
 
+### Turns of agents on another machine (October 5)
+
+An agent on another machine runs in terminal mode behind `ssh -t`, so neither
+the local Claude hook socket nor a lapis-owned Codex app-server reaches it. Its
+status was the output estimate, which never emits `turnFinished`, so remote
+agents had no finished-turn ping and no next-prompt guess. Three routes were
+weighed. Running a session service on the other machine means installing and
+qualifying a Linux service there. A Codex app-server there needs a forwarded
+endpoint and the pinned-binary qualification, which another machine's binary
+does not have. A reverse-forwarded Unix socket depends on the remote sshd
+allowing stream-local forwarding and leaves a socket file behind. The chosen
+route uses the channel lapis already owns: the agent's terminal.
+
+- **Sequences.** The remote login shell makes a 32-hex-digit nonce from
+  `/dev/urandom`, exports it with its terminal's device and lapis's relay
+  script, and prints `ESC ] 7717 ; lapis-init ; <cli> ; <nonce> BEL` before
+  starting the CLI. Each hook then writes `ESC ] 7717 ; lapis-event ; <nonce> ;
+  <base64 JSON> BEL` to that device. Claude Code 2.1.290 runs hooks without a
+  controlling terminal (observed on the Linux test host), so the relay writes
+  to the device the login shell recorded, not `/dev/tty`. The session service
+  enables `TerminalHookChannel` only for ssh-transport terminal launches. The
+  first init binds the nonce; later inits and events without it are ignored,
+  so displayed text cannot pose as a hook. Every lapis sequence is removed
+  before the terminal engine sees it, including one split across reads. A
+  legitimate relay frame is bounded below the 24 KiB sequence limit. An
+  unterminated candidate larger than that limit is quarantined without
+  discarding output that preceded it; only BEL or ST ends quarantine. If a
+  malformed candidate still has no terminator after 96 KiB, the parser emits a
+  one-line recovery notice and resumes filtering subsequent output.
+- **Nothing on the other machine.** The nonce is on no command line and in no
+  file. The relay goes in the environment; no file is written or left behind.
+  The relay sends only the existing relay identity fields (and, for Claude,
+  background task statuses and cron counts) and never prompts or tool input.
+  Cron objects are reduced to counts, so identities and schedules never cross
+  the terminal. It always exits 0 and prints nothing, so a missing `python3`, a hook
+  failure or an unwritable device changes only status, never a permission
+  decision. Status then stays estimated from output.
+- **Claude Code.** The launch passes the same nine hooks through `--settings`
+  (built by `claude::hook_settings`, shared with local launches). The service
+  creates a `claude::Observer` with the terminal transport on the first
+  authenticated event and gives it each event through `relay_event`, so the
+  background-work count is derived exactly as the local relay derives it. The
+  remote launch still names its conversation with `s=`; the observer records
+  no resume identity, so restore never appends resume options to ssh.
+- **Codex.** Codex hooks require per-hook trust, and a hook passed with `-c`
+  did not run in a probe of Codex 0.159.2. Its `notify` program does run (a
+  `codex exec` probe on the Linux test host wrote its `agent-turn-complete`
+  JSON to the terminal over ssh). The launch adds `-c notify=[...]` right
+  after the program; the relay forwards `type`, `thread-id` and `turn-id`, then
+  runs the user's own `notify` from `$CODEX_HOME/config.toml` when one is set;
+  preserving that setting uses `tomllib`, so it requires Python 3.11 there.
+  That executable path is user-owned configuration with the same trust as
+  Codex's own `notify`; writing `CODEX_HOME/config.toml` already controls a
+  command Codex can run, so lapis adds no superficial path allowlist.
+  `NotifyTurns` reports only finished turns. Submitted input (Return, or a
+  paste with Return) returns the activity to unknown. A second Return while
+  that prompt is still active marks its next completion as in flight and does
+  not apply it; the following completion resumes normal reporting. It does not
+  resynchronize after a stream it already reported; a fresh observation state
+  uses the next source epoch. A rejected first observation retries in the same
+  epoch. A profile-level or project-level `notify` is not chained.
+- **Desktop.** A remote agent keeps `StatusSource::output`. `estimated()` uses
+  the output estimate while no observer is synchronized or its activity is
+  unknown. Otherwise the observer's state applies. Since only an observer
+  reports `finished` for such an agent, `noteStatus` emits `turnFinished` on a
+  change to `finished` from working or quiet. A change from unknown or
+  connecting does not emit, so reattaching never pings. A Codex turn too
+  short to register as output activity right after connecting is therefore
+  not pinged.
+- **Saved agents.** A remote Claude Code or Codex agent saved before this
+  gains the hooks when it next starts (restart, reload or reconnect), as it
+  gains connection options. A running one keeps its old command until then.
+  Commands with `--settings`, `--bare`, `--safe-mode`, `--` or their own
+  `notify` are left alone.
+
+`lapis_workspace_tests --case remote-hooks` runs both CLIs as stand-ins behind
+a stand-in ssh that executes the command locally. Its hooks run without a
+controlling terminal, as Claude Code's do. `terminal-hooks` covers sequence
+parsing, read boundaries and nonce binding. On October 5 a disposable Claude
+Code 2.1.290 session on the Linux test host, run through this build's
+workspace, session service and `NextPrompt`, reported SessionStart about 1 s
+after launch. UserPromptSubmit set it working, and its Stop finished the turn
+and pinged. A guess was offered about 5 s later, and no sequence reached the
+screen. Codex's remote route has stand-in and `codex exec` evidence, not a live
+TUI turn through lapis.
+
 **One guess, not three (October 6).** Showing three guesses could collect more
 intent matches than one; that comparison stays an open option, deliberately not
 built. Tab is meant to run as close to autopilot as possible, which needs one
@@ -4314,6 +4463,79 @@ a 2.1.288 print-mode probe. Lapis qualification remains pinned at 2.1.286
 because the router-dependent hook check and an unrelated parallel-approval
 fixture did not pass here; the version-dependent user guidance above is not a
 claim that those suites were promoted.
+
+### Tab's next agent is learned (October 6)
+
+Tab with nothing to type moves to the next agent that needs the person. Which
+agents qualify is a fixed rule; their order is learned.
+
+- **Eligibility.** `Workspace::waitingCandidates`: a pending request, or a turn
+  its observer saw finish (`finished`, or an observer's `idle`) that is unseen
+  or has a guess. The Claude observer holds a turn that ended with background
+  tasks, subagents or wakeups in flight as working until the next turn or its
+  ten-minute deadline, so a paused agent never qualifies; neither does one at
+  work, unknown, ended, closing, or quiet only by the output estimate. An
+  agent already looked at, with no guess, stays out, so Tab does not cycle
+  through conversations the person left. Keyboard ownership is unchanged: only
+  the Tab key moves, with nothing typed since arriving.
+- **Ranking.** `TabRanker` scores each candidate with a linear softmax ranker:
+  work category, request, unseen, guess offered, log minutes waiting, newest
+  of the candidates, waiting over two hours, log turns started in the last
+  hour, log minutes since its last turn started, plus one learned weight per
+  category id. The prior (`TabRanker::prior`) is work first, then requests,
+  then unseen turns, then the newest, as weights: about an hour more of waiting
+  outweighs one step, so an old work turn does not hold Tab forever. Work
+  categories are named in `tabAway.work` (default `work`). `"rank": "fixed"`
+  restores the earlier order (a guess not yet seen, an unseen turn or request,
+  a guess already seen, longest waiting within each), with the same
+  eligibility.
+- **Learning.** When the selected agent changes, the workspace keeps the
+  agents waiting at that moment (minus the one left, before the arriving
+  agent's unseen mark clears). When the person stays 2.5 s, or sends a prompt
+  to the agent shown, the agent they are on is their choice among those; moves
+  before that add agents that began waiting and keep the ones passed over, so
+  a Tab followed by another move teaches against Tab's pick. Each choice and
+  each Tab move (candidates' features and scores) is appended to
+  `runtime/tab_away.jsonl` (owner-only, 4 MiB with one backup). A thread-pool
+  job refits on the newest 1000 choices (150 gradient steps on mean negative
+  log-likelihood plus 0.1 times the squared distance from the prior), writes
+  `runtime/tab_away_model.json` and publishes the weights to the GUI thread;
+  one refit runs at a time and a choice during it queues one more. Picking is a
+  few dot products on the GUI thread; nothing blocks Tab.
+
+Evidence (dated; the author's logs and Claude Code transcripts on the Mac,
+September 29 to October 6, from `scripts/tab_away_eval.py history`): an
+agent's turn waits from its end (a `predicted` or `failed` record) to the next
+prompt typed to it; the first time the person reached it (the guess was seen,
+or they replied) while two or more others waited, excluding the agent they had
+last typed to, is a choice. 168 choices, 16.5 waiting agents on average;
+fitted on the first 117, scored on the newest 51:
+
+| Ranker | Top-1 | MRR |
+| --- | ---: | ---: |
+| Random | 0.065 | 0.214 |
+| Oldest first | 0.000 | 0.069 |
+| Work, then oldest | 0.098 | 0.244 |
+| Fixed (earlier order) | 0.000 | 0.300 |
+| Newest first | 0.608 | 0.760 |
+| Prior | 0.667 | 0.798 |
+| Learned, refitted every 10 choices | 0.745 | 0.852 |
+
+The person almost always went to an agent that had just finished; the
+earlier order's longest-waiting rule ranked that agent first in none of the
+scored choices. Learned category weights moved against the work category the
+prior favours, so the prior's work weight is the person's stated priority, not
+a fitted one. Limits: 51 scored choices put about ±0.07 on top-1; "unseen" is
+true of every chosen agent by construction (a choice is the first arrival), so
+its offline weight is overstated; requests were absent (agents ran with
+permissions bypassed); hand-moves after October 6 are logged as they happen.
+An LLM ranker (`claude -p`, Opus 5.5 at low effort, a compact state of each
+waiting agent's title, category, wait, seen, guess and ping) on the same
+held-out choices of an earlier snapshot reached top-1 0.30 and MRR 0.43 told
+the stated priorities (work first), and 0.52 and 0.69 told only to predict
+where the person goes, at a median 2.9 to 3.1 s per call. It is not used: it is
+less accurate than the learned ranker and would have to be precomputed in the
+background on every state change.
 
 ### Update pacing audit (September 28)
 
@@ -5012,7 +5234,45 @@ runs exact-P1 qualification. P2/P3 and the dedicated import-server/onboarding
 design wait for P1; tool status and the import protocol client remain available
 but dormant until their owners and qualification gates are ready.
 
-## Ultra Tab: a second app beside the window (October 6)
+### Window state across restarts (October 6)
+
+The session service owns running agents, so a window restart (an install's
+relaunch) kept every agent but lost what lived only in the window. An audit of
+the desktop sorted that state three ways. Re-derived after reattaching: screens,
+history, requests and activity (service snapshots), conversation titles
+(`runtime/conversations.json`), plan loads and usage, harness model lists, tool
+status, and the workspace registry's categories, order, selections, tiles and
+plans. Lost and visible, now kept: next-prompt offers, their seen time and
+outcome bookkeeping, predictions in flight, unseen marks and when each agent
+began to need you, `SeenScreens` fingerprints, closed agents for Command-Shift-T,
+and the new-agent form, side terminal and tile zoom. Left transient: kept-history
+browsing (a view of service pages, reopened on demand), in-flight updates,
+reloads and plan switches (re-derived from service and usage state), the
+hourly prediction budget, Tab's pending learning choice, chime repeats and
+reminder timers (restoring them would ping on restore alone).
+
+`GuiState` owns one file, `runtime/gui_state.json`: owner-only, versioned
+(`version` 1), atomic `QSaveFile` writes off the GUI thread, bounded at 1 MiB
+(saved identifiers, conversations and guess text use the restore-side bounds).
+Owners register named sections; any change calls `touch()`, rate-limited
+publish-to-publish at two seconds with the newest state, and the file is flushed
+when the application quits. Each owner validates its own section on restore:
+`Workspace::restoreMarks` drops marks for missing agents or a different
+conversation (from the resume record) and never marks the shown agent; an agent
+saved at work within the last ten minutes whose first settled status is a
+finished turn emits `finishedWhileAway`, which marks it unseen and asks for a
+guess without the `turnFinished` chime. `NextPrompt::restoreState` keeps offer
+keys and turns so Tab, seen records and outcomes continue under the original
+offer; a restored offer is shown only after the helper's `context` mode
+confirms the same conversation and turn, otherwise it is logged as withdrawn
+(`new_turn`, `stale`, `gone`, `moved`, `unsupported` or `unverified`); rejected
+and malformed entries are pruned by the next state write. An owed guess with no
+reattached screen stays owed rather than predicting from context alone.
+`SeenScreens` uses an unseeded FNV-1a fingerprint so saved fingerprints match
+after a restart. Open PR state not on main (Tab-away candidate timing and
+reminder schedules) is not yet saved.
+
+### Ultra Tab: a second app beside the window (October 6)
 
 Ultra Tab (`apps/ultratab/`, user page [ultratab](ultratab.md)) is the publishing
 name for the lapis V2 surface: an overlay, shown by a global key, that deals the

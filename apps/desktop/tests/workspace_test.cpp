@@ -774,6 +774,7 @@ void latestAttentionGoesToTheNewest() {
 // another agent waits; an agent at work is not waiting even with a guess.
 void tabGoesToTheReadyThenTheOldest() {
     Workspace workspace(WorkspaceMode::preview);
+    workspace.setTabAway({.learned = false});
     require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
@@ -804,6 +805,284 @@ void tabGoesToTheReadyThenTheOldest() {
     newer->applyAttention(state);
     require(!workspace.nextPriorityAttention(seen),
             "nothing is waiting once the one with a guess is at work");
+}
+
+// Tab names the move, but only a later hand move does. The pending choice
+// remains one choice, with the agents that began waiting added to it.
+void tabAttributionFollowsTheNextHandMove() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "attribution directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QString first = QStringLiteral("ef715fac-a03a-45d4-8466-b0f2740c6b7b");
+    const QString second = QStringLiteral("e93750ef-ab0d-418a-b53f-25a601827e31");
+    QJsonArray agents;
+    for (const auto& id : {first, second})
+        agents.append(QJsonObject{{"id", id},
+                                  {"title", id},
+                                  {"category", "general"},
+                                  {"endpoint", QDir(canonical).filePath(id + ".sock")},
+                                  {"program", "/usr/bin/true"},
+                                  {"directory", canonical}});
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    options.headless = true;
+    QFile file(options.storagePath);
+    require(file.open(QIODevice::WriteOnly), "create attribution registry");
+    const auto bytes =
+        QJsonDocument(QJsonObject{{"version", 1},
+                                  {"activeCategory", "general"},
+                                  {"categories", QJsonArray{QJsonObject{{"id", "general"},
+                                                                        {"name", "General"},
+                                                                        {"selected", second}}}},
+                                  {"agents", agents}})
+            .toJson();
+    require(file.write(bytes) == bytes.size(), "write attribution registry");
+    file.close();
+    Workspace workspace(WorkspaceMode::live, options);
+    workspace.setChoiceSettleMsForTesting(20);
+    require(workspace.focusedSession()->sessionId() == second, "start on the source agent");
+    lapis::session::wire::AttentionSnapshot state;
+    state.available = state.connected = state.ready = true;
+    auto* target = workspace.session(first);
+    target->setConnection(QStringLiteral("ready"), true);
+    state.activity = lapis::session::attention::Activity::working;
+    target->applyAttention(state);
+    state.activity = lapis::session::attention::Activity::turn_completed;
+    target->applyAttention(state);
+    auto* source = workspace.session(second);
+    source->setConnection(QStringLiteral("ready"), true);
+    require(workspace.nextPriorityAttention({}) && workspace.focusedSession() == target,
+            "Tab moves to the waiting agent");
+    // The source begins a turn while Tab's move is on screen, so its finishing
+    // turn out of view is the second choice the person settles between.
+    state.activity = lapis::session::attention::Activity::working;
+    source->applyAttention(state);
+    state.activity = lapis::session::attention::Activity::turn_completed;
+    source->applyAttention(state);
+    require(source->unseen(), "a turn finished out of view marks the agent");
+    require(workspace.selectSession(second), "the person then moves back by hand");
+    require(waitFor(
+                [&] {
+                    return workspace.tabRanker().model().decisions == 1 &&
+                           !workspace.tabRanker().refitting();
+                },
+                5000),
+            "the Tab-and-hand sequence settles once");
+    QFile log(QFileInfo(options.storagePath).dir().filePath(QStringLiteral("tab_away.jsonl")));
+    require(log.open(QIODevice::ReadOnly), "read the attribution log");
+    QString via;
+    while (!log.atEnd()) {
+        const auto event = QJsonDocument::fromJson(log.readLine()).object();
+        if (event.value(QStringLiteral("event")).toString() == QLatin1String("choice"))
+            via = event.value(QStringLiteral("via")).toString();
+    }
+    require(via == QLatin1String("person"), "a hand move after Tab is the person's choice");
+}
+
+WorkspaceOptions tabAttributionRegistry(QTemporaryDir& directory, const QString& selectedKind) {
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QString source = QStringLiteral("3d53119b-85c5-439b-a2cb-f884742bd11f");
+    const QString target = QStringLiteral("eb00ff7d-e97a-472a-b74e-01c3909d5a55");
+    const QString other = QStringLiteral("778fc84f-1ad3-4a14-8e21-7719d9c5814d");
+    QJsonArray agents;
+    for (const auto& id : {source, target, other})
+        agents.append(QJsonObject{{"id", id},
+                                  {"title", id},
+                                  {"category", "general"},
+                                  {"endpoint", QDir(canonical).filePath(id + ".sock")},
+                                  {"program", "/usr/bin/true"},
+                                  {"directory", canonical}});
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    options.headless = true;
+    QFile file(options.storagePath);
+    require(file.open(QIODevice::WriteOnly), "create Tab attribution registry");
+    const auto selected_id = selectedKind == QLatin1String("source")   ? source
+                             : selectedKind == QLatin1String("target") ? target
+                                                                       : other;
+    const auto bytes =
+        QJsonDocument(
+            QJsonObject{{"version", 1},
+                        {"activeCategory", "general"},
+                        {"categories",
+                         QJsonArray{QJsonObject{
+                             {"id", "general"}, {"name", "General"}, {"selected", selected_id}}}},
+                        {"agents", agents}})
+            .toJson();
+    require(file.write(bytes) == bytes.size(), "write Tab attribution registry");
+    file.close();
+    return options;
+}
+
+// The startup focus is the agent the person leaves on the first move, even
+// though no focus-change signal ran before restoration.
+void firstTabChoiceExcludesTheInitialFocus() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "first Tab directory");
+    const auto source = QStringLiteral("3d53119b-85c5-439b-a2cb-f884742bd11f");
+    const auto target = QStringLiteral("eb00ff7d-e97a-472a-b74e-01c3909d5a55");
+    auto options = tabAttributionRegistry(directory, QStringLiteral("source"));
+    Workspace workspace(WorkspaceMode::live, options);
+    workspace.setChoiceSettleMsForTesting(20);
+    require(workspace.focusedSession()->sessionId() == source, "start on the initial focus");
+    lapis::session::wire::AttentionSnapshot state;
+    state.available = state.connected = state.ready = true;
+    const auto finish = [&](const QString& id) {
+        auto* item = workspace.session(id);
+        item->setConnection(QStringLiteral("ready"), true);
+        state.activity = lapis::session::attention::Activity::working;
+        item->applyAttention(state);
+        state.activity = lapis::session::attention::Activity::turn_completed;
+        item->applyAttention(state);
+        return item;
+    };
+    finish(QStringLiteral("778fc84f-1ad3-4a14-8e21-7719d9c5814d"));
+    finish(target);
+    const bool moved = workspace.nextPriorityAttention({});
+    const auto selected =
+        workspace.focusedSession() ? workspace.focusedSession()->sessionId() : QString();
+    require(moved && selected == target, "Tab moves to the newer waiting agent");
+    require(waitFor(
+                [&] {
+                    return workspace.tabRanker().model().decisions == 1 &&
+                           !workspace.tabRanker().refitting();
+                },
+                5000),
+            "the first move settles");
+    QFile log(QFileInfo(options.storagePath).dir().filePath(QStringLiteral("tab_away.jsonl")));
+    require(log.open(QIODevice::ReadOnly), "read the first Tab choice");
+    QJsonObject choice;
+    while (!log.atEnd()) {
+        const auto event = QJsonDocument::fromJson(log.readLine()).object();
+        if (event.value(QStringLiteral("event")).toString() == QLatin1String("choice"))
+            choice = event;
+    }
+    const auto candidates = choice.value(QStringLiteral("candidates")).toArray();
+    require(candidates.size() == 2, "the choice contains the two waiting agents");
+    for (const auto& value : candidates)
+        require(value.toObject().value(QStringLiteral("agent")).toString() != source,
+                "the agent left at startup is excluded");
+}
+
+// A candidate closed before a choice settles is removed, never fitted as if
+// it were still waiting.
+void closingRemovesAPendingChoiceCandidate() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "pending close directory");
+    const auto target = QStringLiteral("eb00ff7d-e97a-472a-b74e-01c3909d5a55");
+    const auto candidate = QStringLiteral("778fc84f-1ad3-4a14-8e21-7719d9c5814d");
+    auto options = tabAttributionRegistry(directory, QStringLiteral("source"));
+    Workspace workspace(WorkspaceMode::live, options);
+    workspace.setChoiceSettleMsForTesting(20);
+    lapis::session::wire::AttentionSnapshot state;
+    state.available = state.connected = state.ready = true;
+    const auto finish = [&](const QString& id) {
+        auto* item = workspace.session(id);
+        item->setConnection(QStringLiteral("ready"), true);
+        state.activity = lapis::session::attention::Activity::working;
+        item->applyAttention(state);
+        state.activity = lapis::session::attention::Activity::turn_completed;
+        item->applyAttention(state);
+        return item;
+    };
+    finish(target);
+    QThread::msleep(5);
+    finish(candidate);
+    require(workspace.nextPriorityAttention({}) &&
+                workspace.focusedSession()->sessionId() == candidate,
+            "Tab stages a choice among both waiting agents");
+    require(workspace.closeSession(candidate, true), "close the pending candidate");
+    QThread::msleep(60); // longer than the test settle interval
+    require(workspace.tabRanker().model().decisions == 0 && !workspace.tabRanker().refitting(),
+            "a closed candidate cannot form a learned choice");
+}
+
+// Closing the focused agent reassigns focus structurally. It must cancel Tab's
+// pending choice, not attribute the survivor to the person after a timer.
+void closingFocusedAgentCancelsPendingChoice() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "focused-close directory");
+    auto options = tabAttributionRegistry(directory, QStringLiteral("source"));
+    Workspace workspace(WorkspaceMode::live, options);
+    workspace.setChoiceSettleMsForTesting(20);
+    lapis::session::wire::AttentionSnapshot state;
+    state.available = state.connected = state.ready = true;
+    const auto finish = [&](const QString& id) {
+        auto* item = workspace.session(id);
+        item->setConnection(QStringLiteral("ready"), true);
+        state.activity = lapis::session::attention::Activity::working;
+        item->applyAttention(state);
+        state.activity = lapis::session::attention::Activity::turn_completed;
+        item->applyAttention(state);
+        return item;
+    };
+    const QString source = QStringLiteral("3d53119b-85c5-439b-a2cb-f884742bd11f");
+    const QString target = QStringLiteral("eb00ff7d-e97a-472a-b74e-01c3909d5a55");
+    finish(source);
+    finish(target);
+    require(workspace.nextPriorityAttention({}) &&
+                workspace.focusedSession()->sessionId() == target,
+            "Tab stages a focused choice");
+    require(workspace.closeSession(target, true), "close the focused candidate");
+    QThread::msleep(60);
+    require(workspace.tabRanker().model().decisions == 0 && !workspace.tabRanker().refitting(),
+            "a structural focus change teaches nothing");
+}
+
+// A failed registry save must not teach a nonexistent Tab move or leave a
+// half-staged choice behind.
+void failedTabSelectionRecordsNothing() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "failed Tab directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QString source = QStringLiteral("51a90682-5ee6-4ffd-a356-f24f82e9db51");
+    const QString target = QStringLiteral("79858e34-34d8-4cf9-a2c1-25969a1a2d2f");
+    QJsonArray agents;
+    for (const auto& id : {source, target})
+        agents.append(QJsonObject{{"id", id},
+                                  {"title", id},
+                                  {"category", "general"},
+                                  {"endpoint", QDir(canonical).filePath(id + ".sock")},
+                                  {"program", "/usr/bin/true"},
+                                  {"directory", canonical}});
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    options.headless = true;
+    QFile file(options.storagePath);
+    require(file.open(QIODevice::WriteOnly), "create failed-tab registry");
+    const auto bytes =
+        QJsonDocument(QJsonObject{{"version", 1},
+                                  {"activeCategory", "general"},
+                                  {"categories", QJsonArray{QJsonObject{{"id", "general"},
+                                                                        {"name", "General"},
+                                                                        {"selected", source}}}},
+                                  {"agents", agents}})
+            .toJson();
+    require(file.write(bytes) == bytes.size(), "write failed-tab registry");
+    file.close();
+    Workspace workspace(WorkspaceMode::live, options);
+    auto* waiting = workspace.session(target);
+    require(waiting != nullptr && workspace.focusedSession()->sessionId() == source,
+            "load the failed-tab fixture");
+    waiting->setConnection(QStringLiteral("ready"), true);
+    lapis::session::wire::AttentionSnapshot state;
+    state.available = state.connected = state.ready = true;
+    state.activity = lapis::session::attention::Activity::working;
+    waiting->applyAttention(state);
+    state.activity = lapis::session::attention::Activity::turn_completed;
+    waiting->applyAttention(state);
+    require(QFile::setPermissions(canonical, QFile::ReadOwner | QFile::ExeOwner),
+            "make the registry parent unwritable");
+    require(!workspace.nextPriorityAttention({}), "the Tab selection fails with the registry");
+    require(workspace.focusedSession()->sessionId() == source,
+            "a failed Tab move leaves the source focused");
+    require(workspace.tabRanker().model().decisions == 0, "a failed Tab move teaches nothing");
+    require(!QFileInfo::exists(
+                QFileInfo(options.storagePath).dir().filePath(QStringLiteral("tab_away.jsonl"))),
+            "a failed Tab move writes no event log");
+    require(
+        QFile::setPermissions(canonical, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+        "restore registry parent permissions");
 }
 
 // Claude agents run under the service's Claude Code adapter and read their
@@ -948,6 +1227,188 @@ void directTileSelectionNormalizesAStaleTarget() {
                 tiles[1].toMap().value(QStringLiteral("sessionId")).toString() == right &&
                 workspace.focusedSession() == workspace.session(untiled),
             "an untiled direct selection replaces the first valid tile");
+}
+
+// The next and previous keys walk the tiles of the layout the walk started
+// from, but an agent can leave the category while the walk shows another agent
+// in its tile. Closing or moving it then finds no tile to remove, so the walk
+// must end instead of stepping onto the departed agent and putting it back.
+void tileWalkDropsDisplacedAgentsThatLeave() {
+    const auto make = [](const QString& directory, QString& left, QString& right,
+                         QString& untiled) {
+        const auto canonical = QFileInfo(directory).canonicalFilePath();
+        left = uuid();
+        right = uuid();
+        untiled = uuid();
+        auto agent = [&](const QString& id) { return agentRecord(canonical, id, "work"); };
+        WorkspaceOptions options;
+        options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+        writeRegistry(
+            options.storagePath,
+            QJsonObject{
+                {"version", 2},
+                {"activeCategory", "work"},
+                {"categories",
+                 QJsonArray{QJsonObject{{"id", "work"},
+                                        {"name", "Work"},
+                                        {"selected", right},
+                                        {"tiles",
+                                         QJsonObject{{"stacked", false},
+                                                     {"ratio", 0.5},
+                                                     {"children",
+                                                      QJsonArray{QJsonObject{{"agent", left}},
+                                                                 QJsonObject{{"agent", right}}}}}}},
+                            QJsonObject{{"id", "other"}, {"name", "Other"}}}},
+                {"agents", QJsonArray{agent(left), agent(right), agent(untiled)}}});
+        return std::make_unique<Workspace>(WorkspaceMode::live, options);
+    };
+    const auto stage = [](const Workspace& workspace) {
+        QStringList result;
+        for (const auto& tile : workspace.stageTiles())
+            result.append(tile.toMap().value(QStringLiteral("sessionId")).toString());
+        return result;
+    };
+    const auto tile_ids = [](const QJsonObject& tiles) {
+        QStringList result;
+        const std::function<void(const QJsonObject&)> walk = [&](const QJsonObject& node) {
+            const auto children = node.value(QStringLiteral("children")).toArray();
+            if (children.isEmpty()) {
+                result.append(node.value(QStringLiteral("agent")).toString());
+                return;
+            }
+            for (const auto& child : children)
+                walk(child.toObject());
+        };
+        walk(tiles);
+        return result;
+    };
+    const auto saved = [](const QString& path, const QString& category) {
+        const auto groups = QJsonDocument::fromJson(readRegistry(path))
+                                .object()
+                                .value(QStringLiteral("categories"))
+                                .toArray();
+        for (const auto& value : groups) {
+            const auto group = value.toObject();
+            if (group.value(QStringLiteral("id")).toString() == category)
+                return group.value(QStringLiteral("tiles")).toObject();
+        }
+        throw std::runtime_error("missing category in saved registry");
+    };
+
+    QTemporaryDir closed_directory;
+    require(closed_directory.isValid(), "closed-walk directory");
+    QString left;
+    QString right;
+    QString untiled;
+    auto closed = make(closed_directory.path(), left, right, untiled);
+    require(closed->workspaceError().isEmpty(), "load the closed-walk registry");
+    require(closed->focusedSession() == closed->session(right), "the walk starts from a tile");
+    closed->nextSession(1);
+    require(stage(*closed) == QStringList{left, untiled} &&
+                closed->focusedSession() == closed->session(untiled),
+            "the walk shows the untiled agent in the tile it displaced");
+    closed->session(right)->setConnection(QStringLiteral("ended"), false);
+    require(closed->removeSession(right), "close the displaced agent while the walk shows another");
+    require(stage(*closed) == QStringList{left, untiled},
+            "closing a displaced agent leaves the shown tiles alone");
+    closed->nextSession(-1);
+    require(closed->focusedSession() == closed->session(left) &&
+                stage(*closed) == QStringList{left, untiled},
+            "the walk ends instead of stepping onto the closed agent");
+    require(tile_ids(saved(closed->storagePath(), QStringLiteral("work"))) ==
+                QStringList{left, untiled},
+            "closing a displaced agent never saves its stale tile");
+
+    QTemporaryDir moved_directory;
+    require(moved_directory.isValid(), "moved-walk directory");
+    auto moved = make(moved_directory.path(), left, right, untiled);
+    require(moved->workspaceError().isEmpty(), "load the moved-walk registry");
+    moved->nextSession(1);
+    require(stage(*moved) == QStringList{left, untiled} &&
+                moved->focusedSession() == moved->session(untiled),
+            "the moved walk displaces its starting tile");
+    require(moved->moveSession(right, QStringLiteral("other")), "move the displaced agent away");
+    require(stage(*moved) == QStringList{left, untiled},
+            "moving a displaced agent leaves the shown tiles alone");
+    moved->nextSession(-1);
+    require(moved->focusedSession() == moved->session(left) &&
+                stage(*moved) == QStringList{left, untiled},
+            "the walk ends instead of showing the moved agent back");
+    require(!moved->categorySessions().contains(QVariant::fromValue(moved->session(right))),
+            "the moved agent stays out of its old category");
+    require(tile_ids(saved(moved->storagePath(), QStringLiteral("work"))) ==
+                QStringList{left, untiled},
+            "moving a displaced agent never saves its stale tile");
+}
+
+// A walk belongs to its category. A no-op or real step elsewhere must not
+// replace the saved home layout that lets the original walk restore its tiles.
+void tileWalkSurvivesAnotherCategory() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "cross-category walk directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const QString left = uuid();
+    const QString right = uuid();
+    const QString untiled = uuid();
+    const QString alone = uuid();
+    const QString first_away = uuid();
+    const QString second_away = uuid();
+    const auto agent = [&](const QString& id, const char* category) {
+        return agentRecord(root.path(), id, category);
+    };
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{
+            {"version", 2},
+            {"activeCategory", "work"},
+            {"categories",
+             QJsonArray{QJsonObject{
+                            {"id", "work"},
+                            {"name", "Work"},
+                            {"selected", right},
+                            {"tiles",
+                             QJsonObject{{"stacked", false},
+                                         {"ratio", 0.5},
+                                         {"children", QJsonArray{QJsonObject{{"agent", left}},
+                                                                 QJsonObject{{"agent", right}}}}}}},
+                        QJsonObject{{"id", "solo"}, {"name", "Solo"}, {"selected", alone}},
+                        QJsonObject{{"id", "away"}, {"name", "Away"}, {"selected", first_away}}}},
+            {"agents", QJsonArray{agent(left, "work"), agent(right, "work"), agent(untiled, "work"),
+                                  agent(alone, "solo"), agent(first_away, "away"),
+                                  agent(second_away, "away")}}});
+    Workspace workspace(WorkspaceMode::live, options);
+    const auto stage = [](const Workspace& item) {
+        QStringList result;
+        for (const auto& tile : item.stageTiles())
+            result.append(tile.toMap().value(QStringLiteral("sessionId")).toString());
+        return result;
+    };
+    require(workspace.workspaceError().isEmpty(), "load the cross-category walk registry");
+    workspace.nextSession(1);
+    require(stage(workspace) == QStringList{left, untiled} &&
+                workspace.focusedSession() == workspace.session(untiled),
+            "the original walk displaces a home tile");
+
+    require(workspace.selectCategory(QStringLiteral("solo")), "visit a one-agent category");
+    workspace.nextSession(1);
+    require(workspace.focusedSession() == workspace.session(alone),
+            "a one-agent category's next key is a no-op");
+    require(workspace.selectCategory(QStringLiteral("away")), "visit a two-agent category");
+    workspace.nextSession(1);
+    require(workspace.focusedSession() == workspace.session(second_away),
+            "another category can take a real step");
+
+    require(workspace.selectCategory(QStringLiteral("work")), "return to the original walk");
+    require(workspace.focusedSession() == workspace.session(untiled) &&
+                stage(workspace) == QStringList{left, untiled},
+            "returning preserves the original walk's shown stage");
+    workspace.nextSession(1);
+    require(workspace.focusedSession() == workspace.session(left),
+            "the original walk restores its selected home tile");
+    require(stage(workspace) == QStringList{left, right},
+            "the original walk restores its saved home tiles");
 }
 
 void unknownRegistryVersionsAreRejected() {
@@ -1373,6 +1834,55 @@ void failedUpdaterStartClearsTheQueue() {
             "failed start is logged without waiting for finished");
 }
 
+// harnessUpdates in lapis.json pins a CLI: its agents start without an
+// update and the explicit command says updates are off, while every other
+// CLI still updates first.
+void pinnedCliIsNotUpdated() {
+    const QByteArray script = "#!/bin/sh\n"
+                              "if [ \"$1\" = update ]; then\n"
+                              "  echo \"${0##*/}\" >> \"$HOME/updates\"\n"
+                              "  exit 0\n"
+                              "fi\n"
+                              "echo ready\n"
+                              "exec /bin/sleep 600\n";
+    UpdaterFixture fixture(script, QStringLiteral("grok"));
+    writeExecutable(fixture.root.filePath(QStringLiteral("bin/claude")), script);
+    Workspace workspace(WorkspaceMode::live, fixture.options);
+    workspace.setHarnessUpdatesOff({QStringLiteral("grok")});
+    fixture.create(workspace);
+    auto* pinned = workspace.focusedSession();
+    require(pinned->statusLabel() != QStringLiteral("Updating Grok…"),
+            "a pinned CLI's agent does not wait for an update");
+    require(waitFor([pinned] { return pinned->inputReady(); }, 10000), "the pinned agent starts");
+    require(!QFileInfo::exists(fixture.root.filePath(QStringLiteral("updates"))),
+            "the pinned CLI was not updated on start");
+    require(workspace.createAgent(fixture.root.filePath(QStringLiteral("project")),
+                                  QStringLiteral("unpinned"), QStringLiteral("claude")),
+            "create an agent of a CLI that still updates");
+    auto* updated = workspace.focusedSession();
+    require(waitFor([updated] { return updated->inputReady(); }, 10000),
+            "the unpinned agent starts after its update");
+    require(fixture.read(QStringLiteral("updates")) == "claude\n",
+            "only the unpinned CLI was updated");
+    workspace.clearError();
+    require(workspace.canUpdateAgent(pinned->sessionId()) &&
+                workspace.updateAndReloadAgent(pinned->sessionId()) == 0 &&
+                workspace.workspaceError().contains(QStringLiteral("Updates are off for Grok")),
+            "the explicit update says updates are off for the pinned CLI");
+    require(pinned->statusLabel() != QStringLiteral("Updating Grok…") &&
+                fixture.read(QStringLiteral("updates")) == "claude\n",
+            "and does not run it");
+    workspace.setHarnessUpdatesOff({QStringLiteral("grok"), QStringLiteral("claude")});
+    require(workspace.updateClaudeAndReload() == 0 &&
+                workspace.workspaceError().contains(QStringLiteral("Updates are off for Claude")) &&
+                fixture.read(QStringLiteral("updates")) == "claude\n",
+            "a config change pins Claude for the Claude update command too");
+    for (const auto& id : {pinned->sessionId(), updated->sessionId()})
+        require(workspace.closeSession(id), "close a pinned-update fixture agent");
+    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "pinned-update fixture agents close");
+}
+
 void explicitLaunchesUseUpdaterPolicy() {
     UpdaterFixture fixture("#!/bin/sh\n"
                            "if [ \"$1\" = update ]; then\n"
@@ -1455,6 +1965,26 @@ void explicitLaunchesUseUpdaterPolicy() {
     require(workspace.closeSession(agent->sessionId()) &&
                 waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
             "update-disabled fixture closes");
+
+    options.updateHarnesses = true;
+    options.harnessUpdatesOff = {QStringLiteral("claude")};
+    options.endpoint = fixture.root.filePath(QStringLiteral("pinned.sock"));
+    {
+        Workspace pinnedWorkspace(WorkspaceMode::live, options);
+        auto* pinnedAgent = pinnedWorkspace.focusedSession();
+        require(pinnedAgent && pinnedAgent->statusLabel() != QStringLiteral("Updating Claude…"),
+                "constructor-supplied update pins skip the startup update");
+        require(waitFor([pinnedAgent] { return pinnedAgent->inputReady(); }, 10000),
+                "the constructor-pinned agent starts");
+        require(!QFileInfo::exists(fixture.root.filePath(QStringLiteral("updates"))),
+                "constructor-supplied update pins do not create the update marker");
+        require(!QFileInfo::exists(fixture.root.filePath(QStringLiteral("harness-updates.log"))),
+                "constructor-supplied update pins do not log a startup update");
+        require(
+            pinnedWorkspace.closeSession(pinnedAgent->sessionId()) &&
+                waitFor([&pinnedWorkspace] { return pinnedWorkspace.sessions().isEmpty(); }, 10000),
+            "constructor-pinned fixture agent closes");
+    }
 }
 
 // The login helper (lapis_desktop --restore-agents) holds the workspace only
@@ -1731,8 +2261,10 @@ exec sleep 600
                                             "-o\nServerAliveCountMax=4\n-t\ndevbox\n")) &&
                 first.contains(QStringLiteral("cd ~/dev/far && s=")) &&
                 !conversation(first).isEmpty() &&
+                first.contains(QStringLiteral(R"(-lic 'export LAPIS_HOOK_NONCE=)")) &&
                 first.contains(QStringLiteral(
-                    R"(-lic 'export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}"; claude --permission-mode bypassPermissions '"$o $s")")),
+                    R"(export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}"; claude --permission-mode bypassPermissions --settings )")) &&
+                first.contains(QStringLiteral(R"(}'\'' '"$o $s")")),
             "ssh has its own connection, kept alive, and names the conversation; with no mode "
             "asked for, Claude Code starts in Full access, as the forms default, not auto mode");
         require(workspace.agentPlace(id).value(QStringLiteral("place")) ==
@@ -1831,6 +2363,162 @@ exec sleep 600
         require(calls(QStringLiteral("typo")) == 1, "a connection that never worked stays ended");
         // The unreachable one is abandoned; the others end.
         for (const auto& closing : {older_id, id, split, typo->sessionId()})
+            require(workspace.closeSession(closing, true), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agents close");
+    }
+    qputenv("PATH", path);
+}
+
+// An agent on another machine reports its turns through its own terminal.
+// A stand-in ssh runs the command it is given here, as that machine would,
+// in a stand-in login shell with a fixture home; stand-in CLIs run the hooks
+// (Claude Code) and notify program (Codex) from their command lines. Each
+// finished turn pings as a local agent's does, the sequences never reach the
+// screen, and a remote agent saved before the hooks gains them on restart.
+void remoteAgentsReportTurnsThroughTheirTerminal() {
+    using lapis::desktop::SessionPreview;
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-remote-hooks-XXXXXX"));
+    require(directory.isValid(), "remote hooks directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    require(root.mkpath(QStringLiteral("home")), "a home on the other machine");
+    writeExecutable(root.filePath(QStringLiteral("bin/ssh")), R"(#!/bin/sh
+for last; do :; done
+d=$(cd "$(dirname "$0")/.." && pwd)
+export HOME="$d/home" SHELL="$d/bin/login-shell"
+cd "$HOME" && exec /bin/sh -c "$last"
+)");
+    // Its login shell keeps this PATH, where a real one would read profiles.
+    writeExecutable(root.filePath(QStringLiteral("bin/login-shell")),
+                    R"(#!/bin/sh
+[ "$1" = -lic ] && exec /bin/sh -c "$2"
+exit 64
+)");
+    writeExecutable(root.filePath(QStringLiteral("bin/claude")), R"(#!/usr/bin/env python3
+import json, subprocess, sys
+args = sys.argv[1:]
+hooks = json.loads(args[args.index("--settings") + 1])["hooks"]
+session = args[args.index("--session-id") + 1] if "--session-id" in args else "restored"
+def fire(event, **fields):
+    payload = dict(hook_event_name=event, session_id=session, **fields)
+    for group in hooks[event]:
+        for hook in group["hooks"]:
+            # As Claude Code does: no controlling terminal, so no /dev/tty.
+            subprocess.run(["sh", "-c", hook["command"]], input=json.dumps(payload).encode(),
+                           start_new_session=True)
+fire("SessionStart", source="startup")
+print("claude ready", flush=True)
+for n, line in enumerate(sys.stdin, 1):
+    fire("UserPromptSubmit", prompt_id=f"p{n}", prompt=line.strip())
+    print("thinking", flush=True)
+    fire("Stop", prompt_id=f"p{n}", background_tasks=[], session_crons=[])
+    print("turn done", flush=True)
+)");
+    writeExecutable(root.filePath(QStringLiteral("bin/codex")), R"(#!/usr/bin/env python3
+import json, subprocess, sys, time
+args = sys.argv[1:]
+notify = next(json.loads(a.split("=", 1)[1]) for a in args if a.startswith("notify="))
+print("codex ready", flush=True)
+for n, line in enumerate(sys.stdin, 1):
+    for i in range(30):
+        print(f"working {i}", flush=True)
+        time.sleep(0.05)
+    done = {"type": "agent-turn-complete", "turn-id": f"t{n}", "input-messages": [line]}
+    subprocess.run(notify + [json.dumps(done)], start_new_session=True)
+    print("turn done", flush=True)
+)");
+    QFile config(root.filePath(QStringLiteral("ssh_config")));
+    require(config.open(QIODevice::WriteOnly), "write an ssh config");
+    config.write("Host devbox\n");
+    config.close();
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    options.restoreAgents = true;
+    // Saved before remote agents carried hooks.
+    const auto older_id = QStringLiteral("5a1d0000-0000-4000-8000-000000000002");
+    auto older = agentRecord(root.path(), older_id, "general");
+    older.insert(QStringLiteral("title"), QStringLiteral("older"));
+    older.insert(QStringLiteral("program"), root.filePath(QStringLiteral("bin/ssh")));
+    older.insert(QStringLiteral("directory"), QDir::homePath());
+    older.insert(QStringLiteral("harness"), QStringLiteral("claude"));
+    older.insert(
+        QStringLiteral("arguments"),
+        QJsonArray{
+            "-o", "ControlPath=none", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4",
+            "-t", "devbox",
+            R"(cd ~ && exec "${SHELL:-/bin/sh}" -lic 'claude --permission-mode bypassPermissions')"});
+    writeRegistry(options.storagePath,
+                  QJsonObject{{"version", 2},
+                              {"activeCategory", "general"},
+                              {"categories", QJsonArray{QJsonObject{{"id", "general"},
+                                                                    {"name", "General"},
+                                                                    {"selected", older_id}}}},
+                              {"agents", QJsonArray{older}}});
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        workspace.setSshConfigForTesting(config.fileName());
+        QHash<QString, int> pings;
+        QObject::connect(&workspace, &Workspace::turnFinished,
+                         [&pings](SessionPreview* item) { ++pings[item->sessionId()]; });
+        const auto shows = [](SessionPreview* item, const QString& text) {
+            return screenText(item->snapshot()).contains(text);
+        };
+        const auto clean = [](SessionPreview* item) {
+            const auto text = screenText(item->snapshot());
+            return !text.contains(QStringLiteral("7717")) &&
+                   !text.contains(QStringLiteral("lapis-"));
+        };
+        auto* restored = workspace.session(older_id);
+        require(restored != nullptr &&
+                    waitFor([&] { return shows(restored, QStringLiteral("claude ready")); }, 15000),
+                "a saved remote Claude Code agent starts with the hooks it lacked");
+        require(workspace.createAgent(QStringLiteral("~"), QStringLiteral("far claude"),
+                                      QStringLiteral("claude"), {}, {}, QStringLiteral("devbox")),
+                "a Claude Code agent on another machine");
+        auto* claude = workspace.focusedSession();
+        require(claude != nullptr, "the remote Claude Code agent is shown");
+        require(claude != restored &&
+                    claude->statusSource() == SessionPreview::StatusSource::output,
+                "it starts from the output estimate");
+        require(waitFor(
+                    [&] {
+                        return claude->inputReady() &&
+                               shows(claude, QStringLiteral("claude ready"));
+                    },
+                    15000),
+                "the remote Claude Code stand-in starts");
+        for (int turn = 1; turn <= 2; ++turn) {
+            require(claude->sendText("next prompt\r"), "type a prompt");
+            require(waitFor([&] { return pings.value(claude->sessionId()) == turn; }, 15000) &&
+                        claude->statusKind() == QStringLiteral("finished"),
+                    "each Stop hook from the other machine finishes its turn and pings once");
+        }
+        require(clean(claude) && shows(claude, QStringLiteral("turn done")),
+                "hook sequences never reach the screen");
+        require(restored->sendText("hello\r") &&
+                    waitFor([&] { return pings.value(older_id) == 1; }, 15000),
+                "the restored agent's hooks reach lapis too");
+        require(workspace.createAgent(QStringLiteral("~"), QStringLiteral("far codex"),
+                                      QStringLiteral("codex"), {}, {}, QStringLiteral("devbox")),
+                "a Codex agent on another machine");
+        auto* codex = workspace.focusedSession();
+        require(codex != nullptr, "the Codex agent is shown");
+        require(codex != claude && codex != restored, "the Codex agent is distinct");
+        codex->setOutputTimingForTesting({.settle_ms = 0, .burst_ms = 1500, .quiet_ms = 4000});
+        require(
+            waitFor(
+                [&] { return codex->inputReady() && shows(codex, QStringLiteral("codex ready")); },
+                15000),
+            "the remote Codex stand-in starts");
+        for (int turn = 1; turn <= 2; ++turn) {
+            require(codex->sendText("next prompt\r"), "type a Codex prompt");
+            require(waitFor([&] { return pings.value(codex->sessionId()) == turn; }, 15000) &&
+                        codex->statusKind() == QStringLiteral("finished"),
+                    "Codex's notify program finishes each turn once; a prompt starts the next");
+        }
+        require(clean(codex), "notify sequences never reach the screen");
+        for (const auto& closing : {older_id, claude->sessionId(), codex->sessionId()})
             require(workspace.closeSession(closing, true), "close the stand-in agents");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "the stand-in agents close");
@@ -3935,6 +4623,285 @@ void alertsChimeWhileAnAgentWaits() {
             "it starts from silence and peaks near -12 dBFS");
 }
 
+// Away from the Mac, lapis in front no longer stands for being seen: a
+// finished turn notifies, and an agent left waiting notifies once more after
+// alerts.remindAfter, held until the person is back. Looking at it, or its
+// next turn starting, ends the wait.
+void notificationsReachYouWhenAway() {
+    namespace wire = lapis::session::wire;
+    QTemporaryDir directory;
+    require(directory.isValid(), "away directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    QFile config(root.filePath(QStringLiteral("lapis.json")));
+    require(config.open(QIODevice::WriteOnly), "write the away config");
+    config.write(
+        R"({"version": 1, "alerts": {"notify": true, "awayAfter": 5, "remindAfter": 9999}})");
+    config.close();
+    lapis::desktop::KeyMap keymap;
+    keymap.setSourcePathForTesting(config.fileName());
+    require(keymap.load() && keymap.awayAfterSeconds() == 15 && keymap.remindAfterMinutes() == 1440,
+            "awayAfter and remindAfter load within their bounds");
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    Workspace workspace(WorkspaceMode::live, options);
+    lapis::desktop::SessionPreview agent(QStringLiteral("agent"), root.path(), {}, QColor(), "");
+    agent.setHarnessId(QStringLiteral("claude"));
+    const auto activity = [&agent](lapis::session::attention::Activity now) {
+        wire::AttentionSnapshot state;
+        state.available = state.connected = state.ready = true;
+        state.source_epoch = 1;
+        state.activity = now;
+        agent.applyAttention(state);
+    };
+    activity(lapis::session::attention::Activity::turn_completed);
+    std::vector<QStringList> posted;
+    bool background = false;
+    bool present = true;
+    bool focused = false;
+    lapis::desktop::Notifier notifier(
+        workspace, keymap,
+        [&posted](const QString& id, const QString& title, const QString& body) {
+            posted.push_back({id, title, body});
+        },
+        [&background] { return background; });
+    notifier.setPresence([&present] { return present; },
+                         [&present, &focused](const auto*) { return present && focused; });
+    notifier.setTimingForTesting({.checkMs = 20, .remindMs = 150});
+    std::vector<QJsonObject> notes;
+    notifier.setLog([&notes](const QJsonObject& entry) { notes.push_back(entry); });
+    const auto decision = [&notes] {
+        return notes.back().value(QStringLiteral("decision")).toString();
+    };
+
+    // In front with someone there: no notification, as before, and watching
+    // the agent itself leaves nothing waiting.
+    focused = true;
+    emit workspace.turnFinished(&agent);
+    require(posted.empty() && decision() == QStringLiteral("none: lapis is in front"),
+            "in front and present, a finished turn posts nothing");
+    waitFor([] { return false; }, 300);
+    require(posted.empty(), "and the agent being watched is not reminded about");
+
+    // Nobody at the Mac: in front, even showing that agent, it posts.
+    present = false;
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 1 && posted[0][2] == QStringLiteral("Claude finished a turn") &&
+                decision() == QStringLiteral("posted: you are away"),
+            "away, a finished turn posts even with lapis in front on that agent");
+    // Still away when the reminder falls due: it waits for the person.
+    waitFor([] { return false; }, 300);
+    require(posted.size() == 1, "a reminder is held while the person is away");
+    present = true;
+    focused = false;
+    require(waitFor([&posted] { return posted.size() == 2; }, 1000) &&
+                posted[1][2].startsWith(QStringLiteral("Claude ")) &&
+                notes.back().value(QStringLiteral("event")).toString() ==
+                    QStringLiteral("still waiting") &&
+                decision() == QStringLiteral("posted: reminder"),
+            "back at the Mac, the agent still waiting reminds once");
+    waitFor([] { return false; }, 300);
+    require(posted.size() == 2, "one reminder per wait");
+
+    // Present but on another agent: the chime's moment, and a reminder later.
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 2 && decision() == QStringLiteral("none: lapis is in front"),
+            "present on another agent, no notification at the turn's end");
+    require(waitFor([&posted] { return posted.size() == 3; }, 1000) &&
+                decision() == QStringLiteral("posted: reminder"),
+            "but it reminds if left waiting");
+
+    // Looking at it, or its next turn starting, ends the wait.
+    emit workspace.turnFinished(&agent);
+    focused = true;
+    waitFor([] { return false; }, 300);
+    require(posted.size() == 3, "looking at the agent answers the wait");
+    focused = false;
+    emit workspace.turnFinished(&agent);
+    activity(lapis::session::attention::Activity::working);
+    waitFor([] { return false; }, 300);
+    require(posted.size() == 3, "a new turn answers the wait");
+    activity(lapis::session::attention::Activity::turn_completed);
+
+    // In the background nothing changes: it posts, present or not.
+    background = true;
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 4 && decision() == QStringLiteral("posted"),
+            "in the background a finished turn posts as before");
+
+    // A look SeenScreens already recorded answers a finished wait even after
+    // the person moves on: a glance of a few seconds hits the 1s sample and
+    // usually misses the 5s check. A recorded look is not an answer for an
+    // open request, which still reminds.
+    waitFor([] { return false; }, 300);
+    require(posted.size() == 5, "the background wait resolves before the seen coverage");
+    background = false;
+    bool watching = false;
+    lapis::desktop::SeenScreens seen(workspace, [&watching](const auto*) { return watching; });
+    notifier.setSeen(&seen);
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 5 && decision() == QStringLiteral("none: lapis is in front"),
+            "the finished wait queues before anything records the screen");
+    watching = true;
+    seen.see(&agent); // what the 1s sampler records while the agent is shown
+    watching = false;
+    waitFor([] { return false; }, 300);
+    require(posted.size() == 5, "a look SeenScreens recorded answers the wait once they leave");
+
+    wire::AttentionSnapshot pending;
+    pending.available = pending.connected = pending.ready = true;
+    pending.source_epoch = 1;
+    lapis::session::attention::Pending request_item;
+    request_item.request = {.id = std::int64_t{1},
+                            .thread_id = "t",
+                            .turn_id = "u",
+                            .item_id = "i",
+                            .reason = "Approval",
+                            .summary = "Run tests",
+                            .choices = {"accept"}};
+    request_item.source_epoch = request_item.revision = 1;
+    pending.requests.push_back({request_item, QJsonObject{}});
+    agent.applyAttention(pending);
+    emit workspace.agentNeedsYou(&agent);
+    require(posted.size() == 5 && decision() == QStringLiteral("none: lapis is in front"),
+            "an open request queues its wait on the recorded screen too");
+    watching = true;
+    seen.see(&agent);
+    watching = false;
+    require(waitFor([&posted] { return posted.size() == 6; }, 1000) &&
+                notes.back().value(QStringLiteral("event")).toString() ==
+                    QStringLiteral("still waiting"),
+            "but a glance at an open request is not an answer: it still reminds");
+
+    // An immediate notification is not an answer either. Displaying an open
+    // request while it is visible still queues its reminder: once nobody is
+    // looking, an unresolved approval must come back.
+    focused = true;
+    background = true;
+    emit workspace.agentNeedsYou(&agent);
+    require(posted.size() == 7 &&
+                notes.back().value(QStringLiteral("event")).toString() ==
+                    QStringLiteral("needs you") &&
+                decision() == QStringLiteral("posted"),
+            "an open request shown in front posts immediately");
+    background = false;
+    focused = false;
+    require(waitFor([&posted] { return posted.size() == 8; }, 1000) &&
+                notes.back().value(QStringLiteral("event")).toString() ==
+                    QStringLiteral("still waiting"),
+            "and its immediate view does not answer the wait");
+    notifier.setSeen(nullptr);
+    notifier.setLog({});
+}
+
+// Production never emits agentNeedsYou: a real permission request arrives on
+// turnFinished after applyAttention stored it. Arming and keeping its wait
+// is the contract, whatever the person is looking at while it stays open.
+void notificationsHoldLiveRequestsWhileViewed() {
+    namespace wire = lapis::session::wire;
+    QTemporaryDir directory;
+    require(directory.isValid(), "live request directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    QFile config(root.filePath(QStringLiteral("lapis.json")));
+    require(config.open(QIODevice::WriteOnly), "write the live request config");
+    config.write(R"({"version": 1, "alerts": {"notify": true, "remindAfter": 9999}})");
+    config.close();
+    lapis::desktop::KeyMap keymap;
+    keymap.setSourcePathForTesting(config.fileName());
+    require(keymap.load() && keymap.remindAfterMinutes() == 1440, "live request config loads");
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    Workspace workspace(WorkspaceMode::live, options);
+    lapis::desktop::SessionPreview agent(QStringLiteral("agent"), root.path(), {}, QColor(), "");
+    agent.setHarnessId(QStringLiteral("claude"));
+    const auto request = [&agent](bool pending) {
+        wire::AttentionSnapshot state;
+        state.available = state.connected = state.ready = true;
+        state.source_epoch = 1;
+        if (pending) {
+            lapis::session::attention::Pending item;
+            item.request = {.id = std::int64_t{1},
+                            .thread_id = "t",
+                            .turn_id = "u",
+                            .item_id = "i",
+                            .reason = "Approval",
+                            .summary = "Run tests",
+                            .choices = {"accept"}};
+            item.source_epoch = item.revision = 1;
+            state.requests.push_back({item, QJsonObject{}});
+        }
+        agent.applyAttention(state);
+    };
+    std::vector<QStringList> posted;
+    std::vector<QJsonObject> notes;
+    bool background = false;
+    bool present = true;
+    bool focused = true;
+    lapis::desktop::Notifier notifier(
+        workspace, keymap,
+        [&posted](const QString& id, const QString& title, const QString& body) {
+            posted.push_back({id, title, body});
+        },
+        [&background] { return background; });
+    notifier.setPresence([&present] { return present; },
+                         [&present, &focused](const auto*) { return present && focused; });
+    notifier.setTimingForTesting({.checkMs = 20, .remindMs = 150});
+    notifier.setLog([&notes](const QJsonObject& entry) { notes.push_back(entry); });
+    const auto decision = [&notes] {
+        return notes.back().value(QStringLiteral("decision")).toString();
+    };
+
+    // A request that appears while the person is already reading that agent
+    // still arms its reminder: seeing an open request is not answering it.
+    request(true);
+    emit workspace.turnFinished(&agent);
+    require(posted.empty() && decision() == QStringLiteral("none: lapis is in front"),
+            "a live request viewed in front posts nothing now");
+    require(waitFor(
+                [&notes] {
+                    return !notes.empty() &&
+                           notes.back().value(QStringLiteral("event")).toString() ==
+                               QStringLiteral("finished");
+                },
+                100),
+            "the live request reaches the notifier");
+
+    // The wait survives check ticks held under the person's gaze, and the
+    // reminder still comes while they keep reading, whether the request
+    // arrived live.
+    waitFor([] { return false; }, 100);
+    require(posted.empty() && agent.attentionCount() > 0,
+            "looking at an open request keeps its reminder queued");
+    require(waitFor([&posted] { return posted.size() == 1; }, 1000) &&
+                notes.back().value(QStringLiteral("event")).toString() ==
+                    QStringLiteral("still waiting") &&
+                decision() == QStringLiteral("posted: reminder"),
+            "an open request viewed the whole time still reminds");
+    waitFor([] { return false; }, 300);
+    require(posted.size() == 1, "one reminder per open request");
+
+    // The legacy explicit signal path holds the same way: queued while the
+    // person sits on it, reminded even though they saw it the whole time.
+    present = true;
+    focused = true;
+    emit workspace.agentNeedsYou(&agent);
+    require(posted.size() == 1 && decision() == QStringLiteral("none: lapis is in front"),
+            "the legacy signal queues its wait while viewed in front");
+    waitFor([] { return false; }, 100);
+    require(posted.size() == 1 && agent.attentionCount() > 0,
+            "an explicit needs-you wait survives the ticks spent looking at it");
+    require(waitFor([&posted] { return posted.size() == 2; }, 1000) &&
+                notes.back().value(QStringLiteral("event")).toString() ==
+                    QStringLiteral("still waiting") &&
+                decision() == QStringLiteral("posted: reminder"),
+            "and the legacy wait reminds too");
+
+    // Answering the request, not the gaze, is what ends the wait.
+    request(false);
+    waitFor([] { return false; }, 300);
+    require(posted.size() == 2, "a resolved request stops waiting");
+    notifier.setLog({});
+}
+
 // The attention log's own behavior: owner-only however it starts, rotating
 // beside a single predecessor before a line would cross the cap, marking the
 // rotation, and stopping the write when the old file cannot move aside.
@@ -5076,6 +6043,12 @@ QJsonObject resumeArgumentsRecord(const ResumeArgumentsFixture& fixture,
         throw std::runtime_error("a managed retirement fixture must use a terminal checkpoint");
     auto record = agentRecord(fixture.root, id, "general");
     record.insert(QStringLiteral("harness"), variant.harness);
+    if (variant.harness == QLatin1String("codex")) {
+        writeExecutable(QDir(fixture.root).filePath(QStringLiteral("codex")),
+                        "#!/usr/bin/env bash\nexit 0\n");
+        record.insert(QStringLiteral("program"),
+                      QDir(fixture.root).filePath(QStringLiteral("codex")));
+    }
     QJsonArray user_arguments = variant.config_arguments;
     user_arguments.append("--user");
     if (variant.explicit_resume) {
@@ -5118,16 +6091,28 @@ bool followsObserverResume(const ResumeArgumentsCase& variant) {
 QJsonArray expectedResumeArguments(const ResumeArgumentsCase& variant,
                                    const QJsonArray& base_arguments,
                                    const QJsonArray& user_arguments, const QString& id) {
-    QJsonArray expected;
-    if (variant.add_update_setting)
-        expected = {"-c", "check_for_update_on_startup=false"};
-    const auto retained = variant.managed_pair ? base_arguments : QJsonArray(user_arguments);
-    for (const auto& argument : retained)
-        expected.append(argument);
-    if (followsObserverResume(variant)) {
-        expected.append("resume");
-        expected.append(id);
+    const auto retained =
+        variant.managed_pair ? QJsonArray(base_arguments) : QJsonArray(user_arguments);
+    QJsonArray plan = retained;
+    if (followsObserverResume(variant) && plan.size() + 2 <= 64) {
+        plan.append(QStringLiteral("resume"));
+        plan.append(id);
     }
+    // A direct Codex launch takes the startup default the workspace applies: no
+    // update check, prepended, and dropped rather than truncated once the saved
+    // argument limit is hit. Its screen stays full screen.
+    QJsonArray missing;
+    if (variant.harness == QLatin1String("codex")) {
+        if (variant.add_update_setting) {
+            missing.append(QStringLiteral("-c"));
+            missing.append(QStringLiteral("check_for_update_on_startup=false"));
+        }
+    }
+    if (missing.isEmpty() || plan.size() + missing.size() > 64)
+        return plan; // The launch is already at the saved argument limit.
+    QJsonArray expected = missing;
+    for (const auto& value : plan)
+        expected.append(value);
     return expected;
 }
 
@@ -5139,7 +6124,7 @@ void requireRestoredResumeArguments(const ResumeArgumentsCase& variant,
     const auto actual = restored_agent.value(QStringLiteral("arguments")).toArray();
     if (followsObserverResume(variant)) {
         const auto managed = restored_agent.value(QStringLiteral("managedResume")).toObject();
-        require(managed.value(QStringLiteral("index")).toInt(-1) == 3 &&
+        require(managed.value(QStringLiteral("index")).toInt(-1) == expected.size() - 2 &&
                     managed.value(QStringLiteral("identity")).toString() == id,
                 "Codex startup defaults shift managed provenance to the resume pair");
     }
@@ -5261,6 +6246,75 @@ void savedGrokDefaultsPreserveLaunchOwnership() {
                                 .toObject()[QStringLiteral("index")]
                                 .toInt(-1) == 3,
                         "the owned resume pair shifts exactly once with the default");
+        }
+    }
+}
+
+// Saved Codex launches gain the update setting once at restart, before any
+// owned resume pair, unless the person chose it; lapis never picks the screen
+// mode, so a screen setting of the person's own stays as written.
+void savedCodexDefaultsKeepTheScreenMode() {
+    struct Case {
+        QStringList arguments;
+        QStringList expected;
+        bool managed{};
+        QString program{QStringLiteral("codex")};
+    };
+    const QString update = QStringLiteral("check_for_update_on_startup=false");
+    const std::vector<Case> cases{
+        {{}, {"-c", update}},
+        {{"-c", update}, {"-c", update}},
+        {{"--no-alt-screen"}, {"-c", update, "--no-alt-screen"}},
+        {{"-c", "tui.alt_screen=\"always\"", "-c", update},
+         {"-c", "tui.alt_screen=\"always\"", "-c", update}},
+        {{"--", "--no-alt-screen"}, {"-c", update, "--", "--no-alt-screen"}},
+        {{"resume", "conversation"}, {"-c", update, "resume", "conversation"}, true},
+        {{"-o", "ControlPath=none", "-t", "fixture", "codex"},
+         {"-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4", "-o", "ControlPath=none",
+          "-t", "fixture", "codex"},
+         false,
+         QStringLiteral("ssh")},
+    };
+    for (const auto& variant : cases) {
+        QTemporaryDir directory(QStringLiteral("/tmp/lapis-codex-defaults-XXXXXX"));
+        require(directory.isValid(), "Codex defaults directory");
+        const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+        const auto id = uuid();
+        auto record = agentRecord(root.path(), id, "general");
+        const auto program = root.filePath(variant.program);
+        writeExecutable(program, "#!/usr/bin/env bash\nexit 0\n");
+        record.insert(QStringLiteral("program"), program);
+        record.insert(QStringLiteral("harness"), QStringLiteral("codex"));
+        record.insert(QStringLiteral("arguments"), QJsonArray::fromStringList(variant.arguments));
+        if (variant.managed)
+            record.insert(QStringLiteral("managedResume"),
+                          QJsonObject{{"index", 0}, {"identity", "conversation"}});
+        WorkspaceOptions options;
+        options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+        options.restoreAgents = true;
+        writeRegistry(
+            options.storagePath,
+            {{"version", 2},
+             {"activeCategory", "general"},
+             {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+             {"agents", QJsonArray{record}}});
+        for (int pass = 0; pass < 2; ++pass) {
+            Workspace workspace(WorkspaceMode::live, options);
+            require(workspace.workspaceError().isEmpty(), "restore saved Codex launch");
+            const auto saved = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                   .object()[QStringLiteral("agents")]
+                                   .toArray()
+                                   .first()
+                                   .toObject();
+            const auto expected = variant.expected;
+            require(saved[QStringLiteral("arguments")].toArray() ==
+                        QJsonArray::fromStringList(expected),
+                    "Codex defaults are direct-local once, keeping explicit screen choices");
+            if (variant.managed)
+                require(saved[QStringLiteral("managedResume")]
+                                .toObject()[QStringLiteral("index")]
+                                .toInt(-1) == 2,
+                        "the owned resume pair shifts exactly once with the defaults");
         }
     }
 }
@@ -5531,15 +6585,17 @@ int main(int argc, char** argv) {
                     (QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("accounts") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-accounts") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-hooks") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-account-reset") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("launch-policy") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("updates-off") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes")),
                 "Usage: lapis_workspace_tests [--case "
-                "remote-options|accounts|remote-account-reset|reload|updater|"
-                "startup-defaults|launch-policy|chimes]");
+                "remote-options|remote-hooks|accounts|remote-account-reset|reload|updater|"
+                "updates-off|startup-defaults|launch-policy|chimes]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("accounts")) {
                 incompleteCodexHomeNeverStartsAnAgent();
@@ -5551,8 +6607,11 @@ int main(int argc, char** argv) {
             } else if (selected == QStringLiteral("remote-options")) {
                 remoteOptionsRespectTheArgumentLimit();
                 remoteClaudeReconnectsToItsConversation();
+            } else if (selected == QStringLiteral("remote-hooks")) {
+                remoteAgentsReportTurnsThroughTheirTerminal();
             } else if (selected == QStringLiteral("startup-defaults")) {
                 savedGrokDefaultsPreserveLaunchOwnership();
+                savedCodexDefaultsKeepTheScreenMode();
             } else if (selected == QStringLiteral("launch-policy")) {
                 modelessAgentsGetTheDefaultMode();
                 resumingAConversationStartsItsCli();
@@ -5560,11 +6619,16 @@ int main(int argc, char** argv) {
                 updaterLifecycle();
                 updaterOutputIsDrainedWithABoundedTail();
                 failedUpdaterStartClearsTheQueue();
+                pinnedCliIsNotUpdated();
                 updateReloadsAgentsAfterTheirCli();
                 startupAndManualUpdatesShareOneInstaller();
                 skippedClaudeUpdateReportsTheCurrentOperation();
+            } else if (selected == QStringLiteral("updates-off")) {
+                pinnedCliIsNotUpdated();
             } else if (selected == QStringLiteral("chimes")) {
                 alertsChimeWhileAnAgentWaits();
+                notificationsReachYouWhenAway();
+                notificationsHoldLiveRequestsWhileViewed();
                 chimesPlayChosenFiles();
                 attentionLogStaysPrivateAndRotates();
             } else {
@@ -5590,10 +6654,17 @@ int main(int argc, char** argv) {
         unseenFollowsTurnsAndSelection();
         latestAttentionGoesToTheNewest();
         tabGoesToTheReadyThenTheOldest();
+        tabAttributionFollowsTheNextHandMove();
+        firstTabChoiceExcludesTheInitialFocus();
+        closingRemovesAPendingChoiceCandidate();
+        closingFocusedAgentCancelsPendingChoice();
+        failedTabSelectionRecordsNothing();
         modelessAgentsGetTheDefaultMode();
         claudeAgentsUseServiceAdapter();
         agentArgumentsPersist();
         directTileSelectionNormalizesAStaleTarget();
+        tileWalkDropsDisplacedAgentsThatLeave();
+        tileWalkSurvivesAnotherCategory();
         outputEstimate();
         agentsStartWithoutParentSessionMarkers();
         restartRefusesClosingAgent();
@@ -5604,6 +6675,7 @@ int main(int argc, char** argv) {
         updaterLifecycle();
         updaterOutputIsDrainedWithABoundedTail();
         failedUpdaterStartClearsTheQueue();
+        pinnedCliIsNotUpdated();
         savedArgumentCapKeepsRegistryLoadable();
         managedResumeFollowsRecovery();
         printedCheckpointsResumeButNeverOverrideTheObserver();
@@ -5627,6 +6699,7 @@ int main(int argc, char** argv) {
         phoneStartsAnAgentInItsCategory();
         remoteOptionsRespectTheArgumentLimit();
         remoteClaudeReconnectsToItsConversation();
+        remoteAgentsReportTurnsThroughTheirTerminal();
         reloadStartsAgentsAgain();
         incompleteCodexHomeNeverStartsAnAgent();
         plansFollowTheirLoad();
@@ -5643,6 +6716,8 @@ int main(int argc, char** argv) {
         unseenAgentsDecodeNothing();
         windowTakesTheWorkspaceFromTheHost();
         alertsChimeWhileAnAgentWaits();
+        notificationsReachYouWhenAway();
+        notificationsHoldLiveRequestsWhileViewed();
         chimesPlayChosenFiles();
         attentionLogStaysPrivateAndRotates();
         phoneSizeYieldsToTheDesktop();

@@ -5,11 +5,13 @@
 #include "interaction_log.hpp"
 #include "limit_resets.hpp"
 #include "next_prompt.hpp"
+#include "tab_ranker.hpp"
 #include <QFileSystemWatcher>
 #include <QHash>
 #include <QJsonValue>
 #include <QKeyCombination>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -77,6 +79,9 @@ struct Theme {
 inline constexpr int kTerminalFontSizeDefault = 14;
 inline constexpr int kTerminalFontSizeMinimum = 10;
 inline constexpr int kTerminalFontSizeMaximum = 32;
+// alerts.awayAfter (seconds of no input) and alerts.remindAfter (minutes).
+inline constexpr int kAwayAfterDefault = 120;
+inline constexpr int kRemindAfterDefault = 30;
 
 // Defaults for new agents, from the config's "newAgent" section: the CLI,
 // the folder to start in on this Mac and on each ssh machine, and the models
@@ -198,6 +203,9 @@ class KeyMap final : public QObject {
     [[nodiscard]] const QHash<QString, QStringList>& harnessArguments() const {
         return harness_arguments_;
     }
+    // CLIs whose automatic and explicit updates lapis skips, from
+    // {"harnessUpdates": {"omp": false}}; every other CLI updates as before.
+    [[nodiscard]] const QSet<QString>& harnessUpdatesOff() const { return harness_updates_off_; }
     Q_INVOKABLE bool setAlertSound(bool on);
     Q_INVOKABLE bool setFinishSound(bool on);
     Q_INVOKABLE bool setAlertRepeat(int times);
@@ -237,6 +245,13 @@ class KeyMap final : public QObject {
     [[nodiscard]] const QString& alertSoundFile() const { return alert_sound_file_; }
     [[nodiscard]] const QString& finishSoundFile() const { return finish_sound_file_; }
     [[nodiscard]] bool notify() const { return notify_; }
+    // With no keyboard or mouse input for this long (alerts.awayAfter, in
+    // seconds), the person is away: lapis being in front or showing an agent
+    // no longer counts as them seeing it.
+    [[nodiscard]] int awayAfterSeconds() const { return away_after_s_; }
+    // An agent still waiting this long after its finished turn
+    // (alerts.remindAfter, in minutes; 0 for never) notifies once more.
+    [[nodiscard]] int remindAfterMinutes() const { return remind_after_min_; }
     [[nodiscard]] const QString& editor() const { return editor_; }
     [[nodiscard]] bool keepAwake() const { return keep_awake_; }
     [[nodiscard]] bool showUsage() const { return show_usage_; }
@@ -266,6 +281,8 @@ class KeyMap final : public QObject {
     [[nodiscard]] const NextPromptSettings& nextPrompt() const { return next_prompt_; }
     // {"interactionLog": {...}}: the local log of input in lapis's windows.
     [[nodiscard]] const InteractionLogSettings& interactionLog() const { return interaction_log_; }
+    // {"tabAway": {...}}: how Tab ranks the next agent that needs you.
+    [[nodiscard]] const TabAwaySettings& tabAway() const { return tab_away_; }
     [[nodiscard]] static int terminalFontSizeMinimum() { return kTerminalFontSizeMinimum; }
     [[nodiscard]] static int terminalFontSizeMaximum() { return kTerminalFontSizeMaximum; }
     [[nodiscard]] static int terminalFontSizeDefault() { return kTerminalFontSizeDefault; }
@@ -282,6 +299,7 @@ class KeyMap final : public QObject {
     void apply_defaults();
     void load_terminal_font(const QJsonValue& value);
     void load_harness_arguments(const QJsonValue& value);
+    void load_harness_updates(const QJsonValue& value);
     void load_alerts(const QJsonObject& root);
     void load_usage(const QJsonObject& root);
     void load_agent_defaults(const QJsonValue& value);
@@ -304,6 +322,7 @@ class KeyMap final : public QObject {
     QString terminal_font_family_;
     int terminal_font_size_{kTerminalFontSizeDefault};
     QHash<QString, QStringList> harness_arguments_;
+    QSet<QString> harness_updates_off_;
     bool loaded_{};
     bool sidebar_visible_{true};
     bool previews_visible_{true};
@@ -314,6 +333,8 @@ class KeyMap final : public QObject {
     QString finish_sound_file_;
     bool keep_awake_{true};
     bool notify_{true};
+    int away_after_s_{kAwayAfterDefault};
+    int remind_after_min_{kRemindAfterDefault};
     QString editor_;
     bool show_usage_{true};
     QStringList usage_meter_;
@@ -332,6 +353,7 @@ class KeyMap final : public QObject {
     LimitResetSettings limit_resets_;
     NextPromptSettings next_prompt_;
     InteractionLogSettings interaction_log_;
+    TabAwaySettings tab_away_;
     QFileSystemWatcher watcher_;
     QTimer settle_;
     QByteArray known_contents_;

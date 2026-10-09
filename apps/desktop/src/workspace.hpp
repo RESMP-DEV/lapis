@@ -6,6 +6,7 @@
 #include "harness_models.hpp"
 #include "history_strip.hpp"
 #include "keymap.hpp"
+#include "tab_ranker.hpp"
 #include "tile_layout.hpp"
 #include <lapis/session/terminal.hpp>
 
@@ -18,10 +19,12 @@
 #include <QElapsedTimer>
 #include <QHash>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QJsonValue>
 #include <QLockFile>
 #include <QMap>
 #include <QObject>
+#include <QPoint>
 #include <QPointer>
 #include <QSet>
 #include <QSize>
@@ -122,10 +125,15 @@ class SessionPreview final : public QObject {
     [[nodiscard]] bool updating() const { return !updating_.isEmpty(); }
     [[nodiscard]] bool unseen() const { return unseen_; }
     void setUnseen(bool unseen);
+    // A mark an earlier window saved: unseen or not, and when it began to
+    // need you. Restoring emits unseenChanged and nothing else.
+    void restoreUnseen(bool unseen, qint64 neededAtMs);
     // When it last began to need you (ms since the epoch); 0 before that.
     [[nodiscard]] qint64 neededAtMs() const { return needed_at_ms_; }
     // Where activity comes from: a service-side observer (the Codex app-server,
     // Claude Code's hook relay) or, for other CLIs, an output-timing estimate.
+    // An agent on another machine starts from the estimate; hooks relayed
+    // through its terminal then report what they observe (see estimated()).
     enum class StatusSource : std::uint8_t { observer, output };
     void setStatusSource(StatusSource source) { status_source_ = source; }
     [[nodiscard]] StatusSource statusSource() const { return status_source_; }
@@ -187,7 +195,10 @@ class SessionPreview final : public QObject {
     void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
     // A turn of the wheel for the program on the alternate screen, over a
     // viewport cell; only when its snapshot says the service accepts wheels.
-    void sendWheel(int steps, int column, int row);
+    // False means the clamped wheel was not queued.
+    bool sendWheel(int steps, int column, int row);
+    // Sends queued scroll-back debt forward in bounded wheel messages.
+    void returnProgramToBottom();
     void resizeTerminal(session::TerminalSize size);
     // Someone is at this window: take the size back from another device.
     void claimTerminalSize();
@@ -262,6 +273,10 @@ class SessionPreview final : public QObject {
     // few quiet seconds after that as a pause. Neither implies a finished task.
     void noteOutput();
     [[nodiscard]] QString unobservedStatusKind() const;
+    // Whether an output-estimated agent reads from that estimate now: no
+    // observer, one not synchronized, or one that does not know the activity
+    // (Codex on another machine reports only finished turns).
+    [[nodiscard]] bool estimated() const;
     // Shows the strip's view once its pages are here, fetching the next one
     // it lacks.
     void showStrip();
@@ -287,6 +302,13 @@ class SessionPreview final : public QObject {
     // pages; the rows to scroll back once the first page arrives; the oldest
     // page ID fetched, for a service that does not place its pages.
     std::optional<HistoryStrip> strip_;
+    // Full-screen scroll-back steps the service accepted, and the cell where
+    // they were delivered. This belongs to the session so a rebound surface
+    // cannot lose it; rejected wheels leave the previous debt intact. The
+    // const decoder updates it when the newest screen ends the program that
+    // owed the debt.
+    mutable int program_wheel_debt_{};
+    mutable QPoint program_wheel_cell_{-1, -1};
     // The screen when browsing was asked for: the archive answering is at
     // least as new, so it can repeat rows the screen shows but never miss one.
     std::optional<session::TerminalSnapshot> strip_screen_;
@@ -364,6 +386,8 @@ struct WorkspaceOptions {
     // starts, at most every 30 minutes per CLI, so agents never open on an
     // update prompt. Existing-session reconnect and discovery do not update.
     bool updateHarnesses{};
+    // CLIs pinned in lapis.json are known before constructor-started agents.
+    QSet<QString> harnessUpdatesOff{};
     // Production bounds. Tests inject short values so stuck-updater cleanup is
     // observable without waiting two minutes or leaving installer children.
     qint64 updateTimeoutMs{qint64{2} * 60 * 1000};
@@ -537,13 +561,26 @@ class Workspace final : public QObject {
     // Selects the agent that most recently began to need you; again, the one
     // before it. False when none is waiting.
     Q_INVOKABLE bool latestAttention();
-    // Tab's next agent, in any category, of those that need you: first one
-    // with a guessed next prompt not yet seen, then a turn that finished unseen
-    // or a request, then a guess already seen (so Tab cannot bounce between
-    // two guesses while others wait), the one waiting longest within each.
-    // `ready` maps agents with a guess to whether it was seen. False when none.
-    // Advances past the focused session; false leaves Tab with the program.
+    // Tab's next agent, in any category, of those truly waiting on you: a
+    // request, or a finished turn (no background work in flight) that is
+    // unseen or has a guessed next prompt. Agents at work, paused on their own
+    // background work, or without a status never qualify. The TabRanker
+    // orders them: by default a prior (work, requests, unseen, newest) that
+    // learns from where you go; with "tabAway": {"rank": "fixed"} the earlier
+    // order (a guess not yet seen, an unseen turn or request, a guess already
+    // seen, longest waiting within each). `ready` maps agents with a guess to
+    // whether it was seen. Advances past the focused session; false (none
+    // waiting) leaves Tab with the program. Every move is logged with the
+    // candidates and their scores.
     Q_INVOKABLE bool nextPriorityAttention(const QVariantMap& ready);
+    void setTabAway(const TabAwaySettings& settings);
+    [[nodiscard]] const TabAwaySettings& tabAway() const { return tab_away_; }
+    // Where the guesses come from when the person moves by hand, for the
+    // choices the ranker learns from (NextPrompt::readyAgents).
+    void setGuesses(std::function<QVariantMap()> guesses) { guesses_ = std::move(guesses); }
+    [[nodiscard]] TabRanker& tabRanker() { return *tab_ranker_; }
+    // How long the person stays on an agent before it counts as their choice.
+    void setChoiceSettleMsForTesting(int ms) { choice_settle_.setInterval(ms); }
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;
@@ -567,9 +604,25 @@ class Workspace final : public QObject {
     // where its CLI can, in its category, and shows it.
     Q_INVOKABLE bool reopenAgent();
     [[nodiscard]] bool canReopenAgent() const { return !closed_.empty(); }
+    // The window's own marks on each agent, for GuiState: unseen, when it
+    // began to need you, whether it was at work, and the conversation they
+    // belong to. Restoring skips agents that are gone or now in another
+    // conversation (as after /clear) and never pings. An agent that was at
+    // work and is found idle finished while no window watched: it is marked
+    // unseen and finishedWhileAway() says so, without a chime.
+    [[nodiscard]] QJsonObject saveMarks() const;
+    void restoreMarks(const QJsonObject& marks);
+    // The agents Command-Shift-T can bring back, for GuiState.
+    [[nodiscard]] QJsonArray saveClosed() const;
+    void restoreClosed(const QJsonArray& closed);
     // Arguments from lapis.json added to each new agent of a harness.
     void setHarnessArguments(QHash<QString, QStringList> arguments) {
         harness_arguments_ = std::move(arguments);
+    }
+    // CLIs lapis.json pins: never updated on start nor by the update commands.
+    // The constructor copies the startup set; this setter applies live reloads.
+    void setHarnessUpdatesOff(QSet<QString> harnesses) {
+        harness_updates_off_ = std::move(harnesses);
     }
   signals:
     void focusChanged();
@@ -584,12 +637,17 @@ class Workspace final : public QObject {
     void errorChanged();
     void tilesChanged();
     void closedChanged();
+    // What saveMarks() returns may have changed.
+    void marksChanged();
+    // A turn that ended while no window watched (see restoreMarks).
+    void finishedWhileAway(lapis::desktop::SessionPreview* item);
 
   private:
     [[nodiscard]] static QString rootDirectory();
     [[nodiscard]] static QString defaultEndpoint();
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     QHash<QString, QStringList> harness_arguments_;
+    QSet<QString> harness_updates_off_;
     AgentDefaults agent_defaults_;
     QString ssh_config_{QDir::home().filePath(QStringLiteral(".ssh/config"))};
     const HarnessModels* harness_models_{};
@@ -618,6 +676,8 @@ class Workspace final : public QObject {
     };
     QHash<QString, CliUpdate> cli_updates_;
     int updateAndReload(const QStringList& ids);
+    // Reports and returns true when lapis.json turned off this CLI's updates.
+    bool refuseUpdatesOff(const QString& harness);
     void finishCliUpdate(const QString& key, QProcess* process, const QString& outcome,
                          bool succeeded);
     void drainUpdater(QProcess* process);
@@ -668,6 +728,17 @@ class Workspace final : public QObject {
     };
     // Build the launch and its managed resume provenance together.
     std::optional<ResumeLaunch> agentLaunch(const AgentRequest& request);
+    // The walk of the next and previous agent keys through a tiled category:
+    // the layout it started from, its order, the tile showing untiled agents,
+    // and the stage it left. Any other change to the stage starts a new walk.
+    struct TileWalk {
+        TileLayout home;
+        QStringList order;
+        QString slot;
+        QJsonObject shown;
+        QString selected;
+    };
+    QHash<QString, TileWalk> tile_walks_;
     QString insertCategory(const QString& name, bool select);
     // Starts an agent from a finished launch; the rest of startAgent. A
     // managed resume plan is committed in the same registry save as the
@@ -725,9 +796,37 @@ class Workspace final : public QObject {
     // Newest last; at most ten.
     std::vector<ClosedAgent> closed_;
     void rememberClosed(const Agent& agent, const QString& title);
+    // Marks an agent saved at work as finished if its first settled status
+    // after the restart is not work.
+    void watchFinishWhileAway(SessionPreview* item);
     [[nodiscard]] static bool serviceRunning(const QString& endpoint);
     void noteStatus(SessionPreview* item);
     QHash<const SessionPreview*, QString> last_kind_;
+    // Tab's ranking, and the choices it learns from: the agents waiting when
+    // the person left one, kept until they settle on another (or Tab moved
+    // them), then recorded with the one they settled on.
+    std::unique_ptr<TabRanker> tab_ranker_{std::make_unique<TabRanker>()};
+    TabAwaySettings tab_away_;
+    std::function<QVariantMap()> guesses_;
+    // When each agent began waiting (a turn finished or a request arrived),
+    // and when its recent turns started (bounded to the last hour).
+    QHash<QString, qint64> waiting_since_;
+    QHash<QString, std::vector<qint64>> turn_starts_;
+    struct PendingChoice {
+        std::vector<TabCandidate> candidates;
+        bool viaTab{};
+        // Agents that began waiting while the person was still moving join.
+        void add(const std::vector<TabCandidate>& fresh);
+    };
+    std::optional<PendingChoice> choice_;
+    QString last_focus_id_;
+    QTimer choice_settle_;
+    [[nodiscard]] std::vector<TabCandidate> waitingCandidates(const QVariantMap& ready,
+                                                              const SessionPreview* exclude) const;
+    void noteFocusMove();
+    void settleChoice();
+    void rememberInitialFocus();
+    void noteStructuralFocus();
     bool batching_categories_{};
     bool discardSession(const QString& id);
     void changed();

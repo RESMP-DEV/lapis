@@ -648,6 +648,8 @@ std::string Terminal::Impl::encode_wheel(WheelTurn turn) {
 
 TerminalSnapshot Terminal::snapshot() { return impl_->make_snapshot(); }
 
+bool Terminal::synchronizing() { return impl_->mode(GHOSTTY_MODE_SYNC_OUTPUT); }
+
 TerminalSnapshot Terminal::Impl::make_snapshot() {
     require_healthy();
     require_success(ghostty_render_state_update(render.get(), terminal.get()));

@@ -1,0 +1,66 @@
+{
+  "recorded_at": "2026-10-09T06:45:00Z",
+  "task": "PR 124 review repair after origin/main merge",
+  "source_revision": "35b1fef3e8ceae8353246258eb3472f8383bbdd6",
+  "dirty": true,
+  "scope": "Repairs unresolved PR 124 Ultra Tab findings after merging current origin/main; it does not prove native iOS Simulator or clang-tidy acceptance, which were unavailable in the sandbox.",
+  "merge": {
+    "base_pr_head": "c9b683c5ac958af76237367cb4ebb759128c823e",
+    "main": "5062f6a73968cb932d2a229c73a01aeee9321de0",
+    "result": "merge commit 35b1fef3e8ceae8353246258eb3472f8383bbdd6"
+  },
+  "checks": [
+    {
+      "name": "focused-python",
+      "command": "python3 -m unittest ...",
+      "passed": true
+    },
+    {
+      "name": "quality",
+      "command": "umask 0022; python3 scripts/lapis.py quality",
+      "receipt": "build/reports/quality/receipt.json",
+      "passed": true
+    },
+    {
+      "name": "ultratab-cpp",
+      "command": "cmake --build ...; ctest -R ultratab --no-tests=error",
+      "tests": [
+        "ultratab",
+        "ultratab-composer",
+        "ultratab-overlay"
+      ],
+      "passed": true
+    },
+    {
+      "name": "swift-typecheck",
+      "command": "swift-frontend -typecheck ... iphonesimulator27.0",
+      "targets": [
+        "app logic + views",
+        "unit tests + logic"
+      ],
+      "passed": true
+    },
+    {
+      "name": "clang-format",
+      "command": "clang-format --output-replacements-xml changed C++",
+      "passed": true
+    },
+    {
+      "name": "git-diff-check",
+      "command": "git diff --check",
+      "passed": true
+    },
+    {
+      "name": "ios-simulator",
+      "command": "scripts/check_ultratab_ios.py",
+      "passed": null,
+      "reason": "CoreSimulatorService connection invalid: simctl cannot discover runtimes or devices in this sandbox."
+    },
+    {
+      "name": "clang-tidy",
+      "command": "clang-tidy",
+      "passed": null,
+      "reason": "No clang-tidy executable is installed or exposed by Xcode/PATH in this sandbox."
+    }
+  ]
+}

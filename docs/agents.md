@@ -55,7 +55,10 @@ start as top-level sessions: if lapis itself was opened from inside another
 agent's terminal, that agent's session markers (Claude Code's child-session and
 transcript flags, and Grok, OpenCode, OMP and Codex sandbox markers) are removed
 first. No approval settings or global hooks are changed; a Claude agent's hooks
-are passed to that one process by its service.
+are passed to that one process by its service. An agent on another machine
+gets its hooks (Claude Code) or notify program (Codex) on its command line, and
+reports its turns through its own terminal, so its finished turns ping and get
+suggestions as a local agent's do; that needs `python3` there.
 
 ## What lapis knows about an agent
 
@@ -84,6 +87,12 @@ terminal is resized, where a classic renderer can leave a torn prompt. Set
 `CLAUDE_CODE_NO_FLICKER=0` in your login shell to keep Claude Code's classic
 renderer. Every CLI starts at the stage's size.
 
+A full-screen program repaints its whole screen for every scroll step and
+streamed line. Claude Code brackets each repaint in a synchronized update (DEC
+mode 2026); lapis shows only the finished frame, as iTerm2 and Ghostty do, so
+scrolling never shows a screen half painted. An update that never ends is
+shown after 250 ms.
+
 ## Keeping CLIs current
 
 A new agent's CLI updates itself first (`claude update`, `omp update`, `grok
@@ -94,9 +103,24 @@ exception: lapis observes only Codex builds it has qualified, so it keeps that
 build and starts Codex with its update prompt off
 (`check_for_update_on_startup=false`). Starting a supported CLI explicitly
 uses the same update queue; reconnecting and discovering agents do not. Pass
-`--no-harness-updates` to keep a chosen installation unchanged. Queued agents
+`--no-harness-updates` to keep every installation unchanged. Queued agents
 wait until the updater and its installer have stopped, and restarting a queued
 agent cannot skip that wait.
+
+To keep one CLI on a version you chose, install that version and turn off its
+updates in `lapis.json` ([config](config.md#cli-updates)). For OMP:
+
+```sh
+bun add -g @oh-my-pi/pi-coding-agent@<version>
+```
+
+```json
+"harnessUpdates": {"omp": false}
+```
+
+New OMP agents then start on that version, other CLIs keep updating, and the
+update command in Commands says updates are off for OMP instead of running
+`omp update`.
 
 A running agent keeps the version it started with. **Update this tab's CLI and
 reload it** and **Update Claude Code and reload its tabs** in Commands run the

@@ -31,6 +31,7 @@ add_library(lapis_desktop_view STATIC
     src/usage.cpp src/usage.hpp
     src/usage_limits.cpp src/usage_limits.hpp
     src/next_prompt.cpp src/next_prompt.hpp
+    src/tab_ranker.cpp src/tab_ranker.hpp
     src/agent_state.cpp src/agent_state.hpp src/attention_order.hpp
     src/open_request.cpp src/open_request.hpp
     src/plan_sign_in.cpp src/plan_sign_in.hpp
@@ -47,6 +48,7 @@ add_library(lapis_desktop_view STATIC
     src/cell_shapes.cpp src/cell_shapes.hpp
     src/tile_layout.cpp src/tile_layout.hpp
     src/history_strip.cpp src/history_strip.hpp
+    src/gui_state.cpp src/gui_state.hpp
     src/app_paths.cpp src/app_paths.hpp
     src/desktop_actions.cpp src/desktop_actions.hpp src/platform_desktop.hpp
     src/shell_environment.cpp src/shell_environment.hpp
@@ -54,11 +56,12 @@ add_library(lapis_desktop_view STATIC
     src/ui_preview.cpp src/ui_preview.hpp)
 target_include_directories(lapis_desktop_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 if(APPLE)
-    # Notifications, the login item, Command-` and (in the downloaded app) Sparkle.
+    # Notifications, input idle time, the login item, Command-` and (in the
+    # downloaded app) Sparkle.
     target_sources(lapis_desktop_view PRIVATE src/desktop_actions_mac.mm)
     target_link_libraries(lapis_desktop_view PUBLIC "-framework AppKit" "-framework Carbon"
-        "-framework Foundation" "-framework Security" "-framework ServiceManagement"
-        "-framework UserNotifications")
+        "-framework CoreGraphics" "-framework Foundation" "-framework Security"
+        "-framework ServiceManagement" "-framework UserNotifications")
     if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
         get_filename_component(sparkle_directory "${LAPIS_SPARKLE_FRAMEWORK}" DIRECTORY)
         target_compile_definitions(lapis_desktop_view PRIVATE LAPIS_SPARKLE)
@@ -83,8 +86,13 @@ configure_file(src/next_prompt_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/genera
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/plan_sign_in.py)
 file(READ src/plan_sign_in.py LAPIS_PLAN_SIGN_IN_SCRIPT)
 configure_file(src/plan_sign_in_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/plan_sign_in_script.hpp" @ONLY)
+# The hook relay a remote agent's python3 runs, compiled in the same way.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/remote_hook_relay.py)
+file(READ src/remote_hook_relay.py LAPIS_REMOTE_HOOK_RELAY)
+configure_file(src/remote_hook_relay.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/remote_hook_relay.hpp" @ONLY)
 target_include_directories(lapis_desktop_view PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options lapis_session_platform
+    lapis_claude_adapter
     PUBLIC lapis_terminal lapis_attention lapis_session_launch lapis_local_protocol
         Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network)
 if(LAPIS_PACKAGE)
@@ -164,6 +172,10 @@ if(BUILD_TESTING)
         # Mac; leave headroom for concurrent builds without changing app deadlines.
         set_tests_properties(limit-resets PROPERTIES TIMEOUT 60)
     endif()
+    add_executable(lapis_gui_state_tests tests/gui_state_test.cpp)
+    target_link_libraries(lapis_gui_state_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME gui-state COMMAND lapis_gui_state_tests)
+    set_tests_properties(gui-state PROPERTIES TIMEOUT 30)
     add_executable(lapis_history_strip_tests tests/history_strip_test.cpp)
     target_link_libraries(lapis_history_strip_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME history-strip COMMAND lapis_history_strip_tests)
@@ -184,6 +196,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_next_prompt_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME next-prompt COMMAND lapis_next_prompt_tests)
     set_tests_properties(next-prompt PROPERTIES TIMEOUT 30)
+    add_executable(lapis_tab_ranker_tests tests/tab_ranker_test.cpp)
+    target_link_libraries(lapis_tab_ranker_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME tab-ranker COMMAND lapis_tab_ranker_tests)
+    set_tests_properties(tab-ranker PROPERTIES TIMEOUT 30)
     add_executable(lapis_agent_state_tests tests/agent_state_test.cpp)
     target_link_libraries(lapis_agent_state_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME agent-state COMMAND lapis_agent_state_tests)
@@ -207,9 +223,13 @@ if(BUILD_TESTING)
     add_test(NAME workspace-remote-accounts COMMAND lapis_workspace_tests
                                                    --case remote-accounts)
     set_tests_properties(workspace-remote-accounts PROPERTIES TIMEOUT 60)
+    add_test(NAME workspace-remote-hooks COMMAND lapis_workspace_tests --case remote-hooks)
+    set_tests_properties(workspace-remote-hooks PROPERTIES TIMEOUT 90)
     add_test(NAME workspace-remote-account-reset COMMAND lapis_workspace_tests
                                                         --case remote-account-reset)
     set_tests_properties(workspace-remote-account-reset PROPERTIES TIMEOUT 20)
+    add_test(NAME workspace-updates-off COMMAND lapis_workspace_tests --case updates-off)
+    set_tests_properties(workspace-updates-off PROPERTIES TIMEOUT 60)
     if(APPLE)
         add_executable(lapis_sound_decode_tests tests/sound_decode_test.mm)
         target_link_libraries(lapis_sound_decode_tests PRIVATE lapis_project_options lapis_desktop_view)
@@ -284,6 +304,18 @@ target_link_libraries(lapis_workspace_live_probe PRIVATE lapis_project_options l
 target_compile_definitions(lapis_workspace_live_probe PRIVATE
     LAPIS_SESSION_SERVICE_PATH="$<TARGET_FILE:lapis_session_service>")
 add_dependencies(lapis_workspace_live_probe lapis_session_service)
+
+# Opt-in agent and category switching measurement (offscreen); not in CTest.
+set(QT_NO_PRIVATE_MODULE_WARNING ON) # the benchmark is pinned to this exact Qt
+find_package(Qt6 6.11.2 EXACT QUIET COMPONENTS GuiPrivate)
+if(TARGET Qt6::GuiPrivate)
+    add_executable(lapis_switch_benchmark tests/switch_benchmark.cpp)
+    target_link_libraries(lapis_switch_benchmark PRIVATE lapis_project_options lapis_desktop_view
+                                                         Qt6::QuickControls2 Qt6::GuiPrivate)
+    target_compile_definitions(lapis_switch_benchmark PRIVATE
+        LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
+    add_dependencies(lapis_switch_benchmark lapis_session_service)
+endif()
 
 # Opt-in measurement, not a timing gate in CTest.
 add_executable(lapis_terminal_latency_probe tests/terminal_latency_probe.cpp)

@@ -1,7 +1,9 @@
 #include "agent_search.hpp"
 #include "conversation_index.hpp"
+#include "gui_state.hpp"
 #include "keymap.hpp"
 #include "model_change_recorder.hpp"
+#include "next_prompt.hpp"
 #include "plan_sign_in.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
@@ -1157,6 +1159,17 @@ void send_binding(QQuickWindow& window, const QString& binding) {
     QCoreApplication::sendEvent(&window, &press);
     QCoreApplication::sendEvent(&window, &release);
 }
+
+void check_accessible_terminal(QQuickItem& terminal, const QString& name) {
+    auto* face = QAccessible::queryAccessibleInterface(&terminal);
+    CHECK(face != nullptr && face->role() == QAccessible::EditableText);
+    CHECK(face->text(QAccessible::Name) == name);
+    CHECK(face->state().focusable);
+    CHECK(face->state().focused && terminal.hasActiveFocus());
+    // Never advertise an editable target after the terminal stops accepting
+    // input; dictation sends to the focused accessible element.
+    CHECK(face->state().editable == terminal.property("interactive").toBool());
+}
 void click_visual(QQuickWindow& window, QQuickItem& item) {
     const auto position = item.mapToScene(QPointF(item.width() / 2, item.height() / 2));
     CHECK(position.x() >= 0 && position.x() <= window.width());
@@ -1210,6 +1223,7 @@ QStringList strip_ids(const lapis::desktop::Workspace& workspace) {
 }
 
 // Tiles and drags, through the window as a person would use them.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& workspace,
                            lapis::desktop::KeyMap& keymap) {
     const auto item = [&window](const QString& name) {
@@ -1257,6 +1271,77 @@ void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     CHECK(workspace.focusedSession() == workspace.session(ids[1]));
     key("tileLeft");
     CHECK(workspace.focusedSession() == workspace.session(ids[0]));
+    key("tileLeft");
+    CHECK(workspace.focusedSession() == workspace.session(ids[0])); // no wraparound
+
+    // The next and previous agent keys walk the tiles in reading order, then
+    // show each untiled agent in the tile the walk left, and put the stage
+    // back as it was when they wrap onto the tiles. The selection edge and
+    // the stage terminal follow every press.
+    const auto tile_ids = [&workspace] {
+        QStringList result;
+        for (const auto& tile : workspace.stageTiles())
+            result.append(tile.toMap().value(QStringLiteral("sessionId")).toString());
+        return result;
+    };
+    const auto shows_selection = [&](const QString& id) {
+        auto* frame = item(QStringLiteral("tile_") + id);
+        CHECK(frame->property("selectedTile").toBool());
+        CHECK(scene_rect(*frame).contains(scene_rect(*terminal)));
+        CHECK(terminal->document() == workspace.session(id));
+        for (const auto& other_id : tile_ids())
+            CHECK(other_id == id ||
+                  !item(QStringLiteral("tile_") + other_id)->property("selectedTile").toBool());
+        CHECK(frame != nullptr);
+        CHECK(frame->property("selectedTile").toBool());
+        CHECK(scene_rect(*frame).contains(scene_rect(*terminal)));
+        CHECK(terminal->document() == workspace.session(id));
+        for (const auto& other_id : tile_ids()) {
+            if (other_id == id)
+                continue;
+            auto* other_frame = item(QStringLiteral("tile_") + other_id);
+            CHECK(other_frame != nullptr);
+            CHECK(!other_frame->property("selectedTile").toBool());
+        }
+    };
+    const auto capture_walk = [&window](const char* name) {
+        if (const auto path = qEnvironmentVariable("LAPIS_WORKSPACE_CAPTURE_PREFIX");
+            !path.isEmpty())
+            CHECK(window.grabWindow().save(path + QStringLiteral("tile-walk-") +
+                                           QString::fromLatin1(name) + QStringLiteral(".png")));
+    };
+    const QStringList walk_home{ids[0], ids[1]};
+    CHECK(tile_ids() == walk_home);
+    capture_walk("1-left");
+    key("nextWindow");
+    CHECK(workspace.focusedSession() == workspace.session(ids[1]) && tile_ids() == walk_home);
+    shows_selection(ids[1]);
+    capture_walk("2-right");
+    for (qsizetype untiled = 2; untiled < ids.size(); ++untiled) {
+        key("nextWindow");
+        CHECK(workspace.focusedSession() == workspace.session(ids[untiled]));
+        CHECK(tile_ids() == QStringList({ids[0], ids[untiled]}));
+        shows_selection(ids[untiled]);
+        if (untiled == 2)
+            capture_walk("3-untiled-in-right");
+    }
+    key("nextWindow");
+    CHECK(workspace.focusedSession() == workspace.session(ids[0]) && tile_ids() == walk_home);
+    shows_selection(ids[0]);
+    key("previousWindow");
+    CHECK(workspace.focusedSession() == workspace.session(ids.constLast()));
+    CHECK(tile_ids() == QStringList({ids.constLast(), ids[1]}));
+    shows_selection(ids.constLast());
+    capture_walk("4-previous-in-left");
+    key("nextWindow");
+    CHECK(workspace.focusedSession() == workspace.session(ids[0]) && tile_ids() == walk_home);
+    shows_selection(ids[0]);
+
+    // The walk rebuilt the tiles it passed through.
+    left = item(QStringLiteral("tile_") + ids[0]);
+    other = qobject_cast<lapis::desktop::TerminalSurface*>(
+        item(QStringLiteral("tileTerminal_") + ids[0]));
+    CHECK(other != nullptr);
 
     // A divider drag shares the space differently; agents resize once, at the end.
     const auto before = left->width();
@@ -2193,6 +2278,13 @@ void check_side_terminal(QQuickWindow& window, lapis::desktop::Terminals& termin
     pump(60);
     auto* surface = required_visual(window, QStringLiteral("sideTerminalSurface"));
     CHECK(surface->hasActiveFocus());
+    const auto original_interactive = surface->property("interactive").toBool();
+    surface->setProperty("interactive", false);
+    check_accessible_terminal(*surface, QStringLiteral("Side terminal"));
+    auto* face = QAccessible::queryAccessibleInterface(surface);
+    CHECK(face != nullptr && !face->state().editable);
+    surface->setProperty("interactive", original_interactive);
+    check_accessible_terminal(*surface, QStringLiteral("Side terminal"));
     type_text(window, QStringLiteral("hello"));
     send_binding(window, QStringLiteral("Return"));
     CHECK(pump_until(
@@ -2587,6 +2679,18 @@ int run_strip_ui_tests() {
         pump(30);
         CHECK(focused_id(workspace) == target);
     }
+    // The stage terminal is a focused, editable text field to accessibility
+    // clients: Wispr Flow pastes into a text field at once and falls back to
+    // a slow paste when the focused element is the bare window.
+    {
+        wait_terminal_focus(*window, *terminal);
+        auto* face = QAccessible::queryAccessibleInterface(terminal);
+        CHECK(face != nullptr && face->role() == QAccessible::EditableText);
+        CHECK(face->state().focusable && face->state().editable);
+        CHECK(face->text(QAccessible::Name) == QStringLiteral("Terminal"));
+        CHECK(face->state().editable == terminal->property("interactive").toBool());
+        CHECK(terminal->hasActiveFocus() && face->state().focused);
+    }
 
     // Short windows keep the strip with shorter cards.
     window->resize(640, 480);
@@ -2847,6 +2951,112 @@ int run_history_ui_tests() {
     return EXIT_SUCCESS;
 }
 
+// A restarted window brings back the guess at an agent's cursor: the state
+// file an earlier window wrote is read, the conversation (a stand-in helper)
+// is still at the offer's turn, and the guess is drawn and reported seen. The
+// window's own choices come back too.
+int run_restored_suggestion_tests() {
+    using namespace lapis::desktop;
+    QTemporaryDir config(QStringLiteral("/tmp/lapis-ui-XXXXXX"));
+    CHECK(config.isValid());
+    const QDir root(config.path());
+    CHECK(root.mkpath(QStringLiteral("bin")));
+    const auto python = root.filePath(QStringLiteral("bin/python3"));
+    {
+        QFile script(python);
+        CHECK(script.open(QIODevice::WriteOnly));
+        script.write("#!/bin/sh\nprintf '%s' '{\"conversation\":\"c\",\"turn\":3}'\n");
+    }
+    CHECK(QFile::setPermissions(python, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    Workspace workspace(WorkspaceMode::preview);
+    auto* agent = workspace.session(QStringLiteral("agent"));
+    CHECK(agent != nullptr);
+    agent->setHarnessId(QStringLiteral("claude"));
+    lapis::session::wire::AttentionSnapshot finished;
+    finished.available = finished.connected = finished.ready = true;
+    finished.activity = lapis::session::attention::Activity::turn_completed;
+    agent->applyAttention(finished);
+    CHECK(workspace.selectSession(QStringLiteral("agent")));
+    NextPrompt next(
+        [](const QString& id) -> std::optional<NextPrompt::Agent> {
+            if (id != QLatin1String("agent"))
+                return std::nullopt;
+            return NextPrompt::Agent{{},
+                                     QStringLiteral("~/x"),
+                                     QStringLiteral("claude"),
+                                     QStringLiteral("c"),
+                                     QStringLiteral("agent"),
+                                     QStringLiteral("general"),
+                                     QStringLiteral("> |")};
+        },
+        [] { return QJsonArray{}; },
+        [&root](const QString& name) { return root.filePath(QStringLiteral("bin/") + name); },
+        {root.filePath(QStringLiteral("runtime")),
+         root.filePath(QStringLiteral("runtime/next_prompt.jsonl"))});
+    NextPromptSettings on;
+    on.automatic = true;
+    next.setSettings(on);
+    const auto path = root.filePath(QStringLiteral("runtime/gui_state.json"));
+    {
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly));
+        file.write(R"({"version": 1, "sections": {
+            "window": {"lastHarness": "codex", "lastMode": "edits",
+                "lastModels": {"codex": 7, "claude": "custom"},
+                "sideTerminalOpen": true},
+            "nextPrompt": {"offers": {"agent": {"key": "agent:earlier.1",
+                "text": "run the tests", "conversation": "c", "turn": 3, "seenMs": 0}}}}})");
+    }
+    GuiState state(path);
+    CHECK(state.load());
+    next.restoreState(state.section(QStringLiteral("nextPrompt")).toObject());
+    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+                                  .compact = false,
+                                  .screen = QString(),
+                                  .nextPrompt = &next,
+                                  .guiState = &state});
+    CHECK(preview.load());
+    auto* window = preview.window();
+    window->resize(1400, 960);
+    wait_active(*window);
+    CHECK(window->property("lastHarness").toString() == QStringLiteral("codex") &&
+          window->property("lastMode").toString() == QStringLiteral("edits"));
+    // A routine tiles signal without tiling does not clear restored zoom.
+    window->setProperty("tileZoomed", true);
+    CHECK(workspace.selectSession(QStringLiteral("checks")));
+    pump(2);
+    CHECK(workspace.selectSession(QStringLiteral("agent")));
+    pump(2);
+    CHECK(window->property("tileZoomed").toBool());
+    const auto remembered = window->property("lastModels").toMap();
+    CHECK(remembered.value(QStringLiteral("claude")).toString() == QLatin1String("custom") &&
+          !remembered.contains(QStringLiteral("codex")) &&
+          !remembered.contains(QStringLiteral("ghost")));
+    auto* terminal = qobject_cast<TerminalSurface*>(
+        find_visual(window->contentItem(), QStringLiteral("liveTerminal")));
+    CHECK(terminal != nullptr && terminal->document() == agent);
+    CHECK(pump_until([&] { return terminal->suggestion() == QStringLiteral("run the tests"); },
+                     5000));
+    CHECK(terminal->suggestionKey() == QStringLiteral("agent:earlier.1"));
+    // Drawn: on screen, it is reported seen under the restored offer's key.
+    CHECK(pump_until([&] { return next.readyAgents().value(QStringLiteral("agent")).toBool(); },
+                     5000));
+    pump(60);
+    const auto shown = window->grabWindow();
+    if (const auto prefix = qEnvironmentVariable("LAPIS_WORKSPACE_CAPTURE_PREFIX");
+        !prefix.isEmpty())
+        CHECK(shown.save(prefix + QStringLiteral("restored-suggestion.png")));
+    next.used(QStringLiteral("agent"), false, 0, QStringLiteral("agent:earlier.1"));
+    CHECK(pump_until([&] { return terminal->suggestion().isEmpty(); }, 2000));
+    pump(60);
+    const auto plain = window->grabWindow();
+    CHECK(shown.size() == plain.size() && shown != plain);
+    // A choice made now is kept for the next window.
+    window->setProperty("lastHarness", QStringLiteral("claude"));
+    CHECK(state.value(QStringLiteral("lastHarness")).toString() == QStringLiteral("claude"));
+    return EXIT_SUCCESS;
+}
+
 int main(int argc, char** argv) {
     bool background = false;
     bool shortcuts_only = false;
@@ -2909,7 +3119,8 @@ int main(int argc, char** argv) {
                    run_preview_frame_sync_tests() != EXIT_SUCCESS ||
                    run_attention_dialog_tests() != EXIT_SUCCESS ||
                    run_attention_ui_tests() != EXIT_SUCCESS ||
-                   run_strip_ui_tests() != EXIT_SUCCESS || run_history_ui_tests() != EXIT_SUCCESS)
+                   run_strip_ui_tests() != EXIT_SUCCESS || run_history_ui_tests() != EXIT_SUCCESS ||
+                   run_restored_suggestion_tests() != EXIT_SUCCESS)
             return EXIT_FAILURE;
         std::cout << "ui_preview_test: PASS"
                   << (background ? " (offscreen/software; not native input or GPU acceptance)" : "")
