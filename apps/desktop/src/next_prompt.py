@@ -23,19 +23,62 @@ import tempfile
 import time
 from datetime import datetime, timezone
 
-# Tags and notes the CLIs add as user turns, which nobody typed.
-NOT_TYPED = (
+# Tags and notes the CLIs add as user turns, which nobody typed. Tag notes are
+# recognized as complete elements so a request can quote one and continue.
+TAG_NOT_TYPED = (
     "<command-name>",
     "<local-command-caveat>",
     "<local-command-stdout>",
     "<environment_context>",
     "<system-reminder>",
     "<task-notification>",
+    "<codex_internal_context>",
+    "<turn_aborted>",
+    "<subagent_notification>",
+    "<recommended_plugins>",
+    "<bash-input>",
+    "<bash-stdout>",
+    "<bash-stderr>",
+    "<command-message>",
+)
+PROSE_NOT_TYPED = (
     "Caveat:",
     "This session is being continued",
-    "[Request interrupted",
     "# AGENTS.md instructions",
 )
+BRACKET_NOT_TYPED = (
+    "[Request interrupted",
+    "[Your previous response had no visible output",
+)
+# Codex attaches images as empty wrappers around the typed text, never inside.
+IMAGE_EDGES = re.compile(
+    r"\A(?:<image\b[^>]*>\s*</image>\s*)*"
+    r"(.*?)"
+    r"(?:\s*<image\b[^>]*>\s*</image>)*\Z",
+    re.S,
+)
+# Whole injected notes: tag elements and bracketed Codex notes. A request may
+# quote one; it is injected only when nothing else remains.
+NOTE_TAGS = "|".join(
+    sorted(
+        (prefix[1:].removesuffix(">") for prefix in TAG_NOT_TYPED),
+        key=len,
+        reverse=True,
+    )
+)
+NOTE_ELEMENT = re.compile(
+    r"<({})(?=[\s/>])[^>]*(?:/>|>.*?</\1\s*>)".format(NOTE_TAGS),
+    re.S,
+)
+NOTE_BRACKET = re.compile(
+    "|".join(
+        "{}[^\\[\\]]*\\]".format(re.escape(prefix))
+        for prefix in sorted(BRACKET_NOT_TYPED, key=len, reverse=True)
+    ),
+    re.S,
+)
+# Codex Desktop puts context headers before the request it was typed under.
+CODEX_REQUEST = re.compile(r"^## My request for Codex:[ \t]*$", re.MULTILINE)
 CATEGORIES = ("approve", "status", "ship", "fix", "new", "question", "correct", "other")
 # Variables that would send a prediction to a metered key, another endpoint or
 # a cloud account instead of the plan the CLI is signed in to.
@@ -53,9 +96,43 @@ CONTEXT_CHARS = 24000
 RECENT_HOURS = 6
 
 
+def whole_note(text):
+    """Whether stripped text is nothing but whole injected tag/bracket notes."""
+    rest = text
+    while rest:
+        note = NOTE_ELEMENT.match(rest) or NOTE_BRACKET.match(rest)
+        if not note:
+            return False
+        rest = rest[note.end() :].lstrip()
+    return True
+
+
 def typed(text):
     text = (text or "").strip()
-    return "" if not text or text.startswith(NOT_TYPED) else text
+    peeled = False
+    while text:
+        # Strip edge wrappers before deciding what remains was typed.
+        text = IMAGE_EDGES.sub(r"\1", text).strip()
+        # A request may quote an injected tag or bracket note; it is injected
+        # only when nothing else remains. Prose notes have no reliable end.
+        if whole_note(text):
+            return ""
+        if not peeled and text.startswith(PROSE_NOT_TYPED):
+            return ""
+        markers = list(CODEX_REQUEST.finditer(text))
+        if (
+            not markers
+            or peeled
+            or not (text.startswith("# ") or CODEX_REQUEST.match(text))
+        ):
+            break
+        # A '# ' preamble may quote or contain the sentinel in attached text,
+        # so its request starts after the last line-anchored marker. A direct
+        # marker starts the request, and later markers in it remain typed text.
+        marker = markers[-1] if text.startswith("# ") else markers[0]
+        text = text[marker.end() :].strip()
+        peeled = True
+    return text
 
 
 def records(path):
