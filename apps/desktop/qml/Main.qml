@@ -3418,7 +3418,7 @@ ApplicationWindow {
                     // editable item Qt keeps Command-` from the window.
                     Accessible.role: Accessible.EditableText
                     Accessible.name: qsTr("Terminal")
-                    Accessible.editable: true
+                    Accessible.editable: interactive
                     Accessible.focusable: true
                     x: stage.tiled ? stage.focusedFrame.x + 4 : stage.inset
                     y: stage.tiled ? stage.focusedFrame.y + stage.headerHeight : stage.inset
@@ -4406,7 +4406,7 @@ ApplicationWindow {
                 objectName: "sideTerminalSurface"
                 Accessible.role: Accessible.EditableText
                 Accessible.name: qsTr("Side terminal")
-                Accessible.editable: true
+                Accessible.editable: interactive
                 Accessible.focusable: true
                 onPasteRefused: (reason) => {
                     sidePanel.pasteReason = reason

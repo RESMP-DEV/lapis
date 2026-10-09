@@ -1031,6 +1031,17 @@ void send_binding(QQuickWindow& window, const QString& binding) {
     QCoreApplication::sendEvent(&window, &press);
     QCoreApplication::sendEvent(&window, &release);
 }
+
+void check_accessible_terminal(QQuickItem& terminal, const QString& name) {
+    auto* face = QAccessible::queryAccessibleInterface(&terminal);
+    CHECK(face != nullptr && face->role() == QAccessible::EditableText);
+    CHECK(face->text(QAccessible::Name) == name);
+    CHECK(face->state().focusable);
+    CHECK(face->state().focused && terminal.hasActiveFocus());
+    // Never advertise an editable target after the terminal stops accepting
+    // input; dictation sends to the focused accessible element.
+    CHECK(face->state().editable == terminal.property("interactive").toBool());
+}
 void click_visual(QQuickWindow& window, QQuickItem& item) {
     const auto position = item.mapToScene(QPointF(item.width() / 2, item.height() / 2));
     CHECK(position.x() >= 0 && position.x() <= window.width());
@@ -2045,6 +2056,13 @@ void check_side_terminal(QQuickWindow& window, lapis::desktop::Terminals& termin
     pump(60);
     auto* surface = required_visual(window, QStringLiteral("sideTerminalSurface"));
     CHECK(surface->hasActiveFocus());
+    const auto original_interactive = surface->property("interactive").toBool();
+    surface->setProperty("interactive", false);
+    check_accessible_terminal(*surface, QStringLiteral("Side terminal"));
+    auto* face = QAccessible::queryAccessibleInterface(surface);
+    CHECK(face != nullptr && !face->state().editable);
+    surface->setProperty("interactive", original_interactive);
+    check_accessible_terminal(*surface, QStringLiteral("Side terminal"));
     type_text(window, QStringLiteral("hello"));
     send_binding(window, QStringLiteral("Return"));
     CHECK(pump_until(
@@ -2443,10 +2461,13 @@ int run_strip_ui_tests() {
     // clients: Wispr Flow pastes into a text field at once and falls back to
     // a slow paste when the focused element is the bare window.
     {
+        wait_terminal_focus(*window, *terminal);
         auto* face = QAccessible::queryAccessibleInterface(terminal);
         CHECK(face != nullptr && face->role() == QAccessible::EditableText);
         CHECK(face->state().focusable && face->state().editable);
-        CHECK(!terminal->hasActiveFocus() || face->state().focused);
+        CHECK(face->text(QAccessible::Name) == QStringLiteral("Terminal"));
+        CHECK(face->state().editable == terminal->property("interactive").toBool());
+        CHECK(terminal->hasActiveFocus() && face->state().focused);
     }
 
     // Short windows keep the strip with shorter cards.
