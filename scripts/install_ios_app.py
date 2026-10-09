@@ -1,13 +1,14 @@
 """Build the lapis iPhone app for a device and install it with devicectl.
 
 Signs with an installed Apple Development identity and a development
-provisioning profile that covers dev.lapis.remote (a wildcard profile works)
-and includes the phone. The app's default gateway is this Mac's Tailscale
+provisioning profile that covers the app's identifier (dev.lapis.remote, or
+dev.lapis.ultratab with --app ultratab; a wildcard profile works) and includes
+the phone. The app's default gateway is this Mac's Tailscale
 name. With --build-only, omit --host to leave the gateway unset without querying
 Tailscale. Without --device, the one paired iPhone that devicectl can reach is used.
 
-    uv run --no-project python scripts/install_ios_app.py [--device ID] [--build-only]
-        [--wait MINUTES]
+    uv run --no-project python scripts/install_ios_app.py [--app lapis|ultratab]
+        [--device ID] [--build-only] [--wait MINUTES]
 """
 
 import argparse
@@ -23,9 +24,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from check_ios_remote import APP_ID, APP_SOURCES, tool  # noqa: E402
+from check_ios_remote import tool  # noqa: E402
 
 PRODUCTS = ROOT / "build" / "ios" / "device"
+# Each iPhone app: its bundle identifier, sources and executable name.
+APPS = {
+    "lapis": ("dev.lapis.remote", ROOT / "apps" / "ios" / "Lapis", "Lapis"),
+    "ultratab": ("dev.lapis.ultratab", ROOT / "apps" / "ios" / "UltraTab", "UltraTab"),
+}
+APP_ID, APP_SOURCES, APP_NAME = APPS["lapis"]
 PROFILE_DIRECTORIES = [
     Path.home() / "Library/Developer/Xcode/UserData/Provisioning Profiles",
     Path.home() / "Library/MobileDevice/Provisioning Profiles",
@@ -80,7 +87,7 @@ def choose_profile(identities):
                 best = candidate
     if best is None:
         raise SystemExit(
-            "No development provisioning profile covers dev.lapis.remote with an installed "
+            f"No development provisioning profile covers {APP_ID} with an installed "
             "certificate. Open apps/ios in Xcode once (xcodegen, then build to the phone)."
         )
     return best[1:]
@@ -95,7 +102,7 @@ def build(host):
     identities = signing_identities()
     path, profile, team, identity = choose_profile(identities)
     sdk = tool("xcrun", "--sdk", "iphoneos", "--show-sdk-path")
-    app = PRODUCTS / "Lapis.app"
+    app = PRODUCTS / f"{APP_NAME}.app"
     shutil.rmtree(app, ignore_errors=True)
     app.mkdir(parents=True)
     tool(
@@ -108,10 +115,10 @@ def build(host):
         "-parse-as-library",
         "-O",
         "-module-name",
-        "Lapis",
+        APP_NAME,
         *sorted(str(source) for source in APP_SOURCES.glob("*.swift")),
         "-o",
-        str(app / "Lapis"),
+        str(app / APP_NAME),
     )
     partial = PRODUCTS / "assets.plist"
     tool(
@@ -133,9 +140,9 @@ def build(host):
     )
     values = {
         "DEVELOPMENT_LANGUAGE": "en",
-        "EXECUTABLE_NAME": "Lapis",
+        "EXECUTABLE_NAME": APP_NAME,
         "PRODUCT_BUNDLE_IDENTIFIER": APP_ID,
-        "PRODUCT_NAME": "Lapis",
+        "PRODUCT_NAME": APP_NAME,
         "LAPIS_DEFAULT_HOST": host,
     }
     info = plistlib.loads((APP_SOURCES / "Info.plist").read_bytes())
@@ -242,6 +249,9 @@ def reachable_phone():
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
+        "--app", choices=sorted(APPS), default="lapis", help="which iPhone app"
+    )
+    parser.add_argument(
         "--device", help="devicectl identifier; defaults to the paired iPhone"
     )
     parser.add_argument(
@@ -256,6 +266,8 @@ def main():
         help="minutes to wait for the phone to become reachable",
     )
     args = parser.parse_args()
+    global APP_ID, APP_SOURCES, APP_NAME
+    APP_ID, APP_SOURCES, APP_NAME = APPS[args.app]
     app = build(args.host or ("" if args.build_only else mac_host()))
     if args.build_only:
         return 0
@@ -282,7 +294,9 @@ def main():
         ],
         check=True,
     )
-    print("installed; open lapis on the phone")
+    print(
+        f"installed; open {'Ultra Tab' if args.app == 'ultratab' else 'lapis'} on the phone"
+    )
     return 0
 
 

@@ -187,6 +187,27 @@ void missingProbabilityIsNotOffered() {
             "a model-reported zero is offered at the default threshold");
 }
 
+// The shown offer, for other apps (AgentStatePublisher): its key, text, the
+// reply it answers, and whether it was seen, announced once. Leaves it seen.
+void offerIsPublished(NextPrompt& next, const QString& key) {
+    const auto published = next.offerState(QStringLiteral("a"));
+    require(published.value(QStringLiteral("key")) == key &&
+                published.value(QStringLiteral("text")) == QLatin1String("go") &&
+                !published.value(QStringLiteral("seen")).toBool() &&
+                published.value(QStringLiteral("said")) == QLatin1String("Done.") &&
+                next.offerState(QStringLiteral("b")).isEmpty(),
+            "the offer is published with the reply it answers");
+    int seen_changes = 0;
+    const auto counted =
+        QObject::connect(&next, &NextPrompt::seenChanged, [&seen_changes] { ++seen_changes; });
+    next.seen(QStringLiteral("a"));
+    next.seen(QStringLiteral("a"));
+    QObject::disconnect(counted);
+    require(seen_changes == 1 &&
+                next.offerState(QStringLiteral("a")).value(QStringLiteral("seen")).toBool(),
+            "being seen is announced once");
+}
+
 void predictsAndOffers() {
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-next-XXXXXX"));
     require(directory.isValid(), "fixture directory");
@@ -296,8 +317,7 @@ void predictsAndOffers() {
     next.used(QStringLiteral("a"), true, 0, QStringLiteral("stale"));
     require(events(log).size() == 1 && !next.suggestion(QStringLiteral("a")).isEmpty(),
             "stale identities cannot mark or consume a newer offer");
-    next.seen(QStringLiteral("a"));
-    next.seen(QStringLiteral("a"));
+    offerIsPublished(next, first_offer);
     require(next.readyAgents() == QVariantMap{{QStringLiteral("a"), true}}, "now seen");
     next.used(QStringLiteral("a"), false, 5);
     require(next.suggestion(QStringLiteral("a")).isEmpty() && next.readyAgents().isEmpty(),

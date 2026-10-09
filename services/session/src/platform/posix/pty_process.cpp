@@ -308,12 +308,10 @@ bool PtyProcess::leaderExitStatus(int& exit_code, QProcess::ExitStatus& exit_sta
             recordLeaderExit(WTERMSIG(wait_status), QProcess::CrashExit);
         else
             return false;
-    } else if (waited < 0 && errno == ECHILD) {
-        // QProcess may have reaped the child but not yet published `finished`
-        // while PTY writers remain open. Its exitCode/exitStatus accessors can
-        // still hold constructor defaults, so an unknown owner must defer.
-        return false;
     } else {
+        // A waiting failure (ECHILD: QProcess may have reaped the child but not
+        // yet published `finished` while PTY writers remain open) or any other
+        // unresolved state leaves exit ownership unknown, so this poll defers.
         return false;
     }
     exit_code = leader_exit_code_;
@@ -359,16 +357,15 @@ bool PtyProcess::readReady() {
             drained = true;
             break;
         }
-        drained = true;
         reader_->setEnabled(false);
         if (count < 0 && errno != EIO)
             emit failure(system_error("PTY read"));
         if (!bytes.isEmpty())
-            emit output(std::move(bytes));
+            emit output(bytes);
         return true;
     }
     if (!bytes.isEmpty())
-        emit output(std::move(bytes));
+        emit output(bytes);
     // A quota-full batch is not evidence of a drained PTY. It may have stopped
     // only because this reader reached its admission quantum, and a consumer
     // can also pause synchronously while receiving the emitted bytes.
