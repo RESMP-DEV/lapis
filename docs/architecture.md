@@ -3862,9 +3862,10 @@ remains the blocking gate.
 ### Work-order triage (October 7)
 
 This section owns relative importance as of today. The
-[September 27 work order](#work-order) still owns batch detail and gates,
-the [October 7 readiness triage](#platform-triage-and-sub-agent-readiness-october-7)
-owns sizing and delegation, and this lens ranks what is more and less
+[September 27 work order](#feature-backlog-after-rollout-reliability) still
+owns batch detail and gates, the
+[October 7 consolidation plan](#open-pr-consolidation-plan-october-7) owns
+sizing and delegation, and this lens ranks what is more and less
 important right now, with the state each rank rests on.
 
 | Rank | Work | Why here |
