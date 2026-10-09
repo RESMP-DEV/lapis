@@ -28,6 +28,8 @@ void become_accessory();
 // The person pressed the hotkey: bring Ultra Tab forward. Never called for
 // anything that arrives on its own.
 void activate();
+// Brings the app with `bundle_id` forward, launching it if it is not running.
+void activate_app(const QString& bundle_id);
 // Hand the keyboard back to the app that had it.
 void yield();
 // The system's Reduce Motion accessibility setting.
@@ -43,6 +45,7 @@ inline bool register_hotkey(const Hotkey&, const std::function<void()>&) { retur
 inline void become_accessory() {}
 inline void activate() {}
 inline void yield() {}
+inline void activate_app(const QString&) {}
 inline bool reduce_motion() { return false; }
 inline QString set_start_at_login(bool) { return QStringLiteral("not available here"); }
 #endif

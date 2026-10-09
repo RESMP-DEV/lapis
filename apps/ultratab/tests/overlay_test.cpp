@@ -96,6 +96,7 @@ void writeCards(const QString& runtime) {
         {QStringLiteral("key"), key(0, QStringLiteral("100|100|%1:1|0").arg(id(0)))},
         {QStringLiteral("composed"), QStringLiteral("2026-10-06T21:04:00Z")},
         {QStringLiteral("model"), QStringLiteral("fixture-model")},
+        {QStringLiteral("attention"), QStringLiteral("needs")},
         {QStringLiteral("since"), QStringLiteral("You last looked 3 h ago; 2 turns since")},
         {QStringLiteral("tldr"), QStringLiteral("Restored prompts now survive a restart; "
                                                 "every check passes and launch got faster.")},
@@ -115,6 +116,7 @@ void writeCards(const QString& runtime) {
         {QStringLiteral("key"), QStringLiteral("200|200|%1|0").arg(id(1) + QStringLiteral(":1"))},
         {QStringLiteral("composed"), QStringLiteral("2026-10-06T21:05:00Z")},
         {QStringLiteral("model"), QStringLiteral("fixture-model")},
+        {QStringLiteral("attention"), QStringLiteral("needs")},
         {QStringLiteral("tldr"), QStringLiteral("Server is up on the new box; your friend is "
                                                 "still on the old address.")},
         {QStringLiteral("blocks"),
@@ -299,6 +301,25 @@ void overlayAnswersEveryCard() {
     require(name && name->property("text").toString() == QLatin1String("persist GUI state"),
             "the agent that needs you first is in front");
     require(find(root, QStringLiteral("behindCard"))->isVisible(), "one card peeks behind");
+    // The lights: two need you, the request too; one could steer; three run.
+    const auto groups = deck.groups();
+    require(groups.value(QStringLiteral("needs")).toList().size() == 3 &&
+                groups.value(QStringLiteral("steer")).toList().size() == 1 &&
+                groups.value(QStringLiteral("running")).toList().size() == 3,
+            "every agent is in its light");
+    require(find(root, QStringLiteral("needsLight"))->isVisible() &&
+                find(root, QStringLiteral("steerLight"))->isVisible() &&
+                find(root, QStringLiteral("runningLight"))->isVisible(),
+            "the footer shows the three lights");
+    require(find(root, QStringLiteral("frontTile")) != nullptr &&
+                find(root, QStringLiteral("lapisMapLit")) != nullptr,
+            "the front agent's logo and its place in lapis show");
+    // Command-L shows it in lapis and puts the overlay away.
+    QString inLapis;
+    deck.setLapisOpener([&inLapis](const QString& agent) { inLapis = agent; });
+    key(view, Qt::Key_L, QStringLiteral("l"), Qt::ControlModifier);
+    require(inLapis == id(0) && dismissed, "Command-L shows the front agent in lapis");
+    dismissed = false;
 
     // The composed card: headline, text, table and link blocks. When the
     // person last looked frames the card; it is not shown.
@@ -444,6 +465,75 @@ void motionNeverDelaysInput() {
                 "the skip frames are saved");
     }
 }
+// A card the composer judged only running is not a card: its agent sits in
+// the green light. Command-Return opens the push back; Return is a new line
+// in it and Command-Return sends it, as typed, to the card's agent.
+void pushBackAndRunning() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "fixture directory");
+    writeFixture(directory.path());
+    const auto cards_path = QDir(directory.path()).filePath(QStringLiteral("ultratab_cards.json"));
+    QFile cards_file(cards_path);
+    require(cards_file.open(QIODevice::ReadOnly), "read the fixture cards");
+    auto cards = QJsonDocument::fromJson(cards_file.readAll()).object();
+    cards_file.close();
+    auto all = cards.value(QStringLiteral("cards")).toObject();
+    auto second = all.value(id(1)).toObject();
+    second.insert(QStringLiteral("attention"), QStringLiteral("fyi"));
+    all.insert(id(1), second);
+    cards.insert(QStringLiteral("cards"), all);
+    write(cards_path, cards);
+
+    FakeSender sender;
+    Deck deck(sender);
+    std::vector<QJsonObject> logged;
+    deck.setAnswerLog([&logged](const QJsonObject& answer) { logged.push_back(answer); });
+    deck.setPublished(read_published(directory.path()));
+    const auto groups = deck.groups();
+    const auto running = groups.value(QStringLiteral("running")).toList();
+    require(running.size() == 4 &&
+                running.front().toMap().value(QStringLiteral("name")) ==
+                    QLatin1String("game server"),
+            "a report the composer judged needs nothing is in the green light");
+
+    QQuickView view;
+    view.resize(1280, 760);
+    require(load_overlay(view, deck, {.backdrop = true, .reduced_motion = true}),
+            "the overlay QML loads");
+    view.show();
+    view.requestActivate();
+    auto* root = view.rootObject();
+    auto* entry = find(root, QStringLiteral("entry"));
+    require(entry != nullptr && waitFor([&] { return entry->hasActiveFocus(); }),
+            "typing goes to the overlay's entry");
+    auto* name = find(root, QStringLiteral("agentName"));
+    // persist needs you; the request comes next, never game server.
+    require(name->property("text").toString() == QLatin1String("persist GUI state") &&
+                deck.behind().value(QStringLiteral("name")) ==
+                    QLatin1String("cleanup build cache"),
+            "the running agent is skipped over");
+
+    key(view, Qt::Key_Return, {}, Qt::ControlModifier);
+    auto* box = find(root, QStringLiteral("pushBox"));
+    auto* text = find(root, QStringLiteral("pushText"));
+    require(box && box->isVisible() && text && waitFor([&] { return text->hasActiveFocus(); }),
+            "Command-Return opens the push back");
+    for (const QChar character : QStringLiteral("not yet"))
+        key(view, character.toUpper().unicode(), QString(character));
+    key(view, Qt::Key_Return);
+    for (const QChar character : QStringLiteral("profile first"))
+        key(view, character.toUpper().unicode(), QString(character));
+    require(sender.sent.empty(), "Return is a new line in the push back");
+    capture(view, QStringLiteral("overlay-pushback.png"));
+    key(view, Qt::Key_Return, {}, Qt::ControlModifier);
+    require(sender.sent.size() == 1 && sender.sent[0].agent == id(0) &&
+                sender.sent[0].text == QLatin1String("not yet\nprofile first"),
+            "Command-Return sends the push back to that agent");
+    require(!logged.empty() &&
+                logged.back().value(QStringLiteral("how")) == QLatin1String("pushback"),
+            "it is logged as a push back");
+    require(!box->isVisible() && entry->hasActiveFocus(), "the one-line reply is back");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -451,6 +541,7 @@ int main(int argc, char** argv) {
     try {
         overlayAnswersEveryCard();
         motionNeverDelaysInput();
+        pushBackAndRunning();
     } catch (const std::exception& error) {
         std::cerr << "ultratab overlay test failed: " << error.what() << '\n';
         return 1;

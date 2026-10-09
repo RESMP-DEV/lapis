@@ -7,6 +7,8 @@
 #include <QJsonObject>
 #include <QSaveFile>
 #include <algorithm>
+#include <array>
+#include <cstdlib>
 
 namespace lapis::ultratab {
 namespace {
@@ -102,5 +104,37 @@ QRect place_window(const QRect& available, const QSize& size, const std::optiona
         std::clamp(rect.left(), available.left(), available.right() - fitted.width() + 1));
     rect.moveTop(std::clamp(rect.top(), available.top(), available.bottom() - fitted.height() + 1));
     return rect;
+}
+Snap snap_window(const QRect& available, const QSize& window, int panel_top,
+                 int panel_height, QPoint wanted, int reach) {
+    Snap snap{wanted};
+    const int center_x = available.left() + (available.width() - window.width()) / 2;
+    if (std::abs(wanted.x() - center_x) <= reach) {
+        snap.position.setX(center_x);
+        snap.centered = true;
+    }
+    const int height = available.height();
+    const std::array<int, 4> tops{available.top() + height * 6 / 100,
+                                  available.top() + height / 5,
+                                  available.top() + (height - panel_height) / 2,
+                                  available.top() + height * 62 / 100};
+    int best = reach + 1;
+    for (const int top : tops) {
+        const int y = top - panel_top;
+        if (std::abs(wanted.y() - y) < best) {
+            best = std::abs(wanted.y() - y);
+            if (best <= reach) {
+                snap.position.setY(y);
+                snap.level = true;
+            }
+        }
+    }
+    snap.position.setX(std::clamp(snap.position.x(), available.left(),
+                                  std::max(available.left(),
+                                           available.right() - window.width() + 1)));
+    snap.position.setY(std::clamp(snap.position.y(), available.top() - panel_top,
+                                  std::max(available.top(),
+                                           available.bottom() - window.height() + 1)));
+    return snap;
 }
 } // namespace lapis::ultratab

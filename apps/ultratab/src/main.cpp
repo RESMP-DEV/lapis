@@ -22,6 +22,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QQuickView>
+#include <QSaveFile>
 #include <QScreen>
 #include <QSurfaceFormat>
 #include <QTextStream>
@@ -137,6 +138,8 @@ class Overlay final {
                              [this] { follow_content(); });
             QObject::connect(host, &OverlayHost::panelChanged, &view_,
                              [this] { follow_panel(); });
+            QObject::connect(host, &OverlayHost::dragRequested, &view_,
+                             [this, host](QPoint to, bool done) { drag(*host, to, done); });
         }
         // Dragged by its background: remember where, per screen, once it rests.
         remember_.setSingleShot(true);
@@ -210,6 +213,22 @@ class Overlay final {
             view_.resize(size);
             placing_ = false;
         }
+    }
+    // The panel dragged by its background: the window follows the pointer and
+    // snaps to the screen's center line and set heights (snap_window).
+    void drag(OverlayHost& host, QPoint to, bool done) {
+        auto* screen = QGuiApplication::screenAt(to + QPoint(view_.width() / 2, 40));
+        if (screen == nullptr)
+            screen = view_.screen();
+        if (screen == nullptr)
+            return;
+        const auto snap = snap_window(screen->availableGeometry(), view_.size(),
+                                      static_cast<int>(host.panel().y()),
+                                      static_cast<int>(host.panel().height()), to);
+        view_.setPosition(snap.position);
+        host.setSnap(snap.centered && !done, snap.level && !done);
+        if (done)
+            remember();
     }
     void follow_panel() {
         if (auto* host = view_.findChild<OverlayHost*>(); host != nullptr && translucent_)
@@ -285,6 +304,23 @@ int main(int argc, char** argv) {
     PublishedSource source(home.isEmpty() ? QString()
                                           : QDir(home).filePath(QStringLiteral("runtime")));
     QObject::connect(&source, &PublishedSource::loaded, &deck, &Deck::setPublished);
+    // Command-L: lapis shows that agent. The window watches this request
+    // beside its registry; Ultra Tab then brings lapis forward.
+    if (!source.runtime().isEmpty())
+        deck.setLapisOpener(
+            [path = QDir(source.runtime()).filePath(QStringLiteral("ultratab_open.json"))](
+                const QString& agent) {
+                QSaveFile file(path);
+                if (file.open(QIODevice::WriteOnly)) {
+                    file.write(QJsonDocument(QJsonObject{{QStringLiteral("agent"), agent},
+                                                         {QStringLiteral("atMs"),
+                                                          QDateTime::currentMSecsSinceEpoch()}})
+                                   .toJson(QJsonDocument::Compact));
+                    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+                    file.commit();
+                }
+                platform::activate_app(QStringLiteral("dev.lapis.desktop"));
+            });
     if (!source.runtime().isEmpty())
         deck.setAnswerLog(
             [path = QDir(source.runtime()).filePath(QStringLiteral("ultratab_answers.jsonl"))](

@@ -31,12 +31,31 @@ Item {
     // Category colours by the category's place; a request is red.
     readonly property var hues: ["#e8b931", "#5b8cff", "#a77bff", "#2ec4b6", "#f472b6", "#f59e0b"]
     function hueColor(hue) { return hue < 0 ? red : hues[hue % hues.length] }
+    // How much a card needs the person, the same everywhere: red needs you,
+    // yellow could use a nudge, green is running and needs nothing.
+    readonly property color needsColor: "#ef5b4f"
+    readonly property color steerColor: "#f2c230"
+    readonly property color runningColor: "#3ecf8e"
+    function weightColor(weight) { return weight >= 2 ? needsColor : weight === 1 ? steerColor : runningColor }
+    // Command-Return: a push back, written in the larger box below the card.
+    property bool pushing: false
+    onPushingChanged: {
+        if (pushing) {
+            pushText.text = entry.text
+            entry.text = ""
+            pushText.forceActiveFocus()
+            pushText.cursorPosition = pushText.length
+        } else {
+            entry.forceActiveFocus()
+        }
+    }
 
     readonly property int motion: reducedMotion ? 0 : 200
     readonly property var front: deck.front
     readonly property var queue: deck.queue
     readonly property bool hasFront: front.key !== undefined
     readonly property bool typing: entry.text.length > 0 || entry.inputMethodComposing
+                                   || pushing
     property alias typed: entry.text
     // The card being typed to stays in front until the text is sent or cleared.
     onTypingChanged: deck.setDrafting(typing)
@@ -127,25 +146,41 @@ Item {
         }
     }
 
-    // An agent: its CLI's letter on its category's colour.
-    component Mark: Rectangle {
-        id: mark
-        property string letter: "?"
-        property int hue: 0
-        property bool ring: false
-        readonly property color tint: root.hueColor(hue)
-        implicitWidth: 24
-        implicitHeight: 24
-        radius: 6
-        color: Qt.rgba(tint.r, tint.g, tint.b, 0.17)
-        border.width: ring ? 1.5 : 0
-        border.color: tint
-        Text {
-            anchors.centerIn: parent
-            text: mark.letter
-            color: mark.tint
-            font.pixelSize: 12
-            font.weight: Font.Bold
+    // The agents in one light of the footer, each as its CLI's tile in that
+    // light's colour; hovering one names it.
+    component Light: Rectangle {
+        id: light
+        property var agents: []
+        property color tint
+        property string name
+        objectName: name
+        visible: agents.length > 0
+        height: 28
+        width: lights.implicitWidth + 12
+        radius: 14
+        color: Qt.rgba(tint.r, tint.g, tint.b, 0.08)
+        border.color: Qt.rgba(tint.r, tint.g, tint.b, 0.35)
+        Row {
+            id: lights
+            x: 6
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 6
+            Repeater {
+                model: light.agents
+                delegate: HarnessTile {
+                    required property var modelData
+                    anchors.verticalCenter: parent.verticalCenter
+                    size: modelData.front ? 20 : 18
+                    harness: modelData.harness
+                    ring: light.tint
+                    opacity: modelData.front || light.name === "runningLight" ? 1 : 0.8
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onEntered: root.hint = modelData.name
+                    }
+                }
+            }
         }
     }
 
@@ -461,7 +496,7 @@ Item {
         delegate: Rectangle {
             required property int index
             readonly property var next: root.queue[index]
-            readonly property color tint: root.hueColor(next ? next.hue : 0)
+            readonly property color tint: root.weightColor(next ? next.weight : 1)
             objectName: index === 0 ? "behindCard" : "edge" + index
             z: -1 - index
             width: panel.width - (index + 1) * 28
@@ -525,8 +560,8 @@ Item {
         onXChanged: root.tellHost()
         radius: 14
         color: Qt.rgba(22 / 255, 24 / 255, 30 / 255, 0.80)
-        border.width: 1
-        border.color: "#17ffffff"
+        border.width: root.pushing ? 1.5 : 1
+        border.color: root.pushing ? Qt.rgba(239 / 255, 91 / 255, 79 / 255, 0.6) : "#17ffffff"
         clip: true
 
         // The answer's colour, flashing on the edge as the card leaves.
@@ -548,17 +583,52 @@ Item {
             opacity: 0
         }
 
-        // The window moves when the panel's background is dragged.
+        // The window moves when the panel's background is dragged, snapping
+        // to the screen's center line and a few heights (host.dragTo).
         MouseArea {
             objectName: "dragArea"
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton
+            property point grab
             onPressed: (mouse) => {
                 const window = root.Window.window
+                const at = mapToGlobal(mouse.x, mouse.y)
                 if (window)
-                    window.startSystemMove()
+                    grab = Qt.point(at.x - window.x, at.y - window.y)
                 mouse.accepted = true
             }
+            onPositionChanged: (mouse) => {
+                if (!pressed || typeof host === "undefined" || host === null)
+                    return
+                const at = mapToGlobal(mouse.x, mouse.y)
+                host.dragTo(Math.round(at.x - grab.x), Math.round(at.y - grab.y), false)
+            }
+            onReleased: (mouse) => {
+                if (typeof host === "undefined" || host === null)
+                    return
+                const window = root.Window.window
+                if (window)
+                    host.dragTo(window.x, window.y, true)
+            }
+        }
+        // The guides while dragging: the center line, and the panel's edge
+        // when it sits at one of the set heights.
+        Rectangle {
+            objectName: "centerGuide"
+            visible: typeof host !== "undefined" && host !== null && host.dragging && host.centered
+            x: parent.width / 2 - 0.5
+            width: 1
+            height: parent.height
+            color: root.gold
+            opacity: 0.8
+        }
+        Rectangle {
+            anchors.fill: parent
+            radius: parent.radius
+            color: "transparent"
+            border.width: 1.5
+            border.color: root.gold
+            visible: typeof host !== "undefined" && host !== null && host.dragging && host.level
         }
 
         Column {
@@ -572,12 +642,14 @@ Item {
                 width: parent.width
                 height: root.hasFront ? Math.max(54, entry.implicitHeight + 30) : 0
                 visible: root.hasFront
-                Mark {
+                HarnessTile {
                     id: frontMark
+                    objectName: "frontTile"
                     x: 16
                     anchors.verticalCenter: parent.verticalCenter
-                    letter: root.hasFront ? root.front.mark : "?"
-                    hue: root.hasFront ? root.front.hue : 0
+                    size: 26
+                    harness: root.hasFront ? root.front.harness : ""
+                    ring: root.hasFront ? root.weightColor(root.front.weight) : "transparent"
                 }
                 Text {
                     id: proposal
@@ -600,7 +672,7 @@ Item {
                     id: entry
                     objectName: "entry"
                     x: frontMark.x + frontMark.width + 12
-                    width: parent.width - x - (tabCap.visible ? tabCap.width + 30 : 18)
+                    width: parent.width - x - keyHints.width - 30
                     anchors.verticalCenter: parent.verticalCenter
                     // Hidden by opacity, never `visible`, so it keeps the keyboard.
                     opacity: deck.listening ? 0 : 1
@@ -647,16 +719,27 @@ Item {
                         font.pixelSize: 15
                     }
                 }
-                Keycap {
-                    id: tabCap
+                // What the keys do now: Tab and left at rest; Return and
+                // Command-Return while a reply is being written.
+                Row {
+                    id: keyHints
+                    objectName: "keyHints"
                     anchors.right: parent.right
                     anchors.rightMargin: 16
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: root.hasFront && root.front.canAccept && !root.typing
-                    glyph: "⇥"
-                    glyphSize: 12
-                    accent: root.green
-                    lit: root.flash === "tab"
+                    spacing: 6
+                    Keycap { visible: !root.typing && root.hasFront && root.front.canAccept; glyph: "⇥"; accent: root.green; lit: root.flash === "tab" }
+                    Keycap { visible: !root.typing; glyph: "←"; accent: root.red; lit: root.flash === "left" }
+                    Keycap { visible: root.typing && !root.pushing; glyph: "↵"; accent: root.green }
+                    Keycap { visible: root.typing && root.hasFront && root.front.canType; glyph: "⌘↵"; accent: root.needsColor; lit: root.pushing }
+                    Text {
+                        visible: root.pushing
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "push back"
+                        color: "#ff8f84"
+                        font.pixelSize: 12
+                        font.weight: Font.DemiBold
+                    }
                 }
             }
             Rectangle { width: parent.width; height: 1; color: "#14ffffff"; visible: root.hasFront }
@@ -666,16 +749,96 @@ Item {
                 id: cardArea
                 objectName: "frontCard"
                 width: parent.width
-                height: root.hasFront ? frontBody.implicitHeight + 30 : 0
+                height: root.hasFront ? frontBody.implicitHeight + 30
+                                         + (root.pushing ? pushBox.height + 12 : 0) : 0
                 visible: root.hasFront
                 CardBody {
                     id: frontBody
                     objectName: "frontBody"
                     x: 18
                     y: 14
-                    width: parent.width - 36
+                    width: parent.width - 36 - lapisMap.width - 16
                     card: root.front
                     transform: Translate { id: arriveShift }
+                }
+                // Where this agent sits in lapis: one column per category in
+                // its colour, one block per agent in strip order, this one lit.
+                // Clicking it, or Command-L, shows the agent in lapis.
+                Column {
+                    id: lapisMap
+                    objectName: "lapisMap"
+                    anchors.right: parent.right
+                    anchors.rightMargin: 16
+                    y: 14
+                    spacing: 5
+                    Row {
+                        spacing: 4
+                        Repeater {
+                            model: deck.map
+                            delegate: Column {
+                                required property var modelData
+                                spacing: 2
+                                Rectangle { width: 12; height: 3; radius: 1.5; color: root.hueColor(modelData.hue) }
+                                Repeater {
+                                    model: modelData.slots
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        objectName: modelData.lit ? "lapisMapLit" : ""
+                                        width: 12
+                                        height: 7
+                                        radius: 2
+                                        color: modelData.lit ? "#e9edf3" : "#22ffffff"
+                                        border.width: modelData.lit ? 1 : 0
+                                        border.color: "#ffffff"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Row {
+                        anchors.right: parent.right
+                        spacing: 4
+                        Keycap { glyph: "⌘L"; glyphSize: 10 }
+                        Text { text: "lapis"; color: root.dim; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter }
+                    }
+                }
+                MouseArea {
+                    anchors.fill: lapisMap
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.openInLapis()
+                }
+                // The push back: a larger box for a correction.
+                Rectangle {
+                    id: pushBox
+                    objectName: "pushBox"
+                    visible: root.pushing
+                    x: 18
+                    y: frontBody.y + frontBody.implicitHeight + 12
+                    width: parent.width - 36
+                    height: Math.max(96, pushText.contentHeight + 22)
+                    radius: 9
+                    color: "#33000000"
+                    border.color: "#55ef5b4f"
+                    TextEdit {
+                        id: pushText
+                        objectName: "pushText"
+                        x: 12
+                        y: 10
+                        width: parent.width - 24
+                        color: "#ffffff"
+                        selectionColor: "#5a2a2a"
+                        font.pixelSize: 14
+                        wrapMode: TextEdit.Wrap
+                        Keys.onPressed: (event) => root.handlePushKey(event)
+                    }
+                    Text {
+                        x: 12
+                        y: 10
+                        visible: pushText.length === 0
+                        text: "What should it do differently?"
+                        color: root.faint
+                        font.pixelSize: 14
+                    }
                 }
                 property string shownKey: root.hasFront ? root.front.key : ""
                 onShownKeyChanged: root.arrived()
@@ -704,40 +867,27 @@ Item {
                 }
             }
 
-            // The answers on the left, the queue on the right.
+            // Every agent in its light: red needs you, yellow could use a
+            // nudge, green is running. The card in front is the brighter one.
             Rectangle {
                 width: parent.width
                 visible: root.hasFront || message.text.length > 0
-                height: visible ? 38 : 0
+                         || deck.groups.running.length > 0
+                height: visible ? 40 : 0
                 color: "#22000000"
                 Rectangle { width: parent.width; height: 1; color: "#12ffffff" }
                 Row {
-                    x: 14
+                    x: 12
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: 7
-                    visible: root.hasFront
-                    Keycap { glyph: "⇥"; accent: root.green; lit: root.flash === "tab"; opacity: root.hasFront && root.front.canAccept ? 1 : 0.35 }
-                    Rectangle { width: 6; height: 6; radius: 3; color: root.green; anchors.verticalCenter: parent.verticalCenter }
-                    Item { width: 8; height: 1 }
-                    Keycap { glyph: "⌥"; accent: root.violet; lit: root.optionHeld || deck.listening }
-                    // A small microphone.
-                    Item {
-                        width: 10
-                        height: 14
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle { x: 2; width: 6; height: 9; radius: 3; color: root.dim }
-                        Rectangle { x: 4.25; y: 9; width: 1.5; height: 4; color: root.dim }
-                        Rectangle { x: 2; y: 13; width: 6; height: 1.5; color: root.dim }
-                    }
-                    Item { width: 8; height: 1 }
-                    Keycap { glyph: "←"; accent: root.red; lit: root.flash === "left" }
-                    Rectangle { width: 6; height: 6; radius: 3; color: root.red; anchors.verticalCenter: parent.verticalCenter }
+                    spacing: 8
+                    Light { name: "needsLight"; tint: root.needsColor; agents: deck.groups.needs }
+                    Light { name: "steerLight"; tint: root.steerColor; agents: deck.groups.steer }
                 }
                 Text {
                     id: message
                     objectName: "message"
                     anchors.centerIn: parent
-                    width: parent.width * 0.42
+                    width: parent.width * 0.34
                     horizontalAlignment: Text.AlignHCenter
                     // Only what needs a look: a refused send, a notice, a hint.
                     // A send that went through says so by leaving.
@@ -749,43 +899,13 @@ Item {
                     font.pixelSize: 12
                     elide: Text.ElideRight
                 }
-                Row {
-                    objectName: "queue"
+                Light {
+                    name: "runningLight"
                     anchors.right: parent.right
                     anchors.rightMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: 6
-                    visible: root.hasFront
-                    Mark {
-                        anchors.verticalCenter: parent.verticalCenter
-                        implicitWidth: 20
-                        implicitHeight: 20
-                        letter: root.hasFront ? root.front.mark : ""
-                        hue: root.hasFront ? root.front.hue : 0
-                        ring: true
-                    }
-                    Text {
-                        visible: root.queue.length > 0
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "→"
-                        color: root.hasFront ? root.hueColor(root.front.hue) : root.dim
-                        font.pixelSize: 13
-                        font.weight: Font.Bold
-                    }
-                    Repeater {
-                        model: root.queue.slice(0, 4)
-                        delegate: Mark {
-                            required property var modelData
-                            required property int index
-                            anchors.verticalCenter: parent.verticalCenter
-                            implicitWidth: 20
-                            implicitHeight: 20
-                            letter: modelData.mark
-                            hue: modelData.hue
-                            ring: index === 0
-                            opacity: index === 0 ? 1 : 0.55 - index * 0.1
-                        }
-                    }
+                    tint: root.runningColor
+                    agents: deck.groups.running.slice(0, 8)
                 }
             }
         }
@@ -893,9 +1013,34 @@ Item {
     function arrived() {
         if (reducedMotion || !hasFront)
             return
-        riser.tint = hueColor(front.hue)
+        riser.tint = weightColor(front.weight)
         arrivalLine.color = riser.tint
         arrive.restart()
+    }
+
+    function openInLapis() {
+        if (deck.openInLapis())
+            deck.dismiss()
+    }
+    // In the push-back box Return is a new line; Command-Return sends it as a
+    // correction and Escape goes back to the one-line reply.
+    function handlePushKey(event) {
+        if ((event.modifiers & Qt.ControlModifier)
+                && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+            if (pushText.text.trim().length > 0) {
+                leaving(-1)
+                if (deck.pushBack(pushText.text)) {
+                    pushText.text = ""
+                    pushing = false
+                }
+            }
+            event.accepted = true
+        } else if (event.key === Qt.Key_Escape) {
+            const kept = pushText.text
+            pushing = false
+            entry.text = kept.replace(/\n/g, " ")
+            event.accepted = true
+        }
     }
 
     function handleKey(event) {
@@ -915,6 +1060,14 @@ Item {
         if ((event.modifiers & Qt.ControlModifier)
                 && (event.key === Qt.Key_BracketLeft || event.key === Qt.Key_BracketRight)) {
             deck.nextCategory(event.key === Qt.Key_BracketLeft ? -1 : 1)
+            event.accepted = true
+        } else if ((event.modifiers & Qt.ControlModifier)
+                   && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+            if (hasFront && front.canType)
+                pushing = true
+            event.accepted = true
+        } else if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_L) {
+            openInLapis()
             event.accepted = true
         } else if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_O) {
             if (!deck.openLink(0))

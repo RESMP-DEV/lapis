@@ -206,6 +206,24 @@ void activate() {
 
 void yield() { [NSApp hide:nil]; }
 
+void activate_app(const QString& bundle_id) {
+    NSString* identifier = bundle_id.toNSString();
+    NSRunningApplication* running =
+        [NSRunningApplication runningApplicationsWithBundleIdentifier:identifier].firstObject;
+    if (running != nil) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [running activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+#pragma clang diagnostic pop
+        return;
+    }
+    NSURL* app = [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:identifier];
+    if (app != nil)
+        [NSWorkspace.sharedWorkspace openApplicationAtURL:app
+                                            configuration:NSWorkspaceOpenConfiguration.configuration
+                                        completionHandler:nil];
+}
+
 bool reduce_motion() { return NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion; }
 
 QString set_start_at_login(bool on) {

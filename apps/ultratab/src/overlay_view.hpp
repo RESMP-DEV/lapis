@@ -1,8 +1,10 @@
 #ifndef LAPIS_ULTRATAB_OVERLAY_VIEW_HPP
 #define LAPIS_ULTRATAB_OVERLAY_VIEW_HPP
 #include <QObject>
+#include <QPoint>
 #include <QRectF>
 #include <QSize>
+#include <tuple>
 
 class QQuickView;
 
@@ -12,6 +14,11 @@ namespace lapis::ultratab {
 // size). A child of the view, found with findChild.
 class OverlayHost final : public QObject {
     Q_OBJECT
+    // While dragging: whether the window snapped to the center line, and to
+    // one of the set heights (the QML lights a guide for each).
+    Q_PROPERTY(bool centered READ centered NOTIFY snapChanged)
+    Q_PROPERTY(bool level READ level NOTIFY snapChanged)
+    Q_PROPERTY(bool dragging READ dragging NOTIFY snapChanged)
   public:
     using QObject::QObject;
     Q_INVOKABLE void setPanel(const QRectF& rect, qreal radius) {
@@ -28,15 +35,41 @@ class OverlayHost final : public QObject {
         size_ = size;
         emit contentSizeChanged();
     }
+    // The panel's background is dragged: `to` is where the window's top-left
+    // would follow the pointer; the window snaps from there. `done` ends it.
+    Q_INVOKABLE void dragTo(int x, int y, bool done) {
+        dragging_ = !done;
+        emit dragRequested(QPoint(x, y), done);
+        if (done)
+            setSnap(false, false);
+    }
+    void setSnap(bool centered, bool level) {
+        const auto state = std::tuple(centered, level, dragging_);
+        if (state == shown_)
+            return;
+        centered_ = centered;
+        level_ = level;
+        shown_ = state;
+        emit snapChanged();
+    }
+    [[nodiscard]] bool centered() const { return centered_; }
+    [[nodiscard]] bool level() const { return level_; }
+    [[nodiscard]] bool dragging() const { return dragging_; }
     [[nodiscard]] QRectF panel() const { return panel_; }
     [[nodiscard]] qreal radius() const { return radius_; }
     [[nodiscard]] QSize contentSize() const { return size_; }
 
   signals:
+    void dragRequested(QPoint to, bool done);
+    void snapChanged();
     void panelChanged();
     void contentSizeChanged();
 
   private:
+    bool centered_{};
+    bool level_{};
+    bool dragging_{};
+    std::tuple<bool, bool, bool> shown_{};
     QRectF panel_;
     qreal radius_{};
     QSize size_;

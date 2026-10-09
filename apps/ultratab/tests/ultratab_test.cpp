@@ -215,6 +215,19 @@ void fourAnswers() {
     deck.setWriterCheck([](qint64 pid) { return pid == 4242; });
     deck.setPublished(fixture());
     require(deck.notice().isEmpty(), "lapis is running");
+    // A pending request needs the person, so it comes first: no accept or
+    // typing over it, and skip still works.
+    require(deck.front().value(QStringLiteral("request")).toBool() &&
+                deck.front().value(QStringLiteral("weight")).toInt() == 2 &&
+                deck.behind().value(QStringLiteral("name")) == QLatin1String("persist-gui"),
+            "the request is in front, the next card behind");
+    require(!deck.accept() && !deck.send(QStringLiteral("yes")) && sender.sent.empty(),
+            "nothing is typed over a pending request");
+    // Skip: the card goes, nothing is sent, history keeps it.
+    require(deck.skip(), "Left skips");
+    require(sender.sent.empty() && deck.history().front().toMap().value(
+                                       QStringLiteral("how")) == QLatin1String("skipped"),
+            "skip sends nothing and stays in history");
     require(deck.front().value(QStringLiteral("name")) == QLatin1String("persist-gui") &&
                 deck.behind().value(QStringLiteral("name")) == QLatin1String("gameserver"),
             "one card in front, one behind");
@@ -249,21 +262,11 @@ void fourAnswers() {
     require(deck.send(QStringLiteral("again")), "and it can be answered again");
     sender.sent[2].done(true, {});
 
-    // A request: no accept or typing over it; skip still works.
-    require(deck.front().value(QStringLiteral("request")).toBool(), "the request card");
-    require(!deck.accept() && !deck.send(QStringLiteral("yes")) && sender.sent.size() == 3,
-            "nothing is typed over a pending request");
-
     // Speak: listening only; nothing is sent.
     deck.setListening(true);
     require(deck.listening() && sender.sent.size() == 3, "speaking sends nothing yet");
     deck.setListening(false);
 
-    // Skip: the card goes, nothing is sent, history keeps it.
-    require(deck.skip(), "Left skips");
-    require(sender.sent.size() == 3 && deck.history().front().toMap().value(
-                                           QStringLiteral("how")) == QLatin1String("skipped"),
-            "skip sends nothing and stays in history");
     require(deck.front().value(QStringLiteral("name")) == QLatin1String("gemm-tune") &&
                 deck.behind().isEmpty(),
             "the last card");
@@ -307,6 +310,7 @@ void draftsKeepTheirCard() {
     FakeSender sender;
     Deck deck(sender);
     deck.setPublished(fixture());
+    require(deck.skip(), "the request, which needs the person first, is skipped");
     require(deck.front().value(QStringLiteral("name")) == QLatin1String("persist-gui"),
             "persist-gui is in front");
     deck.setDrafting(true);
@@ -343,6 +347,8 @@ void answersAreLogged() {
     std::vector<QJsonObject> logged;
     deck.setAnswerLog([&logged](const QJsonObject& answer) { logged.push_back(answer); });
     deck.setPublished(fixture());
+    require(deck.skip() && logged.size() == 1, "the request in front is skipped and logged");
+    logged.clear();
     require(deck.accept() && logged.empty(), "an accept is logged once the session answers");
     sender.sent[0].done(true, {});
     require(
@@ -639,6 +645,8 @@ void composedCardsFollowTheTurn() {
     std::vector<QUrl> opened;
     deck.setLinkOpener([&opened](const QUrl& url) { opened.push_back(url); });
     deck.setPublished(published);
+    require(deck.front().value(QStringLiteral("request")).toBool() && deck.skip(),
+            "the request comes first and is skipped");
     require(deck.front().value(QStringLiteral("headline")).toString() == QLatin1String("rich") &&
                 deck.front().value(QStringLiteral("composed")).toBool(),
             "the deck shows the tldr as the headline");
@@ -713,6 +721,26 @@ void svgIsSanitized() {
             "an unsafe diagram is dropped; a safe one keeps its aspect");
 }
 
+// Dragging snaps to the center line and set heights, within reach only.
+void snapping() {
+    const QRect area(0, 25, 1600, 975);
+    const QSize window(720, 400);
+    const int center = (1600 - 720) / 2;
+    const auto near_center = snap_window(area, window, 12, 200, QPoint(center + 10, 500));
+    require(near_center.centered && near_center.position.x() == center,
+            "near the center line, it centers");
+    const auto fifth = snap_window(area, window, 12, 200, QPoint(100, 25 + 975 / 5 - 12 + 9));
+    require(fifth.level && fifth.position.y() == 25 + 975 / 5 - 12 && !fifth.centered &&
+                fifth.position.x() == 100,
+            "near a fifth of the way down, its panel's top levels there");
+    const auto loose = snap_window(area, window, 12, 200, QPoint(300, 420));
+    require(!loose.centered && !loose.level && loose.position == QPoint(300, 420),
+            "away from every guide it stays where it was dropped");
+    const auto off = snap_window(area, window, 12, 200, QPoint(5000, 5000));
+    require(off.position.x() == 1600 - 720 && off.position.y() == 1000 - 400,
+            "it stays on the screen");
+}
+
 void settingsAndPlacement() {
     require(parse_settings({}).start_at_login && parse_settings({}).hotkey.isEmpty(),
             "start at login is on by default");
@@ -762,6 +790,7 @@ int main(int argc, char** argv) {
         composedCardsParse();
         composedCardsFollowTheTurn();
         svgIsSanitized();
+        snapping();
         settingsAndPlacement();
     } catch (const std::exception& error) {
         std::cerr << "ultratab test failed: " << error.what() << '\n';
