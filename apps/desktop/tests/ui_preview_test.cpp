@@ -1,6 +1,7 @@
 #include "agent_search.hpp"
 #include "conversation_index.hpp"
 #include "keymap.hpp"
+#include "model_change_recorder.hpp"
 #include "plan_sign_in.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
@@ -629,6 +630,130 @@ void check_terminal_font_controls(QQuickWindow& window, lapis::desktop::KeyMap& 
     write_config(directory, saved);
 }
 
+// Closed Commands and Settings expose empty models and do not recompute for
+// workspace changes. Opening either resolves the entries for the state the
+// user would see, including a category with no focused agent.
+void check_lazy_command_models(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                               lapis::desktop::UiPreview& preview) {
+    auto* commands = window.findChild<QObject*>(QStringLiteral("commandsDialog"));
+    auto* settings = window.findChild<QObject*>(QStringLiteral("settingsDialog"));
+    CHECK(commands != nullptr && settings != nullptr);
+
+    ModelChangeRecorder command_observer;
+    ModelChangeRecorder shortcut_observer;
+    const auto slot_for = [](QObject& receiver) {
+        const auto* meta = receiver.metaObject();
+        const int slot_index = meta->indexOfSlot("changed()");
+        CHECK(slot_index >= 0);
+        return meta->method(slot_index);
+    };
+    const auto observe = [](QObject& dialog, const char* name, QObject& receiver,
+                            const QMetaMethod& slot) {
+        const auto* meta = dialog.metaObject();
+        const int property_index = meta->indexOfProperty(name);
+        CHECK(property_index >= 0);
+        const QMetaProperty property = meta->property(property_index);
+        CHECK(property.isValid() && property.hasNotifySignal());
+        CHECK(QObject::connect(&dialog, property.notifySignal(), &receiver, slot));
+    };
+    observe(*commands, "commands", command_observer, slot_for(command_observer));
+    observe(*settings, "shortcutRows", shortcut_observer, slot_for(shortcut_observer));
+    const auto model = [](QObject& dialog, const char* name) {
+        return dialog.property(name).toList();
+    };
+    const auto entry = [](const QVariantList& entries, const QString& id) {
+        for (const auto& value : entries)
+            if (value.toMap().value(QStringLiteral("id")).toString() == id)
+                return value.toMap();
+        return QVariantMap{};
+    };
+    const auto open_commands = [&] {
+        CHECK(QMetaObject::invokeMethod(&window, "openCommandsDialog"));
+        auto* dialog = window.findChild<QObject*>(QStringLiteral("commandsDialog"));
+        CHECK(dialog != nullptr);
+        wait_popup(*dialog, true);
+        return model(*dialog, "commands");
+    };
+
+    CHECK(model(*commands, "commands").isEmpty());
+    CHECK(model(*settings, "shortcutRows").isEmpty());
+    auto* initial = workspace.focusedSession();
+    CHECK(initial != nullptr);
+    const QString initial_id = initial->sessionId();
+    const QString initial_category = workspace.activeCategoryId();
+
+    CHECK(workspace.addCategory(QStringLiteral("Lazy commands")));
+    pump(30);
+    CHECK(workspace.focusedSession() == nullptr);
+    CHECK(model(*commands, "commands").isEmpty());
+    CHECK(model(*settings, "shortcutRows").isEmpty());
+    CHECK(command_observer.changes == 0 && shortcut_observer.changes == 0);
+
+    const auto empty_category_commands = open_commands();
+    CHECK(!empty_category_commands.isEmpty());
+    CHECK(!entry(empty_category_commands, QStringLiteral("closeAgent"))
+               .value(QStringLiteral("enabled"))
+               .toBool());
+    CHECK(QMetaObject::invokeMethod(commands, "close"));
+    wait_popup(*commands, false);
+    command_observer.changes = 0;
+    shortcut_observer.changes = 0;
+
+    CHECK(workspace.selectCategory(initial_category));
+    pump(30);
+    CHECK(workspace.focusedSession() != nullptr);
+    const auto sessions = workspace.categorySessions();
+    CHECK(sessions.size() >= 2);
+    QString alternate;
+    for (const auto& value : sessions) {
+        auto* session = value.value<lapis::desktop::SessionPreview*>();
+        if (session != nullptr && session->sessionId() != initial_id) {
+            alternate = session->sessionId();
+            break;
+        }
+    }
+    CHECK(!alternate.isEmpty());
+
+    CHECK(workspace.selectSession(alternate));
+    pump(30);
+    CHECK(model(*commands, "commands").isEmpty());
+    CHECK(model(*settings, "shortcutRows").isEmpty());
+    CHECK(command_observer.changes == 0);
+    CHECK(shortcut_observer.changes == 0);
+    CHECK(workspace.selectSession(initial_id));
+    pump(30);
+    CHECK(model(*commands, "commands").isEmpty());
+    CHECK(model(*settings, "shortcutRows").isEmpty());
+    CHECK(command_observer.changes == 0 && shortcut_observer.changes == 0);
+
+    const auto agent_commands = open_commands();
+    CHECK(entry(agent_commands, QStringLiteral("closeAgent"))
+              .value(QStringLiteral("enabled"))
+              .toBool());
+    CHECK(QMetaObject::invokeMethod(commands, "close"));
+    wait_popup(*commands, false);
+
+    CHECK(preview.openSettings());
+    wait_popup(*settings, true);
+    const auto shortcut_rows = model(*settings, "shortcutRows");
+    CHECK(!shortcut_rows.isEmpty());
+#ifdef Q_OS_MACOS
+    const QString new_agent_keys = QStringLiteral("⌘T");
+#else
+    const QString new_agent_keys = QStringLiteral("Ctrl+Shift+T");
+#endif
+    bool found_new_agent = false;
+    for (const auto& value : shortcut_rows) {
+        const auto row = value.toMap();
+        found_new_agent |= row.value(QStringLiteral("keys")).toString() == new_agent_keys;
+    }
+    CHECK(found_new_agent);
+    CHECK(QMetaObject::invokeMethod(settings, "close"));
+    wait_popup(*settings, false);
+    CHECK(model(*commands, "commands").isEmpty());
+    CHECK(model(*settings, "shortcutRows").isEmpty());
+}
+
 int run_shortcut_focus_tests() {
     using namespace lapis::desktop;
     Workspace workspace(WorkspaceMode::preview);
@@ -653,6 +778,7 @@ int run_shortcut_focus_tests() {
     auto* dialog = window->findChild<QObject*>(QStringLiteral("settingsDialog"));
     CHECK(terminal != nullptr && dialog != nullptr);
     terminal->forceActiveFocus();
+    check_lazy_command_models(*window, workspace, preview);
 
     CHECK(QMetaObject::invokeMethod(dialog, "open"));
     wait_popup(*dialog, true);

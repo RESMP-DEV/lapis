@@ -420,7 +420,9 @@ ApplicationWindow {
     function gaugeColor(left) {
         return left < 10 ? scarceColor : left < 30 ? attentionColor : plentyColor
     }
-    readonly property var commandEntries: {
+    // Built when a dialog that lists them is open: as a property it would be
+    // rebuilt, and the closed lists' delegates with it, on every switch.
+    function commandEntries() {
         const agent = workspace.focusedSession
         const hasAgent = agent !== null
         const needAgent = qsTr("Select an agent first")
@@ -511,7 +513,7 @@ ApplicationWindow {
     }
     function runCommand(id) {
         if (!interactionArmed) return
-        const command = commandEntries.find(entry => entry.id === id)
+        const command = commandEntries().find(entry => entry.id === id)
         if (command && command.enabled) command.run()
     }
 
@@ -1178,7 +1180,7 @@ ApplicationWindow {
 
     Commands {
         id: commandsDialog
-        commands: window.commandEntries
+        commands: visible ? window.commandEntries() : []
         surfaceColor: window.surfaceColor
         textColor: window.textColor
         mutedColor: window.mutedTextColor
@@ -1725,8 +1727,8 @@ ApplicationWindow {
         loginAvailable: window.desktopAvailable && desktop.launchAtLoginAvailable
         launchAtLogin: window.desktopAvailable && desktop.launchAtLogin
         updatesAvailable: window.desktopAvailable && desktop.updatesAvailable
-        shortcutRows: window.commandEntries.filter(entry => entry.shortcut.length > 0)
-                                           .map(entry => ({label: entry.label, keys: entry.shortcut}))
+        shortcutRows: visible ? window.commandEntries().filter(entry => entry.shortcut.length > 0)
+                                         .map(entry => ({label: entry.label, keys: entry.shortcut})) : []
         onNotifyChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setNotify(on) }
         onLaunchAtLoginChosen: function(on) { if (window.desktopAvailable) desktop.setLaunchAtLogin(on) }
         onCheckUpdates: if (window.desktopAvailable) desktop.checkForUpdates()
