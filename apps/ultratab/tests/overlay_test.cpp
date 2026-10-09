@@ -556,7 +556,7 @@ void anEmptyDeckStillTakesKeys() {
             "typing goes to the overlay's entry");
     const int cards = 4;
     for (int index = 0; index < cards; ++index)
-        key(view, index % 2 == 0 ? Qt::Key_Left : Qt::Key_Left, {}, Qt::KeypadModifier);
+        key(view, Qt::Key_Left, {}, Qt::KeypadModifier);
     require(deck.front().isEmpty(), "the deck is empty");
     require(entry->isVisible() && waitFor([&] { return entry->hasActiveFocus(); }),
             "the entry keeps the keyboard with an empty deck");

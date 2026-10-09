@@ -104,6 +104,7 @@ QRect place_window(const QRect& available, const QSize& size, const std::optiona
     rect.moveTop(std::clamp(rect.top(), available.top(), available.bottom() - fitted.height() + 1));
     return rect;
 }
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 Snap snap_window(const QRect& available, const QSize& window, int panel_top, int panel_height,
                  QPoint wanted, int reach) {
     Snap snap{wanted};
