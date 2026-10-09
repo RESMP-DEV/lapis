@@ -3873,7 +3873,8 @@ agent, and a `claude` typed in the side terminal, draws full screen; a remote
 Claude agent's command exports it unless that machine's login shell sets it.
 Grok gets `--fullscreen`, which overrides a minimal `screen_mode` in its
 config. Codex's TUI uses the alternate screen unless given `--no-alt-screen`,
-which lapis never passes, and OpenCode is always full screen. Kimi, OMP and
+which lapis never passes: full screen is the chosen mode, and lapis shows only
+whole frames of its repaints. OpenCode is always full screen. Kimi, OMP and
 Antigravity have no full-screen mode, so for them and every other CLI the
 stage's terminal grid is the launch size: a new agent, a restart and a start
 after a CLI update begin at the size the stage shows, with no resize after

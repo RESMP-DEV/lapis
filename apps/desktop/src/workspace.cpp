@@ -40,7 +40,11 @@
 
 namespace lapis::desktop {
 namespace {
-bool hasCodexUpdateSetting(const QStringList& arguments) {
+bool directCodexLaunch(const session::LaunchSpec& launch) {
+    return QFileInfo(launch.program).fileName() == QLatin1String("codex");
+}
+// A setting only before `--`; the rest are literal prompt words.
+bool hasCodexSetting(const QStringList& arguments, const char* key) {
     for (qsizetype index = 0; index < arguments.size(); ++index) {
         const auto& argument = arguments.at(index);
         if (argument == QLatin1String("--"))
@@ -53,11 +57,13 @@ bool hasCodexUpdateSetting(const QStringList& arguments) {
             setting = argument.sliced(9);
         else if (argument.startsWith(QLatin1String("-c")) && argument.size() > 2)
             setting = argument.sliced(2);
-        if (setting.section(QLatin1Char('='), 0, 0).trimmed() ==
-            QLatin1String("check_for_update_on_startup"))
+        if (setting.section(QLatin1Char('='), 0, 0).trimmed() == QLatin1String(key))
             return true;
     }
     return false;
+}
+bool hasCodexUpdateSetting(const QStringList& arguments) {
+    return hasCodexSetting(arguments, "check_for_update_on_startup");
 }
 // Returns true once the lock holder identifies itself as a helper, or false
 // if the lock becomes available before its marker is published.
@@ -418,6 +424,22 @@ void addRemoteOptions(session::LaunchSpec& launch) {
     }
     launch.arguments = missing + launch.arguments;
     return;
+}
+// Keep restored direct Codex launches beside the catalog used by new ones.
+void applyCodexStartupDefault(session::LaunchSpec& launch, int& managed_resume_index) {
+    if (!directCodexLaunch(launch) || hasCodexUpdateSetting(launch.arguments))
+        return;
+    const auto* descriptor = find_harness(QLatin1String("codex"));
+    const auto missing = descriptor ? descriptor->defaultArguments() : QStringList();
+    if (missing.isEmpty())
+        return;
+    if (launch.arguments.size() + missing.size() > max_saved_arguments) {
+        qWarning() << "Codex startup setting not added: saved argument limit reached";
+        return;
+    }
+    launch.arguments = missing + launch.arguments;
+    if (managed_resume_index >= 0)
+        managed_resume_index += static_cast<int>(missing.size());
 }
 constexpr qint64 updater_output_tail_bytes = 8192;
 } // namespace
@@ -2284,16 +2306,8 @@ void Workspace::applyStartupDefaults(const Agent& agent, ResumeLaunch& plan) {
             qWarning() << "Grok fullscreen default not added: saved argument limit reached";
         }
     }
-    if (agent.harness == QLatin1String("codex") && !hasCodexUpdateSetting(plan.launch.arguments)) {
-        if (plan.launch.arguments.size() + 2 <= max_saved_arguments) {
-            const auto* descriptor = find_harness(agent.harness);
-            plan.launch.arguments = (descriptor ? descriptor->defaultArguments() : QStringList()) +
-                                    plan.launch.arguments;
-            if (plan.managed_resume_index >= 0)
-                plan.managed_resume_index += 2;
-        } else {
-            qWarning() << "Codex startup setting not added: saved argument limit reached";
-        }
+    if (agent.harness == QLatin1String("codex")) {
+        applyCodexStartupDefault(plan.launch, plan.managed_resume_index);
     }
 }
 

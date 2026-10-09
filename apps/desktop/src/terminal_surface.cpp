@@ -1432,7 +1432,7 @@ void TerminalSurface::scrollProgram(int steps, QPoint cell) {
     if (!acceptsTerminalInput())
         return;
     if (document_->snapshot().accepts_wheel) {
-        document_->sendWheel(steps, cell.x(), cell.y());
+        static_cast<void>(document_->sendWheel(steps, cell.x(), cell.y()));
         return;
     }
     const auto key = steps > 0 ? session::TerminalKey::up : session::TerminalKey::down;
@@ -1862,6 +1862,7 @@ void TerminalSurface::sendFilled() {
     const std::optional<Filled> taken = filled_;
     if (!taken || !taken->owner || taken->owner != document_)
         return;
+    document_->returnProgramToBottom();
     document_->sendKey(session::TerminalKey::enter, {});
     typed_since_arrival_ = false;
     filled_.reset();
@@ -1905,6 +1906,7 @@ quint64 TerminalSurface::pasteTextRequest(const QString& text, std::optional<boo
     if (document_ != owner || !acceptsTerminalInput())
         return false;
     clearSelection();
+    document_->returnProgramToBottom();
     const auto request = submit.has_value() ? document_->requestPaste(bytes, *submit)
                          : document_->sendText(bytes, true) ? quint64{1}
                                                             : quint64{0};
@@ -2175,7 +2177,9 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         return;
     }
     keepFramesComing();
-    // New input replaces what was selected; a modifier alone does not.
+    // New input replaces what was selected; a modifier alone does not. Input
+    // (not a Command shortcut) first returns a scrolled-back program to the
+    // bottom.
     if (!modifier_key(event->key()))
         clearSelection();
     if (composition_state_ == CompositionState::stale)
@@ -2256,14 +2260,17 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     if (key) {
         interaction::key_outcome(QStringLiteral("agent"));
         const auto mods = event->modifiers();
+        document_->returnProgramToBottom();
         document_->sendKey(*key,
                            {mods.testFlag(Qt::ShiftModifier), mods.testFlag(Qt::ControlModifier),
                             mods.testFlag(Qt::AltModifier), false});
     } else {
         const auto text = terminal_text_key(*event);
         interaction::key_outcome(text.isEmpty() ? QStringLiteral("none") : QStringLiteral("agent"));
-        if (!text.isEmpty())
+        if (!text.isEmpty()) {
+            document_->returnProgramToBottom();
             document_->sendText(text);
+        }
     }
     event->accept();
 }
@@ -2280,6 +2287,7 @@ void TerminalSurface::commandKey(QKeyEvent& event) {
         interaction::key_outcome(QStringLiteral("agent"),
                                  {{QStringLiteral("as"), line_start ? QStringLiteral("line-start")
                                                                     : QStringLiteral("line-end")}});
+        document_->returnProgramToBottom();
         document_->sendText(QByteArray(1, line_start ? '\x01' : '\x05'));
         event.accept();
         return;
@@ -2293,6 +2301,7 @@ void TerminalSurface::commandKey(QKeyEvent& event) {
                                  {{QStringLiteral("as"), event.key() == Qt::Key_Backspace
                                                              ? QStringLiteral("delete-to-start")
                                                              : QStringLiteral("delete-to-end")}});
+        document_->returnProgramToBottom();
         document_->sendText(QByteArray(1, event.key() == Qt::Key_Backspace ? '\x15' : '\x0b'));
         event.accept();
         return;
@@ -2328,6 +2337,7 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
             return;
         }
         noteTyped();
+        document_->returnProgramToBottom();
         document_->sendText(event->commitString().toUtf8());
     }
     if (composition_epoch != ime_epoch_) {

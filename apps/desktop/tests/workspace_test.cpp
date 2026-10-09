@@ -5327,6 +5327,12 @@ QJsonObject resumeArgumentsRecord(const ResumeArgumentsFixture& fixture,
         throw std::runtime_error("a managed retirement fixture must use a terminal checkpoint");
     auto record = agentRecord(fixture.root, id, "general");
     record.insert(QStringLiteral("harness"), variant.harness);
+    if (variant.harness == QLatin1String("codex")) {
+        writeExecutable(QDir(fixture.root).filePath(QStringLiteral("codex")),
+                        "#!/usr/bin/env bash\nexit 0\n");
+        record.insert(QStringLiteral("program"),
+                      QDir(fixture.root).filePath(QStringLiteral("codex")));
+    }
     QJsonArray user_arguments = variant.config_arguments;
     user_arguments.append("--user");
     if (variant.explicit_resume) {
@@ -5369,16 +5375,28 @@ bool followsObserverResume(const ResumeArgumentsCase& variant) {
 QJsonArray expectedResumeArguments(const ResumeArgumentsCase& variant,
                                    const QJsonArray& base_arguments,
                                    const QJsonArray& user_arguments, const QString& id) {
-    QJsonArray expected;
-    if (variant.add_update_setting)
-        expected = {"-c", "check_for_update_on_startup=false"};
-    const auto retained = variant.managed_pair ? base_arguments : QJsonArray(user_arguments);
-    for (const auto& argument : retained)
-        expected.append(argument);
-    if (followsObserverResume(variant)) {
-        expected.append("resume");
-        expected.append(id);
+    const auto retained =
+        variant.managed_pair ? QJsonArray(base_arguments) : QJsonArray(user_arguments);
+    QJsonArray plan = retained;
+    if (followsObserverResume(variant) && plan.size() + 2 <= 64) {
+        plan.append(QStringLiteral("resume"));
+        plan.append(id);
     }
+    // A direct Codex launch takes the startup default the workspace applies: no
+    // update check, prepended, and dropped rather than truncated once the saved
+    // argument limit is hit. Its screen stays full screen.
+    QJsonArray missing;
+    if (variant.harness == QLatin1String("codex")) {
+        if (variant.add_update_setting) {
+            missing.append(QStringLiteral("-c"));
+            missing.append(QStringLiteral("check_for_update_on_startup=false"));
+        }
+    }
+    if (missing.isEmpty() || plan.size() + missing.size() > 64)
+        return plan; // The launch is already at the saved argument limit.
+    QJsonArray expected = missing;
+    for (const auto& value : plan)
+        expected.append(value);
     return expected;
 }
 
@@ -5390,7 +5408,7 @@ void requireRestoredResumeArguments(const ResumeArgumentsCase& variant,
     const auto actual = restored_agent.value(QStringLiteral("arguments")).toArray();
     if (followsObserverResume(variant)) {
         const auto managed = restored_agent.value(QStringLiteral("managedResume")).toObject();
-        require(managed.value(QStringLiteral("index")).toInt(-1) == 3 &&
+        require(managed.value(QStringLiteral("index")).toInt(-1) == expected.size() - 2 &&
                     managed.value(QStringLiteral("identity")).toString() == id,
                 "Codex startup defaults shift managed provenance to the resume pair");
     }
@@ -5512,6 +5530,75 @@ void savedGrokDefaultsPreserveLaunchOwnership() {
                                 .toObject()[QStringLiteral("index")]
                                 .toInt(-1) == 3,
                         "the owned resume pair shifts exactly once with the default");
+        }
+    }
+}
+
+// Saved Codex launches gain the update setting once at restart, before any
+// owned resume pair, unless the person chose it; lapis never picks the screen
+// mode, so a screen setting of the person's own stays as written.
+void savedCodexDefaultsKeepTheScreenMode() {
+    struct Case {
+        QStringList arguments;
+        QStringList expected;
+        bool managed{};
+        QString program{QStringLiteral("codex")};
+    };
+    const QString update = QStringLiteral("check_for_update_on_startup=false");
+    const std::vector<Case> cases{
+        {{}, {"-c", update}},
+        {{"-c", update}, {"-c", update}},
+        {{"--no-alt-screen"}, {"-c", update, "--no-alt-screen"}},
+        {{"-c", "tui.alt_screen=\"always\"", "-c", update},
+         {"-c", "tui.alt_screen=\"always\"", "-c", update}},
+        {{"--", "--no-alt-screen"}, {"-c", update, "--", "--no-alt-screen"}},
+        {{"resume", "conversation"}, {"-c", update, "resume", "conversation"}, true},
+        {{"-o", "ControlPath=none", "-t", "fixture", "codex"},
+         {"-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4", "-o", "ControlPath=none",
+          "-t", "fixture", "codex"},
+         false,
+         QStringLiteral("ssh")},
+    };
+    for (const auto& variant : cases) {
+        QTemporaryDir directory(QStringLiteral("/tmp/lapis-codex-defaults-XXXXXX"));
+        require(directory.isValid(), "Codex defaults directory");
+        const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+        const auto id = uuid();
+        auto record = agentRecord(root.path(), id, "general");
+        const auto program = root.filePath(variant.program);
+        writeExecutable(program, "#!/usr/bin/env bash\nexit 0\n");
+        record.insert(QStringLiteral("program"), program);
+        record.insert(QStringLiteral("harness"), QStringLiteral("codex"));
+        record.insert(QStringLiteral("arguments"), QJsonArray::fromStringList(variant.arguments));
+        if (variant.managed)
+            record.insert(QStringLiteral("managedResume"),
+                          QJsonObject{{"index", 0}, {"identity", "conversation"}});
+        WorkspaceOptions options;
+        options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+        options.restoreAgents = true;
+        writeRegistry(
+            options.storagePath,
+            {{"version", 2},
+             {"activeCategory", "general"},
+             {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+             {"agents", QJsonArray{record}}});
+        for (int pass = 0; pass < 2; ++pass) {
+            Workspace workspace(WorkspaceMode::live, options);
+            require(workspace.workspaceError().isEmpty(), "restore saved Codex launch");
+            const auto saved = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                   .object()[QStringLiteral("agents")]
+                                   .toArray()
+                                   .first()
+                                   .toObject();
+            const auto expected = variant.expected;
+            require(saved[QStringLiteral("arguments")].toArray() ==
+                        QJsonArray::fromStringList(expected),
+                    "Codex defaults are direct-local once, keeping explicit screen choices");
+            if (variant.managed)
+                require(saved[QStringLiteral("managedResume")]
+                                .toObject()[QStringLiteral("index")]
+                                .toInt(-1) == 2,
+                        "the owned resume pair shifts exactly once with the defaults");
         }
     }
 }
@@ -5805,6 +5892,7 @@ int main(int argc, char** argv) {
                 remoteClaudeReconnectsToItsConversation();
             } else if (selected == QStringLiteral("startup-defaults")) {
                 savedGrokDefaultsPreserveLaunchOwnership();
+                savedCodexDefaultsKeepTheScreenMode();
             } else if (selected == QStringLiteral("launch-policy")) {
                 modelessAgentsGetTheDefaultMode();
                 resumingAConversationStartsItsCli();
