@@ -212,7 +212,8 @@ std::vector<std::vector<QString>> start_agents(Workspace& workspace, const Optio
 }
 
 // Every other category holds tiles: its first agent with two beside it.
-void tile_categories(Workspace& workspace, const std::vector<std::vector<QString>>& agents) {
+int tile_categories(Workspace& workspace, const std::vector<std::vector<QString>>& agents) {
+    int tiled = 0;
     for (std::size_t category = 0; category < agents.size(); category += 2) {
         const auto& ids = agents.at(category);
         if (ids.size() < 3)
@@ -220,7 +221,9 @@ void tile_categories(Workspace& workspace, const std::vector<std::vector<QString
         require(workspace.selectSession(ids[0]), "select tile owner");
         require(workspace.tileSession(ids[1], ids[0], QStringLiteral("right")), "tile right");
         require(workspace.tileSession(ids[2], ids[1], QStringLiteral("bottom")), "tile below");
+        ++tiled;
     }
+    return tiled;
 }
 
 class Bench : public QObject {
@@ -525,7 +528,7 @@ QJsonObject measure(const Options& options, const QTemporaryDir& home) {
     if (log)
         log->watchWindow(window);
 #endif
-    tile_categories(workspace, agents);
+    const int tiled_categories = tile_categories(workspace, agents);
     require(workspace.selectCategory(
                 workspace.categories().front().toMap().value(QStringLiteral("id")).toString()),
             "first category");
@@ -540,7 +543,7 @@ QJsonObject measure(const Options& options, const QTemporaryDir& home) {
     result.insert("frameTimeouts", bench.frameTimeouts());
     result.insert("agents", options.agents);
     result.insert("categories", options.categories);
-    result.insert("tiledCategories", (options.categories + 1) / 2);
+    result.insert("tiledCategories", tiled_categories);
     result.insert("interactionLog", options.log);
     result.insert("gapMs", options.gap);
     result.insert("unchangedKeys", bench.unchangedKeys());
