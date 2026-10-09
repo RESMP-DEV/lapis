@@ -40,6 +40,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
@@ -373,7 +374,7 @@ class SessionService final : public QObject {
         snapshot_clock_.start();
         attention_clock_.start();
         timer_.setSingleShot(true);
-        connect(&timer_, &QTimer::timeout, this, [this] { publish(); });
+        connect(&timer_, &QTimer::timeout, this, [this] { publish_paced_output(); });
         ack_timer_.setSingleShot(true);
         ack_timer_.setInterval(launch.agent == AgentMode::codex ? codex_sync_timeout_ms
                                                                 : terminal_sync_timeout_ms);
@@ -458,9 +459,9 @@ class SessionService final : public QObject {
     QString attention_diagnostic() const {
         return codex_observer_    ? codex_observer_->diagnostic()
                : claude_observer_ ? claude_observer_->diagnostic()
-               : notify_turns_    ? notify_turns_->diagnostic()
-                                  : QStringLiteral("Codex notify turns are not connected; "
-                                                   "status is estimated from output");
+               : notify_turns_ ? notify_turns_->diagnostic()
+                               : QStringLiteral("Codex notify turns are not connected; status is "
+                                                "estimated from output");
     }
     QJsonObject attention_details(const attention::RequestId& id) const {
         return codex_observer_    ? codex_observer_->details(id)
@@ -1073,6 +1074,7 @@ class SessionService final : public QObject {
                 apply_resize(size);
             }
             int budget = 16;
+            bool parser_waiting = false;
             while (!pending_output_.isEmpty() && budget-- > 0) {
                 if (!archive_history(false)) {
                     output_waiting_ = true;
@@ -1082,12 +1084,34 @@ class SessionService final : public QObject {
                     std::size_t{1},
                     std::min(std::size_t{256},
                              std::size_t{32768} / (std::size_t{4} * current_size_.columns))));
-                const auto size = std::min(pending_output_.size(), chunk);
+                const auto sync_limit = synchronized_output_limit(pending_output_);
+                if (sync_limit < 0) {
+                    const auto safe =
+                        std::min(chunk, pending_output_.size() -
+                                            synchronized_output_holdback(pending_output_));
+                    if (safe > 0) {
+                        terminal_.feed(std::string_view(pending_output_.constData(),
+                                                        static_cast<std::size_t>(safe)));
+                        pending_output_.remove(0, safe);
+                        mark_dirty();
+                        timing_.parse_end_ns = monotonic_ns();
+                        continue;
+                    }
+                    parser_waiting = true;
+                    break;
+                }
+                // `sync_limit` ends at a complete DEC 2026 marker. Feeding only
+                // `chunk` bytes could split that marker and lose both edges.
+                const auto size = sync_limit < pending_output_.size()
+                                      ? sync_limit
+                                      : std::min(pending_output_.size(), chunk);
                 terminal_.feed(
                     std::string_view(pending_output_.constData(), static_cast<std::size_t>(size)));
                 pending_output_.remove(0, size);
                 mark_dirty();
                 timing_.parse_end_ns = monotonic_ns();
+                if (follow_synchronized_update())
+                    break; // a whole frame is on screen: show it before the next one starts
             }
             const auto replies = terminal_.take_replies();
             if (!replies.empty() && pty_.processId() != 0 &&
@@ -1095,24 +1119,45 @@ class SessionService final : public QObject {
                     QByteArray(replies.data(), static_cast<qsizetype>(replies.size()))))
                 throw std::runtime_error("PTY reply queue overflow");
             schedule();
-            if (!output_waiting_) {
-                if (pending_output_.isEmpty()) {
-                    if (output_pressure_) {
-                        output_pressure_ = false;
-                        output_retention_logged_ = false;
-                        output_pressure_bytes_ = 0;
-                        output_pressure_clock_.invalidate();
-                        qInfo().noquote() << "PTY output retention drained; output resumed";
-                    }
-                    pty_.pauseOutput(false);
-                } else {
-                    QTimer::singleShot(0, this, [this] { process_output(); });
-                }
-            }
+            resume_output(parser_waiting);
         } catch (const std::exception& error) {
             stop(QString::fromUtf8(error.what()));
         }
         processing_output_ = false;
+    }
+    void resume_output(bool parser_waiting) {
+        if (parser_waiting) {
+            // The remainder must arrive from the PTY; never spin on the same
+            // partial marker, even when output pressure paused reads.
+            if (output_pressure_) {
+                output_pressure_ = false;
+                output_retention_logged_ = false;
+                output_pressure_bytes_ = 0;
+                output_pressure_clock_.invalidate();
+            }
+            pty_.pauseOutput(false);
+            return;
+        }
+        if (output_waiting_)
+            return;
+        if (!pending_output_.isEmpty()) {
+            if (timer_.isActive())
+                return; // a paced whole-frame publication owns the retained screen
+            if (output_publication_blocked()) {
+                schedule();
+                return;
+            }
+            QTimer::singleShot(0, this, [this] { process_output(); });
+            return;
+        }
+        if (output_pressure_) {
+            output_pressure_ = false;
+            output_retention_logged_ = false;
+            output_pressure_bytes_ = 0;
+            output_pressure_clock_.invalidate();
+            qInfo().noquote() << "PTY output retention drained; output resumed";
+        }
+        pty_.pauseOutput(false);
     }
     // History replies go to whichever client or joined view asked.
     void send_history(const wire::HistoryReply& reply) {
@@ -1366,7 +1411,61 @@ class SessionService final : public QObject {
         if ((client_ && (!snapshot_in_flight_ || ready_) && dirty_) || views_due())
             timer_.start(static_cast<int>(snapshot_pace_.wait_ms(snapshot_clock_.elapsed())));
     }
+    void publish_paced_output() {
+        timer_.stop();
+        publish();
+        // This is the only safe point to let an already-queued synchronized
+        // frame mutate the terminal retained by the publication that fired.
+        if (!pending_output_.isEmpty() && !output_waiting_ && !processing_output_ &&
+            !output_publication_blocked())
+            QTimer::singleShot(0, this, [this] { process_output(); });
+    }
+    // Full-screen programs such as Claude Code bracket each repaint in a
+    // synchronized update (DEC mode 2026). A screen published inside one is
+    // half drawn: scrolling such a program showed its transcript being
+    // painted in. Returns true when an update just ended, so the caller
+    // publishes that whole frame before feeding more output.
+    bool follow_synchronized_update() {
+        const bool now = terminal_.synchronizing();
+        if (now == in_sync_)
+            return false;
+        in_sync_ = now;
+        if (now) {
+            sync_since_.start();
+            return false;
+        }
+        sync_since_.invalidate();
+        // Replace any hold timer. A completed frame is retained until the next
+        // paced publication; a later update must not overwrite it first.
+        timer_.stop();
+        if (const qint64 wait = snapshot_pace_.wait_ms(snapshot_clock_.elapsed()); wait > 0) {
+            timer_.start(static_cast<int>(wait));
+            return true;
+        }
+        if (output_publication_blocked()) {
+            schedule();
+            return true;
+        }
+        publish();
+        return true;
+    }
+    [[nodiscard]] bool output_publication_blocked() const {
+        if (dirty_ && client_ && client_->bytesToWrite() != 0)
+            return true;
+        return std::any_of(views_.cbegin(), views_.cend(), [](const auto& view) {
+            return view->socket && view->dirty && view->socket->bytesToWrite() != 0;
+        });
+    }
     void publish() {
+        // Mid-update: hold the screen until the update ends (which publishes
+        // at once) or until sync_hold_ms, so a program that never ends one
+        // cannot freeze its views.
+        if (in_sync_ && sync_since_.isValid() && sync_since_.elapsed() < sync_hold_ms) {
+            timer_.start(static_cast<int>(sync_hold_ms - sync_since_.elapsed()));
+            return;
+        }
+        if (output_publication_blocked())
+            return;
         snapshot_pace_.published(snapshot_clock_.elapsed());
         publish_views();
         publish_client();
@@ -1788,6 +1887,40 @@ class SessionService final : public QObject {
         for (const auto& view : views_)
             view->dirty = true;
     }
+
+    // One DEC 2026 control sequence, possibly split by PTY reads. The
+    // service observes the edge only when the whole sequence is fed, so the
+    // parser carries a partial prefix instead of accidentally crossing a
+    // frame end. A carry is the number of buffered bytes to hold back.
+    static qsizetype synchronized_output_limit(const QByteArray& pending) {
+        static constexpr std::array<std::string_view, 2> markers{{"\x1b[?2026h", "\x1b[?2026l"}};
+
+        for (qsizetype offset = 0; offset < pending.size(); ++offset) {
+            for (const auto& marker : markers) {
+                const auto available =
+                    std::min(static_cast<qsizetype>(marker.size()), pending.size() - offset);
+                if (!std::equal(pending.cbegin() + offset, pending.cbegin() + offset + available,
+                                marker.cbegin()))
+                    continue;
+                return available == static_cast<qsizetype>(marker.size())
+                           ? offset + static_cast<qsizetype>(marker.size())
+                           : -static_cast<qsizetype>(marker.size());
+            }
+        }
+        return pending.size();
+    }
+
+    static qsizetype synchronized_output_holdback(const QByteArray& pending) {
+        static constexpr std::array<std::string_view, 2> markers{{"\x1b[?2026h", "\x1b[?2026l"}};
+        for (const auto& marker : markers) {
+            const auto marker_size = static_cast<qsizetype>(marker.size());
+            for (auto length = std::min(marker_size - 1, pending.size()); length > 0; --length)
+                if (std::equal(pending.cend() - length, pending.cend(), marker.cbegin()))
+                    return length;
+        }
+        return 0;
+    }
+
     [[nodiscard]] bool views_due() const {
         return std::any_of(views_.begin(), views_.end(), [](const auto& view) {
             return view->socket && view->dirty && (view->ready || !view->in_flight);
@@ -2004,6 +2137,9 @@ class SessionService final : public QObject {
     wire::UpdatePace attention_pace_{frame_ms};
     QElapsedTimer snapshot_clock_;
     wire::UpdatePace snapshot_pace_{frame_ms};
+    QElapsedTimer sync_since_; // when the current synchronized update began
+    bool in_sync_{};
+    static constexpr qint64 sync_hold_ms = 250;
     QTimer ack_timer_;
     quint64 generation_{};
     quint64 snapshot_sequence_{};

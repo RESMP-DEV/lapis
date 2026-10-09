@@ -87,6 +87,12 @@ terminal is resized, where a classic renderer can leave a torn prompt. Set
 `CLAUDE_CODE_NO_FLICKER=0` in your login shell to keep Claude Code's classic
 renderer. Every CLI starts at the stage's size.
 
+A full-screen program repaints its whole screen for every scroll step and
+streamed line. Claude Code brackets each repaint in a synchronized update (DEC
+mode 2026); lapis shows only the finished frame, as iTerm2 and Ghostty do, so
+scrolling never shows a screen half painted. An update that never ends is
+shown after 250 ms.
+
 ## Keeping CLIs current
 
 A new agent's CLI updates itself first (`claude update`, `omp update`, `grok
