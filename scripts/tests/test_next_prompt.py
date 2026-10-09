@@ -244,6 +244,14 @@ class TranscriptTests(Homes):
             "fix it\n## My request for Codex:\nship it",
         )
         self.assertEqual(
+            typed("## My request for Codex:\n" + direct),
+            direct,
+        )
+        self.assertEqual(
+            typed(direct + "\n# Notes\nsaid:\n## My request for Codex:\nship it"),
+            "fix it\n# Notes\nsaid:\n## My request for Codex:\nship it",
+        )
+        self.assertEqual(
             typed(
                 "# Notes\nThe file said:\n## My request for Codex:\n"
                 "old text\n## My request for Codex:\nship it"

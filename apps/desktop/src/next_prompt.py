@@ -32,14 +32,14 @@ TAG_NOT_TYPED = (
     "<environment_context>",
     "<system-reminder>",
     "<task-notification>",
-    "<codex_internal_context",
-    "<turn_aborted",
-    "<subagent_notification",
-    "<recommended_plugins",
-    "<bash-input",
-    "<bash-stdout",
-    "<bash-stderr",
-    "<command-message",
+    "<codex_internal_context>",
+    "<turn_aborted>",
+    "<subagent_notification>",
+    "<recommended_plugins>",
+    "<bash-input>",
+    "<bash-stdout>",
+    "<bash-stderr>",
+    "<command-message>",
 )
 PROSE_NOT_TYPED = (
     "Caveat:",
@@ -50,7 +50,6 @@ BRACKET_NOT_TYPED = (
     "[Request interrupted",
     "[Your previous response had no visible output",
 )
-NOT_TYPED = TAG_NOT_TYPED + PROSE_NOT_TYPED + BRACKET_NOT_TYPED
 # Codex attaches images as empty wrappers around the typed text, never inside.
 IMAGE_EDGES = re.compile(
     r"\A(?:<image\b[^>]*>\s*</image>\s*)*"
@@ -121,7 +120,11 @@ def typed(text):
         if not peeled and text.startswith(PROSE_NOT_TYPED):
             return ""
         markers = list(CODEX_REQUEST.finditer(text))
-        if not markers or not (text.startswith("# ") or CODEX_REQUEST.match(text)):
+        if (
+            not markers
+            or peeled
+            or not (text.startswith("# ") or CODEX_REQUEST.match(text))
+        ):
             break
         # A '# ' preamble may quote or contain the sentinel in attached text,
         # so its request starts after the last line-anchored marker. A direct
