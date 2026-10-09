@@ -1146,12 +1146,17 @@ void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     };
     const auto shows_selection = [&](const QString& id) {
         auto* frame = item(QStringLiteral("tile_") + id);
+        CHECK(frame != nullptr);
         CHECK(frame->property("selectedTile").toBool());
         CHECK(scene_rect(*frame).contains(scene_rect(*terminal)));
         CHECK(terminal->document() == workspace.session(id));
-        for (const auto& other_id : tile_ids())
-            CHECK(other_id == id ||
-                  !item(QStringLiteral("tile_") + other_id)->property("selectedTile").toBool());
+        for (const auto& other_id : tile_ids()) {
+            if (other_id == id)
+                continue;
+            auto* other_frame = item(QStringLiteral("tile_") + other_id);
+            CHECK(other_frame != nullptr);
+            CHECK(!other_frame->property("selectedTile").toBool());
+        }
     };
     const auto capture_walk = [&window](const char* name) {
         if (const auto path = qEnvironmentVariable("LAPIS_WORKSPACE_CAPTURE_PREFIX");

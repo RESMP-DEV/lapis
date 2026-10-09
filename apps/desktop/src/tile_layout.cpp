@@ -337,8 +337,8 @@ TileLayout::Step TileLayout::step(const TileLayout& home, const QStringList& ord
                                   const QString& slot, const QString& current, int delta) {
     if (order.isEmpty())
         return {.selected = {}, .layout = home, .slot = {}};
-    const auto count = order.size();
-    const auto here = std::max<qsizetype>(order.indexOf(current), 0);
+    const int count = static_cast<int>(order.size());
+    const int here = std::max(static_cast<int>(order.indexOf(current)), 0);
     const auto& next = order.at(((here + delta % count) % count + count) % count);
     if (home.empty() || home.contains(next))
         return {.selected = next, .layout = home, .slot = {}};
