@@ -1,6 +1,7 @@
 #include "agent_search.hpp"
 #include "conversation_index.hpp"
 #include "keymap.hpp"
+#include "model_change_recorder.hpp"
 #include "plan_sign_in.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
@@ -629,6 +630,130 @@ void check_terminal_font_controls(QQuickWindow& window, lapis::desktop::KeyMap& 
     write_config(directory, saved);
 }
 
+// Closed Commands and Settings expose empty models and do not recompute for
+// workspace changes. Opening either resolves the entries for the state the
+// user would see, including a category with no focused agent.
+void check_lazy_command_models(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                               lapis::desktop::UiPreview& preview) {
+    auto* commands = window.findChild<QObject*>(QStringLiteral("commandsDialog"));
+    auto* settings = window.findChild<QObject*>(QStringLiteral("settingsDialog"));
+    CHECK(commands != nullptr && settings != nullptr);
+
+    ModelChangeRecorder command_observer;
+    ModelChangeRecorder shortcut_observer;
+    const auto slot_for = [](QObject& receiver) {
+        const auto* meta = receiver.metaObject();
+        const int slot_index = meta->indexOfSlot("changed()");
+        CHECK(slot_index >= 0);
+        return meta->method(slot_index);
+    };
+    const auto observe = [](QObject& dialog, const char* name, QObject& receiver,
+                            const QMetaMethod& slot) {
+        const auto* meta = dialog.metaObject();
+        const int property_index = meta->indexOfProperty(name);
+        CHECK(property_index >= 0);
+        const QMetaProperty property = meta->property(property_index);
+        CHECK(property.isValid() && property.hasNotifySignal());
+        CHECK(QObject::connect(&dialog, property.notifySignal(), &receiver, slot));
+    };
+    observe(*commands, "commands", command_observer, slot_for(command_observer));
+    observe(*settings, "shortcutRows", shortcut_observer, slot_for(shortcut_observer));
+    const auto model = [](QObject& dialog, const char* name) {
+        return dialog.property(name).toList();
+    };
+    const auto entry = [](const QVariantList& entries, const QString& id) {
+        for (const auto& value : entries)
+            if (value.toMap().value(QStringLiteral("id")).toString() == id)
+                return value.toMap();
+        return QVariantMap{};
+    };
+    const auto open_commands = [&] {
+        CHECK(QMetaObject::invokeMethod(&window, "openCommandsDialog"));
+        auto* dialog = window.findChild<QObject*>(QStringLiteral("commandsDialog"));
+        CHECK(dialog != nullptr);
+        wait_popup(*dialog, true);
+        return model(*dialog, "commands");
+    };
+
+    CHECK(model(*commands, "commands").isEmpty());
+    CHECK(model(*settings, "shortcutRows").isEmpty());
+    auto* initial = workspace.focusedSession();
+    CHECK(initial != nullptr);
+    const QString initial_id = initial->sessionId();
+    const QString initial_category = workspace.activeCategoryId();
+
+    CHECK(workspace.addCategory(QStringLiteral("Lazy commands")));
+    pump(30);
+    CHECK(workspace.focusedSession() == nullptr);
+    CHECK(model(*commands, "commands").isEmpty());
+    CHECK(model(*settings, "shortcutRows").isEmpty());
+    CHECK(command_observer.changes == 0 && shortcut_observer.changes == 0);
+
+    const auto empty_category_commands = open_commands();
+    CHECK(!empty_category_commands.isEmpty());
+    CHECK(!entry(empty_category_commands, QStringLiteral("closeAgent"))
+               .value(QStringLiteral("enabled"))
+               .toBool());
+    CHECK(QMetaObject::invokeMethod(commands, "close"));
+    wait_popup(*commands, false);
+    command_observer.changes = 0;
+    shortcut_observer.changes = 0;
+
+    CHECK(workspace.selectCategory(initial_category));
+    pump(30);
+    CHECK(workspace.focusedSession() != nullptr);
+    const auto sessions = workspace.categorySessions();
+    CHECK(sessions.size() >= 2);
+    QString alternate;
+    for (const auto& value : sessions) {
+        auto* session = value.value<lapis::desktop::SessionPreview*>();
+        if (session != nullptr && session->sessionId() != initial_id) {
+            alternate = session->sessionId();
+            break;
+        }
+    }
+    CHECK(!alternate.isEmpty());
+
+    CHECK(workspace.selectSession(alternate));
+    pump(30);
+    CHECK(model(*commands, "commands").isEmpty());
+    CHECK(model(*settings, "shortcutRows").isEmpty());
+    CHECK(command_observer.changes == 0);
+    CHECK(shortcut_observer.changes == 0);
+    CHECK(workspace.selectSession(initial_id));
+    pump(30);
+    CHECK(model(*commands, "commands").isEmpty());
+    CHECK(model(*settings, "shortcutRows").isEmpty());
+    CHECK(command_observer.changes == 0 && shortcut_observer.changes == 0);
+
+    const auto agent_commands = open_commands();
+    CHECK(entry(agent_commands, QStringLiteral("closeAgent"))
+              .value(QStringLiteral("enabled"))
+              .toBool());
+    CHECK(QMetaObject::invokeMethod(commands, "close"));
+    wait_popup(*commands, false);
+
+    CHECK(preview.openSettings());
+    wait_popup(*settings, true);
+    const auto shortcut_rows = model(*settings, "shortcutRows");
+    CHECK(!shortcut_rows.isEmpty());
+#ifdef Q_OS_MACOS
+    const QString new_agent_keys = QStringLiteral("⌘T");
+#else
+    const QString new_agent_keys = QStringLiteral("Ctrl+Shift+T");
+#endif
+    bool found_new_agent = false;
+    for (const auto& value : shortcut_rows) {
+        const auto row = value.toMap();
+        found_new_agent |= row.value(QStringLiteral("keys")).toString() == new_agent_keys;
+    }
+    CHECK(found_new_agent);
+    CHECK(QMetaObject::invokeMethod(settings, "close"));
+    wait_popup(*settings, false);
+    CHECK(model(*commands, "commands").isEmpty());
+    CHECK(model(*settings, "shortcutRows").isEmpty());
+}
+
 int run_shortcut_focus_tests() {
     using namespace lapis::desktop;
     Workspace workspace(WorkspaceMode::preview);
@@ -653,6 +778,7 @@ int run_shortcut_focus_tests() {
     auto* dialog = window->findChild<QObject*>(QStringLiteral("settingsDialog"));
     CHECK(terminal != nullptr && dialog != nullptr);
     terminal->forceActiveFocus();
+    check_lazy_command_models(*window, workspace, preview);
 
     CHECK(QMetaObject::invokeMethod(dialog, "open"));
     wait_popup(*dialog, true);
@@ -1131,6 +1257,71 @@ void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     CHECK(workspace.focusedSession() == workspace.session(ids[1]));
     key("tileLeft");
     CHECK(workspace.focusedSession() == workspace.session(ids[0]));
+    key("tileLeft");
+    CHECK(workspace.focusedSession() == workspace.session(ids[0])); // no wraparound
+
+    // The next and previous agent keys walk the tiles in reading order, then
+    // show each untiled agent in the tile the walk left, and put the stage
+    // back as it was when they wrap onto the tiles. The selection edge and
+    // the stage terminal follow every press.
+    const auto tile_ids = [&workspace] {
+        QStringList result;
+        for (const auto& tile : workspace.stageTiles())
+            result.append(tile.toMap().value(QStringLiteral("sessionId")).toString());
+        return result;
+    };
+    const auto shows_selection = [&](const QString& id) {
+        auto* frame = item(QStringLiteral("tile_") + id);
+        CHECK(frame != nullptr);
+        CHECK(frame->property("selectedTile").toBool());
+        CHECK(scene_rect(*frame).contains(scene_rect(*terminal)));
+        CHECK(terminal->document() == workspace.session(id));
+        for (const auto& other_id : tile_ids()) {
+            if (other_id == id)
+                continue;
+            auto* other_frame = item(QStringLiteral("tile_") + other_id);
+            CHECK(other_frame != nullptr);
+            CHECK(!other_frame->property("selectedTile").toBool());
+        }
+    };
+    const auto capture_walk = [&window](const char* name) {
+        if (const auto path = qEnvironmentVariable("LAPIS_WORKSPACE_CAPTURE_PREFIX");
+            !path.isEmpty())
+            CHECK(window.grabWindow().save(path + QStringLiteral("tile-walk-") +
+                                           QString::fromLatin1(name) + QStringLiteral(".png")));
+    };
+    const QStringList walk_home{ids[0], ids[1]};
+    CHECK(tile_ids() == walk_home);
+    capture_walk("1-left");
+    key("nextWindow");
+    CHECK(workspace.focusedSession() == workspace.session(ids[1]) && tile_ids() == walk_home);
+    shows_selection(ids[1]);
+    capture_walk("2-right");
+    for (qsizetype untiled = 2; untiled < ids.size(); ++untiled) {
+        key("nextWindow");
+        CHECK(workspace.focusedSession() == workspace.session(ids[untiled]));
+        CHECK(tile_ids() == QStringList({ids[0], ids[untiled]}));
+        shows_selection(ids[untiled]);
+        if (untiled == 2)
+            capture_walk("3-untiled-in-right");
+    }
+    key("nextWindow");
+    CHECK(workspace.focusedSession() == workspace.session(ids[0]) && tile_ids() == walk_home);
+    shows_selection(ids[0]);
+    key("previousWindow");
+    CHECK(workspace.focusedSession() == workspace.session(ids.constLast()));
+    CHECK(tile_ids() == QStringList({ids.constLast(), ids[1]}));
+    shows_selection(ids.constLast());
+    capture_walk("4-previous-in-left");
+    key("nextWindow");
+    CHECK(workspace.focusedSession() == workspace.session(ids[0]) && tile_ids() == walk_home);
+    shows_selection(ids[0]);
+
+    // The walk rebuilt the tiles it passed through.
+    left = item(QStringLiteral("tile_") + ids[0]);
+    other = qobject_cast<lapis::desktop::TerminalSurface*>(
+        item(QStringLiteral("tileTerminal_") + ids[0]));
+    CHECK(other != nullptr);
 
     // A divider drag shares the space differently; agents resize once, at the end.
     const auto before = left->width();
@@ -1141,11 +1332,33 @@ void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     CHECK(!terminal->holdResize() && !other->holdResize());
 
     // A strip agent that is not tiled takes the selected tile.
+    const QPointer<QQuickItem> changed_tile{item(QStringLiteral("tile_") + ids[0])};
+    const QPointer<QQuickItem> kept_tile{item(QStringLiteral("tile_") + ids[1])};
+    const QPointer<lapis::desktop::TerminalSurface> changed_surface{
+        qobject_cast<lapis::desktop::TerminalSurface*>(
+            item(QStringLiteral("tileTerminal_") + ids[0]))};
+    const QPointer<lapis::desktop::TerminalSurface> kept_surface{
+        qobject_cast<lapis::desktop::TerminalSurface*>(
+            item(QStringLiteral("tileTerminal_") + ids[1]))};
+    CHECK(changed_tile);
+    CHECK(kept_tile);
+    CHECK(changed_surface);
+    CHECK(kept_surface);
+    CHECK(changed_surface->document() == workspace.session(ids[0]));
+    CHECK(kept_surface->document() == workspace.session(ids[1]));
     click_visual(window, *item(QStringLiteral("agentTab_") + ids[2]));
     pump(40);
     auto tiled = workspace.stageTiles();
     CHECK(tiled.size() == 2 && workspace.focusedSession() == workspace.session(ids[2]));
     CHECK(tiled[0].toMap().value(QStringLiteral("sessionId")).toString() == ids[2]);
+    CHECK(changed_tile);
+    CHECK(kept_tile);
+    CHECK(changed_surface);
+    CHECK(kept_surface);
+    CHECK(changed_tile->objectName() == QStringLiteral("tile_") + ids[2]);
+    CHECK(kept_tile->objectName() == QStringLiteral("tile_") + ids[1]);
+    CHECK(changed_surface->document() == workspace.session(ids[2]));
+    CHECK(kept_surface->document() == workspace.session(ids[1]));
 
     // The selected tile can fill the stage and come back.
     key("zoomTile");

@@ -608,16 +608,52 @@ SessionPreview* Workspace::focusedSession() const {
 }
 
 void Workspace::nextSession(int delta) {
-    const auto list = categorySessions();
-    if (list.isEmpty())
+    QStringList strip;
+    for (const auto& value : categorySessions())
+        strip.append(value.value<SessionPreview*>()->sessionId());
+    auto* place = category(active_category_);
+    if (strip.isEmpty() || place == nullptr)
         return;
-    int current = 0;
-    for (int i = 0; i < list.size(); ++i)
-        if (list[i].value<SessionPreview*>() == focusedSession())
-            current = i;
-    const int count = static_cast<int>(list.size());
-    const int next = ((current + delta % count) % count + count) % count;
-    selectSession(list[next].value<SessionPreview*>()->sessionId());
+    const auto* focused = focusedSession();
+    const QString current = focused != nullptr ? focused->sessionId() : QString();
+    // Tiles first in reading order, then the strip; a walk continues while the
+    // stage is as its last step left it. A tile whose agent has been closed or
+    // moved away leaves the walk: its starting layout would put that agent back
+    // on the stage, and `untile` cannot see a tile the walk displaced.
+    const auto in_strip = [&strip](const QString& id) { return strip.contains(id); };
+    const auto existing = tile_walks_.constFind(place->id);
+    const auto home_tiles =
+        existing != tile_walks_.cend() ? existing->home.sessions() : QStringList{};
+    const bool continues = existing != tile_walks_.cend() && existing->selected == current &&
+                           existing->shown == place->tiles.toJson() &&
+                           existing->home.cycleOrder(strip) == existing->order &&
+                           std::all_of(home_tiles.cbegin(), home_tiles.cend(), in_strip);
+    const TileWalk candidate{.home = place->tiles,
+                             .order = place->tiles.cycleOrder(strip),
+                             .slot = {},
+                             .shown = place->tiles.toJson(),
+                             .selected = current};
+    const TileWalk& walk = continues ? existing.value() : candidate;
+    const auto step = TileLayout::step(walk.home, walk.order, walk.slot, current, delta);
+    if (step.selected.isEmpty() || step.selected == current || !mutableRegistry())
+        return;
+    const auto previous = checkpoint();
+    const bool retiled = place->tiles.toJson() != step.layout.toJson();
+    place->tiles = step.layout;
+    place->selected = step.selected;
+    if (!commit(previous))
+        return;
+    if (!continues)
+        tile_walks_.insert(place->id, candidate);
+    auto saved_walk = tile_walks_.find(place->id);
+    if (saved_walk == tile_walks_.end())
+        return;
+    saved_walk->slot = step.slot;
+    saved_walk->shown = place->tiles.toJson();
+    saved_walk->selected = step.selected;
+    if (retiled)
+        emit tilesChanged();
+    emit focusChanged();
 }
 
 bool Workspace::nextAttention() {
@@ -934,6 +970,7 @@ bool Workspace::removeCategory(const QString& id) {
         active_category_ = categories_.front().id;
     if (!commit(previous))
         return false;
+    tile_walks_.remove(id);
     changed();
     return true;
 }
