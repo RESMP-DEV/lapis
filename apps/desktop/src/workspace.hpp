@@ -364,6 +364,8 @@ struct WorkspaceOptions {
     // starts, at most every 30 minutes per CLI, so agents never open on an
     // update prompt. Existing-session reconnect and discovery do not update.
     bool updateHarnesses{};
+    // CLIs pinned in lapis.json are known before constructor-started agents.
+    QSet<QString> harnessUpdatesOff{};
     // Production bounds. Tests inject short values so stuck-updater cleanup is
     // observable without waiting two minutes or leaving installer children.
     qint64 updateTimeoutMs{qint64{2} * 60 * 1000};
@@ -572,6 +574,7 @@ class Workspace final : public QObject {
         harness_arguments_ = std::move(arguments);
     }
     // CLIs lapis.json pins: never updated on start nor by the update commands.
+    // The constructor copies the startup set; this setter applies live reloads.
     void setHarnessUpdatesOff(QSet<QString> harnesses) {
         harness_updates_off_ = std::move(harnesses);
     }

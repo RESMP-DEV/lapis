@@ -492,6 +492,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
       headless_(options.headless), update_timeout_ms_(std::max(qint64{1}, options.updateTimeoutMs)),
       preview_mode_(mode == WorkspaceMode::preview) {
     accounts_.setConfig(options.accounts);
+    harness_updates_off_ = options.harnessUpdatesOff;
     // Selecting an agent is looking at it.
     connect(this, &Workspace::focusChanged, this, [this] {
         if (auto* focused = focusedSession())

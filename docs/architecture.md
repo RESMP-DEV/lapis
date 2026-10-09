@@ -1967,13 +1967,14 @@ reattached agents are not updated.
 Explicit supported-CLI creation shares this queue, and `--no-harness-updates`
 disables it. `harnessUpdates` in lapis.json (`{"omp": false}`) pins listed CLIs:
 they skip the launch update and the explicit update-and-reload refuses them;
-an updater already running still holds its queued agents. Headless restore/serve keeps its existing no-update policy. Each
-updater has an isolated process group and a retained guard; timeout, leader exit
-and desktop teardown stop installer descendants too. A queued agent starts only
-after the leader exits and the guard acknowledges cleanup. Restart cannot bypass
-the queue. Output is drained while the updater runs into an 8 KiB tail. Restored
-Codex launches receive the qualified-binary update setting only after the old
-service is gone, preserving explicit configuration and resume-argument provenance.
+an updater already running still holds its queued agents. Headless
+restore/serve keeps its existing no-update policy. Each updater has an isolated
+process group and a retained guard; timeout, leader exit and desktop teardown
+stop installer descendants too. A queued agent starts only after the leader
+exits and the guard acknowledges cleanup. Restart cannot bypass the queue.
+Output is drained while the updater runs into an 8 KiB tail. Restored Codex
+launches receive the qualified-binary update setting only after the old service
+is gone, preserving explicit configuration and resume-argument provenance.
 
 Phone access (September 23, requested for use on the go without signing in).
 A prototype, deliberately simpler than the SSH design first proposed:

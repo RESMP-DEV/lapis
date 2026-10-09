@@ -800,8 +800,16 @@ void KeyMap::load_harness_updates(const QJsonValue& value) {
                                   .arg(it.key().left(32)));
             continue;
         }
-        if (!it.value().toBool())
-            harness_updates_off_.insert(it.key());
+        if (it.value().toBool())
+            continue;
+        if (harness_updates_off_.size() >= 16) {
+            append_diagnostic(&diagnostic_,
+                              QStringLiteral("Ignoring harnessUpdates for '%1': at most 16 "
+                                             "harnesses are kept")
+                                  .arg(it.key().left(32)));
+            continue;
+        }
+        harness_updates_off_.insert(it.key());
     }
 }
 

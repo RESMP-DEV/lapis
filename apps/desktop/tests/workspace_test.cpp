@@ -1504,6 +1504,26 @@ void explicitLaunchesUseUpdaterPolicy() {
     require(workspace.closeSession(agent->sessionId()) &&
                 waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
             "update-disabled fixture closes");
+
+    options.updateHarnesses = true;
+    options.harnessUpdatesOff = {QStringLiteral("claude")};
+    options.endpoint = fixture.root.filePath(QStringLiteral("pinned.sock"));
+    {
+        Workspace pinnedWorkspace(WorkspaceMode::live, options);
+        auto* pinnedAgent = pinnedWorkspace.focusedSession();
+        require(pinnedAgent && pinnedAgent->statusLabel() != QStringLiteral("Updating Claude…"),
+                "constructor-supplied update pins skip the startup update");
+        require(waitFor([pinnedAgent] { return pinnedAgent->inputReady(); }, 10000),
+                "the constructor-pinned agent starts");
+        require(!QFileInfo::exists(fixture.root.filePath(QStringLiteral("updates"))),
+                "constructor-supplied update pins do not create the update marker");
+        require(!QFileInfo::exists(fixture.root.filePath(QStringLiteral("harness-updates.log"))),
+                "constructor-supplied update pins do not log a startup update");
+        require(
+            pinnedWorkspace.closeSession(pinnedAgent->sessionId()) &&
+                waitFor([&pinnedWorkspace] { return pinnedWorkspace.sessions().isEmpty(); }, 10000),
+            "constructor-pinned fixture agent closes");
+    }
 }
 
 // The login helper (lapis_desktop --restore-agents) holds the workspace only
