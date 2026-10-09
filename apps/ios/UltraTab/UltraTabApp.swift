@@ -49,9 +49,11 @@ final class DeckStore {
 
     init() {
         let defaults = UserDefaults.standard
-        // The UI tests' first launch (-resetTutorial YES): the tutorial shows
-        // again, and Got it is remembered as it is for a person.
-        if defaults.bool(forKey: "resetTutorial") {
+        // The UI tests' first launch (-resetTutorial YES) shows the tutorial
+        // again; Got it is remembered afterwards, as it is for a person.
+        // A launch argument of the form -key value is how they say it, so
+        // read those as well as a stored default.
+        if defaults.bool(forKey: "resetTutorial") || Self.argument("resetTutorial") {
             defaults.removeObject(forKey: "tutorialSeen")
         }
         let bundled = Bundle.main.object(forInfoDictionaryKey: "LapisDefaultHost") as? String
@@ -63,6 +65,14 @@ final class DeckStore {
         default: nil
         }
         deck = Deck(sender: GatewaySender(host: host))
+    }
+
+    // Whether the process was launched with `-name YES`, `true` or `1`.
+    static func argument(_ name: String) -> Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-\(name)") else { return false }
+        let value = arguments[(index + 1)...].first
+        return ["YES", "true", "1"].contains(value)
     }
 
     func follow() {

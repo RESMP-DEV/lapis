@@ -77,9 +77,13 @@ struct DeckView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Text(entry.name)
-                            // Something waits here; how many is not the point.
+                            // Something waits here; how many is not the point,
+                            // but a person who cannot see the dot still hears it.
                             if entry.count > 0 {
-                                Circle().fill(Theme.gold).frame(width: 6, height: 6)
+                                Circle()
+                                    .fill(Theme.gold)
+                                    .frame(width: 6, height: 6)
+                                    .accessibilityLabel("\(entry.count) waiting")
                             }
                         }
                         .font(.footnote.weight(selected ? .semibold : .regular))

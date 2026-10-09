@@ -135,7 +135,11 @@ enum DeckOrder {
 // Sends text to an agent as if typed and submitted with Return: one paste
 // and Return through a join that never replaces the Mac window's
 // attachment. Returns nil when the agent's session admitted it, else why not.
+// Both labelled methods are required: the Mac records every answer by its
+// card, so no default can stand in for one without quietly dropping the
+// label. A test double implements all three.
 protocol Sender: Sendable {
+    // Plain text to an agent, for callers that answer no card.
     func submit(agentID: String, text: String) async -> String?
     // The same, with the card it answers, so the Mac logs the answer.
     func submit(agentID: String, text: String, label: AnswerLabel) async -> String?
@@ -149,14 +153,6 @@ struct AnswerLabel: Sendable, Equatable {
     let key: String
     let how: String // accepted, annotated, skipped
     let proposal: String
-}
-
-extension Sender {
-    func submit(agentID: String, text: String, label: AnswerLabel) async -> String? {
-        await submit(agentID: agentID, text: text)
-    }
-
-    func skipped(agentID: String, label: AnswerLabel) async {}
 }
 
 // What a swipe on the front card means.
@@ -298,9 +294,13 @@ final class Deck {
         refusals[card.key] = nil
         remember(card.name, how: "skipped", text: "", outcome: "skipped")
         message = ""
-        let sender = sender
+        // Skips are chained, not piled up: each waits for the one before it,
+        // so swiping quickly cannot grow a queue of tasks waiting on the Mac,
+        // and the Mac's answer log keeps the cards in the order they went.
         let label = AnswerLabel(key: card.key, how: "skipped", proposal: card.proposal)
-        pending.append(Task { await sender.skipped(agentID: card.agentID, label: label) })
+        let sender = sender
+        let agentID = card.agentID
+        enqueueSkip { await sender.skipped(agentID: agentID, label: label) }
         return .skipped
     }
 
@@ -319,13 +319,26 @@ final class Deck {
         category = ids[((current + delta) % ids.count + ids.count) % ids.count]
     }
 
-    // The task finishes once the agent's session has answered.
+    // The tasks finish once the agent's session has answered.
     private var pending: [Task<Void, Never>] = []
+    // The last skip, which the next one waits for; one in flight at a time.
+    private var skipChain: Task<Void, Never>?
+
+    private func enqueueSkip(_ send: @escaping @Sendable () async -> Void) {
+        let previous = skipChain
+        skipChain = Task {
+            _ = await previous?.value
+            await send()
+        }
+    }
 
     func waitForSends() async {
         let tasks = pending
         pending = []
         for task in tasks { await task.value }
+        let skips = skipChain
+        skipChain = nil
+        await skips?.value
     }
 
     private func refuse(_ why: String) -> Outcome {

@@ -85,6 +85,8 @@ final class UltraTabUITests: XCTestCase {
             XCTAssertTrue(element(block).waitForExistence(timeout: 5), "docs shows \(block)")
         }
         XCTAssertFalse(element("proposal").exists, "no proposed reply, no reply box")
+        XCTAssertTrue(element("no-proposal").waitForExistence(timeout: 5),
+                      "a card with no proposal says where a note goes")
         for gone in ["accept", "skip", "mic"] {
             XCTAssertFalse(element(gone).exists, "no \(gone) button: the swipes answer")
         }

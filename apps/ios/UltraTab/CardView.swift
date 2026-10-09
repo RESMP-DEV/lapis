@@ -28,6 +28,7 @@ struct CardView: View {
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(.white)
                         .fixedSize(horizontal: false, vertical: true)
+                        .contentShape(Rectangle())
                         .accessibilityIdentifier("headline")
                     ForEach(Array((card.composed?.blocks ?? []).enumerated()), id: \.offset) { _, block in
                         BlockView(block: block)
@@ -81,6 +82,12 @@ struct CardView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.raised, in: .rect(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.gold.opacity(0.45), lineWidth: 1))
+        } else {
+            // A right swipe would be refused; say where the note goes.
+            Text("No proposed reply. Add a note below.")
+                .font(.callout)
+                .foregroundStyle(Theme.quiet)
+                .accessibilityIdentifier("no-proposal")
         }
     }
 
