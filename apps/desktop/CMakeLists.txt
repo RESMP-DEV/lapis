@@ -31,6 +31,7 @@ add_library(lapis_desktop_view STATIC
     src/usage.cpp src/usage.hpp
     src/usage_limits.cpp src/usage_limits.hpp
     src/next_prompt.cpp src/next_prompt.hpp
+    src/agent_state.cpp src/agent_state.hpp src/attention_order.hpp
     src/plan_sign_in.cpp src/plan_sign_in.hpp
     src/harness_models.cpp src/harness_models.hpp
     src/attention_view.cpp
@@ -182,6 +183,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_next_prompt_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME next-prompt COMMAND lapis_next_prompt_tests)
     set_tests_properties(next-prompt PROPERTIES TIMEOUT 30)
+    add_executable(lapis_agent_state_tests tests/agent_state_test.cpp)
+    target_link_libraries(lapis_agent_state_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME agent-state COMMAND lapis_agent_state_tests)
+    set_tests_properties(agent-state PROPERTIES TIMEOUT 30)
     add_executable(lapis_plan_sign_in_tests tests/plan_sign_in_test.cpp)
     target_link_libraries(lapis_plan_sign_in_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME plan-sign-in COMMAND lapis_plan_sign_in_tests)
@@ -250,11 +255,12 @@ if(BUILD_TESTING)
     add_test(NAME ui-preview COMMAND lapis_ui_preview_tests)
     # Isolate focus ownership from the destructive QML engine-reload fixtures.
     add_test(NAME appearance-input COMMAND lapis_ui_preview_tests --shortcuts-only)
-    set_tests_properties(ui-preview appearance-input PROPERTIES RESOURCE_LOCK "qt_gui" TIMEOUT 20 ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
+    set_tests_properties(ui-preview PROPERTIES RESOURCE_LOCK "qt_gui" TIMEOUT 30 ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
+    set_tests_properties(appearance-input PROPERTIES RESOURCE_LOCK "qt_gui" TIMEOUT 20 ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
     add_executable(lapis_terminal_input_tests tests/terminal_input_test.cpp tests/link_receiver.hpp)
     target_link_libraries(lapis_terminal_input_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME terminal-input COMMAND lapis_terminal_input_tests)
-    set_tests_properties(terminal-input PROPERTIES TIMEOUT 30 RESOURCE_LOCK "qt_gui" ENVIRONMENT
+    set_tests_properties(terminal-input PROPERTIES TIMEOUT 45 RESOURCE_LOCK "qt_gui" ENVIRONMENT
         "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
     add_executable(lapis_terminal_render_tests tests/terminal_render_test.cpp)
     target_link_libraries(lapis_terminal_render_tests PRIVATE lapis_project_options lapis_desktop_view)

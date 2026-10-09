@@ -84,6 +84,7 @@ uv run --no-project python scripts/lapis.py run
 | [usage](docs/usage.md) | Plan usage and plans shared across sessions |
 | [phone](docs/phone.md) | The prototype iPhone app and its separately installed gateway |
 | [suggestions](docs/suggestions.md) | Optional next-prompt guesses, Tab, and their acceptance log |
+| [ultratab](docs/ultratab.md) | Ultra Tab, an overlay that deals waiting agents as cards (milestone 1, from source) |
 | [build](docs/build.md) | Building, checks, probes and fixtures |
 | [status](docs/status.md) | What is qualified, what remains, and the evidence |
 | [architecture](docs/architecture.md) | Design decisions and the plan |

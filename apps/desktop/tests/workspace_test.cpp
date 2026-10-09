@@ -2272,6 +2272,9 @@ void remoteAccountsRefuseBeforeReplacement() {
     // Keep this filename short: QLocalServer rejects Unix paths over the
     // platform sockaddr limit, while a saved agent ID remains a UUID.
     const auto reload_endpoint = root.filePath(QStringLiteral("reload.sock"));
+    // Fixture-local builder with one call site; argument order is the record's
+    // own field order, and distinct wrapper types add no safety here.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     const auto remoteAgent = [&](const QString& harness, const QString& command,
                                  const QString& id) {
         auto record = agentRecord(root.path(), id, "general");

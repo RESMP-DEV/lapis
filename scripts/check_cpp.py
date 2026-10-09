@@ -283,12 +283,13 @@ def _run_gate(tools, arguments, log_dir):
     if not all(result["passed"] for result in results):
         return results
 
-    tasks = [
-        (
-            "ctest",
-            [tools["ctest"], "--preset", arguments.mode, "--parallel", arguments.jobs],
-        )
-    ]
+    # CTest owns real GUI fixtures. Keep it serial and separate from the
+    # analyzer pool so non-GUI tests cannot starve frame-driven inputs.
+    results.append(run("ctest", [tools["ctest"], "--preset", arguments.mode], log_dir))
+    if not results[-1]["passed"]:
+        return results
+
+    tasks = []
     if arguments.mode in ("dev", "desktop"):
         analysis_failed = False
         try:

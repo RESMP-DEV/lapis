@@ -492,6 +492,9 @@ COMMANDS = {
     "build": lambda a: run_python_script("check_cpp.py", ["desktop", *a]),
     "cli-check": lambda a: run_python_script("check_cli_launch.py", ["--desktop", *a]),
     "ui-check": lambda a: run_python_script("check_ui_preview.py", a),
+    "performance-check": lambda a: run_python_script(
+        "check_performance_budget.py", a, needs_ghostty=False
+    ),
     "ui-review": lambda a: run_python_script("check_ui_review.py", a),
     "codex-probe": lambda a: run_python_script("probe_codex.py", a),
     "diagnose": lambda a: run_python_script(
@@ -518,6 +521,8 @@ DESCRIPTIONS = {
     "build": "Build the desktop app and run its checks",
     "cli-check": "Dedicated CLI/service/GUI acceptance fixtures",
     "ui-check": "Bounded preview captures and failure cases",
+    "performance-check": "Compare measured performance receipts against the "
+    "reviewed snappiness budget",
     "ui-review": "Serial offscreen/software UI and input review while using the desktop",
     "codex-probe": "Record content-free evidence from the installed Codex",
     "diagnose": "Read-only runtime/package diagnosis (no GUI or session restore)",
