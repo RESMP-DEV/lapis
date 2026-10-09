@@ -1977,7 +1977,16 @@ def log_answer(registry, record):
                 path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600
             )
             try:
-                os.write(fd, line)
+                # One answer per line: a short write would leave a torn
+                # record, so the whole line goes or none of it is kept.
+                written = 0
+                while written < len(line):
+                    count = os.write(fd, line[written:])
+                    if count <= 0:
+                        raise OSError(
+                            f"short answer write: {written}/{len(line)} bytes"
+                        )
+                    written += count
             finally:
                 os.close(fd)
         except OSError as error:
@@ -3220,7 +3229,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         queued, message = submit_paste(agent, text)
         label = answer_label(body)
-        if label:
+        if "key" in label:
             log_answer(
                 self.gateway.registry,
                 {
@@ -3249,6 +3258,15 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length))
         except ValueError:
             body = None
+        agent = None
+        if not identifier.startswith("terminal-"):
+            try:
+                agent = self.gateway.agent(identifier)
+            except (OSError, ValueError, GatewayError):
+                agent = None
+        if agent is None:
+            self.fail(HTTPStatus.NOT_FOUND, "No such agent")
+            return
         label = answer_label(body)
         if "key" not in label:
             self.fail(HTTPStatus.BAD_REQUEST, "No card key")

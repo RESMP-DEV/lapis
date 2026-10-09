@@ -18,7 +18,6 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
-#include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -28,7 +27,11 @@
 #include <QTextStream>
 #include <QTimer>
 #include <algorithm>
+#include <cerrno>
+#include <fcntl.h>
 #include <optional>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <utility>
 
 namespace {
@@ -71,20 +74,40 @@ void log_answer(const QString& path, QJsonObject answer) {
     answer.insert(QStringLiteral("t"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
     answer.insert(QStringLiteral("from"), QStringLiteral("mac"));
     const auto line = QJsonDocument(answer).toJson(QJsonDocument::Compact) + '\n';
-    const QFileInfo info(path);
-    if (info.isSymLink())
-        return;
-    if (info.exists() && info.size() + line.size() > limit) {
-        QFile::remove(path + QStringLiteral(".1"));
-        QFile::rename(path, path + QStringLiteral(".1"));
+    const auto encoded = QFile::encodeName(path);
+    struct stat existing{};
+    // The phone gateway owns this file too. Never follow a link, and rotate
+    // only a regular file; ::rename replaces the previous archive atomically,
+    // so it cannot delete an archive another writer just moved into place.
+    if (::lstat(encoded.constData(), &existing) == 0) {
+        if (!S_ISREG(existing.st_mode)) {
+            qWarning().noquote() << "Ultra Tab: answer log is not a regular file:" << path;
+            return;
+        }
+        if (qint64(existing.st_size) + line.size() > limit) {
+            const auto archive = QFile::encodeName(path + QStringLiteral(".1"));
+            if (::rename(encoded.constData(), archive.constData()) != 0) {
+                qWarning().noquote() << "Ultra Tab: answers not rotated:" << qt_error_string(errno);
+            }
+        }
     }
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Append)) {
+    // Owner-only from creation, without the window an open-then-chmod leaves.
+    const int fd = ::open(encoded.constData(), O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0600);
+    if (fd < 0) {
+        qWarning().noquote() << "Ultra Tab: answer not logged:" << qt_error_string(errno);
+        return;
+    }
+    QFile file;
+    if (!file.open(fd, QIODevice::WriteOnly | QIODevice::Append, QFileDevice::AutoCloseHandle)) {
         qWarning().noquote() << "Ultra Tab: answer not logged:" << file.errorString();
         return;
     }
-    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    file.write(line);
+    if (::fchmod(fd, 0600) != 0) {
+        qWarning().noquote() << "Ultra Tab: answer log not owner-only:" << qt_error_string(errno);
+    }
+    if (file.write(line) != line.size() || !file.flush()) {
+        qWarning().noquote() << "Ultra Tab: answer not written:" << file.errorString();
+    }
 }
 
 class Overlay final {

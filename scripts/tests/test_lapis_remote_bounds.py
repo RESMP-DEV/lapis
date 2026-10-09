@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import os
 import shutil
 import socket
 import tempfile
@@ -920,3 +921,21 @@ class AnswerLogBoundsTests(unittest.TestCase):
         (folder / remote.ANSWERS_FILE).symlink_to(target)
         remote.log_answer(folder / "workspace.json", {"agent": "a", "how": "skipped"})
         self.assertEqual(target.read_text(), "")
+
+    def test_a_partial_write_does_not_leave_a_corrupt_answer(self):
+        folder = Path(tempfile.mkdtemp(prefix="lapis-answers-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        registry = folder / "workspace.json"
+        original_write = os.write
+
+        def short_then_complete(descriptor, data):
+            if len(data) > 3:
+                return original_write(descriptor, data[:3])
+            return original_write(descriptor, data)
+
+        with patch.object(os, "write", side_effect=short_then_complete):
+            remote.log_answer(registry, {"agent": "a", "how": "skipped", "key": "k"})
+        row = json.loads((folder / remote.ANSWERS_FILE).read_text())
+        self.assertEqual(
+            (row["from"], row["agent"], row["how"]), ("phone", "a", "skipped")
+        )

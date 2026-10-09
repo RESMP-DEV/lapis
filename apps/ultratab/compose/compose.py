@@ -451,7 +451,8 @@ def render(bundle, fence=None):
     if bundle["looked"]:
         lines.append(
             "They last looked at it {} ago ({}); {} agent turns since.".format(
-                bundle.get("looked_ago") or "some time", bundle["looked"],
+                bundle.get("looked_ago") or "some time",
+                bundle["looked"],
                 bundle["turns_since"] or 0,
             )
         )
@@ -718,6 +719,10 @@ def card_from(answer, bundle, key, model, composed):
 
 def finish(content, bundle, key, model, composed):
     card = {"key": key, "composed": composed, "model": model}
+    if bundle.get("since"):
+        # Timing frames the card without being shown; the renderer owns the
+        # choice to omit this field.
+        card["since"] = bundle["since"]
     if content.get("tldr"):
         card["tldr"] = content["tldr"]
     card["blocks"] = content.get("blocks", [])

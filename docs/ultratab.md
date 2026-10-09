@@ -208,6 +208,7 @@ typed, not as taken with Tab.
 ```json
 {"v": 1, "cards": {"<session id>": {
   "key": "<turn key>", "composed": "2026-10-06T21:04:00Z", "model": "...",
+  "since": "You last looked 3 h ago; 2 turns since",
   "tldr": "one line",
   "blocks": [
     {"type": "text", "text": "..."},
@@ -227,7 +228,8 @@ or the `agent_state.json` values `<turnAtMs>|<neededAtMs>|<offer key>|<requests>
 joined by `|`, optionally prefixed with `<session id>|`. Any other key is stale
 and the plain card shows. A card without `tldr` keeps the plain
 headline; one without `prompt` keeps lapis's guess. A request card never takes a
-composed prompt.
+composed prompt. `since` is when the person last looked and how many turns
+passed since; it frames the card but neither renderer shows it.
 
 What is shown, and the limits applied on reading:
 
@@ -251,7 +253,8 @@ What is shown, and the limits applied on reading:
 Ultra Tab for iPhone (`apps/ios/UltraTab`) is a separate app with the same
 icon. It deals the same deck, in the same order, one card at a time: the
 agent's name, the headline, up to three blocks (paragraph, list, table,
-diagram, link) and the proposed reply, in a gold-edged box. The category chips
+diagram, link) and the proposed reply, in a gold-edged box. A card with no
+proposal shows a quiet hint to add a note below. The category chips
 are the top of the screen; a dot marks one where something waits. Settings
 (the gateway address) open from the gear on the empty deck or from a
 connection notice. It
@@ -284,9 +287,14 @@ Every answer, on either app, is also recorded on the Mac in
 `runtime/ultratab_answers.jsonl` (owner-only; past 16 MB it moves to `.1`),
 one JSON line each: when, from the phone or the Mac, the agent, the card's
 key, what it proposed, accepted, annotated or skipped, the text sent and
-whether the session took it. These labels are what teaches lapis what to
-propose and how to show a card; a skip from the phone reaches no agent and
-only this log.
+whether the session took it. Every line names the card it answers: the gateway
+logs a submit only when the request carries a card key, and `POST
+/api/agents/<id>/skip` answers 404 for an agent the registry does not name and
+400 without a key. A skip records no text and no outcome, because no session
+saw it. These labels are what teaches lapis what to propose and how to show a
+card; a skip from the phone reaches no agent and only this log. The Mac overlay
+and the gateway both rotate the log by replacing the file with its `.1`
+archive, so neither can destroy the other's archive.
 
 Install it on the phone (unlocked, on the same Wi-Fi as the Mac or on a cable)
 with:
