@@ -1,5 +1,6 @@
 #include "agent_search.hpp"
 #include "agent_state.hpp"
+#include "open_request.hpp"
 #include "alerts.hpp"
 #include "app_paths.hpp"
 #include "conversation_index.hpp"
@@ -751,6 +752,25 @@ void keep_agent_state(std::optional<lapis::desktop::AgentStatePublisher>& kept,
                      .filePath(QStringLiteral("agent_state.json")));
 }
 
+// Ultra Tab's "show it in lapis" (Command-L on a card): select that agent and
+// bring the window forward, as clicking its notification does.
+void follow_open_requests(std::optional<lapis::desktop::OpenRequests>& kept,
+                          lapis::desktop::Workspace& workspace, QPointer<QQuickWindow>& shown,
+                          bool isolated) {
+    if (isolated || !workspace.holdsRegistry())
+        return;
+    kept.emplace(QDir(QFileInfo(workspace.storagePath()).absolutePath())
+                     .filePath(QStringLiteral("ultratab_open.json")),
+                 [&workspace, &shown](const QString& id) {
+                     lapis::desktop::interaction::cause(QStringLiteral("ultratab"));
+                     if (!workspace.selectSession(id) || !shown)
+                         return;
+                     shown->show();
+                     shown->raise();
+                     shown->requestActivate();
+                 });
+}
+
 // The quick-command terminals beside this workspace, with ssh hosts from the
 // user's ssh config; those still running come back.
 std::unique_ptr<lapis::desktop::Terminals>
@@ -968,6 +988,8 @@ int main(int argc, char** argv) {
         QObject* const nextForQml = keep_next_prompt(nextPrompt, workspace, keymap, isolated);
         std::optional<lapis::desktop::AgentStatePublisher> agentState;
         keep_agent_state(agentState, workspace, nextPrompt, isolated);
+        std::optional<lapis::desktop::OpenRequests> openRequests;
+        follow_open_requests(openRequests, workspace, shown, isolated);
         std::optional<lapis::desktop::PlanSignIn> planSignIn;
         QObject* const signInForQml = keep_plan_sign_in(planSignIn, keymap, isolated);
         const auto conversations = conversation_index(workspace);

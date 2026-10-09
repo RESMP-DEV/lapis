@@ -2,6 +2,7 @@
 // runtime/agent_state.json for other local apps (Ultra Tab): owner-only,
 // replaced atomically, rate-limited publish-to-publish, and only on change.
 #include "agent_state.hpp"
+#include "open_request.hpp"
 #include "workspace.hpp"
 
 #include <QCoreApplication>
@@ -10,6 +11,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
+#include <QDateTime>
 #include <QTemporaryDir>
 
 #include <functional>
@@ -100,11 +103,43 @@ void publishesEachAgentPrivately() {
 }
 } // namespace
 
+// Ultra Tab's request to show an agent: each fresh one opens it once; old,
+// repeated, malformed and linked requests open nothing.
+void followsOpenRequests() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "request directory");
+    const auto path = directory.filePath(QStringLiteral("ultratab_open.json"));
+    QStringList opened;
+    lapis::desktop::OpenRequests requests(path,
+                                          [&opened](const QString& id) { opened.append(id); });
+    const auto id = QStringLiteral("00000000-0000-4000-8000-000000000001");
+    const auto put = [&path](const QJsonObject& object) {
+        QSaveFile file(path);
+        require(file.open(QIODevice::WriteOnly), "write a request");
+        file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
+        require(file.commit(), "commit the request");
+    };
+    const auto now = [] { return QDateTime::currentMSecsSinceEpoch(); };
+    put({{QStringLiteral("agent"), id}, {QStringLiteral("atMs"), static_cast<double>(now())}});
+    require(waitFor([&] { return opened.size() == 1; }) && opened.front() == id,
+            "a fresh request opens its agent");
+    requests.check();
+    require(opened.size() == 1, "the same request opens it once");
+    put({{QStringLiteral("agent"), id},
+         {QStringLiteral("atMs"), static_cast<double>(now() - 60000)}});
+    requests.check();
+    put({{QStringLiteral("agent"), QStringLiteral("not an id")},
+         {QStringLiteral("atMs"), static_cast<double>(now() + 10)}});
+    requests.check();
+    require(opened.size() == 1, "stale and malformed requests open nothing");
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("lapis"));
     try {
         publishesEachAgentPrivately();
+        followsOpenRequests();
     } catch (const std::exception& error) {
         std::cerr << "agent state test failed: " << error.what() << '\n';
         return 1;
