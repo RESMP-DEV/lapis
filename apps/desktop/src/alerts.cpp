@@ -218,11 +218,13 @@ void Notifier::notify(SessionPreview* item, bool needsYou) {
                                        : "posted: you are away");
     // A finished turn ending on what was already seen, or in front of the
     // person watching it, leaves nothing to come back to. Seeing an open
-    // request is not answering it.
-    const bool seen = (seen_ != nullptr && !needsYou && seen_->unchanged(item)) ||
-                      (!needsYou && looking_ && looking_(item));
+    // request is not answering it. Live requests arrive on turnFinished;
+    // nothing emits agentNeedsYou, so the signal flag alone misses them.
+    const bool open = needsYou || item->attentionCount() > 0;
+    const bool seen =
+        !open && ((seen_ != nullptr && seen_->unchanged(item)) || (looking_ && looking_(item)));
     if (config_.notify() && !seen)
-        wait(item, needsYou);
+        wait(item, open);
     if (skipped != nullptr)
         return;
     // The CLI leads the body: a title is the conversation's, and one about
@@ -256,17 +258,21 @@ void Notifier::wait(SessionPreview* item, bool needsYou) {
 void Notifier::check() {
     const auto remind = remindMs();
     // Answered (a new turn, or the request resolved), looked at now or
-    // already seen, ended or closed: nothing is waiting any more. A look
-    // SeenScreens recorded answers a finished wait even after the person
-    // moves on; an open request still counts as waiting until it resolves.
+    // already seen, ended or closed: nothing is waiting any more. A look,
+    // one SeenScreens recorded while the agent was shown, answers a
+    // finished wait even after the person moves on. Seeing an open request
+    // is not answering it: it stays queued until it resolves or a new turn
+    // starts, however long the person keeps reading it.
     std::erase_if(waiting_, [this](const Waiting& waiting) {
         if (!waiting.item)
             return true;
-        const auto kind = waiting.item->statusKind();
+        SessionPreview* item = waiting.item;
+        const auto kind = item->statusKind();
+        const bool open = waiting.needsYou || item->attentionCount() > 0;
         return kind == QLatin1String("working") || kind == QLatin1String("ended") ||
-               (waiting.needsYou && waiting.item->attentionCount() == 0) ||
-               (!waiting.needsYou && seen_ != nullptr && seen_->unchanged(waiting.item)) ||
-               (looking_ && looking_(waiting.item));
+               (waiting.needsYou && item->attentionCount() == 0) ||
+               (!open && seen_ != nullptr && seen_->unchanged(item)) ||
+               (!open && looking_ && looking_(item));
     });
     if (remind <= 0 || !config_.notify())
         waiting_.clear();
