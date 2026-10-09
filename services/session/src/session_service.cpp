@@ -374,7 +374,7 @@ class SessionService final : public QObject {
         snapshot_clock_.start();
         attention_clock_.start();
         timer_.setSingleShot(true);
-        connect(&timer_, &QTimer::timeout, this, [this] { publish(); });
+        connect(&timer_, &QTimer::timeout, this, [this] { publish_paced_output(); });
         ack_timer_.setSingleShot(true);
         ack_timer_.setInterval(launch.agent == AgentMode::codex ? codex_sync_timeout_ms
                                                                 : terminal_sync_timeout_ms);
@@ -459,9 +459,9 @@ class SessionService final : public QObject {
     QString attention_diagnostic() const {
         return codex_observer_    ? codex_observer_->diagnostic()
                : claude_observer_ ? claude_observer_->diagnostic()
-               : notify_turns_    ? notify_turns_->diagnostic()
-                                  : QStringLiteral("Codex notify turns are not connected; "
-                                                      "status is estimated from output");
+               : notify_turns_ ? notify_turns_->diagnostic()
+                               : QStringLiteral("Codex notify turns are not connected; status is "
+                                                "estimated from output");
     }
     QJsonObject attention_details(const attention::RequestId& id) const {
         return codex_observer_    ? codex_observer_->details(id)
@@ -1086,11 +1086,25 @@ class SessionService final : public QObject {
                              std::size_t{32768} / (std::size_t{4} * current_size_.columns))));
                 const auto sync_limit = synchronized_output_limit(pending_output_);
                 if (sync_limit < 0) {
+                    const auto safe =
+                        std::min(chunk, pending_output_.size() -
+                                            synchronized_output_holdback(pending_output_));
+                    if (safe > 0) {
+                        terminal_.feed(std::string_view(pending_output_.constData(),
+                                                        static_cast<std::size_t>(safe)));
+                        pending_output_.remove(0, safe);
+                        mark_dirty();
+                        timing_.parse_end_ns = monotonic_ns();
+                        continue;
+                    }
                     parser_waiting = true;
-                    QTimer::singleShot(0, this, [this] { process_output(); });
                     break;
                 }
-                const auto size = std::min({pending_output_.size(), chunk, sync_limit});
+                // `sync_limit` ends at a complete DEC 2026 marker. Feeding only
+                // `chunk` bytes could split that marker and lose both edges.
+                const auto size = sync_limit < pending_output_.size()
+                                      ? sync_limit
+                                      : std::min(pending_output_.size(), chunk);
                 terminal_.feed(
                     std::string_view(pending_output_.constData(), static_cast<std::size_t>(size)));
                 pending_output_.remove(0, size);
@@ -1112,9 +1126,23 @@ class SessionService final : public QObject {
         processing_output_ = false;
     }
     void resume_output(bool parser_waiting) {
-        if (parser_waiting || output_waiting_)
+        if (parser_waiting) {
+            // The remainder must arrive from the PTY; never spin on the same
+            // partial marker, even when output pressure paused reads.
+            if (output_pressure_) {
+                output_pressure_ = false;
+                output_retention_logged_ = false;
+                output_pressure_bytes_ = 0;
+                output_pressure_clock_.invalidate();
+            }
+            pty_.pauseOutput(false);
+            return;
+        }
+        if (output_waiting_)
             return;
         if (!pending_output_.isEmpty()) {
+            if (timer_.isActive())
+                return; // a paced whole-frame publication owns the retained screen
             QTimer::singleShot(0, this, [this] { process_output(); });
             return;
         }
@@ -1379,6 +1407,14 @@ class SessionService final : public QObject {
         if ((client_ && (!snapshot_in_flight_ || ready_) && dirty_) || views_due())
             timer_.start(static_cast<int>(snapshot_pace_.wait_ms(snapshot_clock_.elapsed())));
     }
+    void publish_paced_output() {
+        timer_.stop();
+        publish();
+        // This is the only safe point to let an already-queued synchronized
+        // frame mutate the terminal retained by the publication that fired.
+        if (!pending_output_.isEmpty() && !output_waiting_ && !processing_output_)
+            QTimer::singleShot(0, this, [this] { process_output(); });
+    }
     // Full-screen programs such as Claude Code bracket each repaint in a
     // synchronized update (DEC mode 2026). A screen published inside one is
     // half drawn: scrolling such a program showed its transcript being
@@ -1394,9 +1430,13 @@ class SessionService final : public QObject {
             return false;
         }
         sync_since_.invalidate();
-        // Replace any hold timer. A completed frame must not wait behind the
-        // next update's begin: the terminal updates the same grid in place.
+        // Replace any hold timer. A completed frame is retained until the next
+        // paced publication; a later update must not overwrite it first.
         timer_.stop();
+        if (const qint64 wait = snapshot_pace_.wait_ms(snapshot_clock_.elapsed()); wait > 0) {
+            timer_.start(static_cast<int>(wait));
+            return true;
+        }
         publish();
         return true;
     }
@@ -1851,6 +1891,18 @@ class SessionService final : public QObject {
         }
         return pending.size();
     }
+
+    static qsizetype synchronized_output_holdback(const QByteArray& pending) {
+        static constexpr std::array<std::string_view, 2> markers{{"\x1b[?2026h", "\x1b[?2026l"}};
+        for (const auto& marker : markers) {
+            const auto marker_size = static_cast<qsizetype>(marker.size());
+            for (auto length = std::min(marker_size - 1, pending.size()); length > 0; --length)
+                if (std::equal(pending.cend() - length, pending.cend(), marker.cbegin()))
+                    return length;
+        }
+        return 0;
+    }
+
     [[nodiscard]] bool views_due() const {
         return std::any_of(views_.begin(), views_.end(), [](const auto& view) {
             return view->socket && view->dirty && (view->ready || !view->in_flight);

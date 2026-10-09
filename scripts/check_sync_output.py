@@ -68,7 +68,10 @@ def exercise(binary, runtime, artifacts):
             # One write, no quiet gap: several finished DEC 2026 frames
             # are already queued back to back.
             client.send(TEXT, b"burst\n")
-            client.snapshot(lambda s: "FRAME4" in s["text"], timeout=5)
+            client.snapshot(
+                lambda s: seen.append(s["text"]) or "FRAME4" in s["text"],
+                timeout=5,
+            )
             half = [
                 text
                 for text in seen

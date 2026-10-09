@@ -84,6 +84,12 @@ class AttentionServiceTestAccess final {
         return service.pending_output_;
     }
 
+    [[nodiscard]] static quint64 snapshot_sequence(const SessionService& service) {
+        return service.snapshot_sequence_;
+    }
+
+    static void publish_paced_output(SessionService& service) { service.publish_paced_output(); }
+
     [[nodiscard]] static bool request_pending(const SessionService& service,
                                               const attention::RequestId& id) {
         const auto found = service.codex_state_->pending().find(id);
@@ -241,7 +247,7 @@ void adjacent_updates_do_not_hide_a_finished_frame() {
     require(Access::in_sync(service));
 }
 
-void a_completed_frame_publishes_even_after_a_recent_frame() {
+void a_marker_crossing_the_chunk_boundary_feeds_as_one_unit() {
     using Access = lapis::session::AttentionServiceTestAccess;
     QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-sync-XXXXXX")};
     require(directory.isValid());
@@ -257,10 +263,36 @@ void a_completed_frame_publishes_even_after_a_recent_frame() {
     client.connectToServer(endpoint);
     require(client.waitForConnected(5000));
     Access::use_client(service, &client);
+    const QByteArray padding(100, 'x');
+    Access::feed_output(service, padding + QByteArrayLiteral("\x1b[?2026hWHOLE\x1b[?2026lNEXT"));
+    require(Access::pending_output(service) == QByteArrayLiteral("NEXT"));
+    require(client.bytesToWrite() > 0);
+}
+
+void a_completed_frame_waits_for_the_paced_publication() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-sync-XXXXXX")};
+    require(directory.isValid());
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    Access::use_client(service, &client);
+    const quint64 before_snapshot = Access::snapshot_sequence(service);
     Access::defer_next_snapshot(service);
 
     Access::feed_output(service, QByteArrayLiteral("\x1b[?2026hWHOLE\x1b[?2026l"));
-    require(client.bytesToWrite() > 0);
+    require(Access::publish_timer_active(service));
+    require(client.bytesToWrite() == 0);
+    Access::publish_paced_output(service);
+    require(Access::snapshot_sequence(service) > before_snapshot);
     require(!Access::publish_timer_active(service));
 }
 
@@ -286,7 +318,7 @@ void a_split_marker_waits_when_the_client_snapshot_is_in_flight() {
 
     const QByteArray output = QByteArrayLiteral("x\x1b[?202");
     Access::feed_output(service, output);
-    require(Access::pending_output(service) == output);
+    require(Access::pending_output(service) == QByteArrayLiteral("\x1b[?202"));
 }
 } // namespace
 
@@ -298,7 +330,8 @@ int main(int argc, char** argv) {
         filtered_output_still_records_pty_timing();
         parser_carries_a_split_synchronized_marker();
         adjacent_updates_do_not_hide_a_finished_frame();
-        a_completed_frame_publishes_even_after_a_recent_frame();
+        a_marker_crossing_the_chunk_boundary_feeds_as_one_unit();
+        a_completed_frame_waits_for_the_paced_publication();
         a_split_marker_waits_when_the_client_snapshot_is_in_flight();
         std::cout << "attention-service: ok\n";
         return 0;
