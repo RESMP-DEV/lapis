@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LAPIS_DESKTOP_TESTS_MODEL_CHANGE_RECORDER_HPP
+#define LAPIS_DESKTOP_TESTS_MODEL_CHANGE_RECORDER_HPP
 
 #include <QObject>
 
@@ -11,3 +12,5 @@ struct ModelChangeRecorder final : QObject {
   public Q_SLOTS:
     void changed() { ++changes; }
 };
+
+#endif
