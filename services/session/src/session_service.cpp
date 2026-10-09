@@ -1143,6 +1143,10 @@ class SessionService final : public QObject {
         if (!pending_output_.isEmpty()) {
             if (timer_.isActive())
                 return; // a paced whole-frame publication owns the retained screen
+            if (output_publication_blocked()) {
+                schedule();
+                return;
+            }
             QTimer::singleShot(0, this, [this] { process_output(); });
             return;
         }
@@ -1412,7 +1416,8 @@ class SessionService final : public QObject {
         publish();
         // This is the only safe point to let an already-queued synchronized
         // frame mutate the terminal retained by the publication that fired.
-        if (!pending_output_.isEmpty() && !output_waiting_ && !processing_output_)
+        if (!pending_output_.isEmpty() && !output_waiting_ && !processing_output_ &&
+            !output_publication_blocked())
             QTimer::singleShot(0, this, [this] { process_output(); });
     }
     // Full-screen programs such as Claude Code bracket each repaint in a
@@ -1437,8 +1442,19 @@ class SessionService final : public QObject {
             timer_.start(static_cast<int>(wait));
             return true;
         }
+        if (output_publication_blocked()) {
+            schedule();
+            return true;
+        }
         publish();
         return true;
+    }
+    [[nodiscard]] bool output_publication_blocked() const {
+        if (dirty_ && client_ && client_->bytesToWrite() != 0)
+            return true;
+        return std::any_of(views_.cbegin(), views_.cend(), [](const auto& view) {
+            return view->socket && view->dirty && view->socket->bytesToWrite() != 0;
+        });
     }
     void publish() {
         // Mid-update: hold the screen until the update ends (which publishes
@@ -1448,6 +1464,8 @@ class SessionService final : public QObject {
             timer_.start(static_cast<int>(sync_hold_ms - sync_since_.elapsed()));
             return;
         }
+        if (output_publication_blocked())
+            return;
         snapshot_pace_.published(snapshot_clock_.elapsed());
         publish_views();
         publish_client();

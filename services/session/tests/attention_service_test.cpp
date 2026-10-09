@@ -296,6 +296,34 @@ void a_completed_frame_waits_for_the_paced_publication() {
     require(!Access::publish_timer_active(service));
 }
 
+void a_completed_frame_waits_for_an_in_flight_snapshot() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-sync-XXXXXX")};
+    require(directory.isValid());
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    Access::use_client(service, &client);
+    const QByteArray large(static_cast<qsizetype>(1024 * 1024), '0');
+    require(client.write(large) > 0);
+    require(client.bytesToWrite() > 0);
+
+    const QByteArray begin = QByteArrayLiteral("\x1b[?2026h");
+    Access::feed_output(service, begin + QByteArrayLiteral("WHOLE\x1b[?2026l") + begin +
+                                     QByteArrayLiteral("NEXT"));
+    QCoreApplication::processEvents();
+    require(Access::pending_output(service) == begin + QByteArrayLiteral("NEXT"));
+    require(!Access::in_sync(service));
+}
+
 void a_split_marker_waits_when_the_client_snapshot_is_in_flight() {
     using Access = lapis::session::AttentionServiceTestAccess;
     QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-sync-XXXXXX")};
@@ -332,6 +360,7 @@ int main(int argc, char** argv) {
         adjacent_updates_do_not_hide_a_finished_frame();
         a_marker_crossing_the_chunk_boundary_feeds_as_one_unit();
         a_completed_frame_waits_for_the_paced_publication();
+        a_completed_frame_waits_for_an_in_flight_snapshot();
         a_split_marker_waits_when_the_client_snapshot_is_in_flight();
         std::cout << "attention-service: ok\n";
         return 0;

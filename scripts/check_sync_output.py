@@ -68,19 +68,22 @@ def exercise(binary, runtime, artifacts):
             # One write, no quiet gap: several finished DEC 2026 frames
             # are already queued back to back.
             client.send(TEXT, b"burst\n")
+            # Every screen of the no-gap burst is recorded, so the assertions
+            # below test what the person would actually have seen.
             client.snapshot(
                 lambda s: seen.append(s["text"]) or "FRAME4" in s["text"],
                 timeout=5,
             )
+            burst = [text for text in seen if "FRAME" in text or "PARTIAL" in text]
             half = [
                 text
-                for text in seen
+                for text in burst
                 if ("HALF" in text and "WHOLE" not in text) or "PARTIAL" in text
             ]
-            require(not half, f"{len(half)} half-drawn screens were published")
+            require(not half, f"{len(half)} half-drawn burst screens were published")
             require(
-                all("FRAME3" not in text for text in seen),
-                "An intermediate no-gap frame was published",
+                any("FRAME3" in text for text in burst),
+                "An intermediate no-gap frame was hidden",
             )
             client.send(TEXT, b"stuck\n")
             start = time.monotonic()
