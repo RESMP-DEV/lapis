@@ -111,6 +111,13 @@ class TabAwayEvalTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unrecognized timestamp"):
             tab_away_eval.utc("not a timestamp")
 
+    def test_evaluation_bounds_the_held_out_fraction(self):
+        self.assertEqual(tab_away_eval.evaluation_start(10, 0.3), 7)
+        self.assertEqual(tab_away_eval.evaluation_start(10, 1.0), 0)
+        for bad in (0.0, -0.1, 1.1):
+            with self.assertRaisesRegex(ValueError, "--held-out"):
+                tab_away_eval.evaluation_start(10, bad)
+
 
 if __name__ == "__main__":
     unittest.main()

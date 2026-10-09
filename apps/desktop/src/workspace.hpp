@@ -805,6 +805,7 @@ class Workspace final : public QObject {
     void noteFocusMove();
     void settleChoice();
     void rememberInitialFocus();
+    void noteStructuralFocus();
     bool batching_categories_{};
     bool discardSession(const QString& id);
     void changed();

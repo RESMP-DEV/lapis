@@ -223,6 +223,13 @@ def utc(stamp):
     return parsed.timestamp()
 
 
+def evaluation_start(count, held_out):
+    """Return the first test index for a held-out fraction in (0, 1]."""
+    if not 0.0 < held_out <= 1.0:
+        raise ValueError("--held-out must be in (0, 1]")
+    return min(int(count * (1.0 - held_out)), count - 1)
+
+
 def jsonl(path):
     out = []
     for name in sorted(glob.glob(str(path) + "*"), reverse=True):
@@ -417,7 +424,10 @@ def main(argv=None):
     if not decisions:
         print("no choices among two or more waiting agents yet")
         return 1
-    test_from = int(len(decisions) * (1 - args.held_out))
+    try:
+        test_from = evaluation_start(len(decisions), args.held_out)
+    except ValueError as error:
+        parser.error(str(error))
     print_report(title, decisions, test_from, evaluate(decisions, test_from), args.out)
     return 0
 

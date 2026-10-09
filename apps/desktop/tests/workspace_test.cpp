@@ -997,6 +997,38 @@ void closingRemovesAPendingChoiceCandidate() {
             "a closed candidate cannot form a learned choice");
 }
 
+// Closing the focused agent reassigns focus structurally. It must cancel Tab's
+// pending choice, not attribute the survivor to the person after a timer.
+void closingFocusedAgentCancelsPendingChoice() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "focused-close directory");
+    auto options = tabAttributionRegistry(directory, QStringLiteral("source"));
+    Workspace workspace(WorkspaceMode::live, options);
+    workspace.setChoiceSettleMsForTesting(20);
+    lapis::session::wire::AttentionSnapshot state;
+    state.available = state.connected = state.ready = true;
+    const auto finish = [&](const QString& id) {
+        auto* item = workspace.session(id);
+        item->setConnection(QStringLiteral("ready"), true);
+        state.activity = lapis::session::attention::Activity::working;
+        item->applyAttention(state);
+        state.activity = lapis::session::attention::Activity::turn_completed;
+        item->applyAttention(state);
+        return item;
+    };
+    const QString source = QStringLiteral("3d53119b-85c5-439b-a2cb-f884742bd11f");
+    const QString target = QStringLiteral("eb00ff7d-e97a-472a-b74e-01c3909d5a55");
+    finish(source);
+    finish(target);
+    require(workspace.nextPriorityAttention({}) &&
+                workspace.focusedSession()->sessionId() == target,
+            "Tab stages a focused choice");
+    require(workspace.closeSession(target, true), "close the focused candidate");
+    QThread::msleep(60);
+    require(workspace.tabRanker().model().decisions == 0 && !workspace.tabRanker().refitting(),
+            "a structural focus change teaches nothing");
+}
+
 // A failed registry save must not teach a nonexistent Tab move or leave a
 // half-staged choice behind.
 void failedTabSelectionRecordsNothing() {
@@ -6625,6 +6657,7 @@ int main(int argc, char** argv) {
         tabAttributionFollowsTheNextHandMove();
         firstTabChoiceExcludesTheInitialFocus();
         closingRemovesAPendingChoiceCandidate();
+        closingFocusedAgentCancelsPendingChoice();
         failedTabSelectionRecordsNothing();
         modelessAgentsGetTheDefaultMode();
         claudeAgentsUseServiceAdapter();

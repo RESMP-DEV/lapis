@@ -621,7 +621,8 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
     choice_settle_.setSingleShot(true);
     choice_settle_.setInterval(2500);
     connect(&choice_settle_, &QTimer::timeout, this, [this] { settleChoice(); });
-    connect(this, &Workspace::focusChanged, this, [this] { noteFocusMove(); });
+    // Only intent-driven selection and navigation below call noteFocusMove;
+    // structural changes may reassign focus without a person's move.
     harness_updates_off_ = options.harnessUpdatesOff;
     // Selecting an agent is looking at it.
     connect(this, &Workspace::focusChanged, this, [this] {
@@ -788,6 +789,7 @@ void Workspace::nextSession(int delta) {
     saved_walk->selected = step.selected;
     if (retiled)
         emit tilesChanged();
+    noteFocusMove();
     emit focusChanged();
 }
 
@@ -1012,6 +1014,15 @@ void Workspace::rememberInitialFocus() {
     const auto* focused = focusedSession();
     last_focus_id_ = focused != nullptr ? focused->sessionId() : QString{};
 }
+// A moved, closed or re-tiled agent can reassign focus, but that is not the
+// person choosing an agent. Drop any pending choice and restart attribution
+// from the structural focus.
+void Workspace::noteStructuralFocus() {
+    choice_.reset();
+    choice_settle_.stop();
+    const auto* focused = focusedSession();
+    last_focus_id_ = focused != nullptr ? focused->sessionId() : QString{};
+}
 void Workspace::watch(SessionPreview* item) {
     connect(item, &SessionPreview::connectionChanged, this, [this, item] { finishClosing(item); });
     // The service reports why a session ended just after the state changes.
@@ -1130,6 +1141,7 @@ void Workspace::restoreSelection() {
 }
 void Workspace::changed() {
     restoreSelection();
+    noteStructuralFocus();
     emit categoriesChanged();
     emit categoryChanged();
     emit sessionsChanged();
@@ -1229,6 +1241,7 @@ bool Workspace::selectCategory(const QString& id) {
     active_category_ = id;
     if (!commit(previous))
         return false;
+    noteFocusMove();
     emit categoryChanged();
     emit sessionsChanged();
     emit tilesChanged();
@@ -1268,6 +1281,7 @@ bool Workspace::selectSession(const QString& id) {
         }
     if (!commit(previous))
         return false;
+    noteFocusMove();
     if (category_changed) {
         emit categoryChanged();
         emit sessionsChanged();
