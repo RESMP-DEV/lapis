@@ -56,14 +56,35 @@ class TileLayout {
     bool setRatio(const QString& path, qreal ratio);
     [[nodiscard]] std::vector<Tile> tiles(const QRectF& bounds) const;
     [[nodiscard]] std::vector<Divider> dividers(const QRectF& bounds) const;
-    // The nearest tile beside `id` in `direction`, or empty.
+    // The nearest tile beside `id` in `direction`, or empty: only tiles that
+    // share some of its span across that direction count, and it never wraps.
     [[nodiscard]] QString neighbor(const QString& id, Edge direction) const;
+    // Agents as the stage shows them: by top edge, then left edge.
+    [[nodiscard]] QStringList readingOrder() const;
+    // The order the next and previous agent keys walk: the tiles in reading
+    // order, then the agents of `strip` (the category, in strip order) that are
+    // not tiled.
+    [[nodiscard]] QStringList cycleOrder(const QStringList& strip) const;
+    // One press of the next or previous agent key from `current`, walking
+    // `order` (cycleOrder of `home`). A tile of `home` is selected with `home`
+    // as it was; an untiled agent is shown in `slot`, the tile the walk left
+    // the tiles from, while the agent of that tile waits in the strip. Without
+    // tiles, the step only selects.
+    struct Step;
+    [[nodiscard]] static Step step(const TileLayout& home, const QStringList& order,
+                                   const QString& slot, const QString& current, int delta);
     [[nodiscard]] QJsonObject toJson() const;
     // Agents not in `known`, repeats and malformed splits are dropped.
     [[nodiscard]] static TileLayout fromJson(const QJsonObject& json, const QSet<QString>& known);
 
   private:
     std::optional<tile_detail::Node> root_;
+};
+
+struct TileLayout::Step {
+    QString selected;
+    TileLayout layout;
+    QString slot;
 };
 } // namespace lapis::desktop
 #endif
