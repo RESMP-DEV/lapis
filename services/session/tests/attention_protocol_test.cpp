@@ -1,4 +1,5 @@
 #include "transport/attention_protocol.hpp"
+#include "transport/update_pacing.hpp"
 
 #include <QJsonDocument>
 #include <cstdint>
@@ -416,6 +417,36 @@ void malformed_decisions() {
     rejects(
         [&] { static_cast<void>(lapis::session::wire::encode_attention_decision(zero_choice)); });
 }
+void update_pacing_is_publish_to_publish() {
+    using lapis::session::wire::UpdatePace;
+    UpdatePace pace{16};
+    // A stream that has never published has no gate: the first event after
+    // quiet is fresh and publishes in its own event turn.
+    require(pace.wait_ms(0) == 0);
+    require(pace.deadline_ms(0) == 0);
+    pace.published(100);
+    // Events inside the gate wait only the remainder, never the full interval,
+    // and their deadline stays pinned to the last publish plus the interval.
+    require(pace.wait_ms(105) == 11 && pace.deadline_ms(105) == 116);
+    require(pace.wait_ms(115) == 1 && pace.deadline_ms(115) == 116);
+    require(pace.wait_ms(116) == 0 && pace.deadline_ms(116) == 116);
+    // A quiet gap makes the newest state current again.
+    require(pace.wait_ms(1000) == 0 && pace.deadline_ms(1000) == 1000);
+    // Deadline and remainder stay pinned to the last publish, not to each
+    // denial, so a burst cannot push its own deadline into the future.
+    pace.published(2000);
+    require(pace.wait_ms(2001) == 15 && pace.deadline_ms(2001) == 2016);
+    require(pace.wait_ms(2010) == 6 && pace.deadline_ms(2010) == 2016);
+    // A backward clock is clamped: the wait never exceeds the interval.
+    require(pace.wait_ms(1990) == 16 && pace.deadline_ms(1990) == 2016);
+    // A disabled gate never defers.
+    UpdatePace immediate{0};
+    immediate.published(0);
+    require(immediate.wait_ms(0) == 0);
+    // Reset restores first-of-burst freshness for a replacement stream.
+    pace.reset();
+    require(pace.last_publish_ms() < 0 && pace.wait_ms(0) == 0);
+}
 } // namespace
 
 int main() {
@@ -426,6 +457,7 @@ int main() {
         golden_wire_bytes();
         malformed_snapshots();
         malformed_decisions();
+        update_pacing_is_publish_to_publish();
         std::cout << "Attention v6 codec boundary and recovery checks passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

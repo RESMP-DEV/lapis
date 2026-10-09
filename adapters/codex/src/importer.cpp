@@ -386,7 +386,7 @@ class Importer::Impl final : public QObject {
         static const Importer::Completion empty;
         return completion_.has_value() ? *completion_ : empty;
     }
-    [[nodiscard]] QString import_id() const { return import_id_; }
+    [[nodiscard]] const QString& import_id() const { return import_id_; }
     [[nodiscard]] QVector<ImportedSession> imported_sessions() const {
         if (!completion_.has_value())
             return {};

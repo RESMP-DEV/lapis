@@ -53,11 +53,12 @@ add_library(lapis_desktop_view STATIC
     src/ui_preview.cpp src/ui_preview.hpp)
 target_include_directories(lapis_desktop_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 if(APPLE)
-    # Notifications, the login item, Command-` and (in the downloaded app) Sparkle.
+    # Notifications, input idle time, the login item, Command-` and (in the
+    # downloaded app) Sparkle.
     target_sources(lapis_desktop_view PRIVATE src/desktop_actions_mac.mm)
     target_link_libraries(lapis_desktop_view PUBLIC "-framework AppKit" "-framework Carbon"
-        "-framework Foundation" "-framework Security" "-framework ServiceManagement"
-        "-framework UserNotifications")
+        "-framework CoreGraphics" "-framework Foundation" "-framework Security"
+        "-framework ServiceManagement" "-framework UserNotifications")
     if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
         get_filename_component(sparkle_directory "${LAPIS_SPARKLE_FRAMEWORK}" DIRECTORY)
         target_compile_definitions(lapis_desktop_view PRIVATE LAPIS_SPARKLE)
@@ -82,8 +83,13 @@ configure_file(src/next_prompt_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/genera
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/plan_sign_in.py)
 file(READ src/plan_sign_in.py LAPIS_PLAN_SIGN_IN_SCRIPT)
 configure_file(src/plan_sign_in_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/plan_sign_in_script.hpp" @ONLY)
+# The hook relay a remote agent's python3 runs, compiled in the same way.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/remote_hook_relay.py)
+file(READ src/remote_hook_relay.py LAPIS_REMOTE_HOOK_RELAY)
+configure_file(src/remote_hook_relay.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/remote_hook_relay.hpp" @ONLY)
 target_include_directories(lapis_desktop_view PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options lapis_session_platform
+    lapis_claude_adapter
     PUBLIC lapis_terminal lapis_attention lapis_session_launch lapis_local_protocol
         Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network)
 if(LAPIS_PACKAGE)
@@ -206,9 +212,13 @@ if(BUILD_TESTING)
     add_test(NAME workspace-remote-accounts COMMAND lapis_workspace_tests
                                                    --case remote-accounts)
     set_tests_properties(workspace-remote-accounts PROPERTIES TIMEOUT 60)
+    add_test(NAME workspace-remote-hooks COMMAND lapis_workspace_tests --case remote-hooks)
+    set_tests_properties(workspace-remote-hooks PROPERTIES TIMEOUT 90)
     add_test(NAME workspace-remote-account-reset COMMAND lapis_workspace_tests
                                                         --case remote-account-reset)
     set_tests_properties(workspace-remote-account-reset PROPERTIES TIMEOUT 20)
+    add_test(NAME workspace-updates-off COMMAND lapis_workspace_tests --case updates-off)
+    set_tests_properties(workspace-updates-off PROPERTIES TIMEOUT 60)
     if(APPLE)
         add_executable(lapis_sound_decode_tests tests/sound_decode_test.mm)
         target_link_libraries(lapis_sound_decode_tests PRIVATE lapis_project_options lapis_desktop_view)
@@ -247,17 +257,18 @@ if(BUILD_TESTING)
     set_tests_properties(tools-ui PROPERTIES TIMEOUT 60 RESOURCE_LOCK "qt_gui" ENVIRONMENT
         "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
 
-    add_executable(lapis_ui_preview_tests tests/ui_preview_test.cpp)
+    add_executable(lapis_ui_preview_tests tests/ui_preview_test.cpp tests/model_change_recorder.hpp)
     target_link_libraries(lapis_ui_preview_tests PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
     target_compile_definitions(lapis_ui_preview_tests PRIVATE LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
     add_test(NAME ui-preview COMMAND lapis_ui_preview_tests)
     # Isolate focus ownership from the destructive QML engine-reload fixtures.
     add_test(NAME appearance-input COMMAND lapis_ui_preview_tests --shortcuts-only)
-    set_tests_properties(ui-preview appearance-input PROPERTIES RESOURCE_LOCK "qt_gui" TIMEOUT 20 ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
+    set_tests_properties(ui-preview PROPERTIES RESOURCE_LOCK "qt_gui" TIMEOUT 30 ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
+    set_tests_properties(appearance-input PROPERTIES RESOURCE_LOCK "qt_gui" TIMEOUT 20 ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
     add_executable(lapis_terminal_input_tests tests/terminal_input_test.cpp tests/link_receiver.hpp)
     target_link_libraries(lapis_terminal_input_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME terminal-input COMMAND lapis_terminal_input_tests)
-    set_tests_properties(terminal-input PROPERTIES TIMEOUT 30 RESOURCE_LOCK "qt_gui" ENVIRONMENT
+    set_tests_properties(terminal-input PROPERTIES TIMEOUT 45 RESOURCE_LOCK "qt_gui" ENVIRONMENT
         "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
     add_executable(lapis_terminal_render_tests tests/terminal_render_test.cpp)
     target_link_libraries(lapis_terminal_render_tests PRIVATE lapis_project_options lapis_desktop_view)

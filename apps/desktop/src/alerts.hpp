@@ -10,6 +10,7 @@
 #include <QTimer>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
 
 namespace lapis::desktop {
@@ -17,8 +18,9 @@ class KeyMap;
 class SessionPreview;
 class Workspace;
 
-// What the person last saw of each agent: while the window is active, the
-// screen of the agent shown is sampled every second. A finished turn whose
+// What the person last saw of each agent: while the window is active and
+// someone is at the Mac (`looking`), the screen of the agent shown is sampled
+// every second. A finished turn whose
 // screen is still what was seen there says nothing new, so it neither chimes
 // nor notifies. Claude Code's input box and status line (below its last
 // box-drawing rule) are left out, since a status line can tick on its own.
@@ -102,26 +104,61 @@ class Alerts final : public QObject {
     QElapsedTimer last_;
     int quiet_ms_{kQuietMs};
 };
-// A system notification when an agent needs you or finishes a turn while
-// lapis is in the background (the chime's moments, when you are elsewhere).
-// Clicking one shows that agent; `post` gets the agent's id for that.
+// A system notification when an agent needs you or finishes a turn while you
+// are not watching lapis: it is in the background, or you are away from the
+// Mac (no keyboard or mouse input for alerts.awayAfter seconds), which in
+// front, showing that very agent, still counts as not seeing it. Clicking one
+// shows that agent; `post` gets the agent's id for that. An agent left
+// waiting, neither looked at nor started on a new turn, notifies once more
+// after alerts.remindAfter minutes, or as soon as you are back if you were
+// away then.
 class Notifier final : public QObject {
     Q_OBJECT
   public:
     using Post = std::function<void(const QString& id, const QString& title, const QString& body)>;
     using Background = std::function<bool()>;
+    // Whether the person is at the Mac now: recent input anywhere.
+    using Present = std::function<bool()>;
+    // Whether the person is looking at this agent now (present included).
+    using Looking = std::function<bool(const SessionPreview*)>;
+    static constexpr int kCheckMs = 5000;
     Notifier(Workspace& workspace, const KeyMap& config, Post post, Background background,
              QObject* parent = nullptr);
+    // The same record the chime uses: a finished turn whose screen is still
+    // what was seen there is answered, even after the person moves on.
     void setSeen(const SeenScreens* seen) { seen_ = seen; }
     void setLog(AttentionLog log) { log_ = std::move(log); }
+    // Without these the person always counts as present, so a reminder
+    // falling due does not wait for them; it still follows remindAfter.
+    void setPresence(Present present, Looking looking);
+    struct Timing {
+        int checkMs;
+        qint64 remindMs;
+    };
+    void setTimingForTesting(Timing timing);
 
   private:
-    void notify(const SessionPreview* item, bool needsYou);
+    struct Waiting {
+        QPointer<SessionPreview> item;
+        qint64 since{};
+        bool needsYou{};
+    };
+    void notify(SessionPreview* item, bool needsYou);
+    void wait(SessionPreview* item, bool needsYou);
+    void check();
+    [[nodiscard]] bool present() const { return !present_ || present_(); }
+    [[nodiscard]] qint64 remindMs() const;
+    void post(const SessionPreview* item, const QString& body);
     const SeenScreens* seen_{};
     AttentionLog log_;
     const KeyMap& config_;
     Post post_;
     Background background_;
+    Present present_;
+    Looking looking_;
+    std::vector<Waiting> waiting_;
+    QTimer check_;
+    std::optional<qint64> remind_ms_;
 };
 } // namespace lapis::desktop
 #endif

@@ -73,7 +73,30 @@ bool read_input(QByteArray& input, QDeadlineTimer& deadline) {
     return false;
 }
 } // namespace
-int run_hook_relay(const QString& socket, const QString& nonce) noexcept {
+QByteArray hook_settings(const QString& command) {
+    QJsonObject hooks;
+    for (const auto& event : hook_event_names)
+        hooks.insert(event.toString(),
+                     QJsonArray{QJsonObject{{"hooks", QJsonArray{QJsonObject{{"type", "command"},
+                                                                             {"command", command},
+                                                                             {"timeout", 2}}}}}});
+    return QJsonDocument(QJsonObject{{"hooks", hooks}}).toJson(QJsonDocument::Compact);
+}
+
+QJsonObject relay_event(const QJsonObject& source, bool include_derived) {
+    QJsonObject event;
+    for (const auto& key : relay_identity_fields)
+        if (source.contains(key))
+            event.insert(key, source.value(key));
+    const auto in_flight = include_derived ? background_work(source) : QString();
+    if (!in_flight.isNull())
+        event.insert(relay_in_flight_field.toString(), in_flight);
+    return event;
+}
+
+// The command line fixes the order: socket, nonce, then contract.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+int run_hook_relay(const QString& socket, const QString& nonce, const QString& contract) noexcept {
     // Hook failure must never become a Claude permission decision or prompt text.
     try {
         if (!socket.startsWith(QLatin1Char('/')) || socket.size() > 100 || nonce.size() != 36 ||
@@ -87,14 +110,7 @@ int run_hook_relay(const QString& socket, const QString& nonce) noexcept {
         const auto source = QJsonDocument::fromJson(input, &error);
         if (error.error != QJsonParseError::NoError || !source.isObject())
             return 0;
-        QJsonObject event;
-        const auto object = source.object();
-        for (const auto& key : relay_identity_fields)
-            if (object.contains(key))
-                event.insert(key, object.value(key));
-        const auto in_flight = background_work(object);
-        if (!in_flight.isNull())
-            event.insert(relay_in_flight_field.toString(), in_flight);
+        const auto event = relay_event(source.object(), contract == relay_contract);
         QJsonObject frame{{"nonce", nonce}, {"event", event}};
         const auto data = QJsonDocument(frame).toJson(QJsonDocument::Compact) + '\n';
         if (data.size() > relay_frame_limit || deadline.hasExpired())

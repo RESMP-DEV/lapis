@@ -33,6 +33,7 @@
 #include <QWheelEvent>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <memory>
@@ -292,24 +293,55 @@ void add_decorations(QSGNode& node, const session::TerminalSnapshot& snapshot, s
     add_decoration_spans(node, snapshot, row, geometry, Decoration::overline, top + 1);
 }
 
-bool safe_ascii_cell(const session::TerminalCell& cell, const QString& value,
-                     const QFontMetricsF& metrics, const QFontMetricsF& bold_metrics,
-                     const QFontMetricsF& italic_metrics, const QFontMetricsF& bold_italic_metrics,
+// The advances of printable ASCII in one font's four styles, measured once per
+// character and style: whether a character fills exactly one cell is asked of
+// every cell a row draws, and measuring a string shapes it each time.
+class AsciiAdvances {
+  public:
+    explicit AsciiAdvances(const QFont& font) : font_(font) {
+        for (auto& style : advances_)
+            style.fill(-1);
+    }
+    // Precondition: printable(character). The renderer gates every cell before
+    // this lookup; a range branch here would run for every drawn cell.
+    qreal advance(char16_t character, bool bold, bool italic) {
+        const std::size_t style = (bold ? 1U : 0U) + (italic ? 2U : 0U);
+        auto& known = advances_.at(style).at(static_cast<std::size_t>(character - kFirst));
+        if (known < 0) {
+            auto& metrics = metrics_.at(style);
+            if (!metrics) {
+                session::TerminalStyle styled;
+                styled.bold = bold;
+                styled.italic = italic;
+                metrics.emplace(styled_font(font_, styled));
+            }
+            known = metrics->horizontalAdvance(QString(QChar(character)));
+        }
+        return known;
+    }
+    static bool printable(char16_t character) { return character >= kFirst && character <= kLast; }
+
+  private:
+    static constexpr char16_t kFirst = 0x20;
+    static constexpr char16_t kLast = 0x7e;
+    QFont font_;
+    std::array<std::optional<QFontMetricsF>, 4> metrics_;
+    std::array<std::array<qreal, kLast - kFirst + 1>, 4> advances_;
+};
+
+bool safe_ascii_cell(const session::TerminalCell& cell, const QString& value, AsciiAdvances& ascii,
                      qreal cell_width) {
     if (cell.kind != session::CellKind::narrow || value.size() != 1 ||
-        value.front().unicode() <= 0x1f || value.front().unicode() > 0x7e)
+        !AsciiAdvances::printable(value.front().unicode()))
         return false;
-    const QFontMetricsF& styled = cell.style.bold && cell.style.italic ? bold_italic_metrics
-                                  : cell.style.bold                    ? bold_metrics
-                                  : cell.style.italic                  ? italic_metrics
-                                                                       : metrics;
-    return styled.horizontalAdvance(value) == cell_width;
+    return ascii.advance(value.front().unicode(), cell.style.bold, cell.style.italic) == cell_width;
 }
 
 // Block and box characters are drawn as shapes filling their cells, over the
 // row's backgrounds, so they join across rows; everything else is text.
 void add_row(QSGNode& backgrounds, QSGTextNode& glyphs, const session::TerminalSnapshot& snapshot,
-             std::size_t row, const QFont& font, const RowGeometry& geometry, qreal ratio) {
+             std::size_t row, const QFont& font, AsciiAdvances& ascii, const RowGeometry& geometry,
+             qreal ratio) {
     const qreal cell_width = geometry.cell_width;
     const qreal row_height = geometry.row_height;
     std::vector<std::pair<CellShapes, QColor>> shapes;
@@ -319,22 +351,6 @@ void add_row(QSGNode& backgrounds, QSGTextNode& glyphs, const session::TerminalS
     std::size_t run_start = 0;
     bool run_safe = true;
     const QFontMetricsF metrics(font);
-    const QFontMetricsF bold_metrics = QFontMetricsF(styled_font(font, [] {
-        session::TerminalStyle style;
-        style.bold = true;
-        return style;
-    }()));
-    const QFontMetricsF italic_metrics = QFontMetricsF(styled_font(font, [] {
-        session::TerminalStyle style;
-        style.italic = true;
-        return style;
-    }()));
-    const QFontMetricsF bold_italic_metrics = QFontMetricsF(styled_font(font, [] {
-        session::TerminalStyle style;
-        style.bold = true;
-        style.italic = true;
-        return style;
-    }()));
     const qreal top = static_cast<qreal>(row) * row_height;
     QFont safe_font = font;
     safe_font.setKerning(false);
@@ -398,8 +414,7 @@ void add_row(QSGNode& backgrounds, QSGTextNode& glyphs, const session::TerminalS
             continue;
         }
         const QString value = grapheme_text(snapshot, index);
-        const bool safe_cell = safe_ascii_cell(cell, value, metrics, bold_metrics, italic_metrics,
-                                               bold_italic_metrics, cell_width);
+        const bool safe_cell = safe_ascii_cell(cell, value, ascii, cell_width);
         if (!safe_cell || !run_safe || text.isEmpty() || cell.style != previous) {
             flush_run();
             run_start = column;
@@ -619,6 +634,7 @@ class TerminalNode final : public QSGTransformNode {
     // Rows are laid out for one font; a different font rebuilds every row.
     QString font_family;
     int font_pixel_size{};
+    std::optional<AsciiAdvances> ascii;
 
     TerminalNode() {
         auto background_node = std::make_unique<QSGSimpleRectNode>();
@@ -649,8 +665,10 @@ class TerminalNode final : public QSGTransformNode {
                 auto text = std::unique_ptr<QSGTextNode>(window.createTextNode());
                 text->setColor(color(next.foreground_rgb));
                 text->setRenderType(QSGTextNode::QtRendering);
-                add_row(*backgrounds, *text, next, row, font, RowGeometry{cell_width, row_height},
-                        window.effectiveDevicePixelRatio());
+                if (!ascii)
+                    ascii.emplace(font);
+                add_row(*backgrounds, *text, next, row, font, *ascii,
+                        RowGeometry{cell_width, row_height}, window.effectiveDevicePixelRatio());
                 add_decorations(*decorations, next, row, font, RowGeometry{cell_width, row_height});
                 row_node->appendChildNode(backgrounds.release());
                 row_node->appendChildNode(text.release());
@@ -1015,6 +1033,7 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
         root->font_family = frame->font_family;
         root->font_pixel_size = frame->font_pixel_size;
         root->snapshot.reset(); // Forces updateRows to discard every cached row.
+        root->ascii.reset();
     }
     root->background->setRect(
         QRectF(0, 0, snapshot.size.columns * cell_width, snapshot.size.rows * row_height));
@@ -1413,7 +1432,7 @@ void TerminalSurface::scrollProgram(int steps, QPoint cell) {
     if (!acceptsTerminalInput())
         return;
     if (document_->snapshot().accepts_wheel) {
-        document_->sendWheel(steps, cell.x(), cell.y());
+        static_cast<void>(document_->sendWheel(steps, cell.x(), cell.y()));
         return;
     }
     const auto key = steps > 0 ? session::TerminalKey::up : session::TerminalKey::down;
@@ -1843,6 +1862,7 @@ void TerminalSurface::sendFilled() {
     const std::optional<Filled> taken = filled_;
     if (!taken || !taken->owner || taken->owner != document_)
         return;
+    document_->returnProgramToBottom();
     document_->sendKey(session::TerminalKey::enter, {});
     typed_since_arrival_ = false;
     filled_.reset();
@@ -1886,6 +1906,7 @@ quint64 TerminalSurface::pasteTextRequest(const QString& text, std::optional<boo
     if (document_ != owner || !acceptsTerminalInput())
         return false;
     clearSelection();
+    document_->returnProgramToBottom();
     const auto request = submit.has_value() ? document_->requestPaste(bytes, *submit)
                          : document_->sendText(bytes, true) ? quint64{1}
                                                             : quint64{0};
@@ -2156,7 +2177,9 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         return;
     }
     keepFramesComing();
-    // New input replaces what was selected; a modifier alone does not.
+    // New input replaces what was selected; a modifier alone does not. Input
+    // (not a Command shortcut) first returns a scrolled-back program to the
+    // bottom.
     if (!modifier_key(event->key()))
         clearSelection();
     if (composition_state_ == CompositionState::stale)
@@ -2237,14 +2260,17 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     if (key) {
         interaction::key_outcome(QStringLiteral("agent"));
         const auto mods = event->modifiers();
+        document_->returnProgramToBottom();
         document_->sendKey(*key,
                            {mods.testFlag(Qt::ShiftModifier), mods.testFlag(Qt::ControlModifier),
                             mods.testFlag(Qt::AltModifier), false});
     } else {
         const auto text = terminal_text_key(*event);
         interaction::key_outcome(text.isEmpty() ? QStringLiteral("none") : QStringLiteral("agent"));
-        if (!text.isEmpty())
+        if (!text.isEmpty()) {
+            document_->returnProgramToBottom();
             document_->sendText(text);
+        }
     }
     event->accept();
 }
@@ -2261,6 +2287,7 @@ void TerminalSurface::commandKey(QKeyEvent& event) {
         interaction::key_outcome(QStringLiteral("agent"),
                                  {{QStringLiteral("as"), line_start ? QStringLiteral("line-start")
                                                                     : QStringLiteral("line-end")}});
+        document_->returnProgramToBottom();
         document_->sendText(QByteArray(1, line_start ? '\x01' : '\x05'));
         event.accept();
         return;
@@ -2274,6 +2301,7 @@ void TerminalSurface::commandKey(QKeyEvent& event) {
                                  {{QStringLiteral("as"), event.key() == Qt::Key_Backspace
                                                              ? QStringLiteral("delete-to-start")
                                                              : QStringLiteral("delete-to-end")}});
+        document_->returnProgramToBottom();
         document_->sendText(QByteArray(1, event.key() == Qt::Key_Backspace ? '\x15' : '\x0b'));
         event.accept();
         return;
@@ -2309,6 +2337,7 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
             return;
         }
         noteTyped();
+        document_->returnProgramToBottom();
         document_->sendText(event->commitString().toUtf8());
     }
     if (composition_epoch != ime_epoch_) {
