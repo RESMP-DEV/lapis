@@ -287,8 +287,9 @@ bool parsed_headless(const QCommandLineParser& parser, bool parsed) {
 
 // Chimes for agents that need you, in the real workspace (the preview
 // fixtures stay silent); looking means the window is active and showing that
-// agent. A notification for the same moments while lapis is in the
-// background, clicking one brings the window to that agent. The downloaded app
+// agent to someone at the Mac. A notification for the same moments while
+// lapis is in the background or nobody is at the Mac, clicking one brings the
+// window to that agent. The downloaded app
 // also starts checking for updates here.
 // Every ping decision, one JSON line each, in the owner-only runtime folder;
 // past 2 MiB the log starts over beside its predecessor.
@@ -371,8 +372,14 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
     using lapis::desktop::Chime;
     auto sounds = std::make_shared<lapis::desktop::ChimeSounds>();
     sounds->configure(keymap);
-    const auto looking = [&workspace, &shown](const lapis::desktop::SessionPreview* item) {
-        return shown && shown->isActive() && workspace.focusedSession() == item;
+    // Someone is at the Mac: keyboard or mouse input anywhere within
+    // alerts.awayAfter seconds. Where that cannot be read, assume so.
+    const auto present = [&keymap] {
+        const auto idle = platform::seconds_since_input();
+        return idle < 0 || idle < keymap.awayAfterSeconds();
+    };
+    const auto looking = [&workspace, &shown, present](const lapis::desktop::SessionPreview* item) {
+        return shown && shown->isActive() && workspace.focusedSession() == item && present();
     };
     seen.emplace(workspace, looking);
     const auto log = attention_log();
@@ -392,6 +399,7 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
         [] { return QGuiApplication::applicationState() != Qt::ApplicationActive; });
     notifier->setSeen(&*seen);
     notifier->setLog(log);
+    notifier->setPresence(present, looking);
     platform::on_notification_opened([&workspace, &shown](const QString& id) {
         lapis::desktop::interaction::cause(QStringLiteral("notification"));
         if (!workspace.selectSession(id) || !shown)

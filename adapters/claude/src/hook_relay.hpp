@@ -37,13 +37,25 @@ inline constexpr std::array<QStringView, 9> hook_event_names{
 // above. The command must never print a decision or exit 2.
 [[nodiscard]] QByteArray hook_settings(const QString& command);
 
+// The hook command names the frame shape its service reads, so a relay never
+// sends a field the listening service predates. The hook runs whatever binary
+// is installed at the command's path when Claude stops, which after an update
+// is newer than a service that kept running; an older service treats an
+// unknown field as a malformed hook and stops observing for good. A command
+// without a contract (from such a service) gets identity fields only, the
+// legacy shape; contract 2 adds the derived fields above.
+inline constexpr QStringView relay_contract{u"2"};
+
+int run_hook_relay(const QString& socket, const QString& nonce,
+                   const QString& contract = {}) noexcept;
+
 // The bounded metadata a relay forwards for one hook input: the identity
 // fields above plus the derived background-work count. Both the local relay
 // process and the session service (for hooks relayed from another machine
 // through the terminal) use it, so the derivation has one definition.
-[[nodiscard]] QJsonObject relay_event(const QJsonObject& source);
-
-int run_hook_relay(const QString& socket, const QString& nonce) noexcept;
+// A relay omits derived fields when the service that wrote its command names
+// no supported contract.
+[[nodiscard]] QJsonObject relay_event(const QJsonObject& source, bool include_derived = true);
 
 } // namespace lapis::claude
 

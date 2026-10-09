@@ -125,7 +125,8 @@ class Observer::Impl {
         if (stopped_ || !temporary_ || executable.isEmpty() || executable.contains(QChar::Null))
             throw std::invalid_argument("Claude hook receiver is unavailable");
         const auto command = quote(executable) + QStringLiteral(" --claude-hook ") +
-                             quote(socket_) + QLatin1Char(' ') + quote(nonce_);
+                             quote(socket_) + QLatin1Char(' ') + quote(nonce_) + QLatin1Char(' ') +
+                             relay_contract.toString();
         QFile settings(temporary_->filePath(QStringLiteral("settings.json")));
         const auto data = hook_settings(command);
         if (!settings.open(QIODevice::WriteOnly | QIODevice::Truncate) ||

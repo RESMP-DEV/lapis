@@ -173,27 +173,58 @@ void Alerts::record(const SessionPreview* item, const char* event, const char* d
 Notifier::Notifier(Workspace& workspace, const KeyMap& config, Post post, Background background,
                    QObject* parent)
     : QObject(parent), config_(config), post_(std::move(post)), background_(std::move(background)) {
+    check_.setInterval(kCheckMs);
+    connect(&check_, &QTimer::timeout, this, &Notifier::check);
     connect(&workspace, &Workspace::agentNeedsYou, this,
             [this](SessionPreview* item) { notify(item, true); });
     connect(&workspace, &Workspace::turnFinished, this,
             [this](SessionPreview* item) { notify(item, false); });
 }
 
-void Notifier::notify(const SessionPreview* item, bool needsYou) {
+void Notifier::setPresence(Present present, Looking looking) {
+    present_ = std::move(present);
+    looking_ = std::move(looking);
+}
+
+void Notifier::setTimingForTesting(Timing timing) {
+    check_.setInterval(timing.checkMs);
+    remind_ms_ = timing.remindMs;
+}
+
+qint64 Notifier::remindMs() const {
+    return remind_ms_ ? *remind_ms_ : qint64{config_.remindAfterMinutes()} * 60 * 1000;
+}
+
+void Notifier::notify(SessionPreview* item, bool needsYou) {
     if (item == nullptr)
         return;
+    const bool away = !present();
+    const bool background = background_();
     const auto decide = [&]() -> const char* {
         if (!config_.notify())
             return "notifications off";
-        if (!background_())
+        // In front counts as seen only with someone there to see it.
+        if (!background && !away)
             return "none: lapis is in front";
         if (!needsYou && seen_ != nullptr && seen_->unchanged(item))
             return "none: nothing new since you looked";
         return nullptr;
     };
     const char* skipped = decide();
-    record_decision(log_, item, "notification", needsYou ? "needs you" : "finished",
-                    skipped != nullptr ? skipped : "posted");
+    const char* event = needsYou ? "needs you" : "finished";
+    record_decision(log_, item, "notification", event,
+                    skipped != nullptr ? skipped
+                    : background       ? "posted"
+                                       : "posted: you are away");
+    // A finished turn ending on what was already seen, or in front of the
+    // person watching it, leaves nothing to come back to. Seeing an open
+    // request is not answering it. Live requests arrive on turnFinished;
+    // nothing emits agentNeedsYou, so the signal flag alone misses them.
+    const bool open = needsYou || item->attentionCount() > 0;
+    const bool seen =
+        !open && ((seen_ != nullptr && seen_->unchanged(item)) || (looking_ && looking_(item)));
+    if (config_.notify() && !seen)
+        wait(item, open);
     if (skipped != nullptr)
         return;
     // The CLI leads the body: a title is the conversation's, and one about
@@ -202,7 +233,71 @@ void Notifier::notify(const SessionPreview* item, bool needsYou) {
     QString body = needsYou ? tr("%1 needs you").arg(cli) : tr("%1 finished a turn").arg(cli);
     if (needsYou && !item->attentionReason().isEmpty())
         body += QStringLiteral(": ") + item->attentionReason();
+    post(item, body);
+}
+
+void Notifier::post(const SessionPreview* item, const QString& body) {
     post_(item->sessionId(), item->title(), body);
+}
+
+void Notifier::wait(SessionPreview* item, bool needsYou) {
+    if (remindMs() <= 0)
+        return;
+    const auto now = QDateTime::currentMSecsSinceEpoch();
+    const auto found =
+        std::find_if(waiting_.begin(), waiting_.end(),
+                     [item](const Waiting& waiting) { return waiting.item == item; });
+    if (found == waiting_.end())
+        waiting_.push_back({item, now, needsYou});
+    else
+        *found = {item, now, needsYou}; // a newer turn starts the wait again
+    if (!check_.isActive())
+        check_.start();
+}
+
+void Notifier::check() {
+    const auto remind = remindMs();
+    // Answered (a new turn, or the request resolved), looked at now or
+    // already seen, ended or closed: nothing is waiting any more. A look,
+    // one SeenScreens recorded while the agent was shown, answers a
+    // finished wait even after the person moves on. Seeing an open request
+    // is not answering it: it stays queued until it resolves or a new turn
+    // starts, however long the person keeps reading it.
+    std::erase_if(waiting_, [this](const Waiting& waiting) {
+        if (!waiting.item)
+            return true;
+        SessionPreview* item = waiting.item;
+        const auto kind = item->statusKind();
+        const bool open = waiting.needsYou || item->attentionCount() > 0;
+        return kind == QLatin1String("working") || kind == QLatin1String("ended") ||
+               (waiting.needsYou && item->attentionCount() == 0) ||
+               (!open && seen_ != nullptr && seen_->unchanged(item)) ||
+               (!open && looking_ && looking_(item));
+    });
+    if (remind <= 0 || !config_.notify())
+        waiting_.clear();
+    if (waiting_.empty()) {
+        check_.stop();
+        return;
+    }
+    // A reminder that falls due while the person is away waits for them.
+    if (!present())
+        return;
+    const auto now = QDateTime::currentMSecsSinceEpoch();
+    std::erase_if(waiting_, [this, now, remind](const Waiting& waiting) {
+        const auto waited = now - waiting.since;
+        if (waited < remind)
+            return false;
+        record_decision(log_, waiting.item, "notification", "still waiting", "posted: reminder");
+        const auto minutes = static_cast<int>(waited / 60000);
+        const QString cli = waiting.item->agentName();
+        post(waiting.item,
+             minutes >= 1 ? tr("%1 has been waiting for you for %n min", nullptr, minutes).arg(cli)
+                          : tr("%1 is still waiting for you").arg(cli));
+        return true; // one reminder per wait
+    });
+    if (waiting_.empty())
+        check_.stop();
 }
 
 AttentionLog attention_log(const QString& path) {

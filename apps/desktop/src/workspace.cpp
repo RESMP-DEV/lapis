@@ -380,14 +380,16 @@ QString unquotedWord(QString word) {
 // preamble, plus the hook settings (Claude Code) or notify program (Codex).
 // A command that has them, or whose arguments would conflict, is unchanged.
 QString withRemoteHooks(const QString& words, const QString& harness) {
-    if (words.contains(QStringLiteral("LAPIS_HOOK_NONCE")) || words.contains(QStringLiteral(" -- ")))
+    if (words.contains(QStringLiteral("LAPIS_HOOK_NONCE")) ||
+        words.contains(QStringLiteral(" -- ")))
         return words;
     if (harness == QLatin1String("claude")) {
         for (const auto* option : {"--settings", "--bare", "--safe-mode"})
             if (words.contains(QLatin1String(option)))
                 return words;
         const bool trailing = words.endsWith(QLatin1Char(' '));
-        const auto command = QStringLiteral(R"(python3 -c "$LAPIS_HOOK_RELAY" claude 2>/dev/null || true)");
+        const auto command =
+            QStringLiteral(R"(python3 -c "$LAPIS_HOOK_RELAY" claude 2>/dev/null || true)");
         return remoteHookPreamble(harness) + QLatin1Char(' ') +
                (trailing ? words.chopped(1) : words) + QStringLiteral(" --settings ") +
                shellWord(QString::fromUtf8(claude::hook_settings(command))) +
@@ -487,8 +489,8 @@ QString remoteLaunch(const AgentRequest& request, const QString& command, QStrin
                   R"(| grep -q . && o=--resume; )"
                   R"(exec "${SHELL:-/bin/sh}" -lic %3"$o $s"; })")
                   .arg(folder, conversation,
-                       shellWord(withRemoteHooks(words.join(' ') + QLatin1Char(' '),
-                                                 request.harness)));
+                       shellWord(
+                           withRemoteHooks(words.join(' ') + QLatin1Char(' '), request.harness)));
     launch = session::validate_launch(
         {ssh,
          remoteOptions() + QStringList{QStringLiteral("-t"), request.machine, line},

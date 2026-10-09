@@ -35,8 +35,7 @@ bool SessionPreview::estimated() const {
         return true;
     return status_source_ == StatusSource::output &&
            (!attention_->ready || !attention_->connected ||
-            (attention_->activity == session::attention::Activity::unknown &&
-             !attentionPending()));
+            (attention_->activity == session::attention::Activity::unknown && !attentionPending()));
 }
 QString SessionPreview::statusKind() const {
     if (live()) {

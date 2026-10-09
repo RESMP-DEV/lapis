@@ -413,6 +413,18 @@ void background_work_pauses_the_turn() {
     paused.raw(QJsonDocument(last).toJson(QJsonDocument::Compact));
     require(paused.state.activity() == attention::Activity::turn_completed);
 
+    // A service names its relay contract in the hook command. The command an
+    // older service wrote has none, and the installed relay then sends only
+    // identity fields: a derived field that service predates would read as a
+    // malformed hook and end its observation for good.
+    require(paused.command.endsWith(QLatin1Char(' ') + lapis::claude::relay_contract.toString()));
+    Fixture older;
+    older.command.chop(lapis::claude::relay_contract.size() + 1);
+    older.begin();
+    older.raw(QJsonDocument(stop).toJson(QJsonDocument::Compact));
+    require(older.state.ready() && older.state.activity() == attention::Activity::turn_completed &&
+            older.observer.diagnostic().contains(QLatin1String("legacy")));
+
     // A claimed count from the hook itself is ignored; the relay derives it.
     Fixture forged;
     forged.begin();
@@ -590,7 +602,8 @@ void terminal_transport() {
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     if (app.arguments().value(1) == QStringLiteral("--claude-hook"))
-        return lapis::claude::run_hook_relay(app.arguments().value(2), app.arguments().value(3));
+        return lapis::claude::run_hook_relay(app.arguments().value(2), app.arguments().value(3),
+                                             app.arguments().value(4));
     try {
         callback_shutdown();
         callback_destruction();
