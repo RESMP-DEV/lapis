@@ -300,7 +300,7 @@ void overlayAnswersEveryCard() {
     auto* name = find(root, QStringLiteral("agentName"));
     require(name && name->property("text").toString() == QLatin1String("persist GUI state"),
             "the agent that needs you first is in front");
-    require(find(root, QStringLiteral("behindCard"))->isVisible(), "one card peeks behind");
+    require(find(root, QStringLiteral("behindCard")) == nullptr, "no cards peek under the panel");
     // The lights: two need you, the request too; one could steer; three run.
     const auto groups = deck.groups();
     require(groups.value(QStringLiteral("needs")).toList().size() == 3 &&

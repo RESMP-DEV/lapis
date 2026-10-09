@@ -3,8 +3,7 @@
 Ultra Tab is a small standalone app that runs beside lapis. It sits in the
 background with no Dock icon; press its key from any app and a compact command
 bar, about 680 points wide and a fifth of the way down the screen, deals the
-agents that need you as a deck of cards: one in the panel, the next two peeking
-out under it. Answer the card and the next comes forward. lapis
+agents that need you as a deck of cards: one at a time in the panel. Answer the card and the next comes forward. lapis
 keeps running as it is; Ultra Tab only reads what lapis publishes and types to
 an agent the way the phone does.
 
@@ -28,17 +27,16 @@ mascot from its welcome screen). Below it the card shows the agent's name, a
 headline and any blocks, and in its corner a small map of lapis: a column per
 category in its colour, a block per agent in strip order, this agent's lit.
 Command-L, or a click on the map, shows that agent in lapis and puts the
-overlay away. The next two cards peek out under the panel as edges in their
-colours, and the footer holds every agent's tile in its light: red and yellow
+overlay away. The footer holds every agent's tile in its light: red and yellow
 on the left, green on the right; hovering one names it. A sent reply says so
 by leaving; only a refused send, a notice or a hint is written in the footer.
 
 When a card is answered, a copy of it slides off, right with a green edge for
-an accept or a send and left with a red edge for a skip, while the nearest
-edge rises into the panel in its colour, the new card's content slides up into
-place and the panel eases to its height. The deck has already changed: the
+an accept or a send and left with a red edge for a skip, while the new card's
+content slides up into place under a thin line of its colour and the panel
+eases to its height. The deck has already changed: the
 motion never holds a key back, and Reduce Motion turns it off. Only the panel
-is blurred; the window is as tall as the card and its edges.
+is blurred; the window is as tall as the card.
 
 A plain card's headline is one sentence of what happened (the start of the
 agent's last reply) and its proposed reply is lapis's guess at your next prompt

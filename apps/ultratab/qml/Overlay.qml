@@ -3,8 +3,8 @@ import QtQuick
 // Ultra Tab's overlay: a compact command bar for the agents that need you.
 // The top line is the reply: lapis's guess shows as ghost text that Tab
 // sends, and typing replaces it (Return sends). The card below says what
-// happened; the next agents peek out under the panel as edges in their
-// colour. Every card takes the same four answers: Tab accepts, holding Option
+// happened, and the footer's lights show every agent by how much it needs
+// you. Every card takes the same four answers: Tab accepts, holding Option
 // speaks (a placeholder for now), typing then Return sends, and the left
 // arrow or Delete skips. Input is never deferred for motion: the deck changes
 // at once and the animation only follows it.
@@ -77,13 +77,10 @@ Item {
         }
     }
 
-    // The panel and the peeking edges under it; the window is as large as
-    // these and the blur covers the panel only.
+    // The panel; the window is as large as it and the blur covers it only.
     readonly property int panelWidth: Math.min(680, width - 40)
     // The screen bounds the card, never the window, which follows the card.
     readonly property real tallest: Screen.desktopAvailableHeight > 0 ? Screen.desktopAvailableHeight * 0.7 : 700
-    readonly property int edgeStep: 10
-    readonly property int edges: Math.min(2, queue.length)
     // Grows with the card at once; shrinks only after the motion, so the
     // window never cuts the card while it animates.
     property real windowPanelHeight: panel.targetHeight
@@ -101,7 +98,7 @@ Item {
         interval: root.motion + 60
         onTriggered: root.windowPanelHeight = panel.targetHeight
     }
-    readonly property int contentHeight: Math.ceil(panel.y + windowPanelHeight + 2 * edgeStep + 24)
+    readonly property int contentHeight: Math.ceil(panel.y + windowPanelHeight + 24)
     onContentHeightChanged: tellHost()
     Component.onCompleted: tellHost()
     function tellHost() {
@@ -122,12 +119,10 @@ Item {
             arrive.stop()
             leave.stop()
             ghost.opacity = 0
-            riser.opacity = 0
             arrivalLine.opacity = 0
             glow.opacity = 0
             frontBody.opacity = 1
             arriveShift.y = 0
-            edgeShift.y = 0
             root.windowPanelHeight = panel.targetHeight
             settled.restart()
         }
@@ -513,60 +508,6 @@ Item {
             Component { id: tableBlock; TableBlock { objectName: "tableBlock"; width: parent.width; block: parent.block } }
             Component { id: diagramBlock; DiagramBlock { objectName: "diagramBlock"; width: parent.width; block: parent.block } }
             Component { id: linkBlock; Item { width: parent.width; implicitHeight: 30; LinkChip { block: parent.parent.block } } }
-        }
-    }
-
-    // The next agents, as the edges of the cards under the panel: the
-    // nearest one full width less a step, each further one narrower.
-    Repeater {
-        model: root.edges
-        delegate: Rectangle {
-            required property int index
-            readonly property var next: root.queue[index]
-            readonly property color tint: root.weightColor(next ? next.weight : 1)
-            objectName: index === 0 ? "behindCard" : "edge" + index
-            z: -1 - index
-            width: panel.width - (index + 1) * 28
-            x: panel.x + (panel.width - width) / 2
-            height: 40
-            y: panel.y + panel.height - height + (index + 1) * root.edgeStep + edgeShift.y * root.edgeStep
-            radius: 12
-            color: Qt.rgba(30 / 255, 33 / 255, 41 / 255, 0.94 - index * 0.14)
-            border.color: Qt.rgba(tint.r, tint.g, tint.b, 0.45)
-            Rectangle {
-                anchors.bottom: parent.bottom
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: parent.width - 2 * parent.radius
-                height: 2.5
-                radius: 1.25
-                color: parent.tint
-                opacity: 0.9 - parent.index * 0.25
-            }
-        }
-    }
-    // The edges move up one step together when the nearest becomes the card.
-    Item { id: edgeShift; y: 0 }
-
-    // The nearest edge, rising into the panel as its card comes forward.
-    Rectangle {
-        id: riser
-        z: -0.5
-        width: panel.width - 28
-        x: panel.x + 14
-        height: 40
-        radius: 12
-        opacity: 0
-        visible: opacity > 0
-        property color tint: root.gold
-        color: Qt.rgba(20 / 255, 22 / 255, 28 / 255, 0.95)
-        border.color: tint
-        Rectangle {
-            anchors.bottom: parent.bottom
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: parent.width - 24
-            height: 2.5
-            radius: 1.25
-            color: riser.tint
         }
     }
 
@@ -982,21 +923,12 @@ Item {
         }
     }
 
-    // The next card arrives: the nearest edge rises into the panel in its
-    // colour while the card's content slides up into place, and the other
-    // edges move up a step.
+    // The next card arrives: its content slides up into place while a thin
+    // line of its colour fades along the top.
     ParallelAnimation {
         id: arrive
         NumberAnimation { target: arriveShift; property: "y"; from: 22; to: 0; duration: root.motion + 60; easing.type: Easing.OutCubic }
         NumberAnimation { target: frontBody; property: "opacity"; from: 0; to: 1; duration: root.motion + 60; easing.type: Easing.OutCubic }
-        NumberAnimation { target: edgeShift; property: "y"; from: 1; to: 0; duration: root.motion + 60; easing.type: Easing.OutCubic }
-        SequentialAnimation {
-            PropertyAction { target: riser; property: "y"; value: panel.y + panel.height - 40 + root.edgeStep }
-            ParallelAnimation {
-                NumberAnimation { target: riser; property: "y"; to: panel.y + panel.height - 60; duration: root.motion; easing.type: Easing.OutCubic }
-                NumberAnimation { target: riser; property: "opacity"; from: 1; to: 0; duration: root.motion; easing.type: Easing.InQuad }
-            }
-        }
         NumberAnimation { target: arrivalLine; property: "opacity"; from: 1; to: 0; duration: 520; easing.type: Easing.OutCubic }
     }
 
@@ -1040,8 +972,7 @@ Item {
     function arrived() {
         if (reducedMotion || settling || !hasFront)
             return
-        riser.tint = weightColor(front.weight)
-        arrivalLine.color = riser.tint
+        arrivalLine.color = weightColor(front.weight)
         arrive.restart()
     }
 
