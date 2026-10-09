@@ -3469,6 +3469,15 @@ ApplicationWindow {
                     ToolTip.text: hoveredLink
                     ToolTip.delay: 250
                     objectName: "liveTerminal"
+                    // A focused, editable text field to macOS accessibility, so
+                    // dictation apps such as Wispr Flow paste into it at once;
+                    // seen as the bare window, Wispr Flow falls back to a paste
+                    // that can wait seconds. Not multiLine: on a multi-line
+                    // editable item Qt keeps Command-` from the window.
+                    Accessible.role: Accessible.EditableText
+                    Accessible.name: qsTr("Terminal")
+                    Accessible.editable: interactive
+                    Accessible.focusable: true
                     x: stage.tiled ? stage.focusedFrame.x + 4 : stage.inset
                     y: stage.tiled ? stage.focusedFrame.y + stage.headerHeight : stage.inset
                     width: stage.tiled ? stage.focusedFrame.width - 8 : stage.width - 2 * stage.inset
@@ -4453,6 +4462,10 @@ ApplicationWindow {
                 ToolTip.text: hoveredLink
                 ToolTip.delay: 250
                 objectName: "sideTerminalSurface"
+                Accessible.role: Accessible.EditableText
+                Accessible.name: qsTr("Side terminal")
+                Accessible.editable: interactive
+                Accessible.focusable: true
                 onPasteRefused: (reason) => {
                     sidePanel.pasteReason = reason
                     sidePasteTimer.restart()
