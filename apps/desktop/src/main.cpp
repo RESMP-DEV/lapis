@@ -48,7 +48,7 @@
 #include <QThread>
 #include <QTimer>
 #include <algorithm>
-#include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <optional>
 #include <set>
@@ -319,19 +319,35 @@ void log_to_file(QtMsgType type, const QMessageLogContext&, const QString& messa
         const auto backup = path + QStringLiteral(".1");
         QFile::remove(backup);
         if (!QFile::rename(path, backup)) {
-            // Qt logging cannot be re-entered from this handler. stderr is safe and
-            // remains useful when tests or a terminal launched the app.
-            std::fprintf(stderr, "Could not rotate app log: %s\n", backup.toUtf8().constData());
+            // Qt logging cannot be re-entered from this handler, and this code is
+            // installed only when stderr is /dev/null; record the failure in place.
+            QFile current(path);
+            if (current.open(QIODevice::Append | QIODevice::WriteOnly,
+                             QFile::ReadOwner | QFile::WriteOwner) &&
+                current.setPermissions(QFile::ReadOwner | QFile::WriteOwner))
+                current.write(QDateTime::currentDateTime().toString(Qt::ISODateWithMs).toUtf8() +
+                              " error: Could not rotate app log: " + backup.toUtf8() + '\n');
             return;
         }
     }
     QFile file(path);
     if (!file.open(QIODevice::Append | QIODevice::WriteOnly, QFile::ReadOwner | QFile::WriteOwner))
         return;
-    static const char* const levels[] = {"debug", "info", "warning", "critical", "fatal"};
+    if (!file.setPermissions(QFile::ReadOwner | QFile::WriteOwner))
+        return;
+    // QtMsgType appended QtInfoMsg last for ABI stability.
+    static const char* const levels[] = {"debug", "warning", "critical", "fatal", "info"};
     const auto level = static_cast<std::size_t>(type) < std::size(levels) ? levels[type] : "log";
-    file.write(QDateTime::currentDateTime().toString(Qt::ISODateWithMs).toUtf8() + ' ' + level +
-               ": " + message.toUtf8() + '\n');
+    const auto bytes = QDateTime::currentDateTime().toString(Qt::ISODateWithMs).toUtf8() + ' ' +
+                       level + ": " + message.toUtf8() + '\n';
+    const auto written = file.write(bytes);
+    if (type == QtFatalMsg) {
+        file.flush();
+        // Installing a handler takes over Qt's fatal behavior; keep it.
+        std::abort();
+    }
+    if (written != bytes.size())
+        return;
 }
 void keep_app_log() {
     if (!stderr_discarded())
@@ -944,6 +960,7 @@ int main(int argc, char** argv) {
         return 2;
     // Before any agent, session service or CLI probe inherits the environment.
     lapis::desktop::adopt_login_environment();
+    keep_app_log(); // Adoption can change LAPIS_HOME; keep the log beside it.
     // Agents draw full screen on the alternate screen, which a resize cannot
     // tear; the classic renderer redraws in place and garbles when lapis
     // resizes a terminal it drew in. Claude Code turns full screen off for

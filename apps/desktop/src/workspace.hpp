@@ -23,8 +23,8 @@
 #include <QLockFile>
 #include <QMap>
 #include <QObject>
-#include <QPointer>
 #include <QPoint>
+#include <QPointer>
 #include <QSet>
 #include <QSize>
 #include <QString>
@@ -294,9 +294,11 @@ class SessionPreview final : public QObject {
     std::optional<HistoryStrip> strip_;
     // Full-screen scroll-back steps the service accepted, and the cell where
     // they were delivered. This belongs to the session so a rebound surface
-    // cannot lose it; rejected wheels leave the previous debt intact.
-    int program_wheel_debt_{};
-    QPoint program_wheel_cell_{-1, -1};
+    // cannot lose it; rejected wheels leave the previous debt intact. The
+    // const decoder updates it when the newest screen ends the program that
+    // owed the debt.
+    mutable int program_wheel_debt_{};
+    mutable QPoint program_wheel_cell_{-1, -1};
     // The screen when browsing was asked for: the archive answering is at
     // least as new, so it can repeat rows the screen shows but never miss one.
     std::optional<session::TerminalSnapshot> strip_screen_;

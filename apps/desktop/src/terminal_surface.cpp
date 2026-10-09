@@ -2208,8 +2208,6 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         commandKey(*event);
         return;
     }
-    // Every key here belongs to the program, so put it back at its bottom.
-    document_->returnProgramToBottom();
     std::optional<session::TerminalKey> key;
     switch (event->key()) {
     case Qt::Key_Up:
@@ -2262,14 +2260,17 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     if (key) {
         interaction::key_outcome(QStringLiteral("agent"));
         const auto mods = event->modifiers();
+        document_->returnProgramToBottom();
         document_->sendKey(*key,
                            {mods.testFlag(Qt::ShiftModifier), mods.testFlag(Qt::ControlModifier),
                             mods.testFlag(Qt::AltModifier), false});
     } else {
         const auto text = terminal_text_key(*event);
         interaction::key_outcome(text.isEmpty() ? QStringLiteral("none") : QStringLiteral("agent"));
-        if (!text.isEmpty())
+        if (!text.isEmpty()) {
+            document_->returnProgramToBottom();
             document_->sendText(text);
+        }
     }
     event->accept();
 }

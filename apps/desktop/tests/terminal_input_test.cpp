@@ -1122,6 +1122,7 @@ void long_pastes() {
 // Dragging selects screen text and double-clicking selects a word. The copy
 // chord copies without sending input, typing clears the selection, and the
 // wheel asks for older history on the normal screen.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void selection_and_scroll() {
     Fixture f;
     QQuickWindow window;
@@ -1340,6 +1341,38 @@ void selection_and_scroll() {
     require(wire::take_frame(peer.bytes, next) && next.kind != wire::Kind::wheel,
             "A program already at the bottom was scrolled again");
 
+    // A key that sends nothing belongs to neither the program nor its scroll
+    // position; the accepted debt waits for real program input.
+    require(f.document.sendWheel(1, 1, 1), "The service did not accept the modifier-test wheel");
+    static_cast<void>(peer.read());
+    QKeyEvent bare_modifier(QEvent::KeyPress, Qt::Key_Shift, Qt::ShiftModifier);
+    QCoreApplication::sendEvent(&surface, &bare_modifier);
+    settle();
+    peer.bytes += peer.socket->readAll();
+    require(peer.bytes.isEmpty(), "A bare modifier scrolled the program or sent input");
+    QKeyEvent after_modifier(QEvent::KeyPress, Qt::Key_Q, Qt::NoModifier, QStringLiteral("q"));
+    QCoreApplication::sendEvent(&surface, &after_modifier);
+    const auto modifier_return = peer.read();
+    require(modifier_return.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(modifier_return.payload).payload).steps ==
+                    -1,
+            "A bare modifier erased the accepted scroll-back debt");
+    require(text_frames(peer, 1) == QByteArray("q"), "The key after a bare modifier was lost");
+
+    // Leaving the alternate screen ends the program view that owed the debt.
+    // A later full-screen program starts at its own bottom.
+    scroll(240);
+    const auto abandoned = peer.read();
+    require(abandoned.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(abandoned.payload).payload).steps == 2,
+            "The abandoned full-screen wheel was not accepted");
+    switch_screen(false);
+    switch_screen(true);
+    QKeyEvent fresh(QEvent::KeyPress, Qt::Key_R, Qt::NoModifier, QStringLiteral("r"));
+    QCoreApplication::sendEvent(&surface, &fresh);
+    require(text_frames(peer, 1) == QByteArray("r"),
+            "The next full-screen program inherited the old wheel debt");
+
     // The debt belongs to the session, in service-sized turns. Rebinding a
     // different surface cannot forget it, and a wheel rejected while history
     // owns the view cannot erase it.
@@ -1395,8 +1428,6 @@ void selection_and_scroll() {
                static_cast<unsigned char>(wire::decode_control(frame.payload).payload.at(0)) ==
                    static_cast<unsigned char>(lapis::session::TerminalKey::enter);
     };
-    // These need a service that offers confirmed paste transactions, which the
-    // older-service fixture above deliberately does not.
     Fixture transactional;
     QQuickWindow confirming;
     confirming.setGeometry(100, 100, 640, 360);
@@ -1428,9 +1459,10 @@ void selection_and_scroll() {
     until([&] { return transactional.document.snapshot().alternate_screen; });
     QJSEngine confirming_navigation;
     confirming_navigation.globalObject().setProperty(QStringLiteral("moved"), true);
+    confirming_navigation.globalObject().setProperty(QStringLiteral("away_calls"), 0);
     confirming_surface.setTabFlow(true);
-    confirming_surface.setTabAway(
-        confirming_navigation.evaluate(QStringLiteral("(function() { return moved; })")));
+    confirming_surface.setTabAway(confirming_navigation.evaluate(
+        QStringLiteral("(function() { away_calls += 1; return true; })")));
     const auto confirming_press = [&confirming_surface](int key, Qt::KeyboardModifiers modifiers,
                                                         const QString& text) {
         QKeyEvent event(QEvent::KeyPress, key, modifiers, text);
@@ -1444,7 +1476,8 @@ void selection_and_scroll() {
             "A wheel before Tab navigation was not queued");
     static_cast<void>(confirming_peer.read());
     confirming_press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
-    require(confirming_navigation.globalObject().property(QStringLiteral("moved")).toInt() == 1 &&
+    require(confirming_navigation.globalObject().property(QStringLiteral("away_calls")).toInt() ==
+                    1 &&
                 confirming_operations(0).empty(),
             "Lapis Tab navigation scrolled the program or sent input");
     confirming_press(Qt::Key_Z, Qt::NoModifier, QStringLiteral("z"));
@@ -1487,6 +1520,43 @@ void selection_and_scroll() {
     require(confirming_ordered.size() == 2 && wheel_steps(confirming_ordered[0]) == -1 &&
                 payload(confirming_ordered[1]) == QByteArray("ime"),
             "Committed IME text did not follow the return to the bottom");
+
+    // A replaced connection is another program even when it uses the same
+    // endpoint and identity. Drive the session directly so the old peer's
+    // closure cannot disturb the focused surface used by the cases above.
+    Fixture replacement;
+    replacement.document.startLive(replacement.endpoint, replacement.launch,
+                                   wire::AttachMode::discover);
+    auto replacement_peer = replacement.accept();
+    static_cast<void>(replacement.request(replacement_peer));
+    replacement.hello(replacement_peer);
+    replacement.screen(replacement_peer);
+    replacement.terminal.feed("\x1b[?1049h");
+    replacement_peer.send(wire::Kind::snapshot,
+                          wire::encode_snapshot_message(
+                              {{replacement.identity, 1}, 2, replacement.terminal.snapshot()}));
+    until([&] { return replacement.document.snapshot().alternate_screen; });
+    require(replacement.document.sendWheel(2, 1, 1),
+            "The dead connection did not accept its scroll-back debt");
+    static_cast<void>(replacement_peer.read());
+
+    replacement.document.startLive(replacement.endpoint, replacement.launch,
+                                   wire::AttachMode::discover);
+    auto restarted_peer = replacement.accept();
+    static_cast<void>(replacement.request(restarted_peer));
+    replacement.hello(restarted_peer);
+    replacement.screen(restarted_peer);
+    restarted_peer.send(wire::Kind::snapshot,
+                        wire::encode_snapshot_message(
+                            {{replacement.identity, 1}, 2, replacement.terminal.snapshot()}));
+    until([&] { return replacement.document.snapshot().alternate_screen; });
+    replacement.document.returnProgramToBottom();
+    settle();
+    restarted_peer.bytes += restarted_peer.socket->readAll();
+    require(restarted_peer.bytes.isEmpty(),
+            "The replaced connection inherited the dead program's wheel debt");
+    require(replacement.document.sendText(QByteArray("s")), "Replacement input was refused");
+    require(text_frames(restarted_peer, 1) == QByteArray("s"), "Replacement input was lost");
 }
 } // namespace
 int main(int argc, char** argv) {

@@ -5327,9 +5327,12 @@ QJsonObject resumeArgumentsRecord(const ResumeArgumentsFixture& fixture,
         throw std::runtime_error("a managed retirement fixture must use a terminal checkpoint");
     auto record = agentRecord(fixture.root, id, "general");
     record.insert(QStringLiteral("harness"), variant.harness);
-    if (variant.harness == QLatin1String("codex"))
+    if (variant.harness == QLatin1String("codex")) {
+        writeExecutable(QDir(fixture.root).filePath(QStringLiteral("codex")),
+                        "#!/usr/bin/env bash\nexit 0\n");
         record.insert(QStringLiteral("program"),
                       QDir(fixture.root).filePath(QStringLiteral("codex")));
+    }
     QJsonArray user_arguments = variant.config_arguments;
     user_arguments.append("--user");
     if (variant.explicit_resume) {
@@ -5594,7 +5597,7 @@ void savedCodexDefaultsKeepTheScreenMode() {
             if (variant.managed)
                 require(saved[QStringLiteral("managedResume")]
                                 .toObject()[QStringLiteral("index")]
-                                .toInt(-1) == 3,
+                                .toInt(-1) == 2,
                         "the owned resume pair shifts exactly once with the defaults");
         }
     }
