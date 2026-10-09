@@ -209,6 +209,8 @@ if(BUILD_TESTING)
     add_test(NAME workspace-remote-account-reset COMMAND lapis_workspace_tests
                                                         --case remote-account-reset)
     set_tests_properties(workspace-remote-account-reset PROPERTIES TIMEOUT 20)
+    add_test(NAME workspace-updates-off COMMAND lapis_workspace_tests --case updates-off)
+    set_tests_properties(workspace-updates-off PROPERTIES TIMEOUT 60)
     if(APPLE)
         add_executable(lapis_sound_decode_tests tests/sound_decode_test.mm)
         target_link_libraries(lapis_sound_decode_tests PRIVATE lapis_project_options lapis_desktop_view)

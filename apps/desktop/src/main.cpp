@@ -909,9 +909,11 @@ int main(int argc, char** argv) {
         keymap.load();
         auto options = workspace_options(parser, isolated);
         options.accounts = keymap.accounts();
+        options.harnessUpdatesOff = keymap.harnessUpdatesOff();
         Workspace workspace(isolated ? WorkspaceMode::preview : WorkspaceMode::live, options);
         const auto configure = [&] {
             workspace.setHarnessArguments(keymap.harnessArguments());
+            workspace.setHarnessUpdatesOff(keymap.harnessUpdatesOff());
             workspace.setAgentDefaults(keymap.agentDefaults());
             workspace.setAccounts(keymap.accounts());
         };
