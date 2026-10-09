@@ -1257,6 +1257,71 @@ void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     CHECK(workspace.focusedSession() == workspace.session(ids[1]));
     key("tileLeft");
     CHECK(workspace.focusedSession() == workspace.session(ids[0]));
+    key("tileLeft");
+    CHECK(workspace.focusedSession() == workspace.session(ids[0])); // no wraparound
+
+    // The next and previous agent keys walk the tiles in reading order, then
+    // show each untiled agent in the tile the walk left, and put the stage
+    // back as it was when they wrap onto the tiles. The selection edge and
+    // the stage terminal follow every press.
+    const auto tile_ids = [&workspace] {
+        QStringList result;
+        for (const auto& tile : workspace.stageTiles())
+            result.append(tile.toMap().value(QStringLiteral("sessionId")).toString());
+        return result;
+    };
+    const auto shows_selection = [&](const QString& id) {
+        auto* frame = item(QStringLiteral("tile_") + id);
+        CHECK(frame != nullptr);
+        CHECK(frame->property("selectedTile").toBool());
+        CHECK(scene_rect(*frame).contains(scene_rect(*terminal)));
+        CHECK(terminal->document() == workspace.session(id));
+        for (const auto& other_id : tile_ids()) {
+            if (other_id == id)
+                continue;
+            auto* other_frame = item(QStringLiteral("tile_") + other_id);
+            CHECK(other_frame != nullptr);
+            CHECK(!other_frame->property("selectedTile").toBool());
+        }
+    };
+    const auto capture_walk = [&window](const char* name) {
+        if (const auto path = qEnvironmentVariable("LAPIS_WORKSPACE_CAPTURE_PREFIX");
+            !path.isEmpty())
+            CHECK(window.grabWindow().save(path + QStringLiteral("tile-walk-") +
+                                           QString::fromLatin1(name) + QStringLiteral(".png")));
+    };
+    const QStringList walk_home{ids[0], ids[1]};
+    CHECK(tile_ids() == walk_home);
+    capture_walk("1-left");
+    key("nextWindow");
+    CHECK(workspace.focusedSession() == workspace.session(ids[1]) && tile_ids() == walk_home);
+    shows_selection(ids[1]);
+    capture_walk("2-right");
+    for (qsizetype untiled = 2; untiled < ids.size(); ++untiled) {
+        key("nextWindow");
+        CHECK(workspace.focusedSession() == workspace.session(ids[untiled]));
+        CHECK(tile_ids() == QStringList({ids[0], ids[untiled]}));
+        shows_selection(ids[untiled]);
+        if (untiled == 2)
+            capture_walk("3-untiled-in-right");
+    }
+    key("nextWindow");
+    CHECK(workspace.focusedSession() == workspace.session(ids[0]) && tile_ids() == walk_home);
+    shows_selection(ids[0]);
+    key("previousWindow");
+    CHECK(workspace.focusedSession() == workspace.session(ids.constLast()));
+    CHECK(tile_ids() == QStringList({ids.constLast(), ids[1]}));
+    shows_selection(ids.constLast());
+    capture_walk("4-previous-in-left");
+    key("nextWindow");
+    CHECK(workspace.focusedSession() == workspace.session(ids[0]) && tile_ids() == walk_home);
+    shows_selection(ids[0]);
+
+    // The walk rebuilt the tiles it passed through.
+    left = item(QStringLiteral("tile_") + ids[0]);
+    other = qobject_cast<lapis::desktop::TerminalSurface*>(
+        item(QStringLiteral("tileTerminal_") + ids[0]));
+    CHECK(other != nullptr);
 
     // A divider drag shares the space differently; agents resize once, at the end.
     const auto before = left->width();
