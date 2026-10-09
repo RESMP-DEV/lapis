@@ -1,6 +1,7 @@
 #include "workspace.hpp"
 #include "agent_checkpoint.hpp"
 #include "app_paths.hpp"
+#include "attention_order.hpp"
 #include "conversation_index.hpp"
 #include "harness_catalog.hpp"
 #include "live_connection.hpp"
@@ -679,15 +680,11 @@ bool Workspace::nextPriorityAttention(const QVariantMap& ready) {
     const auto rank = [&ready](const SessionPreview& item) {
         const auto guess = ready.find(item.sessionId());
         const auto kind = item.statusKind();
-        const bool waiting_for_prompt =
-            kind == QLatin1String("finished") || kind == QLatin1String("idle");
-        int tier = -1;
-        if (guess != ready.end() && waiting_for_prompt && !guess->toBool())
-            tier = 0;
-        else if (item.unseen() || item.attentionPending())
-            tier = 1;
-        else if (guess != ready.end() && waiting_for_prompt)
-            tier = 2;
+        const int tier = waiting_tier({.guessed = guess != ready.end(),
+                                       .guess_seen = guess != ready.end() && guess->toBool(),
+                                       .status = kind,
+                                       .unseen = item.unseen(),
+                                       .request = item.attentionPending()});
         return std::pair{tier, item.neededAtMs()};
     };
     const SessionPreview* best = nullptr;
@@ -2027,7 +2024,7 @@ QString Workspace::remoteAccountFailure(const AccountPool& accounts, const Agent
     }
     const QFileInfo auth(
         QDir(accountsRoot).filePath(QStringLiteral("codex/%1/auth.json").arg(account->name)));
-    if (!auth.isFile() || !auth.isReadable() || auth.size() > 1024 * 1024)
+    if (!auth.isFile() || !auth.isReadable() || auth.size() > qsizetype{1024} * 1024)
         return QStringLiteral("Codex plan %1 has no usable login.").arg(account->name);
     QFile file(auth.absoluteFilePath());
     if (!file.open(QIODevice::ReadOnly) ||

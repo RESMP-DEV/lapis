@@ -468,6 +468,10 @@ class Workspace final : public QObject {
     // from another device never takes the stage from a shown agent.
     QString startAgent(const AgentRequest& request);
     [[nodiscard]] const QString& storagePath() const { return storage_path_; }
+    // This window holds the workspace registry's lock (it owns the workspace).
+    [[nodiscard]] bool holdsRegistry() const {
+        return registry_lock_ != nullptr && registry_lock_->isLocked();
+    }
     // Close an agent's tab. A reachable agent is ended through its
     // session service first and its tab closes once the process exits. An
     // unreachable one keeps its tab unless `abandon` accepts that it may still

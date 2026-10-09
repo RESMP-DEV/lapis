@@ -1743,6 +1743,134 @@ class HomeTests(unittest.TestCase):
         )
 
 
+class DeckTests(unittest.TestCase):
+    """Ultra Tab's deck for the phone: the registry without launch details,
+    and the desktop's published state and composed cards, read-only."""
+
+    AGENT = "11111111-2222-4333-8444-555555555555"
+
+    def setUp(self):
+        self.runtime = Path(tempfile.mkdtemp(prefix="ld-", dir="/tmp"))
+        self.addCleanup(shutil.rmtree, self.runtime, True)
+        self.registry = json.dumps(
+            {
+                "categories": [{"id": "build", "name": "Build"}],
+                "agents": [
+                    {
+                        "id": self.AGENT,
+                        "title": "kernels",
+                        "category": "build",
+                        "harness": "claude",
+                        "endpoint": str(self.runtime / (self.AGENT + ".sock")),
+                        "program": "/usr/local/bin/claude",
+                        "arguments": ["--secret-flag"],
+                        "directory": "/work/kernels",
+                    }
+                ],
+            }
+        )
+        self.state = {
+            "version": 1,
+            "pid": os.getpid(),
+            "agents": [
+                {
+                    "id": self.AGENT,
+                    "status": "finished",
+                    "unseen": True,
+                    "neededAtMs": 1000,
+                    "turnAtMs": 1000,
+                    "offer": {"key": "k1", "text": "run it", "said": "Done."},
+                }
+            ],
+        }
+        self.cards = {
+            "v": 1,
+            "cards": {self.AGENT: {"key": "k1", "tldr": "Kernel is 2x faster"}},
+        }
+
+    def write(self, name, value):
+        (self.runtime / name).write_text(json.dumps(value))
+
+    def test_the_deck_carries_state_and_cards_without_launch_details(self):
+        self.write("agent_state.json", self.state)
+        self.write("ultratab_cards.json", self.cards)
+        with Server(self, self.registry, self.runtime) as server:
+            status, deck = server.request("GET", "/api/deck")
+            self.assertEqual(status, 200)
+            self.assertEqual(deck["categories"], [{"id": "build", "name": "Build"}])
+            self.assertEqual(
+                deck["agents"],
+                [
+                    {
+                        "id": self.AGENT,
+                        "title": "kernels",
+                        "category": "build",
+                        "directory": "/work/kernels",
+                        "harness": "claude",
+                    }
+                ],
+            )
+            self.assertEqual(deck["state"], self.state)
+            self.assertEqual(deck["cards"], self.cards)
+            self.assertTrue(deck["writerRunning"])
+            self.assertEqual(deck["problems"], [])
+            self.assertNotIn("secret-flag", json.dumps(deck))
+            # Browsers and clients without the header are refused, as for
+            # every other route.
+            status, _ = server.request("GET", "/api/deck", client=False)
+            self.assertEqual(status, 403)
+            status, _ = server.request(
+                "GET", "/api/deck", headers={"Origin": "https://example.com"}
+            )
+            self.assertEqual(status, 403)
+
+    def test_missing_linked_or_oversized_files_are_left_out(self):
+        with Server(self, self.registry, self.runtime) as server:
+            status, deck = server.request("GET", "/api/deck")
+            self.assertEqual(status, 200)
+            self.assertEqual((deck["state"], deck["cards"]), (None, None))
+            self.assertFalse(deck["writerRunning"])
+            self.assertEqual(deck["problems"], [])
+
+            elsewhere = self.runtime / "elsewhere.json"
+            elsewhere.write_text(json.dumps(self.cards))
+            (self.runtime / "ultratab_cards.json").symlink_to(elsewhere)
+            with patch.dict(remote.DECK_FILES, {"state": ("agent_state.json", 16)}):
+                self.write("agent_state.json", self.state)
+                status, deck = server.request("GET", "/api/deck")
+            self.assertEqual(status, 200)
+            self.assertEqual((deck["state"], deck["cards"]), (None, None))
+            self.assertEqual(len(deck["problems"]), 2)
+
+    def test_a_waiting_phone_hears_of_a_new_card_at_once(self):
+        self.write("agent_state.json", self.state)
+        with Server(self, self.registry, self.runtime) as server:
+            _, deck = server.request("GET", "/api/deck")
+            threading.Timer(
+                0.3, lambda: self.write("ultratab_cards.json", self.cards)
+            ).start()
+            started = time.monotonic()
+            status, newer = server.request("GET", "/api/deck?after=" + deck["version"])
+            self.assertEqual(status, 200)
+            self.assertLess(time.monotonic() - started, 5)
+            self.assertEqual(newer["cards"], self.cards)
+            self.assertNotEqual(newer["version"], deck["version"])
+
+    def test_submit_refuses_unknown_agents_and_empty_text(self):
+        with Server(self, self.registry, self.runtime) as server:
+            path = f"/api/agents/{self.AGENT}/submit"
+            status, _ = server.request("POST", path, {"text": "  "})
+            self.assertEqual(status, 400)
+            status, _ = server.request(
+                "POST", "/api/agents/terminal-x/submit", {"text": "hi"}
+            )
+            self.assertEqual(status, 404)
+            # The registry names it, but no service runs there.
+            status, body = server.request("POST", path, {"text": "hi"})
+            self.assertEqual(status, 409)
+            self.assertIn("not reachable", body["error"])
+
+
 class MachineTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="lm-", dir="/tmp")).resolve()
@@ -2018,6 +2146,26 @@ class LiveServiceTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertTrue(newer["page"] > before or newer["end"] or newer["busy"])
             phone.close()
+
+    def test_an_ultra_tab_answer_joins_beside_the_desktop_and_leaves(self):
+        with Server(self, self.registry, self.runtime) as server:
+            agent = remote.load_workspace(server.registry)["agents"][0]
+            desktop = remote.WireSession(agent, 90, 30, mode=remote.DISCOVER)
+            self.addCleanup(desktop.close)
+            status, body = server.request(
+                "POST",
+                f"/api/agents/{self.identifier}/submit",
+                {"text": "from the deck"},
+            )
+            self.assertEqual((status, body), (200, {"ok": True}))
+            # The desktop keeps its attachment and its size (desktop_sees
+            # fails on any status, such as "replaced").
+            frame = self.desktop_sees(desktop, "got:from the deck")
+            self.assertEqual(frame["columns"], 90)
+            # No phone view stays behind.
+            self.assertIsNone(remote.Handler.gateway.session(self.identifier))
+            desktop.text(b"still mine\r")
+            self.desktop_sees(desktop, "got:still mine")
 
     def test_mac_and_phone_stay_in_sync(self):
         with Server(self, self.registry, self.runtime) as server:

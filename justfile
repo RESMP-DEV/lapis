@@ -74,6 +74,10 @@ cli-check:
 history-check:
     python3 scripts/check_history.py --disk-full
 
+# Gate the correlated input-to-frame measurement against scripts/performance_budget.json.
+latency-budget:
+    python3 scripts/check_performance_budget.py build/terminal-latency.json
+
 # Correlated native-input/frame-submission measurement; run without competing GUI work.
 latency:
     build/desktop/apps/desktop/lapis_terminal_latency_probe --native --samples 100 --output build/terminal-latency.json

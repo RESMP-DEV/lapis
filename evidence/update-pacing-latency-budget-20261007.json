@@ -1,0 +1,398 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-07T15:40:10.609487+00:00",
+  "scope": "Service snapshot/attention publish-to-publish pacing repair, iPhone newer-history pacing repair, and input-to-frame-submission budget gate on the M4 Max reference machine",
+  "non_claims": [
+    "Frame submission after the matching snapshot synchronized is not pixel presentation",
+    "Qt-injected input does not measure physical keyboard or OS input capture latency",
+    "No switch latency, sustained-output, memory-growth or 32-session scale claim"
+  ],
+  "reference_machine": {
+    "chip": "Apple M4 Max",
+    "display_refresh_hz": 120
+  },
+  "commands": [
+    {
+      "command": "build/desktop/services/session/lapis_attention_protocol_tests",
+      "exit_code": 0
+    },
+    {
+      "command": "ctest --preset desktop -R ^(attention-protocol|attention-state|local-protocol|session-descriptor|agent-checkpoint|launch-spec)$",
+      "exit_code": 0,
+      "tests_passed": 6
+    },
+    {
+      "command": "ctest --preset desktop -R ^(live-connection|terminal-input)$",
+      "exit_code": 0,
+      "tests_passed": 2
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_terminal_latency_probe --samples 30 --output build/terminal-latency-qt-control.json (pre-repair control)",
+      "exit_code": 0
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_terminal_latency_probe --samples 30 --output build/terminal-latency-qt-after.json",
+      "exit_code": 0
+    },
+    {
+      "command": "uv run --no-project python tools/qa/run_history_lifecycle_probe.py",
+      "exit_code": 0
+    },
+    {
+      "command": "uv run --no-project python tools/qa/run_history_lifecycle_probe.py --negative-control --regression newer-pacing",
+      "exit_code": 1,
+      "expected_failure": "first archived page after quiet waited 1.0112190246582031 seconds"
+    },
+    {
+      "command": "python3 scripts/lapis.py performance-check build/terminal-latency-qt-after.json",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 scripts/lapis.py performance-check build/terminal-latency-qt-control.json",
+      "exit_code": 1,
+      "expected_failure": "pre-repair p50 exceeds budget"
+    },
+    {
+      "command": "python3 scripts/lapis.py performance-check build/terminal-latency-final.json",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 scripts/lapis.py build (just desktop)",
+      "exit_code": 0,
+      "note": "29/29 CTest, clang-format, clang-tidy, cppcheck"
+    },
+    {
+      "command": "CCACHE_DISABLE=1 python3 scripts/lapis.py asan",
+      "exit_code": 0,
+      "note": "stale build/asan cache after the Homebrew LLVM upgrade was removed first"
+    },
+    {
+      "command": "CCACHE_DISABLE=1 python3 scripts/lapis.py tsan",
+      "exit_code": 0,
+      "note": "stale build/tsan cache removed first"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_terminal_latency_probe --samples 30 --output build/terminal-latency-buffers-{1,2,3}.json",
+      "exit_code": 0,
+      "note": "repeatability runs"
+    },
+    {
+      "command": "ctest --preset desktop -R ^launch-spec$",
+      "exit_code": 0
+    },
+    {
+      "command": "launch-spec negative control with widen_socket_buffers neutralized",
+      "exit_code": 1,
+      "expected_failure": "Launch contract expectation failed"
+    },
+    {
+      "command": "python3 -m unittest scripts.tests.test_lapis_remote scripts.tests.test_lapis_remote_bounds",
+      "exit_code": 0,
+      "tests_passed": 41
+    },
+    {
+      "command": "CCACHE_DISABLE=1 python3 scripts/lapis.py asan",
+      "exit_code": 0
+    },
+    {
+      "command": "CCACHE_DISABLE=1 python3 scripts/lapis.py tsan",
+      "exit_code": 0
+    },
+    {
+      "command": "ui-preview baseline check with this slice's changes stashed",
+      "exit_code": 1,
+      "note": "failed 1 of 3 identical standalone runs without these changes, at two different assertions; pre-existing flake"
+    },
+    {
+      "command": "python3 scripts/lapis.py ui-check",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 scripts/lapis.py cli-check",
+      "exit_code": 0
+    },
+    {
+      "command": "ctest --preset desktop -R ^(terminal-input|ui-preview)$ --output-on-failure",
+      "exit_code": 0,
+      "note": "ui-preview after QML repair; terminal-input standalone and 6/6 repeated"
+    },
+    {
+      "command": "ctest --preset desktop -R ^ui-preview$ (five runs after repair)",
+      "exit_code": 0,
+      "runs_passed": 5
+    },
+    {
+      "command": "python3 scripts/lapis.py build (after QML repair)",
+      "exit_code": 0,
+      "note": "final gate 29/29 CTest"
+    }
+  ],
+  "latency": {
+    "mode": "Qt key event; correlated service, snapshot and frame submission",
+    "samples": 30,
+    "warmup": 5,
+    "before_repair": {
+      "input_to_frame": {
+        "max_ms": 56.928,
+        "p50_ms": 48.915,
+        "p95_ms": 53.215,
+        "p99_ms": 56.928
+      },
+      "publication_wait": {
+        "max_ms": 17.025,
+        "p50_ms": 17.013,
+        "p95_ms": 17.024,
+        "p99_ms": 17.025
+      },
+      "transport": {
+        "max_ms": 24.873,
+        "p50_ms": 24.297,
+        "p95_ms": 24.856,
+        "p99_ms": 24.873
+      },
+      "snapshot_to_frame": {
+        "max_ms": 14.288,
+        "p50_ms": 6.321,
+        "p95_ms": 10.6,
+        "p99_ms": 14.288
+      }
+    },
+    "after_repair": {
+      "p50_ms": {
+        "min": 15.806,
+        "max": 15.886,
+        "median": 15.822
+      },
+      "p95_ms": {
+        "min": 20.881,
+        "max": 23.957,
+        "median": 22.452
+      },
+      "p99_ms": {
+        "min": 23.964,
+        "max": 25.271,
+        "median": 24.566
+      },
+      "max_ms": {
+        "min": 23.964,
+        "max": 25.271,
+        "median": 24.566
+      }
+    },
+    "valid_native_pre_repair": {
+      "samples": 100,
+      "input_to_frame": {
+        "max_ms": 73.62,
+        "p50_ms": 56.486,
+        "p95_ms": 60.638,
+        "p99_ms": 61.967
+      },
+      "publication_wait": {
+        "max_ms": 17.671,
+        "p50_ms": 17.022,
+        "p95_ms": 17.048,
+        "p99_ms": 17.058
+      },
+      "transport": {
+        "max_ms": 25.196,
+        "p50_ms": 24.737,
+        "p95_ms": 24.974,
+        "p99_ms": 25.135
+      }
+    },
+    "final_gate_input_mode": "synthetic Qt Return",
+    "before_transport_repair": {
+      "input_to_frame": {
+        "max_ms": 37.838,
+        "p50_ms": 32.227,
+        "p95_ms": 34.006,
+        "p99_ms": 37.838
+      },
+      "publication_wait": {
+        "max_ms": 0.005,
+        "p50_ms": 0.005,
+        "p95_ms": 0.005,
+        "p99_ms": 0.005
+      },
+      "transport": {
+        "max_ms": 25.11,
+        "p50_ms": 24.436,
+        "p95_ms": 25.086,
+        "p99_ms": 25.11
+      },
+      "snapshot_to_frame": {
+        "max_ms": 12.171,
+        "p50_ms": 6.488,
+        "p95_ms": 7.741,
+        "p99_ms": 12.171
+      }
+    },
+    "transport_after": {
+      "p50_ms": {
+        "min": 1.642,
+        "max": 1.763,
+        "median": 1.646
+      },
+      "p95_ms": {
+        "min": 1.794,
+        "max": 2.123,
+        "median": 2.003
+      },
+      "p99_ms": {
+        "min": 1.91,
+        "max": 2.497,
+        "median": 2.121
+      },
+      "max_ms": {
+        "min": 1.91,
+        "max": 2.497,
+        "median": 2.121
+      }
+    },
+    "publication_wait_after": {
+      "p50_ms": {
+        "min": 5.642,
+        "max": 6.407,
+        "median": 5.648
+      },
+      "p95_ms": {
+        "min": 10.017,
+        "max": 13.024,
+        "median": 11.523
+      },
+      "p99_ms": {
+        "min": 11.031,
+        "max": 13.046,
+        "median": 12.527
+      },
+      "max_ms": {
+        "min": 11.031,
+        "max": 13.046,
+        "median": 12.527
+      }
+    },
+    "frame_submission_after": {
+      "p50_ms": {
+        "min": 6.587,
+        "max": 7.457,
+        "median": 7.18
+      },
+      "p95_ms": {
+        "min": 9.939,
+        "max": 12.823,
+        "median": 11.352
+      },
+      "p99_ms": {
+        "min": 11.485,
+        "max": 16.499,
+        "median": 13.023
+      },
+      "max_ms": {
+        "min": 11.485,
+        "max": 16.499,
+        "median": 13.023
+      }
+    },
+    "transport_repair": {
+      "cause": "commit 03f766c (widen local socket buffers) is not an ancestor of this branch",
+      "measured_default_socket_buffers": {
+        "SO_SNDBUF": 8192,
+        "SO_RCVBUF": 8192
+      },
+      "fix": "posix::widen_socket_buffers requests at least 1 MiB and never shrinks an already larger buffer; applied at the desktop client, the service primary client and joined-view accepts, and the Python remote gateway",
+      "regression_test": "launch-spec asserts the widened buffer on a real socket pair and fails when the widening is removed (verified by negative control)"
+    },
+    "native_after_repairs": {
+      "mode": "OS-injected Return through AppKit/Qt; not physical keyboard",
+      "samples": 100,
+      "max_ms": 22.324042,
+      "p50_ms": 13.216875,
+      "p95_ms": 19.890709,
+      "p99_ms": 20.999958,
+      "transport": {
+        "max_ms": 2.805083,
+        "p50_ms": 1.677625,
+        "p95_ms": 1.781125,
+        "p99_ms": 1.804041
+      },
+      "snapshot_to_frame": {
+        "max_ms": 14.418875,
+        "p50_ms": 8.547666,
+        "p95_ms": 13.948459,
+        "p99_ms": 14.279459
+      }
+    }
+  },
+  "history_followup": {
+    "fixed_paced_follow_seconds": 0.0012629032135009766,
+    "negative_control_failure_seconds": 1.0112190246582031,
+    "source_sha256": {
+      "apps/ios/Lapis/Models.swift": "eb8e8fe276311be2cc10deb30593f67551fc8cbd652a15d48ed414a20c0ba405",
+      "apps/ios/Lapis/Gateway.swift": "cdf5427ecff92c37579946ba47315ffeadf0bdee7b41720a1ccc4beacce864ec",
+      "apps/ios/Lapis/FolderSearch.swift": "67e8fe831e834100427831137d3176a9b50a741a8675bbfae4e2e9089a9c2e55",
+      "tools/qa/history_lifecycle_probe.swift": "51a6d5906f4f2e8cd4af82d8dc3186a84aee1b293a181cb16b2ee9baab090371"
+    }
+  },
+  "budget": {
+    "name": "m4-max-120hz-input-to-frame",
+    "reference": "Apple M4 Max, 120 Hz reference display",
+    "max_ms": {
+      "p50_ms": 35.0,
+      "p95_ms": 55.0,
+      "p99_ms": 60.0
+    },
+    "budget_ms": {
+      "p50": 20.0,
+      "p95": 30.0,
+      "p99": 35.0
+    },
+    "observed_basis": "Four post-transport-repair runs on the M4 Max reference machine, 30 samples each: input-to-frame p50 15.81/15.83/15.81/15.89 ms, p95 20.88-23.96 ms, p99 23.96-25.27 ms. The budget keeps roughly 25-40 percent headroom over those runs.",
+    "measured_in": "build/desktop/apps/desktop/lapis_terminal_latency_probe --samples 30 --output <receipt.json>; checked with python3 scripts/lapis.py performance-check <receipt.json> or just latency-budget",
+    "history": [
+      {
+        "date": "2026-10-07",
+        "change": "Tightened after the transport repair: whole-screen socket buffers cut the snapshot stage from about 24.7 ms to about 1.7 ms and input-to-frame p50 from 32.2 ms to 15.8 ms.",
+        "previous_budget_ms": {
+          "p50": 35.0,
+          "p95": 55.0,
+          "p99": 60.0
+        },
+        "basis": "Four matched runs above."
+      }
+    ]
+  },
+  "budget_result": "PASS for all four post-transport-repair receipts; FAIL for the pre-repair control at p50 48.915 ms",
+  "passed": true,
+  "native_requalification": {
+    "latency": {
+      "command": "build/desktop/apps/desktop/lapis_terminal_latency_probe --native --samples 100 --output build/terminal-latency-native-final.json",
+      "exit_code": 0,
+      "budget": "PASS at p50 13.217 ms / p95 19.891 ms / p99 21.000 ms"
+    },
+    "native_input": {
+      "command": "just native-input",
+      "exit_code": 0,
+      "receipt": "build/native-input.json",
+      "passed": true
+    },
+    "cli_check": {
+      "command": "python3 scripts/lapis.py cli-check",
+      "exit_code": 0
+    },
+    "ui_preview_flake_repair": {
+      "diagnosis": "revealFocused was not retriggered when card geometry changed with strip height; focused tab stayed past the edge (x 545 + width 274 > view width 684) after 2 s",
+      "fix": "agentTabs.onHeightChanged now calls revealFocused",
+      "before_fix": "failed 3 of 5 runs",
+      "after_fix": "passed 8 consecutive standalone runs and two full desktop gates"
+    },
+    "desktop_gate_final": {
+      "command": "python3 scripts/lapis.py build",
+      "exit_code": 0,
+      "ctest": "29/29"
+    }
+  }
+}
