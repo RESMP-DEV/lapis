@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QString>
+#include <algorithm>
 #include <stdexcept>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -75,9 +76,18 @@ QString prepare_endpoint(const QString& endpoint) {
 void widen_socket_buffers(qintptr descriptor) {
     if (descriptor < 0)
         return;
-    constexpr int bytes = 1024 * 1024;
     const auto fd = static_cast<int>(descriptor);
-    static_cast<void>(::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &bytes, sizeof(bytes)));
-    static_cast<void>(::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &bytes, sizeof(bytes)));
+    // Never request less than the kernel already provides: a host may default
+    // above the widened size, and setsockopt below the current value shrinks it.
+    for (const int option : {SO_SNDBUF, SO_RCVBUF}) {
+        int current{};
+        socklen_t length = sizeof(current);
+        if (::getsockopt(fd, SOL_SOCKET, option, &current, &length) != 0)
+            continue;
+        const int requested = std::max(current, 1024 * 1024);
+        if (requested == current)
+            continue;
+        static_cast<void>(::setsockopt(fd, SOL_SOCKET, option, &requested, sizeof(requested)));
+    }
 }
 } // namespace lapis::session::posix
