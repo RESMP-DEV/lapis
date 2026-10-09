@@ -229,19 +229,27 @@ double NextPrompt::confidence(const QString& id) const { return offers_.value(id
 void NextPrompt::run(const QString& id, bool force) {
     if (!settings_.automatic)
         return;
+    // A repeat is judged by the model's own verdict for the last guess: a
+    // guessed-past turn stays quiet, and re-running this prediction replaces
+    // that verdict once the model answers.
+    const auto judged_for = [this, &id](const QString& attention) { emit judged(id, attention); };
     if (const auto shown = offers_.constFind(id); shown != offers_.cend())
-        previous_.insert(id, {shown->conversation, shown->turn, shown->seen_ms != 0});
+        previous_.insert(id, {shown->conversation, judged_for, shown->turn, shown->seen_ms != 0});
     deferred_.remove(id);
     owed_.remove(id);
     dropRestored(id, "new_turn");
     withdraw(id, Withdrawal::next_turn);
     const auto agent = lookup_(id);
-    if (!agent || (agent->cli != QLatin1String("claude") && agent->cli != QLatin1String("codex")))
+    if (!agent || (agent->cli != QLatin1String("claude") && agent->cli != QLatin1String("codex"))) {
+        emit judged(id, {});
         return;
+    }
     if (auto old = running_.take(id); old.process)
         old.process->stopGroup();
-    if (!budgetAvailable(id))
+    if (!budgetAvailable(id)) {
+        emit judged(id, {});
         return;
+    }
     const auto generation = ++generation_;
     running_.insert(id, {generation, *agent, {}});
     emit stateChanged();
@@ -267,7 +275,7 @@ void NextPrompt::run(const QString& id, bool force) {
                        record({{QStringLiteral("event"), QStringLiteral("skipped")},
                                {QStringLiteral("agent"), id},
                                {QStringLiteral("reason"), QStringLiteral("unseen_repeat")}});
-                       emit judged(id, {});
+                       last.attention(id);
                        return;
                    }
                    predict(id, generation, context);
@@ -382,6 +390,7 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
     if (!budgetAvailable(id)) {
         running_.remove(id);
         emit stateChanged();
+        emit judged(id, {});
         return;
     }
     started_.push_back({clock_.elapsed(), generation});
@@ -470,6 +479,8 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     emit judged(id, answer.value(QStringLiteral("attention")).toString());
     if (!shown)
         return;
+    const auto judged_for = [this, &id](const QString& attention) { emit judged(id, attention); };
+    previous_.insert(id, {made.conversation, judged_for, made.turn, made.seen_ms != 0});
     offers_.insert(id, made);
     // A guess already typed in stays the one its prompt is compared with.
     if (!awaiting_.value(id).filled)
@@ -536,6 +547,8 @@ void NextPrompt::seenOffer(const QVariantMap& identity) {
         offer->seen_ms != 0)
         return;
     offer->seen_ms = QDateTime::currentMSecsSinceEpoch();
+    if (auto previous = previous_.find(id); previous != previous_.end())
+        previous->seen = true;
     auto event = about(*offer, id);
     event.insert(QStringLiteral("event"), QStringLiteral("seen"));
     record(event);
@@ -561,6 +574,8 @@ void NextPrompt::used(const QString& id, bool sent, int typed_first, const QStri
                          ? -1
                          : QDateTime::currentMSecsSinceEpoch() - waiting->offer.seen_ms);
         record(event);
+        if (auto previous = previous_.find(id); previous != previous_.end())
+            previous->seen = true;
         return;
     }
     const auto offer = offers_.value(id);
@@ -573,6 +588,8 @@ void NextPrompt::used(const QString& id, bool sent, int typed_first, const QStri
     event.insert(QStringLiteral("ms_after_seen"),
                  offer.seen_ms == 0 ? -1 : QDateTime::currentMSecsSinceEpoch() - offer.seen_ms);
     record(event);
+    if (auto previous = previous_.find(id); previous != previous_.end())
+        previous->seen = true;
     // Taking a newer offer over a still-waiting guess makes that newer offer
     // the one its eventual prompt must be compared with.
     awaiting_.insert(id, {offer, true, false});

@@ -70,6 +70,7 @@ class NextPrompt final : public QObject {
     // Changes with every suggestion offered or withdrawn, for QML bindings.
     Q_PROPERTY(int revision READ revision NOTIFY changed)
     Q_PROPERTY(bool enabled READ enabled NOTIFY changed)
+    Q_PROPERTY(double confidentThreshold READ confidentThreshold CONSTANT)
   public:
     struct Agent {
         QString machine;      // an ssh host; empty for this Mac
@@ -110,6 +111,7 @@ class NextPrompt final : public QObject {
     // At or above this, the guess is drawn bright: the model's own score
     // separated taken guesses (65%) from the rest (25 to 34%), Oct 3 to 9.
     static constexpr double confident = 0.45;
+    [[nodiscard]] double confidentThreshold() const { return confident; }
     // The suggestion offered for the agent, or empty.
     Q_INVOKABLE [[nodiscard]] QString suggestion(const QString& id) const;
     // The agents with a suggestion offered, each true once it was seen.
@@ -179,6 +181,9 @@ class NextPrompt final : public QObject {
     // The last guess made for an agent, to tell a repeat (see turnFinished).
     struct Previous {
         QString conversation;
+        // The verdict to report when this guess turns out to be an unseen
+        // repeat: the model's own answer, so a self-woken agent stays quiet.
+        std::function<void(const QString&)> attention;
         int turn{-1};
         bool seen{};
     };

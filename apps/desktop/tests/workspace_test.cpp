@@ -4655,6 +4655,15 @@ void pingsFollowTheJudgement() {
     judge.setWaitForTesting(150);
     notifier.judgeBy(judge);
     const auto id = agent.sessionId();
+    lapis::session::wire::AttentionSnapshot attention;
+    attention.available = attention.connected = attention.ready = true;
+    attention.requests.emplace_back();
+    agent.applyAttention(attention);
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 1, "a turn ending on an open request never waits");
+    attention.requests.clear();
+    agent.applyAttention(attention);
+    posted.clear();
 
     emit workspace.turnFinished(&agent);
     require(posted.empty(), "a finished turn waits for its judgement");
