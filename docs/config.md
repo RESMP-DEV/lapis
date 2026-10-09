@@ -33,6 +33,22 @@ lapis's selected model, approval mode and resume options. Configured approval
 flags take precedence for a request with no explicit mode. Shell aliases do not
 apply because lapis starts the executable directly.
 
+## CLI updates
+
+`harnessUpdates` turns off lapis's automatic update for the CLIs set to
+`false`, so a version you chose stays installed:
+
+```json
+"harnessUpdates": {"omp": false}
+```
+
+New agents of a listed CLI start without running its update first, and **Update
+this tab's CLI and reload it** says updates are off for that CLI instead of
+running one. An update already running when you add the key still finishes
+before its waiting agents start. Every CLI that is absent or set to `true` keeps
+updating as before; `--no-harness-updates` still turns off updates for all of
+them. See [keeping CLIs current](agents.md#keeping-clis-current).
+
 ## Alerts
 
 An unseen completed turn or request plays one quiet cue when `alerts.finished`

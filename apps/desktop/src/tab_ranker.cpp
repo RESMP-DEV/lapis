@@ -25,6 +25,8 @@ constexpr int kLogVersion = 1;
 constexpr qint64 kLogLimit = qint64{4} * 1024 * 1024;
 constexpr qint64 kRecordLimit = qint64{256} * 1024;
 constexpr int kMaxCandidates = 64;
+constexpr int kMaxWorkCategories = 32;
+constexpr int kMaxCategoryLength = 64;
 // Fitting: gradient steps on the mean negative log-likelihood of the person's
 // choices plus `kPull` times the squared distance from the prior (category
 // weights are pulled toward zero). Measured on the author's week of choices
@@ -155,8 +157,11 @@ TabAwaySettings parse_tab_away(const QJsonValue& value) {
         settings.work.clear();
         for (const auto& name : work.toArray())
             if (name.isString() && !name.toString().trimmed().isEmpty() &&
-                settings.work.size() < 32)
-                settings.work.append(name.toString().trimmed().left(80));
+                settings.work.size() < kMaxWorkCategories) {
+                const auto trimmed = name.toString().trimmed().left(kMaxCategoryLength);
+                if (!settings.work.contains(trimmed, Qt::CaseInsensitive))
+                    settings.work.append(trimmed);
+            }
     }
     return settings;
 }
@@ -249,8 +254,10 @@ struct TabRanker::Shared {
     bool again{};
     TabRanker* owner{};
     // The decisions this process has made when there is no log to read them
-    // from; a refit worker reads them, so they live under this mutex.
+    // from; pending choices and the cumulative fitted history live under this
+    // mutex. A refit moves the pending batch out, then extends the history.
     std::vector<QJsonObject> memory;
+    std::vector<QJsonObject> history;
 };
 
 TabRanker::TabRanker(QString folder, QObject* parent)
@@ -286,7 +293,7 @@ std::vector<double> TabRanker::scores(const std::vector<TabCandidate>& candidate
             const int tier = item.guess && !item.guessSeen ? 0
                              : item.unseen || item.request ? 1
                                                            : 2;
-            out.push_back(-1e6 * tier + item.waitMinutes);
+            out.push_back(-1e6 * tier + std::max(0.0, item.waitMinutes));
             continue;
         }
         double s = model_.categories.value(candidates[c].category);
@@ -366,6 +373,11 @@ void TabRanker::record(QJsonObject event) const {
     if (encoded.size() > kRecordLimit)
         return;
     QFile file(log_path_);
+    const QDir directory(folder_);
+    if (!directory.mkpath(QStringLiteral("."))) {
+        qWarning() << "Tab ranker: cannot create log directory:" << directory.absolutePath();
+        return;
+    }
     if (file.exists() && file.size() + encoded.size() > kLogLimit) {
         const auto previous = log_path_ + QStringLiteral(".1");
         QFile::remove(previous);
@@ -375,7 +387,6 @@ void TabRanker::record(QJsonObject event) const {
         }
         file.setFileName(log_path_);
     }
-    QDir().mkpath(folder_, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
     if (!file.open(QIODevice::Append | QIODevice::WriteOnly,
                    QFile::ReadOwner | QFile::WriteOwner) ||
         !file.setPermissions(QFile::ReadOwner | QFile::WriteOwner)) {
@@ -401,39 +412,62 @@ void TabRanker::refit() {
             return;
         }
         shared_->running = true;
-        memory = shared_->memory;
+        memory = std::move(shared_->memory);
+        shared_->memory.clear();
     }
     QThreadPool::globalInstance()->start(platform::PublishedTask(
         [shared = shared_, path = log_path_, model_path = model_path_, memory = std::move(memory)] {
-            auto model = fit_tab_ranker(path.isEmpty() ? memory : readDecisions(path));
+            std::vector<QJsonObject> decisions;
+            if (path.isEmpty()) {
+                // Move the new batch into the cumulative fitted history while it
+                // is still mutex-protected, then fit that bounded snapshot.
+                const std::lock_guard history_lock(shared->mutex);
+                auto history = std::move(shared->history);
+                history.insert(history.end(), std::make_move_iterator(memory.begin()),
+                               std::make_move_iterator(memory.end()));
+                if (history.size() > static_cast<std::size_t>(TabRanker::kMaxDecisions))
+                    history.erase(history.begin(), history.end() - static_cast<std::ptrdiff_t>(
+                                                                       TabRanker::kMaxDecisions));
+                shared->history = std::move(history);
+                decisions = shared->history;
+            } else {
+                decisions = readDecisions(path);
+            }
+            auto model = fit_tab_ranker(decisions);
             if (!model_path.isEmpty() && model.decisions > 0)
                 writeModel(model_path, model);
             const std::lock_guard lock(shared->mutex);
             if (!shared->active)
                 return;
-            QMetaObject::invokeMethod(shared->owner,
-                                      platform::PublishedTask([shared, model = std::move(model)] {
-                                          TabRanker* owner = nullptr;
-                                          bool again = false;
-                                          {
-                                              const std::lock_guard inner(shared->mutex);
-                                              if (!shared->active)
-                                                  return;
-                                              owner = shared->owner;
-                                              shared->running = false;
-                                              again = std::exchange(shared->again, false);
-                                          }
-                                          owner->adopt(model);
-                                          if (again)
-                                              owner->refit();
-                                      }),
-                                      Qt::QueuedConnection);
+            QMetaObject::invokeMethod(
+                shared->owner, platform::PublishedTask([shared, model = std::move(model)] {
+                    TabRanker* owner = nullptr;
+                    bool again = false;
+                    {
+                        const std::lock_guard inner(shared->mutex);
+                        if (!shared->active)
+                            return;
+                        owner = shared->owner;
+                        shared->running = false;
+                        again = std::exchange(shared->again, false);
+                        if (owner == nullptr)
+                            return;
+                        // Model state changes while the handoff is
+                        // still protected; its signal is queued so
+                        // listeners cannot re-enter this lock.
+                        owner->adopt(model);
+                        if (again)
+                            QMetaObject::invokeMethod(
+                                owner, [shared, owner] { owner->refit(); }, Qt::QueuedConnection);
+                    }
+                }),
+                Qt::QueuedConnection);
         }));
 }
 
 void TabRanker::adopt(Model model) {
     model_ = std::move(model);
-    emit modelChanged();
+    QMetaObject::invokeMethod(this, [this] { emit modelChanged(); }, Qt::QueuedConnection);
 }
 
 } // namespace lapis::desktop

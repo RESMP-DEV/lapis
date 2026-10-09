@@ -310,12 +310,14 @@ QString TileLayout::neighbor(const QString& id, Edge direction) const {
 
 QStringList TileLayout::readingOrder() const {
     auto all = tiles(QRectF(0, 0, 1, 1));
-    // Exact finite coordinates give the comparator a strict weak ordering.
-    // Approximate equality is transitive only by accident and can make a sort
-    // order depend on the tree's incidental tile order.
+    // Bucket coordinates at the layout comparison resolution: a pair of tiles
+    // in one visual row can differ by floating-point noise, while an epsilon
+    // comparator alone would not give stable_sort a strict weak ordering.
     std::stable_sort(all.begin(), all.end(), [](const Tile& first, const Tile& second) {
-        if (first.rect.top() != second.rect.top())
-            return first.rect.top() < second.rect.top();
+        const auto first_row = std::llround(first.rect.top() * 1'000'000.0);
+        const auto second_row = std::llround(second.rect.top() * 1'000'000.0);
+        if (first_row != second_row)
+            return first_row < second_row;
         return first.rect.left() < second.rect.left();
     });
     QStringList result;
@@ -337,15 +339,26 @@ TileLayout::Step TileLayout::step(const TileLayout& home, const QStringList& ord
                                   const QString& slot, const QString& current, int delta) {
     if (order.isEmpty())
         return {.selected = {}, .layout = home, .slot = {}};
-    const auto count = order.size();
-    const auto here = std::max<qsizetype>(order.indexOf(current), 0);
-    const auto& next = order.at(((here + delta % count) % count + count) % count);
+    const int count = static_cast<int>(order.size());
+    const int here = static_cast<int>(order.indexOf(current));
+    if (here < 0)
+        return {.selected = {}, .layout = home, .slot = {}};
+    const int offset = (here + delta) % count;
+    const auto& next = order.at(offset < 0 ? offset + count : offset);
     if (home.empty() || home.contains(next))
         return {.selected = next, .layout = home, .slot = {}};
     // Leaving a tile of `home`, that tile shows the strip's agents in turn.
-    const QString shown_in = home.contains(current) ? current
-                             : home.contains(slot)  ? slot
-                                                    : home.readingOrder().front();
+    QString shown_in;
+    if (home.contains(current))
+        shown_in = current;
+    else if (home.contains(slot))
+        shown_in = slot;
+    else {
+        const auto first = home.readingOrder();
+        if (first.isEmpty())
+            return {.selected = {}, .layout = home, .slot = {}};
+        shown_in = first.front();
+    }
     auto layout = home;
     layout.replace(shown_in, next);
     return {.selected = next, .layout = layout, .slot = shown_in};

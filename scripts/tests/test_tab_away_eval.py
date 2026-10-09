@@ -102,6 +102,15 @@ class TabAwayEvalTest(unittest.TestCase):
         self.assertEqual(decisions[0]["chosen"], 1)
         self.assertTrue(decisions[0]["raw"][1]["guess_seen"])
 
+    def test_utc_normalizes_the_supported_timestamp_forms(self):
+        expected = 1_759_732_800.0
+        self.assertEqual(tab_away_eval.utc("2025-10-06T06:40:00Z"), expected)
+        self.assertEqual(tab_away_eval.utc("2025-10-06T06:40:00"), expected)
+        self.assertEqual(tab_away_eval.utc("2025-10-06 06:40:00"), expected)
+        self.assertEqual(tab_away_eval.utc("2025-10-06T08:40:00+02:00"), expected)
+        with self.assertRaisesRegex(ValueError, "unrecognized timestamp"):
+            tab_away_eval.utc("not a timestamp")
+
 
 if __name__ == "__main__":
     unittest.main()

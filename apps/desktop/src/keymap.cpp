@@ -636,6 +636,7 @@ void KeyMap::apply_defaults() {
     agent_defaults_ = {};
     terminal_font_family_.clear();
     harness_arguments_.clear();
+    harness_updates_off_.clear();
     terminal_font_size_ = kTerminalFontSizeDefault;
     layout_ = WorkspaceLayout::Focus;
     density_ = CardDensity::Comfortable;
@@ -724,6 +725,7 @@ bool KeyMap::load() {
 
     load_terminal_font(root.value(QStringLiteral("terminalFont")));
     load_harness_arguments(root.value(QStringLiteral("harnessArguments")));
+    load_harness_updates(root.value(QStringLiteral("harnessUpdates")));
     load_alerts(root);
     load_usage(root);
     load_agent_defaults(root.value(QStringLiteral("newAgent")));
@@ -779,6 +781,37 @@ void KeyMap::load_harness_arguments(const QJsonValue& value) {
             continue;
         }
         harness_arguments_.insert(it.key(), arguments);
+    }
+}
+
+void KeyMap::load_harness_updates(const QJsonValue& value) {
+    if (value.isUndefined() || value.isNull())
+        return;
+    if (!value.isObject()) {
+        append_diagnostic(&diagnostic_,
+                          QStringLiteral("harnessUpdates must map harness names to true or false"));
+        return;
+    }
+    const auto harnesses = value.toObject();
+    for (auto it = harnesses.begin(); it != harnesses.end(); ++it) {
+        if (it.key().isEmpty() || it.key().size() > 32 || !it.value().isBool()) {
+            append_diagnostic(&diagnostic_,
+                              QStringLiteral("Ignoring harnessUpdates for '%1': use a harness "
+                                             "name of at least one and at most 32 characters "
+                                             "and true or false")
+                                  .arg(it.key().left(32)));
+            continue;
+        }
+        if (it.value().toBool())
+            continue;
+        if (harness_updates_off_.size() >= 16) {
+            append_diagnostic(&diagnostic_,
+                              QStringLiteral("Ignoring harnessUpdates for '%1': at most 16 "
+                                             "harnesses are kept")
+                                  .arg(it.key().left(32)));
+            continue;
+        }
+        harness_updates_off_.insert(it.key().toLower());
     }
 }
 

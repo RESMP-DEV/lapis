@@ -24,7 +24,7 @@ import math
 import os
 import sys
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -208,7 +208,19 @@ def from_log(path):
 
 
 def utc(stamp):
-    return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    """Parse the ISO timestamps written by lapis and Claude Code transcripts."""
+    text = str(stamp)
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    if "T" not in text and " " in text:
+        text = text.replace(" ", "T", 1)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError as error:
+        raise ValueError(f"unrecognized timestamp: {stamp!r}") from error
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
 
 
 def jsonl(path):

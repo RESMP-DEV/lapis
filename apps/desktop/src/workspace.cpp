@@ -1,6 +1,7 @@
 #include "workspace.hpp"
 #include "agent_checkpoint.hpp"
 #include "app_paths.hpp"
+#include "attention_order.hpp"
 #include "conversation_index.hpp"
 #include "harness_catalog.hpp"
 #include "live_connection.hpp"
@@ -497,6 +498,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
     choice_settle_.setInterval(2500);
     connect(&choice_settle_, &QTimer::timeout, this, [this] { settleChoice(); });
     connect(this, &Workspace::focusChanged, this, [this] { noteFocusMove(); });
+    harness_updates_off_ = options.harnessUpdatesOff;
     // Selecting an agent is looking at it.
     connect(this, &Workspace::focusChanged, this, [this] {
         if (auto* focused = focusedSession())
@@ -527,6 +529,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
             watch(sessions_.front().get());
             update_log_directory_ = QFileInfo(endpoint).absolutePath();
             restoreSelection();
+            rememberInitialFocus();
             if (options.mode == session::wire::AttachMode::create &&
                 deferForUpdate(QStringLiteral("shell")))
                 return;
@@ -541,6 +544,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
         // Tab's choices and model live beside the registry, owner-only.
         tab_ranker_ = std::make_unique<TabRanker>(QFileInfo(storage_path_).absolutePath());
         restoreSelection();
+        rememberInitialFocus();
         return;
     }
     add("Codex", "lapis", "UI preview", "#87cbac", "~/lapis\r\n\r\n> Ready for the next step.\r\n");
@@ -598,6 +602,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
         watch(item.get());
     }
     restoreSelection();
+    rememberInitialFocus();
 }
 
 QVariantList Workspace::sessions() const {
@@ -623,19 +628,23 @@ void Workspace::nextSession(int delta) {
     const auto* focused = focusedSession();
     const QString current = focused != nullptr ? focused->sessionId() : QString();
     // Tiles first in reading order, then the strip; a walk continues while the
-    // stage is as its last step left it.
-    const bool continues = tile_walk_ && tile_walk_->category == place->id &&
-                           tile_walk_->selected == current &&
-                           tile_walk_->shown == place->tiles.toJson() &&
-                           tile_walk_->home.cycleOrder(strip) == tile_walk_->order;
-    if (!continues)
-        tile_walk_ = TileWalk{.category = place->id,
-                              .home = place->tiles,
-                              .order = place->tiles.cycleOrder(strip),
-                              .slot = {},
-                              .shown = place->tiles.toJson(),
-                              .selected = current};
-    auto& walk = tile_walk_.value();
+    // stage is as its last step left it. A tile whose agent has been closed or
+    // moved away leaves the walk: its starting layout would put that agent back
+    // on the stage, and `untile` cannot see a tile the walk displaced.
+    const auto in_strip = [&strip](const QString& id) { return strip.contains(id); };
+    const auto existing = tile_walks_.constFind(place->id);
+    const auto home_tiles =
+        existing != tile_walks_.cend() ? existing->home.sessions() : QStringList{};
+    const bool continues = existing != tile_walks_.cend() && existing->selected == current &&
+                           existing->shown == place->tiles.toJson() &&
+                           existing->home.cycleOrder(strip) == existing->order &&
+                           std::all_of(home_tiles.cbegin(), home_tiles.cend(), in_strip);
+    const TileWalk candidate{.home = place->tiles,
+                             .order = place->tiles.cycleOrder(strip),
+                             .slot = {},
+                             .shown = place->tiles.toJson(),
+                             .selected = current};
+    const TileWalk& walk = continues ? existing.value() : candidate;
     const auto step = TileLayout::step(walk.home, walk.order, walk.slot, current, delta);
     if (step.selected.isEmpty() || step.selected == current || !mutableRegistry())
         return;
@@ -645,9 +654,14 @@ void Workspace::nextSession(int delta) {
     place->selected = step.selected;
     if (!commit(previous))
         return;
-    walk.slot = step.slot;
-    walk.shown = place->tiles.toJson();
-    walk.selected = step.selected;
+    if (!continues)
+        tile_walks_.insert(place->id, candidate);
+    auto saved_walk = tile_walks_.find(place->id);
+    if (saved_walk == tile_walks_.end())
+        return;
+    saved_walk->slot = step.slot;
+    saved_walk->shown = place->tiles.toJson();
+    saved_walk->selected = step.selected;
     if (retiled)
         emit tilesChanged();
     emit focusChanged();
@@ -870,6 +884,10 @@ void Workspace::clearError() {
     error_.clear();
     emit errorChanged();
 }
+void Workspace::rememberInitialFocus() {
+    const auto* focused = focusedSession();
+    last_focus_id_ = focused != nullptr ? focused->sessionId() : QString{};
+}
 void Workspace::watch(SessionPreview* item) {
     connect(item, &SessionPreview::connectionChanged, this, [this, item] { finishClosing(item); });
     // The service reports why a session ended just after the state changes.
@@ -1071,6 +1089,7 @@ bool Workspace::removeCategory(const QString& id) {
         active_category_ = categories_.front().id;
     if (!commit(previous))
         return false;
+    tile_walks_.remove(id);
     changed();
     return true;
 }
@@ -1396,6 +1415,9 @@ bool Workspace::discardSession(const QString& id) {
     last_kind_.remove(item);
     waiting_since_.remove(id);
     turn_starts_.remove(id);
+    if (choice_)
+        std::erase_if(choice_->candidates,
+                      [&id](const TabCandidate& candidate) { return candidate.session == id; });
     rememberClosed(closed_agent, closed_title);
     changed();
     // QML delegates can still hold the removed object during this call stack.
@@ -2132,7 +2154,7 @@ QString Workspace::remoteAccountFailure(const AccountPool& accounts, const Agent
     }
     const QFileInfo auth(
         QDir(accountsRoot).filePath(QStringLiteral("codex/%1/auth.json").arg(account->name)));
-    if (!auth.isFile() || !auth.isReadable() || auth.size() > 1024 * 1024)
+    if (!auth.isFile() || !auth.isReadable() || auth.size() > qsizetype{1024} * 1024)
         return QStringLiteral("Codex plan %1 has no usable login.").arg(account->name);
     QFile file(auth.absoluteFilePath());
     if (!file.open(QIODevice::ReadOnly) ||
@@ -2709,8 +2731,10 @@ bool Workspace::deferForUpdate(const QString& id) {
     const auto key = harness + QLatin1Char('@');
     const bool running = cli_updates_.contains(key);
     constexpr qint64 fresh_ms = qint64{30} * 60 * 1000;
+    // An update already running still holds new agents until its installer
+    // stops, even if lapis.json turned that CLI's updates off meanwhile.
     if (!running &&
-        (!update_harnesses_ ||
+        (!update_harnesses_ || harness_updates_off_.contains(harness) ||
          QDateTime::currentMSecsSinceEpoch() - harness_checked_ms_.value(harness, 0) < fresh_ms))
         return false;
     auto& update = cli_updates_[key];
@@ -2782,9 +2806,21 @@ int Workspace::updateAndReloadAgent(const QString& id) {
         fail(QStringLiteral("lapis has no update command for this agent's CLI."));
         return 0;
     }
+    if (refuseUpdatesOff(agents_.value(id).harness))
+        return 0;
     return updateAndReload({id});
 }
+bool Workspace::refuseUpdatesOff(const QString& harness) {
+    if (!harness_updates_off_.contains(harness))
+        return false;
+    const auto* cli = find_harness(harness);
+    fail(QStringLiteral("Updates are off for %1 in lapis.json (harnessUpdates).")
+             .arg(cli != nullptr ? cli->label : harness));
+    return true;
+}
 int Workspace::updateClaudeAndReload() {
+    if (refuseUpdatesOff(QStringLiteral("claude")))
+        return 0;
     QStringList ids;
     for (const auto& item : sessions_)
         if (agents_.value(item->sessionId()).harness == QLatin1String("claude"))

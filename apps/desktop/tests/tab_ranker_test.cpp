@@ -12,6 +12,7 @@
 #include <QThread>
 #include <QThreadPool>
 #include <QVariantMap>
+#include <algorithm>
 #include <exception>
 #include <functional>
 #include <iostream>
@@ -102,6 +103,20 @@ void fixedOrder() {
             "then the longest waiting seen guess, work or not");
 }
 
+// Clock skew may hand a candidate a negative wait; it cannot make the fixed
+// order reward that candidate for waiting less than no time at all.
+void fixedOrderClampsNegativeWaits() {
+    TabRanker ranker;
+    ranker.setLearned(false);
+    auto behind_clock = agent("skewed", -5, "home");
+    behind_clock.unseen = true;
+    auto zero = agent("zero", 0, "home");
+    zero.unseen = true;
+    const auto scores = ranker.scores({behind_clock, zero});
+    require(scores.size() == 2 && scores[0] == scores[1],
+            "a negative wait scores the same as no wait");
+}
+
 // The ranker follows the person: after they keep choosing a category the
 // prior ranks lower, its agents come first.
 void learnsOnline() {
@@ -137,6 +152,33 @@ void learnsOnline() {
         ranker.learn({work, games}, 1, false);
     require(waitFor([&] { return !ranker.refitting(); }), "the queued refits finished");
     require(ranker.model().decisions == 45, "every queued choice was fitted");
+}
+
+// A ranker without a log keeps its bounded decision memory exactly once per
+// refit: moving it out clears the mutex-protected buffer.
+void memoryRefitDoesNotRepeatChoices() {
+    TabRanker ranker;
+    const auto work = agent("w", 3, "job");
+    const auto games = agent("g", 3, "games");
+    for (int i = 0; i < 12; ++i) {
+        ranker.learn({work, games}, 1, false);
+        require(waitFor([&] { return !ranker.refitting(); }), "each memory refit finished");
+    }
+    require(ranker.model().decisions == 12, "each choice is fitted exactly once");
+}
+
+// The log parent is created before checking or opening its child.
+void createsMissingLogFolder() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary log parent");
+    const auto folder = QDir(directory.path()).filePath(QStringLiteral("nested/tab-away"));
+    TabRanker ranker(folder);
+    const auto work = agent("w", 3, "job");
+    const auto games = agent("g", 3, "games");
+    ranker.learn({work, games}, 1, false);
+    require(waitFor([&] { return !ranker.refitting(); }), "the first fit finished");
+    const QFile log(QDir(folder).filePath(QStringLiteral("tab_away.jsonl")));
+    require(log.exists(), "created the missing log folder and wrote its choice");
 }
 
 // A fit may finish after the ranker is gone. The shared handoff owns only its
@@ -347,6 +389,21 @@ void settings() {
         parse_tab_away(QJsonObject{{"rank", "fixed"}, {"work", QJsonArray{"Job", " ", 3}}});
     require(!fixed.learned && fixed.work == QStringList{QStringLiteral("Job")},
             "fixed rank and named work categories");
+    QJsonArray many;
+    for (int i = 0; i < 40; ++i)
+        many.append(QStringLiteral("category-%1").arg(i));
+    many.append(QStringLiteral("CATEGORY-1"));
+    const auto bounded = parse_tab_away(QJsonObject{{"rank", "fixed"}, {"work", many}});
+    require(bounded.work.size() == 32, "category names are bounded");
+    require(std::adjacent_find(bounded.work.cbegin(), bounded.work.cend(),
+                               [](const QString& first, const QString& second) {
+                                   return first.compare(second, Qt::CaseInsensitive) == 0;
+                               }) == bounded.work.cend(),
+            "duplicate category names are ignored without case");
+    const auto truncated =
+        parse_tab_away(QJsonObject{{"work", QJsonArray{QStringLiteral("x").repeated(70)}}});
+    require(truncated.work.size() == 1 && truncated.work.first().size() == 64,
+            "category names have one truncation limit");
 }
 
 // An append failure must not pretend the choice was persisted.
@@ -381,9 +438,12 @@ int main(int argc, char** argv) {
         QCoreApplication app(argc, argv);
         priorOrder();
         fixedOrder();
+        fixedOrderClampsNegativeWaits();
         learnsOnline();
+        memoryRefitDoesNotRepeatChoices();
         refitSurvivesDestruction();
         persists();
+        createsMissingLogFolder();
         settings();
         tabAwayChoosesOnlyAgentsWaitingOnYou();
         tabAwayPutsWorkFirstAndLearns();
