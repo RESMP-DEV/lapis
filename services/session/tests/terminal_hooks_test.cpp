@@ -84,7 +84,7 @@ void authenticates_events() {
     const QByteArray broken = "\x1b]7717;lapis-event;x\x1b[31m";
     require(channel.filter(broken, events) == broken);
     QByteArray endless = "\x1b]7717;lapis-event;";
-    endless += QByteArray(TerminalHookChannel::max_sequence + 1, 'a');
+    endless += QByteArray(TerminalHookChannel::max_sequence + 21, 'a');
     require(channel.filter(endless, events).isEmpty() && events.size() == 1);
     // The oversized candidate is quarantined through its terminator; a later
     // authenticated event still passes instead of being bypassed as raw output.
@@ -94,12 +94,48 @@ void authenticates_events() {
     for (qsizetype split = 1; split < oversized_done.size(); ++split) {
         TerminalHookChannel split_channel;
         std::vector<TerminalHookEvent> split_events;
-        auto shown =
+        auto quarantined =
             split_channel.filter(QByteArrayView(oversized_done).first(split), split_events);
-        shown += split_channel.filter(QByteArrayView(oversized_done).sliced(split), split_events);
-        shown += split_channel.filter(event(done), split_events);
-        require(shown.isEmpty() && split_events.size() == 1);
+        quarantined +=
+            split_channel.filter(QByteArrayView(oversized_done).sliced(split), split_events);
+        quarantined += split_channel.filter(event(done), split_events);
+        require(quarantined.isEmpty() && split_events.size() == 1);
     }
+}
+
+// An oversized incomplete hook never erases terminal output that arrived
+// before it, a bare backslash does not end quarantine, and quarantine itself
+// cannot suppress later output indefinitely.
+void bounds_oversized_quarantine() {
+    const QByteArray prefix = "login\r\n";
+    const QByteArray marker = "\x1b]7717;lapis-event;" + QByteArray(nonce) + ";";
+    QByteArray oversized_first = prefix + marker;
+    oversized_first += QByteArray(TerminalHookChannel::max_sequence + 1, 'a');
+    const QByteArray resumed = "\x07"
+                               "after\r\n";
+
+    TerminalHookChannel channel;
+    std::vector<TerminalHookEvent> events;
+    require(channel.filter(oversized_first, events) == prefix);
+    require(channel.filter(resumed, events) == "after\r\n");
+    require(events.empty());
+
+    TerminalHookChannel backslash_channel;
+    require(backslash_channel.filter(oversized_first, events) == prefix);
+    require(backslash_channel.filter("\\hidden\x07shown\r\n", events) == "shown\r\n");
+    require(events.empty());
+
+    TerminalHookChannel recovery_channel;
+    require(recovery_channel.filter(oversized_first, events) == prefix);
+    const QByteArray silent(TerminalHookChannel::max_sequence, 'q');
+    while (true) {
+        const auto shown = recovery_channel.filter(silent, events);
+        if (!shown.isEmpty())
+            break;
+        require(events.empty());
+    }
+    require(recovery_channel.filter("recovered\r\n", events) == "recovered\r\n");
+    require(events.empty());
 }
 
 // Codex reports only finished turns: a finished turn is observed, submitted
@@ -114,6 +150,8 @@ void notify_turns() {
     require(!turns.completed({{"type", "agent-turn-complete"}}, 2));
     require(turns.submitted() && state.activity() == attention::Activity::unknown);
     require(!turns.submitted());
+    require(!turns.completed({{"type", "agent-turn-complete"}}, 3));
+    require(state.activity() == attention::Activity::unknown);
     require(turns.completed({{"type", "agent-turn-complete"}}, 3));
     require(state.activity() == attention::Activity::turn_completed);
     // A failed transition must not consume an adapter sequence.
@@ -133,13 +171,39 @@ void notify_turns() {
     require(!reported.submitted());
     require(NotifyTurnsTestAccess::sequence(reported) == 2);
 }
+
+// Return during an in-flight turn must consume the next completion, and a
+// rejected initial observation retries without reusing its source epoch.
+void notify_turn_recovery() {
+    attention::State state("session", "codex-notify");
+    NotifyTurns turns(state);
+    require(turns.completed({{"type", "agent-turn-complete"}}, 1));
+    require(turns.submitted() && state.activity() == attention::Activity::unknown);
+    require(!turns.submitted());
+    require(!turns.completed({{"type", "agent-turn-complete"}}, 2));
+    require(state.activity() == attention::Activity::unknown);
+    require(turns.completed({{"type", "agent-turn-complete"}}, 3));
+    require(state.activity() == attention::Activity::turn_completed);
+    require(turns.diagnostic().contains(QStringLiteral("synchronized=true")));
+
+    attention::State rejected("session", "codex-notify");
+    rejected.connect(1, {false, false, false});
+    NotifyTurns retry(rejected);
+    require(!retry.completed({{"type", "agent-turn-complete"}}, 1));
+    require(!retry.completed({{"type", "agent-turn-complete"}}, 1));
+    require(!rejected.ready() && rejected.epoch() == 1);
+    require(NotifyTurnsTestAccess::sequence(retry) == 0);
+    require(retry.diagnostic().contains(QStringLiteral("synchronized=false")));
+}
 } // namespace
 
 int main() {
     try {
         removes_sequences_across_reads();
         authenticates_events();
+        bounds_oversized_quarantine();
         notify_turns();
+        notify_turn_recovery();
         std::cout << "terminal-hooks: ok\n";
         return 0;
     } catch (const std::exception& error) {

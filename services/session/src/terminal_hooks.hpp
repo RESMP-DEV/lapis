@@ -33,6 +33,10 @@ class NotifyTurnsTestAccess;
 class TerminalHookChannel {
   public:
     static constexpr qsizetype max_sequence = qsizetype{24} * 1024;
+    // A malformed candidate has no timeout in this synchronous parser.
+    // Quarantine is bounded in output bytes so a stream without a terminator
+    // cannot suppress the terminal forever.
+    static constexpr qsizetype max_discard = max_sequence * 4;
     // The output without lapis sequences, in order. A possible sequence cut
     // by the end of this read is held until the next one; it cannot draw
     // anything by itself. Authenticated events are appended to `events`.
@@ -41,9 +45,14 @@ class TerminalHookChannel {
     [[nodiscard]] const QString& cli() const { return cli_; }
 
   private:
+    enum class DiscardResult : std::uint8_t { recover, partial, ready };
+
     void accept(QByteArrayView body, std::vector<TerminalHookEvent>& events);
+    [[nodiscard]] DiscardResult advance_discard(QByteArrayView data, qsizetype& discard_from);
+    bool begin_oversized_discard(qsizetype candidate_size);
     QByteArray carry_;
     bool discarding_{};
+    qsizetype discarded_{};
     QByteArray nonce_;
     QString cli_;
 };
@@ -59,13 +68,15 @@ class NotifyTurns {
     // Whether the state changed.
     bool completed(const QJsonObject& source, attention::Tick now);
     bool submitted();
-    [[nodiscard]] static QString diagnostic();
+    [[nodiscard]] QString diagnostic() const;
 
   private:
     friend class NotifyTurnsTestAccess;
 
     attention::State& state_;
     std::uint64_t sequence_{};
+    bool skip_completion_{};
+    bool prompt_active_{};
 };
 } // namespace lapis::session
 #endif

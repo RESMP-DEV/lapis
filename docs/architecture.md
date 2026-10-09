@@ -4301,12 +4301,18 @@ route uses the channel lapis already owns: the agent's terminal.
   enables `TerminalHookChannel` only for ssh-transport terminal launches. The
   first init binds the nonce; later inits and events without it are ignored,
   so displayed text cannot pose as a hook. Every lapis sequence is removed
-  before the terminal engine sees it, including one split across reads.
+  before the terminal engine sees it, including one split across reads. A
+  legitimate relay frame is bounded below the 24 KiB sequence limit. An
+  unterminated candidate larger than that limit is quarantined without
+  discarding output that preceded it; only BEL or ST ends quarantine. If a
+  malformed candidate still has no terminator after 96 KiB, the parser emits a
+  one-line recovery notice and resumes filtering subsequent output.
 - **Nothing on the other machine.** The nonce is on no command line and in no
   file. The relay goes in the environment; no file is written or left behind.
   The relay sends only the existing relay identity fields (and, for Claude,
   background task statuses and cron counts) and never prompts or tool input.
-  It always exits 0 and prints nothing, so a missing `python3`, a hook
+  Cron objects are reduced to counts, so identities and schedules never cross
+  the terminal. It always exits 0 and prints nothing, so a missing `python3`, a hook
   failure or an unwritable device changes only status, never a permission
   decision. Status then stays estimated from output.
 - **Claude Code.** The launch passes the same nine hooks through `--settings`
@@ -4323,10 +4329,16 @@ route uses the channel lapis already owns: the agent's terminal.
   after the program; the relay forwards `type`, `thread-id` and `turn-id`, then
   runs the user's own `notify` from `$CODEX_HOME/config.toml` when one is set;
   preserving that setting uses `tomllib`, so it requires Python 3.11 there.
+  That executable path is user-owned configuration with the same trust as
+  Codex's own `notify`; writing `CODEX_HOME/config.toml` already controls a
+  command Codex can run, so lapis adds no superficial path allowlist.
   `NotifyTurns` reports only finished turns. Submitted input (Return, or a
-  paste with Return) returns the activity to unknown. It does not resynchronize
-  after a stream it already reported; a fresh observation state uses the next
-  source epoch. A profile-level or project-level `notify` is not chained.
+  paste with Return) returns the activity to unknown. A second Return while
+  that prompt is still active marks its next completion as in flight and does
+  not apply it; the following completion resumes normal reporting. It does not
+  resynchronize after a stream it already reported; a fresh observation state
+  uses the next source epoch. A rejected first observation retries in the same
+  epoch. A profile-level or project-level `notify` is not chained.
 - **Desktop.** A remote agent keeps `StatusSource::output`. `estimated()` uses
   the output estimate while no observer is synchronized or its activity is
   unknown. Otherwise the observer's state applies. Since only an observer

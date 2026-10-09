@@ -21,7 +21,66 @@ qsizetype partial_marker(QByteArrayView data) {
             return keep;
     return 0;
 }
+
+struct SequenceTerminator {
+    qsizetype end{-1};
+    qsizetype size{};
+    qsizetype false_escape{-1};
+};
+
+SequenceTerminator find_terminator(QByteArrayView data, qsizetype body) {
+    const auto bell = data.indexOf('\x07', body);
+    const auto escape = data.indexOf('\x1b', body);
+    if (bell >= 0 && (escape < 0 || bell < escape))
+        return {bell, 1, -1};
+    if (escape < 0 || escape + 1 == data.size())
+        return {};
+    if (data.at(escape + 1) != '\\')
+        return {-1, 0, escape};
+    return {escape, 2, -1};
+}
 } // namespace
+
+TerminalHookChannel::DiscardResult TerminalHookChannel::advance_discard(QByteArrayView data,
+                                                                        qsizetype& discard_from) {
+    if (discarded_ + data.size() >= max_discard) {
+        discarding_ = false;
+        discarded_ = 0;
+        return DiscardResult::recover;
+    }
+    for (;;) {
+        const auto bell = data.indexOf('\x07', discard_from);
+        const auto escape = data.indexOf('\x1b', discard_from);
+        if (bell >= 0 && (escape < 0 || bell < escape)) {
+            discard_from = bell + 1;
+            discarding_ = false;
+            discarded_ = 0;
+            return DiscardResult::ready;
+        }
+        if (escape < 0 || escape + 1 == data.size()) {
+            discarded_ += data.size();
+            return DiscardResult::partial;
+        }
+        if (data.at(escape + 1) == '\\') {
+            discard_from = escape + 2;
+            discarding_ = false;
+            discarded_ = 0;
+            return DiscardResult::ready;
+        }
+        discard_from = escape + 1;
+    }
+}
+
+bool TerminalHookChannel::begin_oversized_discard(qsizetype candidate_size) {
+    if (discarded_ + candidate_size < max_discard) {
+        discarding_ = true;
+        discarded_ += candidate_size;
+        return false;
+    }
+    discarding_ = false;
+    discarded_ = 0;
+    return true;
+}
 
 QByteArray TerminalHookChannel::filter(QByteArrayView output,
                                        std::vector<TerminalHookEvent>& events) {
@@ -30,31 +89,14 @@ QByteArray TerminalHookChannel::filter(QByteArrayView output,
     qsizetype discard_from = 0;
     if (discarding_) {
         // An already oversized candidate cannot be shown or interpreted. Drop
-        // it through its terminator, then filter the remainder normally.
-        for (;;) {
-            if (discard_from == 0 && !data.isEmpty() && data.front() == '\\') {
-                discard_from = 1;
-                discarding_ = false;
-                break;
-            }
-            const auto bell = data.indexOf('\x07', discard_from);
-            const auto escape = data.indexOf('\x1b', discard_from);
-            if (bell >= 0 && (escape < 0 || bell < escape)) {
-                discard_from = bell + 1;
-                discarding_ = false;
-                break;
-            }
-            if (escape < 0)
-                return {};
-            if (escape + 1 == data.size())
-                return {};
-            if (data.at(escape + 1) == '\\') {
-                discard_from = escape + 2;
-                discarding_ = false;
-                break;
-            }
-            discard_from = escape + 1;
-        }
+        // it through its terminator, then filter the remainder normally. A
+        // byte budget bounds quarantine when its terminator never arrives; a
+        // bare backslash is not a terminator.
+        const auto discarded = advance_discard(data, discard_from);
+        if (discarded == DiscardResult::recover)
+            return QByteArrayLiteral("[lapis: dropped an oversized hook]\r\n");
+        if (discarded == DiscardResult::partial)
+            return {};
     }
     if (!carry_.isEmpty()) {
         joined = carry_ + output.toByteArray();
@@ -74,35 +116,30 @@ QByteArray TerminalHookChannel::filter(QByteArrayView output,
         }
         kept.append(data.sliced(from, start - from));
         const auto body = start + marker.size();
-        const auto bell = data.indexOf('\x07', body);
-        const auto escape = data.indexOf('\x1b', body);
-        qsizetype end = -1;
-        qsizetype terminator = 0;
-        if (bell >= 0 && (escape < 0 || bell < escape)) {
-            end = bell;
-            terminator = 1;
-        } else if (escape >= 0 && escape + 1 < data.size()) {
-            if (data.at(escape + 1) != '\\') {
-                // Not one of ours after all: leave it for the terminal.
-                kept.append(data.sliced(start, escape - start));
-                from = escape;
-                continue;
-            }
-            end = escape;
-            terminator = 2;
+        const auto terminator = find_terminator(data, body);
+        if (terminator.false_escape >= 0) {
+            // Not one of ours after all: leave it for the terminal.
+            kept.append(data.sliced(start, terminator.false_escape - start));
+            from = terminator.false_escape;
+            continue;
         }
-        if (end < 0) {
-            if (data.size() - start > max_sequence) {
-                kept.chop(data.size() - start);
-                discarding_ = true;
+        if (terminator.end < 0) {
+            const auto body_size = data.size() - body;
+            if (body_size > max_sequence) {
+                const auto candidate = max_sequence;
+                if (begin_oversized_discard(candidate)) {
+                    kept.append(QByteArrayLiteral("[lapis: dropped an oversized hook]\r\n"));
+                    return kept;
+                }
+                carry_.clear();
                 return kept;
             }
             carry_ = data.sliced(start).toByteArray();
             return kept;
         }
-        if (end - start <= max_sequence)
-            accept(data.sliced(body, end - body), events);
-        from = end + terminator;
+        if (terminator.end - start <= max_sequence)
+            accept(data.sliced(body, terminator.end - body), events);
+        from = terminator.end + terminator.size;
     }
 }
 
@@ -138,14 +175,26 @@ void TerminalHookChannel::accept(QByteArrayView body, std::vector<TerminalHookEv
 bool NotifyTurns::completed(const QJsonObject& source, attention::Tick now) {
     if (source.value(QStringLiteral("type")) != QLatin1String("agent-turn-complete"))
         return false;
+    if (skip_completion_) {
+        // Return already started the next prompt. This finish is the one that
+        // was in flight; applying it would leave that new turn marked finished.
+        skip_completion_ = false;
+        prompt_active_ = false;
+        return false;
+    }
     if (!state_.ready()) {
         if (sequence_ != 0)
             return false; // lost synchronization stays visible
-        state_.connect(state_.epoch() + 1, {true, false, false});
-        // The adapter owns its position only once the service accepts it. A
-        // rejected initial observation leaves this at zero for the next event.
-        if (state_.begin_observation({state_.epoch(), 1}, now) != attention::Outcome::applied)
-            return false;
+        if (state_.connected()) {
+            // Retry the same epoch after a rejected initial observation; the
+            // source epoch has not changed and must strictly increase.
+            if (state_.begin_observation({state_.epoch(), 1}, now) != attention::Outcome::applied)
+                return false;
+        } else {
+            state_.connect(state_.epoch() + 1, {true, false, false});
+            if (state_.begin_observation({state_.epoch(), 1}, now) != attention::Outcome::applied)
+                return false;
+        }
         sequence_ = 1;
     }
     if (!state_.ready() || state_.activity() == attention::Activity::turn_completed ||
@@ -156,23 +205,33 @@ bool NotifyTurns::completed(const QJsonObject& source, attention::Tick now) {
     if (result != attention::Outcome::applied)
         return false;
     sequence_ = sequence_ + 1;
+    prompt_active_ = false;
     return true;
 }
 
 bool NotifyTurns::submitted() {
     if (!state_.ready() || state_.activity() != attention::Activity::turn_completed ||
-        sequence_ == std::numeric_limits<std::uint64_t>::max())
+        sequence_ == std::numeric_limits<std::uint64_t>::max()) {
+        if (state_.ready() && state_.activity() != attention::Activity::turn_completed) {
+            if (prompt_active_)
+                skip_completion_ = true;
+        }
         return false;
+    }
     const auto result =
         state_.activity({state_.epoch(), sequence_ + 1}, attention::Activity::unknown);
     if (result != attention::Outcome::applied)
         return false;
     sequence_ = sequence_ + 1;
+    prompt_active_ = true;
     return true;
 }
 
-QString NotifyTurns::diagnostic() {
-    return QStringLiteral(
-        "Codex reports finished turns; between them status is estimated from output");
+QString NotifyTurns::diagnostic() const {
+    return QStringLiteral("Codex notify turns: synchronized=%1 epoch=%2 sequence=%3; "
+                          "between turns status is estimated from output")
+        .arg(state_.ready() ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(state_.epoch())
+        .arg(sequence_);
 }
 } // namespace lapis::session

@@ -2166,8 +2166,8 @@ for n, line in enumerate(sys.stdin, 1):
     older.insert(
         QStringLiteral("arguments"),
         QJsonArray{
-            "-o", "ControlPath=none", "-o", "ServerAliveInterval=15", "-o",
-            "ServerAliveCountMax=4", "-t", "devbox",
+            "-o", "ControlPath=none", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4",
+            "-t", "devbox",
             R"(cd ~ && exec "${SHELL:-/bin/sh}" -lic 'claude --permission-mode bypassPermissions')"});
     writeRegistry(options.storagePath,
                   QJsonObject{{"version", 2},
@@ -2180,9 +2180,8 @@ for n, line in enumerate(sys.stdin, 1):
         Workspace workspace(WorkspaceMode::live, options);
         workspace.setSshConfigForTesting(config.fileName());
         QHash<QString, int> pings;
-        QObject::connect(&workspace, &Workspace::turnFinished, [&pings](SessionPreview* item) {
-            ++pings[item->sessionId()];
-        });
+        QObject::connect(&workspace, &Workspace::turnFinished,
+                         [&pings](SessionPreview* item) { ++pings[item->sessionId()]; });
         const auto shows = [](SessionPreview* item, const QString& text) {
             return screenText(item->snapshot()).contains(text);
         };
@@ -2193,8 +2192,7 @@ for n, line in enumerate(sys.stdin, 1):
         };
         auto* restored = workspace.session(older_id);
         require(restored != nullptr &&
-                    waitFor([&] { return shows(restored, QStringLiteral("claude ready")); },
-                            15000),
+                    waitFor([&] { return shows(restored, QStringLiteral("claude ready")); }, 15000),
                 "a saved remote Claude Code agent starts with the hooks it lacked");
         require(workspace.createAgent(QStringLiteral("~"), QStringLiteral("far claude"),
                                       QStringLiteral("claude"), {}, {}, QStringLiteral("devbox")),
@@ -2205,7 +2203,8 @@ for n, line in enumerate(sys.stdin, 1):
                 "it starts from the output estimate");
         require(waitFor(
                     [&] {
-                        return claude->inputReady() && shows(claude, QStringLiteral("claude ready"));
+                        return claude->inputReady() &&
+                               shows(claude, QStringLiteral("claude ready"));
                     },
                     15000),
                 "the remote Claude Code stand-in starts");
@@ -2227,12 +2226,11 @@ for n, line in enumerate(sys.stdin, 1):
         require(codex != nullptr && codex != claude && codex != restored,
                 "the Codex agent is shown");
         codex->setOutputTimingForTesting({.settle_ms = 0, .burst_ms = 1500, .quiet_ms = 4000});
-        require(waitFor(
-                    [&] {
-                        return codex->inputReady() && shows(codex, QStringLiteral("codex ready"));
-                    },
-                    15000),
-                "the remote Codex stand-in starts");
+        require(
+            waitFor(
+                [&] { return codex->inputReady() && shows(codex, QStringLiteral("codex ready")); },
+                15000),
+            "the remote Codex stand-in starts");
         for (int turn = 1; turn <= 2; ++turn) {
             require(codex->sendText("next prompt\r"), "type a Codex prompt");
             require(waitFor([&] { return pings.value(codex->sessionId()) == turn; }, 15000) &&
@@ -5950,10 +5948,8 @@ int main(int argc, char** argv) {
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("updates-off") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes")),
                 "Usage: lapis_workspace_tests [--case "
-                 "remote-options|remote-hooks|accounts|remote-account-reset|reload|updater|"
-                 "startup-defaults|launch-policy|chimes]");
-                 "remote-options|remote-hooks|accounts|remote-account-reset|reload|updater|"
-                 "updates-off|startup-defaults|launch-policy|chimes]");
+                "remote-options|remote-hooks|accounts|remote-account-reset|reload|updater|"
+                "updates-off|startup-defaults|launch-policy|chimes]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("accounts")) {
                 incompleteCodexHomeNeverStartsAnAgent();

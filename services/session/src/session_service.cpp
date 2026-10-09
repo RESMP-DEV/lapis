@@ -458,7 +458,9 @@ class SessionService final : public QObject {
     QString attention_diagnostic() const {
         return codex_observer_    ? codex_observer_->diagnostic()
                : claude_observer_ ? claude_observer_->diagnostic()
-                                  : NotifyTurns::diagnostic();
+               : notify_turns_    ? notify_turns_->diagnostic()
+                                  : QStringLiteral("Codex notify turns are not connected; "
+                                                   "status is estimated from output");
     }
     QJsonObject attention_details(const attention::RequestId& id) const {
         return codex_observer_    ? codex_observer_->details(id)
@@ -496,10 +498,9 @@ class SessionService final : public QObject {
         }
     }
     static attention::Tick attention_tick() {
-        return static_cast<attention::Tick>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch())
-                .count());
+        return static_cast<attention::Tick>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                std::chrono::steady_clock::now().time_since_epoch())
+                                                .count());
     }
     // Submitted input starts a turn Codex's notify program will not report.
     void note_submitted() {

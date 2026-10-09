@@ -23,7 +23,9 @@ def work(key, value):
     if not isinstance(value, list) or len(value) > 64:
         return []
     if key == "session_crons":
-        return [t if isinstance(t, dict) else {} for t in value]
+        # The remote consumer derives a count. Do not put cron identities,
+        # schedules or other private configuration on the terminal.
+        return [{} for _ in value]
     out = []
     for t in value:
         s = t.get("status") if isinstance(t, dict) else None

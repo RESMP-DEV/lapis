@@ -27,11 +27,31 @@ class RemoteHookRelayTests(unittest.TestCase):
             relay.work("background_tasks", [{"status": "running"}, 0]),
             [{"status": "running"}, {}],
         )
-        self.assertEqual(
-            relay.work("session_crons", [{"id": "cron"}, 0]), [{"id": "cron"}, {}]
-        )
+        self.assertEqual(relay.work("session_crons", [{"id": "cron"}, 0]), [{}, {}])
         self.assertEqual(relay.work("background_tasks", 0), [])
         self.assertEqual(relay.work("session_crons", [0] * 65), [])
+
+    def test_largest_legitimate_frame_fits_the_terminal_hook_limit(self):
+        source = {key: "x" * 256 for key in relay.K}
+        source["background_tasks"] = [{"status": "running"}] * 64
+        source["session_crons"] = [{"id": "private", "schedule": "* * * * *"}] * 64
+        frames = []
+
+        def capture_write(descriptor, view):
+            frames.append(bytes(view))
+            return len(view)
+
+        with patch.object(os, "write", side_effect=capture_write):
+            with patch.dict(
+                os.environ,
+                {
+                    "LAPIS_HOOK_NONCE": "0123456789abcdef" * 2,
+                    "LAPIS_HOOK_TTY": "/dev/null",
+                },
+            ):
+                relay.relay("claude", json.dumps(source))
+        self.assertEqual(len(frames), 1)
+        self.assertLessEqual(len(frames[0]), 24 * 1024)
 
     def test_nonce_requires_exactly_32_lowercase_hex_digits(self):
         self.assertTrue(relay.valid_nonce("0123456789abcdef" * 2))
