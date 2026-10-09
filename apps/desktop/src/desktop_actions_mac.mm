@@ -2,6 +2,7 @@
 
 #import <AppKit/AppKit.h>
 #import <Carbon/Carbon.h>
+#import <CoreGraphics/CoreGraphics.h>
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
 #import <ServiceManagement/ServiceManagement.h>
@@ -95,6 +96,12 @@ OSStatus latest_attention_pressed(EventHandlerCallRef, EventRef, void*) {
 } // namespace
 
 bool secure_input_enabled() { return IsSecureEventInputEnabled(); }
+
+double seconds_since_input() {
+    // The HID state counts the person's own input, not events other apps post.
+    return CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateHIDSystemState,
+                                                  kCGAnyInputEventType);
+}
 
 QByteArray claude_code_credentials() {
     CFMutableDictionaryRef query = CFDictionaryCreateMutable(

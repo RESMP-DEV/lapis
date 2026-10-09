@@ -8,6 +8,7 @@
 #include "platform/posix/local_endpoint.hpp"
 #include "platform/posix/process_group_guard.hpp"
 #include "platform/posix/pty_process.hpp"
+#include "terminal_hooks.hpp"
 #include "transport/attention_protocol.hpp"
 #include "transport/local_protocol.hpp"
 #include "transport/update_pacing.hpp"
@@ -411,6 +412,8 @@ class SessionService final : public QObject {
                     else
                         finish_session(QStringLiteral("Process exited (%1)").arg(code), code);
                 });
+        if (remote_transport(launch))
+            terminal_hooks_.emplace();
         if (launch.agent == AgentMode::codex)
             start_codex(endpoint, launch);
         else if (launch.agent == AgentMode::claude)
@@ -441,8 +444,68 @@ class SessionService final : public QObject {
     friend class ::lapis::session::AttentionServiceTestAccess;
 
   private:
+    // An agent on another machine reports its hooks through this terminal;
+    // see terminal_hooks.hpp.
+    static bool remote_transport(const LaunchSpec& launch) {
+        return launch.agent == AgentMode::terminal &&
+               QFileInfo(launch.program).fileName() == QStringLiteral("ssh");
+    }
     const attention::State* attention_state() const {
-        return codex_state_ ? codex_state_.get() : claude_state_.get();
+        return codex_state_    ? codex_state_.get()
+               : claude_state_ ? claude_state_.get()
+                               : notify_state_.get();
+    }
+    QString attention_diagnostic() const {
+        return codex_observer_    ? codex_observer_->diagnostic()
+               : claude_observer_ ? claude_observer_->diagnostic()
+               : notify_turns_    ? notify_turns_->diagnostic()
+                                  : QStringLiteral("Codex notify turns are not connected; "
+                                                   "status is estimated from output");
+    }
+    QJsonObject attention_details(const attention::RequestId& id) const {
+        return codex_observer_    ? codex_observer_->details(id)
+               : claude_observer_ ? claude_observer_->details(id)
+                                  : QJsonObject{};
+    }
+    void observer_changed() {
+        decision_error_.clear();
+        attention_dirty_ = true;
+        journal_attention();
+        schedule_attention();
+    }
+    // A hook relayed from another machine through the terminal. The service
+    // owns the attention state as for a local agent, but records no resume
+    // identity: a remote launch names its conversation in its own command.
+    void receive_terminal_hook(const TerminalHookEvent& hook) {
+        if (hook.cli == QLatin1String("claude")) {
+            if (!claude_observer_) {
+                claude_state_ = std::make_unique<attention::State>(
+                    identity_.session_id.toHex().toStdString(), "claude-code");
+                claude_observer_ = std::make_unique<lapis::claude::Observer>(
+                    *claude_state_, lapis::claude::Observer::Transport::terminal);
+                connect(claude_observer_.get(), &lapis::claude::Observer::changed, this,
+                        [this] { observer_changed(); });
+            }
+            claude_observer_->receiveRelayed(hook.source);
+        } else if (hook.cli == QLatin1String("codex")) {
+            if (!notify_turns_) {
+                notify_state_ = std::make_unique<attention::State>(
+                    identity_.session_id.toHex().toStdString(), "codex-notify");
+                notify_turns_ = std::make_unique<NotifyTurns>(*notify_state_);
+            }
+            if (notify_turns_->completed(hook.source, attention_tick()))
+                observer_changed();
+        }
+    }
+    static attention::Tick attention_tick() {
+        return static_cast<attention::Tick>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                std::chrono::steady_clock::now().time_since_epoch())
+                                                .count());
+    }
+    // Submitted input starts a turn Codex's notify program will not report.
+    void note_submitted() {
+        if (notify_turns_ && notify_turns_->submitted())
+            observer_changed();
     }
     void start_claude(const LaunchSpec& launch) {
         claude_state_ = std::make_unique<attention::State>(
@@ -450,10 +513,7 @@ class SessionService final : public QObject {
         claude_observer_ = std::make_unique<lapis::claude::Observer>(*claude_state_);
         connect(claude_observer_.get(), &lapis::claude::Observer::changed, this, [this] {
             note_conversation(QStringLiteral("claude"), claude_observer_->sessionId());
-            decision_error_.clear();
-            attention_dirty_ = true;
-            journal_attention();
-            schedule_attention();
+            observer_changed();
         });
         auto terminal = launch;
         terminal.agent = AgentMode::terminal;
@@ -461,8 +521,17 @@ class SessionService final : public QObject {
             launch.arguments, QCoreApplication::applicationFilePath());
         pty_.start(terminal);
     }
-    void receive_output(const QByteArray& bytes) {
+    void receive_output(const QByteArray& output) {
         timing_.pty_read_ns = monotonic_ns();
+        QByteArray bytes = output;
+        if (terminal_hooks_) {
+            std::vector<TerminalHookEvent> hooks;
+            bytes = terminal_hooks_->filter(output, hooks);
+            for (const auto& hook : hooks)
+                receive_terminal_hook(hook);
+            if (bytes.isEmpty())
+                return;
+        }
         pending_output_ += bytes;
         observe_output_pressure(bytes);
         if (output_pressure_) {
@@ -615,13 +684,10 @@ class SessionService final : public QObject {
                                                      : attention::ObservationPhase::unknown,
                 .diagnostic = !decision_error_.isEmpty() ? decision_error_
                               : !codex_error_.isEmpty()  ? codex_error_
-                              : codex_observer_          ? codex_observer_->diagnostic()
-                                                         : claude_observer_->diagnostic(),
+                                                         : attention_diagnostic(),
                 .requests = {}};
             for (const auto& [id, pending] : state->pending())
-                snapshot.requests.push_back({pending, codex_observer_
-                                                          ? codex_observer_->details(id)
-                                                          : claude_observer_->details(id)});
+                snapshot.requests.push_back({pending, attention_details(id)});
             const auto bytes =
                 wire::frame(wire::Kind::attention_snapshot,
                             wire::encode_attention_snapshot(snapshot, client_attention_phase_));
@@ -1419,9 +1485,11 @@ class SessionService final : public QObject {
         if (!attention_state())
             throw std::runtime_error("Attention decisions are unsupported for terminal sessions");
         const auto decision = wire::decode_attention_decision(payload);
-        if (claude_observer_) {
+        if (claude_observer_ || notify_turns_) {
             allow_decision_retry(decision);
-            decision_error_ = QStringLiteral("Answer Claude requests in the terminal");
+            decision_error_ = notify_turns_ && !claude_observer_
+                                  ? QStringLiteral("Answer Codex requests in the terminal")
+                                  : QStringLiteral("Answer Claude requests in the terminal");
             attention_dirty_ = true;
             schedule_attention();
             return;
@@ -1574,6 +1642,8 @@ class SessionService final : public QObject {
         const auto bytes = input_bytes(kind, payload);
         if (!bytes.isEmpty() && !pty_.writeBytes(bytes))
             throw std::runtime_error("PTY input queue full");
+        if ((kind == wire::Kind::key || kind == wire::Kind::text) && bytes.contains('\r'))
+            note_submitted();
     }
     void paste_input(QLocalSocket* destination, const wire::PasteRequest& request,
                      quint64& last_id) {
@@ -1593,6 +1663,8 @@ class SessionService final : public QObject {
             // One queue admission includes both bracket markers and optional
             // Return. Existing pending input competes for this same budget.
             result.queued = pty_.writeBytes(bytes);
+            if (result.queued && request.submit)
+                note_submitted();
             if (!result.queued)
                 result.message = QStringLiteral(
                     "PTY input queue full or child unavailable; paste was not queued");
@@ -1965,6 +2037,9 @@ class SessionService final : public QObject {
     wire::SnapshotTiming timing_;
     std::unique_ptr<attention::State> claude_state_;
     std::unique_ptr<lapis::claude::Observer> claude_observer_;
+    std::optional<TerminalHookChannel> terminal_hooks_;
+    std::unique_ptr<attention::State> notify_state_;
+    std::unique_ptr<NotifyTurns> notify_turns_;
     QString resume_endpoint_;
     CheckpointScanner checkpoint_scanner_;
     QString checkpoint_agent_;
@@ -2084,9 +2159,10 @@ int main(int argc, char** argv) {
     int application_argc = 1;
     QCoreApplication app(application_argc, argv);
     if (arguments.value(1) == QStringLiteral("--claude-hook")) {
-        if (arguments.size() != 4)
+        // A service started before relay contracts passes no fourth value.
+        if (arguments.size() != 4 && arguments.size() != 5)
             return 0;
-        return lapis::claude::run_hook_relay(arguments.at(2), arguments.at(3));
+        return lapis::claude::run_hook_relay(arguments.at(2), arguments.at(3), arguments.value(4));
     }
     try {
         auto options = parse_options(arguments);

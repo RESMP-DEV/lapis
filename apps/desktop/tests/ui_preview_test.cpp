@@ -1210,6 +1210,7 @@ QStringList strip_ids(const lapis::desktop::Workspace& workspace) {
 }
 
 // Tiles and drags, through the window as a person would use them.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& workspace,
                            lapis::desktop::KeyMap& keymap) {
     const auto item = [&window](const QString& name) {

@@ -32,6 +32,9 @@ bool on_latest_attention_key(const std::function<void()>& handler);
 [[nodiscard]] QByteArray claude_code_credentials();
 // Secure event input is on: some field (in any app) is taking a password.
 [[nodiscard]] bool secure_input_enabled();
+// Seconds since the last keyboard, mouse or trackpad input anywhere on this
+// Mac (hardware events only), or a negative value when it cannot be read.
+[[nodiscard]] double seconds_since_input();
 #else
 inline void post_notification(const QString&, const QString&, const QString&) {}
 inline void on_notification_opened(const std::function<void(const QString&)>&) {}
@@ -44,6 +47,7 @@ inline void on_terminal_keys(const std::function<bool(bool)>&) {}
 inline bool on_latest_attention_key(const std::function<void()>&) { return false; }
 inline QByteArray claude_code_credentials() { return {}; }
 inline bool secure_input_enabled() { return false; }
+inline double seconds_since_input() { return -1; }
 #endif
 } // namespace lapis::desktop::platform
 #endif
