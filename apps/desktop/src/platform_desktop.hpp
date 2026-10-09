@@ -26,6 +26,10 @@ void on_terminal_keys(const std::function<bool(bool shifted)>& handler);
 // Command-Option-L from any app brings lapis to the front and runs the handler.
 // An empty handler releases the key; false when the key could not be taken.
 bool on_latest_attention_key(const std::function<void()>& handler);
+// Brings the application itself forward, so a request written by another app
+// (Ultra Tab's Command-L) reaches the front window rather than an inactive
+// application whose window AppKit cannot make key.
+void activate_application();
 // Claude Code's stored sign-in (its keychain item's JSON), empty when absent or
 // refused. The first read asks the person's permission, so call it off the main
 // thread.
@@ -45,6 +49,7 @@ inline void check_for_updates() {}
 inline bool updater_available() { return false; }
 inline void on_terminal_keys(const std::function<bool(bool)>&) {}
 inline bool on_latest_attention_key(const std::function<void()>&) { return false; }
+inline void activate_application() {}
 inline QByteArray claude_code_credentials() { return {}; }
 inline bool secure_input_enabled() { return false; }
 inline double seconds_since_input() { return -1; }

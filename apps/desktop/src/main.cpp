@@ -9,6 +9,7 @@
 #include "keymap.hpp"
 #include "limit_resets.hpp"
 #include "next_prompt.hpp"
+#include "open_request.hpp"
 #include "plan_sign_in.hpp"
 #include "platform_desktop.hpp"
 #include "platform_preferences.hpp"
@@ -880,6 +881,31 @@ void keep_agent_state(std::optional<lapis::desktop::AgentStatePublisher>& kept,
                      .filePath(QStringLiteral("agent_state.json")));
 }
 
+// Ultra Tab's "show it in lapis" (Command-L on a card): select that agent and
+// bring the window forward, as clicking its notification does.
+void follow_open_requests(std::optional<lapis::desktop::OpenRequests>& kept,
+                          lapis::desktop::Workspace& workspace, QPointer<QQuickWindow>& shown,
+                          bool isolated) {
+    if (isolated || !workspace.holdsRegistry())
+        return;
+    kept.emplace(QDir(QFileInfo(workspace.storagePath()).absolutePath())
+                     .filePath(QStringLiteral("ultratab_open.json")),
+                 [&workspace, &shown](const QString& id) {
+                     lapis::desktop::interaction::cause(QStringLiteral("ultratab"));
+                     // Select first: a request naming an agent this window does
+                     // not hold must not steal focus from the other app.
+                     if (!workspace.selectSession(id) || !shown)
+                         return;
+                     // Ultra Tab is a different application, so its request
+                     // arrives while lapis is inactive; show/raise alone would
+                     // order a window in an application macOS never foregrounds.
+                     lapis::desktop::platform::activate_application();
+                     shown->show();
+                     shown->raise();
+                     shown->requestActivate();
+                 });
+}
+
 // The quick-command terminals beside this workspace, with ssh hosts from the
 // user's ssh config; those still running come back.
 std::unique_ptr<lapis::desktop::Terminals>
@@ -1102,6 +1128,8 @@ int main(int argc, char** argv) {
         QObject* const nextForQml = keep_next_prompt(nextPrompt, workspace, keymap, isolated);
         std::optional<lapis::desktop::AgentStatePublisher> agentState;
         keep_agent_state(agentState, workspace, nextPrompt, isolated);
+        std::optional<lapis::desktop::OpenRequests> openRequests;
+        follow_open_requests(openRequests, workspace, shown, isolated);
         std::optional<lapis::desktop::PlanSignIn> planSignIn;
         QObject* const signInForQml = keep_plan_sign_in(planSignIn, keymap, isolated);
         const auto conversations = conversation_index(workspace);
