@@ -137,8 +137,7 @@ class Overlay final {
         if (auto* host = view_.findChild<OverlayHost*>()) {
             QObject::connect(host, &OverlayHost::contentSizeChanged, &view_,
                              [this] { follow_content(); });
-            QObject::connect(host, &OverlayHost::panelChanged, &view_,
-                             [this] { follow_panel(); });
+            QObject::connect(host, &OverlayHost::panelChanged, &view_, [this] { follow_panel(); });
             QObject::connect(host, &OverlayHost::dragRequested, &view_,
                              [this, host](QPoint to, bool done) { drag(*host, to, done); });
         }
@@ -213,21 +212,36 @@ class Overlay final {
     static constexpr qint64 settle_ms = 600;
     [[nodiscard]] QSize wanted_size(const QRect& area) const {
         auto* host = view_.findChild<OverlayHost*>();
-        const auto wanted = host != nullptr && host->contentSize().isValid()
-                                ? host->contentSize()
-                                : QSize(720, 400);
-        return wanted.boundedTo({area.width(), area.height() * 3 / 4});
+        const auto wanted = host != nullptr && host->contentSize().isValid() ? host->contentSize()
+                                                                             : QSize(720, 400);
+        // Overlay.qml budgets 0.7 of the screen for the panel and adds about 56
+        // points of chrome around it, so a 3/4 cap cut the bottom edge off on
+        // every screen shorter than roughly 1120 points. Bound against the
+        // available area instead and keep the whole content on screen.
+        return wanted.boundedTo({area.width(), area.height()});
     }
     void follow_content() {
         auto* screen = view_.screen();
         if (screen == nullptr || !view_.isVisible())
             return;
-        const auto size = wanted_size(screen->availableGeometry());
-        if (size != view_.size()) {
-            placing_ = true;
+        const auto area = screen->availableGeometry();
+        const auto size = wanted_size(area);
+        // A taller card grows the window from its top-left, and a dragged
+        // position is remembered, so the window can end up past the bottom of
+        // the screen. Clamp where it is: place_window's full reset would jump
+        // the panel back to the default spot.
+        const int lowest = std::max(area.top(), area.bottom() - size.height() + 1);
+        const int rightmost = std::max(area.left(), area.right() - size.width() + 1);
+        const QPoint where(std::clamp(view_.x(), area.left(), rightmost),
+                           std::clamp(view_.y(), area.top(), lowest));
+        if (size == view_.size() && where == view_.position())
+            return;
+        placing_ = true;
+        if (size != view_.size())
             view_.resize(size);
-            placing_ = false;
-        }
+        if (where != view_.position())
+            view_.setPosition(where);
+        placing_ = false;
     }
     // The panel dragged by its background: the window follows the pointer and
     // snaps to the screen's center line and set heights (snap_window).

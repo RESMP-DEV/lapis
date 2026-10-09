@@ -90,9 +90,8 @@ QRect place_window(const QRect& available, const QSize& size, const std::optiona
     // Centered across, a fifth of the way down, as a command bar sits.
     QRect centered(QPoint(), fitted);
     centered.moveCenter(available.center());
-    centered.moveTop(std::max(available.top(),
-                              std::min(available.top() + available.height() / 5,
-                                       available.bottom() - fitted.height() + 1)));
+    centered.moveTop(std::max(available.top(), std::min(available.top() + available.height() / 5,
+                                                        available.bottom() - fitted.height() + 1)));
     if (!saved)
         return centered;
     QRect rect(*saved, fitted);
@@ -105,8 +104,8 @@ QRect place_window(const QRect& available, const QSize& size, const std::optiona
     rect.moveTop(std::clamp(rect.top(), available.top(), available.bottom() - fitted.height() + 1));
     return rect;
 }
-Snap snap_window(const QRect& available, const QSize& window, int panel_top,
-                 int panel_height, QPoint wanted, int reach) {
+Snap snap_window(const QRect& available, const QSize& window, int panel_top, int panel_height,
+                 QPoint wanted, int reach) {
     Snap snap{wanted};
     const int center_x = available.left() + (available.width() - window.width()) / 2;
     if (std::abs(wanted.x() - center_x) <= reach) {
@@ -114,8 +113,7 @@ Snap snap_window(const QRect& available, const QSize& window, int panel_top,
         snap.centered = true;
     }
     const int height = available.height();
-    const std::array<int, 4> tops{available.top() + height * 6 / 100,
-                                  available.top() + height / 5,
+    const std::array<int, 4> tops{available.top() + height * 6 / 100, available.top() + height / 5,
                                   available.top() + (height - panel_height) / 2,
                                   available.top() + height * 62 / 100};
     int best = reach + 1;
@@ -129,12 +127,19 @@ Snap snap_window(const QRect& available, const QSize& window, int panel_top,
             }
         }
     }
-    snap.position.setX(std::clamp(snap.position.x(), available.left(),
-                                  std::max(available.left(),
-                                           available.right() - window.width() + 1)));
-    snap.position.setY(std::clamp(snap.position.y(), available.top() - panel_top,
-                                  std::max(available.top(),
-                                           available.bottom() - window.height() + 1)));
+    const QPoint snapped = snap.position;
+    snap.position.setX(
+        std::clamp(snap.position.x(), available.left(),
+                   std::max(available.left(), available.right() - window.width() + 1)));
+    snap.position.setY(
+        std::clamp(snap.position.y(), available.top() - panel_top,
+                   std::max(available.top(), available.bottom() - window.height() + 1)));
+    // A guide the clamp moved the panel off of is no longer a guide: the gold
+    // border and the centered light would claim a snap that did not happen.
+    if (snap.position.x() != snapped.x())
+        snap.centered = false;
+    if (snap.position.y() != snapped.y())
+        snap.level = false;
     return snap;
 }
 } // namespace lapis::ultratab

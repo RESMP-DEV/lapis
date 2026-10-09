@@ -225,8 +225,8 @@ void fourAnswers() {
             "nothing is typed over a pending request");
     // Skip: the card goes, nothing is sent, history keeps it.
     require(deck.skip(), "Left skips");
-    require(sender.sent.empty() && deck.history().front().toMap().value(
-                                       QStringLiteral("how")) == QLatin1String("skipped"),
+    require(sender.sent.empty() && deck.history().front().toMap().value(QStringLiteral("how")) ==
+                                       QLatin1String("skipped"),
             "skip sends nothing and stays in history");
     require(deck.front().value(QStringLiteral("name")) == QLatin1String("persist-gui") &&
                 deck.behind().value(QStringLiteral("name")) == QLatin1String("gameserver"),
@@ -338,6 +338,118 @@ void draftsKeepTheirCard() {
     require(deck.send(QStringLiteral("for persist-gui")) && sender.sent.size() == 1 &&
                 sender.sent[0].agent == id('a'),
             "the next draft goes to the card in front");
+}
+
+// A push back is a reply to the agent the draft was pinned to: the box stays
+// open across polls, so that agent can stop waiting while it is open.
+[[maybe_unused]] void pushBackKeepsTheirCard() {
+    FakeSender sender;
+    Deck deck(sender);
+    deck.setPublished(fixture());
+    require(deck.skip(), "the request in front is skipped");
+    require(deck.front().value(QStringLiteral("name")) == QLatin1String("persist-gui"),
+            "persist-gui is in front");
+    deck.setDrafting(true);
+    auto next = fixture();
+    next.states[id('b')].offer = Offer{QStringLiteral("b:1"), QStringLiteral("restart it"),
+                                       QStringLiteral("It crashed."), false};
+    deck.setPublished(next);
+    require(deck.front().value(QStringLiteral("name")) == QLatin1String("persist-gui"),
+            "the card being corrected stays in front");
+    // That agent starts working in lapis while the box is open; the next
+    // waiting agent takes the front.
+    auto busy = next;
+    busy.states[id('a')].status = QStringLiteral("working");
+    deck.setPublished(busy);
+    require(deck.front().value(QStringLiteral("name")) != QLatin1String("persist-gui"),
+            "the agent being corrected left the deck");
+    require(!deck.pushBack(QStringLiteral("use the new address")) && sender.sent.empty(),
+            "a push back is never sent to the agent now in front");
+    require(deck.message().contains(QLatin1String("no longer waiting")),
+            "the refusal says why in the footer, and nothing was sent");
+    deck.setDrafting(false);
+    deck.setDrafting(true);
+    require(deck.pushBack(QStringLiteral("use the new address")) && sender.sent.size() == 1 &&
+                sender.sent[0].agent == id('b'),
+            "once cleared, the push back goes to the card in front");
+}
+
+// The footer lights name one category at a time when a category is selected.
+void theGreenLightIsCategoryScoped() {
+    FakeSender sender;
+    Deck deck(sender);
+    auto both = fixture();
+    // A second agent at work, in the other category: without the fix it stays
+    // in the green light while games is selected.
+    both.states[id('f')] = AgentState{QStringLiteral("working"), false, 0, {}, 5, 5, std::nullopt};
+    deck.setPublished(both);
+    const auto listed = [&deck](const char* which) {
+        QVariantList out;
+        for (const auto& entry : deck.groups().value(QLatin1String(which)).toList())
+            out << entry.toMap().value(QStringLiteral("name"));
+        return out;
+    };
+    // lora (c2) is at work and persist-gui (c1) waits, so both categories have
+    // something to show until one is chosen.
+    require(listed("running").contains(QLatin1String("lora")) &&
+                listed("steer").contains(QLatin1String("persist-gui")),
+            "all categories are listed at first");
+    deck.nextCategory(2); // c2, games
+    const auto running = listed("running");
+    require(running.contains(QLatin1String("lora")),
+            "the green light keeps the selected category's work");
+    for (const auto& name : running)
+        require(name != QLatin1String("site"), "and nothing from another category leaks into it");
+    require(!listed("steer").contains(QLatin1String("persist-gui")),
+            "the red and yellow lights are scoped the same way");
+}
+
+// The lapis map lights the block of the card in front, even in a column longer
+// than the number of blocks it draws.
+[[maybe_unused]] void theMapLightsTheCardInFront() {
+    FakeSender sender;
+    Deck deck(sender);
+    Published many;
+    many.has_registry = many.has_state = true;
+    many.categories.append(Category{QStringLiteral("c2"), QStringLiteral("games")});
+    // More agents in one category than the map has slots, so the last one in
+    // strip order is past the cap.
+    constexpr int count = 16;
+    for (int index = 0; index < count; ++index) {
+        const auto key = QStringLiteral("agent-%1").arg(index);
+        many.agents.append(Agent{key,
+                                 key,
+                                 QStringLiteral("c2"),
+                                 QStringLiteral("/work/games"),
+                                 QStringLiteral("claude"),
+                                 QStringLiteral("/run/a.sock"),
+                                 QStringLiteral("/bin/claude"),
+                                 {},
+                                 true});
+        many.states.insert(
+            key,
+            AgentState{
+                QStringLiteral("finished"),
+                true,
+                0,
+                {},
+                count - index * 10,
+                count - index * 10,
+                Offer{QStringLiteral("%1:1").arg(key), QStringLiteral("do the thing"), {}, false}});
+    }
+    deck.setPublished(many);
+    const auto lit = [&deck] {
+        for (const auto& column : deck.map())
+            for (const auto& place : column.toMap().value(QStringLiteral("slots")).toList())
+                if (place.toMap().value(QStringLiteral("lit")).toBool())
+                    return true;
+        return false;
+    };
+    // The agent that waited longest is in front, and in strip order it is the
+    // last one the column would draw.
+    require(deck.front().value(QStringLiteral("name")) == QLatin1String("agent-15"),
+            "the agent that waited longest is in front");
+    require(lit(), "the map lights the card in front past the slot cap");
 }
 
 // Every answer is logged with its card, once settled.
@@ -739,6 +851,15 @@ void snapping() {
     const auto off = snap_window(area, window, 12, 200, QPoint(5000, 5000));
     require(off.position.x() == 1600 - 720 && off.position.y() == 1000 - 400,
             "it stays on the screen");
+    // A guide the screen edge pulled the panel away from is no longer a guide,
+    // so the gold border must not stay lit for it.
+    const auto clamped = snap_window(area, window, 12, 200, QPoint(100, 220 - 12));
+    require(clamped.level && clamped.position.y() == 220 - 12,
+            "a fifth of the way down levels a window that fits there");
+    const auto tall =
+        snap_window(area, QSize(720, 900), 12, 800, QPoint(100, 25 + 975 * 62 / 100 - 12));
+    require(tall.position.y() == 1000 - 900 && !tall.level,
+            "a window too tall for that guide is clamped and stops reporting the snap");
 }
 
 void settingsAndPlacement() {
@@ -784,6 +905,9 @@ int main(int argc, char** argv) {
         sentencesAreShort();
         fourAnswers();
         draftsKeepTheirCard();
+        pushBackKeepsTheirCard();
+        theGreenLightIsCategoryScoped();
+        theMapLightsTheCardInFront();
         answersAreLogged();
         hotkeys();
         joinsBesideTheWindow();

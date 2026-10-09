@@ -26,8 +26,9 @@ replaces it. Each CLI's tile is its own logo on black (Claude Code's is the
 mascot from its welcome screen). Below it the card shows the agent's name, a
 headline and any blocks, and in its corner a small map of lapis: a column per
 category in its colour, a block per agent in strip order, this agent's lit.
-Command-L, or a click on the map, shows that agent in lapis and puts the
-overlay away. The footer holds every agent's tile in its light: red and yellow
+Command-L, or a click on the map, writes `runtime/ultratab_open.json` and
+brings lapis forward; the lapis desktop does not read that file yet (see
+[Not yet](#not-yet)), so it comes forward without selecting the agent. The footer holds every agent's tile in its light: red and yellow
 on the left, green on the right; hovering one names it. A sent reply says so
 by leaving; only a refused send, a notice or a hint is written in the footer.
 
@@ -341,6 +342,10 @@ tests in a headless simulator against real session services and the gateway
 - Voice on the Mac: holding Option shows the listening state only. The iPhone
   app leaves voice to the keyboard.
 - The answer log is not searchable from Ultra Tab yet.
+- lapis does not read `runtime/ultratab_open.json` yet, so Command-L and a
+  click on the map bring the lapis desktop forward without selecting the agent
+  the overlay named. The file is written beside lapis's registry; the desktop
+  side of that handshake is not implemented.
 - The overlay does not show composed cards yet; they are written for it.
 - The learned Tab order and other ranking beyond lapis's tiers.
 - Answering requests from the deck.

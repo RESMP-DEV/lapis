@@ -38,7 +38,12 @@ class OverlayHost final : public QObject {
     // The panel's background is dragged: `to` is where the window's top-left
     // would follow the pointer; the window snaps from there. `done` ends it.
     Q_INVOKABLE void dragTo(int x, int y, bool done) {
+        const bool was_dragging = dragging_;
         dragging_ = !done;
+        // `dragging` is what QML binds its snap guides to, so a change has to
+        // notify like the other state here does.
+        if (dragging_ != was_dragging)
+            emit snapChanged();
         emit dragRequested(QPoint(x, y), done);
         if (done)
             setSnap(false, false);

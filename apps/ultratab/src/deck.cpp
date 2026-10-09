@@ -192,8 +192,9 @@ std::vector<Card> Deck::visible() const {
             shown.push_back(card);
     // What needs the person first, then what could use a nudge; lapis's own
     // order within each.
-    std::stable_sort(shown.begin(), shown.end(),
-                     [](const Card& left, const Card& right) { return left.weight > right.weight; });
+    std::stable_sort(shown.begin(), shown.end(), [](const Card& left, const Card& right) {
+        return left.weight > right.weight;
+    });
     // A newer card never takes the front from the one being typed to.
     if (!drafting_.isEmpty()) {
         const auto pinned = std::find_if(shown.begin(), shown.end(), [this](const Card& card) {
@@ -357,14 +358,20 @@ QVariantMap Deck::groups() const {
         (card.weight >= 2 ? needs : steer).append(entry(card.harness, card.name, card.key));
     // Reports and background work the composer judged need nothing, then
     // agents at work.
+    // Scoped like needs and steer: a category filter that kept other categories
+    // out of the red and yellow lights must not leak them into the green one.
+    const auto in_category = [this](const QString& category) {
+        return category_.isEmpty() || category == category_;
+    };
     for (const auto& card : cards_)
-        if (card.weight == 0 && !answered_.contains(card.key))
+        if (card.weight == 0 && !answered_.contains(card.key) && in_category(card.category_id))
             running.append(entry(card.harness, card.name, {}));
     for (const auto& agent : published_.agents)
-        if (published_.states.value(agent.id).status == QLatin1String("working"))
-            running.append(entry(agent.harness,
-                                 agent.title.isEmpty() ? folder_label(agent.directory) : agent.title,
-                                 {}));
+        if (published_.states.value(agent.id).status == QLatin1String("working") &&
+            in_category(agent.category))
+            running.append(
+                entry(agent.harness,
+                      agent.title.isEmpty() ? folder_label(agent.directory) : agent.title, {}));
     return {{QStringLiteral("needs"), needs},
             {QStringLiteral("steer"), steer},
             {QStringLiteral("running"), running}};
@@ -377,10 +384,19 @@ QVariantList Deck::map() const {
     for (qsizetype index = 0; index < published_.categories.size(); ++index) {
         const auto& category = published_.categories.at(index);
         QVariantList places;
-        for (const auto& agent : published_.agents)
-            if (agent.category == category.id && places.size() < map_slots)
-                places.append(QVariantMap{{QStringLiteral("agent"), agent.id},
-                                         {QStringLiteral("lit"), agent.id == front}});
+        for (const auto& agent : published_.agents) {
+            if (agent.category != category.id)
+                continue;
+            const bool lit = agent.id == front;
+            if (places.size() < map_slots)
+                places.append(
+                    QVariantMap{{QStringLiteral("agent"), agent.id}, {QStringLiteral("lit"), lit}});
+            else if (lit)
+                // The column shows one slot per agent up to the cap; the card
+                // being answered past that still shows where it sits.
+                places.last() =
+                    QVariantMap{{QStringLiteral("agent"), agent.id}, {QStringLiteral("lit"), true}};
+        }
         if (!places.isEmpty())
             columns.append(QVariantMap{{QStringLiteral("id"), category.id},
                                        {QStringLiteral("hue"), static_cast<int>(index)},
@@ -534,6 +550,16 @@ bool Deck::pushBack(const QString& text) {
     const auto trimmed = text.trimmed();
     if (shown.empty() || shown.front().request || trimmed.isEmpty())
         return false;
+    // A correction belongs to the agent the draft was pinned to, exactly as
+    // send() checks. The box stays open across polls, so that agent can stop
+    // waiting while it is open; without this the text reaches whoever is now
+    // in front.
+    if (!drafting_.isEmpty() && shown.front().agent_id != drafting_) {
+        message_ = QStringLiteral("That agent is no longer waiting; nothing was sent. "
+                                  "Escape clears the text.");
+        emit changed();
+        return false;
+    }
     drafting_.clear();
     return answer(shown.front(), QStringLiteral("pushback"), trimmed);
 }

@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QWindow>
 #import <ServiceManagement/ServiceManagement.h>
+#include <cmath>
 
 namespace lapis::ultratab::platform {
 namespace {
@@ -74,6 +75,11 @@ UInt32 key_code(const QString& key, bool* known) {
 }
 
 NSImage* rounded_mask(CGFloat radius) {
+    // A radius at or below zero would ask for an empty or negative image, and
+    // an unbounded one for an image larger than any view; both are the panel's
+    // own corner instead.
+    if (radius <= 0 || !std::isfinite(radius))
+        radius = kCornerRadius;
     const CGFloat side = radius * 2 + 1;
     NSImage* mask = [NSImage imageWithSize:NSMakeSize(side, side)
                                    flipped:NO
@@ -134,6 +140,9 @@ bool make_translucent(QWindow& window) {
     [qt_view retain];
     [qt_view removeFromSuperview];
     host.contentView = container;
+    // Qt's view resizes with the window; the container has to as well, or both
+    // keep the size the window had when it was installed.
+    container.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     [container addSubview:blur];
     qt_view.frame = container.bounds;
     qt_view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -155,10 +164,14 @@ void set_blur_rect(QWindow& window, const QRectF& rect, qreal radius) {
     const NSRect frame = NSMakeRect(rect.x(), rect.y(), rect.width(), rect.height());
     if (!NSEqualRects(blur.frame, frame))
         blur.frame = frame;
-    static CGFloat masked = kCornerRadius;
-    if (masked != radius) {
+    // The mask radius is remembered per blur view, not in a file-scope
+    // static: another window's radius must not skip this one.
+    static NSMapTable<NSVisualEffectView*, NSNumber*>* masked =
+        [NSMapTable weakToStrongObjectsMapTable];
+    NSNumber* previous = [masked objectForKey:blur];
+    if (previous == nil || previous.doubleValue != radius) {
         blur.maskImage = rounded_mask(radius);
-        masked = radius;
+        [masked setObject:@(radius) forKey:blur];
     }
     // The shadow follows what is drawn; recompute it for the new shape.
     [qt_view.window invalidateShadow];

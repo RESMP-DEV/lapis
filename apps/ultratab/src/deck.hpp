@@ -33,7 +33,7 @@ struct Card {
     // How much it needs the person: 2 needs you (red), 1 could steer
     // (yellow), 0 only running or reporting (green, never a card).
     int weight{1};
-    int tier{};       // lapis's Tab tier (attention_order.hpp)
+    int tier{}; // lapis's Tab tier (attention_order.hpp)
     qint64 needed_at_ms{};
     int position{}; // registry order
     // The composer's card for this turn, when it is current.

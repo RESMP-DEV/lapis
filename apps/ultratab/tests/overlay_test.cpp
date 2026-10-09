@@ -491,9 +491,8 @@ void pushBackAndRunning() {
     deck.setPublished(read_published(directory.path()));
     const auto groups = deck.groups();
     const auto running = groups.value(QStringLiteral("running")).toList();
-    require(running.size() == 4 &&
-                running.front().toMap().value(QStringLiteral("name")) ==
-                    QLatin1String("game server"),
+    require(running.size() == 4 && running.front().toMap().value(QStringLiteral("name")) ==
+                                       QLatin1String("game server"),
             "a report the composer judged needs nothing is in the green light");
 
     QQuickView view;
@@ -509,8 +508,7 @@ void pushBackAndRunning() {
     auto* name = find(root, QStringLiteral("agentName"));
     // persist needs you; the request comes next, never game server.
     require(name->property("text").toString() == QLatin1String("persist GUI state") &&
-                deck.behind().value(QStringLiteral("name")) ==
-                    QLatin1String("cleanup build cache"),
+                deck.behind().value(QStringLiteral("name")) == QLatin1String("cleanup build cache"),
             "the running agent is skipped over");
 
     key(view, Qt::Key_Return, {}, Qt::ControlModifier);
@@ -534,6 +532,145 @@ void pushBackAndRunning() {
             "it is logged as a push back");
     require(!box->isVisible() && entry->hasActiveFocus(), "the one-line reply is back");
 }
+// With the deck empty the entry still has to hold the keyboard: an invisible
+// item cannot, and Escape and the category keys are how the overlay is put
+// away.
+void anEmptyDeckStillTakesKeys() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "fixture directory");
+    writeFixture(directory.path());
+    FakeSender sender;
+    Deck deck(sender);
+    deck.setPublished(read_published(directory.path()));
+    bool dismissed = false;
+    QObject::connect(&deck, &Deck::dismissRequested, [&dismissed] { dismissed = true; });
+    QQuickView view;
+    view.resize(1280, 760);
+    require(load_overlay(view, deck, {.backdrop = true, .reduced_motion = true}),
+            "the overlay QML loads");
+    view.show();
+    view.requestActivate();
+    auto* entry = find(view.rootObject(), QStringLiteral("entry"));
+    require(entry != nullptr && waitFor([&] { return entry->hasActiveFocus(); }),
+            "typing goes to the overlay's entry");
+    const int cards = 4;
+    for (int index = 0; index < cards; ++index)
+        key(view, index % 2 == 0 ? Qt::Key_Left : Qt::Key_Left, {}, Qt::KeypadModifier);
+    require(deck.front().isEmpty(), "the deck is empty");
+    require(entry->isVisible() && waitFor([&] { return entry->hasActiveFocus(); }),
+            "the entry keeps the keyboard with an empty deck");
+    key(view, Qt::Key_Escape);
+    require(dismissed, "Escape still puts the overlay away");
+}
+
+// The frozen card that leaves is placed where the card sat, so clearing a
+// wrapped draft or emptying the deck does not move it mid-slide.
+void theLeavingCardKeepsItsPlace() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "fixture directory");
+    writeFixture(directory.path());
+    FakeSender sender;
+    Deck deck(sender);
+    deck.setPublished(read_published(directory.path()));
+    QQuickView view;
+    view.resize(1280, 760);
+    // Motion on: the ghost only exists while the slide runs.
+    require(load_overlay(view, deck, {.backdrop = true, .reduced_motion = false}),
+            "the overlay QML loads");
+    view.show();
+    view.requestActivate();
+    auto* entry = find(view.rootObject(), QStringLiteral("entry"));
+    require(entry != nullptr && waitFor([&] { return entry->hasActiveFocus(); }),
+            "typing goes to the overlay's entry");
+    auto* reply = find(view.rootObject(), QStringLiteral("replyLine"));
+    require(reply != nullptr && reply->property("height").toReal() > 0,
+            "the reply line is showing with a card");
+    const qreal showing = reply->property("height").toReal();
+    // Skip the rest of the deck, so the leaving copy is the last card's and
+    // the reply line collapses to nothing while it slides.
+    while (!deck.front().isEmpty())
+        key(view, Qt::Key_Left, {}, Qt::KeypadModifier);
+    auto* ghost = find(view.rootObject(), QStringLiteral("ghost"));
+    require(ghost != nullptr && waitFor([&] { return ghost->isVisible(); }),
+            "the card starts leaving");
+    const qreal resting = ghost->property("y").toReal();
+    settle(40);
+    require(reply->property("height").toReal() == 0 && showing > 0,
+            "the reply line collapsed when the deck emptied");
+    require(qAbs(ghost->property("y").toReal() - resting) < 0.5,
+            "the leaving card stays where the card sat");
+}
+
+// A push back is a send: it leaves right with a green edge, and a refused one
+// leaves the card where it is.
+void aPushBackLeavesLikeASend() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "fixture directory");
+    writeFixture(directory.path());
+    FakeSender sender;
+    Deck deck(sender);
+    deck.setPublished(read_published(directory.path()));
+    QQuickView view;
+    view.resize(1280, 760);
+    require(load_overlay(view, deck, {.backdrop = true, .reduced_motion = false}),
+            "the overlay QML loads");
+    view.show();
+    view.requestActivate();
+    auto* root = view.rootObject();
+    auto* entry = find(root, QStringLiteral("entry"));
+    require(entry != nullptr && waitFor([&] { return entry->hasActiveFocus(); }),
+            "typing goes to the overlay's entry");
+    auto* name = find(root, QStringLiteral("agentName"));
+    const auto before = name->property("text").toString();
+    key(view, Qt::Key_Return, {}, Qt::ControlModifier); // opens the push back
+    auto* box = find(root, QStringLiteral("pushBox"));
+    auto* text = find(root, QStringLiteral("pushText"));
+    require(box && text && waitFor([&] { return text->hasActiveFocus(); }),
+            "Command-Return opens the push back");
+    for (const QChar character : QStringLiteral("use the new address"))
+        key(view, character.toUpper().unicode(), QString(character));
+    key(view, Qt::Key_Return, {}, Qt::ControlModifier);
+    require(sender.sent.size() == 1, "the push back was sent");
+    auto* ghost = find(root, QStringLiteral("ghost"));
+    require(ghost != nullptr && ghost->property("direction").toInt() == 1,
+            "a sent push back leaves right, like a send and not a skip");
+    require(sender.sent[0].agent == id(0) && before == QLatin1String("persist GUI state"),
+            "and it went to the card it was written for");
+
+    // Escape out of the box returns the text to the one-line reply and keeps
+    // it written for the card the box was opened on, even when a card that
+    // outranks it arrives meanwhile: clearing `pushing` before the text went
+    // back let `typing` rest on an empty entry, which dropped the draft pin and
+    // rebound the restored text to the card that had taken the front.
+    settle(400);
+    const auto pinned = deck.front().value(QStringLiteral("name")).toString();
+    const auto for_agent = deck.front().value(QStringLiteral("agent")).toString();
+    key(view, Qt::Key_Return, {}, Qt::ControlModifier);
+    auto* text2 = find(root, QStringLiteral("pushText"));
+    require(text2 && waitFor([&] { return text2->hasActiveFocus(); }), "the push back opens again");
+    for (const QChar character : QStringLiteral("and this one"))
+        key(view, character.toUpper().unicode(), QString(character));
+    // A request, which outranks every other card, arrives while the box is up.
+    auto busier = read_published(directory.path());
+    busier.states[id(3)].requests = 1;
+    busier.states[id(3)].request = QStringLiteral("Allow rm -rf build/cache?");
+    deck.setPublished(busier);
+    settle(20);
+    // The pin must not be dropped and retaken on the way out: that republishes
+    // the front card and flickers every binding that reads it.
+    int published = 0;
+    QObject::connect(&deck, &Deck::changed, [&published] { ++published; });
+    key(view, Qt::Key_Escape);
+    require(published == 0, "Escape does not republish the deck");
+    auto* entry2 = find(root, QStringLiteral("entry"));
+    require(entry2 != nullptr &&
+                entry2->property("text").toString() == QLatin1String("and this one"),
+            "Escape returns the text to the one-line reply");
+    require(deck.front().value(QStringLiteral("agent")).toString() == for_agent,
+            "and it is still written for the card the box was opened on");
+    require(sender.sent.size() == 1, "Escape sends nothing");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -542,6 +679,9 @@ int main(int argc, char** argv) {
         overlayAnswersEveryCard();
         motionNeverDelaysInput();
         pushBackAndRunning();
+        anEmptyDeckStillTakesKeys();
+        theLeavingCardKeepsItsPlace();
+        aPushBackLeavesLikeASend();
     } catch (const std::exception& error) {
         std::cerr << "ultratab overlay test failed: " << error.what() << '\n';
         return 1;

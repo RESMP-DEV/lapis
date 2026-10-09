@@ -80,7 +80,15 @@ Item {
     // The panel; the window is as large as it and the blur covers it only.
     readonly property int panelWidth: Math.min(680, width - 40)
     // The screen bounds the card, never the window, which follows the card.
-    readonly property real tallest: Screen.desktopAvailableHeight > 0 ? Screen.desktopAvailableHeight * 0.7 : 700
+    // desktopAvailableHeight is the whole virtual desktop, so beside a taller
+    // display this laid the card out to a height the window cannot show; the
+    // window follows the card, so size both from the screen this one is on.
+    readonly property real tallest: {
+        const screen = Screen.height > 0 ? Screen.height : 1000
+        // Chrome around the panel: panel.y, the peeking edges and the bottom
+        // margin, about 56 points in all.
+        return Math.max(220, screen - 56)
+    }
     // Grows with the card at once; shrinks only after the motion, so the
     // window never cuts the card while it animates.
     property real windowPanelHeight: panel.targetHeight
@@ -525,6 +533,7 @@ Item {
             NumberAnimation { duration: root.motion; easing.type: Easing.OutCubic }
         }
         onHeightChanged: root.tellHost()
+        onWidthChanged: root.tellHost()
         onXChanged: root.tellHost()
         radius: 14
         // A dark, mostly opaque tint over the window's blur, as Raycast's
@@ -609,9 +618,14 @@ Item {
             // or what is being typed.
             Item {
                 id: replyLine
+                objectName: "replyLine"
                 width: parent.width
                 height: root.hasFront ? Math.max(54, entry.implicitHeight + 30) : 0
-                visible: root.hasFront
+                // Hidden by opacity, never `visible`, like the entry itself: an
+                // invisible item cannot hold focus, and with an empty deck the
+                // entry has to keep the keyboard for Escape and the category
+                // keys to reach the overlay at all.
+                opacity: root.hasFront ? 1 : 0
                 HarnessTile {
                     id: frontMark
                     objectName: "frontTile"
@@ -886,9 +900,14 @@ Item {
     property var leavingCard: ({})
     Rectangle {
         id: ghost
+        objectName: "ghost"
         z: 5
         x: panel.x
-        y: panel.y + replyLine.height + 1
+        // Where the card sat when it left, not where the reply line is now:
+        // that height collapses as the deck empties or a wrapped draft clears,
+        // which would move the copy mid-slide.
+        property real restingY: panel.y + 55
+        y: restingY
         width: panel.width
         height: ghostBody.implicitHeight + 30
         radius: 12
@@ -967,6 +986,7 @@ Item {
         if (reducedMotion || !hasFront)
             return
         leavingCard = Object.assign({}, front)
+        ghost.restingY = panel.y + replyLine.height + 1
         ghost.direction = direction
         ghost.accent = direction > 0 ? green : red
         leave.restart()
@@ -987,9 +1007,17 @@ Item {
     function handlePushKey(event) {
         if ((event.modifiers & Qt.ControlModifier)
                 && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
-            if (pushText.text.trim().length > 0) {
-                leaving(-1)
+            const trimmed = pushText.text.trim()
+            if (hasFront && front.canType && trimmed.length > 0) {
+                const card = Object.assign({}, front)
                 if (deck.pushBack(pushText.text)) {
+                    // Sent, so it leaves the way a send leaves: right, green.
+                    leavingCard = card
+                    ghost.restingY = panel.y + replyLine.height + 1
+                    ghost.direction = 1
+                    ghost.accent = green
+                    if (!reducedMotion)
+                        leave.restart()
                     pushText.text = ""
                     pushing = false
                 }
@@ -997,8 +1025,10 @@ Item {
             event.accepted = true
         } else if (event.key === Qt.Key_Escape) {
             const kept = pushText.text
-            pushing = false
+            // The text goes back before `pushing` clears, so `typing` never
+            // rests on an empty entry and the draft keeps its card.
             entry.text = kept.replace(/\n/g, " ")
+            pushing = false
             event.accepted = true
         }
     }
