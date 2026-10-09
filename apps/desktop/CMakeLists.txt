@@ -299,6 +299,18 @@ target_compile_definitions(lapis_workspace_live_probe PRIVATE
     LAPIS_SESSION_SERVICE_PATH="$<TARGET_FILE:lapis_session_service>")
 add_dependencies(lapis_workspace_live_probe lapis_session_service)
 
+# Opt-in agent and category switching measurement (offscreen); not in CTest.
+set(QT_NO_PRIVATE_MODULE_WARNING ON) # the benchmark is pinned to this exact Qt
+find_package(Qt6 6.11.2 EXACT QUIET COMPONENTS GuiPrivate)
+if(TARGET Qt6::GuiPrivate)
+    add_executable(lapis_switch_benchmark tests/switch_benchmark.cpp)
+    target_link_libraries(lapis_switch_benchmark PRIVATE lapis_project_options lapis_desktop_view
+                                                         Qt6::QuickControls2 Qt6::GuiPrivate)
+    target_compile_definitions(lapis_switch_benchmark PRIVATE
+        LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
+    add_dependencies(lapis_switch_benchmark lapis_session_service)
+endif()
+
 # Opt-in measurement, not a timing gate in CTest.
 add_executable(lapis_terminal_latency_probe tests/terminal_latency_probe.cpp)
 target_link_libraries(lapis_terminal_latency_probe PRIVATE lapis_project_options lapis_desktop_view)
