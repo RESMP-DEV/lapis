@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-09T07:20:00Z",
+  "scope": "Parent validation and merge evidence for Lapis PRs 98, 99, 101, 105, 109, 110, 115, and 124. This does not validate later open PRs or claim native VoiceOver, CoreSimulator, or GPU-presentation qualification.",
+  "reviewers": {
+    "coderabbit": "Invoked by GitHub review state on every PR; completed where reported, and explicit rate-limit/skip states were treated as unavailable rather than approval.",
+    "kilo": "Queued or pending states were optional and not merge gates.",
+    "opencodereview": "Findings addressed through thread replies and resolution.",
+    "grok": "Explicit earlier free-tier usage limit; no claim of review completion."
+  },
+  "pulls": [
+    {
+      "number": 98,
+      "validated_head": "08b29c81cd7db8cfcc402d15cf113f8c0f3ad8b8",
+      "merge_commit": "316e8074ecc69f48fcc6c40ef8260d3ded6daafa",
+      "threads_unresolved_before_merge": 0,
+      "checks": [
+        "umask 0022 just quality: PASS",
+        "pinned Ghostty bootstrap: PASS",
+        "full desktop configure/build/ctest/clang-format/clang-tidy/cppcheck: PASS"
+      ]
+    },
+    {
+      "number": 99,
+      "validated_head": "81d0816bad138fde53f88acdb483cecb0452093b",
+      "merge_commit": "b38017bf3736be165aae24c48595ec03959e993a",
+      "threads_unresolved_before_merge": 0,
+      "checks": [
+        "python3 -m unittest scripts.tests.test_next_prompt -v: 27/27 PASS",
+        "ctest next-prompt: 1/1 PASS",
+        "umask 0022 just quality: PASS"
+      ]
+    },
+    {
+      "number": 101,
+      "validated_head": "3001d2b385d8d6634838dec3a893d3009c93458f",
+      "merge_commit": "05add1a5436b2eff2b2c0411f1b25af5fdd83ac6",
+      "threads_unresolved_before_merge": 0,
+      "checks": [
+        "umask 0022 just quality: PASS",
+        "worker focused remote-relay, terminal-hook, attention-service, workspace, format, and tidy checks: PASS"
+      ]
+    },
+    {
+      "number": 105,
+      "validated_head": "676c429d43bcd72ff8deab2c241188e4c8330205",
+      "merge_commit": "5062f6a73968cb932d2a229c73a01aeee9321de0",
+      "threads_unresolved_before_merge": 0,
+      "checks": [
+        "umask 0022 just quality: PASS",
+        "full desktop configure/build/ctest/clang-format/clang-tidy/cppcheck after merging main: PASS"
+      ]
+    },
+    {
+      "number": 109,
+      "validated_head": "2f3353e3203cc0687e152e236c5f65843e69d13d",
+      "merge_commit": "fe3a07010aad4d612e69c0929a6febf34f10f86f",
+      "threads_unresolved_before_merge": 0,
+      "checks": [
+        "ctest -j1 all 54 tests: 54/54 PASS",
+        "focused workspace after final structural-focus repair: PASS",
+        "tab-away evaluator Python tests: 8/8 PASS",
+        "changed-file clang-format and clang-tidy: PASS",
+        "umask 0022 just quality: PASS"
+      ],
+      "non_claims": "Parallel aggregate terminal-input runs hit the known rebound-window flake; serial reruns and full serial CTest passed. Native GPU presentation and OS input are not claimed."
+    },
+    {
+      "number": 110,
+      "validated_head": "fa8c63699ec76f5d81d7434450f383838050bf43",
+      "merge_commit": "92e1c977fb5e6e3eabc449af15d4bdb8d296d050",
+      "threads_unresolved_before_merge": 0,
+      "checks": [
+        "real small offscreen benchmark runs with 0/1 tiled category: PASS",
+        "invalid option rejection: PASS",
+        "no leaked stand-in or sleep processes: PASS",
+        "changed-file clang-format/clang-tidy and umask 0022 just quality: PASS"
+      ]
+    },
+    {
+      "number": 115,
+      "validated_head": "c84f922480559496478d4c54e242165c15515856",
+      "merge_commit": "3cb218e6bea79f9190e6346b4d10f8b5662364b0",
+      "threads_unresolved_before_merge": 0,
+      "checks": [
+        "window-state, next-prompt, workspace, and ui-preview focused CTest set: 4/4 PASS",
+        "changed-file clang-tidy: PASS",
+        "umask 0022 just quality: PASS"
+      ],
+      "non_claims": "The worker timeout is not treated as validation; parent checks are acceptance. Native screen-reader qualification is not claimed."
+    },
+    {
+      "number": 124,
+      "validated_head": "986cdaced7d91c6a5d15400a8d10d10a70efb68e",
+      "merge_commit": "4b60e6bd8888e71de8b9f53d6371cf3776162afe",
+      "threads_unresolved_before_merge": 0,
+      "checks": [
+        "Ultra Tab CTest suites: 3/3 PASS",
+        "changed-file clang-format and clang-tidy: PASS",
+        "umask 0022 just quality: PASS",
+        "worker Swift app/views/unit tests against iOS Simulator SDK: PASS"
+      ],
+      "non_claims": "CoreSimulator integration execution was unavailable in the worker sandbox and is not claimed."
+    }
+  ]
+}
