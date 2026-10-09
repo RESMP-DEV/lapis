@@ -796,7 +796,8 @@ void KeyMap::load_harness_updates(const QJsonValue& value) {
         if (it.key().isEmpty() || it.key().size() > 32 || !it.value().isBool()) {
             append_diagnostic(&diagnostic_,
                               QStringLiteral("Ignoring harnessUpdates for '%1': use a harness "
-                                             "name of at most 32 characters and true or false")
+                                             "name of at least one and at most 32 characters "
+                                             "and true or false")
                                   .arg(it.key().left(32)));
             continue;
         }
@@ -809,7 +810,7 @@ void KeyMap::load_harness_updates(const QJsonValue& value) {
                                   .arg(it.key().left(32)));
             continue;
         }
-        harness_updates_off_.insert(it.key());
+        harness_updates_off_.insert(it.key().toLower());
     }
 }
 

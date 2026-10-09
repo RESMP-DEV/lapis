@@ -602,7 +602,7 @@ void harness_updates_can_be_turned_off() {
     require(directory.isValid(), "temporary directory");
     const QString path = write_config(
         QDir(directory.path()),
-        R"({"harnessUpdates": {"omp": false, "claude": true, "grok": "no", "": false}})");
+        R"({"harnessUpdates": {"OMP": false, "claude": true, "grok": "no", "": false}})");
     KeyMap keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "harness updates load with the rest of the file");
@@ -610,6 +610,8 @@ void harness_updates_can_be_turned_off() {
             "only a CLI set to false is pinned");
     require(keymap.diagnostic().contains(QStringLiteral("harnessUpdates for 'grok'")),
             "a non-boolean entry is reported");
+    require(keymap.diagnostic().contains(QStringLiteral("at least one and at most 32 characters")),
+            "an empty harness name is reported");
     const QString defaults = write_config(QDir(directory.path()), R"({"theme": "oled"})");
     keymap.setSourcePathForTesting(defaults);
     require(keymap.load() && keymap.harnessUpdatesOff().isEmpty(), "every CLI updates by default");
