@@ -247,7 +247,7 @@ if(BUILD_TESTING)
     set_tests_properties(tools-ui PROPERTIES TIMEOUT 60 RESOURCE_LOCK "qt_gui" ENVIRONMENT
         "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
 
-    add_executable(lapis_ui_preview_tests tests/ui_preview_test.cpp)
+    add_executable(lapis_ui_preview_tests tests/ui_preview_test.cpp tests/model_change_recorder.hpp)
     target_link_libraries(lapis_ui_preview_tests PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
     target_compile_definitions(lapis_ui_preview_tests PRIVATE LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
     add_test(NAME ui-preview COMMAND lapis_ui_preview_tests)

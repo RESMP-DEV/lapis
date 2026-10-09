@@ -1,6 +1,7 @@
 #include "agent_search.hpp"
 #include "conversation_index.hpp"
 #include "keymap.hpp"
+#include "model_change_recorder.hpp"
 #include "plan_sign_in.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
@@ -66,16 +67,6 @@ struct AttentionRecorder final : QObject {
   public:
     int changed_count{};
     int arrived_count{};
-};
-
-struct ModelChangeRecorder final : QObject {
-    Q_OBJECT
-
-  public:
-    int changes{};
-
-  public Q_SLOTS:
-    void changed() { ++changes; }
 };
 
 QString write_qml(const QTemporaryDir& directory, const QString& name, QStringView qml) {
@@ -2907,5 +2898,3 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 }
-
-#include "ui_preview_test.moc"
