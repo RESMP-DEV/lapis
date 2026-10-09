@@ -1,10 +1,14 @@
 #define LAPIS_SESSION_SERVICE_TEST
+// White-box fixture: the test TU must compile the service translation unit so
+// tests can reach the private attention state through the access class below.
+// NOLINTNEXTLINE(bugprone-suspicious-include)
 #include "session_service.cpp"
 
 #include <QTemporaryDir>
 #include <iostream>
 #include <source_location>
 #include <stdexcept>
+#include <utility>
 
 namespace lapis::session {
 class AttentionServiceTestAccess final {
@@ -28,14 +32,14 @@ class AttentionServiceTestAccess final {
         attachment.identity.session_id = QByteArray(16, 's');
         attachment.identity.epoch = QByteArray(16, 'e');
         attachment.generation = 1;
-        service.attachment_ = attachment;
+        service.attachment_ = std::move(attachment);
     }
 
     [[nodiscard]] static bool journal_failed(const SessionService& service) {
         return !service.attention_journal_ || service.attention_journal_failed_;
     }
 
-    [[nodiscard]] static QString diagnostic(const SessionService& service) {
+    [[nodiscard]] static const QString& diagnostic(const SessionService& service) {
         return service.decision_error_;
     }
 

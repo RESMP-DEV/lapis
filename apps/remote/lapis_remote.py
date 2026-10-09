@@ -40,6 +40,7 @@ import select
 import shlex
 import shutil
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -66,6 +67,12 @@ MAX_HTTP_CONNECTIONS = 16
 WIRE_VERSION = 6
 HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
 HISTORY_REQUEST, HISTORY_PAGE = 10, 11
+# One bounded paste admitted to the agent's input as a unit, optionally
+# followed by Return, with the service's answer (added within v6). A view asks
+# for it with the attach flag; a service that grants it says so in its hello.
+PASTE_REQUEST, PASTE_RESULT = 17, 18
+ATTACH_PASTE_TRANSACTIONS = 0x20
+MAX_PASTE = 960 * 1024
 # A turn of the wheel for a full-screen program (added within v6). Only a
 # service whose snapshots set ACCEPTS_WHEEL in the alternate-screen byte takes
 # it; one from before drops the connection on it.
@@ -1648,7 +1655,15 @@ def frame(kind, payload=b""):
 class WireSession:
     """One attachment to an agent's session service."""
 
-    def __init__(self, agent, columns=None, rows=None, timeout=5.0, mode=JOIN):
+    def __init__(
+        self,
+        agent,
+        columns=None,
+        rows=None,
+        timeout=5.0,
+        mode=JOIN,
+        paste_transactions=False,
+    ):
         self.lock = threading.Lock()
         self.buffer = bytearray()
         self.attachment = None
@@ -1666,6 +1681,8 @@ class WireSession:
         self.superseded = False
         self.history_ids = itertools.count(1)
         self.history_waiters = {}
+        # Whether the service admits submitted pastes (submit_paste).
+        self.paste_transactions = False
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.socket.settimeout(timeout)
         # A whole screen in one read: macOS local sockets default to 8 KB.
@@ -1685,15 +1702,27 @@ class WireSession:
                     ATTACH,
                     struct.pack(">I", WIRE_VERSION)
                     + launch
-                    + bytes([mode])
+                    + bytes(
+                        [
+                            mode
+                            | (ATTACH_PASTE_TRANSACTIONS if paste_transactions else 0)
+                        ]
+                    )
                     + bytes(32),
                 )
             )
             kind, data = self.receive(timeout)
             if kind == STATUS:
                 raise GatewayError(status_message(data))
-            require(kind == HELLO and len(data) == 52, "Expected hello")
+            require(
+                kind == HELLO
+                and len(data) in ((52, 56) if paste_transactions else (52,)),
+                "Expected hello",
+            )
             require(struct.unpack_from(">I", data)[0] == WIRE_VERSION, "Wire mismatch")
+            if len(data) == 56:
+                require(struct.unpack_from(">I", data, 52)[0] == 1, "Invalid hello")
+                self.paste_transactions = True
             self.attachment = data[4:44]
             kind, data = self.receive(timeout)
             if kind == STATUS:
@@ -1841,6 +1870,143 @@ def open_session(agent, columns=None, rows=None):
         if not str(error).startswith("rejected"):
             raise
     return WireSession(agent, columns, rows, mode=DISCOVER), False
+
+
+def submit_paste(agent, text, timeout=5.0):
+    """Join the agent's session as an extra view, admit `text` as one paste
+    followed by Return, and leave, as Ultra Tab on the Mac does: the desktop
+    keeps its attachment and the terminal keeps its size. Returns (queued,
+    message); the service refuses the paste while a request is pending."""
+    data = text.encode("utf-8")
+    if not data or len(data) > MAX_PASTE:
+        return False, "the reply is empty or too long"
+    try:
+        session = WireSession(agent, timeout=timeout, paste_transactions=True)
+    except GatewayError as error:
+        return (
+            False,
+            f"this agent's session cannot be joined ({error}); answer it in lapis",
+        )
+    except (OSError, EOFError) as error:
+        return False, f"the agent's session is not reachable ({error})"
+    try:
+        if not session.paste_transactions:
+            return False, (
+                "this agent's session predates submitted pastes; answer it in lapis"
+            )
+        request_id = 1
+        session.send(PASTE_REQUEST, struct.pack(">QB", request_id, 1) + data)
+        deadline = time.monotonic() + timeout
+        while (remaining := deadline - time.monotonic()) > 0:
+            received = session.receive(remaining)
+            if received is None:
+                break
+            kind, payload = received
+            if kind == STATUS:
+                return False, status_message(payload)
+            if (
+                kind == PASTE_RESULT
+                and len(payload) >= ATTACHMENT_BYTES + 9
+                and payload[:ATTACHMENT_BYTES] == session.attachment
+                and struct.unpack_from(">Q", payload, ATTACHMENT_BYTES)[0] == request_id
+            ):
+                queued = payload[ATTACHMENT_BYTES + 8] == 1
+                message = payload[ATTACHMENT_BYTES + 9 :].decode("utf-8", "replace")
+                return queued, message
+            # Screens and anything else a view receives are not needed.
+        return False, "the agent's session did not answer"
+    except (OSError, EOFError, GatewayError) as error:
+        return False, f"the agent's session closed ({error})"
+    finally:
+        session.close()
+
+
+# Ultra Tab's deck ------------------------------------------------------------
+
+# What the desktop publishes beside its registry for Ultra Tab
+# (docs/ultratab.md), with the limits Ultra Tab reads them by.
+DECK_FILES = {
+    "state": ("agent_state.json", 4 * 1024 * 1024),
+    "cards": ("ultratab_cards.json", 8 * 1024 * 1024),
+}
+
+
+def bounded_json(path, limit):
+    """The object in a regular file (not a link) within `limit` bytes; None
+    when the file is absent, and a GatewayError when it is unreadable."""
+    name = Path(path).name
+    # Opened without following a link and checked on the open descriptor, so
+    # the file cannot be swapped between the check and the read.
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise GatewayError(f"{name} is unreadable or too large") from error
+    with os.fdopen(fd, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        require(
+            stat.S_ISREG(info.st_mode) and info.st_size <= limit,
+            f"{name} is unreadable or too large",
+        )
+        try:
+            data = json.loads(handle.read(limit + 1))
+        except (OSError, ValueError) as error:
+            raise GatewayError(f"{name} is unreadable") from error
+    require(isinstance(data, dict), f"{name} is not an object")
+    return data
+
+
+def deck_version(registry):
+    """Changes whenever the registry, the published state or the composed
+    cards are replaced."""
+    folder = Path(registry).parent
+    names = [Path(registry).name] + [name for name, _ in DECK_FILES.values()]
+    return "/".join(registry_version(folder / name) for name in names)
+
+
+def process_running(pid):
+    if not isinstance(pid, int) or isinstance(pid, bool) or not 0 < pid < 1 << 31:
+        return False
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def read_deck(registry):
+    """Ultra Tab's inputs for the phone, read-only: the registry's categories
+    and agents (without launch details), and the desktop's agent_state.json
+    and ultratab_cards.json as published. The phone orders and validates them
+    as Ultra Tab on the Mac does; a file that cannot be read is reported and
+    left out."""
+    version = deck_version(registry)
+    workspace = load_workspace(registry)
+    deck = {
+        "version": version,
+        "categories": workspace["categories"],
+        "agents": [
+            {
+                key: agent[key]
+                for key in ("id", "title", "category", "directory", "harness")
+            }
+            for agent in workspace["agents"]
+        ],
+        "problems": [],
+    }
+    folder = Path(registry).parent
+    for key, (name, limit) in DECK_FILES.items():
+        try:
+            deck[key] = bounded_json(folder / name, limit)
+        except GatewayError as error:
+            deck[key] = None
+            deck["problems"].append(str(error))
+    state = deck["state"]
+    deck["writerRunning"] = bool(state) and process_running(state.get("pid"))
+    return deck
 
 
 def status_message(data):
@@ -2257,6 +2423,8 @@ class Handler(BaseHTTPRequestHandler):
             self.list_conversations()
         elif parts == ["api", "settings"]:
             self.forward({"request": "settings"}, "settings")
+        elif parts == ["api", "deck"]:
+            self.deck()
         elif agent_route(parts, "screen"):
             self.screen(parts[2])
         elif agent_route(parts, "stream"):
@@ -2272,6 +2440,8 @@ class Handler(BaseHTTPRequestHandler):
         parts = self.route()
         if agent_route(parts, "input"):
             self.input(parts[2])
+        elif agent_route(parts, "submit"):
+            self.submit(parts[2])
         elif parts == ["api", "agents"]:
             self.start_agent()
         elif agent_route(parts, "close"):
@@ -2933,6 +3103,69 @@ class Handler(BaseHTTPRequestHandler):
                 session.wheel(steps, column, row)
         except (ValueError, TypeError, KeyError, GatewayError, OSError) as error:
             self.fail(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        self.reply(HTTPStatus.OK, {"ok": True})
+
+    def deck(self):
+        """Ultra Tab's deck for the phone (read_deck). With `after` set to the
+        version the phone has, answers once something changes or after at
+        most eight seconds."""
+        after = parse_qs(urlsplit(self.path).query).get("after", [""])[0]
+        wait_deadline = time.monotonic() + LISTING_WAIT
+        while after and deck_version(self.gateway.registry) == after:
+            remaining = min(0.2, wait_deadline - time.monotonic())
+            if remaining <= 0:
+                break
+            time.sleep(remaining)
+            if self.phone_left():
+                return
+        try:
+            body = read_deck(self.gateway.registry)
+        except (OSError, ValueError, GatewayError) as error:
+            self.fail(HTTPStatus.SERVICE_UNAVAILABLE, f"No workspace: {error}")
+            return
+        self.reply(
+            HTTPStatus.OK,
+            body,
+            compressed=gzip.compress(
+                json.dumps(body, separators=(",", ":")).encode(), compresslevel=5
+            ),
+        )
+
+    def submit(self, identifier):
+        """An Ultra Tab answer: one paste and Return through a join that never
+        replaces the desktop's attachment (submit_paste). A refusal carries
+        the service's reason, for the phone to bring the card back."""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = -1
+        if not 0 < length <= MAX_INPUT * 2:
+            self.fail(HTTPStatus.BAD_REQUEST, "Invalid request size")
+            return
+        try:
+            body = json.loads(self.rfile.read(length))
+        except ValueError:
+            body = None
+        text = body.get("text") if isinstance(body, dict) else None
+        if not isinstance(text, str) or not text.strip():
+            self.fail(HTTPStatus.BAD_REQUEST, "Nothing to send")
+            return
+        if len(text.encode("utf-8")) > MAX_INPUT:
+            self.fail(HTTPStatus.BAD_REQUEST, "The reply is too long")
+            return
+        agent = None
+        if not identifier.startswith("terminal-"):
+            try:
+                agent = self.gateway.agent(identifier)
+            except (OSError, ValueError, GatewayError):
+                agent = None
+        if agent is None:
+            self.fail(HTTPStatus.NOT_FOUND, "No such agent")
+            return
+        queued, message = submit_paste(agent, text)
+        if not queued:
+            self.fail(HTTPStatus.CONFLICT, message or "the agent's session refused it")
             return
         self.reply(HTTPStatus.OK, {"ok": True})
 

@@ -157,22 +157,22 @@ int run() {
 
     status.setProbeForTesting(QStringLiteral("omp"), ToolStatus::Probe{});
 
-    require(labelText(*window, QStringLiteral("toolState_claude")) == QStringLiteral("working"),
-            "a successful probe reads working");
-    require(labelText(*window, QStringLiteral("toolDetail_claude")) ==
-                QStringLiteral("lapis tools pane probe"),
-            "the pane shows the probe's own first line");
-    require(labelText(*window, QStringLiteral("toolState_codex"))
-                .startsWith(QStringLiteral("failed, exit 1")),
-            "a failed probe shows its exit code");
-    require(labelText(*window, QStringLiteral("toolState_opencode")) ==
-                QStringLiteral("no answer before timeout"),
-            "a timed-out probe does not invent an answer");
-    require(labelText(*window, QStringLiteral("toolState_omp")) ==
-                QStringLiteral("installed, nothing to probe"),
-            "an installed unprobed command says so");
-    require(labelText(*window, QStringLiteral("toolState_agy")) == QStringLiteral("not installed"),
-            "an unresolved command says missing");
+    until(
+        [&] {
+            return labelText(*window, QStringLiteral("toolState_claude")) ==
+                       QStringLiteral("working") &&
+                   labelText(*window, QStringLiteral("toolDetail_claude")) ==
+                       QStringLiteral("lapis tools pane probe") &&
+                   labelText(*window, QStringLiteral("toolState_codex"))
+                       .startsWith(QStringLiteral("failed, exit 1")) &&
+                   labelText(*window, QStringLiteral("toolState_opencode")) ==
+                       QStringLiteral("no answer before timeout") &&
+                   labelText(*window, QStringLiteral("toolState_omp")) ==
+                       QStringLiteral("installed, nothing to probe") &&
+                   labelText(*window, QStringLiteral("toolState_agy")) ==
+                       QStringLiteral("not installed");
+        },
+        "the Tools pane did not render every settled probe state");
     for (const auto* id : {"claude", "codex", "opencode", "omp", "agy"}) {
         const auto name = QString::fromLatin1(id);
         require(labelText(*window, QStringLiteral("toolChecked_") + name)

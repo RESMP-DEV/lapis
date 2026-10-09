@@ -97,9 +97,24 @@ exception: lapis observes only Codex builds it has qualified, so it keeps that
 build and starts Codex with its update prompt off
 (`check_for_update_on_startup=false`). Starting a supported CLI explicitly
 uses the same update queue; reconnecting and discovering agents do not. Pass
-`--no-harness-updates` to keep a chosen installation unchanged. Queued agents
+`--no-harness-updates` to keep every installation unchanged. Queued agents
 wait until the updater and its installer have stopped, and restarting a queued
 agent cannot skip that wait.
+
+To keep one CLI on a version you chose, install that version and turn off its
+updates in `lapis.json` ([config](config.md#cli-updates)). For OMP:
+
+```sh
+bun add -g @oh-my-pi/pi-coding-agent@<version>
+```
+
+```json
+"harnessUpdates": {"omp": false}
+```
+
+New OMP agents then start on that version, other CLIs keep updating, and the
+update command in Commands says updates are off for OMP instead of running
+`omp update`.
 
 A running agent keeps the version it started with. **Update this tab's CLI and
 reload it** and **Update Claude Code and reload its tabs** in Commands run the

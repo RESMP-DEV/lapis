@@ -18,6 +18,7 @@
 #include <QElapsedTimer>
 #include <QHash>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QJsonValue>
 #include <QLockFile>
 #include <QMap>
@@ -370,6 +371,8 @@ struct WorkspaceOptions {
     // starts, at most every 30 minutes per CLI, so agents never open on an
     // update prompt. Existing-session reconnect and discovery do not update.
     bool updateHarnesses{};
+    // CLIs pinned in lapis.json are known before constructor-started agents.
+    QSet<QString> harnessUpdatesOff{};
     // Production bounds. Tests inject short values so stuck-updater cleanup is
     // observable without waiting two minutes or leaving installer children.
     qint64 updateTimeoutMs{qint64{2} * 60 * 1000};
@@ -473,6 +476,10 @@ class Workspace final : public QObject {
     // from another device never takes the stage from a shown agent.
     QString startAgent(const AgentRequest& request);
     [[nodiscard]] const QString& storagePath() const { return storage_path_; }
+    // This window holds the workspace registry's lock (it owns the workspace).
+    [[nodiscard]] bool holdsRegistry() const {
+        return registry_lock_ != nullptr && registry_lock_->isLocked();
+    }
     // Close an agent's tab. A reachable agent is ended through its
     // session service first and its tab closes once the process exits. An
     // unreachable one keeps its tab unless `abandon` accepts that it may still
@@ -573,6 +580,11 @@ class Workspace final : public QObject {
     void setHarnessArguments(QHash<QString, QStringList> arguments) {
         harness_arguments_ = std::move(arguments);
     }
+    // CLIs lapis.json pins: never updated on start nor by the update commands.
+    // The constructor copies the startup set; this setter applies live reloads.
+    void setHarnessUpdatesOff(QSet<QString> harnesses) {
+        harness_updates_off_ = std::move(harnesses);
+    }
   signals:
     void focusChanged();
     // An agent has a new request for you. Requests ping as finished turns do
@@ -592,6 +604,7 @@ class Workspace final : public QObject {
     [[nodiscard]] static QString defaultEndpoint();
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     QHash<QString, QStringList> harness_arguments_;
+    QSet<QString> harness_updates_off_;
     AgentDefaults agent_defaults_;
     QString ssh_config_{QDir::home().filePath(QStringLiteral(".ssh/config"))};
     const HarnessModels* harness_models_{};
@@ -620,6 +633,8 @@ class Workspace final : public QObject {
     };
     QHash<QString, CliUpdate> cli_updates_;
     int updateAndReload(const QStringList& ids);
+    // Reports and returns true when lapis.json turned off this CLI's updates.
+    bool refuseUpdatesOff(const QString& harness);
     void finishCliUpdate(const QString& key, QProcess* process, const QString& outcome,
                          bool succeeded);
     void drainUpdater(QProcess* process);
@@ -670,6 +685,17 @@ class Workspace final : public QObject {
     };
     // Build the launch and its managed resume provenance together.
     std::optional<ResumeLaunch> agentLaunch(const AgentRequest& request);
+    // The walk of the next and previous agent keys through a tiled category:
+    // the layout it started from, its order, the tile showing untiled agents,
+    // and the stage it left. Any other change to the stage starts a new walk.
+    struct TileWalk {
+        TileLayout home;
+        QStringList order;
+        QString slot;
+        QJsonObject shown;
+        QString selected;
+    };
+    QHash<QString, TileWalk> tile_walks_;
     QString insertCategory(const QString& name, bool select);
     // Starts an agent from a finished launch; the rest of startAgent. A
     // managed resume plan is committed in the same registry save as the
