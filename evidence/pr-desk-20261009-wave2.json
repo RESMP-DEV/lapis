@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-10-09T08:05:00Z",
-  "scope": "Parent validation and merge evidence for Lapis PRs 98, 99, 101, 105, 109, 110, 115, 124, 125, 129, 133, and this evidence receipt. This does not validate the still-open PR 130 or PR 135, and does not claim native VoiceOver, CoreSimulator, or GPU-presentation qualification.",
+  "recorded_at": "2026-10-09T09:20:00Z",
+  "scope": "Parent validation and merge evidence for Lapis PRs 98, 99, 101, 105, 109, 110, 115, 124, 125, 129, 130, 133, 135, and this evidence receipt. No open PRs remained after this wave. This does not claim native VoiceOver, CoreSimulator, native window activation, or GPU-presentation qualification.",
   "reviewers": {
     "coderabbit": "Invoked by GitHub review state on every PR; completed where reported, and explicit rate-limit/skip states were treated as unavailable rather than approval.",
     "kilo": "Queued or pending states were optional and not merge gates.",
@@ -128,6 +128,19 @@
       "notes": "The one open thread records a native screen-reader qualification gap, not a code defect; it was answered and left open deliberately. Not claimed: a new accessibility text interface, VoiceOver qualification, or dictation-app behavior."
     },
     {
+      "number": 130,
+      "validated_head": "c2455a49be4be815eebd56d800be22af8440557a",
+      "merge_commit": "dc6008877287c936838df3b813f5a5b630c203f1",
+      "threads_unresolved_before_merge": 0,
+      "checks": [
+        "umask 0022 just quality: PASS",
+        "Ultra Tab CTest suites: 3/3 PASS",
+        "changed-file clang-format and clang-tidy: PASS",
+        "all Ultra Tab targets built successfully"
+      ],
+      "notes": "Worker repair fb2c9cd was parent-reviewed; worker timed out during thread replies and was not treated as acceptance. Parent c2455a4 added two tidy-only lines, then all 33 threads were replied and resolved."
+    },
+    {
       "number": 133,
       "validated_head": "8fb96edaaae185bb3ed99e92df4f995583af3c9f",
       "merge_commit": "fb8fece6b2b2a0dca9d86db3d1c92a5d43449d19",
@@ -139,6 +152,21 @@
         "git diff --check: PASS"
       ],
       "notes": "Repairs: integer-only atMs parsing, bounded read past the 4 KiB contract, symlink and oversized request regressions, explicit NSApp activation for cross-app requests, and select-before-activate so a stale request cannot steal focus."
+    },
+    {
+      "number": 135,
+      "validated_head": "088145cffa01730982714bb9bfb8a2f86a443d68",
+      "merge_commit": "e1d50eac03532e9c7f078b6f6053082d29a82c5b",
+      "threads_unresolved_before_merge": 0,
+      "checks": [
+        "next-prompt CTest: PASS",
+        "workspace CTest: PASS",
+        "Python next-prompt tests: 28/28 PASS",
+        "changed-file clang-format and clang-tidy: PASS",
+        "umask 0022 just quality: PASS",
+        "lapis_desktop build with QML threshold property: PASS"
+      ],
+      "non_claims": "Full desktop build passed at 0122f6e. Parallel ui-preview/appearance-input failures passed serially. terminal-input failed in the same environment on current main too and is not claimed. Native window activation is not claimed."
     },
     {
       "number": 136,
