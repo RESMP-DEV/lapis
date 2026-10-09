@@ -123,8 +123,7 @@ void AgentStatePublisher::publish() {
     // rewritten just because the clock moved.
     object.insert(QStringLiteral("publishedAtMs"), QDateTime::currentMSecsSinceEpoch());
     ++writes_;
-    writer_.start([this, path = path_,
-                   out = QJsonDocument(object).toJson(QJsonDocument::Compact)] {
+    writer_.start([this, path = path_, out = QJsonDocument(object).toJson(QJsonDocument::Compact)] {
         if (write_private(path, out))
             return;
         // Not on disk: forget it so the same state is written again.
