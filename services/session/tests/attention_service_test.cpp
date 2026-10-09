@@ -43,6 +43,21 @@ class AttentionServiceTestAccess final {
         return service.decision_error_;
     }
 
+    static void configure_notify_only(SessionService& service) {
+        service.notify_state_ = std::make_unique<attention::State>(
+            service.identity_.session_id.toHex().toStdString(), "codex-notify");
+        service.notify_turns_ = std::make_unique<NotifyTurns>(*service.notify_state_);
+    }
+
+    static void receive_filtered_only(SessionService& service, const QByteArray& output) {
+        service.terminal_hooks_.emplace();
+        service.receive_output(output);
+    }
+
+    [[nodiscard]] static quint64 pty_read_ns(const SessionService& service) {
+        return service.timing_.pty_read_ns;
+    }
+
     [[nodiscard]] static bool request_pending(const SessionService& service,
                                               const attention::RequestId& id) {
         const auto found = service.codex_state_->pending().find(id);
@@ -107,12 +122,67 @@ void failed_journal_refuses_decision() {
             QStringLiteral("Decision could not be recorded; try again"));
     require(lapis::session::AttentionServiceTestAccess::request_pending(service, std::int64_t{19}));
 }
+
+void notify_only_rejection_names_codex() {
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-asvc-XXXXXX")};
+    require(directory.isValid());
+    require(QFile::setPermissions(directory.path(),
+                                  QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::codex};
+    const QByteArray session_id = QByteArray::fromHex(QByteArray(32, '1'));
+    const QByteArray session_epoch = QByteArray::fromHex(QByteArray(32, '2'));
+    SessionService service{endpoint, session_id, launch, session_epoch};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    lapis::session::AttentionServiceTestAccess::configure_notify_only(service);
+    lapis::session::AttentionServiceTestAccess::use_client(service, &client);
+
+    lapis::session::AttentionServiceTestAccess::decide(service, {.source_epoch = 1,
+                                                                 .request_id = std::int64_t{19},
+                                                                 .revision = 1,
+                                                                 .choice = QStringLiteral("allow"),
+                                                                 .answers = {}});
+    QCoreApplication::processEvents();
+
+    require(lapis::session::AttentionServiceTestAccess::diagnostic(service) ==
+            QStringLiteral("Answer Codex requests in the terminal"));
+}
+
+void filtered_output_still_records_pty_timing() {
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-asvc-XXXXXX")};
+    require(directory.isValid());
+    require(QFile::setPermissions(directory.path(),
+                                  QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::codex};
+    const QByteArray session_id = QByteArray::fromHex(QByteArray(32, '1'));
+    const QByteArray session_epoch = QByteArray::fromHex(QByteArray(32, '2'));
+    SessionService service{endpoint, session_id, launch, session_epoch};
+
+    lapis::session::AttentionServiceTestAccess::receive_filtered_only(
+        service, "\x1b]7717;lapis-init;codex;not-bound\x07");
+    require(lapis::session::AttentionServiceTestAccess::pty_read_ns(service) != 0);
+}
 } // namespace
 
 int main(int argc, char** argv) {
     QCoreApplication application{argc, argv};
     try {
         failed_journal_refuses_decision();
+        notify_only_rejection_names_codex();
+        filtered_output_still_records_pty_timing();
         std::cout << "attention-service: ok\n";
         return 0;
     } catch (const std::exception& error) {

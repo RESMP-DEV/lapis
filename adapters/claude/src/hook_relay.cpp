@@ -73,6 +73,25 @@ bool read_input(QByteArray& input, QDeadlineTimer& deadline) {
     return false;
 }
 } // namespace
+QByteArray hook_settings(const QString& command) {
+    QJsonObject hooks;
+    for (const auto& event : hook_event_names)
+        hooks.insert(event.toString(),
+                     QJsonArray{QJsonObject{
+                         {"hooks", QJsonArray{QJsonObject{
+                                       {"type", "command"}, {"command", command}, {"timeout", 2}}}}}});
+    return QJsonDocument(QJsonObject{{"hooks", hooks}}).toJson(QJsonDocument::Compact);
+}
+QJsonObject relay_event(const QJsonObject& source) {
+    QJsonObject event;
+    for (const auto& key : relay_identity_fields)
+        if (source.contains(key))
+            event.insert(key, source.value(key));
+    const auto in_flight = background_work(source);
+    if (!in_flight.isNull())
+        event.insert(relay_in_flight_field.toString(), in_flight);
+    return event;
+}
 int run_hook_relay(const QString& socket, const QString& nonce) noexcept {
     // Hook failure must never become a Claude permission decision or prompt text.
     try {
@@ -87,15 +106,7 @@ int run_hook_relay(const QString& socket, const QString& nonce) noexcept {
         const auto source = QJsonDocument::fromJson(input, &error);
         if (error.error != QJsonParseError::NoError || !source.isObject())
             return 0;
-        QJsonObject event;
-        const auto object = source.object();
-        for (const auto& key : relay_identity_fields)
-            if (object.contains(key))
-                event.insert(key, object.value(key));
-        const auto in_flight = background_work(object);
-        if (!in_flight.isNull())
-            event.insert(relay_in_flight_field.toString(), in_flight);
-        QJsonObject frame{{"nonce", nonce}, {"event", event}};
+        QJsonObject frame{{"nonce", nonce}, {"event", relay_event(source.object())}};
         const auto data = QJsonDocument(frame).toJson(QJsonDocument::Compact) + '\n';
         if (data.size() > relay_frame_limit || deadline.hasExpired())
             return 0;

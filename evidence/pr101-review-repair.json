@@ -1,0 +1,68 @@
+{
+  "schema": "lapis.pr-repair-receipt/1",
+  "recorded_at": "2026-10-09T05:12:00Z",
+  "operator": "Codex CCR worker",
+  "pull_request": 101,
+  "requested_head": "42bc99ae08db8c7eff0ed16645a3e23d8f44ac35",
+  "merge_commit": "f15843a",
+  "repair_commit": "c87bba3",
+  "validation_source": "working tree at c87bba3 before the evidence commit; source files were identical",
+  "checks": [
+    {
+      "command": "ctest --test-dir build/dev -R '^terminal-hooks$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "result": "1/1 passed"
+    },
+    {
+      "command": "ctest --test-dir build/dev -R '^terminal-hooks$|^attention-service$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "result": "2/2 passed"
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R '^workspace-remote-hooks$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "result": "1/1 passed"
+    },
+    {
+      "command": "python3 -m unittest scripts.tests.test_remote_hook_relay -v",
+      "exit_code": 0,
+      "result": "5/5 passed"
+    },
+    {
+      "command": "clang-format --dry-run --Werror on changed C++ files",
+      "exit_code": 0
+    },
+    {
+      "command": "clang-tidy -p build/desktop on the four changed C++ files",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check HEAD",
+      "exit_code": 0
+    },
+    {
+      "command": "just quality",
+      "exit_code": 1,
+      "result": "source/status, git whitespace and both ruff phases passed; the Python aggregate failed in two unrelated host-constrained fixtures"
+    }
+  ],
+  "quality_failures": [
+    "A windowless-host fixture cannot spawn the setuid process-status binary from this restricted sandbox.",
+    "A plan sign-in fixture expects mode 0755 while this filesystem creates the directory as mode 0700."
+  ],
+  "scope": [
+    "Remote cron objects are reduced to empty count objects before the terminal sequence.",
+    "Oversized hook quarantine no longer deletes preceding output and no bare backslash ends it.",
+    "Quarantine without BEL or ST recovers after 96 KiB with a visible notice.",
+    "The bounded relay metadata remains below the 24 KiB sequence limit.",
+    "A second Return during an active Codex prompt suppresses one in-flight completion; the following completion reports normally.",
+    "A rejected initial observation retries in the same source epoch instead of reusing or advancing that epoch.",
+    "The Codex notify diagnostic reports synchronization, epoch and sequence state."
+  ],
+  "non_claims": [
+    "No live remote SSH host or installed Codex turn was exercised; the end-to-end case uses the repository's stand-ins.",
+    "The aggregate quality gate did not pass because of the two recorded host-constrained fixtures.",
+    "No native macOS input, GPU presentation or release-performance acceptance is claimed.",
+    "No merge or repository protection bypass occurred."
+  ]
+}
