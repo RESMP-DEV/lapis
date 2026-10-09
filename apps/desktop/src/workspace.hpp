@@ -6,6 +6,7 @@
 #include "harness_models.hpp"
 #include "history_strip.hpp"
 #include "keymap.hpp"
+#include "tab_ranker.hpp"
 #include "tile_layout.hpp"
 #include <lapis/session/terminal.hpp>
 
@@ -557,13 +558,26 @@ class Workspace final : public QObject {
     // Selects the agent that most recently began to need you; again, the one
     // before it. False when none is waiting.
     Q_INVOKABLE bool latestAttention();
-    // Tab's next agent, in any category, of those that need you: first one
-    // with a guessed next prompt not yet seen, then a turn that finished unseen
-    // or a request, then a guess already seen (so Tab cannot bounce between
-    // two guesses while others wait), the one waiting longest within each.
-    // `ready` maps agents with a guess to whether it was seen. False when none.
-    // Advances past the focused session; false leaves Tab with the program.
+    // Tab's next agent, in any category, of those truly waiting on you: a
+    // request, or a finished turn (no background work in flight) that is
+    // unseen or has a guessed next prompt. Agents at work, paused on their own
+    // background work, or without a status never qualify. The TabRanker
+    // orders them: by default a prior (work, requests, unseen, newest) that
+    // learns from where you go; with "tabAway": {"rank": "fixed"} the earlier
+    // order (a guess not yet seen, an unseen turn or request, a guess already
+    // seen, longest waiting within each). `ready` maps agents with a guess to
+    // whether it was seen. Advances past the focused session; false (none
+    // waiting) leaves Tab with the program. Every move is logged with the
+    // candidates and their scores.
     Q_INVOKABLE bool nextPriorityAttention(const QVariantMap& ready);
+    void setTabAway(const TabAwaySettings& settings);
+    [[nodiscard]] const TabAwaySettings& tabAway() const { return tab_away_; }
+    // Where the guesses come from when the person moves by hand, for the
+    // choices the ranker learns from (NextPrompt::readyAgents).
+    void setGuesses(std::function<QVariantMap()> guesses) { guesses_ = std::move(guesses); }
+    [[nodiscard]] TabRanker& tabRanker() { return *tab_ranker_; }
+    // How long the person stays on an agent before it counts as their choice.
+    void setChoiceSettleMsForTesting(int ms) { choice_settle_.setInterval(ms); }
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;
@@ -767,6 +781,31 @@ class Workspace final : public QObject {
     [[nodiscard]] static bool serviceRunning(const QString& endpoint);
     void noteStatus(SessionPreview* item);
     QHash<const SessionPreview*, QString> last_kind_;
+    // Tab's ranking, and the choices it learns from: the agents waiting when
+    // the person left one, kept until they settle on another (or Tab moved
+    // them), then recorded with the one they settled on.
+    std::unique_ptr<TabRanker> tab_ranker_{std::make_unique<TabRanker>()};
+    TabAwaySettings tab_away_;
+    std::function<QVariantMap()> guesses_;
+    // When each agent began waiting (a turn finished or a request arrived),
+    // and when its recent turns started (bounded to the last hour).
+    QHash<QString, qint64> waiting_since_;
+    QHash<QString, std::vector<qint64>> turn_starts_;
+    struct PendingChoice {
+        std::vector<TabCandidate> candidates;
+        bool viaTab{};
+        // Agents that began waiting while the person was still moving join.
+        void add(const std::vector<TabCandidate>& fresh);
+    };
+    std::optional<PendingChoice> choice_;
+    QString last_focus_id_;
+    QTimer choice_settle_;
+    [[nodiscard]] std::vector<TabCandidate> waitingCandidates(const QVariantMap& ready,
+                                                              const SessionPreview* exclude) const;
+    void noteFocusMove();
+    void settleChoice();
+    void rememberInitialFocus();
+    void noteStructuralFocus();
     bool batching_categories_{};
     bool discardSession(const QString& id);
     void changed();

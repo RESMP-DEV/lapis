@@ -164,6 +164,26 @@ to 64, the current one included) are kept, so the log never holds more than
 cannot keep up, records are dropped and a `dropped` record counts them, and
 typing never waits. The log holds what you typed and pasted, so do not share it.
 
+## Tab's next agent
+
+`tabAway` sets how Tab, with nothing to type, picks the next agent that needs
+you (see [suggestions](suggestions.md#tab)):
+
+```json
+"tabAway": {"rank": "learned", "work": ["work"]}
+```
+
+`rank` is `learned` (the default) or `fixed`. Learned starts from a prior (work
+first, then requests, then turns you have not seen, then the newest) and fits it
+to where you go: each time you settle on a waiting agent, by Tab or by hand.
+`fixed` keeps the earlier order: a guess not yet seen, then an unseen turn or a
+request, then a guess already seen, the longest waiting first. `work` lists the
+categories, by name and without case, that count as work; the default matches a
+category called `work`. Either way only agents truly waiting on you qualify: a
+request, or a turn that finished with no background work in flight. Choices and
+Tab moves are kept in `runtime/tab_away.jsonl` and the fitted model in
+`runtime/tab_away_model.json`, both owner-only.
+
 ## The rest
 
 - `editor` is the app that opens an agent's folder (else the first of Cursor, VS
