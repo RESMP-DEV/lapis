@@ -38,6 +38,25 @@ constexpr int kLogVersion = 2;
 constexpr qsizetype kHelperOutputLimit = qsizetype{1024} * 1024;
 constexpr qsizetype kHelperErrorLimit = qsizetype{64} * 1024;
 constexpr qint64 kLogLimit = qint64{4} * 1024 * 1024;
+// The agent's newest reply in the helper's context, which a guess answers;
+// clipped to NextPrompt::said_limit without splitting a surrogate pair.
+QString last_reply(const QJsonObject& context) {
+    const auto turns = context.value(QStringLiteral("turns")).toArray();
+    for (auto index = turns.size(); index > 0; --index) {
+        const auto object = turns.at(index - 1).toObject();
+        if (object.value(QStringLiteral("role")).toString() != QLatin1String("agent"))
+            continue;
+        auto text = object.value(QStringLiteral("text")).toString().trimmed();
+        if (text.size() > NextPrompt::said_limit) {
+            qsizetype end = NextPrompt::said_limit;
+            if (text.at(end - 1).isHighSurrogate())
+                --end;
+            text.truncate(end);
+        }
+        return text;
+    }
+    return {};
+}
 struct HelperResult {
     QByteArray output;
     qsizetype error_bytes{};
@@ -351,9 +370,12 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     const bool usable_probability = probability.isDouble();
     const bool shown = !text.isEmpty() && usable_probability &&
                        probability.toDouble() >= settings_.minConfidence && settings_.automatic;
-    const Offer made{QStringLiteral("%1:%2.%3").arg(id, run_).arg(++offers_made_), text,
+    const Offer made{QStringLiteral("%1:%2.%3").arg(id, run_).arg(++offers_made_),
+                     text,
                      context.value(QStringLiteral("conversation")).toString(),
-                     context.value(QStringLiteral("turn")).toInt(), 0};
+                     context.value(QStringLiteral("turn")).toInt(),
+                     0,
+                     last_reply(context)};
     auto event = about(made, id);
     event.insert(QStringLiteral("event"), QStringLiteral("predicted"));
     event.insert(QStringLiteral("machine"), agent.machine);
@@ -405,6 +427,16 @@ QVariantMap NextPrompt::readyAgents() const {
 
 QString NextPrompt::offerKey(const QString& id) const { return offers_.value(id).key; }
 
+QJsonObject NextPrompt::offerState(const QString& id) const {
+    const auto offer = offers_.constFind(id);
+    if (offer == offers_.cend())
+        return {};
+    return {{QStringLiteral("key"), offer->key},
+            {QStringLiteral("text"), offer->text},
+            {QStringLiteral("seen"), offer->seen_ms != 0},
+            {QStringLiteral("said"), offer->said}};
+}
+
 QJsonObject NextPrompt::about(const Offer& offer, const QString& id) {
     return {{QStringLiteral("offer"), offer.key},
             {QStringLiteral("agent"), id},
@@ -427,6 +459,7 @@ void NextPrompt::seenOffer(const QVariantMap& identity) {
     event.insert(QStringLiteral("event"), QStringLiteral("seen"));
     record(event);
     emit stateChanged();
+    emit seenChanged();
 }
 
 void NextPrompt::used(const QString& id, bool sent, int typed_first, const QString& expectedKey) {

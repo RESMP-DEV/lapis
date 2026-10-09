@@ -1,0 +1,80 @@
+{
+  "schema": "lapis.pr-desk/1",
+  "recorded_at": "2026-10-09T04:35:00Z",
+  "operator": "Codex parent coordinator",
+  "starting_main": "f601cc59952fd769fefa8df3f7c9a801dbdfff46",
+  "resulting_main": "3f531c7d6db5312f8b14ec293a20e5b2dd3e3e33",
+  "merged": [
+    {
+      "pr": 131,
+      "pinned_head": "205b72636157ea0ddfffca3999613ab363e32391",
+      "merge_commit": "9b5a228ac49ff4e711ee8282bc7349fb600b2090",
+      "evidence": "just quality PASS"
+    },
+    {
+      "pr": 127,
+      "pinned_head": "a50ce4e56a2a68c460258046b1e3291fab313539",
+      "merge_commit": "983d01a1407eafadb185633445fd873e289ab733",
+      "evidence": "just quality PASS; package_macos.py app PASS; package_macos.py verify PASS"
+    },
+    {
+      "pr": 132,
+      "pinned_head": "d16023bdff8bc619c6e7f1767fec13cce0b60414",
+      "merge_commit": "617036e60db4b86d9fdd14f9bc0358915f1ef153",
+      "evidence": "just quality PASS; just desktop PASS"
+    },
+    {
+      "pr": 112,
+      "pinned_head": "f3b0341c757d68e5be16ad02e7e7201cb30d75dc",
+      "merge_commit": "21d8a8d1baa4cda036a8f96b3f80bef67a9bdd11",
+      "evidence": "desktop aggregate with one known parallel GUI sensitivity; serial terminal-input PASS; changed-file format and tidy PASS; just quality PASS"
+    },
+    {
+      "pr": 113,
+      "pinned_head": "9ade19658ec909d06b676c8eff8a3d3a9be75785",
+      "merge_commit": "e0622b50392822dc007b0ab9a0aa8ff102f354c3",
+      "evidence": "desktop aggregate with one unrelated parallel workspace sensitivity; serial workspace cases 3/3 PASS; changed-file format and tidy PASS; full cppcheck PASS; just quality PASS"
+    },
+    {
+      "pr": 111,
+      "pinned_head": "b7f76b00445728be6ef405399dc5533be1bf1b55",
+      "merge_commit": "aeeb00576c8088c0a2ed974624980aa71b4810d5",
+      "evidence": "just desktop PASS; just quality PASS"
+    },
+    {
+      "pr": 107,
+      "pinned_head": "50db14c45e595210c68f0db7bd64ae02d3440fdf",
+      "merge_commit": "d617e97fc07cf5f2b7f3d170a365edf44f776b3a",
+      "evidence": "tile-layout PASS; full workspace PASS; complete ui-review PASS; desktop aggregate with serial terminal-input discriminator PASS; changed-file format and tidy PASS; just quality PASS"
+    },
+    {
+      "pr": 116,
+      "pinned_head": "2e6a68f6e9d3ba8fc1d2f627fd649b330ce8ceb8",
+      "merge_commit": "3f531c7d6db5312f8b14ec293a20e5b2dd3e3e33",
+      "evidence": "just desktop PASS before normalization; final keymap and updates-off cases PASS; changed-file tidy PASS; just quality PASS"
+    }
+  ],
+  "repaired_open": [
+    {
+      "pr": 129,
+      "pinned_head": "ac10a51e7a167066acb6ce3230901dbb9bc9cb49",
+      "resolved_threads": 6,
+      "remaining_threads": 1,
+      "evidence": "focused desktop builds and background UI/input cases PASS",
+      "remaining_scope": "native screen-reader text-interface and VoiceOver qualification"
+    }
+  ],
+  "reviewer_state": {
+    "code_rabbit": "completed on final heads where available; explicit review-limit failures recorded on affected PRs",
+    "grok": "completed before quota exhaustion; later explicit free-tier limit recorded",
+    "kilo": "completed where available; queued final-head reviews recorded as pending, never approval",
+    "open_code_review": "zero-finding summaries or resolved inline threads on merged core changes"
+  },
+  "non_claims": [
+    "No fresh native GPU performance benchmark was run for #111 or #113.",
+    "No native macOS VoiceOver or Wispr Flow qualification was run for #129.",
+    "Package verification used an ad hoc local build and does not claim notarization.",
+    "Offscreen/software UI checks do not qualify native OS input or GPU presentation.",
+    "The parallel terminal-input and workspace deadline observations are environment sensitivities, not claimed fixed by these PRs."
+  ]
+}

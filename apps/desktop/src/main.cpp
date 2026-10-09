@@ -1,4 +1,5 @@
 #include "agent_search.hpp"
+#include "agent_state.hpp"
 #include "alerts.hpp"
 #include "app_paths.hpp"
 #include "conversation_index.hpp"
@@ -25,6 +26,7 @@
 
 #include <QClipboard>
 #include <QCommandLineParser>
+#include <QDateTime>
 #include <QDebug>
 #include <QDesktopServices>
 #include <QDir>
@@ -36,6 +38,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QPointer>
 #include <QQmlEngine>
 #include <QQuickStyle>
@@ -45,9 +49,11 @@
 #include <QThread>
 #include <QTimer>
 #include <algorithm>
+#include <cstdlib>
 #include <exception>
 #include <optional>
 #include <set>
+#include <sys/stat.h>
 
 namespace {
 void add_options(QCommandLineParser& parser) {
@@ -282,11 +288,78 @@ bool parsed_headless(const QCommandLineParser& parser, bool parsed) {
 
 // Chimes for agents that need you, in the real workspace (the preview
 // fixtures stay silent); looking means the window is active and showing that
-// agent. A notification for the same moments while lapis is in the
-// background, clicking one brings the window to that agent. The downloaded app
+// agent to someone at the Mac. A notification for the same moments while
+// lapis is in the background or nobody is at the Mac, clicking one brings the
+// window to that agent. The downloaded app
 // also starts checking for updates here.
 // Every ping decision, one JSON line each, in the owner-only runtime folder;
 // past 2 MiB the log starts over beside its predecessor.
+// Opened from Finder or the Dock, the app's standard error is /dev/null and its
+// warnings would be lost: they go to runtime/lapis.log instead (owner-only,
+// timestamped, starting over beside its predecessor past 2 MiB). Run from a
+// terminal or a test harness, standard error stays where it was.
+bool stderr_discarded() {
+    struct stat error{};
+    struct stat null{};
+    return ::fstat(2, &error) == 0 && ::stat("/dev/null", &null) == 0 && S_ISCHR(error.st_mode) &&
+           error.st_rdev == null.st_rdev;
+}
+QString& app_log_path() {
+    static QString path;
+    return path;
+}
+void log_to_file(QtMsgType type, const QMessageLogContext&, const QString& message) {
+    static QMutex mutex;
+    const QMutexLocker lock(&mutex);
+    constexpr qint64 kLimit = qint64{2} * 1024 * 1024;
+    const auto& path = app_log_path();
+    if (path.isEmpty())
+        return;
+    if (QFileInfo(path).size() > kLimit) {
+        // Rotation keeps one predecessor. If the rename fails, leave the oversized
+        // current log untouched and retry on a later message rather than losing it.
+        const auto backup = path + QStringLiteral(".1");
+        QFile::remove(backup);
+        if (!QFile::rename(path, backup)) {
+            // Qt logging cannot be re-entered from this handler, and this code is
+            // installed only when stderr is /dev/null; record the failure in place.
+            QFile current(path);
+            if (current.open(QIODevice::Append | QIODevice::WriteOnly,
+                             QFile::ReadOwner | QFile::WriteOwner) &&
+                current.setPermissions(QFile::ReadOwner | QFile::WriteOwner))
+                current.write(QDateTime::currentDateTime().toString(Qt::ISODateWithMs).toUtf8() +
+                              " error: Could not rotate app log: " + backup.toUtf8() + '\n');
+            return;
+        }
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::Append | QIODevice::WriteOnly, QFile::ReadOwner | QFile::WriteOwner))
+        return;
+    if (!file.setPermissions(QFile::ReadOwner | QFile::WriteOwner))
+        return;
+    // QtMsgType appended QtInfoMsg last for ABI stability.
+    static const char* const levels[] = {"debug", "warning", "critical", "fatal", "info"};
+    const auto level = static_cast<std::size_t>(type) < std::size(levels) ? levels[type] : "log";
+    const auto bytes = QDateTime::currentDateTime().toString(Qt::ISODateWithMs).toUtf8() + ' ' +
+                       level + ": " + message.toUtf8() + '\n';
+    const auto written = file.write(bytes);
+    if (type == QtFatalMsg) {
+        file.flush();
+        // Installing a handler takes over Qt's fatal behavior; keep it.
+        std::abort();
+    }
+    if (written != bytes.size())
+        return;
+}
+void keep_app_log() {
+    if (!stderr_discarded())
+        return;
+    const QDir runtime(QDir(lapis::desktop::data_directory()).filePath(QStringLiteral("runtime")));
+    if (!runtime.exists())
+        return;
+    app_log_path() = runtime.filePath(QStringLiteral("lapis.log"));
+    qInstallMessageHandler(log_to_file);
+}
 lapis::desktop::AttentionLog attention_log() {
     return lapis::desktop::attention_log(
         QDir(lapis::desktop::data_directory()).filePath(QStringLiteral("runtime/attention.jsonl")));
@@ -300,8 +373,14 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
     using lapis::desktop::Chime;
     auto sounds = std::make_shared<lapis::desktop::ChimeSounds>();
     sounds->configure(keymap);
-    const auto looking = [&workspace, &shown](const lapis::desktop::SessionPreview* item) {
-        return shown && shown->isActive() && workspace.focusedSession() == item;
+    // Someone is at the Mac: keyboard or mouse input anywhere within
+    // alerts.awayAfter seconds. Where that cannot be read, assume so.
+    const auto present = [&keymap] {
+        const auto idle = platform::seconds_since_input();
+        return idle < 0 || idle < keymap.awayAfterSeconds();
+    };
+    const auto looking = [&workspace, &shown, present](const lapis::desktop::SessionPreview* item) {
+        return shown && shown->isActive() && workspace.focusedSession() == item && present();
     };
     seen.emplace(workspace, looking);
     const auto log = attention_log();
@@ -321,6 +400,7 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
         [] { return QGuiApplication::applicationState() != Qt::ApplicationActive; });
     notifier->setSeen(&*seen);
     notifier->setLog(log);
+    notifier->setPresence(present, looking);
     platform::on_notification_opened([&workspace, &shown](const QString& id) {
         lapis::desktop::interaction::cause(QStringLiteral("notification"));
         if (!workspace.selectSession(id) || !shown)
@@ -784,6 +864,18 @@ keep_gui_state(lapis::desktop::Workspace& workspace,
     return state;
 }
 
+// What this window knows about each agent, for Ultra Tab (apps/ultratab),
+// beside the registry; only from the window that owns the workspace.
+void keep_agent_state(std::optional<lapis::desktop::AgentStatePublisher>& kept,
+                      lapis::desktop::Workspace& workspace,
+                      std::optional<lapis::desktop::NextPrompt>& next, bool isolated) {
+    if (isolated || !workspace.holdsRegistry())
+        return;
+    kept.emplace(workspace, next ? &*next : nullptr,
+                 QDir(QFileInfo(workspace.storagePath()).absolutePath())
+                     .filePath(QStringLiteral("agent_state.json")));
+}
+
 // The quick-command terminals beside this workspace, with ssh hosts from the
 // user's ssh config; those still running come back.
 std::unique_ptr<lapis::desktop::Terminals>
@@ -916,11 +1008,13 @@ int main(int argc, char** argv) {
     QGuiApplication app(application_argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("lapis"));
     QCoreApplication::setOrganizationName(QStringLiteral("lapis"));
+    keep_app_log();
     parser.process(arguments);
     if (!valid_options(parser) || !valid_connection_options(parser))
         return 2;
     // Before any agent, session service or CLI probe inherits the environment.
     lapis::desktop::adopt_login_environment();
+    keep_app_log(); // Adoption can change LAPIS_HOME; keep the log beside it.
     // Agents draw full screen on the alternate screen, which a resize cannot
     // tear; the classic renderer redraws in place and garbles when lapis
     // resizes a terminal it drew in. Claude Code turns full screen off for
@@ -942,9 +1036,11 @@ int main(int argc, char** argv) {
         keymap.load();
         auto options = workspace_options(parser, isolated);
         options.accounts = keymap.accounts();
+        options.harnessUpdatesOff = keymap.harnessUpdatesOff();
         Workspace workspace(isolated ? WorkspaceMode::preview : WorkspaceMode::live, options);
         const auto configure = [&] {
             workspace.setHarnessArguments(keymap.harnessArguments());
+            workspace.setHarnessUpdatesOff(keymap.harnessUpdatesOff());
             workspace.setAgentDefaults(keymap.agentDefaults());
             workspace.setAccounts(keymap.accounts());
         };
@@ -999,6 +1095,8 @@ int main(int argc, char** argv) {
         QObject* const resetsForQml = keep_limit_resets(limitResets, workspace, keymap, isolated);
         std::optional<NextPrompt> nextPrompt;
         QObject* const nextForQml = keep_next_prompt(nextPrompt, workspace, keymap, isolated);
+        std::optional<lapis::desktop::AgentStatePublisher> agentState;
+        keep_agent_state(agentState, workspace, nextPrompt, isolated);
         std::optional<lapis::desktop::PlanSignIn> planSignIn;
         QObject* const signInForQml = keep_plan_sign_in(planSignIn, keymap, isolated);
         const auto conversations = conversation_index(workspace);
