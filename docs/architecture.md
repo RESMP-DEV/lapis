@@ -3730,6 +3730,167 @@ results):
   provider/model: confirm approval requests and shortcuts render and route as
   before. Gate: no behavioral delta recorded, or an explicit adapter note.
 
+### Codex integration addendum (October 5)
+
+Three more fork syncs landed (#50148 through #50977) since the
+[October 2 review](#codex-upstream-integration-review-october-2); no probe
+results exist yet, so P1-P3 remain open. New surfaces that touch lapis
+concerns:
+
+1. **Managed daemon launches** (#50803 lineage): eligible remote-control
+   launches now use the managed app-server daemon, with release identity
+   distinguished from executable contents, installer stderr surfaced, and
+   WSL-mounted homes excluded from auto-start. Lapis owns a dedicated
+   backend per live terminal; if the managed binary now routes launches
+   through a shared daemon, both the launch contract and the binary-hash
+   qualification target change.
+2. **Reconnect backoff** (#50465): automatic remote-control reconnects now
+   back off with jitter and registry-auth outages retry. Lapis keeps GUI
+   reconnect manual and bounded by design; this affects observer
+   reattachment timing, not lapis policy.
+3. **Archive during running turns** (#50764, with subagent-picker archive
+   consistency): archive lifecycle events can fire mid-turn, and request
+   lifecycle ordering is now preserved on review failure (#50804). Lapis
+   disables a source on thread close/archive; that path needs
+   requalification against mid-turn archives.
+4. **Tool-exposure stability** (#50741, #50962): environment-backed tools
+   stay exposed across readiness changes, with stable exposure available
+   behind a feature flag - relevant to the observer capability matrix and
+   any lapis-side tool enumeration.
+5. **Bounded outputs and richer defaults**: the app-server default output
+   cap now applies to TUI workspace commands (#50477); server
+   reasoning-summary defaults are honored in new threads (#50811); model
+   and reasoning effort surface in task details (#50727). Additive to the
+   October 2 observations.
+
+New probe:
+
+- **P4 managed-daemon launch probe.** On the current fork binary, run the
+  lapis managed-Codex launch fixture and record which server the TUI
+  connects to (the dedicated lapis-owned endpoint vs the shared managed
+  daemon), whether the dedicated launch contract (fingerprint prefix,
+  observer binding) still holds, and whether binary-hash qualification
+  needs to target daemon release identity rather than the executable.
+  Gate: the launch contract confirmed unchanged on the new lineage, or an
+  explicit recorded decision to adopt the managed daemon.
+
+Update to P2: include a mid-turn `/archive` case - attention request
+pending, archive during the running turn; expected per current contract:
+source disabled, no stale reply, no crash.
+
+### Codex upstream compilation (October 6)
+
+Four fork syncs since the [October 5 addendum](#codex-integration-addendum-october-5)
+(109 upstream PRs through #51547, fork tip `481280ec26`). This compiles the
+batch by area with the lapis interaction for each; none of it is
+qualification.
+
+- **Thread/turn lifecycle and attribution (~13).** Turn lineage is exposed
+  and persisted across the app server; turn attribution is preserved across
+  recovery, compaction and queued-mail wakeups; root turn IDs ride host-owned
+  Apps tool calls; a partial-answer message phase is handled consistently
+  across workflows; session-lookup pagination is stable with surfaced
+  failures; threads can be archived before their first turn; invalidated
+  wakeups cannot start a turn; idle-thread unloads finish after slow
+  shutdown; attachment uploads carry thread persistence intent; prior
+  cancellation is honored before Codex delegates start.
+  *Lapis:* observer reconciliation gains stable correlation IDs it can
+  adopt; attribution surviving compaction changes what `thread/read`
+  returns after compaction, so P1's replay-boundary recheck must exercise
+  it; archive-before-first-turn extends the archive family already in P2.
+- **Guardian (~16).** Parent-checkpoint recovery, structured and optional
+  JSON transcripts, Decisions request timing, trusted-tool context,
+  issuing-step context for MCP elicitation, `OPENAI_API_KEY` fallback.
+  *Lapis:* not consumed today; JSON transcripts and decision-duration
+  metrics are the only future-relevant surfaces.
+- **TUI presentation (~15).** Clickable URLs across approval headers, the
+  warnings viewer, question titles, banners, verification prompts,
+  selection rows and pending previews; hook-status titles in the hooks
+  browser. *Lapis:* rendered inside the TUI lapis hosts; if these are
+  terminal hyperlinks (OSC 8) rather than mouse regions, the adapter must
+  pass them through, raising the priority of the adapter v0 gap that
+  already lists hyperlinks as unexposed.
+- **Environments and settings (~8).** Environment requests separated from
+  runtime selections; selected environments exposed to MCP contributors;
+  capability roots bound to environment selections; required environment
+  skills enforced before inference; resolved model and effort recorded in
+  sub-agent activity; live TUI settings preserved on reload failure.
+  *Lapis:* extends the server-driven surfacing family behind P3; no
+  observer-contract change.
+- **Transport and backend robustness (~6).** WebSocket error events honor
+  `Retry-After`; relay connection attempts are bounded with pong handling
+  during blocked writes; Unix app-server control-socket startup lock files
+  are cleaned up; the managed app-server fd limit is raised on Unix;
+  rollout history loads on a single blocking worker. *Lapis:* these sit on
+  the paths lapis's dedicated backend and observer use - stale-lock
+  cleanup changes crash recovery of the lapis-owned endpoint, and
+  `Retry-After` shifts observer reconnect timing. Fold both into P1's
+  requalification scope and P4's launch probe.
+- **Sandbox, platform and build (~18).** Windows MXC opt-out and preference
+  plumbing, sandbox temp permissions, drive-letter opens, ripgrep-config
+  isolation in deny globs, bubblewrap PATH rejection, Linux sandbox
+  construction protection, Windows service/signing/installer fixes, Bazel
+  9.2.0, release publication serialization, stable-pointer direction guard.
+  *Lapis:* no interplay (macOS target; engine internals).
+- **Engine and tooling (~20).** Tool declaration mode preserved across
+  resumed context windows; incremental tool namespace updates; base
+  instructions recorded in history and sent as Responses input messages;
+  full context installed in compaction replacement history; ranked tool
+  discovery in code mode; gRPC admission retries; promise-settlement
+  streaming; `apply_patch` line-ending preservation; shell-snapshot sizing
+  and per-command measurement; sub-agent analytics cluster.
+  *Lapis:* the compaction/replacement-history items change post-compaction
+  `thread/read` content, covered by P1's replay-boundary recheck; the rest
+  is engine-internal.
+- **Realtime/voice (~2).** Completion-aware realtime attachment with
+  session-scoped detach; sideband attachment retry. *Lapis:* not consumed;
+  the session-scoped detach semantics are a useful reference for lapis's
+  own detachment model.
+- **Multi-agent and command center (~6).** Shared task pinning in the
+  agent command center; agent-tree shutdown failure reports; bounded
+  spawn-failure diagnostics; partial-history subagent forks removed.
+  *Lapis:* command-center UX is TUI-local; removing partial-history forks
+  reduces thread-proliferation ambiguity relevant to P2's two-thread probe.
+
+Net for lapis: no contract break; three integration opportunities (turn
+lineage IDs for reconciliation correlation; JSON Guardian transcripts if
+guardian state is ever surfaced; hyperlink passthrough rising in
+priority); two items folded into existing probes (`Retry-After` plus
+control-socket locks into P1/P4; archive-before-first-turn into P2). P1
+remains the blocking gate.
+
+### Work-order triage (October 7)
+
+This section owns relative importance as of today. The
+[September 27 work order](#work-order) still owns batch detail and gates,
+the [October 7 readiness triage](#platform-triage-and-sub-agent-readiness-october-7)
+owns sizing and delegation, and this lens ranks what is more and less
+important right now, with the state each rank rests on.
+
+| Rank | Work | Why here |
+| --- | --- | --- |
+| 1 | In-flight release hardening: settings storage, macOS release prep, local install, copy cleanup, menu-bar research | Actively landing on this branch; a committed baseline precedes every queued batch by the repo's own coordination rule. |
+| 2 | Codex rebuild plus P1 binary requalification | The only item blocking a shipped capability: attention responses are disabled by design against every lineage since September 27, the running binary is 483 commits stale, and both the external-agent import slice and the open-table Codex decisions (lineage IDs, daemon adoption) queue behind it. |
+| 3 | Pacing remainder (`schedule_attention`, iPhone `followNewHistory`) and Q13 shared wire peer | Verified still present in source on October 7; the smallest real work available; the update-pacing contract governs all new UI, so every new surface built before the repair inherits the defect shape. |
+| 4 | Q03 wire-compatibility decision | A recorded decision, not code: the goal-3 extraction chain (Q03/Q04) cannot start until the desktop stops inferring adapter state from diagnostic strings, and October 7 names it the one genuinely undecided row. |
+| 5 | P4 managed-daemon launch probe | Cheap when run inside the P1 session; decides whether the dedicated-endpoint launch contract survives, before any further launch-path work builds on an assumption. |
+| 6 | Menu-bar family and Batch 2 companions: trailing attention item, summon hotkey, typed catalog then leading hub; triggers, turn marks, semantic-path editor-at-line with Quick Look | Designs complete (October 6), catalog already exists in `Main.qml`, sizes known; high daily-use value once ranks 1-3 clear the branch. |
+| 7 | Secret-prompt detection slice; P2 two-thread probe (with archive cases); P3 permission smoke | Each small and independent; none blocks anything above them. |
+| 8 | Batch 3 rows (chimes, thermal, dock menu, screen-share, cross-agent search) | Small but individually optional; dock menu additionally gated on a Qt-module decision. |
+| 9 | Web surfaces, Batch 4 eventual tier, milestone-4 scale, second adapter, Linux port | Parked by their own recorded gates (engine checkpoint, dependency decisions, controlled workload); nothing here should be pulled forward. |
+| 10 | Post-P1 adoptions: turn-lineage IDs, hyperlink passthrough | Zero value before P1 lands, cheap immediately after; explicitly sequenced behind rank 2. |
+
+Demotions relative to September 27, all evidence-backed: instant replay
+(stays deferred behind paged history and turn marks per the external
+review), the dock menu (Qt Widgets module introduction is a coordinator
+decision), Q09 (the fix approach itself is unqualified), and Q10 (blocked
+on allocation instrumentation that does not exist yet).
+
+State this triage did not verify: no lapis build or test run was performed
+for it; source-state claims are October 7's, Codex-side state is the
+fork's `481280ec26` lineage, and evidence receipts are unchanged since
+their listed dates.
+
 ### Pacing helper, latency budget and modularity audit (October 7)
 
 The transport widening and both publish-to-publish pacing repairs have landed
