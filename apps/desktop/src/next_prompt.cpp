@@ -654,14 +654,15 @@ bool chats(const QString& cli) {
 
 QJsonObject NextPrompt::encodeOffer(const Offer& offer, qsizetype& budget) const {
     if (offer.key.size() > 400 || offer.conversation.size() > 200 || offer.text.isEmpty() ||
-        offer.text.size() > kSavedText || offer.text.size() > budget)
+        offer.text.size() > kSavedText || offer.text.size() + offer.said.size() > budget)
         return {};
-    budget -= offer.text.size();
+    budget -= offer.text.size() + offer.said.size();
     return {{QStringLiteral("key"), offer.key},
             {QStringLiteral("text"), offer.text},
             {QStringLiteral("conversation"), offer.conversation},
             {QStringLiteral("turn"), offer.turn},
-            {QStringLiteral("seenMs"), offer.seen_ms}};
+            {QStringLiteral("seenMs"), offer.seen_ms},
+            {QStringLiteral("said"), offer.said}};
 }
 
 QJsonObject NextPrompt::savedOffers(qsizetype& budget) const {
@@ -729,6 +730,7 @@ auto NextPrompt::savedOffer(const QString& id, const QJsonValue& value) -> std::
     offer.conversation = object.value(QStringLiteral("conversation")).toString();
     offer.turn = object.value(QStringLiteral("turn")).toInt(-1);
     offer.seen_ms = static_cast<qint64>(object.value(QStringLiteral("seenMs")).toDouble(-1));
+    offer.said = object.value(QStringLiteral("said")).toString().left(said_limit);
     if (id.isEmpty() || id.size() > 200 || !offer.key.startsWith(id + QLatin1Char(':')) ||
         offer.key.size() > 400 || offer.text.isEmpty() || offer.text.size() > kSavedText ||
         offer.conversation.size() > 200 || offer.turn < 0 || offer.seen_ms < 0)

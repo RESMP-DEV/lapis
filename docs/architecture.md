@@ -5200,7 +5200,6 @@ after a restart. Open PR state not on main (Tab-away candidate timing and
 reminder schedules) is not yet saved.
 
 ### Ultra Tab: a second app beside the window (October 6)
-## Ultra Tab: a second app beside the window (October 6)
 
 Ultra Tab (`apps/ultratab/`, user page [ultratab](ultratab.md)) is the publishing
 name for the lapis V2 surface: an overlay, shown by a global key, that deals the
