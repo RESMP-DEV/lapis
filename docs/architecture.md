@@ -99,7 +99,7 @@ for ownership, shared contracts and integration checks across large changes.
 | Engine | Pinned Ghostty `libghostty-vt` selected for the first adapter | Eight-case macOS/Linux replay passes; isolate unstable C API and resolve dependency-notice gaps |
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
 | Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging, attention messages and retained workspace entries | Automatic service recovery remains deferred |
-| Adapter observation status | The desktop still infers pre-prompt state from exact Codex diagnostic strings; the recorded decision is to add a typed observation field and move the shared wire VERSION in the same lockstep change, after which diagnostics become display-only | Q03 extraction needs the typed field, observers, service publisher, desktop consumer and in-repo Python/Swift wire peers together, with replay-equivalent adapter states |
+| Adapter observation status | Typed Codex observation phases are carried from the observer through service IPC to the desktop; v6 clients negotiate the optional trailing byte with attach capability `0x40`, legacy peers retain their exact bytes, and diagnostics are display-only | New observers and wire peers must declare observation/replay compatibility, cover legacy downgrade, and preserve connection identity; unknown phases fail closed |
 | Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
 | Codex multi-thread sessions | Upstream worktree tools (#50148) make attached tasks routine in one TUI; lapis binds a single persistent TUI thread and disables structured responses on a second | A disposable two-thread live session (worktree-created attached task) proving per-thread event delivery, response ownership and `thread/resume`+`thread/read` reconciliation, recorded in the Codex capability matrix; see the [October 2 review](#codex-upstream-integration-review-october-2) |
 | Codex external-agent import | Session-only protocol importer and isolated qualification probe are implemented; no service/desktop onboarding task yet | Finish the separate explicit flow on a requalified Codex build: exact scope consent, dedicated server ownership, imported-thread launch/resume, duplicate reconciliation and failure recovery; never a per-session observer capability |
@@ -5526,3 +5526,60 @@ live agent; the blur, the global key and native focus are not exercised.
 - **Motion.** Deck state changes before any animation; a 180 ms slide/fade
   follows it and restarts on the next key, so input is never deferred. Reduce
   Motion (from `NSWorkspace`) removes the slide and the pulse.
+
+### Architecture readiness triage (October 9)
+
+This pass refreshes the October 7 delegation lens at main `42ec1ec`. It does not
+rewrite the dated October 7 ranking. It separates what source and receipts now
+prove, what can be delegated, and what must remain parent-owned because it uses
+live models, Unix sockets, native GUI qualification or release authority. A row
+is an ownership boundary, not permission for an agent to expand scope.
+
+Three October 7 blockers are no longer implementation work: service attention
+publishing and iPhone history catch-up use the shared publish-to-publish pacing
+helper; Q13 has one wire fixture with separate suite assertions; and the later
+adapter-boundary batch landed Q03 typed observation, Q04's shared harness
+catalog and Q05's launch/descriptor seams. The open-choices table above now
+reflects Q03's negotiated compatibility result. Q09 remains narrower than the
+old table: the state transition has ordinary coverage, but its timing-sensitive
+deferred-queue regression still has no accepted pressure fixture. Secret-prompt
+detection also exists in the interaction recorder with unit and timing tests;
+Keychain fill and Touch ID remain unimplemented and evidence-gated.
+
+The Codex lane is still the first parent-owned execution slice. The live
+PATH binary hashes to `d10a1b29…`, which is not in the response allowlist.
+The `eba4e02…` binary recorded by the October 5 review passed only identity
+and surface smoke, predates the recorded `481280ec26` P1 lineage, and is not
+current qualification. A fresh release build of that exact older source on
+October 9 produced a different executable digest from the recorded smoke
+artifact, confirming that qualification binds the artifact, not merely the
+source revision. P1 therefore remains open: select the exact reviewed
+`481280ec26` commit rather than a moving fork head, build and hash it, inspect
+its resume/read contract, extend the disposable probe for the reviewed
+compaction replay case, then run GLM protocol/TUI and current service/desktop
+checks before changing the observer allowlist in the same reviewed change. The
+older two-source helper named by dated receipts no longer exists in the tree;
+its history can be reused only for unchanged behavior, not as a live gate. P4's
+managed-daemon launch probe belongs in that same disposable candidate session;
+neither probe may touch the installed Codex daemon, user trust configuration or
+Lapis-owned live sessions.
+
+| Work | Current readiness | Delegation boundary |
+| --- | --- | --- |
+| Architecture truth repair | Ready now; stale Q03/Q04/Q05 and rank-3 claims are reconciled by this section | One documentation owner; no implementation bundle |
+| Codex P1 requalification | Parent-owned and ready when the model fixture is healthy | A read-only worker may map commands and contracts; live model, socket and desktop acceptance stay with the coordinator |
+| Codex P4 managed-daemon probe | Ready only after P1 selects the candidate shape | Same parent-owned disposable session; record dedicated-endpoint versus managed-daemon evidence |
+| Trailing menu-bar attention item | Implementable against macOS 14 APIs | One agent may own the new AppKit bridge and native fixture; it must not edit the QML command catalog or global hotkey |
+| Global summon hotkey | Implementable as a separate slice | One agent may own the Carbon bridge, settings and fixture; no menu-bar or catalog edits |
+| Typed command catalog | Decision pending the current catalog audit | Do not extract QML closures until a typed projection has a concrete native consumer and duplicate-ID/disabled-state tests |
+| Q09 deferred-queue regression | Evidence-design blocked | A worker may design a deterministic fixture, but output flooding is not acceptance |
+| Q10 snapshot allocation decision | Measurement blocked | Worker may add only a bounded profiler/receipt design; no ownership change without measured evidence |
+| Keychain fill and Touch ID | Gated on native secret-prompt acceptance | Separate native-UI slice after detection qualification; never a generic credential store |
+| Release package/update gates | Parent-owned | Candidate maps require coordinator-owned artifacts and explicit qualification receipts |
+
+The first practical fanout is therefore asymmetric: keep P1 and P4 in one
+parent-owned Codex lane, let at most one native-UI agent own either the
+trailing attention item or the summon hotkey, and use read-only workers for Q09,
+Q10 and the catalog contract until their designs are reviewable. Worker completion
+remains candidate evidence only; the coordinator inspects the diff and reruns
+the decisive checks.

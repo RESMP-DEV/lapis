@@ -1,0 +1,86 @@
+{
+  "schema": "lapis.architecture-subagent-triage/1",
+  "schema_version": 1,
+  "recorded_at": "2026-10-09T22:57:01-07:00",
+  "source": {
+    "revision": "42ec1ecfdd0133fc1fd8d9be588720bed7bd7e7e",
+    "dirty": true,
+    "dirty_reason": "Documentation triage edits and this receipt are present; ignored worker traces and build outputs are not source status."
+  },
+  "scope": "Refresh architecture execution ownership and sub-agent readiness from clean main, reconcile stale source claims, and start the first parent-owned Codex P1 candidate build. This is not feature implementation or Codex qualification.",
+  "source_findings": [
+    {
+      "topic": "typed observation",
+      "result": "Q03 is implemented at the audited revision: ObservationPhase travels from the Codex observer through service snapshots to the desktop, negotiated by v6 attach capability 0x40 with exact legacy bytes for non-negotiating peers. The stale open-choices row is corrected by this branch."
+    },
+    {
+      "topic": "completed October 7 rows",
+      "result": "Service attention pacing, iPhone newer-history pacing, Q13 shared wire fixture, Q04 shared harness catalog and Q05 launch/descriptor seams are present on main. Q09's deferred-queue regression and Q10's allocation decision remain open."
+    },
+    {
+      "topic": "Codex response routing",
+      "result": "The service hashes the complete selected executable and the observer fails closed unless that digest is allowlisted. The active PATH executable digest is d10a1b29fd2796d79558f1f3540d0b7124e99a3810a55261754fae4d9e04020f and is not allowlisted."
+    },
+    {
+      "topic": "older candidate artifact",
+      "result": "A clean release build of exact source eba4e02df5e1962e4c001f837bf2ab6725d5b7a9 produced executable digest 9c468b11d7ccccd3c9791b311682796cdc97922f9f49653344c912f1a852502a, not the older recorded smoke digest 7f1115012d8a55822bfd530cf8a6e273edb211a48fcb508a5f38a05b92af3c83. The rebuilt artifact was cleaned and removed; neither digest is promoted."
+    },
+    {
+      "topic": "current P1 candidate",
+      "result": "The selected exact lineage is 481280ec261ba1a1f8f0c205ed301825fe28f9bc in a clean detached worktree. Its release build was started and had not completed when this triage receipt was recorded."
+    }
+  ],
+  "sub_agents": [
+    {
+      "task": "Codex P1 map",
+      "outcome": "completed",
+      "elapsed_seconds": 488.93,
+      "route": "zai,glm-5.3-flashx",
+      "accepted_findings": "Fail-closed digest routing, stale eba4e02 smoke boundary, current 481280ec26 lineage gap, resume/read and compaction replay requirements, and parent-owned command sequence.",
+      "acceptance": false
+    },
+    {
+      "task": "Q03 typed observation audit",
+      "outcome": "completed",
+      "elapsed_seconds": 525.549,
+      "route": "zai,glm-5.3-flashx",
+      "accepted_findings": "Q03 is implemented; recommend ratifying capability 0x40 rather than a wire-version bump; stale front matter requires a dated correction.",
+      "acceptance": false
+    },
+    {
+      "task": "Menu/catalog slice audit",
+      "outcome": "timed_out",
+      "elapsed_seconds": 600.033,
+      "route": "zai,glm-5.3-flashx",
+      "accepted_findings": "Partial traces confirmed Main.qml owns the current open-time command list and two consumers, but no final catalog recommendation is accepted.",
+      "acceptance": false
+    }
+  ],
+  "checks": [
+    {
+      "name": "model-fixture-inventory",
+      "command": "curl -fsS --max-time 3 http://127.0.0.1:3456/v1/models",
+      "exit_code": 0,
+      "result": "The configured zai,glm-5.3 fixture model was present."
+    },
+    {
+      "name": "architecture-anchor-check",
+      "command": "Python heading/anchor set comparison over docs/architecture.md",
+      "exit_code": 0,
+      "result": "22 internal links, 119 anchors, missing=[]."
+    },
+    {
+      "name": "documentation-diff-hygiene",
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors were reported."
+    }
+  ],
+  "non_claims": [
+    "No Codex live protocol turn, service/desktop response, managed-daemon probe, worktree probe or compaction replay ran.",
+    "The 481280ec26 build result and digest are not claimed before completion.",
+    "No native menu, global hotkey, typed command catalog, Q09 fixture, Q10 measurement or secret-prompt UI was implemented.",
+    "Worker reports are candidate evidence only; parent source inspection supplied the accepted findings above.",
+    "This receipt does not update release status or claim a package candidate."
+  ]
+}
