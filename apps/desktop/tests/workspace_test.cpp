@@ -2617,6 +2617,8 @@ void agentsStartAtTheStageSize() {
                     },
                     10000),
             "its CLI starts at the stage's grid");
+        require(waitFor([item] { return item->inputReady(); }, 10000),
+                "its terminate handshake is ready");
         require(workspace.closeSession(item->sessionId(), true), "close it");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "it closes");
@@ -2785,6 +2787,9 @@ exec sleep 600
                     },
                     10000),
             "a switch asked for moves the agent to the next plan with room");
+        for (const auto* item : {here, far, next})
+            require(waitFor([item] { return item->inputReady(); }, 10000),
+                    "the terminate handshake is ready");
         for (const auto& closing : {here->sessionId(), far_id, next->sessionId()})
             require(workspace.closeSession(closing, true), "close the stand-in agents");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
