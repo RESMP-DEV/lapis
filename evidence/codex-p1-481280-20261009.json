@@ -6,6 +6,15 @@
   "source": {
     "lapis_revision": "24a54dc99fb2f114f656907ab8bde3c68ccd35c9",
     "lapis_dirty": true,
+    "lapis_dirty_files": [
+      "adapters/codex/README.md",
+      "adapters/codex/src/observer.cpp",
+      "docs/architecture.md",
+      "docs/status.md",
+      "scripts/check_service_attention.py",
+      "evidence/codex-p1-481280-20261009.json"
+    ],
+    "lapis_dirty_scope": "The qualification branch edits only the listed Lapis adapter, harness and documentation files. The Codex executable was built from the separate clean candidate revision before those Lapis edits.",
     "candidate_repository": "RESMP-DEV/codex",
     "candidate_revision": "481280ec261ba1a1f8f0c205ed301825fe28f9bc",
     "candidate_source_clean": true,
@@ -19,12 +28,14 @@
     "awaited_pending_request_replay": "live-exercised",
     "thread_read_full_history_deprecation": "observed; includeTurns still returns replay for this fixture",
     "context_compaction": "live-exercised before resume/read replay",
+    "contract_source": "Clean detached RESMP-DEV/codex worktree at candidate_revision; these files are external-source provenance and are not vendored into Lapis.",
+    "contract_hash_method": "SHA-256 over the exact file bytes in that clean candidate worktree",
     "contract_sha256": {
-      "app-server-protocol/common.rs": "5bc5983defbc8b0623bbace1600cfb33007a8aba8c157ccd56768632d88f8039",
-      "app-server/request_serialization.rs": "e5f95f566b670d0d34bd5b0b31cc37b63a4131b96eef285ced7ee076db6a6f6c",
-      "thread_processor.rs": "37bd749bfe636083214f7fb533c6b719490ffa6cad1b7bc90e439d6745ef76e9",
-      "thread_lifecycle.rs": "6ee8e60a491b50305abf986c16e416db9896cac89e93dbc207cf24b367f899de",
-      "outgoing_message.rs": "8f4c0f1a26a363dc5d0f5f66817a333ea133a9a4b7b7fb35dc49bb7be7ef801d"
+      "codex-rs/app-server-protocol/src/protocol/common.rs": "e25ebb90bf79be79def79ebf2dd704057577fa9806710fbea0ee240a909d0dc1",
+      "codex-rs/app-server/src/request_serialization.rs": "b624a9bac63d16f786939f3e9d2c8916faf5d4bc499af7ed099b1e3803f4632a",
+      "codex-rs/app-server/src/request_processors/thread_processor.rs": "2c40a6db590c9823a6775b28c2e125544583246318ce038166d28fb57a10ab29",
+      "codex-rs/app-server/src/request_processors/thread_lifecycle.rs": "967cbda6493c971232d5434af690e0c86a318589492d3c14344ee249a7267457",
+      "codex-rs/app-server/src/outgoing_message.rs": "b16156e72d8a33a1087896bfd211b22094c3ef3e69a2331a7fed8c0530dd657a"
     }
   },
   "qualification": {
@@ -35,6 +46,7 @@
       "item/tool/requestUserInput"
     ],
     "approval_admission": "sequential",
+    "simultaneous_guard_preserved": true,
     "compaction_replay": {
       "context_compaction_items": 1,
       "resume_read_request_free": true
