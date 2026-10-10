@@ -5583,3 +5583,30 @@ trailing attention item or the summon hotkey, and use read-only workers for Q09,
 Q10 and the catalog contract until their designs are reviewable. Worker completion
 remains candidate evidence only; the coordinator inspects the diff and reruns
 the decisive checks.
+
+### Codex P1 qualification (October 9)
+
+The exact `RESMP-DEV/codex` candidate `481280ec261ba1a1f8f0c205ed301825fe28f9bc`
+built cleanly and produced executable SHA-256
+`1e6d87e0d5b0e862e48f35fd816a7b9425c7988ef7c185d56be07d632a65ffef`. The
+[P1 receipt](../evidence/codex-p1-481280-20261009.json) records no-model
+inventory and shared-server probes, live GLM protocol/TUI input and approval
+round trips, assembled service/desktop decisions, reattachment, stale/retry
+handling, archive/restore recovery, cancellation, post-compaction resume/read
+replay, and separate ASan/TSan builds. The observer allowlist gains exactly that
+artifact digest.
+
+One candidate behavior changed the shape without weakening response identity:
+two command approvals requested in one turn were admitted sequentially, not as
+two simultaneously pending requests. Two controlled pre-repair runs observed the
+same one-at-a-time admission. The qualification harness now records the observed
+admission mode and accepts either shape only after proving same thread/turn
+context, the harmless fixture command, distinct typed IDs, no cross-submission
+and successful turn completion. This P1 pass therefore does not claim
+simultaneous-pending behavior for this binary.
+
+P4 remains open and must use this exact disposable candidate: determine whether
+an eligible launch still binds to lapis's dedicated endpoint or routes through
+the managed daemon, and record whether qualification identity must move from
+executable digest to daemon release identity. No installed daemon, user trust
+configuration or live Lapis session is touched by that probe.

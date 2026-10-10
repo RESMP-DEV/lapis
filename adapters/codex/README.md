@@ -59,6 +59,19 @@ than sending Enter based on prompt wording. No shared configuration is changed.
 Use the [requalification procedure](../../CONTRIBUTING.md#codex-attention-qualification)
 for another binary; changing the pin alone is insufficient.
 
+The `481280ec26` release-build digest
+`1e6d87e0d5b0e862e48f35fd816a7b9425c7988ef7c185d56be07d632a65ffef` is also
+qualified. Its [P1 receipt](../../evidence/codex-p1-481280-20261009.json)
+covers no-model app-server inventory, the zero-turn shared server, live GLM
+protocol/TUI input and approval round trips, and assembled service/desktop
+responses, reattachment, stale/retry handling, archive/restore recovery,
+cancellation, distinct sequential approvals and post-compaction resume/read
+replay. This candidate admitted the two requested approvals sequentially rather
+than exposing both at once; the harness records that observed mode and keeps the
+simultaneous path for binaries that admit both before either decision. No
+managed-daemon adoption, two-thread worktree behavior or broader request kind is
+claimed.
+
 ## Integration route comparison
 
 The first wiring slice preserves the ordinary CLI terminal interface. The
@@ -273,9 +286,10 @@ replay and response behavior was exercised. Its `0.0.0` version string alone is
 insufficient. To update that pin, inspect the candidate's live protocol and run the
 [attention qualification procedure](../../CONTRIBUTING.md#codex-attention-qualification)
 on disposable service-owned sessions, including desktop responses, cancellation,
-reconnect reconciliation and simultaneous requests. Record the executable hash,
-runtime provider/model, source revision, commands, results and limits before
-changing the pin in the same reviewed update. An unknown binary retains terminal
+reconnect reconciliation, multi-request admission and post-compaction replay.
+Record the executable hash, runtime provider/model, source revision, commands,
+results, observed admission mode and limits before changing the pin in the same
+reviewed update. An unknown binary retains terminal
 operation with structured responses disabled; there is no runtime bypass.
 
 Future qualification covers additional request kinds, multiple persistent TUI
