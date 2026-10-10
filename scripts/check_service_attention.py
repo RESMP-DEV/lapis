@@ -350,6 +350,7 @@ async def multiple_approvals(owner, view, thread, receipt, model=MODEL):
         require(
             not remaining["submitted"], "First decision submitted the other request"
         )
+        second = remaining
     else:
         require(len(requests) == 1, "Unexpected initial approval count")
         admission = "sequential"
