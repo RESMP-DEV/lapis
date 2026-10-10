@@ -1,6 +1,7 @@
 {
   "schema": "lapis.architecture-subagent-triage/1",
-  "recorded_at": "2026-10-10T05:57:01Z",
+  "schema_version": 1,
+  "recorded_at": "2026-10-09T22:57:01-07:00",
   "source": {
     "revision": "42ec1ecfdd0133fc1fd8d9be588720bed7bd7e7e",
     "dirty": true,
@@ -71,7 +72,8 @@
     {
       "name": "documentation-diff-hygiene",
       "command": "git diff --check",
-      "exit_code": 0
+      "exit_code": 0,
+      "result": "No whitespace errors were reported."
     }
   ],
   "non_claims": [
