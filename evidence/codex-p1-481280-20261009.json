@@ -1,0 +1,130 @@
+{
+  "schema": "lapis.codex-p1-qualification/1",
+  "schema_version": 1,
+  "recorded_at": "2026-10-09T23:46:12-07:00",
+  "passed": true,
+  "source": {
+    "lapis_revision": "24a54dc99fb2f114f656907ab8bde3c68ccd35c9",
+    "lapis_dirty": true,
+    "lapis_dirty_files": [
+      "adapters/codex/README.md",
+      "adapters/codex/src/observer.cpp",
+      "docs/architecture.md",
+      "docs/status.md",
+      "scripts/check_service_attention.py",
+      "evidence/codex-p1-481280-20261009.json"
+    ],
+    "lapis_dirty_scope": "The qualification branch edits only the listed Lapis adapter, harness and documentation files. The Codex executable was built from the separate clean candidate revision before those Lapis edits.",
+    "candidate_repository": "RESMP-DEV/codex",
+    "candidate_revision": "481280ec261ba1a1f8f0c205ed301825fe28f9bc",
+    "candidate_source_clean": true,
+    "binary_sha256": "1e6d87e0d5b0e862e48f35fd816a7b9425c7988ef7c185d56be07d632a65ffef",
+    "reported_version": "codex-cli 0.0.0",
+    "platform": "macOS arm64"
+  },
+  "scope": "Codex P1 binary requalification for command approval and structured user input through protocol, TUI, service and desktop controls. It does not adopt the managed daemon or qualify two-thread worktrees or other request kinds.",
+  "contract_review": {
+    "same_thread_resume_read_exclusive_serialization": "source-inspected and live-exercised",
+    "awaited_pending_request_replay": "live-exercised",
+    "thread_read_full_history_deprecation": "observed; includeTurns still returns replay for this fixture",
+    "context_compaction": "live-exercised before resume/read replay",
+    "contract_source": "Clean detached RESMP-DEV/codex worktree at candidate_revision; these files are external-source provenance and are not vendored into Lapis.",
+    "contract_hash_method": "SHA-256 over the exact file bytes in that clean candidate worktree",
+    "contract_sha256": {
+      "codex-rs/app-server-protocol/src/protocol/common.rs": "e25ebb90bf79be79def79ebf2dd704057577fa9806710fbea0ee240a909d0dc1",
+      "codex-rs/app-server/src/request_serialization.rs": "b624a9bac63d16f786939f3e9d2c8916faf5d4bc499af7ed099b1e3803f4632a",
+      "codex-rs/app-server/src/request_processors/thread_processor.rs": "2c40a6db590c9823a6775b28c2e125544583246318ce038166d28fb57a10ab29",
+      "codex-rs/app-server/src/request_processors/thread_lifecycle.rs": "967cbda6493c971232d5434af690e0c86a318589492d3c14344ee249a7267457",
+      "codex-rs/app-server/src/outgoing_message.rs": "b16156e72d8a33a1087896bfd211b22094c3ef3e69a2331a7fed8c0530dd657a"
+    }
+  },
+  "qualification": {
+    "model": "zai,glm-5.3",
+    "provider": "lapis_probe loopback fixture",
+    "request_kinds": [
+      "item/commandExecution/requestApproval",
+      "item/tool/requestUserInput"
+    ],
+    "approval_admission": "sequential",
+    "simultaneous_guard_preserved": true,
+    "compaction_replay": {
+      "context_compaction_items": 1,
+      "resume_read_request_free": true
+    }
+  },
+  "validation": [
+    {
+      "name": "candidate-build",
+      "command": "RUSTC_WRAPPER=sccache CARGO_INCREMENTAL=0 cargo build --release --bin codex",
+      "exit_code": 0,
+      "result": "Clean exact-revision release build completed in 11m37s."
+    },
+    {
+      "name": "no-model-inventory",
+      "command": "python3 scripts/probe_codex.py --codex <candidate> --output build/codex-p1-481280/inventory.json",
+      "exit_code": 0,
+      "result": "Initialization and thread/list passed; 447 schema files and all ten tracked attention methods were advertised; zero model turns ran."
+    },
+    {
+      "name": "no-model-shared-server",
+      "command": "python3 scripts/probe_codex_attention.py --codex <candidate> --output build/codex-p1-481280/shared-server.json",
+      "exit_code": 0,
+      "result": "Dedicated server initialize, zero-turn thread/read, reconnect read and expected zero-turn resume error passed; cleanup completed."
+    },
+    {
+      "name": "protocol-tui",
+      "command": "python3 scripts/check_codex_attention.py --live-glm --with-tui --case both --output build/codex-p1-481280/attention-live.json",
+      "exit_code": 0,
+      "result": "Input and approval passed owner delivery, observer resume replay, reconnect replay, serialized read boundary, explicit response, matching resolution, completed turn and TUI display; cleanup completed."
+    },
+    {
+      "name": "service-desktop-final",
+      "command": "QSG_RENDER_LOOP=threaded python3 scripts/check_service_attention.py --live-glm --desktop --build-dir build/desktop --output build/codex-p1-481280/service-desktop-review-repair/receipt.json",
+      "exit_code": 0,
+      "result": "At 2026-10-10T07:09:01Z, all 13 assembled checks passed, including two distinct sequential approvals and post-compaction resume/read replay with the request-free assertion evaluated after replay. Service reaping and owned process-group cleanup passed."
+    },
+    {
+      "name": "harness-focused-tests",
+      "command": "python3 -m unittest scripts.tests.test_check_service_attention -v",
+      "exit_code": 0,
+      "result": "19 tests passed."
+    },
+    {
+      "name": "desktop-build-before-static-gate-repair",
+      "command": "python3 scripts/lapis.py build",
+      "exit_code": 1,
+      "result": "Compilation and all registered CTest cases passed. Two unrelated pre-existing static findings failed the aggregate; PR #143 repairs them."
+    },
+    {
+      "name": "desktop-build-final",
+      "command": "python3 scripts/lapis.py build",
+      "exit_code": 0,
+      "result": "After PR #143, final-source configure, build, CTest, clang-format, Cppcheck and all clang-tidy shards passed."
+    },
+    {
+      "name": "asan",
+      "command": "python3 scripts/lapis.py asan",
+      "exit_code": 0,
+      "result": "Instrumented configure, build and CTest passed."
+    },
+    {
+      "name": "tsan",
+      "command": "python3 scripts/lapis.py tsan",
+      "exit_code": 0,
+      "result": "Instrumented configure, build and CTest passed."
+    }
+  ],
+  "failed_attempts": [
+    {
+      "attempt": "service-desktop-simultaneous-wait",
+      "result": "Two controlled runs each passed 11 preceding checks, then timed out waiting for two simultaneous approvals because this candidate exposed one approval at a time. Cleanup passed in both runs.",
+      "repair": "The harness now records observed admission and validates two distinct sequential approvals without weakening identity, fixture-command, turn-context or completion checks."
+    }
+  ],
+  "limitations": [
+    "Only command approvals and structured user input are response-qualified.",
+    "The candidate's two approvals were sequential; its simultaneous-pending behavior is not claimed.",
+    "No managed-daemon adoption, P4 launch-contract decision, two-thread worktree probe, native hooks, importer onboarding, Linux, package, native input or GPU qualification.",
+    "The full aggregate and sanitizer runs cover this source but are not performance or package qualification."
+  ]
+}

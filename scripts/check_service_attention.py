@@ -292,7 +292,18 @@ def selected_question_answers(questions):
     return labels
 
 
-async def simultaneous_approvals(owner, view, thread, receipt, model=MODEL):
+def validate_approval_request(request, thread, turn, description="approval"):
+    require(
+        request["thread"] == thread and request["turn"] == turn,
+        f"{description.capitalize()} request context mismatch",
+    )
+    require(
+        approved_fixture(request["details"].get("command")),
+        f"Refusing non-fixture {description} command",
+    )
+
+
+async def multiple_approvals(owner, view, thread, receipt, model=MODEL):
     started = await owner.rpc(
         "turn/start",
         {
@@ -314,35 +325,119 @@ async def simultaneous_approvals(owner, view, thread, receipt, model=MODEL):
         },
     )
     await view.wait(
-        lambda: view.attention["ready"] and len(view.attention["requests"]) == 2, 30
+        lambda: view.attention["ready"] and bool(view.attention["requests"]), 30
     )
-    first, second = view.attention["requests"]
-    for request in (first, second):
+    requests = view.attention["requests"]
+    if len(requests) == 2:
+        admission = "simultaneous"
+        first, second = requests
+        for request in (first, second):
+            validate_approval_request(
+                request, thread, started["turn"]["id"], "parallel"
+            )
         require(
-            request["thread"] == thread and request["turn"] == started["turn"]["id"],
-            "Parallel request context mismatch",
+            type(first["id"]) is not type(second["id"]) or first["id"] != second["id"],
+            "Parallel identities collided",
+        )
+        view.client.send(ATTENTION_DECISION, decision(first, "accept"))
+        await view.wait(lambda: len(view.attention["requests"]) == 1)
+        remaining = view.attention["requests"][0]
+        require(
+            type(remaining["id"]) is type(second["id"])
+            and remaining["id"] == second["id"],
+            "First resolution removed the other request",
         )
         require(
-            approved_fixture(request["details"].get("command")),
-            "Refusing non-fixture parallel command",
+            not remaining["submitted"], "First decision submitted the other request"
         )
-    require(
-        type(first["id"]) is not type(second["id"]) or first["id"] != second["id"],
-        "Parallel identities collided",
-    )
-    view.client.send(ATTENTION_DECISION, decision(first, "accept"))
-    await view.wait(lambda: len(view.attention["requests"]) == 1)
-    remaining = view.attention["requests"][0]
-    require(
-        type(remaining["id"]) is type(second["id"]) and remaining["id"] == second["id"],
-        "First resolution removed the other request",
-    )
-    require(not remaining["submitted"], "First decision submitted the other request")
-    view.client.send(ATTENTION_DECISION, decision(remaining, "accept"))
+        second = remaining
+    else:
+        require(len(requests) == 1, "Unexpected initial approval count")
+        admission = "sequential"
+        first = requests[0]
+        validate_approval_request(first, thread, started["turn"]["id"])
+        view.client.send(ATTENTION_DECISION, decision(first, "accept"))
+
+        def not_first(request):
+            return (
+                type(request["id"]) is not type(first["id"])
+                or request["id"] != first["id"]
+            )
+
+        await view.wait(
+            lambda: (
+                view.attention["ready"]
+                and bool(view.attention["requests"])
+                and all(not_first(request) for request in view.attention["requests"])
+            ),
+            30,
+        )
+        replacements = [
+            request for request in view.attention["requests"] if not_first(request)
+        ]
+        require(len(replacements) == 1, "First decision admitted the wrong requests")
+        require(len(view.attention["requests"]) == 1, "First request was not removed")
+        replacement = replacements[0]
+        validate_approval_request(
+            replacement, thread, started["turn"]["id"], "sequential"
+        )
+        require(
+            type(first["id"]) is not type(replacement["id"])
+            or first["id"] != replacement["id"],
+            "Sequential identities collided",
+        )
+        require(
+            not replacement["submitted"], "First decision submitted the other request"
+        )
+        second = replacement
+    view.client.send(ATTENTION_DECISION, decision(second, "accept"))
     await view.wait(lambda: view.attention["ready"] and not view.attention["requests"])
     await finished_turn(owner, thread, started["turn"]["id"])
+    receipt["approval_admission"] = admission
     receipt["checks"].append(
-        "two simultaneous real approvals retain distinct identities and resolve independently"
+        f"two {admission} real approvals retain distinct identities and resolve independently"
+    )
+
+
+async def compaction_replay(owner, view, thread, receipt):
+    await owner.rpc("thread/compact/start", {"threadId": thread})
+    compacted = await owner.event(
+        lambda message: (
+            message.get("method") == "item/completed"
+            and message.get("params", {}).get("threadId") == thread
+            and message.get("params", {}).get("item", {}).get("type")
+            == "contextCompaction"
+        ),
+        90,
+    )
+    compaction_turn = compacted["params"].get("turnId")
+    require(
+        isinstance(compaction_turn, str) and compaction_turn,
+        "Compaction event missing its turn identity",
+    )
+    await view.wait(lambda: view.attention["ready"] and not view.attention["requests"])
+    await owner.rpc("thread/resume", {"threadId": thread, "excludeTurns": True})
+    result, _ = await owner.rpc(
+        "thread/read",
+        {"threadId": thread, "includeTurns": True},
+        capture_events=True,
+    )
+    replayed = result["thread"]
+    require(replayed["id"] == thread, "Compaction replay returned another thread")
+    compactions = [
+        item
+        for turn in replayed.get("turns", [])
+        for item in turn.get("items", [])
+        if item.get("type") == "contextCompaction"
+    ]
+    require(compactions, "Compaction replay omitted the compaction item")
+    receipt["compaction_replay"] = {
+        "turn": compaction_turn,
+        "compaction_items": len(compactions),
+    }
+    await view.wait(lambda: view.attention["ready"] and not view.attention["requests"])
+    receipt["checks"].append(
+        "post-compaction resume/read replay remains synchronized and request-free"
     )
 
 
@@ -699,7 +794,8 @@ async def exercise(args, receipt):
             receipt["checks"].append(
                 "new request after source recovery is cancelled by an observed turn interruption"
             )
-            await simultaneous_approvals(owner, view, thread, receipt, args.model)
+            await multiple_approvals(owner, view, thread, receipt, args.model)
+            await compaction_replay(owner, view, thread, receipt)
         finally:
             original_error = sys.exception()
             if view and view.attention:
