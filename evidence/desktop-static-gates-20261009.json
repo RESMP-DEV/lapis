@@ -1,0 +1,23 @@
+{
+  "schema": "lapis.desktop-static-gate-repair/1",
+  "schema_version": 1,
+  "recorded_at": "2026-10-09T23:38:00-07:00",
+  "source": {
+    "revision": "5a195f5fc59005e392723d4f53adc29fc8df2297",
+    "dirty": true
+  },
+  "scope": "Repair the two pre-existing desktop static-gate findings that blocked an otherwise passing current-main desktop build. No behavior or feature surface changed.",
+  "changes": [
+    "Clang-format the OpenRequests constructor declaration.",
+    "Make the three-entry Ultra Tab skip-log invariant an explicit throwing guard so Cppcheck can prove the following indexed access."
+  ],
+  "checks": [
+    {
+      "name": "desktop-build",
+      "command": "LAPIS_GHOSTTY_PREFIX=<shared pinned prefix> python3 scripts/lapis.py build",
+      "exit_code": 0,
+      "result": "Configure, build, CTest, clang-format, Cppcheck and all 129 clang-tidy shards passed."
+    }
+  ],
+  "non_claims": "This does not renew native input, GPU presentation, package, release, or external CLI qualification."
+}

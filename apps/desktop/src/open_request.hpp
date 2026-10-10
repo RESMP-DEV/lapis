@@ -15,8 +15,7 @@ namespace lapis::desktop {
 class OpenRequests final : public QObject {
     Q_OBJECT
   public:
-    OpenRequests(QString path, std::function<void(const QString&)> open,
-                 QObject* parent = nullptr);
+    OpenRequests(QString path, std::function<void(const QString&)> open, QObject* parent = nullptr);
     static constexpr qint64 max_age_ms = 10000;
     // Reads the request now (the watcher calls this; a test seam).
     void check();
