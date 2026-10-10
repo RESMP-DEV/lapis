@@ -423,6 +423,7 @@ async def compaction_replay(owner, view, thread, receipt):
         "turn": compacted["params"]["turnId"],
         "compaction_items": len(compactions),
     }
+    await view.wait(lambda: view.attention["ready"] and not view.attention["requests"])
     receipt["checks"].append(
         "post-compaction resume/read replay remains synchronized and request-free"
     )

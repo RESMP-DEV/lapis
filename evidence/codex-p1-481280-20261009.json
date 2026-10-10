@@ -1,7 +1,7 @@
 {
   "schema": "lapis.codex-p1-qualification/1",
   "schema_version": 1,
-  "recorded_at": "2026-10-09T23:32:00-07:00",
+  "recorded_at": "2026-10-09T23:46:12-07:00",
   "passed": true,
   "source": {
     "lapis_revision": "24a54dc99fb2f114f656907ab8bde3c68ccd35c9",
@@ -67,9 +67,9 @@
     },
     {
       "name": "service-desktop-final",
-      "command": "QSG_RENDER_LOOP=threaded python3 scripts/check_service_attention.py --live-glm --desktop --build-dir build/desktop --output build/codex-p1-481280/service-desktop-final/receipt.json",
+      "command": "QSG_RENDER_LOOP=threaded python3 scripts/check_service_attention.py --live-glm --desktop --build-dir build/desktop --output build/codex-p1-481280/service-desktop-review-repair/receipt.json",
       "exit_code": 0,
-      "result": "All 13 assembled checks passed, including two distinct sequential approvals and post-compaction resume/read replay. Service reaping and owned process-group cleanup passed."
+      "result": "At 2026-10-10T07:09:01Z, all 13 assembled checks passed, including two distinct sequential approvals and post-compaction resume/read replay with the request-free assertion evaluated after replay. Service reaping and owned process-group cleanup passed."
     },
     {
       "name": "harness-focused-tests",
