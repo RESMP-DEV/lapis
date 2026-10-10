@@ -8,8 +8,8 @@
   },
   "scope": "Prevent two workspace tests from abandoning still-running detached services when a restored screen is visible before input acknowledgement.",
   "defect": {
-    "observed_processes": 4,
-    "shape": "Two lapis_session_service event loops and two signal-blocked process-group guards, with two fixture sleep children, remained after the workspace CTest case passed.",
+    "observed_processes": 6,
+    "shape": "Two lapis_session_service event loops, two signal-blocked process-group guards and two fixture sleep children remained after the workspace CTest case passed.",
     "root_cause": "The size and plan tests called closeSession(..., abandon=true) after seeing terminal text but before inputReady(). The intended unreachable-session abandon path discarded the cards without sending terminate."
   },
   "checks": [
