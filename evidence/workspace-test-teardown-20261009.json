@@ -1,0 +1,30 @@
+{
+  "schema": "lapis.workspace-test-teardown-repair/1",
+  "schema_version": 1,
+  "recorded_at": "2026-10-10T00:08:00-07:00",
+  "source": {
+    "revision": "24a54dc99fb2f114f656907ab8bde3c68ccd35c9",
+    "dirty": true
+  },
+  "scope": "Prevent two workspace tests from abandoning still-running detached services when a restored screen is visible before input acknowledgement.",
+  "defect": {
+    "observed_processes": 4,
+    "shape": "Two lapis_session_service event loops and two signal-blocked process-group guards, with two fixture sleep children, remained after the workspace CTest case passed.",
+    "root_cause": "The size and plan tests called closeSession(..., abandon=true) after seeing terminal text but before inputReady(). The intended unreachable-session abandon path discarded the cards without sending terminate."
+  },
+  "checks": [
+    {
+      "name": "full-desktop-build",
+      "command": "LAPIS_GHOSTTY_PREFIX=<shared pinned prefix> python3 scripts/lapis.py build",
+      "exit_code": 0,
+      "result": "Configure, build, CTest, clang-format, Cppcheck and all clang-tidy shards passed."
+    },
+    {
+      "name": "post-build-process-inventory",
+      "command": "ps axo pid=,ppid=,command= filtered by the isolated worktree path",
+      "exit_code": 0,
+      "result": "No service, guard, fixture CLI or sleep process remained."
+    }
+  ],
+  "non_claims": "This repairs test teardown only; it does not change session-service shutdown behavior or qualify a packaged app."
+}
