@@ -376,13 +376,19 @@ async def multiple_approvals(owner, view, thread, receipt, model=MODEL):
         ]
         require(len(replacements) == 1, "First decision admitted the wrong requests")
         require(len(view.attention["requests"]) == 1, "First request was not removed")
-        second = replacements[0]
-        validate_approval_request(second, thread, started["turn"]["id"], "sequential")
+        replacement = replacements[0]
+        validate_approval_request(
+            replacement, thread, started["turn"]["id"], "sequential"
+        )
         require(
-            type(first["id"]) is not type(second["id"]) or first["id"] != second["id"],
+            type(first["id"]) is not type(replacement["id"])
+            or first["id"] != replacement["id"],
             "Sequential identities collided",
         )
-        require(not second["submitted"], "First decision submitted the other request")
+        require(
+            not replacement["submitted"], "First decision submitted the other request"
+        )
+        second = replacement
     view.client.send(ATTENTION_DECISION, decision(second, "accept"))
     await view.wait(lambda: view.attention["ready"] and not view.attention["requests"])
     await finished_turn(owner, thread, started["turn"]["id"])
@@ -403,6 +409,11 @@ async def compaction_replay(owner, view, thread, receipt):
         ),
         90,
     )
+    compaction_turn = compacted["params"].get("turnId")
+    require(
+        isinstance(compaction_turn, str) and compaction_turn,
+        "Compaction event missing its turn identity",
+    )
     await view.wait(lambda: view.attention["ready"] and not view.attention["requests"])
     await owner.rpc("thread/resume", {"threadId": thread, "excludeTurns": True})
     result, _ = await owner.rpc(
@@ -420,7 +431,7 @@ async def compaction_replay(owner, view, thread, receipt):
     ]
     require(compactions, "Compaction replay omitted the compaction item")
     receipt["compaction_replay"] = {
-        "turn": compacted["params"]["turnId"],
+        "turn": compaction_turn,
         "compaction_items": len(compactions),
     }
     await view.wait(lambda: view.attention["ready"] and not view.attention["requests"])
