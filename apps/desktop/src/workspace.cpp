@@ -500,6 +500,9 @@ QString remoteLaunch(const AgentRequest& request, const QString& command, QStrin
     return {};
 }
 constexpr qsizetype max_saved_arguments = 64;
+// One argument may carry a whole remote launch command (an ssh agent's hook
+// relay is several kilobytes); the registry itself is bounded at 1 MiB.
+constexpr qsizetype max_saved_argument_chars = qsizetype{64} * 1024;
 // A remote agent saved before remoteOptions() gains the ones it lacks.
 void addRemoteOptions(session::LaunchSpec& launch) {
     if (!remoteCommand(launch))
@@ -1927,6 +1930,8 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
         agents.append(agentRecord(entry.value(), item->sessionId(),
                                   item->sessionId() == renamedId ? renamedTitle : item->title()));
     }
+    for (const auto& kept : unreadable_agents_)
+        agents.append(kept);
     QSaveFile file(storage_path_);
     if (!file.open(QIODevice::WriteOnly))
         return saveError(QStringLiteral("Cannot save workspace: ") + file.errorString());
@@ -2656,7 +2661,8 @@ QStringList Workspace::savedArguments(const QJsonValue& value) {
     QStringList arguments;
     for (const auto& item : list) {
         const auto text = item.toString();
-        if (!item.isString() || text.size() > 4096 || text.contains(QChar::Null))
+        if (!item.isString() || text.size() > max_saved_argument_chars ||
+            text.contains(QChar::Null))
             throw std::runtime_error("Invalid agent arguments");
         arguments.append(text);
     }
@@ -2683,64 +2689,81 @@ void Workspace::loadAgents(const QJsonArray& agents) {
     QMap<QString, Agent> metadata;
     std::vector<std::unique_ptr<SessionPreview>> restored;
     const auto directory = QFileInfo(storage_path_).absolutePath();
+    unreadable_agents_ = {};
+    QStringList why;
     for (const auto& value : agents) {
-        const auto object = value.toObject();
-        const auto id = object.value(QStringLiteral("id")).toString();
-        const auto title = object.value(QStringLiteral("title")).toString();
-        const auto harness =
-            object.value(QStringLiteral("harness")).toString(QStringLiteral("codex"));
-        if (!find_harness(harness) || (object.contains(QStringLiteral("harness")) &&
-                                       !object.value(QStringLiteral("harness")).isString()))
-            throw std::runtime_error("Invalid agent harness");
-        Agent agent{object.value(QStringLiteral("category")).toString(),
-                    object.value(QStringLiteral("endpoint")).toString(),
-                    {object.value(QStringLiteral("program")).toString(),
-                     {},
-                     object.value(QStringLiteral("directory")).toString(),
-                     {100, 30},
-                     harness == QStringLiteral("codex") ? session::AgentMode::codex
-                                                        : session::AgentMode::terminal},
-                    harness};
-        const auto resume = object.value(QStringLiteral("resumeThread")).toString();
-        if ((object.contains(QStringLiteral("resumeThread")) &&
-             !object.value(QStringLiteral("resumeThread")).isString()) ||
-            (!resume.isEmpty() && (harness != QStringLiteral("codex") || QUuid(resume).isNull())))
-            throw std::runtime_error("Invalid native resume identity");
-        if (!resume.isEmpty())
-            agent.launch.arguments = {QStringLiteral("resume"), resume};
-        // The full literal argument list, when recorded, is what the running
-        // service was launched with; it is part of the launch fingerprint.
-        if (object.contains(QStringLiteral("arguments")))
-            agent.launch.arguments = savedArguments(object.value(QStringLiteral("arguments")));
-        if (object.contains(QStringLiteral("managedResume")))
-            loadManagedResume(object.value(QStringLiteral("managedResume")), agent);
-        agent.named = object.value(QStringLiteral("named")).toBool();
-        agent.auto_title = object.value(QStringLiteral("autoTitle")).toBool();
-        agent.account = savedAccount(object.value(QStringLiteral("account")));
-        // Claude agents saved before the service adapter ran as terminals; the
-        // launch must match the one their running service was created with.
-        if (harness == QStringLiteral("claude") &&
-            object.value(QStringLiteral("mode")).toString() == QStringLiteral("claude"))
-            agent.launch.agent = session::AgentMode::claude;
-        if (QUuid(id).isNull() || metadata.contains(id) || !validName(title) ||
-            std::none_of(categories_.begin(), categories_.end(),
-                         [&](const auto& category) { return category.id == agent.category; }) ||
-            agent.endpoint != QDir(directory).filePath(id + QStringLiteral(".sock")) ||
-            !QFileInfo(agent.launch.program).isAbsolute() || agent.launch.program.size() > 4096 ||
-            agent.launch.program.contains(QChar::Null) ||
-            !QFileInfo(agent.launch.directory).isAbsolute() ||
-            agent.launch.directory.size() > 4096 || agent.launch.directory.contains(QChar::Null))
-            throw std::runtime_error("Invalid agent record");
-        auto item = std::make_unique<SessionPreview>(title, agent.launch.directory, QString{},
-                                                     QColor(QStringLiteral("#87cbac")), "");
-        item->setSessionId(id);
-        item->setHarnessId(harness);
-        item->setStatusSource(statusSource(agent));
-        metadata.insert(id, agent);
-        restored.push_back(std::move(item));
+        // One unreadable agent is kept as it was and skipped, never the end of
+        // the whole workspace: its service may still be running, and a later
+        // lapis may read it.
+        try {
+            const auto object = value.toObject();
+            const auto id = object.value(QStringLiteral("id")).toString();
+            const auto title = object.value(QStringLiteral("title")).toString();
+            const auto harness =
+                object.value(QStringLiteral("harness")).toString(QStringLiteral("codex"));
+            if (!find_harness(harness) || (object.contains(QStringLiteral("harness")) &&
+                                           !object.value(QStringLiteral("harness")).isString()))
+                throw std::runtime_error("Invalid agent harness");
+            Agent agent{object.value(QStringLiteral("category")).toString(),
+                        object.value(QStringLiteral("endpoint")).toString(),
+                        {object.value(QStringLiteral("program")).toString(),
+                         {},
+                         object.value(QStringLiteral("directory")).toString(),
+                         {100, 30},
+                         harness == QStringLiteral("codex") ? session::AgentMode::codex
+                                                            : session::AgentMode::terminal},
+                        harness};
+            const auto resume = object.value(QStringLiteral("resumeThread")).toString();
+            if ((object.contains(QStringLiteral("resumeThread")) &&
+                 !object.value(QStringLiteral("resumeThread")).isString()) ||
+                (!resume.isEmpty() &&
+                 (harness != QStringLiteral("codex") || QUuid(resume).isNull())))
+                throw std::runtime_error("Invalid native resume identity");
+            if (!resume.isEmpty())
+                agent.launch.arguments = {QStringLiteral("resume"), resume};
+            // The full literal argument list, when recorded, is what the running
+            // service was launched with; it is part of the launch fingerprint.
+            if (object.contains(QStringLiteral("arguments")))
+                agent.launch.arguments = savedArguments(object.value(QStringLiteral("arguments")));
+            if (object.contains(QStringLiteral("managedResume")))
+                loadManagedResume(object.value(QStringLiteral("managedResume")), agent);
+            agent.named = object.value(QStringLiteral("named")).toBool();
+            agent.auto_title = object.value(QStringLiteral("autoTitle")).toBool();
+            agent.account = savedAccount(object.value(QStringLiteral("account")));
+            // Claude agents saved before the service adapter ran as terminals; the
+            // launch must match the one their running service was created with.
+            if (harness == QStringLiteral("claude") &&
+                object.value(QStringLiteral("mode")).toString() == QStringLiteral("claude"))
+                agent.launch.agent = session::AgentMode::claude;
+            if (QUuid(id).isNull() || metadata.contains(id) || !validName(title) ||
+                std::none_of(categories_.begin(), categories_.end(),
+                             [&](const auto& category) { return category.id == agent.category; }) ||
+                agent.endpoint != QDir(directory).filePath(id + QStringLiteral(".sock")) ||
+                !QFileInfo(agent.launch.program).isAbsolute() ||
+                agent.launch.program.size() > 4096 || agent.launch.program.contains(QChar::Null) ||
+                !QFileInfo(agent.launch.directory).isAbsolute() ||
+                agent.launch.directory.size() > 4096 ||
+                agent.launch.directory.contains(QChar::Null))
+                throw std::runtime_error("Invalid agent record");
+            auto item = std::make_unique<SessionPreview>(title, agent.launch.directory, QString{},
+                                                         QColor(QStringLiteral("#87cbac")), "");
+            item->setSessionId(id);
+            item->setHarnessId(harness);
+            item->setStatusSource(statusSource(agent));
+            metadata.insert(id, agent);
+            restored.push_back(std::move(item));
+        } catch (const std::exception& error) {
+            const auto title = value.toObject().value(QStringLiteral("title")).toString().left(80);
+            qWarning().noquote() << "Agent not restored:" << title << error.what();
+            unreadable_agents_.append(value);
+            why.append(QStringLiteral("%1 (%2)").arg(title, QString::fromUtf8(error.what())));
+        }
     }
     agents_ = std::move(metadata);
     sessions_ = std::move(restored);
+    if (!why.isEmpty())
+        fail(QStringLiteral("Not restored, kept in the registry: ") +
+             why.join(QStringLiteral("; ")));
 }
 void Workspace::lockRegistry() {
     registry_lock_ = std::make_unique<QLockFile>(storage_path_ + QStringLiteral(".lock"));

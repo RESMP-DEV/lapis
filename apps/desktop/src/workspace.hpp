@@ -729,6 +729,8 @@ class Workspace final : public QObject {
     std::unique_ptr<QLockFile> registry_lock_;
     QString error_;
     bool storage_failed_{};
+    // Agent records restore() could not read, written back unchanged.
+    QJsonArray unreadable_agents_;
     bool fail(const QString& message);
     struct ResumeLaunch {
         session::LaunchSpec launch;

@@ -451,17 +451,20 @@ void malformedAgentRegistry() {
     file.close();
     Workspace workspace(WorkspaceMode::live, options);
     require(!workspace.workspaceError().isEmpty(), "reject malformed agent");
+    // The malformed agent alone is skipped (and kept for a later lapis); the
+    // categories it sat beside still come back.
     require(workspace.categories().size() == 1 &&
                 workspace.categories().front().toMap().value(QStringLiteral("id")).toString() ==
-                    QStringLiteral("general") &&
-                workspace.activeCategoryId() == QStringLiteral("general"),
-            "partial parsing cannot pollute clean General category");
+                    QStringLiteral("foreign") &&
+                workspace.sessions().isEmpty(),
+            "a malformed agent is skipped, not the workspace");
     require(workspace.sessions().isEmpty() && !workspace.focusedSession(),
             "malformed restore creates no session");
-    require(!workspace.addCategory(QStringLiteral("Blocked")),
-            "malformed registry blocks mutations");
-    require(workspace.categories().size() == 1 && readRegistry(options.storagePath) == bytes,
-            "malformed registry leaves memory and bytes unchanged");
+    require(workspace.addCategory(QStringLiteral("Later")), "the workspace still saves");
+    const auto agents =
+        QJsonDocument::fromJson(readRegistry(options.storagePath)).object().value("agents");
+    require(agents.toArray() == QJsonArray{QJsonObject{{"id", "invalid"}}},
+            "the malformed record is written back unchanged");
 }
 void placeholderMatchesTerminalDefaults() {
     const auto engine = lapis::session::Terminal({2, 2}).snapshot();
@@ -805,6 +808,65 @@ void tabGoesToTheReadyThenTheOldest() {
     newer->applyAttention(state);
     require(!workspace.nextPriorityAttention(seen),
             "nothing is waiting once the one with a guess is at work");
+}
+
+// One agent the registry cannot be read for is skipped and kept as it was,
+// never the end of the whole workspace; a long remote launch argument (an ssh
+// agent's inline hook relay) is readable.
+void oneBadAgentDoesNotEmptyTheWorkspace() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "registry directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QString good = QStringLiteral("0b6f1a4e-7d55-4c35-9a53-1f3f27b8c1a1");
+    const QString remote = QStringLiteral("1c7e2b5f-8e66-4d46-8b64-2a4038c9d2b2");
+    const QString bad = QStringLiteral("2d8f3c60-9f77-4e57-9c75-3b5149dae3c3");
+    const auto record = [&](const QString& id) {
+        return QJsonObject{{"id", id},
+                           {"title", id.left(8)},
+                           {"category", "general"},
+                           {"endpoint", QDir(canonical).filePath(id + ".sock")},
+                           {"program", "/usr/bin/true"},
+                           {"directory", canonical}};
+    };
+    auto long_argument = record(remote);
+    long_argument.insert("arguments",
+                         QJsonArray{QStringLiteral("-t"), QString(4687, QLatin1Char('x'))});
+    auto unreadable = record(bad);
+    unreadable.insert("harness", "no-such-cli");
+    const QJsonArray agents{record(good), long_argument, unreadable};
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    options.headless = true;
+    {
+        QFile file(options.storagePath);
+        require(file.open(QIODevice::WriteOnly), "create registry");
+        file.write(
+            QJsonDocument(QJsonObject{{"version", 2},
+                                      {"activeCategory", "general"},
+                                      {"categories", QJsonArray{QJsonObject{{"id", "general"},
+                                                                            {"name", "General"}}}},
+                                      {"agents", agents}})
+                .toJson());
+    }
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.session(good) != nullptr && workspace.session(remote) != nullptr,
+                "the readable agents, including a long remote argument, come back");
+        require(workspace.session(bad) == nullptr &&
+                    workspace.workspaceError().startsWith(QStringLiteral("Not restored")),
+                "the unreadable one is skipped and named");
+        require(workspace.addCategory(QStringLiteral("Later")), "the workspace still saves");
+    }
+    QFile saved(options.storagePath);
+    require(saved.open(QIODevice::ReadOnly), "read the saved registry");
+    const auto kept = QJsonDocument::fromJson(saved.readAll()).object().value("agents").toArray();
+    require(std::any_of(kept.begin(), kept.end(),
+                        [&](const QJsonValue& value) {
+                            return value.toObject().value("id").toString() == bad &&
+                                   value.toObject().value("harness").toString() ==
+                                       QLatin1String("no-such-cli");
+                        }),
+            "the unreadable record is written back unchanged");
 }
 
 // Tab names the move, but only a later hand move does. The pending choice
@@ -6735,6 +6797,7 @@ int main(int argc, char** argv) {
         latestAttentionGoesToTheNewest();
         tabGoesToTheReadyThenTheOldest();
         tabAttributionFollowsTheNextHandMove();
+        oneBadAgentDoesNotEmptyTheWorkspace();
         firstTabChoiceExcludesTheInitialFocus();
         closingRemovesAPendingChoiceCandidate();
         closingFocusedAgentCancelsPendingChoice();
