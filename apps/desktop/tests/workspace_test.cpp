@@ -774,7 +774,7 @@ void latestAttentionGoesToTheNewest() {
 // another agent waits; an agent at work is not waiting even with a guess.
 void tabGoesToTheReadyThenTheOldest() {
     Workspace workspace(WorkspaceMode::preview);
-    workspace.setTabAway({.learned = false});
+    workspace.setTabAway({.rank = lapis::desktop::TabRank::fixed});
     require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
@@ -839,6 +839,7 @@ void tabAttributionFollowsTheNextHandMove() {
     require(file.write(bytes) == bytes.size(), "write attribution registry");
     file.close();
     Workspace workspace(WorkspaceMode::live, options);
+    workspace.setTabAway({.rank = lapis::desktop::TabRank::learned}); // counts fitted choices
     workspace.setChoiceSettleMsForTesting(20);
     require(workspace.focusedSession()->sessionId() == second, "start on the source agent");
     lapis::session::wire::AttentionSnapshot state;
@@ -923,6 +924,7 @@ void firstTabChoiceExcludesTheInitialFocus() {
     const auto target = QStringLiteral("eb00ff7d-e97a-472a-b74e-01c3909d5a55");
     auto options = tabAttributionRegistry(directory, QStringLiteral("source"));
     Workspace workspace(WorkspaceMode::live, options);
+    workspace.setTabAway({.rank = lapis::desktop::TabRank::learned}); // counts fitted choices
     workspace.setChoiceSettleMsForTesting(20);
     require(workspace.focusedSession()->sessionId() == source, "start on the initial focus");
     lapis::session::wire::AttentionSnapshot state;
@@ -973,6 +975,7 @@ void closingRemovesAPendingChoiceCandidate() {
     const auto candidate = QStringLiteral("778fc84f-1ad3-4a14-8e21-7719d9c5814d");
     auto options = tabAttributionRegistry(directory, QStringLiteral("source"));
     Workspace workspace(WorkspaceMode::live, options);
+    workspace.setTabAway({.rank = lapis::desktop::TabRank::learned}); // counts fitted choices
     workspace.setChoiceSettleMsForTesting(20);
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
@@ -1004,6 +1007,7 @@ void closingFocusedAgentCancelsPendingChoice() {
     require(directory.isValid(), "focused-close directory");
     auto options = tabAttributionRegistry(directory, QStringLiteral("source"));
     Workspace workspace(WorkspaceMode::live, options);
+    workspace.setTabAway({.rank = lapis::desktop::TabRank::learned}); // counts fitted choices
     workspace.setChoiceSettleMsForTesting(20);
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
@@ -1061,6 +1065,7 @@ void failedTabSelectionRecordsNothing() {
     require(file.write(bytes) == bytes.size(), "write failed-tab registry");
     file.close();
     Workspace workspace(WorkspaceMode::live, options);
+    workspace.setTabAway({.rank = lapis::desktop::TabRank::learned}); // counts fitted choices
     auto* waiting = workspace.session(target);
     require(waiting != nullptr && workspace.focusedSession()->sessionId() == source,
             "load the failed-tab fixture");

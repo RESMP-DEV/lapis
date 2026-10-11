@@ -4699,6 +4699,20 @@ where the person goes, at a median 2.9 to 3.1 s per call. It is not used: it is
 less accurate than the learned ranker and would have to be precomputed in the
 background on every state change.
 
+October 11: the default is a plain order again, with learning opt-in
+(`"rank": "learned"`). From October 6 to 11 the interaction log held 593
+Command-number category jumps and 567 next/previous moves against 24 Tab moves,
+so most "choices" were steps of a keyboard walk: the ranker learned adjacency
+in that walk, and the work category ended with the strongest negative weight,
+cancelling the stated preference. Its gain over newest-first was about 7 of 51
+held-out choices, inside its own ±0.07. The plain order keeps the stated
+priorities outside learning (work, requests, unseen turns, newest) and adds a
+ceiling: anything waiting more than four hours comes first. Agents the person
+looked at for 2.5 s and left without a prompt are parked until their next turn;
+before this, with a guess on nearly every finished turn, about 16 agents
+qualified at every Tab, including threads parked for days. Choices are still
+logged, so the learned rank can be evaluated against the plain one later.
+
 ### Update pacing audit (September 28)
 
 The audit began September 28 and was rechecked against main `c0f2037` on

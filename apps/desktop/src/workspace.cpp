@@ -839,6 +839,8 @@ std::vector<TabCandidate> Workspace::waitingCandidates(const QVariantMap& ready,
                               (kind == QLatin1String("idle") && item->hasAttentionSource());
         if (!request && !(finished && (item->unseen() || guess != ready.end())))
             continue;
+        if (!request && parked(item.get()))
+            continue;
         const auto& id = item->sessionId();
         const auto category = agents_.value(id).category;
         bool work = false;
@@ -878,16 +880,36 @@ bool Workspace::nextPriorityAttention(const QVariantMap& ready) {
 }
 void Workspace::setTabAway(const TabAwaySettings& settings) {
     tab_away_ = settings;
-    tab_ranker_->setLearned(settings.learned);
+    tab_ranker_->setRank(settings.rank, settings.overdueHours);
 }
 // The person left an agent: remember who was waiting then. Moves before the
 // last one settled (a quick hop, or Tab's own move) add agents that began
 // waiting since, and keep those passed over.
+qint64 Workspace::parkedAtMs(const QString& id) const { return parked_at_.value(id); }
+bool Workspace::parked(const SessionPreview* item) const {
+    if (item == nullptr)
+        return false;
+    const auto at = parked_at_.value(item->sessionId());
+    return at > 0 && at >= waiting_since_.value(item->sessionId(), item->neededAtMs());
+}
 void Workspace::noteFocusMove() {
     const auto* focused = focusedSession();
     const auto id = focused != nullptr ? focused->sessionId() : QString();
     if (id == last_focus_id_)
         return;
+    // Leaving a finished turn looked at long enough parks it; the look counts
+    // from when it began to wait if that came after the person arrived.
+    const auto now = QDateTime::currentMSecsSinceEpoch();
+    if (const auto* left = session(last_focus_id_); left != nullptr && focus_since_ms_ > 0) {
+        const auto kind = left->statusKind();
+        const auto since = waiting_since_.value(last_focus_id_, left->neededAtMs());
+        if ((kind == QLatin1String("finished") || kind == QLatin1String("idle")) &&
+            !left->attentionPending() && now - std::max(focus_since_ms_, since) >= park_after_ms_) {
+            parked_at_.insert(last_focus_id_, now);
+            emit parkedChanged();
+        }
+    }
+    focus_since_ms_ = now;
     auto fresh = waitingCandidates(guesses_ ? guesses_() : QVariantMap{}, session(last_focus_id_));
     if (choice_)
         choice_->add(fresh);
@@ -1555,6 +1577,7 @@ bool Workspace::discardSession(const QString& id) {
     switching_.remove(id);
     last_kind_.remove(item);
     waiting_since_.remove(id);
+    parked_at_.remove(id);
     turn_starts_.remove(id);
     if (choice_)
         std::erase_if(choice_->candidates,

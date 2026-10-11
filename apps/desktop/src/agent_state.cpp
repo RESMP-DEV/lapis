@@ -43,6 +43,7 @@ AgentStatePublisher::AgentStatePublisher(Workspace& workspace, NextPrompt* next,
         changed();
     });
     connect(&workspace_, &Workspace::categoriesChanged, this, &AgentStatePublisher::changed);
+    connect(&workspace_, &Workspace::parkedChanged, this, &AgentStatePublisher::changed);
     connect(&workspace_, &Workspace::turnFinished, this, [this](SessionPreview* item) {
         if (item != nullptr)
             turn_at_ms_.insert(item->sessionId(), QDateTime::currentMSecsSinceEpoch());
@@ -98,6 +99,8 @@ QJsonObject AgentStatePublisher::state() const {
                           {QStringLiteral("turnAtMs"), turn_at_ms_.value(id)}};
         if (item->attentionPending())
             agent.insert(QStringLiteral("request"), item->attentionReason().left(kReasonLimit));
+        if (const auto parked = workspace_.parkedAtMs(id); parked > 0)
+            agent.insert(QStringLiteral("parkedAtMs"), parked);
         if (next_)
             if (const auto offer = next_->offerState(id); !offer.isEmpty())
                 agent.insert(QStringLiteral("offer"), offer);

@@ -573,6 +573,13 @@ class Workspace final : public QObject {
     // waiting) leaves Tab with the program. Every move is logged with the
     // candidates and their scores.
     Q_INVOKABLE bool nextPriorityAttention(const QVariantMap& ready);
+    // An agent is parked once the person has looked at its finished turn for
+    // kParkAfterMs and moved on without a prompt: Tab, and Ultra Tab's cards,
+    // skip it until it begins to wait again. A request is never parked.
+    static constexpr qint64 kParkAfterMs = 2500;
+    [[nodiscard]] qint64 parkedAtMs(const QString& id) const;
+    [[nodiscard]] bool parked(const SessionPreview* item) const;
+    void setParkAfterMsForTesting(qint64 ms) { park_after_ms_ = ms; }
     void setTabAway(const TabAwaySettings& settings);
     [[nodiscard]] const TabAwaySettings& tabAway() const { return tab_away_; }
     // Where the guesses come from when the person moves by hand, for the
@@ -639,6 +646,8 @@ class Workspace final : public QObject {
     void closedChanged();
     // What saveMarks() returns may have changed.
     void marksChanged();
+    // An agent was parked (see parkedAtMs).
+    void parkedChanged();
     // A turn that ended while no window watched (see restoreMarks).
     void finishedWhileAway(lapis::desktop::SessionPreview* item);
 
@@ -820,6 +829,11 @@ class Workspace final : public QObject {
     };
     std::optional<PendingChoice> choice_;
     QString last_focus_id_;
+    qint64 focus_since_ms_{}; // when the person moved to last_focus_id_
+    // When the person left each agent after looking at its finished turn
+    // (kParkAfterMs or more): it is parked until it next begins to wait.
+    QHash<QString, qint64> parked_at_;
+    qint64 park_after_ms_{kParkAfterMs};
     QTimer choice_settle_;
     [[nodiscard]] std::vector<TabCandidate> waitingCandidates(const QVariantMap& ready,
                                                               const SessionPreview* exclude) const;

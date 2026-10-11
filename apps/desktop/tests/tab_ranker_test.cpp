@@ -22,6 +22,7 @@
 
 namespace {
 using lapis::desktop::TabCandidate;
+using lapis::desktop::TabRank;
 using lapis::desktop::TabRanker;
 using lapis::desktop::Workspace;
 using lapis::desktop::WorkspaceMode;
@@ -60,6 +61,7 @@ QString picked(const TabRanker& ranker, const std::vector<TabCandidate>& candida
 // then the newest; nothing to pick from is no pick.
 void priorOrder() {
     TabRanker ranker;
+    ranker.setRank(TabRank::learned);
     require(!ranker.pick({}), "no candidates, no pick");
     auto old = agent("old", 50, "home");
     auto fresh = agent("fresh", 2, "home");
@@ -83,7 +85,7 @@ void priorOrder() {
 // a guess already seen; the longest waiting within each.
 void fixedOrder() {
     TabRanker ranker;
-    ranker.setLearned(false);
+    ranker.setRank(TabRank::fixed);
     auto seen_guess = agent("seen", 80, "home");
     seen_guess.guess = seen_guess.guessSeen = true;
     auto unseen = agent("unseen", 5, "home");
@@ -107,7 +109,7 @@ void fixedOrder() {
 // order reward that candidate for waiting less than no time at all.
 void fixedOrderClampsNegativeWaits() {
     TabRanker ranker;
-    ranker.setLearned(false);
+    ranker.setRank(TabRank::fixed);
     auto behind_clock = agent("skewed", -5, "home");
     behind_clock.unseen = true;
     auto zero = agent("zero", 0, "home");
@@ -121,6 +123,7 @@ void fixedOrderClampsNegativeWaits() {
 // prior ranks lower, its agents come first.
 void learnsOnline() {
     TabRanker ranker;
+    ranker.setRank(TabRank::learned);
     auto work = agent("w", 3, "job");
     work.work = true;
     auto games = agent("g", 3, "games");
@@ -158,6 +161,7 @@ void learnsOnline() {
 // refit: moving it out clears the mutex-protected buffer.
 void memoryRefitDoesNotRepeatChoices() {
     TabRanker ranker;
+    ranker.setRank(TabRank::learned);
     const auto work = agent("w", 3, "job");
     const auto games = agent("g", 3, "games");
     for (int i = 0; i < 12; ++i) {
@@ -173,6 +177,7 @@ void createsMissingLogFolder() {
     require(directory.isValid(), "temporary log parent");
     const auto folder = QDir(directory.path()).filePath(QStringLiteral("nested/tab-away"));
     TabRanker ranker(folder);
+    ranker.setRank(TabRank::learned);
     const auto work = agent("w", 3, "job");
     const auto games = agent("g", 3, "games");
     ranker.learn({work, games}, 1, false);
@@ -186,6 +191,7 @@ void createsMissingLogFolder() {
 void refitSurvivesDestruction() {
     for (int round = 0; round < 8; ++round) {
         TabRanker ranker;
+        ranker.setRank(TabRank::learned);
         auto work = agent("w", 3, "job");
         auto games = agent("g", 3, "games");
         ranker.learn({work, games}, 1, false);
@@ -203,6 +209,7 @@ void persists() {
     const auto games = agent("g", 3, "games");
     {
         TabRanker ranker(directory.path());
+        ranker.setRank(TabRank::learned);
         std::vector<double> scores;
         const auto best = ranker.pick({work, games}, &scores).value_or(2);
         require(best == 0 && scores.size() == 2, "scores for every candidate");
@@ -233,6 +240,7 @@ void persists() {
                     static_cast<qsizetype>(TabRanker::kFeatures),
             "a Tab move is logged with its candidates' features and scores");
     TabRanker again(directory.path());
+    again.setRank(TabRank::learned);
     require(picked(again, {work, games}) == QLatin1String("g"),
             "a new ranker starts from the kept model");
     require(waitFor([&] { return !again.refitting(); }), "the startup refit finished");
@@ -244,9 +252,9 @@ void persists() {
 // work, which the observer reports as working) never is, even unseen and
 // with a guess; a request always is.
 void tabAwayChoosesOnlyAgentsWaitingOnYou() {
-    for (const bool learned : {true, false}) {
+    for (const auto rank : {TabRank::plain, TabRank::learned, TabRank::fixed}) {
         Workspace workspace(WorkspaceMode::preview);
-        workspace.setTabAway({.learned = learned});
+        workspace.setTabAway({.rank = rank});
         require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
         lapis::session::wire::AttentionSnapshot state;
         state.available = state.connected = state.ready = true;
@@ -310,11 +318,12 @@ void tabAwayChoosesOnlyAgentsWaitingOnYou() {
     }
 }
 
-// The learned default puts a work category first and then follows the
+// The learned rank puts a work category first and then follows the
 // person: Tab, Tab (the guess is sent and the agent is at work), Tab moves on
 // to the next waiting agent, and choices made by hand teach the ranker.
 void tabAwayPutsWorkFirstAndLearns() {
     Workspace workspace(WorkspaceMode::preview);
+    workspace.setTabAway({.rank = TabRank::learned});
     workspace.setChoiceSettleMsForTesting(20);
     require(workspace.addCategory(QStringLiteral("Work")), "add a work category");
     const auto work = workspace.activeCategoryId();
@@ -371,7 +380,7 @@ void tabAwayPutsWorkFirstAndLearns() {
     finish("agent");
     require(workspace.nextPriorityAttention({}) && workspace.focusedSession() == other,
             "after those choices Tab goes where the person goes");
-    workspace.setTabAway({.learned = false});
+    workspace.setTabAway({.rank = TabRank::fixed});
     require(workspace.selectSession(QStringLiteral("renderer")), "start from renderer");
     finish("agent");
     QThread::msleep(5);
@@ -383,11 +392,15 @@ void tabAwayPutsWorkFirstAndLearns() {
 void settings() {
     using lapis::desktop::parse_tab_away;
     const auto defaults = parse_tab_away(QJsonValue{});
-    require(defaults.learned && defaults.work == QStringList{QStringLiteral("work")},
-            "learned, with a category named work, by default");
+    require(defaults.rank == TabRank::plain && defaults.overdueHours == 4 &&
+                defaults.work == QStringList{QStringLiteral("work")},
+            "plain, overdue after 4 hours, with a category named work, by default");
+    const auto learned = parse_tab_away(QJsonObject{{"rank", "learned"}, {"overdueHours", 0}});
+    require(learned.rank == TabRank::learned && learned.overdueHours == 0,
+            "learned rank, overdue off");
     const auto fixed =
         parse_tab_away(QJsonObject{{"rank", "fixed"}, {"work", QJsonArray{"Job", " ", 3}}});
-    require(!fixed.learned && fixed.work == QStringList{QStringLiteral("Job")},
+    require(fixed.rank == TabRank::fixed && fixed.work == QStringList{QStringLiteral("Job")},
             "fixed rank and named work categories");
     QJsonArray many;
     for (int i = 0; i < 40; ++i)
@@ -411,6 +424,7 @@ void appendFailureLeavesTheLogUnchanged() {
     QTemporaryDir directory;
     require(directory.isValid(), "temporary log directory");
     TabRanker ranker(directory.path());
+    ranker.setRank(TabRank::learned);
     auto work = agent("w", 3, "job");
     auto games = agent("g", 3, "games");
     ranker.learn({work, games}, 1, false);
@@ -433,10 +447,74 @@ void appendFailureLeavesTheLogUnchanged() {
 }
 } // namespace
 
+// The plain default: overdue first (oldest first), then work, requests, turns
+// not yet seen, and the newest; it does not learn.
+void plainOrder() {
+    TabRanker ranker;
+    auto old = agent("old", 50, "home");
+    auto fresh = agent("fresh", 2, "home");
+    require(picked(ranker, {old, fresh}) == QLatin1String("fresh"), "the newest of equals");
+    old.unseen = true;
+    require(picked(ranker, {old, fresh}) == QLatin1String("old"), "a turn not yet seen first");
+    fresh.request = true;
+    require(picked(ranker, {old, fresh}) == QLatin1String("fresh"), "a request before it");
+    auto work = agent("work", 200, "job");
+    work.work = true;
+    require(picked(ranker, {old, fresh, work}) == QLatin1String("work"),
+            "work first, however long it waited, short of overdue");
+    auto forgotten = agent("forgotten", 300, "home");
+    forgotten.unseen = true;
+    require(picked(ranker, {old, fresh, work, forgotten}) == QLatin1String("forgotten"),
+            "an unseen turn left over four hours goes before everything");
+    ranker.setRank(TabRank::plain, 0);
+    require(picked(ranker, {old, fresh, work, forgotten}) == QLatin1String("work"),
+            "with overdue off, work leads again");
+    ranker.learn({old, fresh}, 0, false);
+    require(!ranker.refitting() && ranker.model().decisions == 0,
+            "the plain order logs a choice without fitting it");
+}
+
+// Looked at and left: an agent whose finished turn the person stayed on is
+// parked until it next begins to wait, so Tab passes it over.
+void parkedAgentsWaitForTheirNextTurn() {
+    Workspace workspace(WorkspaceMode::preview);
+    workspace.setParkAfterMsForTesting(30);
+    lapis::session::wire::AttentionSnapshot state;
+    state.available = state.connected = state.ready = true;
+    using lapis::session::attention::Activity;
+    const auto finish = [&](const char* id) {
+        auto* item = workspace.session(QString::fromLatin1(id));
+        state.activity = Activity::working;
+        item->applyAttention(state);
+        state.activity = Activity::turn_completed;
+        item->applyAttention(state);
+        return item;
+    };
+    require(workspace.selectSession(QStringLiteral("renderer")), "start on renderer");
+    auto* agent_item = finish("agent");
+    require(workspace.selectSession(QStringLiteral("agent")), "look at its finished turn");
+    QThread::msleep(40);
+    require(workspace.selectSession(QStringLiteral("renderer")), "and move on");
+    require(workspace.parked(agent_item) && workspace.parkedAtMs(QStringLiteral("agent")) > 0,
+            "it is parked");
+    require(!workspace.nextPriorityAttention({}), "Tab passes a parked agent over");
+    QThread::msleep(5);
+    finish("agent");
+    require(!workspace.parked(agent_item), "its next turn brings it back");
+    require(workspace.nextPriorityAttention({}) && workspace.focusedSession() == agent_item,
+            "and Tab goes to it");
+    auto* glanced = finish("checks");
+    require(workspace.selectSession(QStringLiteral("checks")), "a quick glance");
+    require(workspace.selectSession(QStringLiteral("agent")), "straight on");
+    require(!workspace.parked(glanced), "a glance does not park");
+}
+
 int main(int argc, char** argv) {
     try {
         QCoreApplication app(argc, argv);
         priorOrder();
+        plainOrder();
+        parkedAgentsWaitForTheirNextTurn();
         fixedOrder();
         fixedOrderClampsNegativeWaits();
         learnsOnline();

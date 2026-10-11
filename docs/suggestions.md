@@ -75,12 +75,12 @@ turns are not reported and no guess is made; restart it to add the hooks.
   pressed Return (or since Tab twice sent a guess) moves to the next agent that
   needs you. Only agents truly waiting on you count: a request, or a turn that
   finished with no background tasks, subagents or wakeups in flight, unseen or
-  with a guess. An agent at work, or paused while its own background work runs,
-  never does. Among those, Tab goes where you would: it starts from a prior
-  (work categories first, then requests, then turns you have not seen, then the
-  newest) and learns from every agent you settle on, by Tab or by hand, while
-  others wait. `tabAway` in [config](config.md#tabs-next-agent) names your work
-  categories or brings back the fixed order. When nothing waits, Tab goes to the
+  with a guess, and not parked (looked at for 2.5 seconds and left without a
+  prompt). An agent at work, or paused while its own background work runs,
+  never does. Among those, anything waiting over four hours comes first, then
+  work categories, requests, turns you have not seen, and the newest.
+  `tabAway` in [config](config.md#tabs-next-agent) names your work categories
+  or picks another order. When nothing waits, Tab goes to the
   program as usual. With the default
   `minConfidence` of 0 a finished Claude Code or Codex turn nearly always
   offers a guess, so Tab usually takes the guess instead of moving to another

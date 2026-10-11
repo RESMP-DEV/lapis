@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -16,15 +17,20 @@
 
 namespace lapis::desktop {
 
-// {"tabAway": {"rank": "learned", "work": ["work"]}}. `rank` is "learned"
-// (the default: a prior that learns from where the person goes) or "fixed"
-// (the earlier order: a guess not yet seen, then an unseen turn or a request,
-// then a guess already seen, longest waiting first). `work` names the
-// categories that count as work, which the prior puts first; names compare
-// without case.
+// {"tabAway": {"rank": "plain", "work": ["work"], "overdueHours": 4}}.
+// `rank` is "plain" (the default: an order that does not learn), "learned"
+// (a prior fitted to where the person goes) or "fixed" (the earliest order: a
+// guess not yet seen, then an unseen turn or a request, then a guess already
+// seen, longest waiting first). Plain puts first anything left waiting longer
+// than `overdueHours` (0 turns that off), oldest first, so neglected work
+// cannot sink; then work categories, requests, turns not yet seen, and the
+// newest. Choices are logged under every rank. `work` names the categories
+// that count as work; names compare without case.
+enum class TabRank : std::uint8_t { plain, learned, fixed };
 struct TabAwaySettings {
-    bool learned{true};
+    TabRank rank{TabRank::plain};
     QStringList work{QStringLiteral("work")};
+    double overdueHours{4};
     bool operator==(const TabAwaySettings&) const = default;
 };
 [[nodiscard]] TabAwaySettings parse_tab_away(const QJsonValue& value);
@@ -80,8 +86,11 @@ class TabRanker final : public QObject {
     TabRanker(TabRanker&&) = delete;
     TabRanker& operator=(TabRanker&&) = delete;
 
-    void setLearned(bool learned) { learned_ = learned; }
-    [[nodiscard]] bool learned() const { return learned_; }
+    void setRank(TabRank rank, double overdueHours = 4) {
+        rank_ = rank;
+        overdue_minutes_ = std::max(0.0, overdueHours) * 60.0;
+    }
+    [[nodiscard]] TabRank rank() const { return rank_; }
     [[nodiscard]] const Model& model() const { return model_; }
 
     // Scores in candidate order (higher first) and the index Tab goes to, or
@@ -92,7 +101,8 @@ class TabRanker final : public QObject {
     // Records the move Tab made, with every candidate's features and score.
     void recordTab(const std::vector<TabCandidate>& candidates, const std::vector<double>& scores,
                    std::size_t picked);
-    // Records where the person settled and refits in the background.
+    // Records where the person settled; under "learned", refits in the
+    // background.
     void learn(const std::vector<TabCandidate>& candidates, std::size_t chosen, bool viaTab);
 
     // Tests: whether a refit is running or queued, and the decision bound.
@@ -106,7 +116,8 @@ class TabRanker final : public QObject {
     void record(QJsonObject event) const;
     void refit();
     void adopt(Model model);
-    bool learned_{true};
+    TabRank rank_{TabRank::plain};
+    double overdue_minutes_{240};
     QString folder_;
     QString log_path_;
     QString model_path_;
