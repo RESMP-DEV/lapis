@@ -1255,6 +1255,31 @@ validation and thread dispositions at the root. Each optional `followups` entry
 records its own base revision, changed source digests, validation and limits;
 it does not replace or refresh the original evidence.
 
+`lapis.codex-p4-managed-daemon-probe/1` is a self-contained transport-decision
+receipt. It requires `recorded_at`, `passed`, `source`, `scope`, `decision`,
+`validation` and `non_claims`. `source` identifies the Lapis revision and dirty
+state, Codex candidate repository/revision, candidate-source cleanliness,
+binary SHA-256 and platform. The `decision` object must state:
+
+| Field | Contract |
+| --- | --- |
+| `managed_daemon_adopted` | Boolean adoption decision, not a process observation |
+| `backend_transport` | Exact backend transport selected by the launcher |
+| `tui_transport` | Exact TUI transport selected by the launcher |
+| `endpoint_owner_verified` | Boolean proof that the endpoint peer is the backend |
+| `managed_daemon_process` | Whether a daemon process existed in the disposable fixture |
+| `managed_daemon_process_scope` | Process-tree scope to which that observation applies |
+| `managed_daemon_state` | Whether either required daemon-state path existed |
+| `managed_daemon_state_paths_checked` | Every disposable-home state path checked, not a sample |
+| `qualification_identity` | Current identity decision, such as `executable-sha256` |
+| `reason` | Source-selection and live process/state evidence supporting the decision |
+
+Every `validation` entry names the check, its exact command, exit code and
+result. `non_claims` must retain the installed-daemon,
+managed-daemon-lifecycle and platform limits. A launcher that changes endpoint
+selection or creates daemon state cannot reuse this receipt; it must repeat P4
+and record a new decision.
+
 The original `scripts/probe_codex.py` retains its no-turn behavior. The separate
 shared-server probe also sends no model prompt:
 

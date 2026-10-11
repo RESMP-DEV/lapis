@@ -5630,3 +5630,12 @@ managed daemon, and executable SHA-256 remains the qualification identity. The
 attention harness now records this contract on every service check; a launcher
 that omits the explicit endpoint or creates daemon state must repeat P4 and make
 a new identity decision.
+
+### Codex P4 evidence-schema contract (October 11)
+
+The P4 decision receipt now has an explicit contributor contract in
+`CONTRIBUTING.md`. `lapis.codex-p4-managed-daemon-probe/1` requires source,
+scope, decision, validation and non-claim fields; the decision must record both
+transports, endpoint peer ownership, daemon process/state observations and every
+checked daemon-state path. The contract also states when a future launcher must
+repeat P4 rather than reuse the October 10 decision.
