@@ -19,7 +19,10 @@ namespace lapis::desktop {
 class UpdaterProcess;
 
 struct LimitResetSettings {
-    bool automatic{true};
+    // Off by default since October 11: from October 5 to 11 the automatic
+    // checks never spent a reset; 2,547 of 2,911 stopped at "plan identity
+    // could not be verified". Asking for a reset from Commands still works.
+    bool automatic{false};
     double minBlockedMinutes{60};
     int keepCredits{0};
     double salvageHours{12};

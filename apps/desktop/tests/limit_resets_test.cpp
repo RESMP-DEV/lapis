@@ -174,9 +174,9 @@ struct Fixture {
 void settingsReadFromTheConfig() {
     const auto defaults = lapis::desktop::parse_limit_resets(QJsonValue());
     require(defaults == lapis::desktop::LimitResetSettings{}, "lapis defaults without a setting");
-    require(defaults.automatic && defaults.minBlockedMinutes == 60 && defaults.keepCredits == 0 &&
+    require(!defaults.automatic && defaults.minBlockedMinutes == 60 && defaults.keepCredits == 0 &&
                 defaults.salvageHours == 12,
-            "on, an hour, no reserve, twelve hours");
+            "off, an hour, no reserve, twelve hours");
     const auto set = lapis::desktop::parse_limit_resets(
         QJsonDocument::fromJson(
             R"({"auto": false, "minBlockedMinutes": 15, "keepCredits": -2, "salvageHours": 24})")
