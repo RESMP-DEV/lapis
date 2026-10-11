@@ -188,7 +188,7 @@ off) comes first, oldest first, so neglected work cannot sink; then work
 categories, requests, turns you have not seen, and the newest. Learned starts
 from a prior in the same spirit and fits it to where you go; it was the default
 until October 11, when the log showed it mostly learned the order of your
-Command-number walk (593 jumps against 24 Tab moves in five days) rather than
+Command-number walk (597 jumps against 24 Tab moves in five days) rather than
 which agent needed you. `fixed` keeps the earliest order: a guess not yet seen,
 then an unseen turn or a request, then a guess already seen, the longest
 waiting first. `work` lists the categories, by name and without case, that
