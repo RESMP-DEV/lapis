@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import socket
 import struct
@@ -43,8 +44,6 @@ from probe_codex_attention import initialize
 from probe_terminal import run_process
 
 ROOT = Path(__file__).resolve().parents[1]
-MACOS_SOL_LOCAL = 0
-MACOS_LOCAL_PEERPID = 2
 
 
 snapshot = decode_attention_snapshot
@@ -524,43 +523,116 @@ def record_launch_contract(service, home, artifacts, receipt):
     """Prove the TUI used lapis's explicit endpoint, not a shared daemon."""
     backend_endpoint = Path(str(service.endpoint) + ".codex")
     endpoint_text = str(backend_endpoint)
-    rows = subprocess.check_output(
-        ["ps", "-axo", "pid=,ppid=,pgid=,command="], text=True, timeout=5
-    ).splitlines()
-    relevant = [row for row in rows if endpoint_text in row]
+    endpoint_argument = "unix://" + endpoint_text
+    process_command = (
+        ["ps", "-axo", "pid=,ppid=,pgid=,command="]
+        if sys.platform == "darwin"
+        else ["ps", "-eo", "pid=,ppid=,pgid=,args="]
+    )
+    rows = subprocess.check_output(process_command, text=True, timeout=5).splitlines()
+    processes = []
+    for row in rows:
+        columns = row.split(maxsplit=3)
+        if len(columns) != 4:
+            continue
+        processes.append(
+            {
+                "pid": int(columns[0]),
+                "ppid": int(columns[1]),
+                "pgid": int(columns[2]),
+                "command": columns[3],
+                "row": row,
+            }
+        )
+    for process in processes:
+        try:
+            process["arguments"] = shlex.split(process["command"])
+        except ValueError:
+            process["arguments"] = []
+
+    def has_arguments(process, expected):
+        arguments = process["arguments"]
+        width = len(expected)
+        return any(
+            arguments[index : index + width] == expected
+            for index in range(len(arguments))
+        )
+
     backend_rows = [
-        row for row in relevant if "app-server --listen unix://" + endpoint_text in row
+        process
+        for process in processes
+        if has_arguments(process, ["app-server", "--listen", endpoint_argument])
     ]
     tui_rows = [
-        row
-        for row in relevant
-        if "--remote unix://" + endpoint_text in row
-        and "app-server --listen unix://" + endpoint_text not in row
+        process
+        for process in processes
+        if has_arguments(process, ["--remote", endpoint_argument])
     ]
     require(
         len(backend_rows) == 1 and len(tui_rows) == 1,
         "Expected one dedicated backend and one explicitly remote TUI process",
     )
-    daemon_rows = [row for row in relevant if "app-server daemon" in row]
+    children = {}
+    for process in processes:
+        children.setdefault(process["ppid"], []).append(process)
+    descendants = []
+    frontier = [service.process.pid]
+    while frontier:
+        for process in children.get(frontier.pop(), []):
+            descendants.append(process)
+            frontier.append(process["pid"])
+    daemon_rows = [
+        process
+        for process in descendants
+        if has_arguments(process, ["app-server", "daemon"])
+    ]
     require(not daemon_rows, "A shared app-server daemon process was started")
     require(
         not (home / "app-server-daemon").exists()
         and not (home / "packages/app-server-daemon").exists(),
         "Managed daemon state was created in the disposable home",
     )
-    backend_columns = backend_rows[0].split(maxsplit=3)
+    backend = backend_rows[0]
     tui_pid = service.child_pid
     require(tui_pid is not None, "TUI process identity is missing")
-    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        probe.connect(endpoint_text)
-        peer_pid = struct.unpack(
-            "I", probe.getsockopt(MACOS_SOL_LOCAL, MACOS_LOCAL_PEERPID, 4)
-        )[0]
-    finally:
-        probe.close()
+    require(tui_rows[0]["pid"] == tui_pid, "The remote TUI is not the attached child")
     require(
-        peer_pid == int(backend_columns[0]),
+        tui_rows[0]["ppid"] == service.process.pid,
+        "The remote TUI is not parented by the service",
+    )
+    probe = None
+    try:
+        for _ in range(20):
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            probe.settimeout(0.25)
+            try:
+                probe.connect(endpoint_text)
+                break
+            except (ConnectionRefusedError, FileNotFoundError):
+                probe.close()
+                probe = None
+                time.sleep(0.05)
+        else:
+            require(False, "The dedicated endpoint did not accept a probe connection")
+        if sys.platform == "darwin":
+            # macOS defines SOL_LOCAL as 0 and LOCAL_PEERPID as 2 in sys/un.h.
+            peer_bytes = probe.getsockopt(0, 2, 4)
+            require(len(peer_bytes) == 4, "LOCAL_PEERPID returned an unexpected size")
+            peer_pid = struct.unpack("I", peer_bytes)[0]
+        else:
+            peer_bytes = probe.getsockopt(
+                socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("III")
+            )
+            require(
+                len(peer_bytes) == struct.calcsize("III"),
+                "SO_PEERCRED returned an unexpected size",
+            )
+            peer_pid = struct.unpack("III", peer_bytes)[0]
+    finally:
+        if probe is not None:
+            probe.close()
+    require(
+        peer_pid == backend["pid"],
         "The dedicated endpoint is owned by another process",
     )
     receipt["launch_contract"] = {
@@ -570,10 +642,10 @@ def record_launch_contract(service, home, artifacts, receipt):
         "managed_daemon_process_scope": "disposable fixture process tree",
         "managed_daemon_state": False,
         "endpoint_owner_verified": True,
-        "backend_process_group": int(backend_columns[2]),
+        "backend_process_group": backend["pgid"],
     }
     (artifacts / "launch-contract.txt").write_text(
-        "backend:\n" + backend_rows[0] + "\ntui:\n" + tui_rows[0] + "\n"
+        "backend:\n" + backend["row"] + "\ntui:\n" + tui_rows[0]["row"] + "\n"
     )
 
 

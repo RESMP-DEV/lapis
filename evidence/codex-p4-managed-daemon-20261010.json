@@ -1,7 +1,7 @@
 {
   "schema": "lapis.codex-p4-managed-daemon-probe/1",
   "schema_version": 1,
-  "recorded_at": "2026-10-10T23:16:08-07:00",
+  "recorded_at": "2026-10-10T23:27:24-07:00",
   "passed": true,
   "source": {
     "lapis_revision": "1ca099b45193486a955694161d7f85f4d70f020f",
@@ -17,7 +17,8 @@
     "candidate_repository": "RESMP-DEV/codex",
     "candidate_revision": "481280ec261ba1a1f8f0c205ed301825fe28f9bc",
     "candidate_source_clean": true,
-    "binary_sha256": "1e6d87e0d5b0e862e48f35fd816a7b9425c7988ef7c185d56be07d632a65ffef"
+    "binary_sha256": "1e6d87e0d5b0e862e48f35fd816a7b9425c7988ef7c185d56be07d632a65ffef",
+    "platform": "macOS arm64"
   },
   "scope": "P4 launch-contract probe against the P1-qualified binary in a disposable Lapis service home. No model turn is required for the transport decision; one live regression proves the probe does not disturb response routing.",
   "decision": {
@@ -34,9 +35,9 @@
   "validation": [
     {
       "name": "no-model-launch-contract",
-      "command": "python3 scripts/check_service_attention.py --build-dir build/desktop --output build/codex-p4-481280/no-model-final.json",
+      "command": "python3 scripts/check_service_attention.py --build-dir build/desktop --output build/codex-p4-481280/no-model-review-final.json",
       "exit_code": 0,
-      "result": "Passed in 2.042 seconds: managed TUI startup and attention attachment, same-child detach/reattach, abrupt service death cleanup, dedicated backend process, explicit remote TUI process, no daemon process/state in the disposable fixture, and endpoint peer PID matching the backend."
+      "result": "Passed in 2.078 seconds: managed TUI startup and attention attachment, same-child detach/reattach, abrupt service death cleanup, dedicated backend process, exact explicit-remote TUI arguments and child PID/parent, no daemon process/state in the disposable fixture, and endpoint peer PID matching the backend."
     },
     {
       "name": "live-routing-regression",
@@ -48,7 +49,7 @@
       "name": "focused-unit-tests",
       "command": "python3 -m unittest scripts.tests.test_check_service_attention -v",
       "exit_code": 0,
-      "result": "20 tests passed, including the dedicated endpoint and explicit remote process-contract regression."
+      "result": "21 tests passed, including positive and negative dedicated-endpoint, child, daemon and peer-PID process-contract regressions."
     },
     {
       "name": "python-lint-and-format",

@@ -196,7 +196,7 @@ class ModelPropagationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class LaunchContractTests(unittest.TestCase):
-    def test_dedicated_endpoint_and_explicit_remote_are_recorded(self):
+    def run_launch_contract(self, rows, *, peer_pid=321, daemon_state=False):
         class FakeSocket:
             def __init__(self):
                 self.connected = None
@@ -204,28 +204,33 @@ class LaunchContractTests(unittest.TestCase):
             def connect(self, endpoint):
                 self.connected = endpoint
 
+            def settimeout(self, timeout):
+                pass
+
             def getsockopt(self, level, option, size):
-                return struct.pack("I", 321)
+                return struct.pack("I", peer_pid)
 
             def close(self):
                 pass
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            endpoint = root / "attention.sock.codex"
-            service = SimpleNamespace(endpoint=root / "attention.sock", child_pid=123)
+            endpoint = Path("/private/lapis/attention.sock.codex")
+            service = SimpleNamespace(
+                endpoint=Path("/private/lapis/attention.sock"),
+                child_pid=123,
+                process=SimpleNamespace(pid=100),
+            )
             home = root / "home"
             home.mkdir()
+            if daemon_state:
+                (home / "app-server-daemon").mkdir()
             artifacts = root / "artifacts"
             artifacts.mkdir()
-            rows = (
-                "  321 100 321 /candidate app-server "
-                f"--listen unix://{endpoint} -c model=test\n"
-                f"  123 100 123 /candidate --remote unix://{endpoint} --no-alt-screen\n"
-            )
             socket = FakeSocket()
             receipt = {}
             with (
+                patch("check_service_attention.sys.platform", "darwin"),
                 patch(
                     "check_service_attention.subprocess.check_output",
                     Mock(return_value=rows),
@@ -236,19 +241,58 @@ class LaunchContractTests(unittest.TestCase):
             ):
                 record_launch_contract(service, home, artifacts, receipt)
             self.assertEqual(socket.connected, str(endpoint))
-            self.assertEqual(
-                receipt["launch_contract"],
-                {
-                    "backend_transport": "dedicated-app-server-unix-socket",
-                    "tui_transport": "explicit-remote-unix-socket",
-                    "managed_daemon_process": False,
-                    "managed_daemon_process_scope": "disposable fixture process tree",
-                    "managed_daemon_state": False,
-                    "endpoint_owner_verified": True,
-                    "backend_process_group": 321,
-                },
-            )
-            self.assertIn("backend:", (artifacts / "launch-contract.txt").read_text())
+            self.assertTrue((artifacts / "launch-contract.txt").exists())
+            return receipt
+
+    def launch_rows(self, endpoint):
+        return (
+            "  321 100 321 /candidate app-server "
+            f"--listen unix://{endpoint} -c model=test\n"
+            f"  123 100 123 /candidate --remote unix://{endpoint} --no-alt-screen\n"
+            f"  999 100 999 /candidate --remote unix://{endpoint}.old\n"
+        )
+
+    def test_dedicated_endpoint_and_explicit_remote_are_recorded(self):
+        endpoint = Path("/private/lapis/attention.sock.codex")
+        receipt = self.run_launch_contract(self.launch_rows(endpoint))
+        self.assertEqual(
+            receipt["launch_contract"],
+            {
+                "backend_transport": "dedicated-app-server-unix-socket",
+                "tui_transport": "explicit-remote-unix-socket",
+                "managed_daemon_process": False,
+                "managed_daemon_process_scope": "disposable fixture process tree",
+                "managed_daemon_state": False,
+                "endpoint_owner_verified": True,
+                "backend_process_group": 321,
+            },
+        )
+
+    def test_launch_contract_rejects_wrong_process_or_daemon_shapes(self):
+        endpoint = Path("/private/lapis/attention.sock.codex")
+        happy = self.launch_rows(endpoint)
+        duplicate_backend = happy + happy.splitlines()[0] + "\n"
+        duplicate_tui = happy + happy.splitlines()[1] + "\n"
+        wrong_child = happy.replace(
+            "  123 100 123 /candidate --remote", "  124 100 124 /candidate --remote"
+        )
+        daemon_child = happy + "  400 100 400 /candidate app-server daemon\n"
+        cases = [
+            ("duplicate backend", duplicate_backend, {}),
+            ("duplicate tui", duplicate_tui, {}),
+            ("wrong child", wrong_child, {}),
+            ("daemon child", daemon_child, {}),
+            ("daemon state", happy, {"daemon_state": True}),
+            ("peer mismatch", happy, {"peer_pid": 999}),
+        ]
+        for label, rows, options in cases:
+            with (
+                self.subTest(label),
+                self.assertRaisesRegex(
+                    CheckError, "Expected|TUI|daemon|endpoint|remote"
+                ),
+            ):
+                self.run_launch_contract(rows, **options)
 
 
 class StreamSocket:
