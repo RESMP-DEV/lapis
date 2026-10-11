@@ -5,6 +5,7 @@ import io
 import json
 import socket
 import stat
+import struct
 import tempfile
 import sys
 import unittest
@@ -23,6 +24,7 @@ from check_service_attention import (
     fixture_trust_prompt,
     initialize_fixture_owner,
     parse_args,
+    record_launch_contract,
     question_turn,
     verify_runtime_model,
     selected_question_answers,
@@ -191,6 +193,62 @@ class ModelPropagationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             params["collaborationMode"]["settings"]["model"], "selected-model"
         )
+
+
+class LaunchContractTests(unittest.TestCase):
+    def test_dedicated_endpoint_and_explicit_remote_are_recorded(self):
+        class FakeSocket:
+            def __init__(self):
+                self.connected = None
+
+            def connect(self, endpoint):
+                self.connected = endpoint
+
+            def getsockopt(self, level, option, size):
+                return struct.pack("I", 321)
+
+            def close(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            endpoint = root / "attention.sock.codex"
+            service = SimpleNamespace(endpoint=root / "attention.sock", child_pid=123)
+            home = root / "home"
+            home.mkdir()
+            artifacts = root / "artifacts"
+            artifacts.mkdir()
+            rows = (
+                "  321 100 321 /candidate app-server "
+                f"--listen unix://{endpoint} -c model=test\n"
+                f"  123 100 123 /candidate --remote unix://{endpoint} --no-alt-screen\n"
+            )
+            socket = FakeSocket()
+            receipt = {}
+            with (
+                patch(
+                    "check_service_attention.subprocess.check_output",
+                    Mock(return_value=rows),
+                ),
+                patch(
+                    "check_service_attention.socket.socket", Mock(return_value=socket)
+                ),
+            ):
+                record_launch_contract(service, home, artifacts, receipt)
+            self.assertEqual(socket.connected, str(endpoint))
+            self.assertEqual(
+                receipt["launch_contract"],
+                {
+                    "backend_transport": "dedicated-app-server-unix-socket",
+                    "tui_transport": "explicit-remote-unix-socket",
+                    "managed_daemon_process": False,
+                    "managed_daemon_process_scope": "disposable fixture process tree",
+                    "managed_daemon_state": False,
+                    "endpoint_owner_verified": True,
+                    "backend_process_group": 321,
+                },
+            )
+            self.assertIn("backend:", (artifacts / "launch-contract.txt").read_text())
 
 
 class StreamSocket:

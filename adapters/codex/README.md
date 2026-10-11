@@ -72,6 +72,14 @@ simultaneous path for binaries that admit both before either decision. No
 managed-daemon adoption, two-thread worktree behavior or broader request kind is
 claimed.
 
+P4 used the same disposable service fixture and confirmed that the explicit
+remote endpoint wins over daemon discovery: the backend and TUI both named the
+lapis-owned Unix socket, no managed daemon process or state appeared in the
+disposable fixture, and the endpoint's `LOCAL_PEERPID` matched the dedicated
+backend. See
+[P4 evidence](../../evidence/codex-p4-managed-daemon-20261010.json). The
+existing executable digest therefore remains the qualification identity.
+
 ## Integration route comparison
 
 The first wiring slice preserves the ordinary CLI terminal interface. The

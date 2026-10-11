@@ -1,0 +1,65 @@
+{
+  "schema": "lapis.codex-p4-managed-daemon-probe/1",
+  "schema_version": 1,
+  "recorded_at": "2026-10-10T23:16:08-07:00",
+  "passed": true,
+  "source": {
+    "lapis_revision": "1ca099b45193486a955694161d7f85f4d70f020f",
+    "lapis_dirty": true,
+    "lapis_dirty_files": [
+      "adapters/codex/README.md",
+      "docs/architecture.md",
+      "docs/status.md",
+      "scripts/check_service_attention.py",
+      "scripts/tests/test_check_service_attention.py",
+      "evidence/codex-p4-managed-daemon-20261010.json"
+    ],
+    "candidate_repository": "RESMP-DEV/codex",
+    "candidate_revision": "481280ec261ba1a1f8f0c205ed301825fe28f9bc",
+    "candidate_source_clean": true,
+    "binary_sha256": "1e6d87e0d5b0e862e48f35fd816a7b9425c7988ef7c185d56be07d632a65ffef"
+  },
+  "scope": "P4 launch-contract probe against the P1-qualified binary in a disposable Lapis service home. No model turn is required for the transport decision; one live regression proves the probe does not disturb response routing.",
+  "decision": {
+    "managed_daemon_adopted": false,
+    "backend_transport": "dedicated-app-server-unix-socket",
+    "tui_transport": "explicit-remote-unix-socket",
+    "endpoint_owner_verified": true,
+    "managed_daemon_process": false,
+    "managed_daemon_process_scope": "disposable fixture process tree",
+    "managed_daemon_state": false,
+    "qualification_identity": "executable-sha256",
+    "reason": "Lapis launches one dedicated app-server with --listen unix://<endpoint>.codex and passes that exact endpoint to the TUI with --remote. Candidate source selection prefers an explicit remote endpoint over local daemon discovery, and the live process/state inventory found no daemon."
+  },
+  "validation": [
+    {
+      "name": "no-model-launch-contract",
+      "command": "python3 scripts/check_service_attention.py --build-dir build/desktop --output build/codex-p4-481280/no-model-final.json",
+      "exit_code": 0,
+      "result": "Passed in 2.042 seconds: managed TUI startup and attention attachment, same-child detach/reattach, abrupt service death cleanup, dedicated backend process, explicit remote TUI process, no daemon process/state in the disposable fixture, and endpoint peer PID matching the backend."
+    },
+    {
+      "name": "live-routing-regression",
+      "command": "QSG_RENDER_LOOP=threaded python3 scripts/check_service_attention.py --live-glm --desktop --build-dir build/desktop --output build/codex-p4-481280/live-regression.json",
+      "exit_code": 0,
+      "result": "All 13 live GLM service/desktop checks passed in 65.106 seconds while recording the same dedicated-launch contract."
+    },
+    {
+      "name": "focused-unit-tests",
+      "command": "python3 -m unittest scripts.tests.test_check_service_attention -v",
+      "exit_code": 0,
+      "result": "20 tests passed, including the dedicated endpoint and explicit remote process-contract regression."
+    },
+    {
+      "name": "python-lint-and-format",
+      "command": "ruff check --config ruff.toml scripts/check_service_attention.py scripts/tests/test_check_service_attention.py && ruff format --config ruff.toml --check scripts/check_service_attention.py scripts/tests/test_check_service_attention.py",
+      "exit_code": 0,
+      "result": "Both checks passed."
+    }
+  ],
+  "non_claims": [
+    "No installed or user-owned Codex daemon was started, stopped, inspected or modified.",
+    "This does not qualify managed-daemon lifecycle, update identity, remote-control pairing, two-thread worktrees, broader request kinds, package behavior, Linux or native input/GPU.",
+    "A future launcher that omits the explicit remote endpoint or creates daemon state must repeat this probe and make a new adoption decision."
+  ]
+}

@@ -43,6 +43,8 @@ from probe_codex_attention import initialize
 from probe_terminal import run_process
 
 ROOT = Path(__file__).resolve().parents[1]
+MACOS_SOL_LOCAL = 0
+MACOS_LOCAL_PEERPID = 2
 
 
 snapshot = decode_attention_snapshot
@@ -518,6 +520,63 @@ def verify_runtime_model(live, args):
     )
 
 
+def record_launch_contract(service, home, artifacts, receipt):
+    """Prove the TUI used lapis's explicit endpoint, not a shared daemon."""
+    backend_endpoint = Path(str(service.endpoint) + ".codex")
+    endpoint_text = str(backend_endpoint)
+    rows = subprocess.check_output(
+        ["ps", "-axo", "pid=,ppid=,pgid=,command="], text=True, timeout=5
+    ).splitlines()
+    relevant = [row for row in rows if endpoint_text in row]
+    backend_rows = [
+        row for row in relevant if "app-server --listen unix://" + endpoint_text in row
+    ]
+    tui_rows = [
+        row
+        for row in relevant
+        if "--remote unix://" + endpoint_text in row
+        and "app-server --listen unix://" + endpoint_text not in row
+    ]
+    require(
+        len(backend_rows) == 1 and len(tui_rows) == 1,
+        "Expected one dedicated backend and one explicitly remote TUI process",
+    )
+    daemon_rows = [row for row in relevant if "app-server daemon" in row]
+    require(not daemon_rows, "A shared app-server daemon process was started")
+    require(
+        not (home / "app-server-daemon").exists()
+        and not (home / "packages/app-server-daemon").exists(),
+        "Managed daemon state was created in the disposable home",
+    )
+    backend_columns = backend_rows[0].split(maxsplit=3)
+    tui_pid = service.child_pid
+    require(tui_pid is not None, "TUI process identity is missing")
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.connect(endpoint_text)
+        peer_pid = struct.unpack(
+            "I", probe.getsockopt(MACOS_SOL_LOCAL, MACOS_LOCAL_PEERPID, 4)
+        )[0]
+    finally:
+        probe.close()
+    require(
+        peer_pid == int(backend_columns[0]),
+        "The dedicated endpoint is owned by another process",
+    )
+    receipt["launch_contract"] = {
+        "backend_transport": "dedicated-app-server-unix-socket",
+        "tui_transport": "explicit-remote-unix-socket",
+        "managed_daemon_process": False,
+        "managed_daemon_process_scope": "disposable fixture process tree",
+        "managed_daemon_state": False,
+        "endpoint_owner_verified": True,
+        "backend_process_group": int(backend_columns[2]),
+    }
+    (artifacts / "launch-contract.txt").write_text(
+        "backend:\n" + backend_rows[0] + "\ntui:\n" + tui_rows[0] + "\n"
+    )
+
+
 async def exercise(args, receipt):
     executable = shutil.which("codex")
     require(executable is not None, "codex is not installed")
@@ -606,6 +665,7 @@ async def exercise(args, receipt):
                     persistent.append(candidate)
             require(len(persistent) == 1, "Fixture must have one persistent TUI thread")
             thread = persistent[0]
+            record_launch_contract(service, home, artifacts, receipt)
             receipt["checks"].append("managed TUI startup and attention attachment")
             if not (args.live_glm or args.live_openai):
                 await view.close()
