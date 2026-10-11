@@ -359,13 +359,12 @@ QJsonArray loggedCandidates(const std::vector<TabCandidate>& candidates,
 
 void TabRanker::recordTab(const std::vector<TabCandidate>& candidates,
                           const std::vector<double>& scores, std::size_t picked) {
-    record(
-        {{QStringLiteral("event"), QStringLiteral("tab")},
-         {QStringLiteral("rank"), rank_ == TabRank::learned ? QStringLiteral("learned")
-                                  : rank_ == TabRank::fixed ? QStringLiteral("fixed")
-                                                            : QStringLiteral("plain")},
-         {QStringLiteral("picked"), static_cast<int>(picked)},
-         {QStringLiteral("candidates"), loggedCandidates(candidates, &scores)}});
+    record({{QStringLiteral("event"), QStringLiteral("tab")},
+            {QStringLiteral("rank"), rank_ == TabRank::learned ? QStringLiteral("learned")
+                                     : rank_ == TabRank::fixed ? QStringLiteral("fixed")
+                                                               : QStringLiteral("plain")},
+            {QStringLiteral("picked"), static_cast<int>(picked)},
+            {QStringLiteral("candidates"), loggedCandidates(candidates, &scores)}});
 }
 
 void TabRanker::learn(const std::vector<TabCandidate>& candidates, std::size_t chosen,
@@ -408,9 +407,8 @@ void TabRanker::record(QJsonObject event) const {
         // archived under its date, never deleted.
         const auto previous = log_path_ + QStringLiteral(".1");
         if (QFile::exists(previous) &&
-            !QFile::rename(previous,
-                           log_path_ + QDateTime::currentDateTimeUtc().toString(
-                                           QStringLiteral("'.'yyyyMMdd-HHmmss")))) {
+            !QFile::rename(previous, log_path_ + QDateTime::currentDateTimeUtc().toString(
+                                                     QStringLiteral("'.'yyyyMMdd-HHmmss")))) {
             qWarning() << "Tab ranker: cannot archive the previous log";
             return;
         }

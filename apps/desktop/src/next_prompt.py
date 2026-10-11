@@ -645,8 +645,14 @@ FAILURE_KINDS = (
     ("limit", re.compile(r"limit|quota|rate.?limit|\b429\b|overloaded|\b529\b", re.I)),
     ("auth", re.compile(r"auth|log ?in|credential|\b40[13]\b|expired|forbidden", re.I)),
     ("timeout", re.compile(r"timed? ?out|timeout", re.I)),
-    ("network", re.compile(r"connect|resolve|unreachable|refused|network|ssl|dns", re.I)),
-    ("malformed", re.compile(r"json|expecting|malformed|candidates|no answer|parse", re.I)),
+    (
+        "network",
+        re.compile(r"connect|resolve|unreachable|refused|network|ssl|dns", re.I),
+    ),
+    (
+        "malformed",
+        re.compile(r"json|expecting|malformed|candidates|no answer|parse", re.I),
+    ),
 )
 SECRETISH = re.compile(r"[A-Za-z0-9_\-]{24,}")
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")

@@ -325,7 +325,11 @@ def held_out(offers, settled_shown):
             "mean_similarity": round(sum(similarity) / len(similarity), 3),
         }
 
-    return {"made": len(hidden), "hidden": figures(settled), "shown": figures(settled_shown)}
+    return {
+        "made": len(hidden),
+        "hidden": figures(settled),
+        "shown": figures(settled_shown),
+    }
 
 
 def acceptance(events):

@@ -519,14 +519,14 @@ void NextPrompt::failed(const QString& id, const Agent& agent, Stage stage, cons
         QStringLiteral("helper unavailable")};
     const bool from_helper = !known.contains(why);
     const auto reason = from_helper ? QStringLiteral("helper failed") : why;
-    QJsonObject event{
-        {QStringLiteral("event"), QStringLiteral("failed")},
-        {QStringLiteral("agent"), id},
-        {QStringLiteral("machine"), agent.machine},
-        {QStringLiteral("cli"), agent.cli},
-        {QStringLiteral("stage"),
-         stage == Stage::predict ? QStringLiteral("predict") : QStringLiteral("context")},
-        {QStringLiteral("error"), reason}};
+    QJsonObject event{{QStringLiteral("event"), QStringLiteral("failed")},
+                      {QStringLiteral("agent"), id},
+                      {QStringLiteral("machine"), agent.machine},
+                      {QStringLiteral("cli"), agent.cli},
+                      {QStringLiteral("stage"), stage == Stage::predict
+                                                    ? QStringLiteral("predict")
+                                                    : QStringLiteral("context")},
+                      {QStringLiteral("error"), reason}};
     // A message that came with a kind was cleaned to one line by failure() in
     // next_prompt.py; any other helper text stays out of the log.
     if (from_helper && !why.isEmpty() && !kind.isEmpty())
@@ -770,9 +770,8 @@ void NextPrompt::record(QJsonObject event) const {
         // archived under its date, never deleted.
         const auto previous = log_path_ + QStringLiteral(".1");
         if (QFile::exists(previous) &&
-            !QFile::rename(previous,
-                           log_path_ + QDateTime::currentDateTimeUtc().toString(
-                                           QStringLiteral("'.'yyyyMMdd-HHmmss")))) {
+            !QFile::rename(previous, log_path_ + QDateTime::currentDateTimeUtc().toString(
+                                                     QStringLiteral("'.'yyyyMMdd-HHmmss")))) {
             qWarning() << "Next prompt: cannot archive the previous log";
             return;
         }

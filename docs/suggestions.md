@@ -141,6 +141,7 @@ you settled on with the agents that were waiting when you left the one before
 them in the background and keeps its model in `tab_away_model.json`.
 
 ```sh
+python3 scripts/runtime_digest.py                  # the last day: guesses that worked, taken by arm, failures, Ultra Tab, pings
 python3 scripts/tab_away_eval.py log               # Tab's ranker against your logged choices
 python3 scripts/next_prompt_eval.py log            # acceptance: of the guesses you saw, the share you used
 python3 scripts/next_prompt_eval.py log --judge    # the ones you passed over, against what you typed
