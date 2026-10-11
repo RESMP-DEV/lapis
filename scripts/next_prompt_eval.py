@@ -495,14 +495,22 @@ def acceptance(events):
     return offers, report
 
 
+def log_files(path):
+    """The log and what rotation moved aside, oldest first: dated archives
+    (log.YYYYMMDD-HHMMSS), then log.1, then the log itself."""
+    archives = sorted(path.parent.glob(path.name + ".2*"))
+    return [p for p in archives + [Path(str(path) + ".1"), path] if p.is_file()]
+
+
 def log(arguments):
     events = []
     path = Path(arguments.log).expanduser()
-    for line in path.read_text().splitlines() if path.exists() else []:
-        try:
-            events.append(json.loads(line))
-        except ValueError:
-            continue
+    for part in log_files(path):
+        for line in part.read_text(errors="replace").splitlines():
+            try:
+                events.append(json.loads(line))
+            except ValueError:
+                continue
     offers, report = acceptance(events)
     if not arguments.judge:
         # Both report shapes carry the coverage field; without judging there

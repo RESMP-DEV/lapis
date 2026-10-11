@@ -491,7 +491,13 @@ void predictsAndOffers() {
     next.turnFinished(QStringLiteral("a"));
     require(QFileInfo::exists(log + QStringLiteral(".1")) && QFileInfo(log).size() < 4096 &&
                 events(log).size() == 1,
-            "log rotation retains one backup and writes the new event to the active file");
+            "log rotation moves the full log aside and writes the new event to the active file");
+    write(log, QByteArray(qsizetype{4} * 1024 * 1024, '\n'));
+    next.turnFinished(QStringLiteral("a"));
+    const auto archived = QFileInfo(log).dir().entryList(
+        {QFileInfo(log).fileName() + QStringLiteral(".2*")}, QDir::Files);
+    require(archived.size() == 1 && QFileInfo::exists(log + QStringLiteral(".1")),
+            "a second rotation archives the first under its date instead of deleting it");
     next.setSettings({});
     require(!next.enabled(), "off");
     require(next.suggestion(QStringLiteral("a")).isEmpty(), "turning it off withdraws offers");

@@ -765,8 +765,17 @@ void NextPrompt::record(QJsonObject event) const {
         return;
     }
     if (file.exists() && file.size() + encoded.size() > kLogLimit) {
+        // These are labels (what the person did with each guess or move), the
+        // one thing here that cannot be regenerated: the previous file is
+        // archived under its date, never deleted.
         const auto previous = log_path_ + QStringLiteral(".1");
-        QFile::remove(previous);
+        if (QFile::exists(previous) &&
+            !QFile::rename(previous,
+                           log_path_ + QDateTime::currentDateTimeUtc().toString(
+                                           QStringLiteral("'.'yyyyMMdd-HHmmss")))) {
+            qWarning() << "Next prompt: cannot archive the previous log";
+            return;
+        }
         if (!file.rename(previous)) {
             qWarning() << "Next prompt: cannot rotate log";
             return;

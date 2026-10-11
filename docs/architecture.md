@@ -4421,7 +4421,8 @@ without a numeric probability, and the predicted event records `top_scored`.
   off, and whether it had been seen), plus a bounded `similarity_bounded` marker when outcome scoring compares only the first 2000 characters or uses its conservative shared-prefix/suffix fallback for prompts over 256 characters, `failed` (the stage, context or
   predict, and a stable reason category without raw error text) and `skipped`
   (the hourly cap, which counts model calls). Log records are bounded to 1 MiB;
-  the active log rotates at 4 MiB with one owner-only backup. Helper stdout is
+  the active log rotates at 4 MiB into an owner-only `.1`, and an older `.1` is
+  archived under its date (labels are never deleted). Helper stdout is
   bounded to 1 MiB and stderr to 64 KiB; timeout, overflow, disable and
   supersession stop its process group. Session and offer identity are captured
   before input is sent and checked again for every receipt, so a document
@@ -4658,7 +4659,7 @@ agents qualify is a fixed rule; their order is learned.
   before that add agents that began waiting and keep the ones passed over, so
   a Tab followed by another move teaches against Tab's pick. Each choice and
   each Tab move (candidates' features and scores) is appended to
-  `runtime/tab_away.jsonl` (owner-only, 4 MiB with one backup). A thread-pool
+  `runtime/tab_away.jsonl` (owner-only, 4 MiB, older files archived by date). A thread-pool
   job refits on the newest 1000 choices (150 gradient steps on mean negative
   log-likelihood plus 0.1 times the squared distance from the prior), writes
   `runtime/tab_away_model.json` and publishes the weights to the GUI thread;

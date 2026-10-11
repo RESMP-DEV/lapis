@@ -124,7 +124,8 @@ message, with long tokens, email addresses and home folders masked. Three
 failed guesses in a row show in the corner of the agent's terminal, with what
 they hit, until a guess succeeds. A use is recorded only after the service admits its input.
 Admission does not guarantee the CLI consumed it before a crash. The log
-rotates at 4 MiB and retains one previous file; helper output is bounded and
+rotates at 4 MiB into `.1`, and an older `.1` is kept under its date rather
+than deleted, since these are labels; helper output is bounded and
 only the cleaned first line of a model failure is copied into the log.
 Evaluation reports missing conversations, pending answers and failed calls
 separately. Missing judge results are excluded from quality scores; `grading`
