@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import socket
 import struct
@@ -518,6 +519,149 @@ def verify_runtime_model(live, args):
     )
 
 
+def record_launch_contract(service, home, artifacts, receipt):
+    """Prove the TUI used lapis's explicit endpoint, not a shared daemon."""
+    backend_endpoint = Path(str(service.endpoint) + ".codex")
+    endpoint_text = str(backend_endpoint)
+    endpoint_argument = "unix://" + endpoint_text
+    process_command = (
+        ["ps", "-axo", "pid=,ppid=,pgid=,command="]
+        if sys.platform == "darwin"
+        else ["ps", "-eo", "pid=,ppid=,pgid=,args="]
+    )
+    rows = subprocess.check_output(process_command, text=True, timeout=5).splitlines()
+    processes = []
+    for row in rows:
+        columns = row.split(maxsplit=3)
+        if len(columns) != 4:
+            continue
+        try:
+            process = {
+                "pid": int(columns[0]),
+                "ppid": int(columns[1]),
+                "pgid": int(columns[2]),
+                "command": columns[3],
+                "row": row,
+            }
+        except ValueError:
+            continue
+        processes.append(process)
+    for process in processes:
+        try:
+            process["arguments"] = shlex.split(process["command"])
+        except ValueError:
+            # A malformed ps row cannot match the required exact arguments;
+            # leaving it empty makes the expected backend/TUI absence fail closed.
+            process["arguments"] = []
+
+    def has_arguments(process, expected):
+        arguments = process["arguments"]
+        width = len(expected)
+        return any(
+            arguments[index : index + width] == expected
+            for index in range(len(arguments))
+        )
+
+    backend_rows = [
+        process
+        for process in processes
+        if has_arguments(process, ["app-server", "--listen", endpoint_argument])
+    ]
+    tui_rows = [
+        process
+        for process in processes
+        if has_arguments(process, ["--remote", endpoint_argument])
+    ]
+    require(
+        len(backend_rows) == 1 and len(tui_rows) == 1,
+        "Expected one dedicated backend and one explicitly remote TUI process",
+    )
+    children = {}
+    for process in processes:
+        children.setdefault(process["ppid"], []).append(process)
+    descendants = []
+    frontier = [service.process.pid]
+    while frontier:
+        for process in children.get(frontier.pop(), []):
+            descendants.append(process)
+            frontier.append(process["pid"])
+    daemon_rows = [
+        process
+        for process in descendants
+        if has_arguments(process, ["app-server", "daemon"])
+    ]
+    require(not daemon_rows, "A shared app-server daemon process was started")
+    # Canonical managed-daemon locations under CODEX_HOME; a new Codex storage
+    # contract requires a new P4 probe rather than silently broadening this one.
+    daemon_state_paths = (
+        home / "app-server-daemon",
+        home / "packages/app-server-daemon",
+    )
+    require(
+        not any(path.exists() for path in daemon_state_paths),
+        "Managed daemon state was created in the disposable home",
+    )
+    backend = backend_rows[0]
+    tui_pid = service.child_pid
+    require(tui_pid is not None, "TUI process identity is missing")
+    require(tui_rows[0]["pid"] == tui_pid, "The remote TUI is not the attached child")
+    require(
+        tui_rows[0]["ppid"] == service.process.pid,
+        "The remote TUI is not parented by the service",
+    )
+    probe = None
+    try:
+        for _ in range(40):
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            probe.settimeout(0.1)
+            try:
+                probe.connect(endpoint_text)
+                break
+            except (ConnectionRefusedError, FileNotFoundError):
+                probe.close()
+                probe = None
+                time.sleep(0.05)
+        else:
+            require(False, "The dedicated endpoint did not accept a probe connection")
+        if sys.platform == "darwin":
+            # These stable values come from the macOS SDK's sys/un.h; Linux uses
+            # SO_PEERCRED below.
+            peer_bytes = probe.getsockopt(0, 2, 4)
+            require(len(peer_bytes) == 4, "LOCAL_PEERPID returned an unexpected size")
+            peer_pid = struct.unpack("I", peer_bytes)[0]
+        else:
+            peer_bytes = probe.getsockopt(
+                socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("III")
+            )
+            require(
+                len(peer_bytes) == struct.calcsize("III"),
+                "SO_PEERCRED returned an unexpected size",
+            )
+            peer_pid = struct.unpack("III", peer_bytes)[0]
+    finally:
+        if probe is not None:
+            probe.close()
+    require(
+        peer_pid == backend["pid"],
+        "The dedicated endpoint is owned by another process",
+    )
+    receipt["launch_contract"] = {
+        "backend_transport": "dedicated-app-server-unix-socket",
+        "tui_transport": "explicit-remote-unix-socket",
+        "managed_daemon_process": False,
+        "managed_daemon_process_scope": "disposable fixture process tree",
+        "managed_daemon_state": False,
+        "managed_daemon_state_paths_checked": [
+            str(path) for path in daemon_state_paths
+        ],
+        "endpoint_owner_verified": True,
+        "backend_process_group": backend["pgid"],
+    }
+    (artifacts / "launch-contract.txt").write_text(
+        "backend:\n" + backend["row"] + "\ntui:\n" + tui_rows[0]["row"] + "\n"
+    )
+
+
 async def exercise(args, receipt):
     executable = shutil.which("codex")
     require(executable is not None, "codex is not installed")
@@ -606,6 +750,9 @@ async def exercise(args, receipt):
                     persistent.append(candidate)
             require(len(persistent) == 1, "Fixture must have one persistent TUI thread")
             thread = persistent[0]
+            await asyncio.to_thread(
+                record_launch_contract, service, home, artifacts, receipt
+            )
             receipt["checks"].append("managed TUI startup and attention attachment")
             if not (args.live_glm or args.live_openai):
                 await view.close()

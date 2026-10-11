@@ -5610,3 +5610,23 @@ an eligible launch still binds to lapis's dedicated endpoint or routes through
 the managed daemon, and record whether qualification identity must move from
 executable digest to daemon release identity. No installed daemon, user trust
 configuration or live Lapis session is touched by that probe.
+
+### Codex P4 managed-daemon decision (October 10)
+
+The [P4 receipt](../evidence/codex-p4-managed-daemon-20261010.json) closes that
+decision for the P1 candidate without starting or touching an installed daemon.
+The real service fixture launched exactly one dedicated
+`app-server --listen unix://…​.codex` process and one TUI whose command line
+contained the same explicit `--remote unix://…​.codex` endpoint. The disposable
+home had neither `app-server-daemon` state nor `packages/app-server-daemon`, no
+daemon process appeared in the disposable fixture process tree, and a fresh
+connection to the endpoint reported the backend PID through macOS
+`LOCAL_PEERPID`.
+
+Candidate source selection also explains the observation: an explicit remote
+endpoint becomes `AppServerTarget::Remote` before local-daemon discovery. The
+dedicated-endpoint launch contract therefore survives. Lapis does not adopt the
+managed daemon, and executable SHA-256 remains the qualification identity. The
+attention harness now records this contract on every service check; a launcher
+that omits the explicit endpoint or creates daemon state must repeat P4 and make
+a new identity decision.
