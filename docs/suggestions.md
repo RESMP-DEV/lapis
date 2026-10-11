@@ -48,7 +48,7 @@ Experiments: `experiment` (default 0.2) of guesses go to another arm, chosen
 evenly from `experimentModels` (default `["claude-sonnet-5-5"]`, through the
 same CLI) and, when `localEndpoint` and `localModel` are set, a local model
 behind an OpenAI-compatible endpoint (for example
-`"localEndpoint": "http://tetra:8000/v1"`). Each guess's `arm` (`control`,
+`"localEndpoint": "http://gpu-host:8000/v1"`). Each guess's `arm` (`control`,
 `model` or `local`) and `model` are in `next_prompt.jsonl`, so arms can be
 compared on what you then sent. Set `experiment` to 0 to always use `model`.
 

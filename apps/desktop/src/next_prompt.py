@@ -722,22 +722,23 @@ def ask(system, prompt, model, effort="", claude="claude", timeout=150):
     return envelope.get("result", ""), envelope
 
 
-PERSONAL = """You predict the exact next message Elliot will type to the coding agent in this
-conversation. He supervises many CLI agents at once and voice-types; he is often
-terse ("go", "status?", "continue"), pushes back, asks questions, or starts a new
-task. Write only his next message, verbatim in his style, nothing else.
-His standing instructions to every agent follow."""
+PERSONAL = """You predict the exact next message the person will type to the coding agent
+in this conversation. They supervise many CLI agents at once and voice-type;
+they are often terse ("go", "status?", "continue"), push back, ask questions, or
+start a new task. Write only their next message, verbatim in their style,
+nothing else. Their standing instructions to every agent follow."""
 PERSONAL_CONTEXT = 8000
 
 
 def personal_messages(bundle):
-    """The prompt the fine-tuned local model was trained on (tab-bench's
-    personal/fmt.py): header and the newest conversation, as plain tags."""
+    """The shape of prompt the fine-tuned local model was trained on: a
+    header and the newest conversation, as plain tags. Its training text named
+    the person and their machine; this keeps the shape without either."""
     agent = bundle.get("agent", {})
     context = bundle.get("context", {})
     head = "cli: {}\nmachine: {}\ncwd: {}\ntime: {}".format(
         agent.get("cli", ""),
-        agent.get("machine") or "macbook",
+        agent.get("machine") or "this Mac",
         agent.get("folder", ""),
         datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
@@ -756,11 +757,11 @@ def personal_messages(bundle):
     ]
     if recent:
         parts.append(
-            "His latest prompts to other agents on this machine (newest first):\n"
+            "Their latest prompts to other agents on this machine (newest first):\n"
             "<recent>\n" + "\n".join(recent)[:3000] + "\n</recent>"
         )
     parts.append("This conversation, oldest first:\n" + head + "\n\n" + body)
-    parts.append("Write his next message.")
+    parts.append("Write their next message.")
     system = (
         PERSONAL
         + "\n\n<standing_instructions>\n"
