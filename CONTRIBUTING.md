@@ -1274,8 +1274,8 @@ binary SHA-256 and platform. The `decision` object must state:
 | `qualification_identity` | Current identity decision, such as `executable-sha256` |
 | `reason` | Source-selection and live process/state evidence supporting the decision |
 
-Every `validation` entry names a no-model or live-routing check, its exact
-command, exit code and result. `non_claims` must retain the installed-daemon,
+Every `validation` entry names the check, its exact command, exit code and
+result. `non_claims` must retain the installed-daemon,
 managed-daemon-lifecycle and platform limits. A launcher that changes endpoint
 selection or creates daemon state cannot reuse this receipt; it must repeat P4
 and record a new decision.
