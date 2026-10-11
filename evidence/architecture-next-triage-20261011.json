@@ -1,0 +1,98 @@
+{
+  "schema": "lapis.architecture-next-triage/1",
+  "schema_version": 1,
+  "recorded_at": "2026-10-11T08:47:00Z",
+  "passed": true,
+  "source": {
+    "lapis_revision": "31567c4b3a8caa2ec074e15fad6d0025e2e940b3",
+    "lapis_dirty": true,
+    "lapis_dirty_scope": "Architecture triage only: docs/architecture.md, docs/status.md and this sanitized evidence receipt.",
+    "platform": "macOS arm64"
+  },
+  "scope": "Decision triage over the merged architecture after PRs #147-#149. It selects the next bounded implementation slice and records current-head R1 evidence; it changes no runtime behavior.",
+  "inputs": [
+    {
+      "name": "architecture-and-status",
+      "result": "Open choices, production delivery order, execution scoring and readiness tables were inspected at main 31567c4."
+    },
+    {
+      "name": "r1-source-audit",
+      "agent": "read-only CCR worker",
+      "served_model": "zai,glm-5.3-flash",
+      "result": "Mapped GUI birth, state/runtime/control, real-service launcher, CMake and focused checker ownership; proposed the one-session birth-broker slice."
+    },
+    {
+      "name": "r4-source-audit",
+      "agent": "read-only CCR worker",
+      "served_model": "zai,glm-5.3-flash",
+      "result": "Confirmed candidate-gate enforcement is merged and identified the local ad-hoc signed package path plus parent-owned publication gates."
+    },
+    {
+      "name": "codex-next-audit",
+      "agent": "read-only CCR worker",
+      "served_model": "zai,glm-5.3-flash",
+      "result": "Compared explicit thread switching, external-agent import onboarding, embedded/local-daemon worktree adoption and permission-rule semantics; explicit service-owned switching is the narrowest next Codex slice, but R1 remains first globally."
+    }
+  ],
+  "decision": {
+    "next_implementation_slice": "R1 one-session supervisor birth broker",
+    "rank_order": [
+      "R1 headless birth broker behind LAPIS_BUILD_SUPERVISOR_RUNTIME",
+      "R4 local signed-scope package verification at the next candidate",
+      "Codex explicit thread switch",
+      "Codex external-agent import onboarding and other post-P1 adoptions"
+    ],
+    "r1_slice": {
+      "target": "Add an opt-in lapis_supervisor_daemon without changing normal GUI birth.",
+      "request_contract": "Same effective-UID peer, no active session slot, bounded literal agent launch fields and fingerprint; daemon-selected service executable; no environment override.",
+      "reply_contract": "Return supervisor-selected session ID and epoch only; never expose the spawn token.",
+      "required_observations": [
+        "daemon is a separate process from service and terminal child",
+        "real lapis_session_service starts around a harmless terminal child",
+        "authoritative reconnect and joined second client preserve identity",
+        "hello preserves the terminal child PID",
+        "explicit stop removes service, terminal child and ownership record"
+      ],
+      "required_refusals": [
+        "fingerprint mismatch",
+        "oversized launch payload",
+        "nonempty service environment",
+        "second birth while active",
+        "malformed frame"
+      ]
+    },
+    "r4_position": "Local package_macos.py app plus verify is the next local release-slice check, but an installed update cannot claim independent service birth before R1; publication and the six candidate gates remain parent-owned.",
+    "codex_position": "Explicit thread switch is the next Codex slice after P2. The first switch implementation should accept an exact persistent thread ID only while no decision-capable request is pending, rotate the attention epoch, reconcile the target by resume/read and reject every old token. External-agent import onboarding remains broader and is not ahead of R1."
+  },
+  "validation": [
+    {
+      "name": "current-head-r1-focused-gate",
+      "command": "python3 -u scripts/check_supervisor_runtime.py --jobs 6 --output build/reports/r1-supervisor/current-main.json",
+      "exit_code": 0,
+      "source_revision": "31567c4b3a8caa2ec074e15fad6d0025e2e940b3",
+      "source_dirty": false,
+      "result": "Configure, targeted build and supervisor-state/runtime/real-service CTest passed; real-service integration was observed rather than skipped."
+    },
+    {
+      "name": "current-head-quality",
+      "command": "python3 -u scripts/check_quality.py",
+      "exit_code": 0,
+      "source_revision": "31567c4b3a8caa2ec074e15fad6d0025e2e940b3",
+      "source_dirty": false,
+      "result": "Repository contracts, diff hygiene, Ruff check/format and Python unit tests passed at merged main before this documentation edit."
+    }
+  ],
+  "failed_attempts": [
+    {
+      "attempt": "r1-checker-without-prepared-ghostty-cache",
+      "result": "The first configure failed because the r1 preset cache had an empty LAPIS_GHOSTTY_PREFIX.",
+      "repair": "The checkout's validated pinned Ghostty prefix was seeded into build/r1-runtime before rerunning the unchanged checker; the focused gate then passed."
+    }
+  ],
+  "non_claims": [
+    "This is a planning and evidence-only change; no daemon, GUI, package or adapter behavior was implemented.",
+    "The current-head supervisor pass does not qualify GUI birth, launchd, daemon persistence, reboot, package replacement, selected-account environment admission, load, memory, latency or sanitizers.",
+    "Worker audits are source inspection and do not replace the parent-owned build, live-service and eventual native/package acceptance runs.",
+    "R4 publication, notarization, appcast, update and rollback gates remain unclaimed."
+  ]
+}

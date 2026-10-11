@@ -99,9 +99,10 @@ for ownership, shared contracts and integration checks across large changes.
 | Engine | Pinned Ghostty `libghostty-vt` selected for the first adapter | Eight-case macOS/Linux replay passes; isolate unstable C API and resolve dependency-notice gaps |
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
 | Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging, attention messages and retained workspace entries | Automatic service recovery remains deferred |
+| Supervisor process birth | Experimental one-session runtime can launch, adopt, restart and stop the real session service, but no daemon executable or production GUI birth route exists | The next slice is a same-UID, one-session headless birth broker behind `LAPIS_BUILD_SUPERVISOR_RUNTIME`; independent process ownership must pass its focused real-service gate before GUI or launchd wiring |
 | Adapter observation status | Typed Codex observation phases are carried from the observer through service IPC to the desktop; v6 clients negotiate the optional trailing byte with attach capability `0x40`, legacy peers retain their exact bytes, and diagnostics are display-only | New observers and wire peers must declare observation/replay compatibility, cover legacy downgrade, and preserve connection identity; unknown phases fail closed |
 | Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
-| Codex multi-thread sessions | Upstream worktree tools (#50148) make attached tasks routine in one TUI; lapis binds a single persistent TUI thread and disables structured responses on a second | A disposable two-thread live session (worktree-created attached task) proving per-thread event delivery, response ownership and `thread/resume`+`thread/read` reconciliation, recorded in the Codex capability matrix; see the [October 2 review](#codex-upstream-integration-review-october-2) |
+| Codex multi-thread sessions | Explicit remote does not expose managed worktree tools; P2 proved fail-close, exact-ID per-thread reconciliation, foreign-thread recovery and mid-turn archive safety, and recorded an explicit-switch proposal | A user-initiated switch must select the target thread, rotate the source epoch, reconcile by exact ID and invalidate old decision tokens before responses re-enable; no implicit worktree or sender adoption |
 | Codex external-agent import | Session-only protocol importer and isolated qualification probe are implemented; no service/desktop onboarding task yet | Finish the separate explicit flow on a requalified Codex build: exact scope consent, dedicated server ownership, imported-thread launch/resume, duplicate reconciliation and failure recovery; never a per-session observer capability |
 | Session-service analyzer complexity | Narrow documented suppressions hold `codex_permission`, `codex_arguments`, and `parse_options` while their CLI grammar remains one reviewable narrative | Refactor only after behavior-preserving tests cover each option path and `just desktop` remains green |
 | Web surfaces | CEF 8037 (Chromium 154) provisional candidate for service-owned, CLI-drivable web views; September 29 design only, runtime pin awaits W0 | [Web surfaces section](#web-surfaces-september-29) owns the engine gate, wire contract, injection determinism and import consent |
@@ -5707,3 +5708,48 @@ values; Lapis correctly exposed only accept and cancel rather than inventing a
 decline response. Accept routing, source resolution and the full existing
 service regression still passed. Rendering `(p)` is not permission to add a
 session-approval response until that semantic value is separately qualified.
+
+### Next-slice triage (October 11)
+
+The [triage receipt](../evidence/architecture-next-triage-20261011.json)
+refreshes the plan after #147, #148 and #149 at main `31567c4`. It supersedes
+the still-open Codex rows in the October 9 readiness table: P1, P2, P3 and P4
+are now qualified or explicitly dispositioned at the pinned candidate, and none
+of them remains the global next action.
+
+The next implementation slice is R1 process birth: an opt-in
+`lapis_supervisor_daemon` target behind `LAPIS_BUILD_SUPERVISOR_RUNTIME`, with
+no change to the normal GUI launch path. The daemon must expose a bounded
+first-birth request to an effective-UID peer only when its one session slot is
+empty. The request carries the endpoint, launch fingerprint, agent mode, literal
+agent executable/argv/cwd and geometry; the daemon supplies its own pinned
+`lapis_session_service` executable and refuses arbitrary service paths and all
+service-environment overrides in this first slice. Its reply exposes only the
+supervisor-selected session ID and epoch, never the spawn token.
+
+The focused gate must launch the daemon as an independent process, request a
+real service around a harmless terminal child, and prove authoritative
+reconnect plus a joined second client. The service and terminal child must be
+different processes from the daemon, hello must preserve the terminal child's
+PID, and explicit stop must remove the service, terminal and private ownership
+record. Refusals must cover fingerprint mismatch, oversized payloads, a
+nonempty environment, a second active birth and malformed frames. This slice
+deliberately does not add GUI wiring, launchd, package inclusion, credential
+environment admission, daemon-restart reconstruction or multi-session state.
+
+R4 follows with its local signed-scope package check
+(`package_macos.py app` then `verify`) at the next candidate revision. Its
+source enforcement and candidate-gate binding are already merged, but a package
+update transition cannot honestly prove independent service birth until the R1
+broker exists. Publication remains separately parent-owned and requires a new
+version plus the six exact candidate-gate receipts.
+
+The next Codex-specific implementation, when that lane resumes, is the explicit
+thread switch described by P2. It is narrower than external-agent import
+onboarding, but it is not ahead of durable process ownership: the current
+import flow remains session-only and the desktop still has no explicit
+onboarding, duplicate-reconciliation or production server-ownership contract.
+The first switch slice should remain service-owned and accept an exact
+persistent thread ID only while no decision-capable request is pending; it
+rotates the attention epoch, reconciles the selected thread by resume/read and
+rejects every prior decision token before wire or QML navigation is added.
