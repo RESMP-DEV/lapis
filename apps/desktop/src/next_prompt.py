@@ -451,7 +451,10 @@ the one message they are most likely to type next, verbatim in their style
 (length, casing, voice-typing quirks). They often answer with a word ("go",
 "send", "yes"), ask for status, push back, or give a long new instruction, often
 about something outside this conversation. Prefer the short reply when it would
-do: they take short guesses about twice as often as long ones. Give the
+do: they take short guesses about twice as often as long ones. But when the
+agent asks them to choose between options, or to name or confirm something
+specific, a bare "go" or "yes" does not answer it: write the choice as they
+would say it. Give the
 probability that their actual next message would have the same effect on the
 agent; be calibrated, not hopeful.
 
