@@ -1,0 +1,101 @@
+{
+  "timestamp": "2026-10-11T08:02:39.086112+00:00",
+  "checks": [
+    "managed TUI startup and attention attachment",
+    "duplicate decision sent after first decision",
+    "real command approval over service IPC",
+    "pending request survives same-child reattachment",
+    "stale token rejected",
+    "source resolution and successful continuation",
+    "invalid answers rejected with an exact retry token",
+    "real user-input answer over service IPC and successful continuation",
+    "archived source disables replies; restored source reconciles in a fresh epoch",
+    "new request after source recovery is cancelled by an observed turn interruption",
+    "two sequential real approvals retain distinct identities and resolve independently",
+    "post-compaction resume/read replay remains synchronized and request-free"
+  ],
+  "passed": true,
+  "live_model_turn": true,
+  "configured_model": "zai,glm-5.3",
+  "configured_provider": "lapis_probe",
+  "desktop_controls": false,
+  "codex_sha256": "1e6d87e0d5b0e862e48f35fd816a7b9425c7988ef7c185d56be07d632a65ffef",
+  "source": {
+    "lapis_revision": "5ffa725f07a554fb8ccd518c5a515f6440570257",
+    "lapis_dirty_files": [],
+    "candidate_revision": "481280ec261ba1a1f8f0c205ed301825fe28f9bc",
+    "binary_sha256": "1e6d87e0d5b0e862e48f35fd816a7b9425c7988ef7c185d56be07d632a65ffef",
+    "platform": "macOS arm64",
+    "lapis_dirty": false,
+    "lapis_dirty_scope": "P2/P3 probe harness, capability documentation and sanitized evidence only.",
+    "candidate_repository": "RESMP-DEV/codex",
+    "candidate_source_clean": true,
+    "reported_version": "codex-cli 0.0.0",
+    "lapis_live_scope": "Exact clean probe head used for the live P3 run; the later evidence-only commit does not alter probe inputs."
+  },
+  "launch_contract": {
+    "backend_transport": "dedicated-app-server-unix-socket",
+    "tui_transport": "explicit-remote-unix-socket",
+    "managed_daemon_process": false,
+    "managed_daemon_process_scope": "disposable fixture process tree",
+    "managed_daemon_state": false,
+    "managed_daemon_state_paths_checked": [
+      "<disposable CODEX_HOME>/app-server-daemon",
+      "<disposable CODEX_HOME>/packages/app-server-daemon"
+    ],
+    "endpoint_owner_verified": true
+  },
+  "permission_catalog_smoke": {
+    "rendered_choices": [
+      "Yes, proceed (y)",
+      "Yes, and don't ask again for commands that start with `python3 -c 'print(123456789)'` (p)",
+      "No, and tell Codex what to do differently (esc)"
+    ]
+  },
+  "permission_catalog_adapter_note": "Server catalog exposes accept and cancel for this fixture; the TUI renders y, p and esc, while the observer exposes only qualified accept/cancel responses.",
+  "model": "zai,glm-5.3",
+  "model_provider": "lapis_probe",
+  "approval_admission": "sequential",
+  "compaction_replay": {
+    "turn": "<compaction-turn>",
+    "compaction_items": 1
+  },
+  "last_attention": {
+    "ready": true,
+    "connected": true,
+    "diagnostic": "Codex synchronized",
+    "activity": 1
+  },
+  "last_request_count": 0,
+  "service_reaped": true,
+  "owned_process_groups_cleaned": true,
+  "elapsed_seconds": 42.241,
+  "schema": "lapis.codex-p3-permission-smoke/1",
+  "scope": "P3 permission-catalog smoke through the managed explicit-remote TUI using the declared GLM provider/model. It proves rendering and routing for this harmless command fixture, not broader permission kinds.",
+  "validation": [
+    {
+      "name": "live-p3-service-check",
+      "command": "PATH=<candidate-release-dir>:$PATH python3 -u scripts/check_service_attention.py --live-glm --build-dir <clean-main>/build/desktop --output <ignored-build-receipt>",
+      "exit_code": 0,
+      "result": "All 12 assembled live checks passed in 42.241 seconds; complete permission rows rendered and accept routing completed."
+    },
+    {
+      "name": "focused-python-tests",
+      "command": "python3 -m unittest scripts.tests.test_check_service_attention -v",
+      "exit_code": 0,
+      "result": "26 focused tests passed."
+    }
+  ],
+  "failed_attempts": [
+    {
+      "attempt": "live-p3-first-harness-run",
+      "result": "Exit 1 after 7.409 seconds because the harness expected a decline decision and d/n shortcuts that this catalog does not offer; cleanup passed.",
+      "repair": "The harness now requires the observed y/p/esc labels and exactly the qualified accept/cancel adapter choices."
+    }
+  ],
+  "non_claims": [
+    "Only this harmless command-approval fixture and the existing structured user-input regression are claimed.",
+    "The p session-approval shortcut is rendered by the TUI but is not exposed as a Lapis response choice.",
+    "No file-change, permissions, MCP elicitation, native input, GPU, package or Linux qualification is claimed."
+  ]
+}

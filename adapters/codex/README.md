@@ -80,6 +80,24 @@ backend. See
 [P4 evidence](../../evidence/codex-p4-managed-daemon-20261010.json). The
 existing executable digest therefore remains the qualification identity.
 
+P2 used that same launch shape and found a capability boundary rather than a
+worktree qualification: the candidate implements managed worktree tools, but its
+dynamic tool MCP bridge starts only for embedded/local-daemon targets, not the
+explicit `AppServerTarget::Remote` TUI used by lapis. The live model replied
+`WORKTREE_UNAVAILABLE`, ran no substitute command and created no attachment.
+The remainder of
+[P2 evidence](../../evidence/codex-p2-worktree-probe-20261011.json) proves
+second-persistent-thread fail-close, stale-token rejection, exact-ID per-thread
+resume/read, foreign-thread recovery and mid-turn archive safety. A future
+explicit-switch implementation must follow that recorded contract proposal.
+
+P3 checked the server-driven command-permission catalog on the explicit-remote
+TUI. This fixture rendered `y` for acceptance, `p` for a command-prefix session
+rule and `esc` for cancellation, while the observer exposed only the qualified
+accept/cancel values. [P3 evidence](../../evidence/codex-p3-permission-smoke-20261011.json)
+records routing and the full existing service regression; the rendered `p`
+shortcut does not add a lapis session-approval response.
+
 ## Integration route comparison
 
 The first wiring slice preserves the ordinary CLI terminal interface. The
@@ -90,7 +108,7 @@ owns implementation order; this document owns Codex-specific qualification.
 | --- | --- | --- |
 | Ordinary Codex TUI in a lapis-owned PTY | No-prompt editing/navigation/paste/resize, interrupt/exit, same-child reattachment and macOS GPU captures exercised | Terminal interaction works for the exercised cases; all three structured capabilities remain unqualified |
 | Native hooks on that CLI | Source event names plus an enabled runtime feature | Dispatch, payload identity, trust, loss/reconnect and return semantics all require live probes; no hooks installed by lapis |
-| TUI and observer connected to the same app-server | Real input/approval requests displayed in the TUI; observer resume/reconnect replays matching IDs, responses resolve and turns continue | Selected for the two exercised blocking request kinds, including resume/read reconciliation and assembled service/desktop routing on the pinned binary |
+| TUI and observer connected to the same app-server | Real input/approval requests displayed in the TUI; observer resume/reconnect replays matching IDs, responses resolve and turns continue; second-thread and archive boundaries exercised | Selected for the two exercised blocking request kinds, including resume/read reconciliation and assembled service/desktop routing on the pinned binary; explicit remote does not expose managed worktree tools |
 | Separate lapis-owned stdio app-server | Live initialization and loaded-thread listing pass | Structured request/response/reconciliation remain unqualified; does not render the ordinary TUI or observe a different server's threads |
 
 The empty loaded-thread page describes the private probe process only. It does

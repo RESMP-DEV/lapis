@@ -26,6 +26,7 @@ from check_service_attention import (
     parse_args,
     record_launch_contract,
     question_turn,
+    validate_permission_catalog_screen,
     verify_runtime_model,
     selected_question_answers,
 )
@@ -497,6 +498,35 @@ class QuestionFixtureTests(unittest.TestCase):
             with self.subTest(questions=questions):
                 with self.assertRaisesRegex(CheckError, "Unexpected question"):
                     selected_question_answers(questions)
+
+
+class PermissionCatalogTests(unittest.TestCase):
+    def test_command_approval_labels_and_shortcuts_must_render(self):
+        screen = "\n".join(
+            (
+                "› 1. Yes, proceed (y)",
+                "2. Yes, and don't ask again for commands that start with `python3 -c "
+                "'print(123456789)'` (p)",
+                "3. No, and tell Codex what to do differently (esc)",
+            )
+        )
+        self.assertEqual(
+            validate_permission_catalog_screen(screen),
+            {
+                "rendered_choices": [
+                    "Yes, proceed (y)",
+                    "Yes, and don't ask again for commands that start with `python3 -c "
+                    "'print(123456789)'` (p)",
+                    "No, and tell Codex what to do differently (esc)",
+                ]
+            },
+        )
+
+    def test_missing_permission_shortcut_fails_closed(self):
+        with self.assertRaisesRegex(
+            CheckError, "labels or permission shortcuts did not render"
+        ):
+            validate_permission_catalog_screen("Yes, proceed\nNo, continue")
 
 
 if __name__ == "__main__":
