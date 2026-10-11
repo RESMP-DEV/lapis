@@ -357,7 +357,8 @@ void NextPrompt::start(const QString& id, quint64 generation, const QString& pro
             if (stage == Stage::verify)
                 dropRestored(id, "unverified");
             else
-                failed(id, agent, stage, why);
+                failed(id, agent, stage, why,
+                       document.object().value(QStringLiteral("kind")).toString());
             return;
         }
         done(document.object());
@@ -462,6 +463,7 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
                      0,
                      last_reply(context),
                      probability.toDouble()};
+    succeeded();
     auto event = about(made, id);
     event.insert(QStringLiteral("event"), QStringLiteral("predicted"));
     event.insert(QStringLiteral("machine"), agent.machine);
@@ -493,21 +495,50 @@ QString NextPrompt::suggestion(const QString& id) const { return offers_.value(i
 
 // A completed attempt that came to nothing records its stage and reason.
 // Superseded or disabled work is cancelled before producing an offer.
-void NextPrompt::failed(const QString& id, const Agent& agent, Stage stage, const QString& why) {
+void NextPrompt::failed(const QString& id, const Agent& agent, Stage stage, const QString& why,
+                        const QString& kind) {
     const QStringList known{
         QStringLiteral("no transcript"),           QStringLiteral("no Claude Code CLI on this Mac"),
         QStringLiteral("invalid conversation id"), QStringLiteral("timeout"),
         QStringLiteral("output too large"),        QStringLiteral("invalid helper JSON"),
         QStringLiteral("helper unavailable")};
-    const auto reason = known.contains(why) ? why : QStringLiteral("helper failed");
-    record({{QStringLiteral("event"), QStringLiteral("failed")},
-            {QStringLiteral("agent"), id},
-            {QStringLiteral("machine"), agent.machine},
-            {QStringLiteral("cli"), agent.cli},
-            {QStringLiteral("stage"),
-             stage == Stage::predict ? QStringLiteral("predict") : QStringLiteral("context")},
-            {QStringLiteral("error"), reason}});
+    const bool from_helper = !known.contains(why);
+    const auto reason = from_helper ? QStringLiteral("helper failed") : why;
+    QJsonObject event{
+        {QStringLiteral("event"), QStringLiteral("failed")},
+        {QStringLiteral("agent"), id},
+        {QStringLiteral("machine"), agent.machine},
+        {QStringLiteral("cli"), agent.cli},
+        {QStringLiteral("stage"),
+         stage == Stage::predict ? QStringLiteral("predict") : QStringLiteral("context")},
+        {QStringLiteral("error"), reason}};
+    // A message that came with a kind was cleaned to one line by failure() in
+    // next_prompt.py; any other helper text stays out of the log.
+    if (from_helper && !why.isEmpty() && !kind.isEmpty())
+        event.insert(QStringLiteral("detail"), why.left(160));
+    if (!kind.isEmpty())
+        event.insert(QStringLiteral("kind"), kind.left(16));
+    record(event);
+    if (stage == Stage::predict || kind == QStringLiteral("timeout")) {
+        ++failure_streak_;
+        static const QHash<QString, QString> plain{
+            {QStringLiteral("limit"), QStringLiteral("a Claude usage limit")},
+            {QStringLiteral("auth"), QStringLiteral("Claude sign-in")},
+            {QStringLiteral("timeout"), QStringLiteral("timeouts")},
+            {QStringLiteral("network"), QStringLiteral("the network")},
+            {QStringLiteral("malformed"), QStringLiteral("unreadable answers")}};
+        last_failure_ = plain.value(kind, from_helper ? why.left(100) : reason);
+        emit failingChanged();
+    }
     emit judged(id, {});
+}
+
+void NextPrompt::succeeded() {
+    if (failure_streak_ == 0)
+        return;
+    failure_streak_ = 0;
+    last_failure_.clear();
+    emit failingChanged();
 }
 
 QVariantMap NextPrompt::readyAgents() const {

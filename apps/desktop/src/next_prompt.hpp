@@ -71,6 +71,10 @@ class NextPrompt final : public QObject {
     Q_PROPERTY(int revision READ revision NOTIFY changed)
     Q_PROPERTY(bool enabled READ enabled NOTIFY changed)
     Q_PROPERTY(double confidentThreshold READ confidentThreshold CONSTANT)
+    // Guesses that failed in a row (any arm), and what the last one hit, so a
+    // dead model call shows instead of Tab quietly offering nothing.
+    Q_PROPERTY(int failureStreak READ failureStreak NOTIFY failingChanged)
+    Q_PROPERTY(QString lastFailure READ lastFailure NOTIFY failingChanged)
   public:
     struct Agent {
         QString machine;      // an ssh host; empty for this Mac
@@ -135,6 +139,8 @@ class NextPrompt final : public QObject {
     Q_INVOKABLE void used(const QString& id, bool sent, int typedFirst,
                           const QString& expectedKey = {});
     [[nodiscard]] int revision() const { return revision_; }
+    [[nodiscard]] int failureStreak() const { return failure_streak_; }
+    [[nodiscard]] QString lastFailure() const { return last_failure_; }
     [[nodiscard]] bool enabled() const { return settings_.automatic; }
     // What a restarted window needs to carry on (see GuiState): the offers
     // shown, each with its key, conversation, turn and whether it was seen;
@@ -161,6 +167,7 @@ class NextPrompt final : public QObject {
     // after a turn: "needs", "steer" or "fyi"; empty when there is none
     // (no guess was made, or it failed). One per turnFinished.
     void judged(const QString& id, const QString& attention);
+    void failingChanged();
 
   private:
     struct Run {
@@ -208,7 +215,11 @@ class NextPrompt final : public QObject {
     void start(const QString& id, quint64 generation, const QString& program,
                const QStringList& arguments, const QByteArray& input, Stage stage,
                const std::function<void(const QJsonObject&)>& done);
-    void failed(const QString& id, const Agent& agent, Stage stage, const QString& why);
+    // `kind` and the helper's cleaned message say what a failure was
+    // ("limit", "auth", "timeout", "network", "malformed" or "other").
+    void failed(const QString& id, const Agent& agent, Stage stage, const QString& why,
+                const QString& kind = {});
+    void succeeded();
     void predict(const QString& id, quint64 generation, const QJsonObject& context);
     void offer(const QString& id, const Agent& agent, const QJsonObject& context,
                const QJsonObject& answer, const QString& arm, const QString& model);
@@ -264,6 +275,8 @@ class NextPrompt final : public QObject {
     QString run_; // this launch, in offer ids
     quint64 offers_made_{};
     int revision_{};
+    int failure_streak_{};
+    QString last_failure_;
     int owed_tries_{20};
     int owed_retry_ms_{500};
 };

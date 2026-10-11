@@ -14,8 +14,10 @@ Add this to `~/.lapis/lapis.json`:
 The other settings are `model` (`claude-opus-5-5`), `effort`, `minConfidence`
 (0, so the helper's top guess shows, including its numeric fallback for an
 unscored candidate) and `maxPerHour` (60). Each prediction
-attempt uses the Claude Code plan this Mac is signed in to: API keys, custom
-endpoints and cloud-provider variables are removed from the call. An attempt
+attempt takes the route your agents take: the `env` in `~/.claude/settings.json`
+(a plan gateway, say) applies, while API keys, custom endpoints and
+cloud-provider variables lapis itself inherited are removed. Without that `env`
+the call uses the account in this Mac's keychain. An attempt
 may retry a malformed answer once, so `maxPerHour` bounds attempts rather than
 individual provider requests.
 
@@ -108,10 +110,14 @@ quadratic edit distance. Every such bounded or fallback score is marked with
 `similarity_bounded`; `as_offered` still requires the complete prompt to be
 unchanged. A prediction
 that failed (with a stable reason category) or was skipped at the hourly cap
-is kept too. A use is recorded only after the service admits its input.
+is kept too. A model failure also keeps its `kind` (`limit`, `auth`,
+`timeout`, `network`, `malformed` or `other`) and the first line of its
+message, with long tokens, email addresses and home folders masked. Three
+failed guesses in a row show in the corner of the agent's terminal, with what
+they hit, until a guess succeeds. A use is recorded only after the service admits its input.
 Admission does not guarantee the CLI consumed it before a crash. The log
 rotates at 4 MiB and retains one previous file; helper output is bounded and
-raw error output is never copied into the log.
+only the cleaned first line of a model failure is copied into the log.
 Evaluation reports missing conversations, pending answers and failed calls
 separately. Missing judge results are excluded from quality scores; `grading`
 reports how many judgments were requested, how many succeeded and their coverage.

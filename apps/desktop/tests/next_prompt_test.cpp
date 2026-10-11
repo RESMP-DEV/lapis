@@ -418,10 +418,35 @@ void predictsAndOffers() {
                      .contains("private path and transcript must not become a log category"),
             "no field in any persisted record contains the private failure input");
     write(root.filePath(QStringLiteral("context.reply")), valid_context);
+    // A model failure the helper classified keeps its cleaned line and kind,
+    // and failures in a row show until a guess succeeds.
+    const auto valid_predict = read(root.filePath(QStringLiteral("predict.reply")));
+    write(root.filePath(QStringLiteral("predict.reply")),
+          R"({"error": "Claude AI usage limit reached", "kind": "limit"})");
+    const auto streak_before = next.failureStreak();
+    for (int failure_index = 0; failure_index < 3; ++failure_index) {
+        const auto before = events(log).size();
+        next.turnFinished(QStringLiteral("a"));
+        require(waitFor([&] { return events(log).size() > before; }), "the failure is logged");
+    }
+    require(events(log).last().value(QStringLiteral("kind")) == QLatin1String("limit") &&
+                events(log).last().value(QStringLiteral("detail")) ==
+                    QLatin1String("Claude AI usage limit reached"),
+            "a classified failure keeps what it was");
+    require(next.failureStreak() == streak_before + 3 &&
+                next.lastFailure() == QLatin1String("a Claude usage limit"),
+            "failures in a row are counted and named");
+    write(root.filePath(QStringLiteral("predict.reply")), valid_predict);
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] { return next.failureStreak() == 0; }), "a guess ends the streak");
+    next.seen(QStringLiteral("a")); // so the next turn is not an unseen repeat
     write(root.filePath(QStringLiteral("no-claude")), "yes");
     const auto before_missing_cli = events(log).size();
     next.turnFinished(QStringLiteral("a"));
-    require(waitFor([&] { return events(log).size() > before_missing_cli; }),
+    require(waitFor([&] {
+                return events(log).size() > before_missing_cli &&
+                       events(log).last().value(QStringLiteral("event")) == QLatin1String("failed");
+            }),
             "missing prediction CLI recorded");
     require(events(log).last().value(QStringLiteral("error")) ==
                     QLatin1String("no Claude Code CLI on this Mac") &&
