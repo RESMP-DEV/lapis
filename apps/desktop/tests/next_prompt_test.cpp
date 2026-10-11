@@ -33,6 +33,7 @@ NextPromptSettings on(int max_per_hour = 60, const QString& effort = {}) {
     settings.maxPerHour = max_per_hour;
     settings.effort = effort;
     settings.experimentShare = 0; // the chosen model every time
+    settings.holdoutShare = 0;    // and every guess shown
     return settings;
 }
 void require(bool condition, const char* message) {
@@ -361,7 +362,11 @@ void predictsAndOffers() {
     // Tie the offering behaviour to the parsed default, not only the struct.
     const auto default_on = lapis::desktop::parse_next_prompt(QJsonObject{
         {QStringLiteral("auto"), true}, {QStringLiteral("effort"), QStringLiteral("low")}});
-    next.setSettings(default_on);
+    // Holdout sampling has its own deterministic loop below; keep this case
+    // observable every time instead of making the default threshold flaky.
+    auto default_without_holdout = default_on;
+    default_without_holdout.holdoutShare = 0;
+    next.setSettings(default_without_holdout);
     next.turnFinished(QStringLiteral("b"));
     require(waitFor([&] {
                 return next.suggestion(QStringLiteral("b")) == QLatin1String("rerun it on 8 GPUs");
@@ -418,10 +423,59 @@ void predictsAndOffers() {
                      .contains("private path and transcript must not become a log category"),
             "no field in any persisted record contains the private failure input");
     write(root.filePath(QStringLiteral("context.reply")), valid_context);
+    // A model failure the helper classified keeps its cleaned line and kind,
+    // and failures in a row show until a guess succeeds.
+    const auto valid_predict = read(root.filePath(QStringLiteral("predict.reply")));
+    write(root.filePath(QStringLiteral("predict.reply")),
+          R"({"error": "Claude AI usage limit reached", "kind": "limit"})");
+    const auto streak_before = next.failureStreak();
+    for (int failure_index = 0; failure_index < 3; ++failure_index) {
+        const auto before = events(log).size();
+        next.turnFinished(QStringLiteral("a"));
+        require(waitFor([&] { return events(log).size() > before; }), "the failure is logged");
+    }
+    require(events(log).last().value(QStringLiteral("kind")) == QLatin1String("limit") &&
+                events(log).last().value(QStringLiteral("detail")) ==
+                    QLatin1String("Claude AI usage limit reached"),
+            "a classified failure keeps what it was");
+    require(next.failureStreak() == streak_before + 3 &&
+                next.lastFailure() == QLatin1String("a Claude usage limit"),
+            "failures in a row are counted and named");
+    write(root.filePath(QStringLiteral("predict.reply")), valid_predict);
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] { return next.failureStreak() == 0; }), "a guess ends the streak");
+    next.seen(QStringLiteral("a")); // so the next turn is not an unseen repeat
+    // A held-out guess is made and logged but never shown.
+    auto held_out = on(60);
+    held_out.holdoutShare = 0.5; // the cap; every draw below 0.5 hides
+    for (int tries = 0; tries < 40; ++tries) {
+        next.setSettings(held_out);
+        const auto before = events(log).size();
+        next.turnFinished(QStringLiteral("a"));
+        require(waitFor([&] {
+                    const auto all = events(log);
+                    return all.size() > before &&
+                           all.last().value(QStringLiteral("event")) == QLatin1String("predicted");
+                }),
+                "a guess is made");
+        const auto made = events(log).last();
+        if (made.value(QStringLiteral("hidden")).toBool()) {
+            require(!made.value(QStringLiteral("shown")).toBool() &&
+                        next.suggestion(QStringLiteral("a")).isEmpty(),
+                    "a held-out guess is never shown");
+            break;
+        }
+        require(tries < 39, "a guess is held out at the configured share");
+        next.seen(QStringLiteral("a"));
+    }
+    next.setSettings(on(60));
     write(root.filePath(QStringLiteral("no-claude")), "yes");
     const auto before_missing_cli = events(log).size();
     next.turnFinished(QStringLiteral("a"));
-    require(waitFor([&] { return events(log).size() > before_missing_cli; }),
+    require(waitFor([&] {
+                return events(log).size() > before_missing_cli &&
+                       events(log).last().value(QStringLiteral("event")) == QLatin1String("failed");
+            }),
             "missing prediction CLI recorded");
     require(events(log).last().value(QStringLiteral("error")) ==
                     QLatin1String("no Claude Code CLI on this Mac") &&
@@ -441,7 +495,13 @@ void predictsAndOffers() {
     next.turnFinished(QStringLiteral("a"));
     require(QFileInfo::exists(log + QStringLiteral(".1")) && QFileInfo(log).size() < 4096 &&
                 events(log).size() == 1,
-            "log rotation retains one backup and writes the new event to the active file");
+            "log rotation moves the full log aside and writes the new event to the active file");
+    write(log, QByteArray(qsizetype{4} * 1024 * 1024, '\n'));
+    next.turnFinished(QStringLiteral("a"));
+    const auto archived = QFileInfo(log).dir().entryList(
+        {QFileInfo(log).fileName() + QStringLiteral(".2*")}, QDir::Files);
+    require(archived.size() == 1 && QFileInfo::exists(log + QStringLiteral(".1")),
+            "a second rotation archives the first under its date instead of deleting it");
     next.setSettings({});
     require(!next.enabled(), "off");
     require(next.suggestion(QStringLiteral("a")).isEmpty(), "turning it off withdraws offers");

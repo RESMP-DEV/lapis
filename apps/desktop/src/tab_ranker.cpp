@@ -151,8 +151,13 @@ void writeModel(const QString& path, const TabRanker::Model& model) {
 TabAwaySettings parse_tab_away(const QJsonValue& value) {
     TabAwaySettings settings;
     const auto object = value.toObject();
-    if (object.value(QStringLiteral("rank")).toString() == QLatin1String("fixed"))
-        settings.learned = false;
+    const auto rank = object.value(QStringLiteral("rank")).toString();
+    if (rank == QLatin1String("fixed"))
+        settings.rank = TabRank::fixed;
+    else if (rank == QLatin1String("learned"))
+        settings.rank = TabRank::learned;
+    if (const auto hours = object.value(QStringLiteral("overdueHours")); hours.isDouble())
+        settings.overdueHours = std::clamp(hours.toDouble(), 0.0, 24.0 * 7);
     if (const auto work = object.value(QStringLiteral("work")); work.isArray()) {
         settings.work.clear();
         for (const auto& name : work.toArray())
@@ -286,7 +291,23 @@ std::vector<double> TabRanker::scores(const std::vector<TabCandidate>& candidate
     out.reserve(candidates.size());
     const auto rows = features(candidates);
     for (std::size_t c = 0; c < candidates.size(); ++c) {
-        if (!learned_) {
+        if (rank_ == TabRank::plain) {
+            // Overdue first, oldest first; then work, requests, turns not yet
+            // seen; the newest within each.
+            const auto& item = candidates[c];
+            const auto wait = std::max(0.0, item.waitMinutes);
+            if (overdue_minutes_ > 0 && wait > overdue_minutes_ &&
+                (item.request || item.unseen || (item.guess && !item.guessSeen))) {
+                out.push_back(1e12 + wait);
+                continue;
+            }
+            const bool fresh = item.unseen || (item.guess && !item.guessSeen);
+            out.push_back(1e10 * static_cast<double>(item.work) +
+                          1e9 * static_cast<double>(item.request) +
+                          1e8 * static_cast<double>(fresh) - std::min(wait, 1e7));
+            continue;
+        }
+        if (rank_ == TabRank::fixed) {
             // The fixed order: a guess not yet seen, then an unseen turn or a
             // request, then a guess already seen; longest waiting within each.
             const auto& item = candidates[c];
@@ -338,11 +359,12 @@ QJsonArray loggedCandidates(const std::vector<TabCandidate>& candidates,
 
 void TabRanker::recordTab(const std::vector<TabCandidate>& candidates,
                           const std::vector<double>& scores, std::size_t picked) {
-    record(
-        {{QStringLiteral("event"), QStringLiteral("tab")},
-         {QStringLiteral("rank"), learned_ ? QStringLiteral("learned") : QStringLiteral("fixed")},
-         {QStringLiteral("picked"), static_cast<int>(picked)},
-         {QStringLiteral("candidates"), loggedCandidates(candidates, &scores)}});
+    record({{QStringLiteral("event"), QStringLiteral("tab")},
+            {QStringLiteral("rank"), rank_ == TabRank::learned ? QStringLiteral("learned")
+                                     : rank_ == TabRank::fixed ? QStringLiteral("fixed")
+                                                               : QStringLiteral("plain")},
+            {QStringLiteral("picked"), static_cast<int>(picked)},
+            {QStringLiteral("candidates"), loggedCandidates(candidates, &scores)}});
 }
 
 void TabRanker::learn(const std::vector<TabCandidate>& candidates, std::size_t chosen,
@@ -361,7 +383,8 @@ void TabRanker::learn(const std::vector<TabCandidate>& candidates, std::size_t c
             shared_->memory.erase(shared_->memory.begin());
     }
     record(event);
-    refit();
+    if (rank_ == TabRank::learned)
+        refit();
 }
 
 void TabRanker::record(QJsonObject event) const {
@@ -379,8 +402,16 @@ void TabRanker::record(QJsonObject event) const {
         return;
     }
     if (file.exists() && file.size() + encoded.size() > kLogLimit) {
+        // These are labels (what the person did with each guess or move), the
+        // one thing here that cannot be regenerated: the previous file is
+        // archived under its date, never deleted.
         const auto previous = log_path_ + QStringLiteral(".1");
-        QFile::remove(previous);
+        if (QFile::exists(previous) &&
+            !QFile::rename(previous, log_path_ + QDateTime::currentDateTimeUtc().toString(
+                                                     QStringLiteral("'.'yyyyMMdd-HHmmss")))) {
+            qWarning() << "Tab ranker: cannot archive the previous log";
+            return;
+        }
         if (!file.rename(previous)) {
             qWarning() << "Tab ranker: cannot rotate the log";
             return;

@@ -3666,6 +3666,36 @@ ApplicationWindow {
                     }
                 }
 
+                // Tab's guesses failing in a row (a usage limit, sign-in, the
+                // network) show in the terminal's corner until one succeeds,
+                // rather than Tab quietly offering nothing.
+                Rectangle {
+                    id: tabFailureNote
+                    objectName: "tabFailureNote"
+                    readonly property int streak: liveTerminal.predicting ? nextPrompt.failureStreak : 0
+                    visible: streak >= 3 && liveTerminal.visible
+                    z: 6
+                    x: liveTerminal.x + 8
+                    y: liveTerminal.y + liveTerminal.height - height - 8
+                    width: Math.min(liveTerminal.width / 2, tabFailureLabel.implicitWidth + 16)
+                    height: tabFailureLabel.height + 10
+                    color: window.surfaceColor
+                    border.color: window.faultColor
+                    border.width: 1
+                    radius: window.chromeRadius
+                    PlainLabel {
+                        id: tabFailureLabel
+                        anchors.centerIn: parent
+                        width: parent.width - 16
+                        text: tabFailureNote.visible
+                              ? qsTr("Tab: the last %1 guesses failed (%2)")
+                                .arg(tabFailureNote.streak).arg(nextPrompt.lastFailure)
+                              : ""
+                        color: window.mutedTextColor
+                        elide: Text.ElideRight
+                    }
+                }
+
                 // A paste lapis could not send says why, over the bottom of the
                 // terminal, for a few seconds.
                 Rectangle {

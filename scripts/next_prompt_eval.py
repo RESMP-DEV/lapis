@@ -250,9 +250,15 @@ def replay(arguments):
             when = when.strftime("%a %-I:%M %p")
         except ValueError:
             pass
+        turns = item["turns"]
+        if arguments.context == "last":
+            # Only what the agent last said: whether the rest of the context
+            # earns its cost.
+            said = [t for t in turns if t["role"] == "agent"]
+            turns = said[-1:]
         bundle = {
             "agent": {"cli": item["cli"], "machine": item["machine"]},
-            "context": {"turns": item["turns"]},
+            "context": {"turns": turns},
             "time": when,
         }
         return next_prompt.predict(bundle, arguments.model, arguments.effort)
@@ -302,9 +308,35 @@ def replay(arguments):
     report["judge_missing_grades"] = sum(g["id"] not in grades for g in graded)
     report["grading"] = grading_coverage(len(graded), len(rows))
     report["model"] = arguments.model
+    report["context"] = arguments.context
     if graded:
         report["median_ms"] = sorted(g["ms"] for g in graded)[len(graded) // 2]
     return report, rows
+
+
+def held_out(offers, settled_shown):
+    """Prediction apart from acceptance: guesses made but never shown, against
+    what the person then typed, beside the same figures for shown guesses
+    (which the person could take, so they match more often)."""
+    hidden = [o for o in offers.values() if o.get("hidden")]
+    settled = [o for o in hidden if o["outcome"]]
+
+    def figures(part):
+        if not part:
+            return {"settled": 0, "exact": None, "mean_similarity": None}
+        exact = sum(1 for o in part if o["outcome"].get("result") == "as_offered")
+        similarity = [float(o["outcome"].get("similarity", 0) or 0) for o in part]
+        return {
+            "settled": len(part),
+            "exact": round(exact / len(part), 3),
+            "mean_similarity": round(sum(similarity) / len(similarity), 3),
+        }
+
+    return {
+        "made": len(hidden),
+        "hidden": figures(settled),
+        "shown": figures(settled_shown),
+    }
 
 
 def acceptance(events):
@@ -331,6 +363,8 @@ def acceptance(events):
             )
             offer.update(
                 shown=bool(e.get("shown")),
+                hidden=bool(e.get("hidden")),
+                arm=str(e.get("arm") or "control"),
                 p=float(candidates[0].get("p", 0) or 0),
                 top_scored=top_scored,
                 category=e.get("category") or "other",
@@ -350,7 +384,10 @@ def acceptance(events):
         elif kind == "withdrawn":
             offer["withdrawn"] = e.get("reason")
     failures = defaultdict(int)
+    failure_kinds = defaultdict(int)
     for e in events:
+        if e.get("event") == "failed" and isinstance(e.get("kind"), str):
+            failure_kinds[e["kind"][:16]] += 1
         if e.get("event") == "failed":
             known = {
                 "no transcript",
@@ -424,10 +461,24 @@ def acceptance(events):
             if not e.get("offer") and e.get("event") in ("used", "dismissed")
         ),
         "failed": dict(sorted(failures.items(), key=lambda kv: -kv[1])),
+        "failed_by_kind": dict(sorted(failure_kinds.items(), key=lambda kv: -kv[1])),
+        "held_out": held_out(offers, settled),
+        "by_arm": {},
         "skipped": sum(1 for e in events if e.get("event") == "skipped"),
         "by_category": {},
         "by_confidence": [],
     }
+    arms = defaultdict(list)
+    for o in offers.values():
+        if "shown" in o:
+            arms[o["arm"]].append(o)
+    for arm, part in sorted(arms.items()):
+        arm_seen = [o for o in part if o["shown"] and o["seen"]]
+        report["by_arm"][arm] = {
+            "predicted": len(part),
+            "seen": len(arm_seen),
+            "acceptance": rate([o for o in arm_seen if o["used"]], arm_seen),
+        }
     groups = defaultdict(list)
     for o in seen:
         groups[o["category"]].append(o)
@@ -455,14 +506,22 @@ def acceptance(events):
     return offers, report
 
 
+def log_files(path):
+    """The log and what rotation moved aside, oldest first: dated archives
+    (log.YYYYMMDD-HHMMSS), then log.1, then the log itself."""
+    archives = sorted(path.parent.glob(path.name + ".2*"))
+    return [p for p in archives + [Path(str(path) + ".1"), path] if p.is_file()]
+
+
 def log(arguments):
     events = []
     path = Path(arguments.log).expanduser()
-    for line in path.read_text().splitlines() if path.exists() else []:
-        try:
-            events.append(json.loads(line))
-        except ValueError:
-            continue
+    for part in log_files(path):
+        for line in part.read_text(errors="replace").splitlines():
+            try:
+                events.append(json.loads(line))
+            except ValueError:
+                continue
     offers, report = acceptance(events)
     if not arguments.judge:
         # Both report shapes carry the coverage field; without judging there
@@ -560,6 +619,12 @@ def main(argv=None):
         "--exclude", nargs="*", help="conversation ids to leave out"
     )
     replay_mode.add_argument("--model", default="claude-opus-5-5")
+    replay_mode.add_argument(
+        "--context",
+        choices=("full", "last"),
+        default="full",
+        help="the conversation, or only the agent's last message",
+    )
     replay_mode.add_argument("--effort", default="")
     replay_mode.add_argument("--parallel", type=int, default=6)
     log_mode = modes.add_parser(

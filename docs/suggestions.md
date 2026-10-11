@@ -14,8 +14,10 @@ Add this to `~/.lapis/lapis.json`:
 The other settings are `model` (`claude-opus-5-5`), `effort`, `minConfidence`
 (0, so the helper's top guess shows, including its numeric fallback for an
 unscored candidate) and `maxPerHour` (60). Each prediction
-attempt uses the Claude Code plan this Mac is signed in to: API keys, custom
-endpoints and cloud-provider variables are removed from the call. An attempt
+attempt takes the route your agents take: the `env` in `~/.claude/settings.json`
+(a plan gateway, say) applies, while API keys, custom endpoints and
+cloud-provider variables lapis itself inherited are removed. Without that `env`
+the call uses the account in this Mac's keychain. An attempt
 may retry a malformed answer once, so `maxPerHour` bounds attempts rather than
 individual provider requests.
 
@@ -46,9 +48,17 @@ Experiments: `experiment` (default 0.2) of guesses go to another arm, chosen
 evenly from `experimentModels` (default `["claude-sonnet-5-5"]`, through the
 same CLI) and, when `localEndpoint` and `localModel` are set, a local model
 behind an OpenAI-compatible endpoint (for example
-`"localEndpoint": "http://tetra:8000/v1"`). Each guess's `arm` (`control`,
+`"localEndpoint": "http://gpu-host:8000/v1"`). Each guess's `arm` (`control`,
 `model` or `local`) and `model` are in `next_prompt.jsonl`, so arms can be
 compared on what you then sent. Set `experiment` to 0 to always use `model`.
+
+A shown guess shapes what you send (you can take it), so how often you take
+guesses is not how well they predict you. `holdout` (default 0.1, at most 0.5)
+of guesses are made and logged but never shown, and compared with what you then
+typed; `next_prompt_eval.py log` reports them as `held_out` beside the same
+figures for shown guesses, and acceptance per arm as `by_arm`. The model is
+also told which of your past prompts were guesses you took unchanged (marked
+`[took a guess]`), so it does not learn its own words as your style.
 
 An agent on another machine reports its finished turns through its own
 terminal: lapis starts it with hooks (Claude Code) or a notify program (Codex)
@@ -73,12 +83,12 @@ turns are not reported and no guess is made; restart it to add the hooks.
   pressed Return (or since Tab twice sent a guess) moves to the next agent that
   needs you. Only agents truly waiting on you count: a request, or a turn that
   finished with no background tasks, subagents or wakeups in flight, unseen or
-  with a guess. An agent at work, or paused while its own background work runs,
-  never does. Among those, Tab goes where you would: it starts from a prior
-  (work categories first, then requests, then turns you have not seen, then the
-  newest) and learns from every agent you settle on, by Tab or by hand, while
-  others wait. `tabAway` in [config](config.md#tabs-next-agent) names your work
-  categories or brings back the fixed order. When nothing waits, Tab goes to the
+  with a guess, and not parked (looked at for 2.5 seconds and left without a
+  prompt). An agent at work, or paused while its own background work runs,
+  never does. Among those, anything waiting over four hours comes first, then
+  work categories, requests, turns you have not seen, and the newest.
+  `tabAway` in [config](config.md#tabs-next-agent) names your work categories
+  or picks another order. When nothing waits, Tab goes to the
   program as usual. With the default
   `minConfidence` of 0 a finished Claude Code or Codex turn nearly always
   offers a guess, so Tab usually takes the guess instead of moving to another
@@ -108,10 +118,15 @@ quadratic edit distance. Every such bounded or fallback score is marked with
 `similarity_bounded`; `as_offered` still requires the complete prompt to be
 unchanged. A prediction
 that failed (with a stable reason category) or was skipped at the hourly cap
-is kept too. A use is recorded only after the service admits its input.
+is kept too. A model failure also keeps its `kind` (`limit`, `auth`,
+`timeout`, `network`, `malformed` or `other`) and the first line of its
+message, with long tokens, email addresses and home folders masked. Three
+failed guesses in a row show in the corner of the agent's terminal, with what
+they hit, until a guess succeeds. A use is recorded only after the service admits its input.
 Admission does not guarantee the CLI consumed it before a crash. The log
-rotates at 4 MiB and retains one previous file; helper output is bounded and
-raw error output is never copied into the log.
+rotates at 4 MiB into `.1`, and an older `.1` is kept under its date rather
+than deleted, since these are labels; helper output is bounded and
+only the cleaned first line of a model failure is copied into the log.
 Evaluation reports missing conversations, pending answers and failed calls
 separately. Missing judge results are excluded from quality scores; `grading`
 reports how many judgments were requested, how many succeeded and their coverage.
@@ -126,6 +141,7 @@ you settled on with the agents that were waiting when you left the one before
 them in the background and keeps its model in `tab_away_model.json`.
 
 ```sh
+python3 scripts/runtime_digest.py                  # the last day: guesses that worked, taken by arm, failures, Ultra Tab, pings
 python3 scripts/tab_away_eval.py log               # Tab's ranker against your logged choices
 python3 scripts/next_prompt_eval.py log            # acceptance: of the guesses you saw, the share you used
 python3 scripts/next_prompt_eval.py log --judge    # the ones you passed over, against what you typed

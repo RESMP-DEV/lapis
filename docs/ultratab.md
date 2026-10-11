@@ -21,8 +21,8 @@ reads the end of each conversation and labels the card `needs`, `steer` or
 `fyi`; a card not yet composed is yellow.
 
 The top line is the reply: the agent's CLI as a small glossy tile, ringed in
-its colour, and lapis's guess as grey ghost text, which Tab sends; typing
-replaces it. Each CLI's tile is its own logo on black (Claude Code's is the
+its colour, and lapis's guess as grey ghost text, which Tab types out and a
+second Tab sends; typing replaces it. Each CLI's tile is its own logo on black (Claude Code's is the
 mascot from its welcome screen). Below it the card shows the agent's name, a
 headline and any blocks, and in its corner a small map of lapis: a column per
 category in its colour, a block per agent in strip order, this agent's lit.
@@ -49,7 +49,7 @@ light up when pressed:
 
 | Key | Answer |
 | --- | --- |
-| Tab | Accept: send the proposed reply to that agent, as typed and submitted with Return |
+| Tab | Type the proposed reply out; a second Tab (or Return) sends it unchanged, as in lapis. An edited reply goes with Return |
 | Hold Option | Speak: shows that it is listening. Voice input is not built yet; type instead |
 | Typing, then Return | Nudge: start typing anywhere in the overlay; Return sends it to that agent |
 | Command-Return | Push back: opens a larger box with a red edge for a correction (Return is a new line in it); Command-Return sends it as typed, logged as a push back, and Escape returns to the one-line reply |
@@ -75,26 +75,33 @@ An answered or skipped card stays away until the agent has something new: its
 next finished turn, a new guess or a new request.
 
 The front card slides away (right when answered, left when skipped) while the
-next comes forward, in about 180 ms. Keys act at once: a second Tab during the
-slide already answers the next card. With Reduce Motion on in macOS
+next comes forward, in about 180 ms. Keys act at once, but a send always takes
+two Tabs on the same card, so a quick Tab during the slide only types the next
+card's proposal out; it cannot answer a card you have not read. With Reduce Motion on in macOS
 accessibility settings, cards change without sliding and the dots do not pulse.
 
 ## Order
 
 Cards come in the order lapis's Tab visits waiting agents: a guess you have not
 seen yet, then turns that finished unseen and requests, then guesses you have
-seen; within each, the agent that has waited longest first. Agents at work, and
-agents whose state is unknown, are never cards; a pending request always is.
+seen; within each, the agent that has waited longest first. Agents at work,
+agents whose state is unknown, and agents parked in lapis (you looked at the
+finished turn and moved on; they return with their next turn) are never cards;
+a pending request always is.
 
 ## Composed cards
 
-For each agent that waits on you, Ultra Tab also composes a card meant to put
-you back in that thread in seconds: a one-line summary and at most three blocks
+While the overlay is open, Ultra Tab composes a card for each agent that waits
+on you, the one in front first, meant to put you back in that thread in
+seconds: a one-line summary and at most three blocks
 the model
 chooses (a short paragraph, a list, a table when there are numbers to compare,
 a small diagram when structure is the point, or a link to a report the agent
 wrote that you have not opened). Its proposed next message is lapis's guess
-when there is one. When you last looked and how long the agent has waited
+when there is one, except that a bare "go" or "yes" to a question asking you
+to choose is replaced by the answer made explicit (what is chosen, what is
+kept), or by no proposal at all when only you can make the choice: a key press
+should approve something definite. When you last looked and how long the agent has waited
 frame the card but are not shown: a thread you looked at minutes ago gets only
 what changed, and one you have likely forgotten opens with what it is about.
 
@@ -128,6 +135,10 @@ Settings go in `~/.lapis/ultratab.json`:
 `"endpoint": "http://127.0.0.1:8000/v1"` with a `"model"` sends the request to
 a local OpenAI-compatible server (`/chat/completions`) instead, for example a
 local Qwen model. It is off unless set. `"enabled": false` stops composing.
+`"onlyWhileOpen": false` composes for every waiting agent in the background
+too, so cards are ready before you open the overlay; it is off because almost
+none of those cards were ever read (October 7 to 11: 500 cards composed, two
+answers).
 
 Cards are written to `runtime/ultratab_cards.json` (owner-only, replaced
 atomically, only when a card changes, at most 512 KiB):

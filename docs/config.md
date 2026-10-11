@@ -179,19 +179,28 @@ typing never waits. The log holds what you typed and pasted, so do not share it.
 you (see [suggestions](suggestions.md#tab)):
 
 ```json
-"tabAway": {"rank": "learned", "work": ["work"]}
+"tabAway": {"rank": "plain", "work": ["work"], "overdueHours": 4}
 ```
 
-`rank` is `learned` (the default) or `fixed`. Learned starts from a prior (work
-first, then requests, then turns you have not seen, then the newest) and fits it
-to where you go: each time you settle on a waiting agent, by Tab or by hand.
-`fixed` keeps the earlier order: a guess not yet seen, then an unseen turn or a
-request, then a guess already seen, the longest waiting first. `work` lists the
-categories, by name and without case, that count as work; the default matches a
-category called `work`. Either way only agents truly waiting on you qualify: a
-request, or a turn that finished with no background work in flight. Choices and
-Tab moves are kept in `runtime/tab_away.jsonl` and the fitted model in
-`runtime/tab_away_model.json`, both owner-only.
+`rank` is `plain` (the default), `learned` or `fixed`. Plain is an order that
+does not learn: anything left waiting more than `overdueHours` (0 turns this
+off) comes first, oldest first, so neglected work cannot sink; then work
+categories, requests, turns you have not seen, and the newest. Learned starts
+from a prior in the same spirit and fits it to where you go; it was the default
+until October 11, when the log showed it mostly learned the order of your
+Command-number walk (597 jumps against 24 Tab moves in five days) rather than
+which agent needed you. `fixed` keeps the earliest order: a guess not yet seen,
+then an unseen turn or a request, then a guess already seen, the longest
+waiting first. `work` lists the categories, by name and without case, that
+count as work; the default matches a category called `work`.
+
+Only agents truly waiting on you qualify: a request, or a turn that finished
+with no background work in flight and that you have not parked. Looking at a
+finished turn for 2.5 seconds or more and moving on without a prompt parks the
+agent: Tab and Ultra Tab pass it over until it next begins to wait. A request
+is never parked. Choices and Tab moves are kept in `runtime/tab_away.jsonl`
+under every rank, and the learned rank's model in `runtime/tab_away_model.json`,
+both owner-only.
 
 ## The rest
 

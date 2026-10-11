@@ -2995,6 +2995,7 @@ int run_restored_suggestion_tests() {
          root.filePath(QStringLiteral("runtime/next_prompt.jsonl"))});
     NextPromptSettings on;
     on.automatic = true;
+    on.holdoutShare = 0;
     next.setSettings(on);
     const auto path = root.filePath(QStringLiteral("runtime/gui_state.json"));
     {

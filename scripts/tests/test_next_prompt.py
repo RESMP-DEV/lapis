@@ -576,6 +576,7 @@ class ModelTests(unittest.TestCase):
         )
         fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
         metered = {name: "placeholder" for name in next_prompt.METERED}
+        metered["CLAUDE_CONFIG_DIR"] = str(folder)  # no settings there
         with patch.dict(os.environ, metered):
             answer = next_prompt.predict(
                 {"context": {"turns": [{"role": "agent", "text": "Running."}]}},
@@ -595,6 +596,73 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--effort") + 1], "low")
         self.assertIn("--no-session-persistence", argv)
         self.assertIn("Running.", seen["stdin"])
+
+    def test_the_model_takes_the_route_the_agents_take(self):
+        folder = Path(tempfile.mkdtemp(prefix="lapis-claude-"))
+        self.addCleanup(shutil.rmtree, folder)
+        (folder / "settings.json").write_text(
+            json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:9"}})
+        )
+        with patch.dict(
+            os.environ,
+            {"CLAUDE_CONFIG_DIR": str(folder), "ANTHROPIC_API_KEY": "placeholder"},
+        ):
+            environment = next_prompt.plan_environment()
+        self.assertEqual(environment["ANTHROPIC_BASE_URL"], "http://127.0.0.1:9")
+        self.assertNotIn("ANTHROPIC_API_KEY", environment)
+
+    def test_a_failure_says_what_it_was_without_secrets(self):
+        cases = {
+            "Claude AI usage limit reached|1760000000": "limit",
+            "API Error: 401 OAuth token has expired": "auth",
+            "Connection refused": "network",
+            "Expecting value: line 1 column 1": "malformed",
+            "something odd": "other",
+        }
+        for message, kind in cases.items():
+            self.assertEqual(next_prompt.failure(RuntimeError(message))["kind"], kind)
+        cleaned = next_prompt.failure(
+            RuntimeError(
+                "bad key sk-ant-oat01-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 for a@b.co "
+                "in /Users/someone/x\nsecond line"
+            )
+        )["error"]
+        self.assertNotIn("ABCDEFGHIJ", cleaned)
+        self.assertNotIn("a@b.co", cleaned)
+        self.assertNotIn("someone", cleaned)
+        self.assertNotIn("second line", cleaned)
+        self.assertEqual(
+            next_prompt.failure(subprocess.TimeoutExpired("x", 1))["kind"], "timeout"
+        )
+
+    def test_prompts_that_were_taken_guesses_are_marked(self):
+        bundle = {
+            "taken": ["go ahead  and ship"],
+            "context": {
+                "recent": [{"text": "go ahead and ship"}, {"text": "why is it slow?"}],
+                "turns": [
+                    {"role": "person", "text": "go ahead and ship"},
+                    {"role": "agent", "text": "go ahead and ship"},
+                ],
+            },
+        }
+        text = next_prompt.render(bundle, fence="f")
+        self.assertIn("- [took a guess] go ahead and ship", text)
+        self.assertIn("- why is it slow?", text)
+        self.assertIn('kind="person">\n[took a guess] go ahead and ship', text)
+        self.assertIn('kind="agent">\ngo ahead and ship', text)
+
+    def test_the_local_model_thinking_aloud_is_not_a_guess(self):
+        for text in (
+            "The user wants to know if the download is done.\nWait, let me check.",
+            "Thinking Process:\n1. look",
+            "<think>hmm</think>",
+            "ok go ahead\nWait, actually no",
+        ):
+            self.assertIsNone(next_prompt.spoken(text), text)
+        self.assertEqual(next_prompt.spoken("<think>x</think>\nstatus?"), "status?")
+        for text in ("ok the user list looks right, ship it", "let me see the diff"):
+            self.assertEqual(next_prompt.spoken(text), text)
 
     def test_a_failed_call_is_an_error_not_a_guess(self):
         folder = Path(tempfile.mkdtemp(prefix="lapis-claude-"))
@@ -893,6 +961,22 @@ class AcceptanceTests(unittest.TestCase):
             (at_eight["scored"], at_eight["unscored"], at_eight["scored_unknown"]),
             (1, 1, 1),
         )
+
+    def test_log_files_include_dated_archives_without_the_recent_rotation(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "next_prompt.jsonl"
+            archive = log.with_name(log.name + ".20261011-070000")
+            recent = log.with_name(log.name + ".1")
+            for path, event in (
+                (archive, {"event": "archived"}),
+                (recent, {"event": "recent"}),
+                (log, {"event": "active"}),
+            ):
+                write_lines(path, [event])
+            self.assertEqual(next_prompt_eval.log_files(log), [archive, recent, log])
 
 
 if __name__ == "__main__":

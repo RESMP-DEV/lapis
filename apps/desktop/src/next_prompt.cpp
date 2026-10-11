@@ -128,6 +128,8 @@ NextPromptSettings parse_next_prompt(const QJsonValue& value) {
     settings.localEndpoint =
         object.value(QStringLiteral("localEndpoint")).toString().trimmed().left(200);
     settings.localModel = object.value(QStringLiteral("localModel")).toString().trimmed().left(100);
+    if (const auto share = object.value(QStringLiteral("holdout")); share.isDouble())
+        settings.holdoutShare = std::clamp(share.toDouble(), 0.0, 0.5);
     return settings;
 }
 
@@ -357,7 +359,8 @@ void NextPrompt::start(const QString& id, quint64 generation, const QString& pro
             if (stage == Stage::verify)
                 dropRestored(id, "unverified");
             else
-                failed(id, agent, stage, why);
+                failed(id, agent, stage, why,
+                       document.object().value(QStringLiteral("kind")).toString());
             return;
         }
         done(document.object());
@@ -404,6 +407,7 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
                              {QStringLiteral("screen"), agent.screen},
                              {QStringLiteral("context"), context},
                              {QStringLiteral("agents"), agents_()},
+                             {QStringLiteral("taken"), QJsonArray::fromStringList(taken_)},
                              {QStringLiteral("time"), QDateTime::currentDateTime().toString(
                                                           QStringLiteral("ddd h:mm ap"))}};
     // Most guesses come from the chosen model; a share goes to an experiment
@@ -453,15 +457,20 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     // normalization. A reported 0.0 still counts at the default; whether the
     // model scored the top guess is recorded as top_scored below.
     const bool usable_probability = probability.isDouble();
-    const bool shown = !text.isEmpty() && usable_probability &&
-                       probability.toDouble() >= settings_.minConfidence && settings_.automatic;
+    const bool offered = !text.isEmpty() && usable_probability &&
+                         probability.toDouble() >= settings_.minConfidence && settings_.automatic;
+    const bool hidden =
+        offered && QRandomGenerator::global()->generateDouble() < settings_.holdoutShare;
+    const bool shown = offered && !hidden;
     const Offer made{QStringLiteral("%1:%2.%3").arg(id, run_).arg(++offers_made_),
                      text,
                      context.value(QStringLiteral("conversation")).toString(),
                      context.value(QStringLiteral("turn")).toInt(),
                      0,
                      last_reply(context),
-                     probability.toDouble()};
+                     probability.toDouble(),
+                     hidden};
+    succeeded();
     auto event = about(made, id);
     event.insert(QStringLiteral("event"), QStringLiteral("predicted"));
     event.insert(QStringLiteral("machine"), agent.machine);
@@ -473,10 +482,18 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     event.insert(QStringLiteral("candidates"), candidates);
     event.insert(QStringLiteral("top_scored"), top.value(QStringLiteral("scored")).toBool());
     event.insert(QStringLiteral("shown"), shown);
+    if (hidden)
+        event.insert(QStringLiteral("hidden"), true);
     event.insert(QStringLiteral("min_confidence"), settings_.minConfidence);
     event.insert(QStringLiteral("ms"), answer.value(QStringLiteral("ms")));
     record(event);
     emit judged(id, answer.value(QStringLiteral("attention")).toString());
+    if (hidden) {
+        // Compared with what the person sends, as an offer would be.
+        if (!awaiting_.value(id).filled)
+            awaiting_.insert(id, {made, false, false});
+        return;
+    }
     if (!shown)
         return;
     const auto judged_for = [this, &id](const QString& attention) { emit judged(id, attention); };
@@ -493,21 +510,50 @@ QString NextPrompt::suggestion(const QString& id) const { return offers_.value(i
 
 // A completed attempt that came to nothing records its stage and reason.
 // Superseded or disabled work is cancelled before producing an offer.
-void NextPrompt::failed(const QString& id, const Agent& agent, Stage stage, const QString& why) {
+void NextPrompt::failed(const QString& id, const Agent& agent, Stage stage, const QString& why,
+                        const QString& kind) {
     const QStringList known{
         QStringLiteral("no transcript"),           QStringLiteral("no Claude Code CLI on this Mac"),
         QStringLiteral("invalid conversation id"), QStringLiteral("timeout"),
         QStringLiteral("output too large"),        QStringLiteral("invalid helper JSON"),
         QStringLiteral("helper unavailable")};
-    const auto reason = known.contains(why) ? why : QStringLiteral("helper failed");
-    record({{QStringLiteral("event"), QStringLiteral("failed")},
-            {QStringLiteral("agent"), id},
-            {QStringLiteral("machine"), agent.machine},
-            {QStringLiteral("cli"), agent.cli},
-            {QStringLiteral("stage"),
-             stage == Stage::predict ? QStringLiteral("predict") : QStringLiteral("context")},
-            {QStringLiteral("error"), reason}});
+    const bool from_helper = !known.contains(why);
+    const auto reason = from_helper ? QStringLiteral("helper failed") : why;
+    QJsonObject event{{QStringLiteral("event"), QStringLiteral("failed")},
+                      {QStringLiteral("agent"), id},
+                      {QStringLiteral("machine"), agent.machine},
+                      {QStringLiteral("cli"), agent.cli},
+                      {QStringLiteral("stage"), stage == Stage::predict
+                                                    ? QStringLiteral("predict")
+                                                    : QStringLiteral("context")},
+                      {QStringLiteral("error"), reason}};
+    // A message that came with a kind was cleaned to one line by failure() in
+    // next_prompt.py; any other helper text stays out of the log.
+    if (from_helper && !why.isEmpty() && !kind.isEmpty())
+        event.insert(QStringLiteral("detail"), why.left(160));
+    if (!kind.isEmpty())
+        event.insert(QStringLiteral("kind"), kind.left(16));
+    record(event);
+    if (stage == Stage::predict || kind == QStringLiteral("timeout")) {
+        ++failure_streak_;
+        static const QHash<QString, QString> plain{
+            {QStringLiteral("limit"), QStringLiteral("a Claude usage limit")},
+            {QStringLiteral("auth"), QStringLiteral("Claude sign-in")},
+            {QStringLiteral("timeout"), QStringLiteral("timeouts")},
+            {QStringLiteral("network"), QStringLiteral("the network")},
+            {QStringLiteral("malformed"), QStringLiteral("unreadable answers")}};
+        last_failure_ = plain.value(kind, from_helper ? why.left(100) : reason);
+        emit failingChanged();
+    }
     emit judged(id, {});
+}
+
+void NextPrompt::succeeded() {
+    if (failure_streak_ == 0)
+        return;
+    failure_streak_ = 0;
+    last_failure_.clear();
+    emit failingChanged();
 }
 
 QVariantMap NextPrompt::readyAgents() const {
@@ -691,6 +737,13 @@ void NextPrompt::settle(const QString& id, const QJsonObject& context) {
     event.insert(QStringLiteral("similarity"), std::round(score.value * 1000.0) / 1000.0);
     event.insert(QStringLiteral("similarity_bounded"), prefix_bounded || score.bounded);
     event.insert(QStringLiteral("sent_text"), sent.left(4000));
+    if (waiting->offer.hidden)
+        event.insert(QStringLiteral("hidden"), true);
+    if (exact && waiting->filled) {
+        taken_.append(sent.trimmed().left(500));
+        while (taken_.size() > 40)
+            taken_.removeFirst();
+    }
     awaiting_.erase(waiting);
     record(event);
     emit stateChanged();
@@ -712,8 +765,16 @@ void NextPrompt::record(QJsonObject event) const {
         return;
     }
     if (file.exists() && file.size() + encoded.size() > kLogLimit) {
+        // These are labels (what the person did with each guess or move), the
+        // one thing here that cannot be regenerated: the previous file is
+        // archived under its date, never deleted.
         const auto previous = log_path_ + QStringLiteral(".1");
-        QFile::remove(previous);
+        if (QFile::exists(previous) &&
+            !QFile::rename(previous, log_path_ + QDateTime::currentDateTimeUtc().toString(
+                                                     QStringLiteral("'.'yyyyMMdd-HHmmss")))) {
+            qWarning() << "Next prompt: cannot archive the previous log";
+            return;
+        }
         if (!file.rename(previous)) {
             qWarning() << "Next prompt: cannot rotate log";
             return;

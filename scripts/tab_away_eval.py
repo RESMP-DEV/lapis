@@ -165,7 +165,8 @@ def evaluate(decisions, test_from):
 def from_log(path):
     """Choices as lapis logged them."""
     decisions, tabs = [], []
-    for name in (str(path) + ".1", str(path)):
+    archives = sorted(glob.glob(glob.escape(str(path)) + ".2*"))
+    for name in archives + [str(path) + ".1", str(path)]:
         if not os.path.exists(name):
             continue
         with open(name, encoding="utf-8", errors="replace") as lines:

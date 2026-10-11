@@ -4421,7 +4421,8 @@ without a numeric probability, and the predicted event records `top_scored`.
   off, and whether it had been seen), plus a bounded `similarity_bounded` marker when outcome scoring compares only the first 2000 characters or uses its conservative shared-prefix/suffix fallback for prompts over 256 characters, `failed` (the stage, context or
   predict, and a stable reason category without raw error text) and `skipped`
   (the hourly cap, which counts model calls). Log records are bounded to 1 MiB;
-  the active log rotates at 4 MiB with one owner-only backup. Helper stdout is
+  the active log rotates at 4 MiB into an owner-only `.1`, and an older `.1` is
+  archived under its date (labels are never deleted). Helper stdout is
   bounded to 1 MiB and stderr to 64 KiB; timeout, overflow, disable and
   supersession stop its process group. Session and offer identity are captured
   before input is sent and checked again for every receipt, so a document
@@ -4658,7 +4659,7 @@ agents qualify is a fixed rule; their order is learned.
   before that add agents that began waiting and keep the ones passed over, so
   a Tab followed by another move teaches against Tab's pick. Each choice and
   each Tab move (candidates' features and scores) is appended to
-  `runtime/tab_away.jsonl` (owner-only, 4 MiB with one backup). A thread-pool
+  `runtime/tab_away.jsonl` (owner-only, 4 MiB, older files archived by date). A thread-pool
   job refits on the newest 1000 choices (150 gradient steps on mean negative
   log-likelihood plus 0.1 times the squared distance from the prior), writes
   `runtime/tab_away_model.json` and publishes the weights to the GUI thread;
@@ -4698,6 +4699,20 @@ the stated priorities (work first), and 0.52 and 0.69 told only to predict
 where the person goes, at a median 2.9 to 3.1 s per call. It is not used: it is
 less accurate than the learned ranker and would have to be precomputed in the
 background on every state change.
+
+October 11: the default is a plain order again, with learning opt-in
+(`"rank": "learned"`). From October 6 to 11 the interaction log held 597
+Command-number category jumps and 571 next/previous moves against 24 Tab moves,
+so most "choices" were steps of a keyboard walk: the ranker learned adjacency
+in that walk, and the work category ended with the strongest negative weight,
+cancelling the stated preference. Its gain over newest-first was about 7 of 51
+held-out choices, inside its own ±0.07. The plain order keeps the stated
+priorities outside learning (work, requests, unseen turns, newest) and adds a
+ceiling: anything waiting more than four hours comes first. Agents the person
+looked at for 2.5 s and left without a prompt are parked until their next turn;
+before this, with a guess on nearly every finished turn, a logged choice had
+7.6 waiting agents on average, including threads left for days. Choices are still
+logged, so the learned rank can be evaluated against the plain one later.
 
 ### Update pacing audit (September 28)
 
