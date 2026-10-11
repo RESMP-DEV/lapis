@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-11T07:39:14.988201+00:00",
+  "timestamp": "2026-10-11T08:02:39.086112+00:00",
   "checks": [
     "managed TUI startup and attention attachment",
     "duplicate decision sent after first decision",
@@ -21,27 +21,17 @@
   "desktop_controls": false,
   "codex_sha256": "1e6d87e0d5b0e862e48f35fd816a7b9425c7988ef7c185d56be07d632a65ffef",
   "source": {
-    "lapis_revision": "8ee3d0469c9cbed75fd4984de39d88cdb5f7cfb0",
-    "lapis_dirty_files": [
-      "adapters/codex/README.md",
-      "docs/architecture.md",
-      "docs/status.md",
-      "evidence/codex-p2-worktree-probe-20261011.json",
-      "evidence/codex-p3-permission-smoke-20261011.json",
-      "evidence/codex-p3-permission-smoke-20261011.screen.txt",
-      "scripts/check_service_attention.py",
-      "scripts/probe_codex_worktrees.py",
-      "scripts/tests/test_check_service_attention.py",
-      "scripts/tests/test_probe_codex_worktrees.py"
-    ],
+    "lapis_revision": "5ffa725f07a554fb8ccd518c5a515f6440570257",
+    "lapis_dirty_files": [],
     "candidate_revision": "481280ec261ba1a1f8f0c205ed301825fe28f9bc",
     "binary_sha256": "1e6d87e0d5b0e862e48f35fd816a7b9425c7988ef7c185d56be07d632a65ffef",
     "platform": "macOS arm64",
-    "lapis_dirty": true,
+    "lapis_dirty": false,
     "lapis_dirty_scope": "P2/P3 probe harness, capability documentation and sanitized evidence only.",
     "candidate_repository": "RESMP-DEV/codex",
     "candidate_source_clean": true,
-    "reported_version": "codex-cli 0.0.0"
+    "reported_version": "codex-cli 0.0.0",
+    "lapis_live_scope": "Exact clean probe head used for the live P3 run; the later evidence-only commit does not alter probe inputs."
   },
   "launch_contract": {
     "backend_transport": "dedicated-app-server-unix-socket",
@@ -79,7 +69,7 @@
   "last_request_count": 0,
   "service_reaped": true,
   "owned_process_groups_cleaned": true,
-  "elapsed_seconds": 59.166,
+  "elapsed_seconds": 42.241,
   "schema": "lapis.codex-p3-permission-smoke/1",
   "scope": "P3 permission-catalog smoke through the managed explicit-remote TUI using the declared GLM provider/model. It proves rendering and routing for this harmless command fixture, not broader permission kinds.",
   "validation": [
@@ -87,13 +77,13 @@
       "name": "live-p3-service-check",
       "command": "PATH=<candidate-release-dir>:$PATH python3 -u scripts/check_service_attention.py --live-glm --build-dir <clean-main>/build/desktop --output <ignored-build-receipt>",
       "exit_code": 0,
-      "result": "All 12 assembled live checks passed in 59.166 seconds; permission labels/shortcuts rendered and accept routing completed."
+      "result": "All 12 assembled live checks passed in 42.241 seconds; complete permission rows rendered and accept routing completed."
     },
     {
       "name": "focused-python-tests",
       "command": "python3 -m unittest scripts.tests.test_check_service_attention -v",
       "exit_code": 0,
-      "result": "25 tests passed."
+      "result": "26 focused tests passed."
     }
   ],
   "failed_attempts": [

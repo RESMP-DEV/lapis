@@ -1,29 +1,19 @@
 {
   "schema": "lapis.codex-p2-worktree-probe/1",
-  "recorded_at": "2026-10-11T07:37:21.528656+00:00",
+  "recorded_at": "2026-10-11T08:02:03.806478+00:00",
   "passed": true,
   "source": {
-    "lapis_revision": "8ee3d0469c9cbed75fd4984de39d88cdb5f7cfb0",
-    "lapis_dirty_files": [
-      "adapters/codex/README.md",
-      "docs/architecture.md",
-      "docs/status.md",
-      "evidence/codex-p2-worktree-probe-20261011.json",
-      "evidence/codex-p3-permission-smoke-20261011.json",
-      "evidence/codex-p3-permission-smoke-20261011.screen.txt",
-      "scripts/check_service_attention.py",
-      "scripts/probe_codex_worktrees.py",
-      "scripts/tests/test_check_service_attention.py",
-      "scripts/tests/test_probe_codex_worktrees.py"
-    ],
+    "lapis_revision": "5ffa725f07a554fb8ccd518c5a515f6440570257",
+    "lapis_dirty_files": [],
     "candidate_revision": "481280ec261ba1a1f8f0c205ed301825fe28f9bc",
     "binary_sha256": "1e6d87e0d5b0e862e48f35fd816a7b9425c7988ef7c185d56be07d632a65ffef",
-    "platform": "macOS arm64",
-    "lapis_dirty": true,
+    "platform": "Darwin arm64",
+    "lapis_dirty": false,
     "lapis_dirty_scope": "P2/P3 probe harness, capability documentation and sanitized evidence only.",
     "candidate_repository": "RESMP-DEV/codex",
     "candidate_source_clean": true,
-    "reported_version": "codex-cli 0.0.0"
+    "reported_version": "codex-cli 0.0.0",
+    "lapis_live_scope": "Exact clean probe head used for the live P2 run; the later evidence-only commit does not alter probe inputs."
   },
   "model": "zai,glm-5.3",
   "model_provider": "lapis_probe loopback fixture",
@@ -56,13 +46,7 @@
     ],
     "endpoint_owner_verified": true
   },
-  "failed_attempts": [
-    {
-      "attempt": "live-p2-first-tracked-run",
-      "result": "Exit 1 after 106.229 seconds when the model stream disconnected before WORKTREE_UNAVAILABLE; cleanup passed.",
-      "repair": "The durable probe records terminal status and retries the bounded availability turn once without weakening its no-command/no-attachment assertions."
-    }
-  ],
+  "failed_attempts": [],
   "worktree_tools": "unavailable-on-explicit-remote",
   "persistent_threads": 2,
   "events": [
@@ -196,11 +180,6 @@
     },
     {
       "method": "thread/status/changed",
-      "thread": "other",
-      "ephemeral": null
-    },
-    {
-      "method": "thread/status/changed",
       "thread": "original",
       "ephemeral": null
     },
@@ -239,7 +218,7 @@
   ],
   "service_reaped": true,
   "owned_process_groups_cleaned": true,
-  "elapsed_seconds": 29.405,
+  "elapsed_seconds": 27.056,
   "source_review": {
     "explicit_remote_target": "AppServerTarget::Remote; app/startup.rs starts dynamic tool MCP only for LocalDaemon or Embedded targets.",
     "managed_worktree_surface": "Managed worktree tools and their create/poll/list schemas exist in the candidate, but the explicit-remote bridge is absent.",
@@ -270,13 +249,22 @@
       "name": "live-p2-probe",
       "command": "PATH=<candidate-release-dir>:$PATH python3 -u scripts/probe_codex_worktrees.py --codex <candidate-release-dir>/codex --build-dir <clean-main>/build/desktop --output <ignored-build-receipt>",
       "exit_code": 0,
-      "result": "All seven P2 checks passed in 29.405 seconds; service reaping and owned process-group cleanup passed."
+      "result": "All seven P2 checks passed in 27.056 seconds; service reaping and owned process-group cleanup passed."
     },
     {
       "name": "focused-python-tests",
       "command": "python3 -m unittest scripts.tests.test_check_service_attention -v",
       "exit_code": 0,
-      "result": "25 tests passed."
+      "result": "26 focused tests passed."
     }
-  ]
+  ],
+  "second_thread_diagnostic": "Codex observer requires one stable thread",
+  "disabled_response_rejection": {
+    "diagnostic": "Request changed or response is unsupported; refresh attention",
+    "retry_echoed": false
+  },
+  "archive_response_rejection": {
+    "diagnostic": "Request changed or response is unsupported; refresh attention",
+    "retry_echoed": false
+  }
 }
