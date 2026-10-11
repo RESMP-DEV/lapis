@@ -1,7 +1,7 @@
 {
   "schema": "lapis.codex-p4-managed-daemon-probe/1",
   "schema_version": 1,
-  "recorded_at": "2026-10-10T23:27:24-07:00",
+  "recorded_at": "2026-10-10T23:33:00-07:00",
   "passed": true,
   "source": {
     "lapis_revision": "1ca099b45193486a955694161d7f85f4d70f020f",
@@ -29,15 +29,19 @@
     "managed_daemon_process": false,
     "managed_daemon_process_scope": "disposable fixture process tree",
     "managed_daemon_state": false,
+    "managed_daemon_state_paths_checked": [
+      "<disposable CODEX_HOME>/app-server-daemon",
+      "<disposable CODEX_HOME>/packages/app-server-daemon"
+    ],
     "qualification_identity": "executable-sha256",
     "reason": "Lapis launches one dedicated app-server with --listen unix://<endpoint>.codex and passes that exact endpoint to the TUI with --remote. Candidate source selection prefers an explicit remote endpoint over local daemon discovery, and the live process/state inventory found no daemon."
   },
   "validation": [
     {
       "name": "no-model-launch-contract",
-      "command": "python3 scripts/check_service_attention.py --build-dir build/desktop --output build/codex-p4-481280/no-model-review-final.json",
+      "command": "python3 scripts/check_service_attention.py --build-dir build/desktop --output build/codex-p4-481280/no-model-final-state-paths.json",
       "exit_code": 0,
-      "result": "Passed in 2.078 seconds: managed TUI startup and attention attachment, same-child detach/reattach, abrupt service death cleanup, dedicated backend process, exact explicit-remote TUI arguments and child PID/parent, no daemon process/state in the disposable fixture, and endpoint peer PID matching the backend."
+      "result": "Passed in 2.016 seconds: managed TUI startup and attention attachment, same-child detach/reattach, abrupt service death cleanup, dedicated backend process, exact explicit-remote TUI arguments and child PID/parent, no daemon process/state in the disposable fixture, explicit daemon-state paths checked, and endpoint peer PID matching the backend."
     },
     {
       "name": "live-routing-regression",

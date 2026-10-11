@@ -242,7 +242,7 @@ class LaunchContractTests(unittest.TestCase):
                 record_launch_contract(service, home, artifacts, receipt)
             self.assertEqual(socket.connected, str(endpoint))
             self.assertTrue((artifacts / "launch-contract.txt").exists())
-            return receipt
+            return receipt, root
 
     def launch_rows(self, endpoint):
         return (
@@ -254,7 +254,17 @@ class LaunchContractTests(unittest.TestCase):
 
     def test_dedicated_endpoint_and_explicit_remote_are_recorded(self):
         endpoint = Path("/private/lapis/attention.sock.codex")
-        receipt = self.run_launch_contract(self.launch_rows(endpoint))
+        receipt, root = self.run_launch_contract(self.launch_rows(endpoint))
+        state_paths = receipt["launch_contract"].pop(
+            "managed_daemon_state_paths_checked"
+        )
+        self.assertEqual(
+            [Path(path).relative_to(root) for path in state_paths],
+            [
+                Path("home/app-server-daemon"),
+                Path("home/packages/app-server-daemon"),
+            ],
+        )
         self.assertEqual(
             receipt["launch_contract"],
             {

@@ -587,9 +587,12 @@ def record_launch_contract(service, home, artifacts, receipt):
         if has_arguments(process, ["app-server", "daemon"])
     ]
     require(not daemon_rows, "A shared app-server daemon process was started")
+    daemon_state_paths = (
+        home / "app-server-daemon",
+        home / "packages/app-server-daemon",
+    )
     require(
-        not (home / "app-server-daemon").exists()
-        and not (home / "packages/app-server-daemon").exists(),
+        not any(path.exists() for path in daemon_state_paths),
         "Managed daemon state was created in the disposable home",
     )
     backend = backend_rows[0]
@@ -641,6 +644,9 @@ def record_launch_contract(service, home, artifacts, receipt):
         "managed_daemon_process": False,
         "managed_daemon_process_scope": "disposable fixture process tree",
         "managed_daemon_state": False,
+        "managed_daemon_state_paths_checked": [
+            str(path) for path in daemon_state_paths
+        ],
         "endpoint_owner_verified": True,
         "backend_process_group": backend["pgid"],
     }
