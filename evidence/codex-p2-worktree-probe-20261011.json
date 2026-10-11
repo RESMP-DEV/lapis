@@ -1,0 +1,282 @@
+{
+  "schema": "lapis.codex-p2-worktree-probe/1",
+  "recorded_at": "2026-10-11T07:37:21.528656+00:00",
+  "passed": true,
+  "source": {
+    "lapis_revision": "8ee3d0469c9cbed75fd4984de39d88cdb5f7cfb0",
+    "lapis_dirty_files": [
+      "adapters/codex/README.md",
+      "docs/architecture.md",
+      "docs/status.md",
+      "evidence/codex-p2-worktree-probe-20261011.json",
+      "evidence/codex-p3-permission-smoke-20261011.json",
+      "evidence/codex-p3-permission-smoke-20261011.screen.txt",
+      "scripts/check_service_attention.py",
+      "scripts/probe_codex_worktrees.py",
+      "scripts/tests/test_check_service_attention.py",
+      "scripts/tests/test_probe_codex_worktrees.py"
+    ],
+    "candidate_revision": "481280ec261ba1a1f8f0c205ed301825fe28f9bc",
+    "binary_sha256": "1e6d87e0d5b0e862e48f35fd816a7b9425c7988ef7c185d56be07d632a65ffef",
+    "platform": "macOS arm64",
+    "lapis_dirty": true,
+    "lapis_dirty_scope": "P2/P3 probe harness, capability documentation and sanitized evidence only.",
+    "candidate_repository": "RESMP-DEV/codex",
+    "candidate_source_clean": true,
+    "reported_version": "codex-cli 0.0.0"
+  },
+  "model": "zai,glm-5.3",
+  "model_provider": "lapis_probe loopback fixture",
+  "scope": "P2 live probe of worktool exposure on Lapis's explicit-remote managed TUI, followed by two persistent threads, per-thread replay, response fail-close and mid-turn archive. It does not qualify embedded or local-daemon worktree creation.",
+  "checks": [
+    "dedicated managed TUI launch contract",
+    "model observed no worktree tools or attachment",
+    "second persistent thread disabled observer",
+    "disabled observer rejected structured response",
+    "both threads resume/read by identity",
+    "original pending request reconciled and answered after second archive",
+    "mid-turn archive disabled source and stale reply"
+  ],
+  "non_claims": [
+    "No managed worktree was created because the explicit-remote TUI did not expose its tools.",
+    "No worktree attachment, task-tool delegation, embedded/local-daemon worktree behavior, native input, GPU, package or Linux behavior is claimed.",
+    "The thread-switch contract is proposed, not implemented in Lapis.",
+    "A future Codex target that exposes worktree tools on explicit remote requires a new probe."
+  ],
+  "codex_sha256": "1e6d87e0d5b0e862e48f35fd816a7b9425c7988ef7c185d56be07d632a65ffef",
+  "launch_contract": {
+    "backend_transport": "dedicated-app-server-unix-socket",
+    "tui_transport": "explicit-remote-unix-socket",
+    "managed_daemon_process": false,
+    "managed_daemon_process_scope": "disposable fixture process tree",
+    "managed_daemon_state": false,
+    "managed_daemon_state_paths_checked": [
+      "<disposable CODEX_HOME>/app-server-daemon",
+      "<disposable CODEX_HOME>/packages/app-server-daemon"
+    ],
+    "endpoint_owner_verified": true
+  },
+  "failed_attempts": [
+    {
+      "attempt": "live-p2-first-tracked-run",
+      "result": "Exit 1 after 106.229 seconds when the model stream disconnected before WORKTREE_UNAVAILABLE; cleanup passed.",
+      "repair": "The durable probe records terminal status and retries the bounded availability turn once without weakening its no-command/no-attachment assertions."
+    }
+  ],
+  "worktree_tools": "unavailable-on-explicit-remote",
+  "persistent_threads": 2,
+  "events": [
+    {
+      "method": "thread/started",
+      "thread": "original",
+      "ephemeral": false
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "original",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/started",
+      "thread": "other",
+      "ephemeral": true
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "other",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "original",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "original",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "other",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "original",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/started",
+      "thread": "second",
+      "ephemeral": false
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "second",
+      "ephemeral": null
+    },
+    {
+      "method": "turn/started",
+      "thread": "second",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "second",
+      "ephemeral": null
+    },
+    {
+      "method": "turn/completed",
+      "thread": "second",
+      "ephemeral": null,
+      "status": "completed"
+    },
+    {
+      "method": "item/tool/requestUserInput",
+      "thread": "original",
+      "ephemeral": null,
+      "request": true
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "second",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "second",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/archived",
+      "thread": "second",
+      "ephemeral": null
+    },
+    {
+      "method": "serverRequest/resolved",
+      "thread": "original",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "original",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "original",
+      "ephemeral": null
+    },
+    {
+      "method": "turn/completed",
+      "thread": "original",
+      "ephemeral": null,
+      "status": "completed"
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "original",
+      "ephemeral": null
+    },
+    {
+      "method": "turn/started",
+      "thread": "original",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/started",
+      "thread": "other",
+      "ephemeral": true
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "other",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "other",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "original",
+      "ephemeral": null
+    },
+    {
+      "method": "item/tool/requestUserInput",
+      "thread": "original",
+      "ephemeral": null,
+      "request": true
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "original",
+      "ephemeral": null
+    },
+    {
+      "method": "turn/completed",
+      "thread": "original",
+      "ephemeral": null,
+      "status": "interrupted"
+    },
+    {
+      "method": "serverRequest/resolved",
+      "thread": "original",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/status/changed",
+      "thread": "original",
+      "ephemeral": null
+    },
+    {
+      "method": "thread/archived",
+      "thread": "original",
+      "ephemeral": null
+    }
+  ],
+  "service_reaped": true,
+  "owned_process_groups_cleaned": true,
+  "elapsed_seconds": 29.405,
+  "source_review": {
+    "explicit_remote_target": "AppServerTarget::Remote; app/startup.rs starts dynamic tool MCP only for LocalDaemon or Embedded targets.",
+    "managed_worktree_surface": "Managed worktree tools and their create/poll/list schemas exist in the candidate, but the explicit-remote bridge is absent.",
+    "thread_archive": "thread/archive can archive while a request and turn are active, emits thread/archived and resolves/cancels pending source requests.",
+    "contract_sha256": {
+      "codex-rs/tui/src/app/startup.rs": "cd8d29107ec288169b80f74ee74f2ccfe322d88b3ca205b98fff8415366a2ef9",
+      "codex-rs/tui/src/app_server_session.rs": "2f061f53fe78a03cfdc160f5e376c3d83030b169d8653126bbb892646dc9823a",
+      "codex-rs/tui/src/managed_worktree_tools.rs": "aa5105caeaa992fa9a0a8276714f66e344b0290a76bde65f4ca99aad98c5199f",
+      "codex-rs/tui/src/managed_worktree_tool_specs.rs": "3126c1d1d68d34b998c2d533848d22b5040ee212822ad054d3359202ac7ea784",
+      "codex-rs/app-server/src/request_processors/thread_processor.rs": "2c40a6db590c9823a6775b28c2e125544583246318ce038166d28fb57a10ab29"
+    }
+  },
+  "finding": {
+    "kind": "contract gap",
+    "result": "The P1/P4 qualified explicit-remote managed TUI does not expose managed worktree tools to the model.",
+    "disposition": "Recorded as a P2 boundary; no embedded or shared-daemon fallback was adopted."
+  },
+  "thread_contract_proposal": {
+    "selection": "One Lapis observer remains bound to an explicitly selected persistent thread ID; it never adopts a second sender.",
+    "second_thread": "A second persistent thread disconnects structured responses without killing the TUI/backend; pending decision tokens are rejected.",
+    "reconciliation": "thread/resume then thread/read must be issued and checked per exact thread ID; each thread remains independently readable.",
+    "recovery": "Archiving the foreign persistent thread allows explicit observer reconnection to restore the original pending request by typed ID and epoch.",
+    "archive": "Archiving the selected thread during an active request disables responses, resolves/cancels source state and rejects stale replies.",
+    "future_switch": "A UI switch must be explicit, select the target ID, increment the source epoch, reconcile target state and invalidate old decision tokens before responses re-enable."
+  },
+  "validation": [
+    {
+      "name": "live-p2-probe",
+      "command": "PATH=<candidate-release-dir>:$PATH python3 -u scripts/probe_codex_worktrees.py --codex <candidate-release-dir>/codex --build-dir <clean-main>/build/desktop --output <ignored-build-receipt>",
+      "exit_code": 0,
+      "result": "All seven P2 checks passed in 29.405 seconds; service reaping and owned process-group cleanup passed."
+    },
+    {
+      "name": "focused-python-tests",
+      "command": "python3 -m unittest scripts.tests.test_check_service_attention -v",
+      "exit_code": 0,
+      "result": "25 tests passed."
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+  >_ OpenAI Codex (v0.0.0)
+     <disposable fixture cwd>
+
+  Tip: Maximize usage with GPT-6.1 Sol. Try it on complex work for near-Astra performance at a lower
+  cost.
+
+
+› Use exec_command to run exactly python3 -c "print(123456789)". Set sandbox_permissions to
+  require_escalated and justification to "Verify lapis approval routing" so this harmless fixture
+  asks for approval before execution. Do not use other commands or tools. After execution reply
+  DONE.
+
+
+• Running python3 -c "print(123456789)"
+
+
+  Would you like to run the following command?
+
+  Environment: local
+
+  Reason: Verify lapis approval routing
+
+  $ python3 -c "print(123456789)"
+
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `python3 -c 'print(123456789)'` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel

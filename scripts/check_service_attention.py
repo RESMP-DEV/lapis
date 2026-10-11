@@ -304,6 +304,22 @@ def validate_approval_request(request, thread, turn, description="approval"):
     )
 
 
+def validate_permission_catalog_screen(screen):
+    """Require the qualified command approval labels and shortcut hints."""
+    normalized = " ".join(screen.split())
+    expected = (
+        "Yes, proceed (y)",
+        "Yes, and don't ask again for commands that start with `python3 -c "
+        "'print(123456789)'` (p)",
+        "No, and tell Codex what to do differently (esc)",
+    )
+    require(
+        all(label in normalized for label in expected),
+        "Command approval labels or permission shortcuts did not render",
+    )
+    return {"rendered_choices": list(expected)}
+
+
 async def multiple_approvals(owner, view, thread, receipt, model=MODEL):
     started = await owner.rpc(
         "turn/start",
@@ -782,6 +798,19 @@ async def exercise(args, receipt):
                 "Refusing non-fixture command",
             )
             require("accept" in request["choices"], "No qualified approval response")
+            (artifacts / "permission-catalog-screen.txt").write_text(view.screen)
+            receipt["permission_catalog_smoke"] = validate_permission_catalog_screen(
+                view.screen
+            )
+            require(
+                set(request["choices"]) == {"accept", "cancel"},
+                "Unexpected qualified permission catalog decisions",
+            )
+            receipt["permission_catalog_adapter_note"] = (
+                "Server catalog exposes accept and cancel for this fixture; the TUI "
+                "renders y, p and esc, while the observer exposes only qualified "
+                "accept/cancel responses."
+            )
             live = await owner.rpc(
                 "thread/resume", {"threadId": thread, "excludeTurns": True}
             )

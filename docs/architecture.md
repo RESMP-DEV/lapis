@@ -5639,3 +5639,55 @@ scope, decision, validation and non-claim fields; the decision must record both
 transports, endpoint peer ownership, daemon process/state observations and every
 checked daemon-state path. The contract also states when a future launcher must
 repeat P4 rather than reuse the October 10 decision.
+### Codex P2/P3 qualification (October 11)
+
+The [P2 receipt](../evidence/codex-p2-worktree-probe-20261011.json) closes the
+open probe against the same exact `481280ec26` executable and the qualified
+explicit-remote launch shape. The result is a contract gap, not a worktree
+qualification: candidate source contains the managed `create_worktree`,
+`get_worktree_creation_status` and `list_worktrees` tools, but `app/startup.rs`
+starts their dynamic MCP bridge only for embedded/local-daemon targets. The
+live GLM model on Lapis's explicit-remote TUI replied `WORKTREE_UNAVAILABLE`,
+ran no substitute command and produced no worktree attachment.
+
+The same disposable fixture then created a second persistent app-server thread
+while the original had a pending structured request. The observer kept its
+original binding, disconnected with `Codex observer requires one stable thread`,
+and rejected the pending response token. Both threads remained independently
+readable through exact-ID `thread/resume` followed by `thread/read`. Archiving
+only the foreign thread allowed explicit observer reconnection to restore the
+original request with the same typed ID, and answering it completed the turn.
+Finally, archiving the selected thread while another request was active emitted
+`thread/archived`, interrupted the turn, disabled responses and rejected a stale
+reply without crashing the service, TUI or backend.
+
+The proposed thread-switch contract is therefore:
+
+1. A Lapis source has one explicitly selected persistent thread ID. Neither
+   worktree attachment metadata nor a second sender may implicitly rebind it.
+2. A second persistent thread is a response-capability boundary, not a process
+   failure: keep terminal ownership, retain bounded observation diagnostics and
+   reject old decision tokens until an explicit selection changes the contract.
+3. Reconciliation is always scoped by the exact target thread ID and consists of
+   `thread/resume` followed by authoritative `thread/read`; success on one
+   thread never proves or restores another.
+4. Archiving the selected thread during an active request must disable
+   responses immediately and treat later replies as stale. Archiving a foreign
+   thread may permit explicit recovery of the original thread.
+5. A future UI switch must be user-initiated, select the target ID, increment
+   the adapter epoch, reconcile target state and invalidate prior tokens before
+   structured responses re-enable. This is a proposal; no switch is implemented.
+
+P2 leaves embedded/local-daemon worktree creation unqualified. A future Codex
+target that exposes those tools on `AppServerTarget::Remote` requires a new
+probe that actually calls create/poll/list and verifies attachment ownership.
+
+The [P3 receipt](../evidence/codex-p3-permission-smoke-20261011.json) and
+[screen](../evidence/codex-p3-permission-smoke-20261011.screen.txt) record the
+server-driven permission catalog on the same managed TUI. The harmless command
+approval rendered `Yes, proceed (y)`, the command-prefix session option `(p)`
+and cancellation `(esc)`. Codex offered accept/cancel as qualified decision
+values; Lapis correctly exposed only accept and cancel rather than inventing a
+decline response. Accept routing, source resolution and the full existing
+service regression still passed. Rendering `(p)` is not permission to add a
+session-approval response until that semantic value is separately qualified.
