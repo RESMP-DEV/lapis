@@ -362,7 +362,11 @@ void predictsAndOffers() {
     // Tie the offering behaviour to the parsed default, not only the struct.
     const auto default_on = lapis::desktop::parse_next_prompt(QJsonObject{
         {QStringLiteral("auto"), true}, {QStringLiteral("effort"), QStringLiteral("low")}});
-    next.setSettings(default_on);
+    // Holdout sampling has its own deterministic loop below; keep this case
+    // observable every time instead of making the default threshold flaky.
+    auto default_without_holdout = default_on;
+    default_without_holdout.holdoutShare = 0;
+    next.setSettings(default_without_holdout);
     next.turnFinished(QStringLiteral("b"));
     require(waitFor([&] {
                 return next.suggestion(QStringLiteral("b")) == QLatin1String("rerun it on 8 GPUs");

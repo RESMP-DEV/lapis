@@ -962,6 +962,22 @@ class AcceptanceTests(unittest.TestCase):
             (1, 1, 1),
         )
 
+    def test_log_files_include_dated_archives_without_the_recent_rotation(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "next_prompt.jsonl"
+            archive = log.with_name(log.name + ".20261011-070000")
+            recent = log.with_name(log.name + ".1")
+            for path, event in (
+                (archive, {"event": "archived"}),
+                (recent, {"event": "recent"}),
+                (log, {"event": "active"}),
+            ):
+                write_lines(path, [event])
+            self.assertEqual(next_prompt_eval.log_files(log), [archive, recent, log])
+
 
 if __name__ == "__main__":
     unittest.main()

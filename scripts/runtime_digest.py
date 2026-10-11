@@ -57,6 +57,12 @@ def rate(part, whole):
     return round(part / whole, 3) if whole else None
 
 
+def offer_key(event):
+    """A usable offer identity, or none for malformed log data."""
+    value = event.get("offer")
+    return value if isinstance(value, str) and value else None
+
+
 def guesses(runtime, since):
     events = list(records(runtime, "next_prompt.jsonl", since))
     kinds = Counter(e.get("event") for e in events)
@@ -64,12 +70,20 @@ def guesses(runtime, since):
         e for e in events if e.get("event") == "failed" and e.get("stage") == "predict"
     ]
     predicted = {
-        e["offer"]: e
+        key: e
         for e in events
-        if e.get("event") == "predicted" and e.get("offer")
+        if e.get("event") == "predicted" and (key := offer_key(e)) is not None
     }
-    seen = {e.get("offer") for e in events if e.get("event") in ("seen", "used")}
-    used = {e.get("offer") for e in events if e.get("event") == "used"}
+    seen = {
+        key
+        for e in events
+        if e.get("event") in ("seen", "used") and (key := offer_key(e)) is not None
+    }
+    used = {
+        key
+        for e in events
+        if e.get("event") == "used" and (key := offer_key(e)) is not None
+    }
     arms = {}
     for key, offer in predicted.items():
         arm = arms.setdefault(offer.get("arm") or "control", Counter())
