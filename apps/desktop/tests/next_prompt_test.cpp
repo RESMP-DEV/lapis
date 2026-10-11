@@ -33,6 +33,7 @@ NextPromptSettings on(int max_per_hour = 60, const QString& effort = {}) {
     settings.maxPerHour = max_per_hour;
     settings.effort = effort;
     settings.experimentShare = 0; // the chosen model every time
+    settings.holdoutShare = 0;    // and every guess shown
     return settings;
 }
 void require(bool condition, const char* message) {
@@ -440,6 +441,30 @@ void predictsAndOffers() {
     next.turnFinished(QStringLiteral("a"));
     require(waitFor([&] { return next.failureStreak() == 0; }), "a guess ends the streak");
     next.seen(QStringLiteral("a")); // so the next turn is not an unseen repeat
+    // A held-out guess is made and logged but never shown.
+    auto held_out = on(60);
+    held_out.holdoutShare = 0.5; // the cap; every draw below 0.5 hides
+    for (int tries = 0; tries < 40; ++tries) {
+        next.setSettings(held_out);
+        const auto before = events(log).size();
+        next.turnFinished(QStringLiteral("a"));
+        require(waitFor([&] {
+                    const auto all = events(log);
+                    return all.size() > before &&
+                           all.last().value(QStringLiteral("event")) == QLatin1String("predicted");
+                }),
+                "a guess is made");
+        const auto made = events(log).last();
+        if (made.value(QStringLiteral("hidden")).toBool()) {
+            require(!made.value(QStringLiteral("shown")).toBool() &&
+                        next.suggestion(QStringLiteral("a")).isEmpty(),
+                    "a held-out guess is never shown");
+            break;
+        }
+        require(tries < 39, "a guess is held out at the configured share");
+        next.seen(QStringLiteral("a"));
+    }
+    next.setSettings(on(60));
     write(root.filePath(QStringLiteral("no-claude")), "yes");
     const auto before_missing_cli = events(log).size();
     next.turnFinished(QStringLiteral("a"));

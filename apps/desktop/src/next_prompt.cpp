@@ -128,6 +128,8 @@ NextPromptSettings parse_next_prompt(const QJsonValue& value) {
     settings.localEndpoint =
         object.value(QStringLiteral("localEndpoint")).toString().trimmed().left(200);
     settings.localModel = object.value(QStringLiteral("localModel")).toString().trimmed().left(100);
+    if (const auto share = object.value(QStringLiteral("holdout")); share.isDouble())
+        settings.holdoutShare = std::clamp(share.toDouble(), 0.0, 0.5);
     return settings;
 }
 
@@ -405,6 +407,7 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
                              {QStringLiteral("screen"), agent.screen},
                              {QStringLiteral("context"), context},
                              {QStringLiteral("agents"), agents_()},
+                             {QStringLiteral("taken"), QJsonArray::fromStringList(taken_)},
                              {QStringLiteral("time"), QDateTime::currentDateTime().toString(
                                                           QStringLiteral("ddd h:mm ap"))}};
     // Most guesses come from the chosen model; a share goes to an experiment
@@ -454,15 +457,19 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     // normalization. A reported 0.0 still counts at the default; whether the
     // model scored the top guess is recorded as top_scored below.
     const bool usable_probability = probability.isDouble();
-    const bool shown = !text.isEmpty() && usable_probability &&
-                       probability.toDouble() >= settings_.minConfidence && settings_.automatic;
+    const bool offered = !text.isEmpty() && usable_probability &&
+                         probability.toDouble() >= settings_.minConfidence && settings_.automatic;
+    const bool hidden =
+        offered && QRandomGenerator::global()->generateDouble() < settings_.holdoutShare;
+    const bool shown = offered && !hidden;
     const Offer made{QStringLiteral("%1:%2.%3").arg(id, run_).arg(++offers_made_),
                      text,
                      context.value(QStringLiteral("conversation")).toString(),
                      context.value(QStringLiteral("turn")).toInt(),
                      0,
                      last_reply(context),
-                     probability.toDouble()};
+                     probability.toDouble(),
+                     hidden};
     succeeded();
     auto event = about(made, id);
     event.insert(QStringLiteral("event"), QStringLiteral("predicted"));
@@ -475,10 +482,18 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     event.insert(QStringLiteral("candidates"), candidates);
     event.insert(QStringLiteral("top_scored"), top.value(QStringLiteral("scored")).toBool());
     event.insert(QStringLiteral("shown"), shown);
+    if (hidden)
+        event.insert(QStringLiteral("hidden"), true);
     event.insert(QStringLiteral("min_confidence"), settings_.minConfidence);
     event.insert(QStringLiteral("ms"), answer.value(QStringLiteral("ms")));
     record(event);
     emit judged(id, answer.value(QStringLiteral("attention")).toString());
+    if (hidden) {
+        // Compared with what the person sends, as an offer would be.
+        if (!awaiting_.value(id).filled)
+            awaiting_.insert(id, {made, false, false});
+        return;
+    }
     if (!shown)
         return;
     const auto judged_for = [this, &id](const QString& attention) { emit judged(id, attention); };
@@ -722,6 +737,13 @@ void NextPrompt::settle(const QString& id, const QJsonObject& context) {
     event.insert(QStringLiteral("similarity"), std::round(score.value * 1000.0) / 1000.0);
     event.insert(QStringLiteral("similarity_bounded"), prefix_bounded || score.bounded);
     event.insert(QStringLiteral("sent_text"), sent.left(4000));
+    if (waiting->offer.hidden)
+        event.insert(QStringLiteral("hidden"), true);
+    if (exact && waiting->filled) {
+        taken_.append(sent.trimmed().left(500));
+        while (taken_.size() > 40)
+            taken_.removeFirst();
+    }
     awaiting_.erase(waiting);
     record(event);
     emit stateChanged();

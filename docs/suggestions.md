@@ -52,6 +52,14 @@ behind an OpenAI-compatible endpoint (for example
 `model` or `local`) and `model` are in `next_prompt.jsonl`, so arms can be
 compared on what you then sent. Set `experiment` to 0 to always use `model`.
 
+A shown guess shapes what you send (you can take it), so how often you take
+guesses is not how well they predict you. `holdout` (default 0.1, at most 0.5)
+of guesses are made and logged but never shown, and compared with what you then
+typed; `next_prompt_eval.py log` reports them as `held_out` beside the same
+figures for shown guesses, and acceptance per arm as `by_arm`. The model is
+also told which of your past prompts were guesses you took unchanged (marked
+`[took a guess]`), so it does not learn its own words as your style.
+
 An agent on another machine reports its finished turns through its own
 terminal: lapis starts it with hooks (Claude Code) or a notify program (Codex)
 that run a small relay with that machine's `python3` (Python 3.11+ to preserve

@@ -473,6 +473,19 @@ with your own messages and probabilities in place of the placeholders:
 {{"category": "other", "attention": "steer", "candidates": [{{"text": "...", "p": 0.0}}]}}"""
 
 
+def taken_set(bundle):
+    """The person's prompts that were guesses they took unchanged."""
+    return {
+        " ".join(str(text).split())
+        for text in bundle.get("taken", [])
+        if isinstance(text, str) and text.strip()
+    }
+
+
+def mark_taken(text, taken):
+    return "[took a guess] " + text if " ".join(text.split()) in taken else text
+
+
 def render(bundle, fence=None):
     """The user turn for the model: this agent, the others, and the time.
 
@@ -508,13 +521,17 @@ def render(bundle, fence=None):
         "Other agents now:",
         block("agents", "\n".join(others)),
     ]
+    taken = taken_set(bundle)
     if context.get("recent"):
         lines += [
-            "Their latest prompts to other agents (newest first):",
+            "Their latest prompts to other agents (newest first); [took a guess]"
+            " marks one they sent by accepting a guess like yours, so it shows"
+            " what they accept, not what they would have written:",
             block(
                 "recent",
                 "\n".join(
-                    "- " + r["text"].replace("\n", " ") for r in context["recent"][:15]
+                    "- " + mark_taken(r["text"], taken).replace("\n", " ")
+                    for r in context["recent"][:15]
                 ),
             ),
         ]
@@ -522,8 +539,12 @@ def render(bundle, fence=None):
         lines += ["Its terminal now:", block("screen", bundle["screen"])]
     lines.append("This conversation, oldest first:")
     for turn in context.get("turns", []):
+        person = turn["role"] == "person"
         lines.append(
-            block("person" if turn["role"] == "person" else "agent", turn["text"])
+            block(
+                "person" if person else "agent",
+                mark_taken(turn["text"], taken) if person else turn["text"],
+            )
         )
     lines.append("Write the person's next message.")
     return "\n".join(lines)

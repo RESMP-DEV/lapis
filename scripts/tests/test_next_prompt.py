@@ -635,6 +635,23 @@ class ModelTests(unittest.TestCase):
             next_prompt.failure(subprocess.TimeoutExpired("x", 1))["kind"], "timeout"
         )
 
+    def test_prompts_that_were_taken_guesses_are_marked(self):
+        bundle = {
+            "taken": ["go ahead  and ship"],
+            "context": {
+                "recent": [{"text": "go ahead and ship"}, {"text": "why is it slow?"}],
+                "turns": [
+                    {"role": "person", "text": "go ahead and ship"},
+                    {"role": "agent", "text": "go ahead and ship"},
+                ],
+            },
+        }
+        text = next_prompt.render(bundle, fence="f")
+        self.assertIn("- [took a guess] go ahead and ship", text)
+        self.assertIn("- why is it slow?", text)
+        self.assertIn('kind="person">\n[took a guess] go ahead and ship', text)
+        self.assertIn('kind="agent">\ngo ahead and ship', text)
+
     def test_the_local_model_thinking_aloud_is_not_a_guess(self):
         for text in (
             "The user wants to know if the download is done.\nWait, let me check.",

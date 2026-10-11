@@ -42,6 +42,10 @@ struct NextPromptSettings {
     QStringList experimentModels{QStringLiteral("claude-sonnet-5-5")};
     QString localEndpoint; // e.g. http://host:8000/v1; empty: no local arm
     QString localModel;
+    // Held out: this share of guesses is made but never shown, and compared
+    // with what the person then typed, so prediction can be measured apart
+    // from acceptance (a shown guess shapes what is sent).
+    double holdoutShare{0.1};
     bool operator==(const NextPromptSettings&) const = default;
 };
 [[nodiscard]] NextPromptSettings parse_next_prompt(const QJsonValue& value);
@@ -184,6 +188,7 @@ class NextPrompt final : public QObject {
         qint64 seen_ms{}; // when first on screen; 0 while unseen
         QString said;     // the agent's last reply, clipped to said_limit
         double p{};       // the model's probability for it
+        bool hidden{};    // held out: made, never shown
     };
     // The last guess made for an agent, to tell a repeat (see turnFinished).
     struct Previous {
@@ -195,6 +200,9 @@ class NextPrompt final : public QObject {
         bool seen{};
     };
     QHash<QString, Previous> previous_;
+    // Prompts the person sent by taking a guess unchanged, newest last: the
+    // model is told which of their past prompts were its own words.
+    QStringList taken_;
     QSet<QString> deferred_;
     QSet<QString> pending_show_;
     void run(const QString& id, bool force);
