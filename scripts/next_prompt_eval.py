@@ -250,9 +250,15 @@ def replay(arguments):
             when = when.strftime("%a %-I:%M %p")
         except ValueError:
             pass
+        turns = item["turns"]
+        if arguments.context == "last":
+            # Only what the agent last said: whether the rest of the context
+            # earns its cost.
+            said = [t for t in turns if t["role"] == "agent"]
+            turns = said[-1:]
         bundle = {
             "agent": {"cli": item["cli"], "machine": item["machine"]},
-            "context": {"turns": item["turns"]},
+            "context": {"turns": turns},
             "time": when,
         }
         return next_prompt.predict(bundle, arguments.model, arguments.effort)
@@ -302,6 +308,7 @@ def replay(arguments):
     report["judge_missing_grades"] = sum(g["id"] not in grades for g in graded)
     report["grading"] = grading_coverage(len(graded), len(rows))
     report["model"] = arguments.model
+    report["context"] = arguments.context
     if graded:
         report["median_ms"] = sorted(g["ms"] for g in graded)[len(graded) // 2]
     return report, rows
@@ -612,6 +619,12 @@ def main(argv=None):
         "--exclude", nargs="*", help="conversation ids to leave out"
     )
     replay_mode.add_argument("--model", default="claude-opus-5-5")
+    replay_mode.add_argument(
+        "--context",
+        choices=("full", "last"),
+        default="full",
+        help="the conversation, or only the agent's last message",
+    )
     replay_mode.add_argument("--effort", default="")
     replay_mode.add_argument("--parallel", type=int, default=6)
     log_mode = modes.add_parser(
