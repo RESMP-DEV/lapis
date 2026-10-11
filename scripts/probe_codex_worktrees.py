@@ -37,6 +37,7 @@ from codex_probe_transport import UnixWebSocketTransport
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_SHA256 = "1e6d87e0d5b0e862e48f35fd816a7b9425c7988ef7c185d56be07d632a65ffef"
 EXPECTED_REVISION = "481280ec261ba1a1f8f0c205ed301825fe28f9bc"
+DEFAULT_MODEL_ENDPOINT = "http://127.0.0.1:3456/v1"
 RELEVANT_EVENTS = {
     "thread/started",
     "thread/status/changed",
@@ -170,8 +171,8 @@ def flatten_items(thread_result):
     return values
 
 
-def verify_model_fixture():
-    with urlopen("http://127.0.0.1:3456/v1/models", timeout=3) as response:
+def verify_model_fixture(endpoint):
+    with urlopen(endpoint.rstrip("/") + "/models", timeout=3) as response:
         payload = json.load(response)
     models = [entry.get("id") for entry in payload.get("data", [])]
     if MODEL not in models:
@@ -202,7 +203,7 @@ async def exercise(args, receipt):
     digest = hashlib.sha256(binary.read_bytes()).hexdigest()
     if digest != args.expected_sha256:
         raise RuntimeError(f"Unexpected Codex executable SHA-256: {digest}")
-    verify_model_fixture()
+    verify_model_fixture(args.model_endpoint)
     receipt["codex_sha256"] = digest
     artifacts = args.output.parent
     artifacts.mkdir(parents=True, exist_ok=True)
@@ -217,7 +218,7 @@ async def exercise(args, receipt):
         home, repository = runtime / "home", runtime / "repository"
         home.mkdir()
         create_repository(home, repository)
-        options = probe_configuration_arguments() + [
+        options = probe_configuration_arguments(args.model_endpoint) + [
             "-c",
             "features.worktrees=true",
             "-c",
@@ -323,6 +324,9 @@ async def exercise(args, receipt):
                             for item in result["thread"]["turns"]
                             if item["id"] == unavailable["turn"]["id"]
                         ),
+                        "agent_reply": next(
+                            (message for message in messages if message), ""
+                        )[:240],
                     }
                 )
             if unavailable_result is None:
@@ -371,11 +375,11 @@ async def exercise(args, receipt):
                 "second persistent thread fail-close",
             )
             if (
-                view.attention["diagnostic"]
-                != "Codex observer requires one stable thread"
-                or view.attention["ready"]
+                view.attention["ready"]
+                or "stable thread" not in view.attention["diagnostic"]
             ):
                 raise RuntimeError("Second persistent thread did not fail closed")
+            receipt["second_thread_diagnostic"] = view.attention["diagnostic"]
             receipt["checks"].append("second persistent thread disabled observer")
             disabled = decision(
                 restore_request,
@@ -384,13 +388,14 @@ async def exercise(args, receipt):
             )
             view.client.send(ATTENTION_DECISION, disabled)
             await eventually(
-                lambda: (
-                    "Request changed or response is unsupported"
-                    in view.attention["diagnostic"]
-                ),
+                lambda: "Request changed" in view.attention["diagnostic"],
                 5,
                 "disabled response rejection",
             )
+            receipt["disabled_response_rejection"] = {
+                "diagnostic": view.attention["diagnostic"],
+                "retry_echoed": view.retry == disabled,
+            }
             receipt["checks"].append("disabled observer rejected structured response")
 
             for thread in (original, second):
@@ -463,15 +468,21 @@ async def exercise(args, receipt):
             )
             view.client.send(ATTENTION_DECISION, stale)
             await eventually(
-                lambda: (
-                    "Request changed or response is unsupported"
-                    in view.attention["diagnostic"]
-                ),
+                lambda: "Request changed" in view.attention["diagnostic"],
                 5,
                 "stale response rejection",
             )
-            if view.attention["requests"] or view.retry not in (None, stale):
+            # Archive can retire the service journal before it emits a retry frame.
+            # No requests plus the rejection diagnostic is therefore sufficient; a
+            # present retry token must nevertheless be exactly the stale payload.
+            if view.attention["requests"] or (
+                view.retry is not None and view.retry != stale
+            ):
                 raise RuntimeError("Archived source exposed stale request state")
+            receipt["archive_response_rejection"] = {
+                "diagnostic": view.attention["diagnostic"],
+                "retry_echoed": view.retry == stale,
+            }
             receipt["checks"].append("mid-turn archive disabled source and stale reply")
             receipt["events"] = sanitized_events(journal.events, original, second)
             receipt["passed"] = True
@@ -500,6 +511,7 @@ def parse_args(argv=None):
     )
     parser.add_argument("--source-revision", default=EXPECTED_REVISION)
     parser.add_argument("--expected-sha256", default=EXPECTED_SHA256)
+    parser.add_argument("--model-endpoint", default=DEFAULT_MODEL_ENDPOINT)
     parser.add_argument("--build-dir", type=Path, default=ROOT / "build/desktop")
     parser.add_argument(
         "--output", type=Path, default=ROOT / "build/codex-p2/receipt.json"

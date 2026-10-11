@@ -504,10 +504,10 @@ class PermissionCatalogTests(unittest.TestCase):
     def test_command_approval_labels_and_shortcuts_must_render(self):
         screen = "\n".join(
             (
-                "Yes, proceed (y)",
-                "Yes, and don't ask again for commands that start with `python3 -c "
+                "› 1. Yes, proceed (y)",
+                "2. Yes, and don't ask again for commands that start with `python3 -c "
                 "'print(123456789)'` (p)",
-                "No, and tell Codex what to do differently (esc)",
+                "3. No, and tell Codex what to do differently (esc)",
             )
         )
         self.assertEqual(

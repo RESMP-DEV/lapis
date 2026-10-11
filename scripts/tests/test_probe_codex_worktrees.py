@@ -2,11 +2,13 @@
 
 import sys
 import unittest
+import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from probe_codex_worktrees import sanitized_events
+from probe_codex_worktrees import parse_args, sanitized_events
+from check_codex_attention import probe_configuration_arguments
 
 
 class SanitizedEventTests(unittest.TestCase):
@@ -55,6 +57,17 @@ class SanitizedEventTests(unittest.TestCase):
         self.assertEqual(
             len(sanitized_events(events, "private-original", "private-second")),
             256,
+        )
+
+
+class ArgumentTests(unittest.TestCase):
+    def test_model_endpoint_is_explicit_and_reaches_provider_configuration(self):
+        args = parse_args(["--model-endpoint", "http://127.0.0.1:3900/v1"])
+        self.assertEqual(args.model_endpoint, "http://127.0.0.1:3900/v1")
+        arguments = probe_configuration_arguments(args.model_endpoint)
+        self.assertIn(
+            "model_providers.lapis_probe.base_url=" + json.dumps(args.model_endpoint),
+            arguments,
         )
 
 

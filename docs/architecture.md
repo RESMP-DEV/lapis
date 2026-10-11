@@ -5639,6 +5639,7 @@ scope, decision, validation and non-claim fields; the decision must record both
 transports, endpoint peer ownership, daemon process/state observations and every
 checked daemon-state path. The contract also states when a future launcher must
 repeat P4 rather than reuse the October 10 decision.
+
 ### Codex P2/P3 qualification (October 11)
 
 The [P2 receipt](../evidence/codex-p2-worktree-probe-20261011.json) closes the

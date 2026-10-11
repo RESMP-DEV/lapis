@@ -281,13 +281,13 @@ def trust_fixture_directory(home, cwd):
         )
 
 
-def probe_configuration_arguments():
+def probe_configuration_arguments(base_url="http://127.0.0.1:3456/v1"):
     """Shared isolated GLM route for app-server and ordinary-TUI fixtures."""
     config = {
         "model": MODEL,
         "model_provider": "lapis_probe",
         "model_providers.lapis_probe.name": "lapis GLM probe",
-        "model_providers.lapis_probe.base_url": "http://127.0.0.1:3456/v1",
+        "model_providers.lapis_probe.base_url": base_url,
         "model_providers.lapis_probe.wire_api": "responses",
         "model_providers.lapis_probe.requires_openai_auth": False,
         "model_providers.lapis_probe.supports_websockets": False,

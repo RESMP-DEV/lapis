@@ -305,8 +305,13 @@ def validate_approval_request(request, thread, turn, description="approval"):
 
 
 def validate_permission_catalog_screen(screen):
-    """Require the qualified command approval labels and shortcut hints."""
-    normalized = " ".join(screen.split())
+    """Require complete command-approval rows, not labels mentioned elsewhere."""
+    rows = [" ".join(line.split()) for line in screen.splitlines() if line.strip()]
+
+    def rendered(number, label):
+        choice = f"{number}. {label}"
+        return any(row in (choice, f"› {choice}") for row in rows)
+
     expected = (
         "Yes, proceed (y)",
         "Yes, and don't ask again for commands that start with `python3 -c "
@@ -314,7 +319,7 @@ def validate_permission_catalog_screen(screen):
         "No, and tell Codex what to do differently (esc)",
     )
     require(
-        all(label in normalized for label in expected),
+        all(rendered(number, label) for number, label in enumerate(expected, 1)),
         "Command approval labels or permission shortcuts did not render",
     )
     return {"rendered_choices": list(expected)}
