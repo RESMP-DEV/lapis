@@ -535,19 +535,23 @@ def record_launch_contract(service, home, artifacts, receipt):
         columns = row.split(maxsplit=3)
         if len(columns) != 4:
             continue
-        processes.append(
-            {
+        try:
+            process = {
                 "pid": int(columns[0]),
                 "ppid": int(columns[1]),
                 "pgid": int(columns[2]),
                 "command": columns[3],
                 "row": row,
             }
-        )
+        except ValueError:
+            continue
+        processes.append(process)
     for process in processes:
         try:
             process["arguments"] = shlex.split(process["command"])
         except ValueError:
+            # A malformed ps row cannot match the required exact arguments;
+            # leaving it empty makes the expected backend/TUI absence fail closed.
             process["arguments"] = []
 
     def has_arguments(process, expected):
@@ -587,6 +591,8 @@ def record_launch_contract(service, home, artifacts, receipt):
         if has_arguments(process, ["app-server", "daemon"])
     ]
     require(not daemon_rows, "A shared app-server daemon process was started")
+    # Canonical managed-daemon locations under CODEX_HOME; a new Codex storage
+    # contract requires a new P4 probe rather than silently broadening this one.
     daemon_state_paths = (
         home / "app-server-daemon",
         home / "packages/app-server-daemon",
@@ -605,9 +611,9 @@ def record_launch_contract(service, home, artifacts, receipt):
     )
     probe = None
     try:
-        for _ in range(20):
+        for _ in range(40):
             probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            probe.settimeout(0.25)
+            probe.settimeout(0.1)
             try:
                 probe.connect(endpoint_text)
                 break
@@ -618,7 +624,8 @@ def record_launch_contract(service, home, artifacts, receipt):
         else:
             require(False, "The dedicated endpoint did not accept a probe connection")
         if sys.platform == "darwin":
-            # macOS defines SOL_LOCAL as 0 and LOCAL_PEERPID as 2 in sys/un.h.
+            # These stable values come from the macOS SDK's sys/un.h; Linux uses
+            # SO_PEERCRED below.
             peer_bytes = probe.getsockopt(0, 2, 4)
             require(len(peer_bytes) == 4, "LOCAL_PEERPID returned an unexpected size")
             peer_pid = struct.unpack("I", peer_bytes)[0]
@@ -743,7 +750,9 @@ async def exercise(args, receipt):
                     persistent.append(candidate)
             require(len(persistent) == 1, "Fixture must have one persistent TUI thread")
             thread = persistent[0]
-            record_launch_contract(service, home, artifacts, receipt)
+            await asyncio.to_thread(
+                record_launch_contract, service, home, artifacts, receipt
+            )
             receipt["checks"].append("managed TUI startup and attention attachment")
             if not (args.live_glm or args.live_openai):
                 await view.close()
