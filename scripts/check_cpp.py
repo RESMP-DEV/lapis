@@ -363,12 +363,10 @@ def _analysis_tasks(tools, arguments, log_dir):
             [
                 tools["cppcheck"],
                 f"--project={analysis_database}",
-                *(
-                    # moc consumes this annotation; the C++ compiler sees a no-op.
-                    ["--library=qt", "-DQ_MOC_INCLUDE(x)="]
-                    if arguments.mode == "desktop"
-                    else []
-                ),
+                # Qt metadata is real in every mode that reaches these sources;
+                # moc consumes this annotation while the compiler sees a no-op.
+                "--library=qt",
+                "-DQ_MOC_INCLUDE(x)=",
                 "--enable=warning,performance,portability",
                 "--error-exitcode=1",
                 "--inline-suppr",

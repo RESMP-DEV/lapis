@@ -34,7 +34,8 @@ if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
         PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../session/src")
     target_link_libraries(lapis_supervisor_endpoint
         PRIVATE lapis_project_options PUBLIC Qt6::Core)
-    add_library(lapis_supervisor_runtime STATIC src/runtime.cpp src/control_server.cpp)
+    add_library(lapis_supervisor_runtime STATIC
+        src/birth.cpp src/runtime.cpp src/control_server.cpp)
     target_include_directories(lapis_supervisor_runtime
         PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_libraries(lapis_supervisor_runtime
@@ -50,6 +51,11 @@ if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
     endif()
     add_executable(lapis_supervisor_child_fixture tests/supervisor_child_fixture.cpp)
     target_link_libraries(lapis_supervisor_child_fixture PRIVATE lapis_project_options)
+    add_executable(lapis_supervisor_daemon src/daemon.cpp)
+    target_link_libraries(lapis_supervisor_daemon PRIVATE
+        lapis_project_options lapis_supervisor_runtime Qt6::Core Qt6::Network)
+    target_compile_definitions(lapis_supervisor_daemon PRIVATE
+        LAPIS_SUPERVISOR_SESSION_SERVICE="$<TARGET_FILE:lapis_session_service>")
 
     if(BUILD_TESTING)
         add_executable(lapis_supervisor_runtime_tests tests/supervisor_runtime_test.cpp)
@@ -68,5 +74,15 @@ if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
         add_test(NAME supervisor-session-service
             COMMAND lapis_supervisor_runtime_session_tests)
         set_tests_properties(supervisor-session-service PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 75)
+        add_executable(lapis_supervisor_daemon_tests tests/supervisor_daemon_test.cpp)
+        target_include_directories(lapis_supervisor_daemon_tests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include")
+        target_link_libraries(lapis_supervisor_daemon_tests PRIVATE
+            lapis_project_options lapis_supervisor_runtime lapis_session_launch
+            lapis_local_protocol Qt6::Core Qt6::Network)
+        target_compile_definitions(lapis_supervisor_daemon_tests PRIVATE
+            LAPIS_SUPERVISOR_DAEMON="$<TARGET_FILE:lapis_supervisor_daemon>")
+        add_test(NAME supervisor-daemon COMMAND lapis_supervisor_daemon_tests)
+        set_tests_properties(supervisor-daemon PROPERTIES TIMEOUT 45 SKIP_RETURN_CODE 75)
     endif()
 endif()

@@ -45,6 +45,18 @@ def test_bind_skip_reports_exit_and_skip_without_success_claim() -> None:
     assert "exited successfully" not in str(result["diagnostic"])
 
 
+def test_daemon_result_requires_its_own_observed_marker() -> None:
+    logs = ROOT / "build" / "test-supervisor-daemon-receipt"
+    logs.mkdir(parents=True, exist_ok=True)
+    logs.joinpath("test.log").write_text("supervisor-session-service: ok\n")
+    result = checker.daemon_integration_result(
+        "supervisor-session-service: ok", {"exit_code": 1, "timed_out": False}, logs
+    )
+    assert result["passed"] is False
+    assert result["integration_skipped"] is False
+    assert "daemon integration marker was absent" in str(result["diagnostic"])
+
+
 def test_output_outside_checkout_is_rejected_before_receipt_write(tmp_path) -> None:
     output = tmp_path / "lapis-supervisor-receipt-outside.json"
     assert not output.resolve().is_relative_to(ROOT)
