@@ -67,8 +67,8 @@ DesiredSessionLaunch persisted_launch(const BirthAgent& agent) {
     for (const auto& argument : validated.arguments)
         result.arguments.push_back(argument.toStdString());
     result.working_directory = validated.directory.toStdString();
-    result.columns = agent.columns;
-    result.rows = agent.rows;
+    result.columns = validated.size.columns;
+    result.rows = validated.size.rows;
     result.mode = agent.mode == BirthAgentMode::codex    ? DesiredAgentMode::codex
                   : agent.mode == BirthAgentMode::claude ? DesiredAgentMode::claude
                                                          : DesiredAgentMode::terminal;

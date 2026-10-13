@@ -693,11 +693,13 @@ void daemon_sigkill_reconstructs_the_live_service() {
             replacement_daemon = -1;
         }
         if (service_pid > 0) {
-            static_cast<void>(::killpg(service_pid, SIGKILL));
+            static_cast<void>(::kill(service_pid, SIGKILL));
             wait_gone(service_pid);
+            service_pid = -1;
         }
         if (terminal_child > 0)
             wait_gone(static_cast<pid_t>(terminal_child));
+        terminal_child = 0;
         QDir::setCurrent(previous);
         throw;
     }
