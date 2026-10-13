@@ -156,7 +156,7 @@ int main(int argc, char** argv) {
         auto registry = std::make_shared<SupervisorRegistry>(
             storage, std::make_shared<JsonStateCodec>(), std::make_shared<RandomIdentity>());
         if (registry->state().session) {
-            const auto& persisted = *registry->state().session;
+            const DesiredSession persisted = *registry->state().session;
             if (registry->state().version != 2 || !persisted.launch)
                 throw std::runtime_error(
                     "Persisted supervisor state has no reconstructable launch");

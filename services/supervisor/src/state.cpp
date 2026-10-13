@@ -46,18 +46,22 @@ bool valid_desired_session(const DesiredSession& session) {
 
 bool valid_desired_session_launch(const DesiredSessionLaunch& launch) {
     std::size_t bytes = 0;
-    const auto bounded = [&](const std::string& value) {
+    const auto bounded = [&](const std::string& value, bool required) {
         bytes += value.size();
-        return bounded_text(value, max_agent_launch_bytes, false);
+        if (bytes > max_agent_launch_bytes)
+            return false;
+        if (required)
+            return bounded_text(value, max_agent_launch_bytes, false);
+        return value.find('\0') == std::string::npos;
     };
     const bool mode_valid = launch.mode == DesiredAgentMode::terminal ||
                             launch.mode == DesiredAgentMode::codex ||
                             launch.mode == DesiredAgentMode::claude;
-    return mode_valid && bounded(launch.program) && bounded(launch.working_directory) &&
+    return mode_valid && bounded(launch.program, true) && bounded(launch.working_directory, true) &&
            launch.arguments.size() <= max_agent_arguments &&
-           std::all_of(launch.arguments.begin(), launch.arguments.end(), bounded) &&
-           bytes <= max_agent_launch_bytes && launch.columns > 0 && launch.rows > 0 &&
-           launch.columns <= 1024 && launch.rows <= 1024;
+           std::all_of(launch.arguments.begin(), launch.arguments.end(),
+                       [&](const std::string& value) { return bounded(value, false); }) &&
+           launch.columns > 0 && launch.rows > 0 && launch.columns <= 1024 && launch.rows <= 1024;
 }
 
 bool valid_state(const SupervisorState& state) {

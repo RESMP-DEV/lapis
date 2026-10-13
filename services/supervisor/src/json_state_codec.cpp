@@ -151,7 +151,7 @@ DesiredSessionLaunch state_launch(const QJsonValue& value, const char* message) 
         if (!argument.isString())
             invalid(message);
         result.arguments.push_back(
-            json_text(argument.toString(), max_agent_launch_bytes, false, message));
+            json_text(argument.toString(), max_agent_launch_bytes, true, message));
     }
     if (!valid_desired_session_launch(result))
         invalid(message);

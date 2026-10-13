@@ -120,6 +120,7 @@ void schema_and_codec() {
     filled.session->desired_state = DesiredState::started;
     filled.enabled = true;
     filled.session->spawn_token = repeat('7', spawn_token_hex_bytes);
+    filled.session->launch->arguments = {std::string{}, "line\n"};
     require(codec.decode(codec.encode(filled)) == filled, "session state round trip");
 
     auto legacy = filled;

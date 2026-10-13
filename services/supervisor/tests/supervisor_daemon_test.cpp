@@ -205,8 +205,19 @@ pid_t start_daemon(const std::string& state,
         const pid_t changed = ::waitpid(pid, &status, WNOHANG);
         require(changed != pid, "the supervisor daemon remains running during startup");
         struct stat info{};
-        if (::lstat(control.c_str(), &info) == 0 && S_ISSOCK(info.st_mode))
-            return pid;
+        if (::lstat(control.c_str(), &info) == 0 && S_ISSOCK(info.st_mode)) {
+            const int probe = ::socket(AF_UNIX, SOCK_STREAM, 0);
+            if (probe >= 0) {
+                sockaddr_un address{};
+                address.sun_family = AF_UNIX;
+                std::memcpy(address.sun_path, control.c_str(), control.size() + 1);
+                const bool ready =
+                    ::connect(probe, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0;
+                static_cast<void>(::close(probe));
+                if (ready)
+                    return pid;
+            }
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds{10});
     }
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
