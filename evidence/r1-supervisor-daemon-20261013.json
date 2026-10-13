@@ -57,7 +57,7 @@
     "Signal handlers are registered before control-socket construction so an early shutdown cannot bypass socket cleanup.",
     "A birth is reported born only when convergence leaves a started session and a live service child; a launch failure consumes the slot and returns rejection.",
     "Both integration summaries consume the raw CTest result rather than the preceding synthesized integration result.",
-    "Whitespace-only required birth fields are rejected at protocol admission, and daemon test directories retain the macOS/Linux fallback.",
+    "Whitespace-only required birth fields are rejected at protocol admission, and daemon test directories retain the macOS/Linux fallback."
   ],
   "failed_attempts": [
     {
