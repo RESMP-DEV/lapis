@@ -4,7 +4,7 @@
   "recorded_at": "2026-10-13T12:58:00Z",
   "passed": true,
   "source": {
-    "lapis_revision": "1b586e0387bbc8fa84eed542340f1a2d0efb5c9e",
+    "lapis_revision": "a4f8e4c9ff77a480368ec5fd6aa6d07c67059631",
     "implementation_revision": "8cccb6cfbf0c648c34a4bdc2bf70a6c65bec8b66",
     "lapis_dirty": true,
     "lapis_dirty_scope": "Documentation and this sanitized evidence receipt only; runtime and verification source are committed.",
@@ -53,7 +53,8 @@
   ],
   "repairs": [
     "Cppcheck now loads the Qt library and Q_MOC_INCLUDE definition in every analyzed mode; the prior dev-only configuration produced a false Q_ENUM unknown-macro failure.",
-    "The focused receipt now requires a distinct supervisor-daemon integration marker instead of accepting only the older real-service marker."
+    "The focused receipt now requires a distinct supervisor-daemon integration marker instead of accepting only the older real-service marker.",
+    "Signal handlers are registered before control-socket construction so an early shutdown cannot bypass socket cleanup."
   ],
   "failed_attempts": [
     {
