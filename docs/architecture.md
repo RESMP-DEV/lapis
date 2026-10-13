@@ -5788,3 +5788,18 @@ launchd registration, no daemon-restart reconstruction after a prior persisted
 session, no package inclusion, no credential-environment admission, no reboot
 or upgrade transition, and no load, memory or latency qualification. Those
 boundaries must remain explicit until separately implemented and exercised.
+
+### Supervisor daemon review repair (October 13)
+
+The post-merge review repair keeps the first daemon slice bounded. Stop
+handlers now use POSIX `sigaction` with `SA_RESTART`, so an interrupt or
+terminate request remains installed and interrupted calls follow a defined
+policy. Required birth strings reject blank values and surrounding whitespace
+rather than silently trimming them; launch fields remain literal. The source
+also states why a failed convergence intentionally retains its stopped one-shot
+slot instead of silently replacing it.
+
+The daemon continues to use the existing `LocalControlServer::poll_once(100ms)`
+seam. Promoting it to Qt socket notifiers or another event-loop integration is
+not a claim of this slice and requires its own lifecycle evidence. The focused
+gate and repository quality remain the acceptance for this repair.
