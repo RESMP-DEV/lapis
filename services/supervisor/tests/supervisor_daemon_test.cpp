@@ -198,6 +198,7 @@ pid_t start_daemon(const std::string& state,
     require(::posix_spawn(&pid, storage.front().c_str(), nullptr, nullptr, arguments.data(),
                           environ) == 0,
             "start the independent supervisor daemon");
+    const auto started_at = std::chrono::steady_clock::now();
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{30};
     while (std::chrono::steady_clock::now() < deadline) {
         int status = 0;
@@ -208,7 +209,10 @@ pid_t start_daemon(const std::string& state,
             return pid;
         std::this_thread::sleep_for(std::chrono::milliseconds{10});
     }
-    throw std::runtime_error("supervisor daemon did not bind its control endpoint");
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started_at);
+    throw std::runtime_error("supervisor daemon did not bind its control endpoint after " +
+                             std::to_string(elapsed.count()) + "ms");
 }
 
 pid_t service_pid_from_ownership(const std::string& endpoint) {
@@ -688,8 +692,12 @@ void daemon_sigkill_reconstructs_the_live_service() {
             static_cast<void>(::waitpid(replacement_daemon, &status, 0));
             replacement_daemon = -1;
         }
-        if (service_pid > 0)
+        if (service_pid > 0) {
             static_cast<void>(::killpg(service_pid, SIGKILL));
+            wait_gone(service_pid);
+        }
+        if (terminal_child > 0)
+            wait_gone(static_cast<pid_t>(terminal_child));
         QDir::setCurrent(previous);
         throw;
     }
