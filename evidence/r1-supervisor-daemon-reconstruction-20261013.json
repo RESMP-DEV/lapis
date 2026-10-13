@@ -4,7 +4,7 @@
   "recorded_at": "2026-10-13T16:49:24Z",
   "passed": true,
   "source": {
-    "lapis_revision": "8e16c354c977c61df675e57a5fd7b47fae7d6e1f",
+    "lapis_revision": "a9a8fdb1e3d99e2ae4b31e93d956135daa2a608c",
     "lapis_dirty": true,
     "lapis_dirty_scope": "Supervisor state v2, daemon reconstruction, tests, documentation and this receipt.",
     "platform": "macOS arm64"
@@ -22,7 +22,8 @@
     "Daemon startup timeout diagnostics include elapsed milliseconds, and failure cleanup waits for the killed service and terminal child.",
     "Persisted geometry comes from the validated launch, and failure cleanup signals individual service/terminal PIDs before bounded disappearance checks.",
     "Reconstruction snapshots persisted state before convergence, argument persistence permits empty/non-NUL argv entries, and daemon readiness requires an accepted control connection rather than a socket inode.",
-    "The readiness probe bounds the control path before copying it into sockaddr_un."
+    "The readiness probe bounds the control path before copying it into sockaddr_un.",
+    "Recovery diagnostics distinguish incompatible v1 state from corrupt v2 launch state, document stopped-slot behavior, and require explicit operator disposition for v1."
   ],
   "observed": [
     "SIGKILL of the daemon left the real service and terminal child alive.",
