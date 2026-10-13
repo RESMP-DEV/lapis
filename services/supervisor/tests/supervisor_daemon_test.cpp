@@ -373,6 +373,13 @@ void daemon_birth_refuses_unsafe_requests(const std::string& control, const QStr
                 "a whitespace-only launch value is rejected");
     }
     {
+        ControlClient client{control};
+        send_frame(client, birth_json(fingerprint, empty_service, QStringLiteral(" /bin/cat")));
+        require(reply_object(receive_reply(client)).value(QStringLiteral("status")).toString() ==
+                    QLatin1String("rejected"),
+                "surrounding whitespace in a launch value is rejected");
+    }
+    {
         const QJsonObject environment{
             {QStringLiteral("environment"),
              QJsonObject{{QStringLiteral("LAPIS_TEST"), QStringLiteral("1")}}}};

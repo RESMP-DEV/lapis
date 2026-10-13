@@ -1,0 +1,38 @@
+{
+  "schema": "lapis.r1-supervisor-review-repair/1",
+  "schema_version": 1,
+  "recorded_at": "2026-10-13T14:12:00Z",
+  "passed": true,
+  "source": {
+    "lapis_revision": "45c55b2eccfd411d7786ff035d08e4079c210d05",
+    "lapis_dirty": true,
+    "lapis_dirty_scope": "Supervisor review repair, architecture documentation and this evidence receipt.",
+    "platform": "macOS arm64"
+  },
+  "scope": "Post-merge repair of the Kilo review findings on PR #152. No GUI, launchd, package, event-loop or reset-protocol scope was added.",
+  "repairs": [
+    "SIGINT and SIGTERM use sigaction with an empty mask and SA_RESTART.",
+    "Required birth strings reject blank and surrounding-whitespace values while preserving their literal bytes; blank and padded programs both have refusal tests.",
+    "The one-shot failed-slot policy is documented at the admission boundary."
+  ],
+  "disposition": [
+    "The 100ms poll_once loop remains intentional for this bounded experimental daemon; Qt notifier/event-loop promotion needs separate lifecycle qualification."
+  ],
+  "validation": [
+    {
+      "name": "focused-supervisor-runtime",
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 -u scripts/check_supervisor_runtime.py --jobs 6 --output build/reports/r1-supervisor/review-repair.json",
+      "exit_code": 0,
+      "result": "All four focused CTest suites passed; real-service and daemon integration markers were observed."
+    },
+    {
+      "name": "repository-quality",
+      "command": "python3 -u scripts/check_quality.py",
+      "exit_code": 0,
+      "result": "Repository contracts, Ruff and Python unit tests passed."
+    }
+  ],
+  "non_claims": [
+    "No daemon idle-CPU measurement, Qt event-loop integration, reset protocol, launchd ownership, package update, reboot or real agent-adapter qualification is claimed."
+  ]
+}

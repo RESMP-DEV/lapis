@@ -37,7 +37,8 @@ QJsonObject exact_object(const QJsonValue& value, std::initializer_list<QString>
 QString required_string(const QJsonObject& object, const QString& name, const char* message) {
     const auto value = object.value(name);
     const QString result = value.toString();
-    if (!value.isString() || result.isEmpty() || result.trimmed().isEmpty())
+    const QString trimmed = result.trimmed();
+    if (!value.isString() || trimmed.isEmpty() || trimmed != result)
         invalid(message);
     return result;
 }

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <iostream>
 #include <memory>
+#include <signal.h>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -112,14 +113,23 @@ int main(int argc, char** argv) {
         if (registry->state().session)
             throw std::runtime_error("Supervisor daemon restart reconstruction is not implemented");
 
-        std::signal(SIGINT, request_stop);
-        std::signal(SIGTERM, request_stop);
+        struct sigaction stop_action{};
+        stop_action.sa_handler = request_stop;
+        sigemptyset(&stop_action.sa_mask);
+        stop_action.sa_flags = SA_RESTART;
+        if (::sigaction(SIGINT, &stop_action, nullptr) != 0 ||
+            ::sigaction(SIGTERM, &stop_action, nullptr) != 0)
+            throw std::runtime_error("Could not install supervisor stop handlers");
         LocalControlServer server{
             arguments.control_endpoint, [&](uid_t peer_uid, const std::string& request) {
                 if (peer_uid != ::geteuid())
                     return encode_birth_rejected();
                 if (runtime)
                     return encode_birth_rejected();
+                // A convergence failure deliberately retains its stopped slot: this
+                // experimental daemon is one-shot, and silent replacement could hide
+                // a launch failure or create a retry storm. Reconstruction and an
+                // explicit reset protocol remain later supervisor work.
                 if (registry->state().session)
                     return encode_birth_rejected();
                 try {
