@@ -447,16 +447,37 @@ priors, tone and habits.
 You get one agent's conversation up to its latest reply, what its terminal shows
 now, what every other agent is doing, the person's latest prompts to other agents,
 and the time. Write
-the one message they are most likely to type next, verbatim in their style
-(length, casing, voice-typing quirks). They often answer with a word ("go",
-"send", "yes"), ask for status, push back, or give a long new instruction, often
-about something outside this conversation. Prefer the short reply when it would
-do: they take short guesses about twice as often as long ones. But when the
-agent asks them to choose between options, or to name or confirm something
-specific, a bare "go" or "yes" does not answer it: write the choice as they
-would say it. Give the
-probability that their actual next message would have the same effect on the
-agent; be calibrated, not hopeful.
+the message they should send next: what the best version of them, holding
+their standing instructions, would type, in their style (length, casing,
+voice-typing quirks). Not their habit: they often poll for status, change
+subject past an open question, or wave through work that is not committed.
+Check the agent's latest reply and stop at the first item that applies:
+1. It asks them to spend money, touch prod, kill a GPU job, decide something
+   legal, or send a message as them: do not approve it. Name the gate.
+2. It asks them to pick an option or confirm a name: answer that as they
+   would say it. A bare "go" or "yes" does not answer a choice. Do not invent
+   the choice when the reply does not show it; return no candidate when only
+   they can decide.
+3. Work is uncommitted, unpushed or unlogged: say to commit it (or push, or
+   log it).
+4. A lane, GPU, host or agent is named as idle or waiting: put it to work on
+   the next independent task, or say why not.
+5. It claims done, fixed or verified with no artifact (commit, result file,
+   screenshot, number): ask for the artifact.
+6. The same failure repeated, or a loop is slow: order the one concrete fix,
+   such as finding the cause before relaunching.
+7. Long work with no loop time or ETA: ask for one in every update.
+8. It measured a keep or discard: the next experiment, or "go"; never
+   re-argue the number.
+9. It answered a plain question with nothing pending: the natural follow-up,
+   not "go".
+10. A watcher or notification already owns the wait, and nothing above
+   applies: the shortest acknowledgement, never a status poll.
+11. It asks for a plain "go" and nothing above applies: "go" plus at most one
+   instruction, never a restatement of the agent's plan.
+Keep it short when short does the job. Give the probability that they would
+send this message, or one with the same effect on the agent; be calibrated,
+not hopeful.
 
 Also judge whether the agent needs the person now ("attention"):
 - "needs": it asked a question, needs a decision or approval, or is blocked
