@@ -149,6 +149,16 @@ void schema_and_codec() {
     require(codec.decode(legacy_bytes) == legacy, "version-one state decodes without launch");
     require(codec.encode(legacy) == legacy_bytes, "version-one state remains version one");
 
+    const auto empty_legacy_bytes = json_bytes(QJsonObject{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("enabled"), false},
+        {QStringLiteral("instance_epoch"), QString::fromStdString(legacy.instance_epoch)},
+        {QStringLiteral("session"), QJsonValue{QJsonValue::Null}}});
+    auto upgraded = registry(std::make_shared<MemoryStateStorage>(empty_legacy_bytes));
+    const auto upgraded_session = upgraded->start(record());
+    require(upgraded_session.version == 2 && upgraded_session.session->launch.has_value(),
+            "an empty version-one registry upgrades on its first launch-bearing start");
+
     rejects("a version-two session without launch", [&] {
         auto invalid = filled;
         invalid.session->launch.reset();
@@ -203,6 +213,13 @@ void transitions_and_persistence() {
     require(started.session->blocked_reason.empty(), "a start has no blocker");
     require(storage->write_count() == 1 && storage->fsynced() && storage->mode_is_owner_only(),
             "a start commits privately");
+    auto mismatched = *started.session;
+    mismatched.fingerprint = repeat('b', fingerprint_hex_bytes);
+    mismatched.launch.reset();
+    rejects("a changed start fingerprint without launch data",
+            [&] { static_cast<void>(owner->start(mismatched)); });
+    rejects("a changed restart fingerprint without launch data",
+            [&] { static_cast<void>(owner->restart(mismatched)); });
 
     const auto start_token = started.session->spawn_token;
     const auto stopped = owner->stop();

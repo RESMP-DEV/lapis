@@ -147,8 +147,11 @@ SupervisorRegistry::~SupervisorRegistry() {
 }
 
 DesiredSession SupervisorRegistry::start_record(DesiredSession session) const {
-    if (!session.launch && state_.session)
+    if (!session.launch && state_.session) {
+        check(session.fingerprint == state_.session->fingerprint,
+              "A changed launch fingerprint requires its matching launch payload");
         session.launch = state_.session->launch;
+    }
     if (session.identity.session_id.empty())
         session.identity.session_id = identities_->session_id();
     if (session.identity.epoch.empty())
@@ -165,8 +168,11 @@ DesiredSession SupervisorRegistry::restart_record(DesiredSession session) const 
     // the epoch with the spawn token so stale reconnects cannot accept the
     // replacement as the original process.
     check(state_.session.has_value(), "No desired session to restart");
-    if (!session.launch)
+    if (!session.launch) {
+        check(session.fingerprint == state_.session->fingerprint,
+              "A changed restart fingerprint requires its matching launch payload");
         session.launch = state_.session->launch;
+    }
     session.identity.session_id = state_.session->identity.session_id;
     session.identity.epoch = identities_->session_epoch();
     session.desired_state = DesiredState::started;
@@ -185,6 +191,8 @@ DesiredSession SupervisorRegistry::restart_record(DesiredSession session) const 
 SupervisorState SupervisorRegistry::start(DesiredSession session) {
     check(!poisoned_, "Supervisor persistence failed; reload before transitioning");
     SupervisorState next = state_;
+    if (state_.version == 1 && !state_.session)
+        next.version = 2;
     session = start_record(std::move(session));
     check(valid_desired_session(session), "Invalid desired session");
     next.enabled = true;
