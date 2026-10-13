@@ -146,14 +146,14 @@ void expect_closed_after_oversized_frame(ControlClient& client) {
 }
 
 QJsonObject birth_object(const QString& fingerprint, const QJsonObject& service,
-                         const QString& endpoint) {
+                         const QString& endpoint, const QString& program) {
     return QJsonObject{{QStringLiteral("version"), 1},
                        {QStringLiteral("action"), QStringLiteral("birth")},
                        {QStringLiteral("endpoint"), endpoint},
                        {QStringLiteral("fingerprint"), fingerprint},
                        {QStringLiteral("agent"),
                         QJsonObject{{QStringLiteral("mode"), QStringLiteral("terminal")},
-                                    {QStringLiteral("program"), QStringLiteral("/bin/cat")},
+                                    {QStringLiteral("program"), program},
                                     {QStringLiteral("arguments"), QJsonArray{}},
                                     {QStringLiteral("working_directory"), QDir::currentPath()},
                                     {QStringLiteral("columns"), 80},
@@ -161,10 +161,12 @@ QJsonObject birth_object(const QString& fingerprint, const QJsonObject& service,
                        {QStringLiteral("service"), service}};
 }
 
-std::string birth_json(const QString& fingerprint, const QJsonObject& service) {
+std::string birth_json(const QString& fingerprint, const QJsonObject& service,
+                       const QString& program = QStringLiteral("/bin/cat")) {
     const auto bytes =
         QJsonDocument{birth_object(fingerprint, service,
-                                   QDir::current().filePath(QStringLiteral("session.sock")))}
+                                   QDir::current().filePath(QStringLiteral("session.sock")),
+                                   program)}
             .toJson(QJsonDocument::Compact);
     return {bytes.constData(), static_cast<std::size_t>(bytes.size())};
 }
@@ -172,7 +174,8 @@ std::string birth_json(const QString& fingerprint, const QJsonObject& service) {
 std::string birth_json_at(const QString& fingerprint, const QJsonObject& service,
                           const QString& endpoint) {
     const auto bytes =
-        QJsonDocument{birth_object(fingerprint, service, endpoint)}.toJson(QJsonDocument::Compact);
+        QJsonDocument{birth_object(fingerprint, service, endpoint, QStringLiteral("/bin/cat"))}
+            .toJson(QJsonDocument::Compact);
     return {bytes.constData(), static_cast<std::size_t>(bytes.size())};
 }
 
@@ -340,6 +343,15 @@ void wait_gone(pid_t pid) {
     throw std::runtime_error("a supervised process did not stop");
 }
 
+QTemporaryDir owned_test_directory(const QString& pattern) {
+#if defined(__APPLE__)
+    QTemporaryDir directory{QStringLiteral("/private/tmp/") + pattern};
+    if (directory.isValid())
+        return directory;
+#endif
+    return QTemporaryDir{QStringLiteral("/tmp/") + pattern};
+}
+
 void daemon_birth_refuses_unsafe_requests(const std::string& control, const QString& fingerprint) {
     const QJsonObject empty_service{{QStringLiteral("environment"), QJsonObject{}}};
     {
@@ -352,6 +364,13 @@ void daemon_birth_refuses_unsafe_requests(const std::string& control, const QStr
     {
         ControlClient client{control};
         expect_closed_after_oversized_frame(client);
+    }
+    {
+        ControlClient client{control};
+        send_frame(client, birth_json(fingerprint, empty_service, QStringLiteral("   ")));
+        require(reply_object(receive_reply(client)).value(QStringLiteral("status")).toString() ==
+                    QLatin1String("rejected"),
+                "a whitespace-only launch value is rejected");
     }
     {
         const QJsonObject environment{
@@ -383,7 +402,8 @@ void daemon_birth_refuses_unsafe_requests(const std::string& control, const QStr
 
 void failed_service_birth_never_reports_born() {
     const QString previous = QDir::currentPath();
-    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-r1-daemon-failure-XXXXXX")};
+    QTemporaryDir directory =
+        owned_test_directory(QStringLiteral("lapis-r1-daemon-failure-XXXXXX"));
     require(directory.isValid(), "create the failed-birth test directory");
     QDir::setCurrent(directory.path());
     const std::string control = directory.filePath(QStringLiteral("control.sock")).toStdString();
@@ -423,7 +443,7 @@ void failed_service_birth_never_reports_born() {
 }
 
 void daemon_birth_and_real_service_clients() {
-    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-r1-daemon-XXXXXX")};
+    QTemporaryDir directory = owned_test_directory(QStringLiteral("lapis-r1-daemon-XXXXXX"));
     require(directory.isValid(), "create the private daemon test directory");
     QDir::setCurrent(directory.path());
     const std::string control = directory.filePath(QStringLiteral("control.sock")).toStdString();

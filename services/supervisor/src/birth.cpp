@@ -36,9 +36,10 @@ QJsonObject exact_object(const QJsonValue& value, std::initializer_list<QString>
 
 QString required_string(const QJsonObject& object, const QString& name, const char* message) {
     const auto value = object.value(name);
-    if (!value.isString() || value.toString().isEmpty())
+    const QString result = value.toString();
+    if (!value.isString() || result.isEmpty() || result.trimmed().isEmpty())
         invalid(message);
-    return value.toString();
+    return result;
 }
 
 unsigned required_dimension(const QJsonObject& object, const QString& name, const char* message) {
