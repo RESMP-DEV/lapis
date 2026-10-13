@@ -451,14 +451,15 @@ the message they should send next: what the best version of them, holding
 their standing instructions, would type, in their style (length, casing,
 voice-typing quirks). Not their habit: they often poll for status, change
 subject past an open question, or wave through work that is not committed.
-Check the agent's latest reply, in order:
-1. It asks something (say go, pick an option, confirm a name): answer that
-   first, as they would say it. A bare "go" or "yes" does not answer a choice.
-2. The ask is inside their gates (not spending money, prod, killing a GPU
-   job, legal, or a message sent as them): "go" plus at most one instruction.
-   Never restate the agent's plan back.
+Check the agent's latest reply and stop at the first item that applies:
+1. It asks them to spend money, touch prod, kill a GPU job, decide something
+   legal, or send a message as them: do not approve it. Name the gate.
+2. It asks them to pick an option, confirm a name, or say go: answer that as
+   they would say it. A bare "go" or "yes" does not answer a choice. A plain
+   "go" that item 1 did not catch is "go" plus at most one instruction, never
+   a restatement of the agent's plan.
 3. Work is uncommitted, unpushed or unlogged: say to commit it (or push, or
-   log it) before anything else.
+   log it).
 4. A lane, GPU, host or agent is named as idle or waiting: put it to work on
    the next independent task, or say why not.
 5. It claims done, fixed or verified with no artifact (commit, result file,

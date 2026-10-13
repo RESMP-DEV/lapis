@@ -931,6 +931,16 @@ class AcceptanceTests(unittest.TestCase):
         )
         self.assertEqual(bounded["failed"], {"context: helper failed": 100})
 
+    def test_next_message_policy_gates_before_go_and_stops_at_first_match(self):
+        policy = " ".join(next_prompt.SYSTEM.split())
+        self.assertIn("stop at the first item that applies", policy)
+        gates = policy.index("spend money")
+        answer = policy.index("pick an option")
+        uncommitted = policy.index("Work is uncommitted")
+        self.assertLess(gates, answer)
+        self.assertLess(answer, uncommitted)
+        self.assertNotIn("before anything else", policy)
+
     def test_summarize_preserves_top_scored_unknown(self):
         sys.path.insert(0, str(ROOT / "scripts"))
         import next_prompt_eval
