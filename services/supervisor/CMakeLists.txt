@@ -52,6 +52,9 @@ if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
     add_executable(lapis_supervisor_child_fixture tests/supervisor_child_fixture.cpp)
     target_link_libraries(lapis_supervisor_child_fixture PRIVATE lapis_project_options)
     add_executable(lapis_supervisor_daemon src/daemon.cpp)
+    target_include_directories(lapis_supervisor_daemon PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../session/src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../session/include")
     target_link_libraries(lapis_supervisor_daemon PRIVATE
         lapis_project_options lapis_supervisor_runtime Qt6::Core Qt6::Network)
     target_compile_definitions(lapis_supervisor_daemon PRIVATE

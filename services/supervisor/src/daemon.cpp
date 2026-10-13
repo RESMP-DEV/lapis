@@ -2,6 +2,8 @@
 #include "lapis/supervisor/control_server.hpp"
 #include "lapis/supervisor/session_service_launcher.hpp"
 
+#include "launch_spec.hpp"
+
 #include <QCoreApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -43,6 +45,49 @@ std::string random_hex(std::size_t bytes) {
         result += std::string{random.constData(), static_cast<std::size_t>(random.size())};
     }
     return result.substr(0, bytes * 2);
+}
+
+DesiredSessionLaunch persisted_launch(const BirthAgent& agent) {
+    namespace session = lapis::session;
+    session::AgentMode mode = session::AgentMode::terminal;
+    if (agent.mode == BirthAgentMode::codex)
+        mode = session::AgentMode::codex;
+    else if (agent.mode == BirthAgentMode::claude)
+        mode = session::AgentMode::claude;
+    const session::LaunchSpec validated =
+        session::validate_launch({.program = agent.program,
+                                  .arguments = agent.arguments,
+                                  .directory = agent.working_directory,
+                                  .size = {static_cast<std::uint16_t>(agent.columns),
+                                           static_cast<std::uint16_t>(agent.rows)},
+                                  .agent = mode});
+    DesiredSessionLaunch result;
+    result.program = validated.program.toStdString();
+    result.arguments.reserve(static_cast<std::size_t>(validated.arguments.size()));
+    for (const auto& argument : validated.arguments)
+        result.arguments.push_back(argument.toStdString());
+    result.working_directory = validated.directory.toStdString();
+    result.columns = agent.columns;
+    result.rows = agent.rows;
+    result.mode = agent.mode == BirthAgentMode::codex    ? DesiredAgentMode::codex
+                  : agent.mode == BirthAgentMode::claude ? DesiredAgentMode::claude
+                                                         : DesiredAgentMode::terminal;
+    return result;
+}
+
+SessionServiceLaunch service_launch(const DesiredSessionLaunch& launch) {
+    SessionServiceLaunch result;
+    result.service_program = QString::fromLatin1(LAPIS_SUPERVISOR_SESSION_SERVICE);
+    result.agent_program = QString::fromStdString(launch.program);
+    result.agent_arguments.reserve(static_cast<qsizetype>(launch.arguments.size()));
+    for (const auto& argument : launch.arguments)
+        result.agent_arguments.push_back(QString::fromStdString(argument));
+    result.working_directory = QString::fromStdString(launch.working_directory);
+    result.columns = launch.columns;
+    result.rows = launch.rows;
+    result.codex = launch.mode == DesiredAgentMode::codex;
+    result.claude = launch.mode == DesiredAgentMode::claude;
+    return result;
 }
 
 class RandomIdentity final : public IdentityProvider {
@@ -110,8 +155,22 @@ int main(int argc, char** argv) {
         auto storage = std::make_shared<PosixStateStorage>(arguments.state_directory);
         auto registry = std::make_shared<SupervisorRegistry>(
             storage, std::make_shared<JsonStateCodec>(), std::make_shared<RandomIdentity>());
-        if (registry->state().session)
-            throw std::runtime_error("Supervisor daemon restart reconstruction is not implemented");
+        if (registry->state().session) {
+            const auto& persisted = *registry->state().session;
+            if (registry->state().version != 2 || !persisted.launch)
+                throw std::runtime_error(
+                    "Persisted supervisor state has no reconstructable launch");
+            auto reconstructed_launcher = std::make_unique<SessionServiceLauncher>(
+                service_launch(*persisted.launch), persisted.fingerprint);
+            auto reconstructed_runtime =
+                std::make_unique<SupervisorRuntime>(registry, std::move(reconstructed_launcher));
+            const auto& converged = *reconstructed_runtime->state().session;
+            if (persisted.desired_state == DesiredState::started &&
+                (converged.desired_state != DesiredState::started ||
+                 reconstructed_runtime->child_pid() <= 0))
+                throw std::runtime_error("Supervisor daemon reconstruction failed");
+            runtime = std::move(reconstructed_runtime);
+        }
 
         struct sigaction stop_action{};
         stop_action.sa_handler = request_stop;
@@ -134,22 +193,16 @@ int main(int argc, char** argv) {
                     return encode_birth_rejected();
                 try {
                     const auto birth = decode_birth_request(request);
-                    SessionServiceLaunch launch;
-                    launch.service_program = QString::fromLatin1(LAPIS_SUPERVISOR_SESSION_SERVICE);
-                    launch.agent_program = birth.agent.program;
-                    launch.agent_arguments = birth.agent.arguments;
-                    launch.working_directory = birth.agent.working_directory;
-                    launch.columns = birth.agent.columns;
-                    launch.rows = birth.agent.rows;
-                    launch.codex = birth.agent.mode == BirthAgentMode::codex;
-                    launch.claude = birth.agent.mode == BirthAgentMode::claude;
+                    const auto launch = persisted_launch(birth.agent);
+                    auto service = service_launch(launch);
                     auto next_launcher =
-                        std::make_unique<SessionServiceLauncher>(launch, birth.fingerprint);
+                        std::make_unique<SessionServiceLauncher>(service, birth.fingerprint);
                     auto next_runtime =
                         std::make_unique<SupervisorRuntime>(registry, std::move(next_launcher));
                     DesiredSession desired;
                     desired.endpoint = birth.endpoint;
                     desired.fingerprint = birth.fingerprint;
+                    desired.launch = launch;
                     const auto born = next_runtime->bootstrap(desired);
                     const auto& converged = next_runtime->state();
                     if (!born.session || !converged.session ||

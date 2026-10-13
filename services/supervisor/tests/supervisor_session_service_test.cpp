@@ -6,6 +6,7 @@
 
 #include <QCoreApplication>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
@@ -71,6 +72,9 @@ DesiredSession record(const std::string& endpoint, const std::string& fingerprin
     result.endpoint = endpoint;
     result.fingerprint = fingerprint;
     result.identity = {repeat('1', identity_hex_bytes), repeat('2', identity_hex_bytes)};
+    const auto directory = QFileInfo(QString::fromStdString(endpoint)).absolutePath();
+    result.launch = DesiredSessionLaunch{"/bin/cat", {}, directory.toStdString(),
+                                         80,         24, DesiredAgentMode::terminal};
     return result;
 }
 
@@ -431,9 +435,9 @@ void terminate_revalidates_protocol_before_group_signal() {
 
     pid_t peer_pid = -1;
     quint64 peer_child_pid = 0;
-    require(::posix_spawn(&peer_pid, storage.front().c_str(), nullptr, nullptr, argv.data(),
-                          environ) == 0,
-            "spawn the non-setsid protocol peer");
+    const int peer_spawn =
+        ::posix_spawn(&peer_pid, storage.front().c_str(), nullptr, nullptr, argv.data(), environ);
+    require(peer_spawn == 0, "spawn the non-setsid protocol peer");
     try {
         bool socket_ready = false;
         const auto readiness_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);

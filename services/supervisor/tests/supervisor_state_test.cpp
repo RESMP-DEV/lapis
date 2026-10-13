@@ -43,6 +43,8 @@ DesiredSession record() {
     result.fingerprint = repeat('a', fingerprint_hex_bytes);
     result.identity = {repeat('1', identity_hex_bytes), repeat('2', identity_hex_bytes)};
     result.desired_state = DesiredState::stopped;
+    result.launch =
+        DesiredSessionLaunch{"/bin/cat", {}, "/tmp", 80, 24, DesiredAgentMode::terminal};
     return result;
 }
 
@@ -119,6 +121,38 @@ void schema_and_codec() {
     filled.enabled = true;
     filled.session->spawn_token = repeat('7', spawn_token_hex_bytes);
     require(codec.decode(codec.encode(filled)) == filled, "session state round trip");
+
+    auto legacy = filled;
+    legacy.version = 1;
+    legacy.enabled = false;
+    legacy.session->desired_state = DesiredState::stopped;
+    legacy.session->spawn_token.clear();
+    legacy.session->blocked_reason.clear();
+    legacy.session->launch.reset();
+    const auto legacy_bytes = json_bytes(QJsonObject{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("enabled"), false},
+        {QStringLiteral("instance_epoch"), QString::fromStdString(legacy.instance_epoch)},
+        {QStringLiteral("session"),
+         QJsonObject{
+             {QStringLiteral("endpoint"), QString::fromStdString(legacy.session->endpoint)},
+             {QStringLiteral("fingerprint"), QString::fromStdString(legacy.session->fingerprint)},
+             {QStringLiteral("identity"),
+              QJsonObject{{QStringLiteral("session_id"),
+                           QString::fromStdString(legacy.session->identity.session_id)},
+                          {QStringLiteral("epoch"),
+                           QString::fromStdString(legacy.session->identity.epoch)}}},
+             {QStringLiteral("desired_state"), QStringLiteral("stopped")},
+             {QStringLiteral("spawn_token"), QString()},
+             {QStringLiteral("blocked_reason"), QString()}}}});
+    require(codec.decode(legacy_bytes) == legacy, "version-one state decodes without launch");
+    require(codec.encode(legacy) == legacy_bytes, "version-one state remains version one");
+
+    rejects("a version-two session without launch", [&] {
+        auto invalid = filled;
+        invalid.session->launch.reset();
+        static_cast<void>(codec.encode(invalid));
+    });
 
     rejects("an unsupported version", [&] {
         auto invalid = empty;

@@ -44,12 +44,34 @@ bool valid_desired_session(const DesiredSession& session) {
            (session.spawn_token.empty() || valid_hex(session.spawn_token, spawn_token_hex_bytes));
 }
 
+bool valid_desired_session_launch(const DesiredSessionLaunch& launch) {
+    std::size_t bytes = 0;
+    const auto bounded = [&](const std::string& value) {
+        bytes += value.size();
+        return bounded_text(value, max_agent_launch_bytes, false);
+    };
+    const bool mode_valid = launch.mode == DesiredAgentMode::terminal ||
+                            launch.mode == DesiredAgentMode::codex ||
+                            launch.mode == DesiredAgentMode::claude;
+    return mode_valid && bounded(launch.program) && bounded(launch.working_directory) &&
+           launch.arguments.size() <= max_agent_arguments &&
+           std::all_of(launch.arguments.begin(), launch.arguments.end(), bounded) &&
+           bytes <= max_agent_launch_bytes && launch.columns > 0 && launch.rows > 0 &&
+           launch.columns <= 1024 && launch.rows <= 1024;
+}
+
 bool valid_state(const SupervisorState& state) {
-    if (state.version != 1 || !valid_hex(state.instance_epoch, epoch_hex_bytes))
+    if ((state.version != 1 && state.version != 2) ||
+        !valid_hex(state.instance_epoch, epoch_hex_bytes))
         return false;
     if (!state.session)
         return !state.enabled;
     if (!valid_desired_session(*state.session))
+        return false;
+    if (state.version == 1)
+        return !state.session->launch.has_value();
+    if (state.version != 2 || !state.session->launch.has_value() ||
+        !valid_desired_session_launch(*state.session->launch))
         return false;
     return state.session->desired_state != DesiredState::started ||
            (state.enabled && !state.session->spawn_token.empty());
@@ -120,6 +142,8 @@ SupervisorRegistry::~SupervisorRegistry() {
 }
 
 DesiredSession SupervisorRegistry::start_record(DesiredSession session) const {
+    if (!session.launch && state_.session)
+        session.launch = state_.session->launch;
     if (session.identity.session_id.empty())
         session.identity.session_id = identities_->session_id();
     if (session.identity.epoch.empty())
@@ -136,6 +160,8 @@ DesiredSession SupervisorRegistry::restart_record(DesiredSession session) const 
     // the epoch with the spawn token so stale reconnects cannot accept the
     // replacement as the original process.
     check(state_.session.has_value(), "No desired session to restart");
+    if (!session.launch)
+        session.launch = state_.session->launch;
     session.identity.session_id = state_.session->identity.session_id;
     session.identity.epoch = identities_->session_epoch();
     session.desired_state = DesiredState::started;
