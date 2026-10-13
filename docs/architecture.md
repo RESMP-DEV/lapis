@@ -99,7 +99,7 @@ for ownership, shared contracts and integration checks across large changes.
 | Engine | Pinned Ghostty `libghostty-vt` selected for the first adapter | Eight-case macOS/Linux replay passes; isolate unstable C API and resolve dependency-notice gaps |
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
 | Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging, attention messages and retained workspace entries | Automatic service recovery remains deferred |
-| Supervisor process birth | Experimental one-session runtime can launch, adopt, restart and stop the real session service, but no daemon executable or production GUI birth route exists | The next slice is a same-UID, one-session headless birth broker behind `LAPIS_BUILD_SUPERVISOR_RUNTIME`; independent process ownership must pass its focused real-service gate before GUI or launchd wiring |
+| Supervisor process birth | Experimental one-session runtime can launch, adopt, restart and stop the real session service; an opt-in headless daemon now admits one same-UID first birth and starts the daemon-selected service, but no GUI/CLI production route or launchd ownership exists | Define daemon restart reconstruction and production client ownership before GUI or launchd wiring; package replacement still requires R4 candidate evidence |
 | Adapter observation status | Typed Codex observation phases are carried from the observer through service IPC to the desktop; v6 clients negotiate the optional trailing byte with attach capability `0x40`, legacy peers retain their exact bytes, and diagnostics are display-only | New observers and wire peers must declare observation/replay compatibility, cover legacy downgrade, and preserve connection identity; unknown phases fail closed |
 | Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
 | Codex multi-thread sessions | Explicit remote does not expose managed worktree tools; P2 proved fail-close, exact-ID per-thread reconciliation, foreign-thread recovery and mid-turn archive safety, and recorded an explicit-switch proposal | A user-initiated switch must select the target thread, rotate the source epoch, reconcile by exact ID and invalidate old decision tokens before responses re-enable; no implicit worktree or sender adoption |
@@ -5753,3 +5753,38 @@ The first switch slice should remain service-owned and accept an exact
 persistent thread ID only while no decision-capable request is pending; it
 rotates the attention epoch, reconciles the selected thread by resume/read and
 rejects every prior decision token before wire or QML navigation is added.
+
+### Supervisor daemon birth broker (October 13)
+
+The R1 first slice is implemented behind `LAPIS_BUILD_SUPERVISOR_RUNTIME`.
+`lapis_supervisor_daemon` is a separate Qt Core process with explicit absolute
+state-directory and control-endpoint options. It acquires the one-session state
+registry before exposing the control socket, refuses to reconstruct a persisted
+session in this slice, and admits one first birth only while its slot is empty.
+
+The framed birth request is strict JSON version 1: endpoint, launch fingerprint,
+agent mode (`terminal`, `codex` or `claude`), literal executable/arguments/cwd,
+geometry, and a service object whose environment must be empty. The schema has
+no service-program field. The daemon supplies the pinned
+`lapis_session_service` executable selected by CMake, canonicalizes the child
+through the existing launch contract, and returns only the selected session ID
+and epoch. The spawn token remains private. Malformed and oversized frames,
+fingerprint mismatch, nonempty environment, caller-selected service shape, a
+second active birth and a foreign effective UID are refused.
+
+The focused daemon test launches the daemon as an independent process, reads
+its private service ownership record only to distinguish PIDs, and connects
+two real v6 clients. The service and `/bin/cat` terminal child are distinct
+from the daemon and from one another; hello preserves the terminal PID;
+authoritative reconnect and a joined second client retain that identity; input
+echo reaches both clients. SIGTERM is this experimental executable's bounded
+explicit stop: it terminates the service and terminal, removes the endpoint
+ownership record and control socket, and leaves private stopped desired state.
+The checker requires an observed daemon integration marker rather than treating
+a bind skip or generic CTest success as birth evidence.
+
+This does not complete R1. There is no GUI or CLI production birth route, no
+launchd registration, no daemon-restart reconstruction after a prior persisted
+session, no package inclusion, no credential-environment admission, no reboot
+or upgrade transition, and no load, memory or latency qualification. Those
+boundaries must remain explicit until separately implemented and exercised.

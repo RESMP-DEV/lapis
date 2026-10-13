@@ -1,0 +1,77 @@
+{
+  "schema": "lapis.r1-supervisor-daemon/1",
+  "schema_version": 1,
+  "recorded_at": "2026-10-13T12:58:00Z",
+  "passed": true,
+  "source": {
+    "lapis_revision": "1b586e0387bbc8fa84eed542340f1a2d0efb5c9e",
+    "implementation_revision": "8cccb6cfbf0c648c34a4bdc2bf70a6c65bec8b66",
+    "lapis_dirty": true,
+    "lapis_dirty_scope": "Documentation and this sanitized evidence receipt only; runtime and verification source are committed.",
+    "platform": "macOS arm64"
+  },
+  "scope": "R1 first slice: an opt-in one-session headless birth broker behind LAPIS_BUILD_SUPERVISOR_RUNTIME. It adds no GUI, launchd, package, reboot, upgrade or multi-session behavior.",
+  "implementation": {
+    "daemon": "lapis_supervisor_daemon takes explicit absolute state-directory and control-endpoint paths, acquires the one-session registry, refuses persisted-session reconstruction and admits one first birth while its slot is empty.",
+    "request_contract": "Strict version-1 JSON carries endpoint, fingerprint, agent mode, literal executable/arguments/cwd, geometry and an empty service environment. There is no caller service-program field.",
+    "reply_contract": "A successful birth returns only supervisor-selected session ID and epoch. The spawn token is never returned.",
+    "service_selection": "CMake supplies the pinned lapis_session_service executable; SessionServiceLauncher canonicalizes and fingerprint-checks the child before launch.",
+    "explicit_stop": "SIGTERM performs the existing authenticated internal stop, terminates service and terminal ownership, removes endpoint/control sockets and leaves private stopped desired state."
+  },
+  "observed": [
+    "The daemon, real session service and /bin/cat terminal child ran as three distinct PIDs.",
+    "Hello preserved the terminal child PID while authoritative reconnect and a joined second client retained session identity.",
+    "Input echoed through both authoritative and joined v6 clients.",
+    "Malformed and oversized frames, nonempty environment, caller service-program shape, fingerprint mismatch and second active birth were refused.",
+    "Explicit stop removed the service ownership record and control endpoint and left a private stopped state record."
+  ],
+  "validation": [
+    {
+      "name": "focused-supervisor-daemon",
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 -u scripts/check_supervisor_runtime.py --jobs 6 --output build/reports/r1-supervisor/receipt.json",
+      "exit_code": 0,
+      "result": "Configure, targeted build and state/runtime/real-service/daemon CTest passed. Both real-service and daemon integration markers were observed; neither was a bind skip."
+    },
+    {
+      "name": "repository-quality",
+      "command": "python3 -u scripts/check_quality.py",
+      "exit_code": 0,
+      "result": "Repository contracts, source/dirty receipts, diff hygiene, Ruff format/lint and Python unit tests passed."
+    },
+    {
+      "name": "shared-cpp-gate",
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py check --jobs 6",
+      "exit_code": 0,
+      "result": "Dev configure/build/CTest, clang-format, Cppcheck and all clang-tidy shards passed."
+    },
+    {
+      "name": "verification-runner-tools",
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py verify-tools",
+      "exit_code": 0,
+      "result": "All compiler, formatter, Cppcheck, clang-tidy, sanitizer and expected-failure tool fixtures passed."
+    }
+  ],
+  "repairs": [
+    "Cppcheck now loads the Qt library and Q_MOC_INCLUDE definition in every analyzed mode; the prior dev-only configuration produced a false Q_ENUM unknown-macro failure.",
+    "The focused receipt now requires a distinct supervisor-daemon integration marker instead of accepting only the older real-service marker."
+  ],
+  "failed_attempts": [
+    {
+      "attempt": "initial-focused-configure",
+      "result": "The fresh worktree had no LAPIS_GHOSTTY_PREFIX and CMake correctly refused to configure.",
+      "repair": "A validated pinned prefix from the synchronized clean main checkout was selected explicitly; no source behavior was relaxed."
+    },
+    {
+      "attempt": "first-cppcheck-dev-gate",
+      "result": "Cppcheck reported an unknown Q_ENUM macro in unchanged Codex importer headers.",
+      "repair": "Qt metadata configuration was enabled for all analysis modes and the gate then passed."
+    }
+  ],
+  "non_claims": [
+    "No GUI or CLI production birth route is implemented.",
+    "No launchd registration, daemon-restart reconstruction after a persisted session, package inclusion or update transition is implemented.",
+    "No credential-environment admission, real Codex/Claude launch, reboot, load, memory, latency or sanitizer workload is claimed by the daemon test.",
+    "The shared dev C++ gate does not build the opt-in supervisor target; the focused r1-runtime gate provides its compilation and behavioral coverage.",
+    "The harmless terminal child proves process and v6 ownership only; it is not agent-adapter qualification."
+  ]
+}
