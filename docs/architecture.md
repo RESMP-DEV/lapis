@@ -5811,6 +5811,9 @@ literal agent program, arguments, working directory, geometry and integration
 mode beside endpoint, fingerprint, identity and spawn state. Version 1 state
 remains readable, but a session without launch fields fails closed because a
 replacement daemon must not guess how to reconstruct its service.
+Recovery from that incompatible v1 slot requires explicit operator disposition
+of the private state record; the daemon deliberately provides no automatic
+reset or migration in this slice.
 
 On startup, a daemon with persisted v2 state rebuilds `SessionServiceLauncher`
 from that record and runs the existing convergence path before exposing its

@@ -157,14 +157,19 @@ int main(int argc, char** argv) {
             storage, std::make_shared<JsonStateCodec>(), std::make_shared<RandomIdentity>());
         if (registry->state().session) {
             const DesiredSession persisted = *registry->state().session;
-            if (registry->state().version != 2 || !persisted.launch)
-                throw std::runtime_error(
-                    "Persisted supervisor state has no reconstructable launch");
+            if (registry->state().version != 2)
+                throw std::runtime_error("Persisted supervisor state version cannot be "
+                                         "reconstructed; explicit operator recovery is required");
+            if (!persisted.launch)
+                throw std::runtime_error("Version-two supervisor state is missing its launch");
             auto reconstructed_launcher = std::make_unique<SessionServiceLauncher>(
                 service_launch(*persisted.launch), persisted.fingerprint);
             auto reconstructed_runtime =
                 std::make_unique<SupervisorRuntime>(registry, std::move(reconstructed_launcher));
             const auto& converged = *reconstructed_runtime->state().session;
+            // A stopped v2 slot still validates launcher construction above, but has no
+            // child to adopt. Birth stays refused until an explicit reset protocol
+            // replaces this one-shot experimental daemon.
             if (persisted.desired_state == DesiredState::started &&
                 (converged.desired_state != DesiredState::started ||
                  reconstructed_runtime->child_pid() <= 0))
