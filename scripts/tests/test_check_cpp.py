@@ -338,6 +338,8 @@ class ReceiptFreshnessTests(unittest.TestCase):
             f"--project={self.logs / 'dev' / 'compile_commands.json'}",
             cppcheck_command,
         )
+        self.assertIn("--library=qt", cppcheck_command)
+        self.assertIn("-DQ_MOC_INCLUDE(x)=", cppcheck_command)
         tidy_command = commands["clang-tidy-0"]
         self.assertEqual(
             tidy_command,
