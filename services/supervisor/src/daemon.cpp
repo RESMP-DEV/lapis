@@ -112,6 +112,8 @@ int main(int argc, char** argv) {
         if (registry->state().session)
             throw std::runtime_error("Supervisor daemon restart reconstruction is not implemented");
 
+        std::signal(SIGINT, request_stop);
+        std::signal(SIGTERM, request_stop);
         LocalControlServer server{
             arguments.control_endpoint, [&](uid_t peer_uid, const std::string& request) {
                 if (peer_uid != ::geteuid())
@@ -149,8 +151,6 @@ int main(int argc, char** argv) {
                 }
             }};
 
-        std::signal(SIGINT, request_stop);
-        std::signal(SIGTERM, request_stop);
         while (!stop_requested) {
             server.poll_once(100);
         }
