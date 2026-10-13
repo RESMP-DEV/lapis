@@ -153,6 +153,11 @@ void schema_and_codec() {
         invalid.session->launch.reset();
         static_cast<void>(codec.encode(invalid));
     });
+    rejects("a disabled version-one started session", [&] {
+        auto invalid = legacy;
+        invalid.session->desired_state = DesiredState::started;
+        static_cast<void>(codec.encode(invalid));
+    });
 
     rejects("an unsupported version", [&] {
         auto invalid = empty;

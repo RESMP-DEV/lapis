@@ -5756,11 +5756,12 @@ rejects every prior decision token before wire or QML navigation is added.
 
 ### Supervisor daemon birth broker (October 13)
 
-The R1 first slice is implemented behind `LAPIS_BUILD_SUPERVISOR_RUNTIME`.
+The R1 first slice was implemented behind `LAPIS_BUILD_SUPERVISOR_RUNTIME`.
 `lapis_supervisor_daemon` is a separate Qt Core process with explicit absolute
 state-directory and control-endpoint options. It acquires the one-session state
-registry before exposing the control socket, refuses to reconstruct a persisted
-session in this slice, and admits one first birth only while its slot is empty.
+registry before exposing the control socket, refused to reconstruct a persisted
+session at this first-slice revision, and admitted one first birth only while
+its slot was empty.
 
 The framed birth request is strict JSON version 1: endpoint, launch fingerprint,
 agent mode (`terminal`, `codex` or `claude`), literal executable/arguments/cwd,
@@ -5783,11 +5784,10 @@ ownership record and control socket, and leaves private stopped desired state.
 The checker requires an observed daemon integration marker rather than treating
 a bind skip or generic CTest success as birth evidence.
 
-This does not complete R1. There is no GUI or CLI production birth route, no
-launchd registration, no daemon-restart reconstruction after a prior persisted
-session, no package inclusion, no credential-environment admission, no reboot
-or upgrade transition, and no load, memory or latency qualification. Those
-boundaries must remain explicit until separately implemented and exercised.
+At this first-slice revision R1 was not complete: there was no GUI or CLI
+production birth route, launchd registration, daemon-restart reconstruction,
+package inclusion, credential-environment admission, reboot or upgrade
+transition, or load, memory or latency qualification.
 
 ### Supervisor daemon review repair (October 13)
 

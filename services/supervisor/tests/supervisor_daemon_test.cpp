@@ -584,6 +584,7 @@ void daemon_sigkill_reconstructs_the_live_service() {
         lapis::session::launch_fingerprint(lapis::session::validate_launch(launch)).toHex());
     const QJsonObject birth_service{{QStringLiteral("environment"), QJsonObject{}}};
     pid_t first_daemon = -1;
+    pid_t replacement_daemon = -1;
     pid_t service_pid = -1;
     quint64 terminal_child = 0;
     std::string session_id;
@@ -620,6 +621,7 @@ void daemon_sigkill_reconstructs_the_live_service() {
         require(::kill(first_daemon, SIGKILL) == 0, "crash the daemon without cleanup");
         int status = 0;
         require(::waitpid(first_daemon, &status, 0) == first_daemon, "reap the crashed daemon");
+        first_daemon = -1;
         require(::kill(service_pid, 0) == 0 && ::kill(static_cast<pid_t>(terminal_child), 0) == 0,
                 "the daemon crash preserves the service and terminal child");
         QFile next_ownership{QString::fromStdString(endpoint + ".supervisor-owner")};
@@ -628,8 +630,7 @@ void daemon_sigkill_reconstructs_the_live_service() {
                 "the daemon crash preserves service ownership bytes");
         next_ownership.close();
 
-        QFile::remove(QString::fromStdString(control));
-        const pid_t replacement_daemon = start_daemon(directory.path().toStdString(), control);
+        replacement_daemon = start_daemon(directory.path().toStdString(), control);
         require(service_pid_from_ownership(endpoint) == service_pid,
                 "the replacement daemon adopts the same service");
         {
@@ -660,6 +661,7 @@ void daemon_sigkill_reconstructs_the_live_service() {
         require(::waitpid(replacement_daemon, &status, 0) == replacement_daemon &&
                     WIFEXITED(status) && WEXITSTATUS(status) == 0,
                 "the replacement daemon exits cleanly");
+        replacement_daemon = -1;
         wait_gone(service_pid);
         wait_gone(static_cast<pid_t>(terminal_child));
         struct stat ownership_info{};
@@ -678,6 +680,13 @@ void daemon_sigkill_reconstructs_the_live_service() {
             static_cast<void>(::kill(first_daemon, SIGKILL));
             int status = 0;
             static_cast<void>(::waitpid(first_daemon, &status, 0));
+            first_daemon = -1;
+        }
+        if (replacement_daemon > 0) {
+            static_cast<void>(::kill(replacement_daemon, SIGTERM));
+            int status = 0;
+            static_cast<void>(::waitpid(replacement_daemon, &status, 0));
+            replacement_daemon = -1;
         }
         if (service_pid > 0)
             static_cast<void>(::killpg(service_pid, SIGKILL));

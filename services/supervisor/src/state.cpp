@@ -68,10 +68,11 @@ bool valid_state(const SupervisorState& state) {
         return !state.enabled;
     if (!valid_desired_session(*state.session))
         return false;
-    if (state.version == 1)
-        return !state.session->launch.has_value();
-    if (state.version != 2 || !state.session->launch.has_value() ||
-        !valid_desired_session_launch(*state.session->launch))
+    const bool launch_valid = state.version == 1
+                                  ? !state.session->launch.has_value()
+                                  : state.version == 2 && state.session->launch.has_value() &&
+                                        valid_desired_session_launch(*state.session->launch);
+    if (!launch_valid)
         return false;
     return state.session->desired_state != DesiredState::started ||
            (state.enabled && !state.session->spawn_token.empty());
