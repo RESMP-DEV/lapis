@@ -187,6 +187,7 @@ QJsonObject reply_object(const std::string& bytes) {
 
 pid_t start_daemon(const std::string& state,
                    const std::string& control) { // NOLINT(bugprone-easily-swappable-parameters)
+    require(control.size() < sizeof(sockaddr_un::sun_path), "daemon control endpoint path length");
     std::vector<std::string> storage{LAPIS_SUPERVISOR_DAEMON, "--state-directory=" + state,
                                      "--control-endpoint=" + control};
     std::vector<char*> arguments;
