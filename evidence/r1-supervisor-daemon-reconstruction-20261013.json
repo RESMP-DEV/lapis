@@ -4,7 +4,7 @@
   "recorded_at": "2026-10-13T16:49:24Z",
   "passed": true,
   "source": {
-    "lapis_revision": "95c9b5f09f508886eb9fb014552a2c39b20c7cf4",
+    "lapis_revision": "94221fb7eb7b56a93e24cf4340c84770f0e94a64",
     "lapis_dirty": true,
     "lapis_dirty_scope": "Supervisor state v2, daemon reconstruction, tests, documentation and this receipt.",
     "platform": "macOS arm64"
@@ -19,7 +19,8 @@
     "Version-one state rejects launch data while retaining started-session enablement and token invariants.",
     "The daemon restart test keeps the stale control endpoint in place, tracks both daemon PIDs for failure cleanup, and clears each PID after reaping it.",
     "Earlier architecture text is explicitly historical and the state-core status row now names v1/v2 persistence.",
-    "Daemon startup timeout diagnostics include elapsed milliseconds, and failure cleanup waits for the killed service and terminal child."
+    "Daemon startup timeout diagnostics include elapsed milliseconds, and failure cleanup waits for the killed service and terminal child.",
+    "Persisted geometry comes from the validated launch, and failure cleanup signals individual service/terminal PIDs before bounded disappearance checks."
   ],
   "observed": [
     "SIGKILL of the daemon left the real service and terminal child alive.",
