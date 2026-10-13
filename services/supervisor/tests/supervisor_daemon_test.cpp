@@ -169,6 +169,13 @@ std::string birth_json(const QString& fingerprint, const QJsonObject& service) {
     return {bytes.constData(), static_cast<std::size_t>(bytes.size())};
 }
 
+std::string birth_json_at(const QString& fingerprint, const QJsonObject& service,
+                          const QString& endpoint) {
+    const auto bytes =
+        QJsonDocument{birth_object(fingerprint, service, endpoint)}.toJson(QJsonDocument::Compact);
+    return {bytes.constData(), static_cast<std::size_t>(bytes.size())};
+}
+
 QJsonObject reply_object(const std::string& bytes) {
     const auto document = QJsonDocument::fromJson(QByteArray::fromStdString(bytes));
     require(document.isObject(), "supervisor birth reply is JSON");
@@ -374,6 +381,47 @@ void daemon_birth_refuses_unsafe_requests(const std::string& control, const QStr
     }
 }
 
+void failed_service_birth_never_reports_born() {
+    const QString previous = QDir::currentPath();
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-r1-daemon-failure-XXXXXX")};
+    require(directory.isValid(), "create the failed-birth test directory");
+    QDir::setCurrent(directory.path());
+    const std::string control = directory.filePath(QStringLiteral("control.sock")).toStdString();
+    const QString normal_endpoint = directory.filePath(QStringLiteral("session.sock"));
+    const QString impossible_endpoint =
+        directory.filePath(QStringLiteral("very-long/") + QString{120, QLatin1Char{'x'}} +
+                           QStringLiteral("/session.sock"));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = lapis::session::AgentMode::terminal};
+    const QString fingerprint = QString::fromLatin1(
+        lapis::session::launch_fingerprint(lapis::session::validate_launch(launch)).toHex());
+    const pid_t daemon = start_daemon(directory.path().toStdString(), control);
+    const QJsonObject service{{QStringLiteral("environment"), QJsonObject{}}};
+    {
+        ControlClient client{control};
+        send_frame(client, birth_json_at(fingerprint, service, impossible_endpoint));
+        require(reply_object(receive_reply(client)).value(QStringLiteral("status")).toString() ==
+                    QLatin1String("rejected"),
+                "a service launch failure is not reported as born");
+    }
+    {
+        ControlClient client{control};
+        send_frame(client, birth_json_at(fingerprint, service, normal_endpoint));
+        require(reply_object(receive_reply(client)).value(QStringLiteral("status")).toString() ==
+                    QLatin1String("rejected"),
+                "a failed birth consumes the one-session slot");
+    }
+    require(::kill(daemon, SIGTERM) == 0, "stop the failed-birth daemon");
+    int status = 0;
+    require(::waitpid(daemon, &status, 0) == daemon && WIFEXITED(status) &&
+                WEXITSTATUS(status) == 0,
+            "the failed-birth daemon exits cleanly");
+    QDir::setCurrent(previous);
+}
+
 void daemon_birth_and_real_service_clients() {
     QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-r1-daemon-XXXXXX")};
     require(directory.isValid(), "create the private daemon test directory");
@@ -496,6 +544,7 @@ void daemon_birth_and_real_service_clients() {
 int main(int argc, char** argv) {
     QCoreApplication application{argc, argv};
     try {
+        failed_service_birth_never_reports_born();
         daemon_birth_and_real_service_clients();
         std::cout << "supervisor-daemon: ok\n";
         return 0;

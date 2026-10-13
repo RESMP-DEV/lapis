@@ -141,7 +141,10 @@ int main(int argc, char** argv) {
                     desired.endpoint = birth.endpoint;
                     desired.fingerprint = birth.fingerprint;
                     const auto born = next_runtime->bootstrap(desired);
-                    if (!born.session)
+                    const auto& converged = next_runtime->state();
+                    if (!born.session || !converged.session ||
+                        converged.session->desired_state != DesiredState::started ||
+                        next_runtime->child_pid() <= 0)
                         throw std::runtime_error("Supervisor birth produced no session");
                     runtime = std::move(next_runtime);
                     return encode_birth_reply(born.session->identity);
