@@ -43,6 +43,8 @@ DesiredSession record() {
     result.fingerprint = repeat('a', fingerprint_hex_bytes);
     result.identity = {repeat('1', identity_hex_bytes), repeat('2', identity_hex_bytes)};
     result.desired_state = DesiredState::stopped;
+    result.launch =
+        DesiredSessionLaunch{"/bin/cat", {}, "/tmp", 80, 24, DesiredAgentMode::terminal};
     return result;
 }
 
@@ -118,7 +120,55 @@ void schema_and_codec() {
     filled.session->desired_state = DesiredState::started;
     filled.enabled = true;
     filled.session->spawn_token = repeat('7', spawn_token_hex_bytes);
+    filled.session->launch->arguments = {std::string{}, "line\n"};
     require(codec.decode(codec.encode(filled)) == filled, "session state round trip");
+
+    auto legacy = filled;
+    legacy.version = 1;
+    legacy.enabled = false;
+    legacy.session->desired_state = DesiredState::stopped;
+    legacy.session->spawn_token.clear();
+    legacy.session->blocked_reason.clear();
+    legacy.session->launch.reset();
+    const auto legacy_bytes = json_bytes(QJsonObject{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("enabled"), false},
+        {QStringLiteral("instance_epoch"), QString::fromStdString(legacy.instance_epoch)},
+        {QStringLiteral("session"),
+         QJsonObject{
+             {QStringLiteral("endpoint"), QString::fromStdString(legacy.session->endpoint)},
+             {QStringLiteral("fingerprint"), QString::fromStdString(legacy.session->fingerprint)},
+             {QStringLiteral("identity"),
+              QJsonObject{{QStringLiteral("session_id"),
+                           QString::fromStdString(legacy.session->identity.session_id)},
+                          {QStringLiteral("epoch"),
+                           QString::fromStdString(legacy.session->identity.epoch)}}},
+             {QStringLiteral("desired_state"), QStringLiteral("stopped")},
+             {QStringLiteral("spawn_token"), QString()},
+             {QStringLiteral("blocked_reason"), QString()}}}});
+    require(codec.decode(legacy_bytes) == legacy, "version-one state decodes without launch");
+    require(codec.encode(legacy) == legacy_bytes, "version-one state remains version one");
+
+    const auto empty_legacy_bytes = json_bytes(QJsonObject{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("enabled"), false},
+        {QStringLiteral("instance_epoch"), QString::fromStdString(legacy.instance_epoch)},
+        {QStringLiteral("session"), QJsonValue{QJsonValue::Null}}});
+    auto upgraded = registry(std::make_shared<MemoryStateStorage>(empty_legacy_bytes));
+    const auto upgraded_session = upgraded->start(record());
+    require(upgraded_session.version == 2 && upgraded_session.session->launch.has_value(),
+            "an empty version-one registry upgrades on its first launch-bearing start");
+
+    rejects("a version-two session without launch", [&] {
+        auto invalid = filled;
+        invalid.session->launch.reset();
+        static_cast<void>(codec.encode(invalid));
+    });
+    rejects("a disabled version-one started session", [&] {
+        auto invalid = legacy;
+        invalid.session->desired_state = DesiredState::started;
+        static_cast<void>(codec.encode(invalid));
+    });
 
     rejects("an unsupported version", [&] {
         auto invalid = empty;
@@ -163,6 +213,13 @@ void transitions_and_persistence() {
     require(started.session->blocked_reason.empty(), "a start has no blocker");
     require(storage->write_count() == 1 && storage->fsynced() && storage->mode_is_owner_only(),
             "a start commits privately");
+    auto mismatched = *started.session;
+    mismatched.fingerprint = repeat('b', fingerprint_hex_bytes);
+    mismatched.launch.reset();
+    rejects("a changed start fingerprint without launch data",
+            [&] { static_cast<void>(owner->start(mismatched)); });
+    rejects("a changed restart fingerprint without launch data",
+            [&] { static_cast<void>(owner->restart(mismatched)); });
 
     const auto start_token = started.session->spawn_token;
     const auto stopped = owner->stop();

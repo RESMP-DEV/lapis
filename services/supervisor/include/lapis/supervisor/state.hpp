@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace lapis::supervisor {
 
@@ -15,6 +16,8 @@ inline constexpr std::size_t max_state_bytes = 8 * 1024;
 inline constexpr std::size_t max_control_bytes = 8 * 1024;
 inline constexpr std::size_t max_endpoint_bytes = 4096;
 inline constexpr std::size_t max_blocked_reason_bytes = 512;
+inline constexpr std::size_t max_agent_arguments = 256;
+inline constexpr std::size_t max_agent_launch_bytes = 64 * 1024;
 inline constexpr std::size_t epoch_hex_bytes = 32;
 inline constexpr std::size_t identity_hex_bytes = 32;
 inline constexpr std::size_t fingerprint_hex_bytes = 64;
@@ -22,10 +25,22 @@ inline constexpr std::size_t spawn_token_hex_bytes = 64;
 
 enum class DesiredState : std::uint8_t { stopped = 0, started = 1 };
 
+enum class DesiredAgentMode : std::uint8_t { terminal, codex, claude };
+
 struct SessionIdentity {
     std::string session_id;
     std::string epoch;
     bool operator==(const SessionIdentity&) const = default;
+};
+
+struct DesiredSessionLaunch {
+    std::string program;
+    std::vector<std::string> arguments;
+    std::string working_directory;
+    unsigned columns{80};
+    unsigned rows{24};
+    DesiredAgentMode mode{DesiredAgentMode::terminal};
+    bool operator==(const DesiredSessionLaunch&) const = default;
 };
 
 struct DesiredSession {
@@ -35,11 +50,15 @@ struct DesiredSession {
     DesiredState desired_state{DesiredState::stopped};
     std::string spawn_token;
     std::string blocked_reason;
+    // Version 2 persists this canonical literal launch so a replacement
+    // daemon can adopt or restart the service it describes. Version 1 state
+    // may omit it and must fail closed instead of guessing a launch.
+    std::optional<DesiredSessionLaunch> launch;
     bool operator==(const DesiredSession&) const = default;
 };
 
 struct SupervisorState {
-    int version{1};
+    int version{2};
     bool enabled{false};
     std::string instance_epoch;
     std::optional<DesiredSession> session;
@@ -74,6 +93,7 @@ struct ControlOutcome {
 [[nodiscard]] bool valid_hex(const std::string& value, std::size_t length);
 [[nodiscard]] bool valid_state(const SupervisorState& state);
 [[nodiscard]] bool valid_desired_session(const DesiredSession& session);
+[[nodiscard]] bool valid_desired_session_launch(const DesiredSessionLaunch& launch);
 [[nodiscard]] bool constant_time_equal(const std::string& trusted, const std::string& supplied);
 
 class StateCodec {

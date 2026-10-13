@@ -1,6 +1,7 @@
 #include "lapis/supervisor/state.hpp"
 
 #include <QByteArray>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -79,13 +80,17 @@ QJsonObject exact_object(const QJsonValue& value, std::initializer_list<QString>
     return object;
 }
 
-bool version_one(const QJsonObject& object) {
+int state_version(const QJsonObject& object) {
     const auto value = object.value(QStringLiteral("version"));
     if (!value.isDouble())
-        return false;
+        return 0;
     const auto version = value.toDouble();
-    return version == 1.0;
+    if (version != 1.0 && version != 2.0)
+        return 0;
+    return static_cast<int>(version);
 }
+
+bool version_one(const QJsonObject& object) { return state_version(object) == 1; }
 
 bool boolean(const QJsonObject& object, const QString& name, const char* message) {
     const auto value = object.value(name);
@@ -102,15 +107,92 @@ SessionIdentity identity(const QJsonObject& session, const char* message) {
             required_hex(object, QStringLiteral("epoch"), identity_hex_bytes, message)};
 }
 
-std::optional<DesiredSession> state_session(const QJsonValue& value, const char* message) {
+unsigned dimension(const QJsonObject& object, const QString& name, const char* message) {
+    const auto value = object.value(name);
+    if (!value.isDouble())
+        invalid(message);
+    const double number = value.toDouble();
+    if (number < 1 || number > 1024 || number != static_cast<double>(static_cast<unsigned>(number)))
+        invalid(message);
+    return static_cast<unsigned>(number);
+}
+
+DesiredAgentMode agent_mode(const QJsonObject& object, const char* message) {
+    const auto name =
+        required_text(object, QStringLiteral("mode"), max_agent_launch_bytes, message);
+    if (name == QLatin1String("terminal"))
+        return DesiredAgentMode::terminal;
+    if (name == QLatin1String("codex"))
+        return DesiredAgentMode::codex;
+    if (name == QLatin1String("claude"))
+        return DesiredAgentMode::claude;
+    invalid(message);
+}
+
+DesiredSessionLaunch state_launch(const QJsonValue& value, const char* message) {
+    const auto launch = exact_object(
+        value,
+        {QStringLiteral("mode"), QStringLiteral("program"), QStringLiteral("arguments"),
+         QStringLiteral("working_directory"), QStringLiteral("columns"), QStringLiteral("rows")},
+        message);
+    DesiredSessionLaunch result;
+    result.mode = agent_mode(launch, message);
+    result.program =
+        required_text(launch, QStringLiteral("program"), max_agent_launch_bytes, message);
+    result.working_directory =
+        required_text(launch, QStringLiteral("working_directory"), max_agent_launch_bytes, message);
+    result.columns = dimension(launch, QStringLiteral("columns"), message);
+    result.rows = dimension(launch, QStringLiteral("rows"), message);
+    const auto arguments = launch.value(QStringLiteral("arguments"));
+    if (!arguments.isArray() ||
+        static_cast<std::size_t>(arguments.toArray().size()) > max_agent_arguments)
+        invalid(message);
+    for (const auto& argument : arguments.toArray()) {
+        if (!argument.isString())
+            invalid(message);
+        result.arguments.push_back(
+            json_text(argument.toString(), max_agent_launch_bytes, true, message));
+    }
+    if (!valid_desired_session_launch(result))
+        invalid(message);
+    return result;
+}
+
+QJsonObject encode_launch(const DesiredSessionLaunch& launch) {
+    QJsonArray arguments;
+    for (const auto& argument : launch.arguments)
+        arguments.push_back(QString::fromStdString(argument));
+    const char* mode = "terminal";
+    if (launch.mode == DesiredAgentMode::codex)
+        mode = "codex";
+    else if (launch.mode == DesiredAgentMode::claude)
+        mode = "claude";
+    return QJsonObject{
+        {QStringLiteral("mode"), QLatin1String{mode}},
+        {QStringLiteral("program"), QString::fromStdString(launch.program)},
+        {QStringLiteral("arguments"), arguments},
+        {QStringLiteral("working_directory"), QString::fromStdString(launch.working_directory)},
+        {QStringLiteral("columns"), static_cast<int>(launch.columns)},
+        {QStringLiteral("rows"), static_cast<int>(launch.rows)}};
+}
+
+std::optional<DesiredSession> state_session(const QJsonValue& value, int version,
+                                            const char* message) {
     if (value.isNull())
         return std::nullopt;
     const auto session =
-        exact_object(value,
-                     {QStringLiteral("endpoint"), QStringLiteral("fingerprint"),
-                      QStringLiteral("identity"), QStringLiteral("desired_state"),
-                      QStringLiteral("spawn_token"), QStringLiteral("blocked_reason")},
-                     message);
+        version == 1
+            ? exact_object(value,
+                           {QStringLiteral("endpoint"), QStringLiteral("fingerprint"),
+                            QStringLiteral("identity"), QStringLiteral("desired_state"),
+                            QStringLiteral("spawn_token"), QStringLiteral("blocked_reason")},
+                           message)
+            : exact_object(value,
+                           {QStringLiteral("endpoint"), QStringLiteral("fingerprint"),
+                            QStringLiteral("identity"), QStringLiteral("desired_state"),
+                            QStringLiteral("spawn_token"), QStringLiteral("blocked_reason"),
+                            QStringLiteral("launch")},
+                           message);
     DesiredSession result;
     result.endpoint =
         required_text(session, QStringLiteral("endpoint"), max_endpoint_bytes, message);
@@ -124,11 +206,20 @@ std::optional<DesiredSession> state_session(const QJsonValue& value, const char*
         optional_text(session, QStringLiteral("blocked_reason"), max_blocked_reason_bytes, message);
     if (!result.spawn_token.empty() && !valid_hex(result.spawn_token, spawn_token_hex_bytes))
         invalid(message);
+    const auto launch = session.value(QStringLiteral("launch"));
+    if (version == 1) {
+        if (!launch.isUndefined() && !launch.isNull())
+            invalid(message);
+    } else if (!launch.isObject()) {
+        invalid(message);
+    } else {
+        result.launch = state_launch(launch, message);
+    }
     return result;
 }
 
 QJsonObject encode_session(const DesiredSession& session) {
-    return QJsonObject{
+    auto result = QJsonObject{
         {QStringLiteral("endpoint"), QString::fromStdString(session.endpoint)},
         {QStringLiteral("fingerprint"), QString::fromStdString(session.fingerprint)},
         {QStringLiteral("identity"),
@@ -140,6 +231,9 @@ QJsonObject encode_session(const DesiredSession& session) {
                                               : QStringLiteral("stopped")},
         {QStringLiteral("spawn_token"), QString::fromStdString(session.spawn_token)},
         {QStringLiteral("blocked_reason"), QString::fromStdString(session.blocked_reason)}};
+    if (session.launch)
+        result.insert(QStringLiteral("launch"), encode_launch(*session.launch));
+    return result;
 }
 
 } // namespace
@@ -148,7 +242,7 @@ std::string JsonStateCodec::encode(const SupervisorState& state) const {
     if (!valid_state(state))
         invalid("Cannot encode an invalid supervisor state");
     QJsonObject root{
-        {QStringLiteral("version"), 1},
+        {QStringLiteral("version"), state.version},
         {QStringLiteral("enabled"), state.enabled},
         {QStringLiteral("instance_epoch"), QString::fromStdString(state.instance_epoch)},
         {QStringLiteral("session"), state.session ? QJsonValue{encode_session(*state.session)}
@@ -172,13 +266,15 @@ SupervisorState JsonStateCodec::decode(const std::string& bytes) const {
                                    {QStringLiteral("version"), QStringLiteral("enabled"),
                                     QStringLiteral("instance_epoch"), QStringLiteral("session")},
                                    message);
-    if (!version_one(root))
+    const int version = state_version(root);
+    if (version == 0)
         invalid("Unsupported supervisor state version");
     SupervisorState result;
+    result.version = version;
     result.enabled = boolean(root, QStringLiteral("enabled"), message);
     result.instance_epoch = required_hex(root, QStringLiteral("instance_epoch"), epoch_hex_bytes,
                                          "Invalid supervisor instance epoch");
-    result.session = state_session(root.value(QStringLiteral("session")), message);
+    result.session = state_session(root.value(QStringLiteral("session")), version, message);
     if (!valid_state(result))
         invalid("Invalid supervisor state values");
     return result;

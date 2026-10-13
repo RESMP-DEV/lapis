@@ -1,6 +1,7 @@
 #include "lapis/supervisor/control_server.hpp"
 #include "lapis/supervisor/runtime.hpp"
 
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -45,6 +46,9 @@ DesiredSession record(const std::string& endpoint = "/tmp/lapis-supervisor-runti
     result.endpoint = endpoint;
     result.fingerprint = repeat('a', fingerprint_hex_bytes);
     result.identity = {repeat('1', identity_hex_bytes), repeat('2', identity_hex_bytes)};
+    const auto directory = QFileInfo(QString::fromStdString(endpoint)).absolutePath();
+    result.launch = DesiredSessionLaunch{"/bin/cat", {}, directory.toStdString(),
+                                         80,         24, DesiredAgentMode::terminal};
     return result;
 }
 

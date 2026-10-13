@@ -99,7 +99,7 @@ for ownership, shared contracts and integration checks across large changes.
 | Engine | Pinned Ghostty `libghostty-vt` selected for the first adapter | Eight-case macOS/Linux replay passes; isolate unstable C API and resolve dependency-notice gaps |
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
 | Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging, attention messages and retained workspace entries | Automatic service recovery remains deferred |
-| Supervisor process birth | Experimental one-session runtime can launch, adopt, restart and stop the real session service; an opt-in headless daemon now admits one same-UID first birth and starts the daemon-selected service, but no GUI/CLI production route or launchd ownership exists | Define daemon restart reconstruction and production client ownership before GUI or launchd wiring; package replacement still requires R4 candidate evidence |
+| Supervisor process birth | Experimental one-session runtime can launch, adopt, restart and stop the real session service; an opt-in headless daemon admits one same-UID birth and reconstructs a persisted v2 live service after daemon replacement, but no GUI/CLI production route or launchd ownership exists | Define production client ownership and lifecycle registration before GUI or launchd wiring; package replacement still requires R4 candidate evidence |
 | Adapter observation status | Typed Codex observation phases are carried from the observer through service IPC to the desktop; v6 clients negotiate the optional trailing byte with attach capability `0x40`, legacy peers retain their exact bytes, and diagnostics are display-only | New observers and wire peers must declare observation/replay compatibility, cover legacy downgrade, and preserve connection identity; unknown phases fail closed |
 | Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
 | Codex multi-thread sessions | Explicit remote does not expose managed worktree tools; P2 proved fail-close, exact-ID per-thread reconciliation, foreign-thread recovery and mid-turn archive safety, and recorded an explicit-switch proposal | A user-initiated switch must select the target thread, rotate the source epoch, reconcile by exact ID and invalidate old decision tokens before responses re-enable; no implicit worktree or sender adoption |
@@ -5756,11 +5756,12 @@ rejects every prior decision token before wire or QML navigation is added.
 
 ### Supervisor daemon birth broker (October 13)
 
-The R1 first slice is implemented behind `LAPIS_BUILD_SUPERVISOR_RUNTIME`.
+The R1 first slice was implemented behind `LAPIS_BUILD_SUPERVISOR_RUNTIME`.
 `lapis_supervisor_daemon` is a separate Qt Core process with explicit absolute
 state-directory and control-endpoint options. It acquires the one-session state
-registry before exposing the control socket, refuses to reconstruct a persisted
-session in this slice, and admits one first birth only while its slot is empty.
+registry before exposing the control socket, refused to reconstruct a persisted
+session at this first-slice revision, and admitted one first birth only while
+its slot was empty.
 
 The framed birth request is strict JSON version 1: endpoint, launch fingerprint,
 agent mode (`terminal`, `codex` or `claude`), literal executable/arguments/cwd,
@@ -5783,11 +5784,10 @@ ownership record and control socket, and leaves private stopped desired state.
 The checker requires an observed daemon integration marker rather than treating
 a bind skip or generic CTest success as birth evidence.
 
-This does not complete R1. There is no GUI or CLI production birth route, no
-launchd registration, no daemon-restart reconstruction after a prior persisted
-session, no package inclusion, no credential-environment admission, no reboot
-or upgrade transition, and no load, memory or latency qualification. Those
-boundaries must remain explicit until separately implemented and exercised.
+At this first-slice revision R1 was not complete: there was no GUI or CLI
+production birth route, launchd registration, daemon-restart reconstruction,
+package inclusion, credential-environment admission, reboot or upgrade
+transition, or load, memory or latency qualification.
 
 ### Supervisor daemon review repair (October 13)
 
@@ -5803,3 +5803,27 @@ The daemon continues to use the existing `LocalControlServer::poll_once(100ms)`
 seam. Promoting it to Qt socket notifiers or another event-loop integration is
 not a claim of this slice and requires its own lifecycle evidence. The focused
 gate and repository quality remain the acceptance for this repair.
+
+### Supervisor daemon reconstruction (October 13)
+
+Supervisor state is now schema version 2. A v2 session records the canonical
+literal agent program, arguments, working directory, geometry and integration
+mode beside endpoint, fingerprint, identity and spawn state. Version 1 state
+remains readable, but a session without launch fields fails closed because a
+replacement daemon must not guess how to reconstruct its service.
+Recovery from that incompatible v1 slot requires explicit operator disposition
+of the private state record; the daemon deliberately provides no automatic
+reset or migration in this slice.
+
+On startup, a daemon with persisted v2 state rebuilds `SessionServiceLauncher`
+from that record and runs the existing convergence path before exposing its
+control endpoint. If the previous daemon died while the service remained live,
+adoption preserves the service PID, ownership record, session ID/epoch, terminal
+child and v6 identity. A subsequent birth remains refused. The focused test
+SIGKILLs the daemon, proves service and terminal survival, restarts against the
+same state/control endpoint, reconnects with the original identity, exercises
+terminal input and verifies explicit cleanup.
+
+This is still not launchd ownership or a production GUI/CLI client. A persisted
+v1 session, daemon reset protocol, credential-environment admission, package
+update transition, reboot behavior and multi-session state remain out of scope.

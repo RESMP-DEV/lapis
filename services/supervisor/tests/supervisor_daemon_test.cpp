@@ -187,6 +187,7 @@ QJsonObject reply_object(const std::string& bytes) {
 
 pid_t start_daemon(const std::string& state,
                    const std::string& control) { // NOLINT(bugprone-easily-swappable-parameters)
+    require(control.size() < sizeof(sockaddr_un::sun_path), "daemon control endpoint path length");
     std::vector<std::string> storage{LAPIS_SUPERVISOR_DAEMON, "--state-directory=" + state,
                                      "--control-endpoint=" + control};
     std::vector<char*> arguments;
@@ -198,17 +199,32 @@ pid_t start_daemon(const std::string& state,
     require(::posix_spawn(&pid, storage.front().c_str(), nullptr, nullptr, arguments.data(),
                           environ) == 0,
             "start the independent supervisor daemon");
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    const auto started_at = std::chrono::steady_clock::now();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{30};
     while (std::chrono::steady_clock::now() < deadline) {
         int status = 0;
         const pid_t changed = ::waitpid(pid, &status, WNOHANG);
         require(changed != pid, "the supervisor daemon remains running during startup");
         struct stat info{};
-        if (::lstat(control.c_str(), &info) == 0 && S_ISSOCK(info.st_mode))
-            return pid;
+        if (::lstat(control.c_str(), &info) == 0 && S_ISSOCK(info.st_mode)) {
+            const int probe = ::socket(AF_UNIX, SOCK_STREAM, 0);
+            if (probe >= 0) {
+                sockaddr_un address{};
+                address.sun_family = AF_UNIX;
+                std::memcpy(address.sun_path, control.c_str(), control.size() + 1);
+                const bool ready =
+                    ::connect(probe, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0;
+                static_cast<void>(::close(probe));
+                if (ready)
+                    return pid;
+            }
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds{10});
     }
-    throw std::runtime_error("supervisor daemon did not bind its control endpoint");
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started_at);
+    throw std::runtime_error("supervisor daemon did not bind its control endpoint after " +
+                             std::to_string(elapsed.count()) + "ms");
 }
 
 pid_t service_pid_from_ownership(const std::string& endpoint) {
@@ -566,6 +582,142 @@ void daemon_birth_and_real_service_clients() {
     }
 }
 
+void daemon_sigkill_reconstructs_the_live_service() {
+    const QString previous = QDir::currentPath();
+    QTemporaryDir directory =
+        owned_test_directory(QStringLiteral("lapis-r1-daemon-restart-XXXXXX"));
+    require(directory.isValid(), "create the daemon restart test directory");
+    QDir::setCurrent(directory.path());
+    const std::string control = directory.filePath(QStringLiteral("control.sock")).toStdString();
+    const std::string endpoint = directory.filePath(QStringLiteral("session.sock")).toStdString();
+    require_bindable(directory.filePath(QStringLiteral("bind.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = lapis::session::AgentMode::terminal};
+    const QString fingerprint = QString::fromLatin1(
+        lapis::session::launch_fingerprint(lapis::session::validate_launch(launch)).toHex());
+    const QJsonObject birth_service{{QStringLiteral("environment"), QJsonObject{}}};
+    pid_t first_daemon = -1;
+    pid_t replacement_daemon = -1;
+    pid_t service_pid = -1;
+    quint64 terminal_child = 0;
+    std::string session_id;
+    std::string epoch;
+    QByteArray ownership_before_crash;
+    try {
+        first_daemon = start_daemon(directory.path().toStdString(), control);
+        {
+            ControlClient client{control};
+            send_frame(client, birth_json(fingerprint, birth_service));
+            const auto reply = reply_object(receive_reply(client));
+            require(reply.value(QStringLiteral("status")).toString() == QLatin1String("born"),
+                    "the first daemon births a service");
+            session_id = reply.value(QStringLiteral("session_id")).toString().toStdString();
+            epoch = reply.value(QStringLiteral("epoch")).toString().toStdString();
+        }
+        service_pid = service_pid_from_ownership(endpoint);
+        QFile ownership_file{QString::fromStdString(endpoint + ".supervisor-owner")};
+        require(ownership_file.open(QIODevice::ReadOnly), "read ownership before the daemon crash");
+        ownership_before_crash = ownership_file.readAll();
+        ownership_file.close();
+
+        QLocalSocket client;
+        client.connectToServer(QString::fromStdString(endpoint), QLocalSocket::ReadWrite);
+        require(client.waitForConnected(5000), "the pre-crash client reaches the service");
+        const auto hello = attach(client, fingerprint.toStdString(), session_id, epoch, false);
+        terminal_child = hello.pid;
+        static_cast<void>(synchronize(client));
+        send_text(client, hello.attachment, U'B');
+        require(screen_text(wait_text(client, U'B')).find(U'B') != std::u32string::npos,
+                "the pre-crash service owns a live terminal child");
+        detach(client);
+
+        require(::kill(first_daemon, SIGKILL) == 0, "crash the daemon without cleanup");
+        int status = 0;
+        require(::waitpid(first_daemon, &status, 0) == first_daemon, "reap the crashed daemon");
+        first_daemon = -1;
+        require(::kill(service_pid, 0) == 0 && ::kill(static_cast<pid_t>(terminal_child), 0) == 0,
+                "the daemon crash preserves the service and terminal child");
+        QFile next_ownership{QString::fromStdString(endpoint + ".supervisor-owner")};
+        require(next_ownership.open(QIODevice::ReadOnly), "read ownership after the daemon crash");
+        require(next_ownership.readAll() == ownership_before_crash,
+                "the daemon crash preserves service ownership bytes");
+        next_ownership.close();
+
+        replacement_daemon = start_daemon(directory.path().toStdString(), control);
+        require(service_pid_from_ownership(endpoint) == service_pid,
+                "the replacement daemon adopts the same service");
+        {
+            ControlClient control_client{control};
+            send_frame(control_client, birth_json(fingerprint, birth_service));
+            require(reply_object(receive_reply(control_client))
+                            .value(QStringLiteral("status"))
+                            .toString() == QLatin1String("rejected"),
+                    "reconstruction does not expose a second birth");
+        }
+
+        QLocalSocket reconstructed;
+        reconstructed.connectToServer(QString::fromStdString(endpoint), QLocalSocket::ReadWrite);
+        require(reconstructed.waitForConnected(5000),
+                "the reconstructed client reaches the adopted service");
+        const auto reconstructed_hello =
+            attach(reconstructed, fingerprint.toStdString(), session_id, epoch, false);
+        require(reconstructed_hello.pid == terminal_child &&
+                    reconstructed_hello.attachment.identity == hello.attachment.identity,
+                "reconstruction preserves the terminal child and session identity");
+        static_cast<void>(synchronize(reconstructed));
+        send_text(reconstructed, reconstructed_hello.attachment, U'R');
+        require(screen_text(wait_text(reconstructed, U'R')).find(U'R') != std::u32string::npos,
+                "the adopted service still owns terminal input");
+        detach(reconstructed);
+
+        require(::kill(replacement_daemon, SIGTERM) == 0, "stop the replacement daemon");
+        require(::waitpid(replacement_daemon, &status, 0) == replacement_daemon &&
+                    WIFEXITED(status) && WEXITSTATUS(status) == 0,
+                "the replacement daemon exits cleanly");
+        replacement_daemon = -1;
+        wait_gone(service_pid);
+        wait_gone(static_cast<pid_t>(terminal_child));
+        struct stat ownership_info{};
+        require(::lstat((endpoint + ".supervisor-owner").c_str(), &ownership_info) != 0 &&
+                    errno == ENOENT,
+                "replacement-daemon stop removes service ownership");
+        QFile state_file{directory.filePath(QStringLiteral("supervisor.json"))};
+        require(state_file.open(QIODevice::ReadOnly), "read persisted state after stop");
+        const auto state_document = QJsonDocument::fromJson(state_file.readAll());
+        state_file.close();
+        require(state_document.isObject() &&
+                    state_document.object().value(QStringLiteral("version")).toInt() == 2,
+                "reconstruction uses version-two state");
+    } catch (...) {
+        if (first_daemon > 0) {
+            static_cast<void>(::kill(first_daemon, SIGKILL));
+            int status = 0;
+            static_cast<void>(::waitpid(first_daemon, &status, 0));
+            first_daemon = -1;
+        }
+        if (replacement_daemon > 0) {
+            static_cast<void>(::kill(replacement_daemon, SIGTERM));
+            int status = 0;
+            static_cast<void>(::waitpid(replacement_daemon, &status, 0));
+            replacement_daemon = -1;
+        }
+        if (service_pid > 0) {
+            static_cast<void>(::kill(service_pid, SIGKILL));
+            wait_gone(service_pid);
+            service_pid = -1;
+        }
+        if (terminal_child > 0)
+            wait_gone(static_cast<pid_t>(terminal_child));
+        terminal_child = 0;
+        QDir::setCurrent(previous);
+        throw;
+    }
+    QDir::setCurrent(previous);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -573,6 +725,7 @@ int main(int argc, char** argv) {
     try {
         failed_service_birth_never_reports_born();
         daemon_birth_and_real_service_clients();
+        daemon_sigkill_reconstructs_the_live_service();
         std::cout << "supervisor-daemon: ok\n";
         return 0;
     } catch (const BindUnavailable&) {
