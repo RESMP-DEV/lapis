@@ -939,6 +939,11 @@ class AcceptanceTests(unittest.TestCase):
         uncommitted = policy.index("Work is uncommitted")
         self.assertLess(gates, answer)
         self.assertLess(answer, uncommitted)
+        plain_go = policy.index('asks for a plain "go"')
+        follow_up = policy.index("answered a plain question")
+        watcher = policy.index("A watcher or notification")
+        self.assertLess(uncommitted, plain_go)
+        self.assertLess(follow_up, watcher)
         self.assertNotIn("before anything else", policy)
 
     def test_summarize_preserves_top_scored_unknown(self):
