@@ -75,6 +75,12 @@
       "source_revision": "2c42280949602bbed02063027b9ea28fffc8e709",
       "source_dirty": true,
       "result": "Repository contracts, diff hygiene, Ruff check/format and Python unit tests passed for this documentation-only change."
+    },
+    {
+      "name": "recovered-receipt-privacy-review",
+      "reviewer": "CodeRabbit",
+      "finding": "The local-install receipt exposed a developer email inside the local signing identity.",
+      "result": "Both signing-identity occurrences were redacted while retaining the signing method, certificate identifier, team and verification result; an email scan over all recovered receipts now finds none."
     }
   ],
   "failed_attempts": [

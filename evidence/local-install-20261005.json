@@ -35,7 +35,7 @@
     },
     {
       "name": "app-build-and-sign",
-      "command": "LAPIS_SIGN_IDENTITY='Apple Development: jlu@resmp.dev (HN776ABXR6)' uv run --no-project python scripts/package_macos.py app",
+      "command": "LAPIS_SIGN_IDENTITY='Apple Development: [redacted developer email] (HN776ABXR6)' uv run --no-project python scripts/package_macos.py app",
       "result": "pass"
     },
     {
@@ -63,7 +63,7 @@
     }
   ],
   "signing": {
-    "authority": "Apple Development: jlu@resmp.dev (HN776ABXR6)",
+    "authority": "Apple Development: [redacted developer email] (HN776ABXR6)",
     "team": "UM5U8XJCT2",
     "hardened_runtime": true,
     "timestamped": true,
