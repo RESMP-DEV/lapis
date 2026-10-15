@@ -1,0 +1,168 @@
+{
+  "receipt": "macos-platform-release-and-readiness-research",
+  "recorded_at": "2026-10-07T08:04:12Z",
+  "scope": "Read-only release/API research and source-size triage for docs/architecture.md. No implementation, build, OS upgrade, dependency update, or rebuild was performed.",
+  "sanitization": "No credentials, private transcripts, account IDs, hostnames or user-specific paths are recorded. Worker run-directory paths are omitted.",
+  "environment": {
+    "runtime_macos": "26.7.1 (25G313)",
+    "xcode": "27.0 (27A266a)",
+    "macos_sdk": "27.0 (26A425)",
+    "qt": "6.11.2",
+    "cef_pin": "8037 / Chromium 154.0.8037.58",
+    "repo_head": "98c6ff2",
+    "repo_state": "Dirty shared checkout; implementation files were inspected but not modified."
+  },
+  "apple_findings": {
+    "latest_stable_macos": {
+      "version": "27.0.1 Golden Gate",
+      "release_date": "2026-09-28",
+      "source": "Apple Support HT201222 / 100100",
+      "observed": "The page states the latest macOS version is 27.0.1 and lists macOS Golden Gate 27.0.1 with release date 28 September 2026.",
+      "non_claim": "Apple's page shows no published CVE entries for 27.0.1; no exploit or patch impact beyond Apple's statement is claimed."
+    },
+    "latest_macos_beta": {
+      "version": "27.2 Golden Gate beta 3",
+      "source": "Apple Developer macOS 27.2 release-notes JSON",
+      "observed": "Title is 'macOS 27.2 Golden Gate Beta 3 Release Notes'; the macOS 27.2 SDK ships with Xcode 27.2. HTTP Last-Modified was 2026-10-06T02:57:13Z.",
+      "non_claim": "Apple's public release-notes endpoint does not state the installer build number; no third-party build-number claim was promoted."
+    },
+    "xcode_channels": {
+      "27.2_beta_2": {
+        "sdks": ["macOS 27.2", "iOS 27.2", "watchOS 27.2", "tvOS 27.2", "visionOS 27.2"],
+        "runtime_requirement": "macOS 26.6 or later",
+        "source": "Apple Developer Xcode 27.2 release-notes JSON"
+      },
+      "27.1_rc": {
+        "sdks": ["macOS 27", "iOS 27.1", "watchOS 27", "tvOS 27", "visionOS 27"],
+        "runtime_requirement": "macOS 26.6 or later",
+        "source": "Apple Developer Xcode 27.1 release-notes JSON"
+      },
+      "27.0": {
+        "sdks": ["macOS 27"],
+        "runtime_requirement": "macOS 26.6 or later",
+        "source": "Apple Developer Xcode 27 release-notes JSON"
+      }
+    }
+  },
+  "sdk_and_dependency_findings": {
+    "status_item": {
+      "available_first_slice_api": "NSStatusBar, NSStatusItem and NSMenu are available on the macOS 14 deployment target.",
+      "macos_27_addition": "NSStatusItemExpandedInterfaceDelegate and NSStatusItemExpandedInterfaceSession are available from macOS 27.0 and were not selected for the first slice.",
+      "non_claim": "macOS 27.0.1 or 27.2 runtime behavior was not exercised because the local runtime remains macOS 26.7.1."
+    },
+    "qt": {
+      "pin": "Qt 6.11.2 EXACT in services/session/CMakeLists.txt, apps/desktop/CMakeLists.txt and scripts/package_macos.py.",
+      "observed": "qmake reports 6.11.2 and the architecture pins the source archives for packaging.",
+      "non_claim": "No Qt source rebuild under Xcode 27.1, 27.2, macOS 27.0.1 or 27.2 was run; compatibility is an empirical gate for a separate dependency decision."
+    },
+    "cef": {
+      "pin": "CEF 8037 / Chromium 154.0.8037.58, macOS deployment target 12.0, built against the Xcode 26 SDK.",
+      "observed": "Architecture records the pin and design only.",
+      "non_claim": "No CEF fetch, engine probe, SDK rebuild or runtime compatibility test was run."
+    },
+    "deployment_target": "scripts/package_macos.py still sets MACOS_TARGET=14.0."
+  },
+  "source_readiness_audit": {
+    "native_menu_worker": {
+      "mode": "read-only",
+      "result": "completed",
+      "elapsed_seconds": 177.958,
+      "output_sha256": "cf703c53fb599bde69eea3caabc9923e9e3018060fbfc0a13d55e846864a10d8",
+      "key_findings": [
+        "desktop_actions_mac.mm is 143 lines and currently owns notifications, ServiceManagement login-item registration and Sparkle; no NSMenu, NSStatusItem, hotkey, dock-menu or QuickLook implementation exists.",
+        "Main.qml already has a commandEntries catalog with stable IDs, enabled/reason state, shortcut text and runCommand dispatch; it is untyped QML rather than a typed C++ catalog.",
+        "The Batch 2 and 3 rows compile against the existing desktop targets with no Qt rebuild; Dock menu alone would introduce Qt Widgets.",
+        "Offscreen check_ui_preview.py cannot accept native menu-bar, status-item, Dock, QuickLook, Focus or secure-input behavior; new native fixtures are required."
+      ],
+      "search_note": "The worker attempted sindexer first; its sandbox could not create the wrapper temp file, so rg was the recorded fallback."
+    },
+    "quality_goals_worker": {
+      "mode": "read-only",
+      "result": "timed_out_after_600_seconds",
+      "use": "Not accepted as evidence; the coordinator independently confirmed the Q03 diagnostic coupling and the Q04/Q05/Q13 file duplication."
+    },
+    "coordinator_confirmations": [
+      "services/session/src/session_service.cpp schedule_attention still starts the full attention interval when the timer is inactive.",
+      "apps/ios/Lapis/Models.swift followNewHistory still sleeps a full second before its first loadNewer after idle.",
+      "apps/desktop/src/attention_view.cpp applyAttention still infers awaiting_first_prompt from exact diagnostic strings.",
+      "wire::AttentionSnapshot in services/session/src/transport/attention_protocol.hpp has no observation-phase field, confirming that Q03 needs a compatibility decision before a sub-agent edits it.",
+      "apps/desktop/tests/live_connection_test.cpp and terminal_input_test.cpp each define an identical Peer fixture helper, confirming Q13's bounded scope.",
+      "apps/desktop/src/live_connection.cpp is 585 lines and couples transport, descriptor persistence, snapshot handling and history requests, confirming Q05 is a seam review rather than a blind extraction."
+    ]
+  },
+  "verification_commands": [
+    {
+      "command": "sw_vers",
+      "exit_code": 0,
+      "result": "26.7.1 / 25G313"
+    },
+    {
+      "command": "xcodebuild -version",
+      "exit_code": 0,
+      "result": "Xcode 27.0 / 27A266a"
+    },
+    {
+      "command": "xcrun --show-sdk-version && xcrun --show-sdk-build-version",
+      "exit_code": 0,
+      "result": "27.0 / 26A425"
+    },
+    {
+      "command": "qmake -query QT_VERSION",
+      "exit_code": 0,
+      "result": "6.11.2"
+    },
+    {
+      "command": "curl -fsSL Apple Developer JSON endpoints and jq the title/paragraph content",
+      "exit_code": 0,
+      "result": "macOS 27.2 Beta 3, Xcode 27.2 Beta 2, Xcode 27.1 RC and Xcode 27.0 release notes returned HTTP 200 with the recorded SDK and runtime statements."
+    },
+    {
+      "command": "curl -fsSL Apple Support 100100 and extract text",
+      "exit_code": 0,
+      "result": "Latest macOS is 27.0.1; macOS Golden Gate 27.0.1 release date is 28 September 2026."
+    }
+  ],
+  "post_document_validation": [
+    {
+      "command": "jq -e . evidence/macos-release-research.json && jq -e . evidence/native-menu-bar-research.json",
+      "exit_code": 0,
+      "result": "Both research receipts are valid JSON."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors."
+    },
+    {
+      "command": "just quality",
+      "exit_code": 0,
+      "result": "source-revision, source-status, ruff-check, ruff-format-check, git-diff-check, python-unittests and quality all passed; receipt build/reports/quality/receipt.json."
+    },
+    {
+      "command": "architecture-anchor check for the five links used by the new triage section",
+      "exit_code": 0,
+      "result": "work-order, quality-repair-goals, native-menu-bar-command-hub, pseudo-production-direction and the new platform-triage heading all resolve."
+    },
+    {
+      "command": "sindexer update .",
+      "exit_code": 0,
+      "result": "737 chunks created, 2 files indexed, lexical_only=false, no warnings."
+    }
+  ],
+  "sources": [
+    "https://support.apple.com/en-us/100100",
+    "https://developer.apple.com/tutorials/data/documentation/macos-release-notes/macos-27_2-release-notes.json",
+    "https://developer.apple.com/tutorials/data/documentation/macos-release-notes/macos-27-release-notes.json",
+    "https://developer.apple.com/tutorials/data/documentation/xcode-release-notes/xcode-27_2-release-notes.json",
+    "https://developer.apple.com/tutorials/data/documentation/xcode-release-notes/xcode-27_1-release-notes.json",
+    "https://developer.apple.com/tutorials/data/documentation/xcode-release-notes/xcode-27-release-notes.json",
+    "Installed macOS 27.0 AppKit SDK headers",
+    "Local lapis source at repository head 98c6ff2 plus current uncommitted working tree"
+  ],
+  "non_claims": [
+    "No macOS or Xcode installation, beta enrollment, SDK download, OS upgrade, Qt rebuild, CEF fetch or application build was performed.",
+    "No macOS 27 runtime, Liquid Glass menu behavior, signing path or native lapis UI integration was exercised.",
+    "The timed-out quality-goals worker report is not evidence; only the independently confirmed source findings above were used.",
+    "This receipt records readiness and research, not feature implementation or milestone completion."
+  ]
+}

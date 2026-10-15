@@ -1,0 +1,100 @@
+{
+  "schema": "lapis.branch-consolidation/1",
+  "recorded_at": "2026-10-15T07:09:54Z",
+  "source": {
+    "main_revision": "2c42280949602bbed02063027b9ea28fffc8e709",
+    "main_clean_before_documentation": true,
+    "dirty_branch": "fix/quality-correctness",
+    "dirty_revision": "901f009df2e9f9f9c235936c8f05ffa15f48a472",
+    "preserved_dirty_state": "8549b1ae9b945d734ed0dc99e118c172d4f10ac5",
+    "platform": "macOS arm64"
+  },
+  "scope": "Consolidated the preserved quality-correctness working tree against current main, classified every dirty source group, recovered only missing sanitized research receipts, and changed no runtime behavior.",
+  "inventory": {
+    "open_pull_requests": 0,
+    "remote_branches": [
+      "origin/main"
+    ],
+    "worker_groups": [
+      {
+        "name": "desktop",
+        "configured_route": "zai,glm-5.3-flash",
+        "assigned_paths": 15,
+        "result": "All local repair intents are represented on current main in equal or newer form; no recoverable slice."
+      },
+      {
+        "name": "services",
+        "configured_route": "zai,glm-5.3-flash",
+        "assigned_paths": 9,
+        "result": "Pacing, socket widening, pending-history cleanup and resume provenance are present on main with newer contracts; no recoverable slice."
+      },
+      {
+        "name": "scripts-and-packaging",
+        "configured_route": "zai,glm-5.3-flash",
+        "assigned_paths": 21,
+        "result": "Check, budget, changelog, restore, CLI and packaging changes are historical precursors of hardened current-main implementations; no recoverable slice."
+      },
+      {
+        "name": "product-documents-and-artwork",
+        "configured_route": "zai,glm-5.3-flash",
+        "assigned_paths": 16,
+        "result": "Older documents and source snapshots are superseded; canonical artwork and quality receipts are already present on main; no recoverable source slice."
+      }
+    ],
+    "recovered_receipts": [
+      "evidence/settings-storage-review-20261006.json",
+      "evidence/native-menu-bar-research.json",
+      "evidence/macos-release-research.json",
+      "evidence/local-install-20261005.json",
+      "evidence/lapis-copy-cleanup-launch-20261005.json"
+    ]
+  },
+  "validation": [
+    {
+      "name": "all-repository-open-pr-enumeration",
+      "command": "gh api graphql",
+      "exit_code": 0,
+      "result": "The RESMP-DEV/lapis open pull-request connection returned zero nodes."
+    },
+    {
+      "name": "read-only-worker-audits",
+      "command": "codex-ccr-worker --read-only --timeout 900",
+      "exit_code": 0,
+      "result": "Four independently scoped audits completed with exit 0 and no edits."
+    },
+    {
+      "name": "receipt-json-and-sanitization",
+      "command": "jq -e . on each recovered receipt plus a targeted identity-and-secret scan",
+      "exit_code": 0,
+      "result": "Recovered JSON parses and the machine-specific absolute path in the original release-research command was replaced with the repository-relative form."
+    },
+    {
+      "name": "documentation-quality",
+      "command": "python3 -u scripts/check_quality.py",
+      "exit_code": 0,
+      "source_revision": "2c42280949602bbed02063027b9ea28fffc8e709",
+      "source_dirty": true,
+      "result": "Repository contracts, diff hygiene, Ruff check/format and Python unit tests passed for this documentation-only change."
+    },
+    {
+      "name": "recovered-receipt-privacy-review",
+      "reviewer": "CodeRabbit",
+      "finding": "The local-install receipt exposed a developer email inside the local signing identity.",
+      "result": "Both signing-identity occurrences were redacted while retaining the signing method, certificate identifier, team and verification result; an email scan over all recovered receipts now finds none."
+    }
+  ],
+  "failed_attempts": [
+    {
+      "attempt": "quality-before-session-service-rebuild",
+      "result": "The first full Python run failed three test_lapis_remote cases because this checkout retained the archived branch's stale compiled session service under ignored build/.",
+      "control": "The same three cases passed in the untouched clean-main worktree.",
+      "repair": "Rebuilt the desktop preset's lapis_session_service target; the three focused cases and the full quality dispatcher then passed."
+    }
+  ],
+  "non_claims": [
+    "The preserved dirty implementation was not built or tested; worker classification was source and history inspection.",
+    "No runtime, package, adapter, native menu, GUI or settings behavior changed in this consolidation.",
+    "The macOS-release, native-menu, settings, local-install and copy-cleanup receipts are dated observations, not current qualification.",
+    "The full obsolete dirty state remains only in local archive refs; this repository keeps the five unique sanitized receipts and the canonical current-main sources."
+  ]
+}

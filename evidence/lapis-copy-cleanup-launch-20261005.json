@@ -1,0 +1,71 @@
+{
+  "recorded_at": "2026-10-05T16:43:00Z",
+  "platform": "macOS arm64",
+  "keeper": "/Applications/Lapis.app",
+  "keeper_identity": {
+    "bundle_identifier": "dev.lapis.desktop",
+    "version": "0.2.1",
+    "architectures": [
+      "arm64"
+    ],
+    "executable_sha256": "7b024ba04a68ff52a1b6dedca33fe547a7c38233f6da413354a651a70a9cdc14"
+  },
+  "cleanup": {
+    "initial_bundle_count": 55,
+    "removed_bundle_count": 54,
+    "initial_allocated_size_mb": 533.8,
+    "removed_file_size_mb": 513.95,
+    "method": "Moved each unused bundle to a single dated Trash container with a complete original-path manifest, then observed macOS remove that Trash container during the final verification scan.",
+    "manifest": "build/lapis-cleanup-20261005T161816Z.json",
+    "final_on_disk_outside_trash": 1,
+    "preserved": [
+      "The installed /Applications/Lapis.app keeper.",
+      "Lapis source checkouts and worktrees; only generated app bundles were removed.",
+      "The active remote-host login agent and active session-service processes, which do not execute from the removed app bundles.",
+      "The Sparkle Updater app nested in the release dependency; it is not a Lapis application copy."
+    ]
+  },
+  "launch": {
+    "launched": true,
+    "path": "/Applications/Lapis.app",
+    "open_exit_code": 0,
+    "gui_process_alive_after_settling": true,
+    "window_count": 1,
+    "session_services_spawned_from_installed_bundle": true
+  },
+  "checks": [
+    {
+      "name": "no-removed-copy-in-use",
+      "result": "pass",
+      "scope": "Checked executable paths and open file handles before cleanup; no Lapis app bundle had a process executing from it or an open handle."
+    },
+    {
+      "name": "spotlight-single-result",
+      "command": "mdfind 'kMDItemFSName == \"Lapis.app\" && kMDItemContentType == \"com.apple.application-bundle\"'",
+      "result": "pass",
+      "observed": "Only /Applications/Lapis.app."
+    },
+    {
+      "name": "launch-services-resolution",
+      "command": "osascript -e 'POSIX path of (path to application id \"dev.lapis.desktop\")'",
+      "result": "pass",
+      "observed": "/Applications/Lapis.app/"
+    },
+    {
+      "name": "installed-code-signature",
+      "command": "codesign --verify --deep --strict /Applications/Lapis.app",
+      "result": "pass"
+    },
+    {
+      "name": "installed-process",
+      "command": "ps and System Events process/window query",
+      "result": "pass",
+      "observed": "The installed GUI process was sleeping normally after launch and had one window."
+    }
+  ],
+  "non_claims": [
+    "The ignored cleanup manifest records original paths and remains under build/; this sanitized receipt does not reproduce them.",
+    "The reversible Trash window was no longer present when the final size scan ran, so restoration from that dated Trash container is not currently available.",
+    "No native input or IME exercise was performed; launch and GUI presence only were verified."
+  ]
+}
