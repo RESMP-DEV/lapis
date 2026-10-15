@@ -1368,18 +1368,21 @@ Qt's offscreen clipboard, without requesting macOS foreground access or moving
 the system pointer. Timeout diagnostics identify the calling assertion. This is
 logical Qt coverage; the background UI mode leaves exact cursor-pixel assertions
 to the native GPU run. It does not qualify AppKit input, the system pasteboard,
-Apple IME, display rendering or GPU presentation. The ordinary CTest entry still
-requires the native desktop. Run the background mode while the desktop is in use;
+Apple IME, display rendering or GPU presentation. CTest uses this mode unless
+`LAPIS_NATIVE_GUI_TESTS` is ON. Run the background mode while the desktop is in use;
 reserve short exclusive windows for the native checks below. Do not replace a
 failed native result with a background pass or relabel it as native acceptance.
 
-For a separate background `window-state` run, give Qt an explicit virtual screen.
-Its default offscreen screen can be smaller than the saved-window fixture. A JSON
-file containing `{"screens":[{"name":"qualification","x":0,"y":0,"width":1920,"height":1080}]}`
-can be selected with `QT_QPA_PLATFORM=offscreen:configfile=<absolute-json-path>`
-when running `ctest --test-dir build/desktop -R '^window-state$'
---output-on-failure --no-tests=error`. This verifies geometry against that virtual
-screen; it does not qualify native window-manager placement.
+CTest never shows a window on a Mac by default. With `LAPIS_NATIVE_GUI_TESTS`
+OFF (the default), terminal-input, ui-preview and appearance-input get
+`--background`, and `window-state` runs offscreen against a generated 1920x1080
+virtual screen (`build/desktop/apps/desktop/virtual_screen.json`), which checks
+geometry but not native window-manager placement. Tests that still open windows,
+the desktop host or an NSApplication carry the `screen` label and are disabled on
+macOS: workspace*, tools-ui, ui-preview, appearance-input and terminal-keys-mac;
+terminal-render is not registered. A new test that creates a QWindow,
+NSApplication or desktop process gets the `screen` label. Configure with
+`-DLAPIS_NATIVE_GUI_TESTS=ON` only for an authorized native run.
 
 Build the current desktop first. Run these checks serially with other GUI work:
 

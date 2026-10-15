@@ -142,7 +142,18 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_window_state_tests PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
     target_compile_definitions(lapis_window_state_tests PRIVATE LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
     add_test(NAME window-state COMMAND lapis_window_state_tests)
-    set_tests_properties(window-state PROPERTIES TIMEOUT 30 RESOURCE_LOCK "qt_gui" ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
+    option(LAPIS_NATIVE_GUI_TESTS "Run GUI tests in native windows (takes focus)" OFF)
+    if(LAPIS_NATIVE_GUI_TESTS)
+        set(lapis_window_state_platform "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
+    else()
+        # Offscreen with a virtual screen large enough for the saved-window
+        # fixture: geometry is checked without showing a window.
+        set(lapis_virtual_screen "${CMAKE_CURRENT_BINARY_DIR}/virtual_screen.json")
+        file(WRITE "${lapis_virtual_screen}"
+             "{\"screens\":[{\"name\":\"qualification\",\"x\":0,\"y\":0,\"width\":1920,\"height\":1080}]}\n")
+        set(lapis_window_state_platform "QT_QPA_PLATFORM=offscreen:configfile=${lapis_virtual_screen}")
+    endif()
+    set_tests_properties(window-state PROPERTIES TIMEOUT 30 RESOURCE_LOCK "qt_gui" ENVIRONMENT "${lapis_window_state_platform}")
     add_executable(lapis_conversation_index_tests tests/conversation_index_test.cpp)
     target_link_libraries(lapis_conversation_index_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME conversation-index COMMAND lapis_conversation_index_tests)
@@ -230,6 +241,11 @@ if(BUILD_TESTING)
     set_tests_properties(workspace-remote-account-reset PROPERTIES TIMEOUT 20)
     add_test(NAME workspace-updates-off COMMAND lapis_workspace_tests --case updates-off)
     set_tests_properties(workspace-updates-off PROPERTIES TIMEOUT 60)
+    # These launch the real desktop host or QML windows. On a Mac someone is
+    # using they would show windows, so they run only on request.
+    set_tests_properties(workspace workspace-remote-accounts workspace-remote-hooks
+                         workspace-remote-account-reset workspace-updates-off
+                         PROPERTIES LABELS "screen")
     if(APPLE)
         add_executable(lapis_sound_decode_tests tests/sound_decode_test.mm)
         target_link_libraries(lapis_sound_decode_tests PRIVATE lapis_project_options lapis_desktop_view)
@@ -265,36 +281,58 @@ if(BUILD_TESTING)
     target_compile_definitions(lapis_tools_ui_tests PRIVATE
         LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
     add_test(NAME tools-ui COMMAND lapis_tools_ui_tests)
-    set_tests_properties(tools-ui PROPERTIES TIMEOUT 60 RESOURCE_LOCK "qt_gui" ENVIRONMENT
+    set_tests_properties(tools-ui PROPERTIES TIMEOUT 60 RESOURCE_LOCK "qt_gui" LABELS "screen" ENVIRONMENT
         "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
 
     add_executable(lapis_ui_preview_tests tests/ui_preview_test.cpp tests/model_change_recorder.hpp)
     target_link_libraries(lapis_ui_preview_tests PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
     target_compile_definitions(lapis_ui_preview_tests PRIVATE LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
-    add_test(NAME ui-preview COMMAND lapis_ui_preview_tests)
+    # GUI tests run offscreen by default so they never show a window or take
+    # focus on the machine someone is using; configure with
+    # -DLAPIS_NATIVE_GUI_TESTS=ON for native windows, Vulkan and real focus.
+    if(LAPIS_NATIVE_GUI_TESTS)
+        set(lapis_gui_test_mode)
+    else()
+        set(lapis_gui_test_mode --background)
+    endif()
+    add_test(NAME ui-preview COMMAND lapis_ui_preview_tests ${lapis_gui_test_mode})
     # Isolate focus ownership from the destructive QML engine-reload fixtures.
-    add_test(NAME appearance-input COMMAND lapis_ui_preview_tests --shortcuts-only)
+    add_test(NAME appearance-input COMMAND lapis_ui_preview_tests ${lapis_gui_test_mode} --shortcuts-only)
     set_tests_properties(ui-preview PROPERTIES RESOURCE_LOCK "qt_gui" TIMEOUT 30 ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
     set_tests_properties(appearance-input PROPERTIES RESOURCE_LOCK "qt_gui" TIMEOUT 20 ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
+    set_tests_properties(ui-preview appearance-input PROPERTIES LABELS "screen")
     add_executable(lapis_terminal_input_tests tests/terminal_input_test.cpp tests/link_receiver.hpp)
     target_link_libraries(lapis_terminal_input_tests PRIVATE lapis_project_options lapis_desktop_view)
-    add_test(NAME terminal-input COMMAND lapis_terminal_input_tests)
+    add_test(NAME terminal-input COMMAND lapis_terminal_input_tests ${lapis_gui_test_mode})
     set_tests_properties(terminal-input PROPERTIES TIMEOUT 45 RESOURCE_LOCK "qt_gui" ENVIRONMENT
         "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
     add_executable(lapis_terminal_render_tests tests/terminal_render_test.cpp)
     target_link_libraries(lapis_terminal_render_tests PRIVATE lapis_project_options lapis_desktop_view)
-    add_test(NAME terminal-render COMMAND lapis_terminal_render_tests)
-    set_tests_properties(terminal-render PROPERTIES TIMEOUT 20 RESOURCE_LOCK "qt_gui" ENVIRONMENT
-        "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
+    # Native Vulkan pixels need a shown window: only with LAPIS_NATIVE_GUI_TESTS.
+    if(LAPIS_NATIVE_GUI_TESTS)
+        add_test(NAME terminal-render COMMAND lapis_terminal_render_tests)
+        set_tests_properties(terminal-render PROPERTIES TIMEOUT 20 RESOURCE_LOCK "qt_gui"
+            ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
+    endif()
     if(APPLE)
         add_executable(lapis_terminal_keys_mac_tests tests/terminal_keys_mac_test.mm)
         target_link_libraries(lapis_terminal_keys_mac_tests PRIVATE lapis_project_options lapis_desktop_view)
         add_test(NAME terminal-keys-mac COMMAND lapis_terminal_keys_mac_tests)
-        set_tests_properties(terminal-keys-mac PROPERTIES TIMEOUT 20)
+        # A shared NSApplication can surface in the Dock: on request only.
+        set_tests_properties(terminal-keys-mac PROPERTIES TIMEOUT 20 LABELS "screen")
         foreach(test_target IN ITEMS lapis_ui_preview_tests lapis_terminal_input_tests)
             target_sources(${test_target} PRIVATE tests/platform/window_activation.mm)
             target_link_libraries(${test_target} PRIVATE "-framework AppKit")
         endforeach()
+        # terminal-input --background is proven windowless (offscreen QPA, no
+        # NSApplication activation). Tests labeled "screen" open windows, the
+        # desktop host or an NSApplication, so a Mac runs them only on request.
+        if(NOT LAPIS_NATIVE_GUI_TESTS)
+            set_tests_properties(workspace workspace-remote-accounts
+                                 workspace-remote-hooks workspace-remote-account-reset
+                                 workspace-updates-off tools-ui ui-preview appearance-input
+                                 terminal-keys-mac PROPERTIES DISABLED TRUE)
+        endif()
     endif()
 endif()
 
