@@ -1,0 +1,74 @@
+{
+  "schema": "lapis.supervisor-production-architecture/1",
+  "recorded_at": "2026-10-15T08:17:42Z",
+  "source": {
+    "lapis_revision": "213b3f291efe57a2c6d444edae6726703d104ba6",
+    "lapis_dirty": true,
+    "lapis_dirty_scope": "Architecture contract, this sanitized evidence receipt, and read-only worker outputs under ignored build/ only.",
+    "platform": "macOS arm64"
+  },
+  "scope": "Architecture-only decision for the next R1 production-client slice. No supervisor, GUI, CLI, launchd, package or runtime behavior was implemented.",
+  "inputs": [
+    {
+      "name": "production-client-audit",
+      "agent": "parent source audit",
+      "result": "Mapped the one-slot state registry, effective-UID daemon admission, spawn-token boundary, GUI restart ownership and existing executable surfaces. A separately dispatched read-only client worker timed out after source inspection and was not used as final evidence."
+    },
+    {
+      "name": "birth-route-audit",
+      "agent": "read-only CCR worker",
+      "configured_route": "zai,glm-5.3-flash",
+      "result": "Mapped the current LiveConnection detached-service path, the daemon birth payload and the seam needed to preserve direct service tests and preview mode."
+    },
+    {
+      "name": "package-recovery-audit",
+      "agent": "read-only CCR worker",
+      "configured_route": "zai,glm-5.3-flash",
+      "result": "Mapped current app/session-service bundling, verify scope, restore LaunchAgent and the missing daemon/update/recovery gates."
+    }
+  ],
+  "current_facts": [
+    "The opt-in daemon is one-shot, admits one same-effective-UID birth, selects the pinned session service, persists v2 launch state and reconstructs a live service after daemon replacement.",
+    "The normal GUI still starts services through LiveConnection and detached QProcess; no production GUI or CLI birth route exists.",
+    "No launchd supervisor registration, daemon CLI, package inclusion, update transition, reboot recovery or credential-environment admission exists.",
+    "The existing restore login helper launches the desktop in restore/serve mode and is not an independent supervisor."
+  ],
+  "decision": {
+    "first_production_client": "A headless lapis supervisor verb sharing the C++ supervisor and v6 protocol libraries, before any GUI or launchd wiring.",
+    "process_security_boundary": "Effective UID plus the private socket directory; same-UID client identity is an ownership label, not a sandbox boundary.",
+    "registration_authority": "launchctl and the installed plist own registration; SupervisorState owns the one-session slot; the client reconciles observations and refuses unknown-state mutations.",
+    "protocol_requirements": [
+      "read-only JSON status",
+      "no automatic retry after an unknown birth result",
+      "the first route keeps the validated client-selected service endpoint",
+      "explicit operator reset and stop-or-leave disposition"
+    ],
+    "implementation_order": [
+      "daemon lifecycle completion and headless client",
+      "DirectBirthRoute and SupervisorBirthRoute seam",
+      "GUI replacement attach semantics",
+      "explicit launchd LaunchAgent registration",
+      "R4 package-location decision and update gate"
+    ]
+  },
+  "validation": [
+    {
+      "name": "architecture-diff",
+      "command": "git diff --check && git diff -- docs/architecture.md evidence/supervisor-production-architecture-20261015.json",
+      "exit_code": 0,
+      "result": "The architecture adds one component-ownership row, updates the open-choice gate, and appends one dated contract section without another roadmap file."
+    },
+    {
+      "name": "repository-quality",
+      "command": "python3 -u scripts/check_quality.py",
+      "exit_code": 0,
+      "result": "Repository contracts, diff hygiene, Ruff check/format and Python unit tests passed for this documentation-only change."
+    }
+  ],
+  "non_claims": [
+    "No status control protocol, CLI, reset operation, BirthRoute strategy, LaunchAgent or package change has been implemented.",
+    "The contract does not qualify process replacement, login, reboot, update, rollback, credential environments, multi-session state, load, memory or latency.",
+    "Effective-UID admission does not protect user state from malicious software already running as that user.",
+    "Worker audits are source and receipt inspection, not process or package acceptance."
+  ]
+}

@@ -65,6 +65,7 @@ promoting any number to an acceptance threshold.
 | Agent adapters | Tool-specific activity, attention requests, responses and reconciliation | Service-owned; capabilities verified per tool/version |
 | Attention policy | Service-owned pending requests; desktop aggregation, navigation aging/cooldowns and presentation snooze | Source state stays authoritative in each service; only desktop focus policy assigns keyboard ownership |
 | Desktop | Layout, navigation, keyboard ownership, IME, selection and accessibility | Receives snapshots; explicitly targets input and decisions to a session |
+| Supervisor | One-session birth admission, desired state, launch/restart convergence and private lifecycle records | A production client requests or observes; it never becomes a generic control plane. The existing session service keeps PTY, terminal, history and adapter ownership; launchd owns only daemon process registration |
 | Tool status | Installed/version observations for canonical agent CLIs in the Tools pane | Reads `harness_catalog`; never configures tools or changes launch, restore, resume or update behavior |
 | Renderer | Glyph/texture caches, terminal drawing and previews | Desktop render thread; consumes snapshots, never mutable parser objects |
 
@@ -99,7 +100,7 @@ for ownership, shared contracts and integration checks across large changes.
 | Engine | Pinned Ghostty `libghostty-vt` selected for the first adapter | Eight-case macOS/Linux replay passes; isolate unstable C API and resolve dependency-notice gaps |
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
 | Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging, attention messages and retained workspace entries | Automatic service recovery remains deferred |
-| Supervisor process birth | Experimental one-session runtime can launch, adopt, restart and stop the real session service; an opt-in headless daemon admits one same-UID birth and reconstructs a persisted v2 live service after daemon replacement, but no GUI/CLI production route or launchd ownership exists | Define production client ownership and lifecycle registration before GUI or launchd wiring; package replacement still requires R4 candidate evidence |
+| Supervisor process birth | Experimental one-session runtime can launch, adopt, restart and stop the real session service; an opt-in headless daemon admits one same-UID birth and reconstructs a persisted v2 live service after daemon replacement, but no GUI/CLI production route or launchd ownership exists | Follow the [production client contract](#production-supervisor-client-and-registration-contract-october-15): prove the headless client first, then the `LiveConnection` route, then launchd/package ownership; R4 candidate evidence remains separate |
 | Adapter observation status | Typed Codex observation phases are carried from the observer through service IPC to the desktop; v6 clients negotiate the optional trailing byte with attach capability `0x40`, legacy peers retain their exact bytes, and diagnostics are display-only | New observers and wire peers must declare observation/replay compatibility, cover legacy downgrade, and preserve connection identity; unknown phases fail closed |
 | Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
 | Codex multi-thread sessions | Explicit remote does not expose managed worktree tools; P2 proved fail-close, exact-ID per-thread reconciliation, foreign-thread recovery and mid-turn archive safety, and recorded an explicit-switch proposal | A user-initiated switch must select the target thread, rotate the source epoch, reconcile by exact ID and invalidate old decision tokens before responses re-enable; no implicit worktree or sender adoption |
@@ -5857,3 +5858,130 @@ observations, including their explicit non-claims.
 These receipts do not reopen the old quality branch or change its superseded
 implementation. In particular, they do not qualify a native menu, settings
 CLI, OS upgrade, notarized release, package replacement or reboot transition.
+
+### Production supervisor client and registration contract (October 15)
+
+This section turns the remaining R1 boundary into an implementation order. It
+is a contract decision, not an implementation claim. At main `213b3f2`, the
+experimental daemon remains opt-in, one-shot and headless; the normal GUI still
+starts services through `LiveConnection`; no production client, launchd job, or
+packaged update transition exists.
+
+**The first production client is a headless `lapis supervisor` verb.** It uses
+the same C++ supervisor and v6 protocol libraries as the eventual GUI, but does
+not create a QML engine, GPU surface, login item, or second daemon. The CLI is
+the first client because it can make status, admission, lost-reply recovery and
+explicit operator disposition observable without coupling process ownership to
+window lifecycle. A GUI may later project the same state, but it must consume
+the client contract rather than privately duplicating it.
+
+Local user identity is the only process-security boundary in the first slice:
+peer effective UID plus the private socket directory admits a client. A
+per-application secret cannot distinguish trustworthy same-UID processes on
+this machine, because they can read the same user state. The client therefore
+labels ownership, but does not claim to sandbox malicious software already
+running as the user. Read-only status exposes no spawn token, service program,
+environment, argument list, or endpoint ownership record. Mutating stop or
+reset requires the private supervisor token and an explicit user action.
+
+#### Control and lifecycle state
+
+The first production protocol adds the observations the experimental birth
+protocol needs for operator control, while deliberately preserving its existing
+wire shape and endpoint ownership:
+
+1. **Status, not birth by retry.** `status --json` reports daemon health,
+   schema version, instance epoch, one-slot state, blocked reason, endpoint
+   when a service exists, and whether the state is reconstructable. It never
+   reports the spawn token or credential-bearing launch details.
+2. **Unknown birth is never retried.** The v1 birth is intentionally
+   non-idempotent: a failed or unknown attempt can consume the one-shot slot.
+   After a timeout the client probes status and the named service endpoint, and
+   reports blocked state if neither answers. Only an explicit operator reset
+   can clear the slot; automatic replay must not turn a lost reply into a
+   second child.
+3. **Validated client endpoint.** The first route keeps endpoint selection in
+   the Workspace or explicit CLI client, as today, so registry metadata and v6
+   reconnect hints remain stable. The daemon still validates the absolute
+   private path and owns the process after admission. Moving endpoint selection
+   to the daemon is a later multi-session migration, not a prerequisite for the
+   first production route.
+
+The lifecycle states are deliberately owned by different authorities:
+
+| State | Authority | Meaning | Client action |
+| --- | --- | --- | --- |
+| Unregistered | `launchctl` / installed plist absent | No daemon is expected at login | An explicit user action may register; no process is silently spawned |
+| Registered enabled | `launchctl` | The per-user daemon is expected after login and receives restart policy | Inspect status; never spawn a second daemon |
+| Registered disabled | `launchctl` plus explicit operator disposition | Autostart is off, while private state may retain a stopped or unmanaged record | Report both facts; require explicit stop-or-leave choice before mutation |
+| Unknown | live probe | Plist, daemon, socket, or state observations disagree | Diagnose only; refuse birth, stop, reset, unregister and update until resolved |
+
+`SupervisorState` remains authoritative for the one session slot. It must not
+mirror launchd registration as though that were durable process truth: the
+installed plist and live `launchctl` observation own registration, the daemon
+owns session convergence, and the client reconciles the two. Unregister is not
+complete until the operator has selected either explicit stop or leaving current
+children unmanaged; an unknown state refuses both implicit termination and
+silent abandonment.
+
+#### Implementation order
+
+1. **Daemon lifecycle completion and headless client.** Add bounded status by
+   endpoint, clean-exit versus unclean-crash convergence, an explicit stop
+   client, and an operator reset for stopped, incompatible-v1, or poisoned
+   slots. Expose this through the C++ `lapis supervisor` verb. Keep direct
+   `lapis_session_service` tests and preview mode unchanged. Qualification is
+   process-level only: status never launches a process; birth and stop prove
+   daemon/service/terminal PID separation, private state modes, malformed and
+   foreign-UID refusals, and exact cleanup.
+2. **`BirthRoute` seam.** Introduce `DirectBirthRoute`,
+   `SupervisorBirthRoute`, and a `BirthTicket` at the desktop/live boundary.
+   `Workspace` and `agentLaunch()` continue to validate the literal payload and
+   choose the private endpoint; the supervisor route sends the existing v1
+   birth shape, waits for daemon-selected identity, and hands `LiveConnection`
+   a ticket that suppresses its detached `QProcess` launch. Preview mode,
+   fixtures, and direct service tests keep `DirectBirthRoute`. The first route
+   admits only an empty service environment; credential-environment admission
+   remains a separate reviewed contract.
+3. **GUI replacement semantics.** A normal window never rebirths a supervised
+   session. On launch it asks status, attaches to the returned endpoint, and
+   retains the existing session identity. GUI close, crash and replacement must
+   not change the daemon, service or terminal PID. A replacement GUI that
+   observes unknown or blocked state surfaces the operator action; it does not
+   fallback to GUI-owned process birth.
+4. **launchd registration.** Only after the client and GUI route are reviewed,
+   install a per-user LaunchAgent that runs the supervisor daemon, not the
+   existing desktop `--restore-agents --serve` helper. Registration is explicit.
+   `KeepAlive` waits until reset/retry admission is bounded and a replacement
+   daemon can converge before exposing control. Qualify disabled BTM/login-item
+   states, daemon SIGKILL, service death, restart storm limits, logout/login,
+   and a real reboot without converting reboot recovery into a same-process
+   claim.
+5. **R4 package and update gate.** Package the supervisor daemon beside the
+   pinned session service and make `package_macos.py verify` exercise the
+   installed ownership path, not merely the presence of another Mach-O. The
+   first candidate may keep both executables in the signed app bundle only if a
+   live Sparkle-replacement fixture proves that daemon and service ownership
+   survive the bundle transition without duplicate children. If that
+   measurement fails, the installer must instead stage a stable, versioned
+   per-user support location and switch launchd atomically. An update
+   reconciles state and preserves the live child where protocol-compatible;
+   incompatibility requires explicit recovery or rollback. Publication and
+   notarization remain the separate candidate gates.
+
+The first implementation slice stops after step 1. It must not add launchd,
+GUI wiring, package movement, credential environments, multi-session state, or
+provider routing. A worker passing state-core tests is not acceptance: the
+parent must observe the real daemon, service and terminal PIDs, private file
+modes, refusal cases, and cleanup paths.
+
+The decisive checks stay explicit. Step 1 extends
+`python3 scripts/check_supervisor_runtime.py --jobs 6` and must retain
+`python3 scripts/check_quality.py`. Step 2 adds the affected `live-connection`,
+`workspace`, `launch-spec`, and supervisor CTest cases, plus `just cli-check`
+for the unchanged direct route and preview rejection coverage. The end-to-end
+record must show two v6 clients around one terminal PID, input through both,
+detach without service death, daemon SIGKILL and replacement adoption, clean
+exit versus bounded unclean restart, stale-epoch reconciliation, and failed
+birth without fallback. Real Codex and Claude qualification remains separate
+from this process-ownership evidence.
