@@ -5827,3 +5827,33 @@ terminal input and verifies explicit cleanup.
 This is still not launchd ownership or a production GUI/CLI client. A persisted
 v1 session, daemon reset protocol, credential-environment admission, package
 update transition, reboot behavior and multi-session state remain out of scope.
+
+### Preserved quality-branch consolidation (October 15)
+
+The old `fix/quality-correctness` working tree was audited against current main
+after the supervisor work. Four scoped read-only audits covered desktop,
+session-service, script/package and product/document ownership. Every dirty
+source change was already present on main in equal form or superseded by a
+newer contract, so none of that implementation was transplanted. The complete
+obsolete working state is preserved locally; the durable decision is recorded
+in [the consolidation receipt](../evidence/branch-consolidation-20261015.json).
+
+Five sanitized receipts from that tree were not represented on main and are
+now preserved as dated observations. The
+[settings review](../evidence/settings-storage-review-20261006.json) records
+the tracked-default/private-runtime split and the fact that the packaged
+desktop exposed neither settings environment variable. The
+[native-menu research](../evidence/native-menu-bar-research.json) keeps the
+leading `NSMenu` versus trailing `NSStatusItem` split and the command-catalog,
+AppKit-bridge, dispatcher and status-bridge ownership boundaries. The
+[macOS release research](../evidence/macos-release-research.json) records the
+October platform/SDK inventory and why an OS or Xcode upgrade is dependency
+work rather than a prerequisite for the macOS 14 target. The
+[local install](../evidence/local-install-20261005.json) and
+[copy-cleanup launch](../evidence/lapis-copy-cleanup-launch-20261005.json)
+receipts preserve the local-signed bundle and generated-copy cleanup
+observations, including their explicit non-claims.
+
+These receipts do not reopen the old quality branch or change its superseded
+implementation. In particular, they do not qualify a native menu, settings
+CLI, OS upgrade, notarized release, package replacement or reboot transition.

@@ -1,0 +1,92 @@
+{
+  "recorded_at": "2026-10-05T16:03:46Z",
+  "platform": "macOS arm64",
+  "source_revision": "b8dfd7ba3d00a622e135b5381834faa4bb3f3870",
+  "source_dirty": true,
+  "source_state": "The checkout was already the dirty fix/quality-correctness working tree; this task preserved that work and added one test-race repair.",
+  "installed_bundle": "/Applications/Lapis.app",
+  "bundle_identifier": "dev.lapis.desktop",
+  "bundle_version": "0.2.1",
+  "executable_sha256": "7b024ba04a68ff52a1b6dedca33fe547a7c38233f6da413354a651a70a9cdc14",
+  "session_service_sha256": "3df8700dbb37d40c3ba83d29e8c8e26ea96b83382e150da7d16be4639339ee65",
+  "changes": [
+    "Captured the in-progress build event before releasing a RemoteFolders replacement worker in test_lapis_remote_bounds.py; the old lookup raced with worker cleanup.",
+    "Built the pinned Qt 6.11.2 Vulkan stack under build/release/qt.",
+    "Built, bundled, and locally signed Lapis 0.2.1 under build/release/stage/Lapis.app.",
+    "Installed the verified bundle at /Applications/Lapis.app; no previous /Applications/Lapis.app existed.",
+    "Registered /Applications/Lapis.app with Launch Services and Spotlight import."
+  ],
+  "checks": [
+    {
+      "name": "focused-remote-race-test",
+      "command": "python3 -m unittest scripts.tests.test_lapis_remote_bounds.RemoteFolderBoundsTests.test_a_stale_report_stays_usable_while_its_replacement_builds",
+      "result": "pass"
+    },
+    {
+      "name": "quality",
+      "command": "just quality",
+      "result": "pass",
+      "receipt": "build/reports/quality/receipt.json"
+    },
+    {
+      "name": "qt-build",
+      "command": "uv run --no-project python scripts/package_macos.py qt",
+      "result": "pass"
+    },
+    {
+      "name": "app-build-and-sign",
+      "command": "LAPIS_SIGN_IDENTITY='Apple Development: jlu@resmp.dev (HN776ABXR6)' uv run --no-project python scripts/package_macos.py app",
+      "result": "pass"
+    },
+    {
+      "name": "package-verify",
+      "command": "uv run --no-project python scripts/package_macos.py verify",
+      "result": "pass",
+      "scope": "Notarization was not requested or checked."
+    },
+    {
+      "name": "installed-copy-signature",
+      "command": "codesign --verify --deep --strict --verbose=2 /Applications/Lapis.app",
+      "result": "pass"
+    },
+    {
+      "name": "installed-headless-host",
+      "command": "package_macos.check_headless_host with package_macos.APP=/Applications/Lapis.app",
+      "result": "pass",
+      "observed": "Headless host answered 1117 bytes with no reported problems."
+    },
+    {
+      "name": "spotlight-installed-result",
+      "command": "mdfind 'kMDItemFSName == \"Lapis.app\" && kMDItemContentType == \"com.apple.application-bundle\"'",
+      "result": "pass",
+      "observed": "/Applications/Lapis.app was the first result; development simulator bundles remained lower-ranked results."
+    }
+  ],
+  "signing": {
+    "authority": "Apple Development: jlu@resmp.dev (HN776ABXR6)",
+    "team": "UM5U8XJCT2",
+    "hardened_runtime": true,
+    "timestamped": true,
+    "notarized": false
+  },
+  "spotlight_observation": {
+    "launch_services_registered": true,
+    "open_reveal_resolved": true,
+    "persistent_metadata_visible": true,
+    "metadata": {
+      "kMDItemDisplayName": "lapis.app",
+      "kMDItemContentType": "com.apple.application-bundle",
+      "kMDItemCFBundleIdentifier": "dev.lapis.desktop",
+      "kMDItemVersion": "0.2.1",
+      "kMDItemExecutableArchitectures": [
+        "arm64"
+      ]
+    },
+    "diagnostic": "Initial publication lagged behind active system indexing. A bounded application-domain move/import cycle triggered publication after returning the bundle to /Applications; no volume index rebuild was used."
+  },
+  "non_claims": [
+    "The app is locally signed but not Developer ID signed, not notarized, and not a release artifact.",
+    "No GUI window or native input session was opened from the installed bundle.",
+    "The pre-existing dirty source tree was not committed or reset."
+  ]
+}

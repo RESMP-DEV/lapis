@@ -1,0 +1,63 @@
+{
+  "receipt": "native-menu-bar-research",
+  "date": "2026-10-06",
+  "scope": "Design-phase API research for the leading lapis command hub and separate trailing attention item. It records documentation, SDK-source and local AppKit ordering evidence for docs/architecture.md; no lapis implementation or native UI integration was changed.",
+  "sanitization": "No account IDs, credentials, private transcripts, hostnames or user-specific paths are recorded.",
+  "environment": {
+    "runtime_os": "macOS 26.7.1 arm64",
+    "sdk_checked": "macOS 27.0 AppKit SDK from Xcode 27.0",
+    "qt_reviewed": "6.11.2 source shipped for lapis packaging",
+    "repo_state": "Read-only inspection of dirty branch fix/quality-correctness; unrelated work untouched."
+  },
+  "public_api_findings": {
+    "leading_zone": {
+      "api": "NSApplication.mainMenu plus NSMenu, NSMenuItem and NSMenuDelegate",
+      "constraints": "The system Apple menu is outside the application-owned main menu and cannot be modified. Apple's menu-bar guidance says the Apple menu is first on the leading side, app menus follow, and app-specific menus normally sit between View and Window.",
+      "position": "To place a custom menu immediately after the Apple menu and before the normal app menu, insert it at index 0 after the platform application menu exists. This is a documented product exception to Apple's normal order."
+    },
+    "trailing_zone": {
+      "api": "NSStatusBar.systemStatusBar.statusItem(withLength:), NSStatusItem.button/menu/visible/behavior/autosaveName",
+      "constraints": "Status items are menu bar extras on the trailing side. Apple's guidance says the system may hide them under space pressure and applications cannot predict their location. Use a menu rather than a popover unless functionality is too complex for one.",
+      "macos_27_addition": "NSStatusItemExpandedInterfaceDelegate and NSStatusItemExpandedInterfaceSession are available in macOS 27.0 for custom panels participating in status-item keyboard and tracking lifecycle. Not selected for the macOS 14+ first slice."
+    },
+    "swiftui": {
+      "api": "MenuBarExtra, available on macOS 13.0 and later",
+      "verdict": "Not selected. It is a SwiftUI Scene and would introduce a second application-state owner; it also addresses the trailing menu-extra zone, not the requested leading slot."
+    },
+    "qt": {
+      "api": "QtQuick.Controls MenuBar backed by QPlatformMenuBar",
+      "finding": "The reviewed Qt 6.11.2 source documents that MenuBar is native on macOS since Qt 6.8, with its menus and items becoming native. It is suitable for conventional app menus, but its normal order is not an API for placing a menu before the application menu."
+    }
+  },
+  "local_ordering_probe": {
+    "method": "Compiled and ran a disposable Swift AppKit app on the live desktop. It created an application menu named Probe and a Lapis menu, then inserted a Command menu at mainMenu index 0 after launch.",
+    "result": [
+      "before=[\"Probe\", \"Lapis\"]",
+      "after=[\"Command\", \"Probe\", \"Lapis\"]",
+      "early_hidden=false app_hidden=false"
+    ],
+    "significance": "AppKit accepts an index-zero application-owned top-level item and does not hide the existing application item. This supports the requested placement contract.",
+    "non_claims": "The probe did not use Qt, click either menu, capture Liquid Glass rendering, or test lapis command dispatch; those remain acceptance gates."
+  },
+  "architecture_segmentation": [
+    "Typed command catalog: stable IDs, labels, groups, context, enabled state, reasons, shortcuts and safe command kinds; Command-K, context menus and native menus are projections.",
+    "Leading AppKit bridge: owns one lapis top-level NSMenuItem and repopulates from a catalog snapshot in menuNeedsUpdate; inserts at index zero after Qt creates the platform application menu.",
+    "Single main-thread dispatcher: returns command IDs to the existing desktop routing; no native item directly touches services, adapters or PTYs.",
+    "Separate trailing status bridge: count and bounded pending navigation only, with stable autosave identity and no fixed-position promise."
+  ],
+  "sources": [
+    "https://developer.apple.com/documentation/appkit/nsstatusitem",
+    "https://developer.apple.com/documentation/appkit/nsstatusbar",
+    "https://developer.apple.com/documentation/appkit/nsstatusitemexpandedinterfacedelegate",
+    "https://developer.apple.com/documentation/swiftui/menubarextra",
+    "https://developer.apple.com/design/human-interface-guidelines/the-menu-bar",
+    "qtdeclarative Qt Quick Controls MenuBar source and documentation supplied with Qt 6.11.2",
+    "macOS 27.0 AppKit NSStatusItem.h and NSStatusItemExpandedInterfaceSession.h SDK headers"
+  ],
+  "unverified_or_open": [
+    "Index-zero insertion through lapis's Qt/Cocoa application lifecycle.",
+    "Native menu accessibility order and Liquid Glass appearance on the signed macOS 26 package.",
+    "Click dispatch from background lapis and focus policy behavior.",
+    "NSStatusItem removal, autosave restore and macOS 26 quirks in lapis itself."
+  ]
+}

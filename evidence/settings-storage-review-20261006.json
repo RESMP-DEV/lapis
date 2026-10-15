@@ -1,0 +1,44 @@
+{
+  "schema": "lapis.review/1",
+  "recorded_at": "2026-10-06T21:30:00-07:00",
+  "agent": "Codex",
+  "task": "Review existing Lapis settings storage and its accessibility to supervised agents",
+  "source": {
+    "revision": "98c6ff2",
+    "dirty": true,
+    "scope_note": "Read-only source review; no user settings or unrelated dirty work were modified. A focused ignored build artifact was produced."
+  },
+  "checks": [
+    {
+      "command": "sindexer search . \"settings persistence configuration storage restore QSettings workspace\" --limit 5",
+      "exit_code": 0,
+      "result": "Located KeyMap, workspace restore, geometry persistence, and architecture references."
+    },
+    {
+      "command": "cmake --build build/desktop --target lapis_keymap_tests -j 4 && ./build/desktop/apps/desktop/lapis_keymap_tests",
+      "exit_code": 0,
+      "result": "Focused keymap suite passed, including atomic write-back, unknown-key preservation, rollback, validation, and external replacement hot reload."
+    },
+    {
+      "command": "runtime inventory of active packaged lapis.json, workspace.json, and window.json plus desktop process environment filtering",
+      "exit_code": 0,
+      "result": "Active config is under ~/.lapis; workspace and geometry are private mode-0600 runtime JSON. The running desktop exposes neither LAPIS_HOME nor LAPIS_CONFIG."
+    }
+  ],
+  "findings": [
+    "lapis.json is already a small JSON document with a version key, but read paths do not enforce that version and no JSON Schema is shipped.",
+    "The GUI writes atomically, preserves unknown JSON fields, rolls back failed mutations, diagnoses invalid fields, and reloads replacement writes from external editors or agents after a 150 ms settle.",
+    "Active packaged settings, agent registry, and window geometry are intentionally split across lapis.json, runtime/workspace.json, and runtime/window.json; the latter two are private machine-local state.",
+    "Supervised local agents do not inherit a pointer to the active config. A packaged agent whose working directory is this checkout would find the committed default ./lapis.json rather than the active ~/.lapis/lapis.json.",
+    "Direct agent edits have no advisory lock or compare-and-swap generation, so concurrent UI and agent read-modify-write cycles can lose updates even though each write is atomic.",
+    "Agents have no machine-readable validation or diagnostics surface; invalid values fall back in the GUI and appear only as GUI diagnostic text.",
+    "Remote SSH agents have no local settings-access contract; blindly forwarding the local config path would be a separate security and consistency decision."
+  ],
+  "recommendation": "Keep JSON and add a local self-describing contract rather than changing formats: inject the active LAPIS_CONFIG/LAPIS_HOME into local agent environments, ship a Draft 2020-12 JSON Schema with additionalProperties true, and provide a small JSON CLI for path/schema/validate/read/write that shares the same lock and validation. Before implementation, decide version enforcement and conflict behavior explicitly.",
+  "non_claims": [
+    "This review did not modify or reload the user's active settings.",
+    "The focused keymap suite does not requalify the full desktop, workspace, iOS, or packaging stacks.",
+    "No settings CLI, schema, environment injection, or concurrency protocol was implemented.",
+    "Remote agent settings access and nested Lapis behavior remain undesigned."
+  ]
+}
