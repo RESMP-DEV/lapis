@@ -182,7 +182,7 @@ gate is implied.
 | Async work and persistence | Capture session/host/generation identity before suspension; validate it before mutation, persistence, deferred cleanup and follow-up work. Check A-to-B-to-A changes and unchanged-identity updates. Cache keys must distinguish complete owners; private task handles stay private. |
 | Resources and failure paths | Bound active work, queued work and retained state separately. Check acquisition/start failure as well as normal completion. Preserve the original failure and release only owned resources. Exercise successful cached decisions as well as refusal/retry paths. |
 | Test value and isolation | State the observable behavior each new case adds. Reuse shared fixtures without deleting distinct layer contracts. Await a trigger and completion for stale-response assertions; use a removed-fix control when a race test's sensitivity is uncertain. Give concurrent probes private build/runtime artifacts and clean them on setup failure. |
-| Evidence and integration | Bind results to tested inputs and scope. Reject empty success, stale passing receipts and unreachable assertions. Read review-service output: a green check can accompany a skipped review. Retain unresolved native-platform and sanitizer limitations, and reconcile overlapping PR/local changes before integration. |
+| Evidence and integration | Bind results to tested inputs and scope. Reject empty success, stale passing receipts and unreachable assertions. Retain unresolved native-platform and sanitizer limitations, and reconcile overlapping PR/local changes before integration. |
 
 When creating or changing a verification runner, invalidate the previous output
 receipt before attempting checks. Setup, compilation and execution failures must
@@ -290,60 +290,21 @@ present prose-only rules as an automated gate.
    the result. Explain the problem and resulting behavior, relevant design choices,
    exact checks and outcomes, and remaining risks. Link an issue when one exists;
    an issue, special branch prefix or conventional-commit prefix is not required.
-4. Identify the applicable configured reviewers for the actual PR head; invoke
-   comment-triggered services and verify delivery. Installation alone does not
-   establish review coverage. Collect complete thread-aware feedback and address findings together within
-   the review budget; slow optional services must not hold useful work open.
-   Fix valid findings, rerun affected checks, reply with evidence and resolve the
-   threads. Explain duplicate, stale or inapplicable findings rather than ignoring
-   them. Refresh review state after changing the head.
-5. Record each service as completed, completed with findings, pending, or
-   skipped/unavailable. Explicit auth, quota or provider failures are unavailable.
-   For rate/quota limits, stop calls until reset (next local day if none is supplied),
-   then retry once only if needed. For silence, use a bounded wait of up to ten minutes, one retrigger and a
-   sixty-second acknowledgement check unless the maintainer requests a shorter
-   budget. Record a shortened wait as skipped, without claiming unavailability. Optional unavailability is neither approval nor a merge gate.
-6. Before merge, confirm checks and reviews apply to the current head, resolve
+4. Collect review coverage for the actual PR head: invoke the applicable
+   reviewers and verify delivery rather than assuming installation covers it.
+   Address complete thread-aware feedback together: fix valid findings, rerun
+   affected checks, and reply with evidence before resolving threads; explain
+   duplicate, stale or inapplicable findings instead of ignoring them. Refresh
+   review state after changing the head, and record unavailable reviewers in
+   the handoff. Optional reviewer unavailability is neither approval nor a
+   merge gate.
+5. Before merge, confirm checks and reviews apply to the current head, resolve
    valid findings and conflicts, and satisfy required CI, repository protection
    and human approvals. Report unavailable reviewers in the handoff. Templates
    standardize submissions; they do not enforce these gates in GitHub.
 
-### Grok review
-
-`scripts/grok_review.py` runs Grok Build (`grok-4.7`, reasoning
-`xhigh`) as a read-only reviewer: in a clone of its own under
-`runtime/grok-review`, with only read_file, grep and list_dir tools and a supplied diff.
-The child inherits an allowlisted environment and its file-based Grok login.
-The author must have repository write, maintain or admin access, rechecked
-before inference and posting; unknown permissions fail closed. This tool is for
-trusted contributors: tool selection is not filesystem isolation, and the
-review process can still read the operator's home directory.
-`review NUMBER` prints a review of the PR head;
-`--post` publishes it as a review comment, never an approval or change request,
-with findings on changed lines inline and the rest in the summary. `install`
-runs `watch` every five minutes as a LaunchAgent, reviewing each open, non-draft
-PR head once after it has stood ten minutes (saving reviews locally unless
-installed with `--post`); `status` lists what it reviewed and what failed. It uses
-the Grok account signed in on that machine, so its usage limit applies; a
-quota failure pauses all repositories until the next local day when no reset
-time is supplied, without consuming a head's two non-quota attempts. MCP discovery/invocation tools are removed and MCPTool permission is denied.
-Helper commands have a five-minute deadline and bounded output; over-limit diffs
-are stopped while reading, and uncertain POST failures are not reposted.
-Malformed model output enters normal failure handling. Concurrent
-invocations skip immediately instead of queuing behind a long review. Diffs over
-256 KiB fail explicitly instead of sending an unbounded model request.
-The optional global `--repo owner/name` selects separate clones, worktrees,
-saved reviews and retry state under `runtime/grok-review/repos`; an installed
-watcher keeps this selection. The original lapis state is retained and read
-on first use of its namespaced state. A moved head must settle before inference.
-
-The September 29 live probe of Grok Build 1.0.41 rejected the previous
-`grok-4.7-build-fast` pin as unknown. Its catalog advertises `grok-4.7`; a request
-for that model reached an account usage limit. The pin follows the catalog,
-without automatic fallback, but a completed live review remains unqualified.
-Which models a Grok account may use differs by team: on another team the same
-build refused `grok-4.7` (404) and completed a review with `grok-4.7-build-fast`.
-The global `--model` option picks one, and `install` keeps it for the watcher.
+`scripts/grok_review.py` is this repository's automatic read-only reviewer; its
+usage, trust model and limits are documented in the script.
 
 Keep the PR description current as scope changes. Use `Change`, `Validation` and
 `Risks and follow-up`; a small change needs only a sentence or two plus its checks.
@@ -362,7 +323,7 @@ in `.gitignore` and the relative `CLAUDE.md` symlink to `AGENTS.md`.
 Start with the changed behavior and reuse verified dependency builds. Once the
 relevant checks pass, move on; rerun broader checks only for a new change, failure
 or unresolved concern. Do not rebuild the engine comparison for adapter-only work.
-Skip optional slow checks or additional reviewer waits when they stop providing
+Skip optional slow checks when they stop providing
 useful evidence, and name what was skipped and why in the handoff. Required CI,
 repository protection and unresolved correctness findings still govern merges.
 
@@ -396,9 +357,7 @@ elapsed time as a reason to declare incomplete work finished.
    independent authorized work; do not quietly extend the milestone to chase a fix.
 6. If required validation remains blocked, report the completed work, missing check,
    cause, evidence path and next action. Preserve a reviewable checkpoint and keep
-   its status incomplete. Never describe a timeout, skipped check or unavailable
-   reviewer as a pass. Rate limits still stop reviewer calls. A maintainer-directed shorter review
-   budget takes precedence over optional waiting; record it as skipped, not passed.
+   its status incomplete. Never describe a timeout or skipped check as a pass.
 
 ## Setup
 
