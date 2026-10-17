@@ -21,11 +21,11 @@ std::string reply_status(const std::string& bytes) {
 }
 
 void print_status(const std::string& bytes, bool json) {
+    const auto status = decode_status_reply(bytes);
     if (json) {
         std::cout << bytes << '\n';
         return;
     }
-    const auto status = decode_status_reply(bytes);
     std::cout << "schema " << status.schema_version << " slot " << status.slot << " enabled "
               << (status.enabled ? "true" : "false") << " service "
               << (status.service_live ? "live" : "absent") << " epoch " << status.instance_epoch

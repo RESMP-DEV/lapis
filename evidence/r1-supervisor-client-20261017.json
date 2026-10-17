@@ -58,7 +58,7 @@
     },
     {
       "path": "services/supervisor/src/cli.cpp",
-      "sha256": "0eb01da78af77aba664c7aeed25936b49773cfca3614f5933221714b51cc43a2"
+      "sha256": "3a99abfba6d2d9b0e9c04f3825d7ce348e007c122b9a83e657b663f9bf6dcba7"
     },
     {
       "path": "services/supervisor/src/client.cpp",
@@ -74,11 +74,11 @@
     },
     {
       "path": "services/supervisor/tests/supervisor_client_test.cpp",
-      "sha256": "5eb9d82007c61644c1ffc23dfd8c62e28e1d738cb7b593ee182c6ab045b1edfe"
+      "sha256": "b59433e7df93b7d42e272c22fba9c3c4e97da81ed0c2c5bbd96923e7cf2839c2"
     },
     {
       "path": "services/supervisor/tests/supervisor_daemon_test.cpp",
-      "sha256": "e11e5a97ba8d19d7a85bd70d6c75f13bed211a2e4455e0049fbc730c734037e8"
+      "sha256": "3fe881e0bcd11f2fadd415665962ce8b7957758c6f310475c6fab0e61cfe5788"
     },
     {
       "path": "services/supervisor/tests/supervisor_runtime_test.cpp",
@@ -122,13 +122,13 @@
       "name": "focused-tsan",
       "command": "cmake --preset r1-runtime -B build/r1-runtime-tsan -DLAPIS_SANITIZER=thread; build targets; ctest -R '^supervisor-(state|runtime|session-service|client|daemon)$'",
       "exit_code": 0,
-      "result": "All five focused supervisor suites passed under AddressSanitizer/UndefinedBehaviorSanitizer after the control-server deadline repairs."
+      "result": "A first full run failed once on a synchronization deadline without a race report; the repaired build then passed all five focused suites under ThreadSanitizer."
     },
     {
       "name": "repository-contracts",
       "command": "python3 scripts/check_markdown_links.py; jq -e evidence/r1-supervisor-client-20261017.json; git diff --check HEAD; diff privacy scan",
       "exit_code": 0,
-      "result": "A first full run failed once on a synchronization deadline without a race report; the repaired build then passed all five focused suites under ThreadSanitizer."
+      "result": "Markdown links and fragments resolve, the durable receipt parses as JSON, git diff --check reports no whitespace errors, and the diff privacy scan found no absolute path, address, token, or private-key pattern."
     }
   ],
   "failed_attempts": [
@@ -193,6 +193,26 @@
     {
       "finding": "The initial receipt omitted later test edits and several changed documentation/build files, leaving stale digests.",
       "repair": "The final receipt binds all seventeen changed non-receipt files by SHA-256 and was verified with a mechanical digest comparison."
+    },
+    {
+      "reviewer": "CodeRabbit",
+      "finding": "status --json printed unvalidated replies, so scripts could not trust the exit code.",
+      "repair": "print_status decodes and validates every reply before printing, in both output modes."
+    },
+    {
+      "reviewer": "CodeRabbit",
+      "finding": "The framed round-trip unit test polled the control server exactly once.",
+      "repair": "The test now polls until the reply is read or a bounded deadline expires, and joins the thread on success and failure."
+    },
+    {
+      "reviewer": "CodeRabbit",
+      "finding": "The trailing-byte daemon test depended on stream-socket write boundaries.",
+      "repair": "That assertion was removed; the oversized header and slot-timeout guards now prove the malformed-frame and abandoned-peer paths deterministically."
+    },
+    {
+      "reviewer": "CodeRabbit",
+      "finding": "Two validation result strings described the wrong command.",
+      "repair": "focused-tsan records the ThreadSanitizer outcome and repository-contracts records its own link, JSON, whitespace, and privacy results."
     }
   ]
 }

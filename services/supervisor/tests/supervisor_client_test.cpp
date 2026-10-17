@@ -11,7 +11,9 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -167,7 +169,12 @@ void framed_request_round_trip() {
                              .toJson(QJsonDocument::Compact)
                              .toStdString();
         }};
-    std::thread poll{[&server] { server.poll_once(2000); }};
+    std::atomic<bool> poll_done{false};
+    std::thread poll{[&server, &poll_done] {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{3};
+        while (!poll_done.load() && std::chrono::steady_clock::now() < deadline)
+            server.poll_once(50);
+    }};
 
     const int client = ::socket(AF_UNIX, SOCK_STREAM, 0);
     require(client >= 0, "create the raw control client");
@@ -212,9 +219,17 @@ void framed_request_round_trip() {
         require(count > 0, "read the raw control reply");
         done += static_cast<std::size_t>(count);
     }
-    static_cast<void>(::close(client));
-    poll.join();
+    struct JoinPoll {
+        std::atomic<bool>& done;
+        std::thread& worker;
+        ~JoinPoll() {
+            done.store(true);
+            worker.join();
+        }
+    };
+    JoinPoll join_poll{poll_done, poll};
     require(decode_status_reply(response).slot == "empty", "framed request returns status");
+    static_cast<void>(::close(client));
 }
 
 } // namespace
