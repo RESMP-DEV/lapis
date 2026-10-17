@@ -1,0 +1,115 @@
+{
+  "schema": "lapis.architecture-buildout-triage/1",
+  "recorded_at": "2026-10-17T18:46:00Z",
+  "agent": "Codex",
+  "source": {
+    "revision": "c28a871e289b7a52753312a5c8100386765f9825",
+    "clean": true,
+    "open_pull_requests": 0,
+    "platform": "macOS arm64"
+  },
+  "scope": "Read-only buildability triage of the trimmed architecture plan against current source, tests, receipts, and live process tooling. No runtime source changed.",
+  "inputs": [
+    {
+      "name": "parent-source-audit",
+      "result": "Mapped docs/architecture.md, docs/status.md, services/supervisor, the desktop launch path, CMake targets, the pinned Qt build, and the R2/R3 account and paste implementations."
+    },
+    {
+      "name": "focused-supervisor-gate",
+      "result": "The current clean-head daemon/runtime gate passed after selecting the repository's pinned Qt 6.11.2 prefix."
+    },
+    {
+      "name": "birth-route-worker",
+      "outcome": "completed",
+      "read_only": true,
+      "result": "Defined the LiveConnection create-admission seam while preserving direct service arguments, preview rejection, descriptor ownership, and v6 compatibility."
+    },
+    {
+      "name": "parallel-gates-worker",
+      "outcome": "completed",
+      "read_only": true,
+      "result": "Identified current R2 verification surfaces and a local R3 credential-validation parity defect."
+    },
+    {
+      "name": "supervisor-client-worker",
+      "outcome": "timed_out",
+      "result": "The 600-second read-only worker timed out; its report was not used. Parent source inspection and the live gate cover this area."
+    }
+  ],
+  "findings": [
+    {
+      "rank": 1,
+      "slice": "Make the focused supervisor gate reproducible from the normal launcher",
+      "evidence": "Without a Qt prefix, standalone CMake selected Homebrew Qt 6.12.0 and failed the exact-version Qt 6.11.2 lookup. With CMAKE_PREFIX_PATH pointing at build/release/qt, configure, build, all focused tests, real-service integration, and daemon integration passed at c28a871.",
+      "boundary": "This is an environment/dispatch repair, not a runtime behavior change."
+    },
+    {
+      "rank": 2,
+      "slice": "Supervisor status and authenticated stop",
+      "evidence": "State v2, bounded effective-UID framing, real service birth/adoption, authenticated control codecs, and process-level tests already exist. The daemon control handler currently interprets every request as birth and exposes no status/stop client.",
+      "buildable_contract": "Add strict action dispatch, read-only status that omits secrets and launch details, a headless client verb, and authenticated stop. Failed or unknown birth remains terminal.",
+      "acceptance": "Extend the real daemon/service/terminal test to prove status before and after birth, stop cleanup, stale token/epoch rejection, malformed framing, and foreign-UID refusal."
+    },
+    {
+      "rank": 3,
+      "slice": "Operator reset",
+      "blocked_reason": "SupervisorRegistry has no clear-slot transition, and persisted v1 startup fails before the control endpoint exists. An explicit choice is required between a bounded daemon recovery mode and an offline locked-state disposition path.",
+      "non_claim": "No reset implementation or recovery-mode decision is made by this triage."
+    },
+    {
+      "rank": 4,
+      "slice": "BirthRoute seam",
+      "evidence": "LiveConnection owns direct create admission and currently chooses the client session ID before starting a detached service. Supervisor birth returns a daemon-selected ID and epoch, so the existing ServiceLauncher callback alone cannot express the route.",
+      "buildable_contract": "Put DirectBirthRoute, SupervisorBirthRoute, and BirthTicket at LiveConnection create admission. Direct behavior stays byte-equivalent; supervisor birth is one-shot with no fallback; a born ticket supplies both identity fields to the existing v6 attach path.",
+      "dependency": "Build after headless status/stop so operator disposition exists before GUI routing."
+    },
+    {
+      "rank": 5,
+      "slice": "R2 current-head input-integrity verification",
+      "evidence": "Service-owned paste admission, mode-aware encoding, bounded queues, cancellation, reconnect uncertainty, and desktop ownership tests already exist, but current-head assembled evidence is missing.",
+      "buildable_contract": "Run and record the real-service paste/backpressure/identity suites at this source before package-dependent candidate claims.",
+      "non_claim": "Background Qt or service-only results do not substitute for native macOS input or packaged candidate acceptance."
+    },
+    {
+      "rank": 6,
+      "slice": "R3 local selected-credential parity repair",
+      "evidence": "Remote Claude validation rejects oversized or multi-line tokens and remote Codex validation requires a JSON object. Local Claude reads only 8192 bytes and trims; local Codex checks only that auth.json is readable. Oversized or malformed local selected credentials can therefore pass preflight.",
+      "buildable_contract": "Reuse the remote validation boundaries for local kept plans and add focused workspace account cases that refuse before replacing or launching a healthy session.",
+      "non_claim": "Fixture refusal does not qualify a real provider account or packaged host."
+    }
+  ],
+  "validation": [
+    {
+      "name": "open-pr-inventory",
+      "command": "gh pr list --repo RESMP-DEV/lapis --state open --limit 100",
+      "exit_code": 0,
+      "result": "No open pull requests."
+    },
+    {
+      "name": "focused-supervisor-unpinned-qt",
+      "command": "python3 scripts/check_supervisor_runtime.py --jobs 6 --output build/reports/r1-supervisor/current-main.json",
+      "exit_code": 1,
+      "result": "CMake found Homebrew Qt 6.12.0 and rejected the exact Qt 6.11.2 requirement."
+    },
+    {
+      "name": "focused-supervisor-pinned-qt",
+      "command": "CMAKE_PREFIX_PATH=build/release/qt LAPIS_GHOSTTY_PREFIX=<pinned-repository-prefix> python3 scripts/check_supervisor_runtime.py --jobs 6 --output build/reports/r1-supervisor/current-main.json",
+      "exit_code": 0,
+      "source_revision": "c28a871e289b7a52753312a5c8100386765f9825",
+      "source_dirty": false,
+      "result": "Configure, build, focused tests, real-service integration, and daemon integration all passed."
+    },
+    {
+      "name": "source-parity-check",
+      "command": "rg and direct reads of workspace.cpp, live_connection.cpp, supervisor state/runtime/daemon sources, and focused tests",
+      "exit_code": 0,
+      "result": "The stated ownership boundaries and local credential validation asymmetry are present at c28a871."
+    }
+  ],
+  "non_claims": [
+    "This triage implements no supervisor, CLI, GUI, account, input, package, or runtime behavior.",
+    "The passing focused gate does not qualify launchd, GUI replacement, reboot, package update, credential environments, load, memory, or latency.",
+    "Worker audits are source inspection only; the runtime route field was unavailable, so no served-model claim is made.",
+    "The ignored build receipt and worker outputs are execution context; this sanitized evidence receipt is the durable consolidation."
+  ]
+}
