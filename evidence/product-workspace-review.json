@@ -33,7 +33,7 @@
     "Deferring Linux, storing window geometry in tracked project configuration, or assuming C++ establishes memory superiority.",
     "Estimated glyph-scale defects and native Dock behavior are not runtime-verified findings."
   ],
-  "next_contract": "docs/architecture.md#daily-use-agent-workspace-direction-september-21-review",
+  "next_contract": "docs/architecture.md#architecture-decisions",
   "implementation_status": "Not implemented. Coordinate with the other developer before overlapping multi-session work.",
   "validation": "Source references inspected; git diff --check only for documentation. Runtime geometry/shortcut assertions require later qualification."
 }

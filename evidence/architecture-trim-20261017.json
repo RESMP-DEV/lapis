@@ -8,7 +8,7 @@
     "source_dirty": true,
     "platform": "macOS arm64"
   },
-  "scope": "Replaced the accumulated architecture work log with the active product scope, ownership boundaries, architecture decisions, executable delivery order, release gates, open choices, verification discipline, and durable contracts. Updated live documentation references. No runtime behavior changed.",
+  "scope": "Replaced the accumulated architecture work log with the active product scope, ownership boundaries, architecture decisions, executable delivery order, release gates, open choices, verification discipline, and durable contracts. Updated live documentation references and one historical navigation pointer. No runtime behavior changed.",
   "change": {
     "architecture_before": {
       "lines": 5987,
@@ -25,9 +25,10 @@
       "adapters/codex/README.md",
       "docs/status.md",
       "docs/suggestions.md",
-      "docs/usage.md"
+      "docs/usage.md",
+      "evidence/product-workspace-review.json"
     ],
-    "historical_material": "Superseded dated narratives remain in Git history at the base revision; existing evidence receipts were not rewritten."
+    "historical_material": "Superseded dated narratives remain in Git history at the base revision. Historical observations were not rewritten; the product-workspace receipt's superseded next_contract pointer was redirected to the retained architecture-decisions section."
   },
   "validation": [
     {
@@ -62,6 +63,13 @@
       "attempt": "first local Markdown fragment audit",
       "result": "The one-off checker raised IndexError because its regex referenced a nonexistent capture group.",
       "repair": "Corrected the checker and reran it over the same repository Markdown set; it exited 0."
+    }
+  ],
+  "review_repairs": [
+    {
+      "reviewer": "Kilo Code Review",
+      "finding": "The unchanged product-workspace evidence receipt still named the removed daily-use workspace architecture anchor.",
+      "repair": "Repointed only its next_contract navigation field to architecture decisions; the dated observations and non-claims remain unchanged."
     }
   ],
   "non_claims": [
