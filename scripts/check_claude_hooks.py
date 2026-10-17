@@ -18,7 +18,7 @@ from check_service_attention import View, cleanup_service, decision, process_gro
 from probe_terminal import run_process
 
 ROOT = Path(__file__).resolve().parents[1]
-SUPPORTED_VERSION = "2.1.286"
+SUPPORTED_VERSION = "2.1.302"
 MODEL = "zai,glm-5.3"
 FIXTURE_COMMAND = 'python3 -c "print(123456789)"'
 FIXTURE_PROMPT = (

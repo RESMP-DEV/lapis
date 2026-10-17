@@ -1,6 +1,7 @@
 """Protocol diagnostics for the QA model fixture."""
 
 import asyncio
+import gzip
 import json
 import sys
 import tempfile
@@ -264,6 +265,40 @@ class ProtocolDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
                 len(log.read_text().splitlines()), len(malformed_requests) + 1
             )
             self.assertNotIn("private-prompt-sentinel", log.read_text())
+
+    async def test_gzipped_message_bodies_are_read(self):
+        body = gzip.compress(
+            json.dumps(
+                {"model": "fake", "messages": [{"role": "user", "content": "hi"}]}
+            ).encode()
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "requests.jsonl"
+            server = await asyncio.start_server(Server(log).handle, "127.0.0.1", 0)
+            try:
+                for raw in (body, body[:-8]):
+                    reader, writer = await asyncio.open_connection(
+                        *server.sockets[0].getsockname()
+                    )
+                    try:
+                        writer.write(
+                            b"POST /v1/messages/count_tokens HTTP/1.1\r\n"
+                            b"Content-Encoding: gzip\r\nContent-Length: "
+                            + str(len(raw)).encode()
+                            + b"\r\n\r\n"
+                            + raw
+                        )
+                        await writer.drain()
+                        await asyncio.wait_for(reader.read(), 2)
+                    finally:
+                        writer.close()
+                        await writer.wait_closed()
+            finally:
+                server.close()
+                await server.wait_closed()
+            entries = [json.loads(line) for line in log.read_text().splitlines()]
+            self.assertEqual(entries[0]["messages"], 1)
+            self.assertEqual(entries[1]["error"], "ValueError")
 
 
 if __name__ == "__main__":

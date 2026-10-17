@@ -78,6 +78,15 @@ approve, decline, cancel or send answers. Opening or selecting never approves,
 and a stale source disables the buttons. Unsupported Codex builds keep explicit
 limits on status and responses; there is no way around qualification.
 
+A Claude agent gets one lapis hook per event, and it only reports: it never
+prints a decision or blocks a tool, so Claude Code's own permission rules and
+dialogs decide every approval. The hooks keep Claude Code's default failure
+behavior (not `onFailure: "block"`), so an agent keeps working while lapis's
+service is down or restarting. Claude Code raises one permission prompt at a
+time, so a batch of parallel tool calls shows as one request, then the next.
+Idle compaction, mods, fork subagents and other Claude Code behaviors stay as
+your Claude Code settings choose; lapis does not override them.
+
 ## Full-screen CLIs
 
 lapis runs Claude Code and Grok full screen (Claude Code through
