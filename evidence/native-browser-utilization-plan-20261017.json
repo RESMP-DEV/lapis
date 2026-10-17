@@ -1,0 +1,56 @@
+{
+  "schema": "lapis.native-browser-utilization-plan/1",
+  "recorded_at": "2026-10-17T22:15:00Z",
+  "source_revision": "a5e104ec77e0441c2bee3e1df911d709ce915b8f",
+  "source_dirty": true,
+  "scope": "Convert the September web-surface research into the current bounded native-browser implementation ladder. This planning batch changes architecture and this receipt only; it does not fetch or execute CEF, add a service, import credentials, or qualify a browser engine.",
+  "inputs": [
+    {
+      "evidence": "evidence/web-surface-research.json",
+      "used": "Engine landscape, external browser-tool failure modes, injection model, control-reference design, credential-import constraints, and historical W0-W5 ladder."
+    },
+    {
+      "evidence": "evidence/r1-supervisor-client-20261017.json",
+      "used": "Confirmed the current supervisor slice is status/stop only and R1 remains incomplete."
+    },
+    {
+      "evidence": "evidence/release-manifest.json",
+      "used": "Confirmed packaging and update qualification remain open, so W1 product wiring remains blocked by R1/R4."
+    }
+  ],
+  "architecture_sha256": "62c69a144cd29a2195940dd64f28da94950132b40ce77adbc551004b5f9381f6",
+  "cef_index_refresh": {
+    "url": "https://cef-builds.spotifycdn.com/index.json",
+    "checked_at": "2026-10-17T22:10:00Z",
+    "september_artifact_still_published": {
+      "cef_version": "154.0.32+g682c378+chromium-154.0.8037.58",
+      "channel": "stable",
+      "size_bytes": 132224904,
+      "published_sha1": "2e9df1077c097e450d30f26804b7c4b1820da4e3"
+    },
+    "newer_branch_8037_stable_observed": {
+      "cef_version": "154.0.34+g14c5a08+chromium-154.0.8037.98",
+      "channel": "stable",
+      "size_bytes": 132210884,
+      "published_sha1": "b7081f6609e5edccf07be96b5d7977329fbe1bdf"
+    },
+    "decision": "W0 resolves the current exact branch-8037 stable artifact at execution and records its independently computed digest; it does not inherit the September artifact solely from the survey timestamp."
+  },
+  "resulting_order": [
+    "W0 is the only currently authorized implementation step and remains an isolated engine probe.",
+    "W1 through W5 are ordered gates; W1 waits for R1/R4 and introduces headless service/CLI behavior before GUI work.",
+    "Credential import starts only at W4 with explicit consent, storageState first, in-memory destination isolation, and negative credential-disclosure checks.",
+    "The first workload is eight concurrent views in the assembled package; 32 views is a later separate claim."
+  ],
+  "non_claims": [
+    "No web engine, web service, CLI, GUI surface, injection runtime, credential import, package inclusion, or browser workload was implemented or exercised.",
+    "Published CEF SHA-1 metadata is distribution-index evidence only; no archive was downloaded, independently hashed, inspected, or executed.",
+    "CEF remains a provisional W0 candidate, not a runtime pin or redistribution clearance."
+  ],
+  "checks": [
+    {
+      "command": "git diff --check",
+      "result": "pass"
+    }
+  ]
+}
