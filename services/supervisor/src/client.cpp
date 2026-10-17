@@ -210,7 +210,10 @@ std::string send_control_request(const std::string& endpoint, const std::string&
         framed.append(static_cast<char>((length >> shift) & 0xffU));
     }
     framed.append(request.data(), static_cast<qsizetype>(request.size()));
-    if (socket.write(framed) != framed.size() || !socket.flush())
+    // A stream socket may accept only part of one request; Qt keeps the rest
+    // queued, so a partial write is progress and the drain below completes it.
+    const auto written = socket.write(framed);
+    if (written < 0 || !socket.flush())
         invalid("Could not send the supervisor control request");
     while (socket.bytesToWrite() != 0) {
         if (!socket.waitForBytesWritten(remaining_milliseconds()))

@@ -58,11 +58,11 @@
     },
     {
       "path": "services/supervisor/src/cli.cpp",
-      "sha256": "3a99abfba6d2d9b0e9c04f3825d7ce348e007c122b9a83e657b663f9bf6dcba7"
+      "sha256": "0e919323bde94c03188657735e9bde5b16a74f9873d5065ac1e70625d14cea70"
     },
     {
       "path": "services/supervisor/src/client.cpp",
-      "sha256": "e05d9f73ae903d8f686fb32967da1e81544e6b893be25f54b1a44a73e7847dd6"
+      "sha256": "9e5a9b138597a29967952863e3ae571ca0a713df5628fdc31a1c63aeed41f207"
     },
     {
       "path": "services/supervisor/src/control_server.cpp",
@@ -213,6 +213,11 @@
       "reviewer": "CodeRabbit",
       "finding": "Two validation result strings described the wrong command.",
       "repair": "focused-tsan records the ThreadSanitizer outcome and repository-contracts records its own link, JSON, whitespace, and privacy results."
+    },
+    {
+      "reviewer": "OpenCodeReview",
+      "finding": "The client treated any partial QLocalSocket write as failure, and stop rejected a missing status key with an ambiguous message.",
+      "repair": "A positive partial write now drains through the bounded loop, and a missing or non-string status throws a descriptive reply error."
     }
   ]
 }

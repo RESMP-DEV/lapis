@@ -17,7 +17,11 @@ std::string reply_status(const std::string& bytes) {
     const auto document = QJsonDocument::fromJson(QByteArray::fromStdString(bytes));
     if (!document.isObject())
         throw std::runtime_error{"Supervisor reply is not JSON"};
-    return document.object().value(QStringLiteral("status")).toString().toStdString();
+    const auto root = document.object();
+    const auto status = root.value(QStringLiteral("status"));
+    if (!status.isString())
+        throw std::runtime_error{"Supervisor reply has no status string"};
+    return status.toString().toStdString();
 }
 
 void print_status(const std::string& bytes, bool json) {
