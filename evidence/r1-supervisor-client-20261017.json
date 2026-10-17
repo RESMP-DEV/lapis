@@ -1,0 +1,223 @@
+{
+  "schema": "lapis.r1-supervisor-client/1",
+  "recorded_at": "2026-10-17T21:18:30Z",
+  "passed": true,
+  "source": {
+    "base_revision": "96296ac681ef5567e5cde565777aeff094377a82",
+    "source_dirty": true,
+    "platform": "macOS arm64"
+  },
+  "scope": "R1 status/stop slice: framed read-only supervisor status, explicit authenticated stop, a headless lapis supervisor binary, replay-safe state reading, focused tests, and launcher discovery for the pinned worktree gate. No reset, GUI birth route, launchd, package, reboot, workload, or runtime launch behavior is added.",
+  "implementation": {
+    "protocol": "Birth and control replies now use the same four-byte big-endian bounded frame as requests. Status requires an exact version/action object. A frame with trailing bytes is closed instead of processed, and every control peer has a five-second deadline so a malformed or abandoned client cannot hold a slot or stall the daemon loop. Reply writes retry a bounded nonblocking socket and drop the peer instead of throwing out of the loop.",
+    "status": "Reports schema version, instance epoch, empty/started/stopped slot, enabled state, live-service flag, blocked reason, endpoint only while live, and reconstructability. It never reports the spawn token, launch payload, environment, argument list, or ownership file.",
+    "stop": "Stop reads only the private regular owner-only version-two state file without acquiring the daemon lock, then sends its epoch and spawn token once. A version-one or unreadable slot, or a stale state refused by the authoritative registry, never retries.",
+    "client": "The opt-in lapis_supervisor target emits lapis and accepts status or stop with --control-endpoint, --state-directory, and --json. Stop requires --state-directory and returns nonzero for rejection.",
+    "launch_environment": "The launcher resolves linked-worktree Ghostty and pinned Qt from the primary checkout, compares local and shared prefixes by receipt time, exposes supervisor-runtime for the focused gate, and exposes supervisor for the built client. The Apple network-information plugin deployment is guarded on target availability so non-Apple or pluginless Qt builds still configure."
+  },
+  "changed_file_digests": [
+    {
+      "path": "CONTRIBUTING.md",
+      "sha256": "a227b9cfc524446ecc637d57107e63c1b71881da086d1de43b2e0471265e0e60"
+    },
+    {
+      "path": "docs/status.md",
+      "sha256": "d554e7fc371c1bdf56391fa4dedb81ed25946f6339c36d59d18fb610ee014d11"
+    },
+    {
+      "path": "justfile",
+      "sha256": "bf6cd5f4f6a12dc865ad8fe12e68065c85ec288e6554ee246821a358fc66f8c0"
+    },
+    {
+      "path": "scripts/check_supervisor_runtime.py",
+      "sha256": "d4a4cc5dbd08e4f65e8999cc9f500fbbee86bf599582be64409bc689118823df"
+    },
+    {
+      "path": "scripts/lapis.py",
+      "sha256": "2a2a965288631ddda96b209f7470b09e8675c258726e43ed17f27ed026e960a7"
+    },
+    {
+      "path": "scripts/tests/test_lapis.py",
+      "sha256": "5a72a901540206f20535d0f70286e68ffa6006034965174b165644ec91468bbf"
+    },
+    {
+      "path": "services/supervisor/CMakeLists.txt",
+      "sha256": "196d1b0e81a3f07ba9df6b147f16a5f425512ee59e7d79befce2813a78c045e6"
+    },
+    {
+      "path": "services/supervisor/include/lapis/supervisor/client.hpp",
+      "sha256": "4abb724b29936cdfb0e895c2539a526ce1104e09cc84b11c05d654a9b1e663ca"
+    },
+    {
+      "path": "services/supervisor/include/lapis/supervisor/runtime.hpp",
+      "sha256": "db9725631786b5c0d39edaaa3da7c9dfaa06f170e4124b78d2749369d2314e99"
+    },
+    {
+      "path": "services/supervisor/lapis_supervisor.qt.conf",
+      "sha256": "c4ea83188906ce486ee4243f62a781b60f7bc59013393d66124e25f2d31864de"
+    },
+    {
+      "path": "services/supervisor/src/cli.cpp",
+      "sha256": "0e919323bde94c03188657735e9bde5b16a74f9873d5065ac1e70625d14cea70"
+    },
+    {
+      "path": "services/supervisor/src/client.cpp",
+      "sha256": "9e5a9b138597a29967952863e3ae571ca0a713df5628fdc31a1c63aeed41f207"
+    },
+    {
+      "path": "services/supervisor/src/control_server.cpp",
+      "sha256": "81016974e15f389910da39148ce48c1f657bbdb29ec5361ad7cf7ba970462103"
+    },
+    {
+      "path": "services/supervisor/src/daemon.cpp",
+      "sha256": "82f75ee35582bccc1545efe64ad10edcbcbe9d22e886816e19f6b37c7cd75c99"
+    },
+    {
+      "path": "services/supervisor/tests/supervisor_client_test.cpp",
+      "sha256": "b59433e7df93b7d42e272c22fba9c3c4e97da81ed0c2c5bbd96923e7cf2839c2"
+    },
+    {
+      "path": "services/supervisor/tests/supervisor_daemon_test.cpp",
+      "sha256": "3fe881e0bcd11f2fadd415665962ce8b7957758c6f310475c6fab0e61cfe5788"
+    },
+    {
+      "path": "services/supervisor/tests/supervisor_runtime_test.cpp",
+      "sha256": "2a73583c4a6194e6f455ae37d4b2057c4c377b7a0b438e2048783d6c4865c2b2"
+    }
+  ],
+  "validation": [
+    {
+      "name": "focused-supervisor-client-gate",
+      "command": "python3 scripts/lapis.py supervisor-runtime --jobs 6 --output build/reports/r1-supervisor/client-slice.json",
+      "exit_code": 0,
+      "source_revision": "96296ac681ef5567e5cde565777aeff094377a82",
+      "source_dirty": true,
+      "result": "Configure, targeted build, all focused CTest suites, real-service integration, daemon integration, and client integration passed. The receipt records six checks with aggregate passed=true."
+    },
+    {
+      "name": "live-empty-client-probe",
+      "command": "independent daemon, then build/r1-runtime/services/supervisor/lapis supervisor --control-endpoint ... status --json",
+      "exit_code": 0,
+      "result": "The client connected and returned JSON with slot=empty, service_live=false, endpoint=null, and no token."
+    },
+    {
+      "name": "python-regressions",
+      "command": "python3 -m unittest scripts.tests.test_lapis scripts.tests.test_check_supervisor_runtime -v",
+      "exit_code": 0,
+      "result": "39 tests passed."
+    },
+    {
+      "name": "shared-static-gate",
+      "command": "python3 scripts/lapis.py check --jobs 6",
+      "exit_code": 0,
+      "result": "Dev configure/build/CTest, clang-format, Cppcheck and all clang-tidy workers passed."
+    },
+    {
+      "name": "focused-asan-ubsan",
+      "command": "cmake --preset r1-runtime -B build/r1-runtime-asan -DLAPIS_SANITIZER=address; build targets; ctest -R '^supervisor-(state|runtime|session-service|client|daemon)$'",
+      "exit_code": 0,
+      "result": "All five focused supervisor suites passed under AddressSanitizer/UndefinedBehaviorSanitizer."
+    },
+    {
+      "name": "focused-tsan",
+      "command": "cmake --preset r1-runtime -B build/r1-runtime-tsan -DLAPIS_SANITIZER=thread; build targets; ctest -R '^supervisor-(state|runtime|session-service|client|daemon)$'",
+      "exit_code": 0,
+      "result": "A first full run failed once on a synchronization deadline without a race report; the repaired build then passed all five focused suites under ThreadSanitizer."
+    },
+    {
+      "name": "repository-contracts",
+      "command": "python3 scripts/check_markdown_links.py; jq -e evidence/r1-supervisor-client-20261017.json; git diff --check HEAD; diff privacy scan",
+      "exit_code": 0,
+      "result": "Markdown links and fragments resolve, the durable receipt parses as JSON, git diff --check reports no whitespace errors, and the diff privacy scan found no absolute path, address, token, or private-key pattern."
+    }
+  ],
+  "failed_attempts": [
+    {
+      "attempt": "standalone focused configure in the linked worktree",
+      "result": "The build selected Homebrew Qt 6.12.0 and rejected the exact Qt 6.11.2 requirement.",
+      "repair": "The launcher now discovers the shared primary checkout's pinned Qt and Ghostty build, and exposes supervisor-runtime."
+    },
+    {
+      "attempt": "first live client probe",
+      "result": "The client rejected the birth/control reply as outside its bound because the server sent JSON without the existing four-byte request frame.",
+      "repair": "The control server now frames every reply with the same header contract and handles nonblocking writes without escaping the daemon loop."
+    },
+    {
+      "attempt": "directly linking the Qt network-information plugin",
+      "result": "macOS rejected the MH_BUNDLE plugin as a linker input.",
+      "repair": "On Apple, build post-processing deploys the plugin beside lapis with qt.conf; Linux needs no Apple plugin."
+    },
+    {
+      "attempt": "QLocalSocket inside the in-process client unit test",
+      "result": "The test aborted before completing the framed round trip.",
+      "repair": "Kept codec/security/state coverage in the unit suite and covered real QLocalSocket transport through the independent daemon/CLI integration."
+    },
+    {
+      "attempt": "first full focused ThreadSanitizer run",
+      "result": "The real daemon test missed its first synchronization assertion once; no data-race report was emitted.",
+      "repair": "The daemon test passed three consecutive repeats and a complete second focused TSan run passed all five suites."
+    }
+  ],
+  "non_claims": [
+    "This is not a production birth client: the GUI still owns direct detached launches, and the supervisor verb only observes or explicitly stops the opt-in daemon.",
+    "No operator reset protocol is implemented; incompatible v1 and failed-birth slots still require a reviewed stop-or-leave disposition.",
+    "No launchd registration, package inclusion, update transition, GUI replacement qualification, reboot recovery, credential environment admission, or workload/load claim is made.",
+    "The harmless /bin/cat child proves process and v6 ownership, not Codex or Claude adapter behavior.",
+    "The focused gate runs on macOS; Linux build or supervisor qualification remains separate."
+  ],
+  "review_repairs": [
+    {
+      "finding": "Malformed frames with trailing bytes or an abandoned peer could hold every control slot.",
+      "repair": "The control server closes over-long frames, applies a five-second per-client deadline, and the daemon test now proves four idle peers release their slots."
+    },
+    {
+      "finding": "Nonblocking reply writes could retry forever inside the daemon loop.",
+      "repair": "Writes poll for writability with a bounded deadline and drop the peer instead of throwing."
+    },
+    {
+      "finding": "Stop state reading accepted version-one state although the receipt and status claim v2-only.",
+      "repair": "read_control_state now requires version 2 and the client test proves version-one refusal."
+    },
+    {
+      "finding": "The client-integration marker matched both the unit and integration suites.",
+      "repair": "The unit suite prints supervisor-client-unit: ok; the gate requires the daemon test's supervisor-client-integration: ok."
+    },
+    {
+      "finding": "The client unit suite hardcoded macOS-only temporary paths.",
+      "repair": "Fixture state no longer depends on /private/tmp, so the same test configures on Linux."
+    },
+    {
+      "finding": "The Apple network-information plugin was referenced unconditionally.",
+      "repair": "Deployment and qt.conf now depend on the plugin target existing."
+    },
+    {
+      "finding": "The initial receipt omitted later test edits and several changed documentation/build files, leaving stale digests.",
+      "repair": "The final receipt binds all seventeen changed non-receipt files by SHA-256 and was verified with a mechanical digest comparison."
+    },
+    {
+      "reviewer": "CodeRabbit",
+      "finding": "status --json printed unvalidated replies, so scripts could not trust the exit code.",
+      "repair": "print_status decodes and validates every reply before printing, in both output modes."
+    },
+    {
+      "reviewer": "CodeRabbit",
+      "finding": "The framed round-trip unit test polled the control server exactly once.",
+      "repair": "The test now polls until the reply is read or a bounded deadline expires, and joins the thread on success and failure."
+    },
+    {
+      "reviewer": "CodeRabbit",
+      "finding": "The trailing-byte daemon test depended on stream-socket write boundaries.",
+      "repair": "That assertion was removed; the oversized header and slot-timeout guards now prove the malformed-frame and abandoned-peer paths deterministically."
+    },
+    {
+      "reviewer": "CodeRabbit",
+      "finding": "Two validation result strings described the wrong command.",
+      "repair": "focused-tsan records the ThreadSanitizer outcome and repository-contracts records its own link, JSON, whitespace, and privacy results."
+    },
+    {
+      "reviewer": "OpenCodeReview",
+      "finding": "The client treated any partial QLocalSocket write as failure, and stop rejected a missing status key with an ambiguous message.",
+      "repair": "A positive partial write now drains through the bounded loop, and a missing or non-string status throws a descriptive reply error."
+    }
+  ]
+}

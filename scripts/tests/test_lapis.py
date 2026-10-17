@@ -118,6 +118,17 @@ class LauncherTests(unittest.TestCase):
         self.assertNotIn("--socket", command[: command.index("--")])
         self.assertFalse(self.runtime.exists())
 
+    def test_supervisor_command_uses_focused_binary_and_shows_help(self):
+        binary = self.temporary_root / "lapis"
+        binary.touch()
+        result = SimpleNamespace(returncode=0)
+        with (
+            patch.object(lapis, "SUPERVISOR_BUILD", self.temporary_root),
+            patch.object(lapis, "_run", return_value=result) as run,
+        ):
+            self.assertEqual(lapis.command_supervisor([]), 0)
+            run.assert_called_once_with([binary, "--help"], check=False)
+
     def test_bootstrap_does_not_require_existing_ghostty(self):
         with (
             patch.object(
@@ -404,8 +415,8 @@ class GhosttyPrefixTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.runs = self.root / "runs"
 
-    def prefix(self, name, mtime=None):
-        prefix = self.runs / name / "prefix"
+    def prefix(self, name, mtime=None, runs=None):
+        prefix = (runs or self.runs) / name / "prefix"
         header = prefix / "include" / "ghostty" / "vt.h"
         header.parent.mkdir(parents=True)
         header.touch()
@@ -422,8 +433,27 @@ class GhosttyPrefixTests(unittest.TestCase):
         with (
             patch.dict("os.environ", {}, clear=True),
             patch.object(lapis, "GHOSTTY_RUNS", self.runs),
+            patch.object(lapis, "shared_checkout_root", return_value=self.root),
         ):
             self.assertEqual(lapis.ghostty_prefix(), current)
+
+    def test_linked_worktree_selects_newest_shared_prefix(self):
+        work_runs = self.root / "worktree" / "runs"
+        work = self.prefix("work", mtime=100, runs=work_runs)
+        # The shared checkout builds its prefix under its own terminal-probe path.
+        shared = self.prefix(
+            "shared",
+            mtime=200,
+            runs=self.root / "build/terminal-probe/reproduce/ghostty/runs",
+        )
+
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch.object(lapis, "GHOSTTY_RUNS", work_runs),
+            patch.object(lapis, "shared_checkout_root", return_value=self.root),
+        ):
+            self.assertEqual(lapis.ghostty_prefix(), shared)
+            self.assertNotEqual(lapis.ghostty_prefix(), work)
 
     def test_skips_failed_or_incomplete_builds(self):
         good = self.prefix("good", 100)
@@ -436,6 +466,7 @@ class GhosttyPrefixTests(unittest.TestCase):
         with (
             patch.dict("os.environ", {}, clear=True),
             patch.object(lapis, "GHOSTTY_RUNS", self.runs),
+            patch.object(lapis, "shared_checkout_root", return_value=self.root),
         ):
             self.assertEqual(lapis.ghostty_prefix(), good)
         with (
@@ -775,10 +806,29 @@ class LinuxQtTests(unittest.TestCase):
                 patch.object(lapis, "ROOT", self.root),
                 patch.object(lapis.sys, "platform", platform),
                 patch.object(lapis, "ghostty_prefix", return_value=self.root / "vt"),
+                patch.object(lapis, "shared_checkout_root", return_value=self.root),
             ):
                 if platform == "linux":
                     (self.sdk / "lib/cmake/Qt6/Qt6Config.cmake").unlink()
                 self.assertNotIn("CMAKE_PREFIX_PATH", lapis.environment())
+
+    def test_macos_linked_worktree_uses_shared_release_qt(self):
+        shared = self.root / "build/release/qt"
+        config = shared / "lib/cmake/Qt6/Qt6Config.cmake"
+        config.parent.mkdir(parents=True)
+        config.touch()
+        qmake = shared / "bin/qmake"
+        qmake.parent.mkdir()
+        qmake.touch(mode=0o700)
+        with (
+            patch.object(lapis, "ROOT", self.root / "worktree"),
+            patch.object(lapis.sys, "platform", "darwin"),
+            patch.object(lapis, "shared_checkout_root", return_value=self.root),
+            patch.object(lapis, "ghostty_prefix", return_value=self.root / "vt"),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            self.assertEqual(lapis.environment()["CMAKE_PREFIX_PATH"], str(shared))
+            self.assertEqual(lapis.qt_qmake(), str(qmake))
 
     def test_doctor_queries_explicit_sdk_before_local_and_path(self):
         explicit = self.root / "explicit"

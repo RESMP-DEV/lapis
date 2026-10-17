@@ -70,6 +70,14 @@ ui-review:
 cli-check:
     python3 scripts/lapis.py cli-check
 
+# Focused opt-in supervisor state/runtime/service/daemon/client checks.
+supervisor-runtime:
+    python3 scripts/lapis.py supervisor-runtime
+
+# Run the focused build's headless supervisor status/stop client.
+supervisor:
+    python3 scripts/lapis.py supervisor
+
 # Real service history, quotas and controlled macOS disk exhaustion.
 history-check:
     python3 scripts/check_history.py --disk-full

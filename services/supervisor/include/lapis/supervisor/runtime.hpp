@@ -14,6 +14,9 @@
 namespace lapis::supervisor {
 
 inline constexpr unsigned max_control_clients = 4;
+// A control peer that cannot finish one strict frame is dropped instead of
+// holding a slot: malformed and abandoned clients must never delay status or stop.
+inline constexpr int control_client_timeout_ms = 5000;
 inline constexpr unsigned max_restarts_per_window = 3;
 inline constexpr std::uint64_t restart_window_ns = std::uint64_t{60} * 1'000'000'000;
 

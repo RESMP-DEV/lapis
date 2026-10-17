@@ -21,6 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_BUILD = ROOT / "build" / "desktop"
+SUPERVISOR_BUILD = ROOT / "build" / "r1-runtime" / "services" / "supervisor"
 GHOSTTY_RUNS = ROOT / "build" / "terminal-probe" / "reproduce" / "ghostty" / "runs"
 RUNTIME_DIR = ROOT / "runtime"
 DEFAULT_SOCKET = RUNTIME_DIR / "desktop-v6.sock"
@@ -88,6 +89,24 @@ def valid_ghostty_prefix(candidate):
         return False
 
 
+def shared_checkout_root():
+    """Resolve a linked worktree's primary checkout without assuming a host path."""
+    try:
+        common = Path(
+            subprocess.run(
+                ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
+            ).stdout.strip()
+        ).resolve()
+    except (OSError, subprocess.SubprocessError):
+        return ROOT
+    return common.parent if common.name == ".git" else ROOT
+
+
 def ghostty_prefix():
     """Return the newest successful pinned build, or explain how to create one."""
     configured = os.environ.get("LAPIS_GHOSTTY_PREFIX")
@@ -99,20 +118,23 @@ def ghostty_prefix():
                 "Rebuild it with: python3 scripts/lapis.py bootstrap"
             )
         return candidate
-    if GHOSTTY_RUNS.is_dir():
-        prefixes = [
-            run / "prefix"
-            for run in GHOSTTY_RUNS.iterdir()
-            if valid_ghostty_prefix(run / "prefix")
-        ]
-        if prefixes:
-            return max(
-                prefixes,
-                key=lambda prefix: (
-                    (prefix.parent / "reports/receipt.json").stat().st_mtime_ns,
-                    str(prefix),
-                ),
+    shared_runs = shared_checkout_root() / "build/terminal-probe/reproduce/ghostty/runs"
+    prefixes = []
+    for runs in dict.fromkeys((GHOSTTY_RUNS, shared_runs)):
+        if runs.is_dir():
+            prefixes.extend(
+                run / "prefix"
+                for run in runs.iterdir()
+                if valid_ghostty_prefix(run / "prefix")
             )
+    if prefixes:
+        return max(
+            prefixes,
+            key=lambda prefix: (
+                (prefix.parent / "reports/receipt.json").stat().st_mtime_ns,
+                str(prefix),
+            ),
+        )
     raise SetupError(
         "Ghostty VT is not bootstrapped.\n"
         "Build the pinned dependency once with: python3 scripts/lapis.py bootstrap"
@@ -127,7 +149,7 @@ def environment():
         "LAPIS_GHOSTTY_PREFIX": str(ghostty_prefix()),
         "LAPIS_SCREEN": screen,
     }
-    prefix = linux_qt_prefix()
+    prefix = local_qt_prefix()
     if prefix is not None:
         prefixes = os.environ.get("CMAKE_PREFIX_PATH", "").split(os.pathsep)
         prefixes = [value for value in prefixes if value]
@@ -150,29 +172,34 @@ def llvm_environment():
     return {}
 
 
-def linux_qt_prefix():
-    """Find the project-local pinned Linux SDK without changing shell settings."""
-    prefix = ROOT / "build/deps/qt/6.11.2/gcc_64"
-    if sys.platform == "linux" and (prefix / "lib/cmake/Qt6/Qt6Config.cmake").is_file():
-        return prefix
+def local_qt_prefix():
+    """Find the project-local pinned Qt SDK without changing shell settings."""
+    if sys.platform == "linux":
+        prefixes = (ROOT / "build/deps/qt/6.11.2/gcc_64",)
+    else:
+        primary = shared_checkout_root()
+        prefixes = (ROOT / "build/release/qt", primary / "build/release/qt")
+    for prefix in prefixes:
+        if (prefix / "lib/cmake/Qt6/Qt6Config.cmake").is_file():
+            return prefix
     return None
 
 
 def qt_qmake():
-    """Query explicit Linux SDKs first, then the local SDK and PATH tools."""
+    """Query explicit SDKs first, then the local SDK and PATH tools."""
+    prefixes = [
+        Path(value)
+        for value in os.environ.get("CMAKE_PREFIX_PATH", "").split(os.pathsep)
+        if value
+    ]
+    local = local_qt_prefix()
+    if local is not None:
+        prefixes.append(local)
+    for prefix in prefixes:
+        qmake = prefix / "bin/qmake"
+        if qmake.is_file() and os.access(qmake, os.X_OK):
+            return str(qmake)
     if sys.platform == "linux":
-        prefixes = [
-            Path(value)
-            for value in os.environ.get("CMAKE_PREFIX_PATH", "").split(os.pathsep)
-            if value
-        ]
-        local = linux_qt_prefix()
-        if local is not None:
-            prefixes.append(local)
-        for prefix in prefixes:
-            qmake = prefix / "bin/qmake"
-            if qmake.is_file() and os.access(qmake, os.X_OK):
-                return str(qmake)
         return shutil.which("qmake6") or shutil.which("qmake")
     return shutil.which("qmake")
 
@@ -363,6 +390,17 @@ def command_run(arguments):
     return launch(arguments)
 
 
+def command_supervisor(arguments):
+    """Run the headless lapis supervisor client from the focused build."""
+    binary = SUPERVISOR_BUILD / "lapis"
+    if not binary.is_file():
+        raise SetupError(
+            f"The headless supervisor client is not built: {binary}\n"
+            "Build it with: python3 scripts/lapis.py supervisor-runtime"
+        )
+    return _run([binary, *(arguments or ["--help"])], check=False).returncode
+
+
 def command_gui(arguments):
     """Live shell window with no extra flags for the common case."""
     return launch(arguments)
@@ -500,6 +538,8 @@ COMMANDS = {
     "diagnose": lambda a: run_python_script(
         "runtime_diagnostics.py", a, needs_ghostty=False
     ),
+    "supervisor-runtime": lambda a: run_python_script("check_supervisor_runtime.py", a),
+    "supervisor": command_supervisor,
     "run": command_run,
     "gui": command_gui,
     "ui": command_ui,
@@ -526,6 +566,8 @@ DESCRIPTIONS = {
     "ui-review": "Serial offscreen/software UI and input review while using the desktop",
     "codex-probe": "Record content-free evidence from the installed Codex",
     "diagnose": "Read-only runtime/package diagnosis (no GUI or session restore)",
+    "supervisor-runtime": "Focused supervisor runtime/daemon build and tests",
+    "supervisor": "Run the headless supervisor status/stop client",
     "run": "Open the live shell window (pass extra app flags through)",
     "gui": "Alias for run",
     "ui": "Open the isolated QML fixture for visual iteration",
