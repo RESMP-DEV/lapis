@@ -13,6 +13,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 #include <QTemporaryDir>
 #include <QVariantMap>
 #include <lapis/session/terminal.hpp>
@@ -32,8 +33,10 @@ NextPromptSettings on(int max_per_hour = 60, const QString& effort = {}) {
     settings.automatic = true;
     settings.maxPerHour = max_per_hour;
     settings.effort = effort;
-    settings.experimentShare = 0; // the chosen model every time
-    settings.holdoutShare = 0;    // and every guess shown
+    settings.experimentShare = 0;         // the chosen model every time
+    settings.holdoutShare = 0;            // and every guess shown
+    settings.experimentMinConfidence = 0; // at the one floor
+    settings.contextArms = {QStringLiteral("base")};
     return settings;
 }
 void require(bool condition, const char* message) {
@@ -103,6 +106,21 @@ void settingsReadFromTheConfig() {
                 set.effort == QLatin1String("low") && set.minConfidence == 1.0 &&
                 set.maxPerHour == 0,
             "each field, clamped");
+    require(defaults.contextArms.size() == 4 && defaults.experimentMinConfidence == 0.4 &&
+                defaults.returnMinutes == 30 && defaults.returnShare == 0.5,
+            "every context arm, a 0.4 floor arm, and half of returns after 30 minutes");
+    const auto arms = lapis::desktop::parse_next_prompt(
+        QJsonDocument::fromJson(R"({"contextArms": ["thread", "bogus", "thread"],
+                                    "experimentMinConfidence": 2, "returnMinutes": 0,
+                                    "returnShare": 0})")
+            .object());
+    require(arms.contextArms == QStringList{QStringLiteral("thread")} &&
+                arms.experimentMinConfidence == 1.0 && arms.returnMinutes == 1 &&
+                arms.returnShare == 0.0,
+            "known arms once each, clamped floor and return settings");
+    const auto none = lapis::desktop::parse_next_prompt(
+        QJsonDocument::fromJson(R"({"contextArms": []})").object());
+    require(none.contextArms == QStringList{QStringLiteral("base")}, "no arms: the base one");
 }
 
 void screensReadAsText() {
@@ -366,6 +384,8 @@ void predictsAndOffers() {
     // observable every time instead of making the default threshold flaky.
     auto default_without_holdout = default_on;
     default_without_holdout.holdoutShare = 0;
+    // The floor arm, which hides half the unlikely guesses, has its own case.
+    default_without_holdout.experimentMinConfidence = 0;
     next.setSettings(default_without_holdout);
     next.turnFinished(QStringLiteral("b"));
     require(waitFor([&] {
@@ -574,6 +594,81 @@ void repeatsWaitUntilShown() {
                        last.value(QStringLiteral("model")) == QLatin1String("claude-sonnet-5-5");
             }),
             "an experiment's guess is logged with its arm and model");
+
+    // The context arm goes to the helper and onto the guess; the floor arm
+    // offers a p=0.6 guess at the 0 floor and holds it back at 0.9.
+    settings = on();
+    settings.contextArms = {QStringLiteral("retrieval")};
+    settings.experimentMinConfidence = 0.9;
+    next.setSettings(settings);
+    QSet<double> floors;
+    for (int round = 0; round < 40 && floors.size() < 2; ++round) {
+        next.seen(QStringLiteral("a"));
+        next.turnFinished(QStringLiteral("a"));
+        require(waitFor([&] {
+                    const auto last = events(log).last();
+                    return last.value(QStringLiteral("event")) == QLatin1String("predicted") &&
+                           last.value(QStringLiteral("context_arm")) == QLatin1String("retrieval");
+                }),
+                "a guess is logged with its context arm");
+        const auto last = events(log).last();
+        const auto floor = last.value(QStringLiteral("min_confidence")).toDouble();
+        floors.insert(floor);
+        require((floor == 0.0 && last.value(QStringLiteral("shown")).toBool()) ||
+                    (floor == 0.9 && !last.value(QStringLiteral("shown")).toBool()),
+                "a guess is offered against the floor it was drawn");
+    }
+    require(floors.size() == 2, "both floors are drawn");
+    const auto arguments = QString::fromUtf8(read(root.filePath(QStringLiteral("predict.args"))))
+                               .split(QLatin1Char('\n'));
+    const auto at = arguments.indexOf(QStringLiteral("--context-arm"));
+    require(at > 0 && arguments.value(at + 1) == QLatin1String("retrieval"),
+            "the helper is told the context arm");
+
+    // Coming back to an old guess: guessed again, and the return is logged.
+    settings = on();
+    settings.returnMinutes = 0;
+    settings.returnShare = 1;
+    next.setSettings(settings);
+    next.seen(QStringLiteral("a"));
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] { return !next.suggestion(QStringLiteral("a")).isEmpty(); }),
+            "a guess to come back to");
+    next.focused(QStringLiteral("a"));
+    require(waitFor([&] {
+                const auto last = events(log).last();
+                return last.value(QStringLiteral("event")) == QLatin1String("predicted") &&
+                       last.value(QStringLiteral("returned_minutes")).toInt(-1) == 0;
+            }),
+            "a return guesses again, saying how long it has been");
+    bool returned = false;
+    bool withdrawn = false;
+    for (const auto& event : events(log)) {
+        returned |= event.value(QStringLiteral("event")) == QLatin1String("return") &&
+                    event.value(QStringLiteral("arm")) == QLatin1String("reguess");
+        withdrawn |= event.value(QStringLiteral("event")) == QLatin1String("withdrawn") &&
+                     event.value(QStringLiteral("reason")) == QLatin1String("return");
+    }
+    require(returned && withdrawn, "the return and the replaced guess are logged");
+    const auto stdin_bundle =
+        QJsonDocument::fromJson(read(root.filePath(QStringLiteral("predict.stdin")))).object();
+    require(stdin_bundle.value(QStringLiteral("returned_minutes")).toInt(-1) == 0,
+            "the model is told the person came back");
+    // Once per offer: the fresh guess is new, so a second look decides again,
+    // but the same offer is never decided twice.
+    const auto count_returns = [&] {
+        int count = 0;
+        for (const auto& event : events(log))
+            count += event.value(QStringLiteral("event")) == QLatin1String("return") ? 1 : 0;
+        return count;
+    };
+    settings.returnShare = 0.0001;
+    next.setSettings(settings);
+    const auto before = count_returns();
+    next.focused(QStringLiteral("a"));
+    next.focused(QStringLiteral("a"));
+    QCoreApplication::processEvents();
+    require(count_returns() == before + 1, "each offer's return is decided once");
 }
 
 void outcomesCompareWhatWasSent() {

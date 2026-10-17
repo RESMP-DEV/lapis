@@ -344,6 +344,37 @@ class TranscriptTests(Homes):
         self.assertEqual([r["text"] for r in context["recent"]], ["run the suite"])
         self.assertNotIn("answered", context)
 
+    def test_context_brings_the_persons_messages_before_the_window(self):
+        arguments = next_prompt.argparse.Namespace(
+            cli="claude", conversation="c1", folder=""
+        )
+        window = next_prompt.history
+        with patch.object(
+            next_prompt, "history", lambda turns: window(turns, limit=11)
+        ):
+            context = next_prompt.command_context(arguments)
+        self.assertEqual(context["turns"], [{"role": "agent", "text": "Installed."}])
+        self.assertEqual(context["earlier"], ["fix the paste bug", "go"])
+
+    def test_past_exchanges_are_indexed_privately_and_retrieved(self):
+        folder = self.root / "runtime"
+        folder.mkdir()
+        self.assertEqual(next_prompt.pair_index(str(folder), budget=0), {})
+        files = next_prompt.pair_index(str(folder))
+        index = folder / next_prompt.INDEX_NAME
+        self.assertEqual(stat.S_IMODE(index.stat().st_mode), 0o600)
+        pairs = files[str(self.claude_path)]["pairs"]
+        self.assertEqual([p[2] for p in pairs], ["go"])
+        self.assertIn("Fixed; tests pass.", pairs[0][1])
+        self.assertEqual(files[str(self.codex_path)]["pairs"], [])
+        found = next_prompt.retrieve(files, "The tests pass. Install it?")
+        self.assertEqual([p[2] for p in found], ["go"])
+        self.assertEqual(next_prompt.retrieve(files, "tests pass", skip="c1"), [])
+        self.assertEqual(next_prompt.retrieve(files, "zzz unrelated words"), [])
+        stamp = index.stat().st_mtime_ns
+        self.assertEqual(next_prompt.pair_index(str(folder)), files)
+        self.assertEqual(index.stat().st_mtime_ns, stamp)
+
     def test_context_brings_what_was_sent_for_an_earlier_offer(self):
         ask = next_prompt.argparse.Namespace
         context = next_prompt.command_context(
@@ -457,6 +488,37 @@ class ModelTests(unittest.TestCase):
         ):
             self.assertIn(part, text)
         self.assertTrue(text.endswith("Write the person's next message."))
+
+    def test_each_context_arm_adds_only_its_own_material(self):
+        bundle = {
+            "time": "Sat 2:00 pm",
+            "returned_minutes": 45,
+            "context": {
+                "turns": [{"role": "agent", "text": "Shall I merge?"}],
+                "earlier": ["ship it tonight"],
+            },
+        }
+        retrieved = [["t", "Merge now?", "check ci first"]]
+        base = next_prompt.render(bundle, fence="f")
+        self.assertIn("came 45 minutes ago", base)
+        self.assertNotIn("ship it tonight", base)
+        self.assertNotIn("check ci first", base)
+        thread = next_prompt.render(bundle, fence="f", arm="thread")
+        self.assertIn("ship it tonight", thread)
+        similar = next_prompt.render(
+            bundle, fence="f", arm="retrieval", retrieved=retrieved
+        )
+        self.assertIn('they sent: "check ci first"', similar)
+        self.assertNotIn("ship it tonight", similar)
+        self.assertNotIn("came 0 minutes", next_prompt.render({}, fence="f"))
+        reply = '{"category": "approve", "candidates": [{"text": "go", "p": 0.5}]}'
+        with patch.object(next_prompt, "ask", return_value=(reply, {})) as call:
+            answer = next_prompt.predict(bundle, "m", arm="evidence")
+        self.assertEqual(answer["context_arm"], "evidence")
+        self.assertTrue(call.call_args[0][0].endswith(next_prompt.EVIDENCE))
+        with patch.object(next_prompt, "ask", return_value=(reply, {})) as call:
+            next_prompt.predict(bundle, "m")
+        self.assertNotIn(next_prompt.EVIDENCE, call.call_args[0][0])
 
     def test_agent_text_cannot_close_its_block(self):
         text = next_prompt.render(
@@ -809,6 +871,57 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(
             report["failed"],
             {"unknown: no transcript": 2, "predict: no Claude Code CLI on this Mac": 1},
+        )
+
+    def test_live_arms_are_reported_apart(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        def predicted(key, context, floor, shown=True, t="1", **extra):
+            return dict(
+                event="predicted",
+                offer=key,
+                agent="a",
+                t=t,
+                shown=shown,
+                context_arm=context,
+                min_confidence=floor,
+                candidates=[{"text": "go", "p": 0.3}],
+                **extra,
+            )
+
+        events = [
+            predicted("a:1", "thread", 0),
+            {"event": "seen", "offer": "a:1"},
+            {"event": "used", "offer": "a:1"},
+            predicted("a:2", "base", 0.4, shown=False),
+            predicted("a:3", "base", 0, t="2"),
+            {"event": "seen", "offer": "a:3"},
+            {"event": "return", "offer": "a:3", "agent": "a", "t": "3", "arm": "keep"},
+            {"event": "used", "offer": "a:3"},
+            predicted("a:4", "base", 0, t="4"),
+            {
+                "event": "return",
+                "offer": "a:4",
+                "agent": "a",
+                "t": "5",
+                "arm": "reguess",
+            },
+            predicted("a:5", "evidence", 0, t="6", returned_minutes=40),
+            {"event": "seen", "offer": "a:5"},
+            {"event": "used", "offer": "a:5"},
+        ]
+        _, report = next_prompt_eval.acceptance(events)
+        self.assertEqual(report["by_context_arm"]["thread"]["acceptance"], 1.0)
+        self.assertEqual(report["by_context_arm"]["base"]["predicted"], 3)
+        self.assertEqual(report["by_floor"]["0.4"]["offered"], 0)
+        self.assertEqual(report["by_floor"]["0"]["used_per_guess"], 0.75)
+        self.assertEqual(
+            report["returns"],
+            {
+                "keep": {"returns": 1, "used": 1},
+                "reguess": {"returns": 1, "guessed": 1, "used": 1},
+            },
         )
 
     def test_offers_seen_used_typed_first_and_never_seen(self):
