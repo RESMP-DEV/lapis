@@ -956,7 +956,7 @@ replies; it needs no external provider credentials. It verifies a failed Read
 and records hook names and payload field types, then checks an HTTP-error turn.
 A successful probe means the controlled cases ran as specified; each event's
 observed/not-observed result is reported separately. `PostToolUseFailure` is
-qualified on 2.1.280; `StopFailure` was not observed for this print-mode API error
+qualified on 2.1.280 and 2.1.302; `StopFailure` was not observed for this print-mode API error
 and is not registered by the adapter. This probe does not replace the real-provider
 permission/input, terminal or GUI checks above. Keep failed receipts in a separate
 output directory when diagnosing a rerun.

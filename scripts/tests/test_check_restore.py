@@ -47,7 +47,7 @@ class RestoreProbeTests(unittest.TestCase):
                         "codex", bad_arguments, bad_provenance, "saved"
                     )
 
-    def test_parallel_approvals_ready_requires_both_distinct_requests(self):
+    def test_parallel_approvals_ready_requires_a_distinct_pending_request(self):
         def request(identifier, submitted=False):
             return {
                 "id": identifier,
@@ -71,6 +71,10 @@ class RestoreProbeTests(unittest.TestCase):
             restore.parallel_approvals_ready(
                 {"requests": [request("one"), request("two")]}
             )
+        )
+        # Claude queues the rest of a parallel batch behind one request.
+        self.assertTrue(
+            restore.parallel_approvals_ready({"requests": [request("one")]})
         )
 
     def test_screen_caches_only_matching_attention_snapshots(self):

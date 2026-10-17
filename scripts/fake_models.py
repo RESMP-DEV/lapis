@@ -23,6 +23,7 @@ import asyncio
 import itertools
 import json
 import time
+import zlib
 from pathlib import Path
 
 COMMAND = "touch lapis-fake-approval.txt"
@@ -34,6 +35,8 @@ PARALLEL_PROMPT = (
 )
 PARALLEL_COMMANDS = ("echo lapis-parallel-one", "echo lapis-parallel-two")
 counter = itertools.count(1)
+# Claude Code 2.1.300 and newer gzip large request bodies.
+MAX_BODY_BYTES = 64 * 1024 * 1024
 
 
 def sse(event, data):
@@ -562,6 +565,11 @@ class Server:
             }
             length = int(headers.get("content-length", "0"))
             raw = await reader.readexactly(length) if length else b""
+            if raw and headers.get("content-encoding", "").lower() == "gzip":
+                inflate = zlib.decompressobj(wbits=31)
+                raw = inflate.decompress(raw, MAX_BODY_BYTES)
+                if inflate.unconsumed_tail or not inflate.eof:
+                    raise ValueError("Gzipped request body is too large or truncated")
             body = json.loads(raw) if raw else {}
             if not isinstance(body, dict):
                 raise ValueError("Request body must be a JSON object")
@@ -582,6 +590,7 @@ class Server:
             ValueError,
             asyncio.IncompleteReadError,
             asyncio.LimitOverrunError,
+            zlib.error,
         ) as error:
             self.record_error(error)
         finally:

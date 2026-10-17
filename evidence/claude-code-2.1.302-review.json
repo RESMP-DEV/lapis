@@ -1,0 +1,34 @@
+{
+  "schema": "lapis.qa-receipt/1",
+  "recorded_at": "2026-10-17T21:00:00Z",
+  "scope": "Integration review of Claude Code 2.1.287 through 2.1.302 (issues #68 to #162): the fixture checks that run without a model provider",
+  "source": {
+    "base": "ee375b6 (main)",
+    "branch": "chore/claude-code-2.1.302"
+  },
+  "hosts": {
+    "mac": "Apple Silicon, macOS 27.0"
+  },
+  "tools": {
+    "claude_code": "2.1.302",
+    "claude_code_sha256": "5262ce9de86243fed0d21edc39b271555d56780d0112e2b194439fe1c6662d37",
+    "models": "scripts/fake_models.py and the probe's synthetic replies; no model usage"
+  },
+  "checks": [
+    {
+      "name": "failure hooks (scripts/probe_claude_failure_hooks.py)",
+      "result": "PASS on 2.1.302: PostToolUseFailure observed; StopFailure not observed for the print-mode HTTP 400, as on 2.1.280"
+    },
+    {
+      "name": "power loss (scripts/check_restore.py, macOS)",
+      "result": "PASS on 2.1.302 after the fixture change in this branch. Claude left two distinct parallel Bash calls pending with one approval shown; after each of two SIGKILLs of all 21 workspace processes the helper restarted all 6 agents (1.6 s directly, 5.1 s as a launchd job), each in its conversation, and Claude's next request carried the earlier messages (5 -> 10)."
+    },
+    {
+      "name": "parallel approvals before the fixture change",
+      "result": "FAIL on 2.1.286, 2.1.292, 2.1.295 and 2.1.302 alike: Claude Code raises one permission request at a time for a parallel batch, so the expectation of two pending requests never held on this Mac. After a resume Claude marks the interrupted calls, so no approval is pending after the second loss either."
+    }
+  ],
+  "not_run": [
+    "scripts/check_claude_hooks.py: needs the real-provider router on 127.0.0.1:3456, which this Mac does not run"
+  ]
+}
