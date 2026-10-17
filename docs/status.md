@@ -8,7 +8,7 @@ components land, from code and tests, and keep receipts as dated observations.
 ## Rollout
 
 The next delivery target is a dependable macOS Apple Silicon early-access
-release. The [production delivery order](architecture.md#production-delivery-order-september-30)
+release. The [production delivery order](architecture.md#production-delivery-order)
 prioritizes a consolidated candidate, independent process ownership and verified
 upgrades, input/account integrity, then workload and support qualification before
 more integrations. The first workload target is eight local sessions; it is not
@@ -67,8 +67,8 @@ qualification receipts. The two-session Milestone 3 workspace (flat manifest,
 shared attention queue and guarded carousel) was
 [qualified on macOS](../evidence/milestone-three-workspace.json) and then replaced
 by this category workspace; its service, Codex and Claude Code work carries over. The category workspace's current checks and remaining
-acceptance are recorded in [the evidence](../evidence/agent-workspace.json) and
-[architecture](architecture.md#daily-use-agent-workspace-direction-september-21-review).
+acceptance are recorded in [the evidence](../evidence/agent-workspace.json);
+[architecture](architecture.md#architecture-decisions) owns the active boundaries.
 
 | Component | Exercised | Remaining |
 | --- | --- | --- |
@@ -100,8 +100,8 @@ acceptance are recorded in [the evidence](../evidence/agent-workspace.json) and
 
 The [first quality repair batch](../evidence/quality-repairs.json) exercises iPhone
 history retirement across reconnects, atomic managed-session reopening, and the
-expanded verification gates. Remaining repairs have bounded acceptance in the
-[quality goals](architecture.md#quality-repair-goals-september-25-audit).
+expanded verification gates. Remaining repairs use the bounded acceptance in
+[architecture](architecture.md#release-gates).
 The [follow-up audit and repairs](../evidence/quality-followup.json) cover paste and
 gateway ownership, bounded remote discovery, explicit build dependencies, and
 focused CLI checks. The receipt distinguishes exercised behavior from remaining
@@ -123,8 +123,8 @@ and dependency notices; a build from the repository is a developer build.
 The old multi-layout preview is no longer the product surface. The explicit
 `--ui-preview` developer fixture exercises the same category UI with synthetic
 data; it is never added to a normal workspace. See the
-[Milestone 2 plan](architecture.md#milestone-2-attention-and-codex-plan)
-for the underlying attention route and its acceptance evidence.
+[adapter contracts](architecture.md#verified-adapter-contracts)
+for the underlying attention route and its acceptance boundary.
 The first checkpoint implemented the standalone attention core and exercised real
 Codex request round trips. [Milestone 2 evidence](../evidence/milestone-two.json) now
 records assembled service/desktop acceptance on macOS. The
@@ -158,4 +158,4 @@ Claude Code's permission and input notices appear under **Requests**; answer
 them in Claude's terminal. Lapis does not change Claude's approval policy or
 install global hooks. The [Claude hook receipt](../evidence/claude-code-hooks.json)
 records runtime qualification. See the
-[hook contract and limitations](architecture.md#claude-code-hooks-an-observation-only-extension).
+[adapter contracts](architecture.md#verified-adapter-contracts).

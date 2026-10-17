@@ -80,11 +80,15 @@ October 5 to 11 the automatic checks logged 2,911 lines and none spent a reset:
 no eligible reset or the helper failed.
 
 `limitResets` configures `auto` (false), `minBlockedMinutes` (60), `keepCredits`
-(0) and `salvageHours` (12). Automatic restores require a sufficiently long block and coverage of
-every exhausted window; expiring credits can be salvaged when a covered weekly
-window is at least one-quarter used. That automatic policy still excludes this
-Mac's own Claude Code keychain sign-in; only the saved-reset action above reads
-it. A weekly session reset cannot clear an Opus/Sonnet weekly cap.
+(0) and `salvageHours` (12). An automatic restore requires a window to be at
+least 99.9% used, a block that would last `minBlockedMinutes`, a credit that
+covers every exhausted window while retaining `keepCredits`, and a plausible
+reset time. Expiring credits can be salvaged when a covered weekly window is at
+least one-quarter used. That automatic policy still excludes this Mac's own
+Claude Code keychain sign-in; only the saved-reset action above reads it. A
+weekly Claude session reset clears only the five-hour window; it cannot clear an
+Opus/Sonnet weekly cap, and its credit identity is tied to that weekly reset
+boundary.
 
 Missing plan credentials or provider IDs, or an account mismatch, stop the
 operation; email alone is not an account identity. A definite provider refusal
@@ -95,5 +99,10 @@ not reported as a newly spent reset. Expired, settled journals are reclaimed und
 unrecognized records are never evicted. Corrupt, full or unwritable journals
 refuse new operations. Keep the private runtime `limit-resets/` records when recovering
 or reinstalling; deleting a pending record discards the protection against replay.
-The [architecture contract](architecture.md#saved-limit-resets-september-29)
-describes these bounds and the remaining live qualification.
+The private journal set admits at most 256 target files. Each journal is at most
+64 KiB and retains at most 128 recent settled or refused attempt keys. Helpers
+have a three-minute deadline, a 1 MiB stdout bound, a 64 KiB stderr bound, and
+at most eight targets run concurrently.
+[Architecture](architecture.md#storage-credentials-and-diagnostics)
+owns the general storage and credential contract; [status](status.md#components)
+records the remaining live qualification.

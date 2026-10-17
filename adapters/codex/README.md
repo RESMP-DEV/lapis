@@ -101,8 +101,8 @@ shortcut does not add a lapis session-approval response.
 ## Integration route comparison
 
 The first wiring slice preserves the ordinary CLI terminal interface. The
-[architecture plan](../../docs/architecture.md#first-wiring-slice-explicit-cli-launch)
-owns implementation order; this document owns Codex-specific qualification.
+[architecture plan](../../docs/architecture.md#architecture-decisions)
+owns the active boundaries; this document owns Codex-specific qualification.
 
 | Route | Current evidence | Observation / response / reconciliation |
 | --- | --- | --- |

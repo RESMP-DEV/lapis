@@ -519,7 +519,7 @@ The committed `lapis.json` holds defaults only (see
   lapis keeps running, and the Dock icon brings it back; Command-M
   (`minimizeWindow`) minimizes. Command-Q quits the GUI. The intended service
   lifetime is independent, but macOS 27 can terminate GUI-spawned services with
-  the app's coalition; see the [production delivery order](docs/architecture.md#production-delivery-order-september-30).
+  the app's coalition; see the [production delivery order](docs/architecture.md#production-delivery-order).
   Do not promise quit/update survival until that platform gate is qualified.
   `detachWindow` still works when configured but has no default key.
 - Command-O (`resumeConversation`) lists past Claude Code and Codex
@@ -1327,7 +1327,7 @@ while a second observer is disconnected, capturing replay/resolution events befo
 a subsequent same-thread `thread/read` reply. This boundary depends on the tested
 server's exclusive method serialization, so source inspection plus a new live run
 is required for another binary hash. It qualifies only the two exercised blocking
-request kinds. See the [Milestone 2 plan](docs/architecture.md#milestone-2-attention-and-codex-plan).
+request kinds. See the [adapter contracts](docs/architecture.md#verified-adapter-contracts).
 
 ### History and input qualification
 
