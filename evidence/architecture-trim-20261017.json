@@ -8,7 +8,7 @@
     "source_dirty": true,
     "platform": "macOS arm64"
   },
-  "scope": "Replaced the accumulated architecture work log with the active product scope, ownership boundaries, architecture decisions, executable delivery order, release gates, open choices, verification discipline, and durable contracts. Updated live documentation references and one historical navigation pointer. No runtime behavior changed.",
+  "scope": "Replaced the accumulated architecture work log with the active product scope, ownership boundaries, architecture decisions, executable delivery order, release gates, open choices, verification discipline, and durable contracts. Updated live documentation references and one historical navigation pointer, retained the operational saved-reset bounds in usage documentation, and added a reproducible Markdown-link checker. No runtime behavior changed.",
   "change": {
     "architecture_before": {
       "lines": 5987,
@@ -28,14 +28,31 @@
       "docs/usage.md",
       "evidence/product-workspace-review.json"
     ],
+    "changed_file_digests": [
+      {"path": "CONTRIBUTING.md", "sha256": "529c72be4929dbd071532519be03f638990ef5e85387a522be84bc1fb6f6bffe"},
+      {"path": "adapters/codex/README.md", "sha256": "66c050433adc79b2d28ce8acfe92670f52f0073252b6e47b9b8cb156fec52bf0"},
+      {"path": "docs/architecture.md", "sha256": "875b52e60c3dafe91ef0ef120cc4357d3711c22183e817eaf5025549e475b2ba"},
+      {"path": "docs/status.md", "sha256": "f5a85a927c71f90d9304e94f29ef23ef988030242e7b0b1fcc75e94e6e681798"},
+      {"path": "docs/suggestions.md", "sha256": "7749e6daa37807d4c6174901e377d7df61e4ad811c15693bbe816ee81ad38382"},
+      {"path": "docs/usage.md", "sha256": "86cd0bf3716bcb7df0b9bf4164f2b9f3661e59e402c0be7962970bf289843cae"},
+      {"path": "evidence/product-workspace-review.json", "sha256": "6e98a5c8121f4c85a364db560f8eabe694795dabf0cad76c32f3ede216764031"},
+      {"path": "scripts/check_markdown_links.py", "sha256": "6bf2e71fbe259d42564f2657b4138dbb2aa11324d0c9ace93b0463a97e1ed536"},
+      {"path": "scripts/tests/test_check_markdown_links.py", "sha256": "a60d550c3e84838c9d48724d782acd5be5164296be64599bf55e720851724dd2"}
+    ],
     "historical_material": "Superseded dated narratives remain in Git history at the base revision. Historical observations were not rewritten; the product-workspace receipt's superseded next_contract pointer was redirected to the retained architecture-decisions section."
   },
   "validation": [
     {
       "name": "local-markdown-links-and-fragments",
-      "command": "Python audit of repository Markdown relative paths and heading fragments",
+      "command": "python3 scripts/check_markdown_links.py",
       "exit_code": 0,
       "result": "All local Markdown paths and fragments resolve."
+    },
+    {
+      "name": "markdown-link-checker-tests",
+      "command": "python3 -m unittest scripts.tests.test_check_markdown_links -v",
+      "exit_code": 0,
+      "result": "Four focused tests passed."
     },
     {
       "name": "diff-whitespace",
@@ -47,7 +64,7 @@
       "name": "repository-quality",
       "command": "python3 scripts/lapis.py quality",
       "exit_code": 0,
-      "source_revision": "44cbcdd053066504fb95cf565f9062000cda7f83b",
+      "source_revision": "498c36d338cd537c16f2648dbf530ae638d2f1fb",
       "source_dirty": true,
       "result": "source-revision, source-status, git-diff-check, ruff-check, ruff-format-check, python-unittests, and aggregate quality passed."
     },
@@ -70,6 +87,21 @@
       "reviewer": "Kilo Code Review",
       "finding": "The unchanged product-workspace evidence receipt still named the removed daily-use workspace architecture anchor.",
       "repair": "Repointed only its next_contract navigation field to architecture decisions; the dated observations and non-claims remain unchanged."
+    },
+    {
+      "reviewer": "CodeRabbit",
+      "finding": "The trimmed architecture link hid operational saved-reset admission and journal/helper bounds behind generic storage guidance.",
+      "repair": "Kept the verified 99.9% admission threshold, blocked-window and coverage rules, five-hour Claude reset boundary, journal capacities, and helper limits in docs/usage.md."
+    },
+    {
+      "reviewer": "CodeRabbit",
+      "finding": "The receipt named changed reference files without content digests while recording a dirty source.",
+      "repair": "Added SHA-256 digests for every changed non-receipt documentation, evidence-reference, and checker file."
+    },
+    {
+      "reviewer": "CodeRabbit",
+      "finding": "The Markdown link and fragment audit was a non-repeatable one-off command description.",
+      "repair": "Added scripts/check_markdown_links.py with four focused unit tests and recorded its exact CLI invocation."
     }
   ],
   "non_claims": [
