@@ -1,4 +1,6 @@
 #include "lapis/supervisor/birth.hpp"
+#include "lapis/supervisor/client.hpp"
+#include "lapis/supervisor/runtime.hpp"
 #include "launch_spec.hpp"
 #include "transport/local_protocol.hpp"
 
@@ -11,6 +13,7 @@
 #include <QJsonValue>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QProcess>
 #include <QTemporaryDir>
 
 #include <array>
@@ -18,6 +21,7 @@
 #include <csignal>
 #include <cstring>
 #include <iostream>
+#include <optional>
 #include <source_location>
 #include <spawn.h>
 #include <stdexcept>
@@ -45,6 +49,8 @@ void require(bool value, const char* message,
         throw std::runtime_error(std::string{"supervisor-daemon failed at line "} +
                                  std::to_string(where.line()) + ": " + message);
 }
+
+std::string repeat(char value, std::size_t length) { return std::string(length, value); }
 
 struct BindUnavailable : std::runtime_error {
     BindUnavailable() : std::runtime_error{"QLocalServer bind unavailable"} {}
@@ -75,6 +81,8 @@ struct ControlClient {
     }
     ControlClient(const ControlClient&) = delete;
     ControlClient& operator=(const ControlClient&) = delete;
+    ControlClient(ControlClient&&) = default;
+    ControlClient& operator=(ControlClient&&) = default;
 };
 
 void write_all(int descriptor, const char* bytes, std::size_t size) {
@@ -119,17 +127,24 @@ std::string receive_reply(ControlClient& client) {
             reply.append(bytes.data(), static_cast<std::size_t>(count));
             continue;
         }
-        if (count == 0 && !reply.empty())
-            return reply;
+        if (count == 0 && !reply.empty()) {
+            require(reply.size() >= 4, "supervisor reply has a frame header");
+            const auto length =
+                (static_cast<unsigned>(static_cast<unsigned char>(reply[0])) << 24U) |
+                (static_cast<unsigned>(static_cast<unsigned char>(reply[1])) << 16U) |
+                (static_cast<unsigned>(static_cast<unsigned char>(reply[2])) << 8U) |
+                static_cast<unsigned>(static_cast<unsigned char>(reply[3]));
+            require(length <= max_control_bytes &&
+                        reply.size() == static_cast<std::size_t>(length) + 4,
+                    "supervisor reply has one bounded frame");
+            return reply.substr(4);
+        }
         throw std::runtime_error("receive supervisor control reply");
     }
     throw std::runtime_error("supervisor control reply timed out");
 }
 
-void expect_closed_after_oversized_frame(ControlClient& client) {
-    const std::array<char, 4> header{{static_cast<char>(0xff), static_cast<char>(0xff),
-                                      static_cast<char>(0xff), static_cast<char>(0xff)}};
-    write_all(client.descriptor, header.data(), header.size());
+void wait_for_closed(ControlClient& client, const char* message) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{3};
     while (std::chrono::steady_clock::now() < deadline) {
         pollfd wait{client.descriptor, POLLIN, 0};
@@ -140,9 +155,16 @@ void expect_closed_after_oversized_frame(ControlClient& client) {
         const auto count = ::read(client.descriptor, &byte, 1);
         if (count == 0)
             return;
-        throw std::runtime_error("oversized supervisor birth frame has no reply");
+        throw std::runtime_error(std::string{message} + " produced a reply");
     }
-    throw std::runtime_error("oversized supervisor birth frame was not closed");
+    throw std::runtime_error(std::string{message} + " was not closed");
+}
+
+void expect_closed_after_oversized_frame(ControlClient& client) {
+    const std::array<char, 4> header{{static_cast<char>(0xff), static_cast<char>(0xff),
+                                      static_cast<char>(0xff), static_cast<char>(0xff)}};
+    write_all(client.descriptor, header.data(), header.size());
+    wait_for_closed(client, "oversized supervisor birth frame");
 }
 
 QJsonObject birth_object(const QString& fingerprint, const QJsonObject& service,
@@ -225,6 +247,30 @@ pid_t start_daemon(const std::string& state,
         std::chrono::steady_clock::now() - started_at);
     throw std::runtime_error("supervisor daemon did not bind its control endpoint after " +
                              std::to_string(elapsed.count()) + "ms");
+}
+
+struct CliResult {
+    int exit_code{-1};
+    QString standard_output;
+    QString standard_error;
+};
+
+CliResult run_supervisor_cli(const QStringList& arguments) {
+    QProcess process;
+    process.setProgram(QString::fromLatin1(LAPIS_SUPERVISOR_CLI));
+    process.setArguments(arguments);
+    process.start();
+    require(process.waitForStarted(5000), "start the headless supervisor client");
+    require(process.waitForFinished(10000), "the headless supervisor client finishes");
+    return {process.exitStatus() == QProcess::NormalExit ? process.exitCode() : -1,
+            QString::fromUtf8(process.readAllStandardOutput()),
+            QString::fromUtf8(process.readAllStandardError())};
+}
+
+QJsonObject cli_json(const CliResult& result, const QString& context) {
+    const auto document = QJsonDocument::fromJson(result.standard_output.toUtf8());
+    require(result.exit_code == 0 && document.isObject(), context.toStdString().c_str());
+    return document.object();
 }
 
 pid_t service_pid_from_ownership(const std::string& endpoint) {
@@ -482,6 +528,50 @@ void daemon_birth_and_real_service_clients() {
     pid_t daemon = -1;
     try {
         daemon = start_daemon(directory.path().toStdString(), control);
+        {
+            const auto empty =
+                cli_json(run_supervisor_cli({QStringLiteral("--control-endpoint"),
+                                             QString::fromStdString(control),
+                                             QStringLiteral("status"), QStringLiteral("--json")}),
+                         "the initial status CLI succeeds");
+            require(empty.value(QStringLiteral("slot")).toString() == QLatin1String("empty") &&
+                        !empty.value(QStringLiteral("service_live")).toBool() &&
+                        !empty.contains(QStringLiteral("token")),
+                    "initial status is read-only and exposes no service or token");
+        }
+        {
+            ControlClient client{control};
+            send_frame(client, QJsonDocument{QJsonObject{{QStringLiteral("version"), 1},
+                                                         {QStringLiteral("action"),
+                                                          QStringLiteral("status")},
+                                                         {QStringLiteral("extra"), true}}}
+                                   .toJson(QJsonDocument::Compact)
+                                   .toStdString());
+            require(
+                reply_object(receive_reply(client)).value(QStringLiteral("status")).toString() ==
+                    QLatin1String("rejected"),
+                "a status request with extra fields is rejected");
+        }
+        {
+            ControlClient trailing{control};
+            send_frame(trailing, encode_status_request());
+            const char extra = 'x';
+            write_all(trailing.descriptor, &extra, 1);
+            wait_for_closed(trailing, "a frame with trailing bytes");
+        }
+        {
+            auto idle = std::vector<std::optional<ControlClient>>{};
+            idle.reserve(max_control_clients);
+            for (unsigned index = 0; index < max_control_clients; ++index)
+                idle.emplace_back(std::in_place, control);
+            require(idle.size() == max_control_clients, "create abandoned control clients");
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds{static_cast<unsigned>(control_client_timeout_ms + 250)});
+            const auto recovered = run_supervisor_cli(
+                {QStringLiteral("--control-endpoint"), QString::fromStdString(control),
+                 QStringLiteral("status"), QStringLiteral("--json")});
+            cli_json(recovered, "abandoned clients release their control slots");
+        }
         daemon_birth_refuses_unsafe_requests(control, fingerprint);
 
         std::string session_id;
@@ -503,6 +593,19 @@ void daemon_birth_and_real_service_clients() {
         }
         const pid_t service = service_pid_from_ownership(endpoint);
         require(service > 0 && service != daemon, "daemon and service are separate processes");
+        {
+            const auto live =
+                cli_json(run_supervisor_cli({QStringLiteral("--control-endpoint"),
+                                             QString::fromStdString(control),
+                                             QStringLiteral("status"), QStringLiteral("--json")}),
+                         "the live status CLI succeeds");
+            require(live.value(QStringLiteral("slot")).toString() == QLatin1String("started") &&
+                        live.value(QStringLiteral("service_live")).toBool() &&
+                        live.value(QStringLiteral("endpoint")).toString().toStdString() ==
+                            endpoint &&
+                        !live.contains(QStringLiteral("token")),
+                    "live status exposes the endpoint but no spawn token");
+        }
 
         {
             const QJsonObject duplicate_service{{QStringLiteral("environment"), QJsonObject{}}};
@@ -553,6 +656,66 @@ void daemon_birth_and_real_service_clients() {
         detach(reconnected);
         detach(joined);
 
+        const auto persisted =
+            read_control_state(QFileInfo(directory.path()).canonicalFilePath().toStdString());
+        {
+            ControlClient malformed{control};
+            send_frame(malformed, QJsonDocument{QJsonObject{{QStringLiteral("version"), 1},
+                                                            {QStringLiteral("action"),
+                                                             QStringLiteral("stop")}}}
+                                      .toJson(QJsonDocument::Compact)
+                                      .toStdString());
+            require(
+                reply_object(receive_reply(malformed)).value(QStringLiteral("status")).toString() ==
+                    QLatin1String("rejected"),
+                "an unauthenticated stop shape is rejected");
+        }
+        {
+            auto stale =
+                QJsonDocument::fromJson(QByteArray::fromStdString(encode_stop_request(persisted)))
+                    .object();
+            stale.insert(QStringLiteral("token"),
+                         QString::fromStdString(repeat('e', spawn_token_hex_bytes)));
+            ControlClient client{control};
+            send_frame(client, QJsonDocument(stale).toJson(QJsonDocument::Compact).toStdString());
+            require(
+                reply_object(receive_reply(client)).value(QStringLiteral("status")).toString() ==
+                    QLatin1String("unauthorized"),
+                "a stale token cannot stop the supervisor");
+        }
+        {
+            const auto stopped = run_supervisor_cli(
+                {QStringLiteral("--control-endpoint"), QString::fromStdString(control),
+                 QStringLiteral("--state-directory"),
+                 QFileInfo(directory.path()).canonicalFilePath(), QStringLiteral("stop")});
+            require(stopped.exit_code == 0 &&
+                        stopped.standard_output.contains(QStringLiteral("applied")),
+                    "the headless client explicitly stops the live supervisor session");
+        }
+        wait_gone(service);
+        wait_gone(static_cast<pid_t>(first_hello.pid));
+        {
+            const auto after_stop =
+                cli_json(run_supervisor_cli({QStringLiteral("--control-endpoint"),
+                                             QString::fromStdString(control),
+                                             QStringLiteral("status"), QStringLiteral("--json")}),
+                         "the post-stop status CLI succeeds");
+            require(after_stop.value(QStringLiteral("slot")).toString() ==
+                            QLatin1String("stopped") &&
+                        !after_stop.value(QStringLiteral("service_live")).toBool() &&
+                        after_stop.value(QStringLiteral("endpoint")).isNull(),
+                    "post-stop status reports a stopped slot without an endpoint");
+        }
+        {
+            const QJsonObject stopped_service{{QStringLiteral("environment"), QJsonObject{}}};
+            ControlClient client{control};
+            send_frame(client, birth_json(fingerprint, stopped_service));
+            require(
+                reply_object(receive_reply(client)).value(QStringLiteral("status")).toString() ==
+                    QLatin1String("rejected"),
+                "an explicit stop does not expose another one-shot birth");
+        }
+
         require(::kill(daemon, SIGTERM) == 0, "request explicit daemon stop");
         int status = 0;
         const pid_t stopped = ::waitpid(daemon, &status, 0);
@@ -572,6 +735,7 @@ void daemon_birth_and_real_service_clients() {
                         &state_file) == 0 &&
                     S_ISREG(state_file.st_mode) && (state_file.st_mode & 07777U) == 0600U,
                 "explicit stop leaves private persisted desired state");
+        std::cout << "supervisor-client-integration: ok\n";
     } catch (...) {
         if (daemon > 0) {
             static_cast<void>(::kill(daemon, SIGTERM));

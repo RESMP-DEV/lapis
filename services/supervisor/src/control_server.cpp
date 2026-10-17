@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <fcntl.h>
 #include <limits>
@@ -36,6 +37,7 @@ namespace {
 using lapis::session::posix::UniqueFd;
 
 constexpr std::size_t control_header_bytes = 4;
+constexpr int control_reply_timeout_ms = 1000;
 
 [[noreturn]] void failed_system(const char* message) {
     throw std::runtime_error(std::string{message} + ": " + std::generic_category().message(errno));
@@ -48,17 +50,49 @@ uint32_t big_endian_length(const unsigned char bytes[control_header_bytes]) {
            (static_cast<uint32_t>(bytes[2]) << 8U) | static_cast<uint32_t>(bytes[3]);
 }
 
-void write_all(int descriptor,
-               const std::string& bytes) { // NOLINT(bugprone-easily-swappable-parameters)
+bool write_all(int descriptor, const std::string& bytes,
+               std::chrono::steady_clock::time_point deadline) {
     std::size_t done = 0;
     while (done < bytes.size()) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+            return false;
         const auto count = ::write(descriptor, bytes.data() + done, bytes.size() - done);
         if (count < 0 && errno == EINTR)
             continue;
+        if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            pollfd wait{descriptor, POLLOUT, 0};
+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - std::chrono::steady_clock::now());
+            const auto wait_ms = static_cast<int>(
+                std::min<std::int64_t>(remaining.count(), control_reply_timeout_ms));
+            if (wait_ms <= 0 || ::poll(&wait, 1, wait_ms) < 1)
+                return false;
+            continue;
+        }
         if (count <= 0)
-            return;
+            return false;
         done += static_cast<std::size_t>(count);
     }
+    return true;
+}
+
+bool write_reply(int descriptor, const std::string& payload) {
+    if (payload.size() > max_control_bytes)
+        return false;
+    const auto length = static_cast<std::uint32_t>(payload.size());
+    const unsigned char header[control_header_bytes]{
+        static_cast<unsigned char>((length >> 24U) & 0xffU),
+        static_cast<unsigned char>((length >> 16U) & 0xffU),
+        static_cast<unsigned char>((length >> 8U) & 0xffU),
+        static_cast<unsigned char>(length & 0xffU),
+    };
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds{control_reply_timeout_ms};
+    return write_all(descriptor,
+                     std::string{reinterpret_cast<const char*>(header), control_header_bytes} +
+                         payload,
+                     deadline);
 }
 
 std::optional<uid_t> peer_uid(int descriptor) {
@@ -101,11 +135,14 @@ struct ControlClient {
     UniqueFd descriptor;
     uid_t uid{};
     std::string buffer;
+    std::chrono::steady_clock::time_point deadline;
 };
 
 enum class ReceiveResult : std::uint8_t { incomplete, ready, closed };
 
 ReceiveResult receive_header(ControlClient& client) {
+    if (std::chrono::steady_clock::now() >= client.deadline)
+        return ReceiveResult::closed;
     while (client.buffer.size() < control_header_bytes) {
         char header[control_header_bytes]{};
         const auto count =
@@ -131,6 +168,9 @@ ReceiveResult receive_header(ControlClient& client) {
 ReceiveResult receive_payload(ControlClient& client) {
     const auto expected =
         big_endian_length(reinterpret_cast<const unsigned char*>(client.buffer.data()));
+    if (client.buffer.size() > control_header_bytes + expected ||
+        std::chrono::steady_clock::now() >= client.deadline)
+        return ReceiveResult::closed;
     if (client.buffer.size() >= control_header_bytes + expected)
         return ReceiveResult::ready;
     std::string chunk(
@@ -144,8 +184,12 @@ ReceiveResult receive_payload(ControlClient& client) {
         return (errno == EAGAIN || errno == EWOULDBLOCK) ? ReceiveResult::incomplete
                                                          : ReceiveResult::closed;
     client.buffer.append(chunk.data(), static_cast<std::size_t>(count));
-    if (big_endian_length(reinterpret_cast<const unsigned char*>(client.buffer.data())) !=
-        client.buffer.size() - control_header_bytes)
+    const auto buffered_length = client.buffer.size() - control_header_bytes;
+    const auto declared_length =
+        big_endian_length(reinterpret_cast<const unsigned char*>(client.buffer.data()));
+    if (declared_length < buffered_length)
+        return ReceiveResult::closed;
+    if (declared_length > buffered_length)
         return ReceiveResult::incomplete;
     return ReceiveResult::ready;
 }
@@ -157,10 +201,12 @@ bool process_client(const ControlHandler& handler, ControlClient& client) {
     if (header == ReceiveResult::incomplete && client.buffer.size() < control_header_bytes)
         return true;
     const auto payload_result = receive_payload(client);
-    if (payload_result != ReceiveResult::ready)
+    if (payload_result == ReceiveResult::closed)
+        return false;
+    if (payload_result == ReceiveResult::incomplete)
         return true;
     const std::string payload = client.buffer.substr(control_header_bytes);
-    write_all(client.descriptor.get(), handler(client.uid, payload));
+    static_cast<void>(write_reply(client.descriptor.get(), handler(client.uid, payload)));
     return false;
 }
 
@@ -177,7 +223,11 @@ void accept_clients(const UniqueFd& listener, std::vector<ControlClient>& client
         const auto uid = peer_uid(descriptor.get());
         if (!uid || *uid != ::geteuid())
             continue;
-        clients.push_back({std::move(descriptor), *uid, {}});
+        clients.push_back({std::move(descriptor),
+                           *uid,
+                           {},
+                           std::chrono::steady_clock::now() +
+                               std::chrono::milliseconds{control_client_timeout_ms}});
     }
 }
 

@@ -803,6 +803,8 @@ Run from the repository root:
 | `just ui-review` | Focused build and background workspace UI, shortcuts and terminal-input checks; no OS focus or pointer changes |
 | `just ui-check` | Native bounded isolated captures, attention state and expected failures |
 | `just cli-check` | Isolated live service/CLI and shell GUI acceptance |
+| `just supervisor-runtime` | Focused opt-in supervisor state/runtime/service/daemon/client build and real-process tests |
+| `just supervisor` | Run the built headless `lapis` supervisor status/stop client |
 | `just native-input` | Automated macOS keyboard/clipboard and real Japanese IME through the PTY |
 | `just ios-check` | iPhone app UI tests in a headless simulator, synced with a Mac-side client, including real Codex and Claude Code on a fake model |
 
@@ -818,6 +820,7 @@ union of the relevant checks; a check satisfying two rows runs once:
 | PTY, local transport or CLI launch | `just desktop`, `just cli-check`, and desktop-enabled ASan/TSan as applicable below |
 | QML, rendering or desktop input | `just desktop` and `just ui-check`; live input changes also need `just cli-check` and `just native-input` on the qualified Mac |
 | C++ verification runner, compiler/analyzer flags or toolchain | `just verify-tools` plus affected positive check/build paths |
+| Supervisor runtime, daemon protocol or headless client | `just supervisor-runtime`, plus focused client/daemon cases; sanitizer coverage when process or framing changes affect lifetime |
 | Test cases or other test harnesses | `just quality` for Python; affected build/CTest cases for C++; exercise the affected runtime probe when its harness behavior changes |
 | Session restore, resume records or the registry lock | `uv run --no-project python scripts/check_restore.py` on macOS with the installed Codex and Claude Code; it uses the fake model and leaves nothing running |
 | Disk history | `python3 scripts/check_history.py --disk-full` on macOS, plus desktop-enabled ASan/TSan; the disk-full fixture creates and removes its own 32 MiB disk image |

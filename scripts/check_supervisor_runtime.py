@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 TARGETS = (
     "lapis_session_service",
     "lapis_supervisor_daemon",
+    "lapis_supervisor",
+    "lapis_supervisor_client_tests",
     "lapis_supervisor_state_tests",
     "lapis_supervisor_runtime_tests",
     "lapis_supervisor_runtime_session_tests",
@@ -145,6 +147,33 @@ def daemon_integration_result(
     }
 
 
+def client_integration_result(
+    test_output: str, test_result: dict[str, object], logs: Path
+) -> dict[str, object]:
+    """Require the headless client marker, never a generic test success."""
+    integration_observed = "supervisor-client-integration: ok" in test_output
+    diagnostic = "Observed headless status, stale-token refusal, and explicit stop."
+    exit_code = 0
+    if not integration_observed:
+        diagnostic = (
+            "The headless client marker was absent; the test step did not pass "
+            f"(exit_code={test_result['exit_code']}, "
+            f"timed_out={test_result['timed_out']}). See test.log."
+        )
+        exit_code = test_result["exit_code"]
+    return {
+        "check": "client-integration",
+        "command": [],
+        "cwd": str(ROOT),
+        "passed": integration_observed,
+        "timed_out": test_result["timed_out"],
+        "exit_code": exit_code,
+        "diagnostic": diagnostic,
+        "elapsed_seconds": 0.0,
+        "log": str((logs / "test.log").relative_to(ROOT)),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -185,7 +214,7 @@ def main() -> int:
                 "--test-dir",
                 "build/r1-runtime",
                 "-R",
-                "supervisor-(state|runtime|session-service|daemon)$",
+                "supervisor-(state|runtime|session-service|client|daemon)$",
                 "--output-on-failure",
                 "--no-tests=error",
                 "-V",
@@ -201,6 +230,7 @@ def main() -> int:
         test_result = results[-1]
         results.append(integration_result(test_output, test_result, logs))
         results.append(daemon_integration_result(test_output, test_result, logs))
+        results.append(client_integration_result(test_output, test_result, logs))
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         return write_failure(receipt_path, scope, "supervisor-runtime-setup", error)
 

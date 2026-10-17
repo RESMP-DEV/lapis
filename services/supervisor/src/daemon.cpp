@@ -1,4 +1,5 @@
 #include "lapis/supervisor/birth.hpp"
+#include "lapis/supervisor/client.hpp"
 #include "lapis/supervisor/control_server.hpp"
 #include "lapis/supervisor/session_service_launcher.hpp"
 
@@ -134,6 +135,34 @@ std::string internal_stop_request(const SupervisorRuntime& runtime) {
     return {bytes.constData(), static_cast<std::size_t>(bytes.size())};
 }
 
+std::string control_action(const std::string& request) {
+    if (request.empty() || request.size() > max_control_bytes)
+        return {};
+    QJsonParseError parse{};
+    const auto document = QJsonDocument::fromJson(
+        QByteArray::fromRawData(request.data(), static_cast<qsizetype>(request.size())), &parse);
+    if (parse.error != QJsonParseError::NoError || !document.isObject())
+        return {};
+    const auto root = document.object();
+    if (root.value(QStringLiteral("version")).toInt() != 1 ||
+        !root.value(QStringLiteral("action")).isString())
+        return {};
+    return root.value(QStringLiteral("action")).toString().toStdString();
+}
+
+bool valid_status_request(const std::string& request) {
+    if (request.empty() || request.size() > max_control_bytes)
+        return false;
+    QJsonParseError parse{};
+    const auto document = QJsonDocument::fromJson(
+        QByteArray::fromRawData(request.data(), static_cast<qsizetype>(request.size())), &parse);
+    if (parse.error != QJsonParseError::NoError || !document.isObject())
+        return false;
+    const auto root = document.object();
+    return root.size() == 2 && root.value(QStringLiteral("version")).toInt() == 1 &&
+           root.value(QStringLiteral("action")).toString() == QLatin1String("status");
+}
+
 void stop_runtime(const std::unique_ptr<SupervisorRuntime>& runtime) noexcept {
     if (!runtime)
         return;
@@ -188,6 +217,16 @@ int main(int argc, char** argv) {
             arguments.control_endpoint, [&](uid_t peer_uid, const std::string& request) {
                 if (peer_uid != ::geteuid())
                     return encode_birth_rejected();
+                const auto action = control_action(request);
+                if (action == "status" && valid_status_request(request)) {
+                    return encode_status_reply(registry->state(),
+                                               runtime && runtime->child_pid() > 0);
+                }
+                if (action == "stop") {
+                    if (!runtime)
+                        return encode_control_reply(ControlReplyStatus::rejected);
+                    return runtime->control(peer_uid, request);
+                }
                 if (runtime)
                     return encode_birth_rejected();
                 // A convergence failure deliberately retains its stopped slot: this

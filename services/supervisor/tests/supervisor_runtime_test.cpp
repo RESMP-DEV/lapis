@@ -383,7 +383,15 @@ std::string receive_reply(int descriptor) {
     require(::poll(&wait, 1, 2000) == 1, "control reply arrives");
     const auto count = ::read(descriptor, bytes.data(), bytes.size());
     require(count > 0, "control reply is nonempty");
-    return std::string{bytes.data(), static_cast<std::size_t>(count)};
+    const std::string frame{bytes.data(), static_cast<std::size_t>(count)};
+    require(frame.size() >= 4, "control reply has a frame header");
+    const auto length = (static_cast<unsigned>(static_cast<unsigned char>(frame[0])) << 24U) |
+                        (static_cast<unsigned>(static_cast<unsigned char>(frame[1])) << 16U) |
+                        (static_cast<unsigned>(static_cast<unsigned char>(frame[2])) << 8U) |
+                        static_cast<unsigned>(static_cast<unsigned char>(frame[3]));
+    require(length <= max_control_bytes && frame.size() == static_cast<std::size_t>(length) + 4,
+            "control reply has one bounded frame");
+    return frame.substr(4);
 }
 
 void strict_local_server() {
