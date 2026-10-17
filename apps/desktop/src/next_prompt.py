@@ -94,6 +94,16 @@ METERED = (
 CONVERSATION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 CONTEXT_CHARS = 24000
 RECENT_HOURS = 6
+# Context arms, compared live (each guess records its arm): the conversation
+# alone; with the person's earlier messages in it; with how they answered
+# similar replies before; or with an instruction to find the reply's weakest
+# claim. An offline replay (Oct 16) could not tell them apart.
+CONTEXT_ARMS = ("base", "thread", "retrieval", "evidence")
+EARLIER_MESSAGES = 25
+RETRIEVED = 6
+INDEX_DAYS = 60
+INDEX_SECONDS = 3.0
+INDEX_NAME = "next_prompt_pairs.json"
 
 
 def whole_note(text):
@@ -335,12 +345,21 @@ def command_context(arguments):
         return {"error": "no transcript"}
     turns = turns_of(arguments.cli, path)
     prompts = [t for t in turns if t["role"] == "person"]
+    shown = history(turns)
     result = {
         "conversation": os.path.basename(path)[: -len(".jsonl")],
         "turn": len(prompts),
-        "turns": history(turns),
+        "turns": shown,
         "recent": recent_prompts(path),
     }
+    # The person's messages from before the turns shown (the thread arm).
+    earlier = [
+        clip(t["text"], 220)
+        for t in turns[: len(turns) - len(shown)]
+        if t["role"] == "person"
+    ][-EARLIER_MESSAGES:]
+    if earlier:
+        result["earlier"] = earlier
     # What the person sent for an earlier offer, to compare with the guess.
     answered = getattr(arguments, "answered", -1)
     if 0 <= answered < len(prompts):
@@ -425,6 +444,124 @@ def command_sample(arguments):
     return {"eligible": len(eligible), "items": items}
 
 
+WORD = re.compile(r"[a-z0-9]{3,}")
+
+
+def transcript_pairs(cli, path):
+    """(time, reply tail, the person's answer) for each answered agent turn."""
+    turns = turns_of(cli, path)
+    return [
+        [
+            turn.get("time") or "",
+            clip(turns[i - 1]["text"], 600)[-600:],
+            clip(turn["text"], 400),
+        ]
+        for i, turn in enumerate(turns)
+        if i
+        and turn["role"] == "person"
+        and turns[i - 1]["role"] != "person"
+        and not turn["text"].lstrip().startswith("/")
+    ]
+
+
+def pair_index(folder, now=None, budget=INDEX_SECONDS):
+    """Past exchanges on this Mac, cached in `folder` and brought up to date
+    within `budget` seconds a call, newest transcripts first."""
+    now = now or time.time()
+    path = os.path.join(folder, INDEX_NAME)
+    try:
+        with open(path) as stream:
+            index = json.load(stream)
+        if not isinstance(index.get("files"), dict):
+            raise ValueError
+    except (OSError, ValueError, AttributeError):
+        index = {"files": {}}
+    found = {}
+    cutoff = now - INDEX_DAYS * 86400
+    claude = glob.glob(os.path.join(claude_home(), "projects", "*", "*.jsonl"))
+    codex = glob.glob(
+        os.path.join(codex_home(), "sessions", "*", "*", "*", "rollout-*.jsonl")
+    )
+    for cli, paths in (("claude", claude), ("codex", codex)):
+        for name in paths:
+            try:
+                stamp = os.path.getmtime(name)
+            except OSError:
+                continue
+            if stamp >= cutoff:
+                found[name] = (cli, stamp)
+    files = {k: v for k, v in index["files"].items() if k in found}
+    started = time.time()
+    changed = False
+    for name, (cli, stamp) in sorted(found.items(), key=lambda f: -f[1][1]):
+        if files.get(name, {}).get("mtime") == stamp:
+            continue
+        if time.time() - started > budget:
+            break
+        interactive = (
+            claude_interactive(name)
+            if cli == "claude"
+            else codex_interactive(codex_meta(name))
+        )
+        pairs = transcript_pairs(cli, name) if interactive else []
+        files[name] = {"mtime": stamp, "pairs": pairs}
+        changed = True
+    if changed or len(files) != len(index["files"]):
+        temporary = path + ".tmp"
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w") as stream:
+            json.dump({"files": files}, stream)
+        os.replace(temporary, path)
+    return files
+
+
+def retrieve(files, reply, skip="", k=RETRIEVED):
+    """The k past exchanges whose agent reply best matches `reply` (BM25),
+    leaving out the conversation in `skip` (its own messages are the thread
+    arm's)."""
+    documents = [
+        pair
+        for name, entry in files.items()
+        if not (skip and os.path.basename(name).endswith(skip + ".jsonl"))
+        for pair in entry.get("pairs", [])
+    ]
+    query = set(WORD.findall(reply[-1500:].lower()))
+    if not documents or not query:
+        return []
+    counts = [{} for _ in documents]
+    frequency = {}
+    for count, pair in zip(counts, documents):
+        for word in WORD.findall(pair[1].lower()):
+            count[word] = count.get(word, 0) + 1
+        for word in count:
+            frequency[word] = frequency.get(word, 0) + 1
+    average = sum(sum(c.values()) for c in counts) / len(counts) or 1
+    total = len(documents)
+
+    def score(count):
+        length = sum(count.values())
+        value = 0.0
+        for word in query & count.keys():
+            idf = math.log(
+                1 + (total - frequency[word] + 0.5) / (frequency[word] + 0.5)
+            )
+            f = count[word]
+            value += idf * f * 2.2 / (f + 1.2 * (0.25 + 0.75 * length / average))
+        return value
+
+    ranked = sorted(range(total), key=lambda i: -score(counts[i]))[:k]
+    return [documents[i] for i in ranked if score(counts[i]) > 0]
+
+
+EVIDENCE = """
+
+Before writing, read the agent's latest reply as this person would: which claim
+or proposal rests on an assumption, an unmeasured number or an unchecked
+source, and what state of the world (machines, people, inboxes, money, time)
+it depends on. When one of those decides what they should send, ask for that
+measurement or state instead of approving."""
+
+
 def priors():
     for path in ("~/.claude/CLAUDE.md", "~/.codex/AGENTS.md"):
         try:
@@ -507,7 +644,7 @@ def mark_taken(text, taken):
     return "[took a guess] " + text if " ".join(text.split()) in taken else text
 
 
-def render(bundle, fence=None):
+def render(bundle, fence=None, arm="base", retrieved=()):
     """The user turn for the model: this agent, the others, and the time.
 
     Screens, transcripts and titles come from agents and their tools, so each
@@ -558,6 +695,33 @@ def render(bundle, fence=None):
         ]
     if bundle.get("screen"):
         lines += ["Its terminal now:", block("screen", bundle["screen"])]
+    if isinstance(bundle.get("returned_minutes"), int):
+        lines.append(
+            "Its latest reply came {} minutes ago; the person has just come back"
+            " to it.".format(int(bundle["returned_minutes"]))
+        )
+    if arm == "thread" and context.get("earlier"):
+        lines += [
+            "Their earlier messages in this conversation, before the turns below:",
+            block(
+                "earlier",
+                "\n".join("- " + t.replace("\n", " ") for t in context["earlier"]),
+            ),
+        ]
+    if arm == "retrieval" and retrieved:
+        lines += [
+            "How they answered agents in similar past situations:",
+            block(
+                "similar",
+                "\n".join(
+                    '- the agent ended: "{}"\n  they sent: "{}"'.format(
+                        reply[-280:].replace("\n", " "),
+                        sent[:220].replace("\n", " "),
+                    )
+                    for _, reply, sent in retrieved
+                ),
+            ),
+        ]
     lines.append("This conversation, oldest first:")
     for turn in context.get("turns", []):
         person = turn["role"] == "person"
@@ -809,7 +973,9 @@ def spoken(text):
     return words
 
 
-def predict(bundle, model, effort="", claude="claude", endpoint="", style=""):
+def predict(
+    bundle, model, effort="", claude="claude", endpoint="", style="", arm="base"
+):
     if style == "personal":
         # The fine-tuned model writes the message itself: no JSON, no
         # probability, no judgement.
@@ -829,14 +995,28 @@ def predict(bundle, model, effort="", claude="claude", endpoint="", style=""):
             "ms": int((time.time() - started) * 1000),
         }
     system = SYSTEM.format(priors=priors(), categories=", ".join(CATEGORIES))
+    if arm == "evidence":
+        system += EVIDENCE
     started = time.time()
+    retrieved = []
+    if arm == "retrieval":
+        turns = bundle.get("context", {}).get("turns", [])
+        reply = turns[-1]["text"] if turns and turns[-1]["role"] != "person" else ""
+        try:
+            files = pair_index(os.path.dirname(os.path.abspath(__file__)))
+        except OSError:
+            files = {}
+        retrieved = retrieve(
+            files, reply, bundle.get("context", {}).get("conversation", "")
+        )
+    prompt = render(bundle, arm=arm, retrieved=retrieved)
     last = None
     for _ in range(2):
         try:
             if endpoint:
-                text, envelope = ask_endpoint(system, render(bundle), endpoint, model)
+                text, envelope = ask_endpoint(system, prompt, endpoint, model)
             else:
-                text, envelope = ask(system, render(bundle), model, effort, claude)
+                text, envelope = ask(system, prompt, model, effort, claude)
         except (
             RuntimeError,
             OSError,
@@ -851,6 +1031,9 @@ def predict(bundle, model, effort="", claude="claude", endpoint="", style=""):
             result = parse(text)
             result["ms"] = int((time.time() - started) * 1000)
             result["cost"] = envelope.get("total_cost_usd", 0)
+            result["context_arm"] = arm
+            if arm == "retrieval":
+                result["retrieved"] = len(retrieved)
             return result
         except (ValueError, KeyError, TypeError, AttributeError) as error:
             last = error
@@ -866,6 +1049,7 @@ def command_predict(arguments):
         arguments.claude,
         arguments.endpoint,
         arguments.style,
+        arguments.context_arm,
     )
 
 
@@ -894,6 +1078,7 @@ def main(argv=None):
     predict_mode.add_argument("--endpoint", default="")
     # "personal": the local fine-tuned model's own plain-text format.
     predict_mode.add_argument("--style", default="")
+    predict_mode.add_argument("--context-arm", choices=CONTEXT_ARMS, default="base")
     arguments = parser.parse_args(argv)
     handler = {
         "context": command_context,

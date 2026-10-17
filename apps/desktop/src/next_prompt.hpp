@@ -46,6 +46,17 @@ struct NextPromptSettings {
     // with what the person then typed, so prediction can be measured apart
     // from acceptance (a shown guess shapes what is sent).
     double holdoutShare{0.1};
+    // Arms compared live, each picked at random and recorded on the guess:
+    // the context the helper adds (`contextArms`; see next_prompt.py), a
+    // stricter floor for half the guesses (`experimentMinConfidence`, when
+    // above `minConfidence`), and, when the person comes back to an agent
+    // whose guess is at least `returnMinutes` old, a fresh guess for
+    // `returnShare` of those returns.
+    QStringList contextArms{QStringLiteral("base"), QStringLiteral("thread"),
+                            QStringLiteral("retrieval"), QStringLiteral("evidence")};
+    double experimentMinConfidence{0.4};
+    int returnMinutes{30};
+    double returnShare{0.5};
     bool operator==(const NextPromptSettings&) const = default;
 };
 [[nodiscard]] NextPromptSettings parse_next_prompt(const QJsonValue& value);
@@ -189,6 +200,7 @@ class NextPrompt final : public QObject {
         QString said;     // the agent's last reply, clipped to said_limit
         double p{};       // the model's probability for it
         bool hidden{};    // held out: made, never shown
+        qint64 made_ms{}; // when it was made; 0 for a restored offer
     };
     // The last guess made for an agent, to tell a repeat (see turnFinished).
     struct Previous {
@@ -205,7 +217,12 @@ class NextPrompt final : public QObject {
     QStringList taken_;
     QSet<QString> deferred_;
     QSet<QString> pending_show_;
-    void run(const QString& id, bool force);
+    // `returned`: minutes since the stale guess this run replaces, when the
+    // person came back to the agent (see focused); -1 otherwise.
+    void run(const QString& id, bool force, int returned = -1);
+    // A return to an agent whose guess is old: the return arm, once per offer.
+    void returned(const QString& id);
+    QSet<QString> returns_decided_;
     // The last offer shown to an agent, until the prompt the person sends
     // after it is read from the conversation.
     struct Awaiting {
@@ -228,12 +245,21 @@ class NextPrompt final : public QObject {
     void failed(const QString& id, const Agent& agent, Stage stage, const QString& why,
                 const QString& kind = {});
     void succeeded();
-    void predict(const QString& id, quint64 generation, const QJsonObject& context);
+    // The arms one guess was made under, recorded with it.
+    struct Arms {
+        QString arm; // "control", "model" or "local"
+        QString model;
+        QString context;  // a contextArms entry
+        double floor{};   // the minimum confidence it was offered at
+        int returned{-1}; // see run()
+    };
+    void predict(const QString& id, quint64 generation, const QJsonObject& context,
+                 int returned = -1);
     void offer(const QString& id, const Agent& agent, const QJsonObject& context,
-               const QJsonObject& answer, const QString& arm, const QString& model);
-    // Why an offer went unused: the next turn's guess replaced it, or the
-    // setting was turned off.
-    enum class Withdrawal : std::uint8_t { next_turn, off };
+               const QJsonObject& answer, const Arms& arms);
+    // Why an offer went unused: the next turn's guess replaced it, the person
+    // came back and it was guessed again, or the setting was turned off.
+    enum class Withdrawal : std::uint8_t { next_turn, returned, off };
     void withdraw(const QString& id, Withdrawal why);
     void recordWithdrawn(const Offer& offer, const QString& id, const char* reason) const;
     // The conversation's arguments for the helper's context mode.

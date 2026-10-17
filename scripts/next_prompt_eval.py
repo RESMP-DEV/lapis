@@ -365,6 +365,11 @@ def acceptance(events):
                 shown=bool(e.get("shown")),
                 hidden=bool(e.get("hidden")),
                 arm=str(e.get("arm") or "control"),
+                context_arm=str(e.get("context_arm") or "none"),
+                floor=e.get("min_confidence"),
+                returned=e.get("returned_minutes"),
+                agent=e.get("agent", ""),
+                t=e.get("t", ""),
                 p=float(candidates[0].get("p", 0) or 0),
                 top_scored=top_scored,
                 category=e.get("category") or "other",
@@ -479,6 +484,70 @@ def acceptance(events):
             "seen": len(arm_seen),
             "acceptance": rate([o for o in arm_seen if o["used"]], arm_seen),
         }
+    # The live arms (see NextPromptSettings): context, floor and return.
+    contexts = defaultdict(list)
+    floors = defaultdict(list)
+    for o in offers.values():
+        if "shown" in o:
+            contexts[o["context_arm"]].append(o)
+            floors[str(o["floor"])].append(o)
+    report["by_context_arm"] = {}
+    for arm, part in sorted(contexts.items()):
+        arm_seen = [o for o in part if o["shown"] and o["seen"]]
+        report["by_context_arm"][arm] = {
+            "predicted": len(part),
+            "seen": len(arm_seen),
+            "acceptance": rate([o for o in arm_seen if o["used"]], arm_seen),
+            "outcome_own": sum(
+                1 for o in part if (o["outcome"] or {}).get("result") == "own"
+            ),
+        }
+    report["by_floor"] = {}
+    for floor, part in sorted(floors.items()):
+        floor_seen = [o for o in part if o["shown"] and o["seen"]]
+        floor_used = [o for o in floor_seen if o["used"]]
+        report["by_floor"][floor] = {
+            "predicted": len(part),
+            "offered": sum(1 for o in part if o["shown"]),
+            "seen": len(floor_seen),
+            "used": len(floor_used),
+            "acceptance": rate(floor_used, floor_seen),
+            "used_per_guess": rate(floor_used, part),
+        }
+    # A return keeps the old guess or guesses again; either way, was the
+    # guess then on screen used?
+    reguesses = sorted(
+        (o for o in offers.values() if isinstance(o.get("returned"), int)),
+        key=lambda o: o["t"],
+    )
+    returns = {"keep": [0, 0], "reguess": [0, 0, 0]}
+    for e in events:
+        if e.get("event") != "return" or e.get("arm") not in returns:
+            continue
+        counts = returns[e["arm"]]
+        counts[0] += 1
+        if e["arm"] == "keep":
+            counts[1] += bool((offers.get(e.get("offer")) or {}).get("used"))
+            continue
+        fresh = next(
+            (
+                o
+                for o in reguesses
+                if o["agent"] == e.get("agent") and o["t"] >= e.get("t", "")
+            ),
+            None,
+        )
+        if fresh:
+            counts[1] += 1
+            counts[2] += bool(fresh["used"])
+    report["returns"] = {
+        "keep": {"returns": returns["keep"][0], "used": returns["keep"][1]},
+        "reguess": {
+            "returns": returns["reguess"][0],
+            "guessed": returns["reguess"][1],
+            "used": returns["reguess"][2],
+        },
+    }
     groups = defaultdict(list)
     for o in seen:
         groups[o["category"]].append(o)

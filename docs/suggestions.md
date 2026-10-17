@@ -52,6 +52,30 @@ behind an OpenAI-compatible endpoint (for example
 `model` or `local`) and `model` are in `next_prompt.jsonl`, so arms can be
 compared on what you then sent. Set `experiment` to 0 to always use `model`.
 
+Three more arms run on every guess, each drawn at random and logged with it:
+
+- **Context** (`contextArms`, default all four): `base` sends the conversation
+  as above; `thread` adds your earlier messages in the conversation, from
+  before the turns shown; `retrieval` adds the six past exchanges on this Mac
+  whose agent reply best matches this one, with what you sent to each; and
+  `evidence` tells the model to look for the reply's unmeasured claim and ask
+  for it. Past exchanges come from the last 60 days of transcripts, indexed in
+  the runtime folder (owner-only, `next_prompt_pairs.json`) a few seconds of
+  work per guess until it is complete. Logged as `context_arm`.
+- **Floor**: half the guesses use `experimentMinConfidence` (default 0.4) as
+  their floor instead of `minConfidence`, when it is higher. The floor a guess
+  was offered against is its `min_confidence`.
+- **Return**: when you show an agent whose guess is at least `returnMinutes`
+  old (default 30) and was not typed, `returnShare` (default 0.5) of those
+  returns guess again, telling the model how long it has been; the rest keep
+  the old guess. Each is logged as a `return` event with its `arm` (`reguess`
+  or `keep`). Set `returnShare` to 0 to keep old guesses.
+
+`next_prompt_eval.py log` reports these as `by_context_arm`, `by_floor` and
+`returns`. An offline replay of 232 past guesses (Oct 16) could not tell the
+context arms apart; guessing again after a return was the largest effect it
+found.
+
 A shown guess shapes what you send (you can take it), so how often you take
 guesses is not how well they predict you. `holdout` (default 0.1, at most 0.5)
 of guesses are made and logged but never shown, and compared with what you then
