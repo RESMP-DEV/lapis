@@ -148,5 +148,5 @@ python3 scripts/next_prompt_eval.py log --judge    # the ones you passed over, a
 python3 scripts/next_prompt_eval.py replay --machine HOST   # the same prediction on past transcripts
 ```
 
-The design and the measurements behind the defaults are in
-[architecture](architecture.md#predicting-the-next-prompt-september-29).
+The feature remains optional and is governed by
+[architecture](architecture.md#deferred-work).

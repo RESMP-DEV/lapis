@@ -1,0 +1,73 @@
+{
+  "schema": "lapis.architecture-trim/1",
+  "recorded_at": "2026-10-17T13:51:51Z",
+  "agent": "Codex",
+  "source": {
+    "base_revision": "44cbcdd053066504fb95cf565f9062000cda7f83b",
+    "branch": "work/architecture-trim",
+    "source_dirty": true,
+    "platform": "macOS arm64"
+  },
+  "scope": "Replaced the accumulated architecture work log with the active product scope, ownership boundaries, architecture decisions, executable delivery order, release gates, open choices, verification discipline, and durable contracts. Updated live documentation references. No runtime behavior changed.",
+  "change": {
+    "architecture_before": {
+      "lines": 5987,
+      "bytes": 436771,
+      "sha256": "1773c1bf7789bbc1b87636cfe19b2a005aa5eca33f69d117e52da4d3f1dc7654"
+    },
+    "architecture_after": {
+      "lines": 242,
+      "bytes": 16926,
+      "sha256": "875b52e60c3dafe91ef0ef120cc4357d3711c22183e817eaf5025549e475b2ba"
+    },
+    "live_reference_files_updated": [
+      "CONTRIBUTING.md",
+      "adapters/codex/README.md",
+      "docs/status.md",
+      "docs/suggestions.md",
+      "docs/usage.md"
+    ],
+    "historical_material": "Superseded dated narratives remain in Git history at the base revision; existing evidence receipts were not rewritten."
+  },
+  "validation": [
+    {
+      "name": "local-markdown-links-and-fragments",
+      "command": "Python audit of repository Markdown relative paths and heading fragments",
+      "exit_code": 0,
+      "result": "All local Markdown paths and fragments resolve."
+    },
+    {
+      "name": "diff-whitespace",
+      "command": "git diff --check HEAD",
+      "exit_code": 0,
+      "result": "No whitespace errors."
+    },
+    {
+      "name": "repository-quality",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "source_revision": "44cbcdd053066504fb95cf565f9062000cda7f83b",
+      "source_dirty": true,
+      "result": "source-revision, source-status, git-diff-check, ruff-check, ruff-format-check, python-unittests, and aggregate quality passed."
+    },
+    {
+      "name": "generated-quality-receipt",
+      "command": "jq . build/reports/quality/receipt.json",
+      "exit_code": 0,
+      "result": "Valid JSON with aggregate passed=true."
+    }
+  ],
+  "failed_attempts": [
+    {
+      "attempt": "first local Markdown fragment audit",
+      "result": "The one-off checker raised IndexError because its regex referenced a nonexistent capture group.",
+      "repair": "Corrected the checker and reran it over the same repository Markdown set; it exited 0."
+    }
+  ],
+  "non_claims": [
+    "This is a documentation and reference consolidation; it does not implement the supervisor client, launchd registration, package update, account qualification, workload qualification, or any runtime behavior.",
+    "The concise architecture does not transfer old dated evidence to the new source revision; qualification claims remain tied to their original receipts and revisions.",
+    "The ignored generated quality receipt is execution evidence for this dirty branch, not a candidate or release qualification.",
+    "Historical narratives are intentionally no longer duplicated in the live plan; Git history and evidence receipts remain the retrieval paths."
+  ]
+}

@@ -95,5 +95,6 @@ not reported as a newly spent reset. Expired, settled journals are reclaimed und
 unrecognized records are never evicted. Corrupt, full or unwritable journals
 refuse new operations. Keep the private runtime `limit-resets/` records when recovering
 or reinstalling; deleting a pending record discards the protection against replay.
-The [architecture contract](architecture.md#saved-limit-resets-september-29)
-describes these bounds and the remaining live qualification.
+[Architecture](architecture.md#storage-credentials-and-diagnostics)
+describes these bounds; [status](status.md#components) records the remaining
+live qualification.
