@@ -75,19 +75,20 @@ class DecisionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
             cwd = home / "fixture"
+            marker = cwd / "hook-ran.marker"
             trust_fixture_directory(home, cwd)
-            write_fixture_hook(home)
+            write_fixture_hook(home, cwd)
             config = tomllib.loads((home / "config.toml").read_text())
             self.assertEqual(
                 config["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
-                "/bin/sh -c 'printf x >> hook-ran.marker'",
+                f"/bin/sh -c 'printf x >> {marker}'",
             )
 
     def test_hook_inventory_summary_accepts_only_fixture_declaration(self):
         hook = {
             "eventName": "userPromptSubmit",
             "handlerType": "command",
-            "command": "/bin/sh -c 'printf x >> hook-ran.marker'",
+            "command": "/bin/sh -c 'printf x >> /fixture/hook-ran.marker'",
             "enabled": True,
             "source": "user",
             "trustStatus": "untrusted",

@@ -18,7 +18,7 @@
     "adapter_qualified_digest_added_in_same_change": true
   },
   "live_result": {
-    "recorded_at": "2026-10-18T14:43:24.343988+00:00",
+    "recorded_at": "2026-10-18T14:56:53.460811+00:00",
     "passed": true,
     "configured_model": "zai,glm-5.3",
     "configured_provider": "CCR on loopback port 3456",
@@ -47,6 +47,7 @@
         "errors": 0
       },
       "fixture_trust_established": true,
+      "marker_path_scope": "Absolute path inside the disposable fixture cwd; deleted with the temporary fixture.",
       "runs_by_case": {
         "input": {
           "marker_bytes_before": 1,
@@ -125,11 +126,11 @@
     },
     {
       "path": "scripts/check_codex_attention.py",
-      "sha256": "2eb1ea1151e9931955fbfd615a87a8b25dfc6c46f00f0cd8ceea654be3ed5d28"
+      "sha256": "6bc83a75a908183a45bf701b231e76a7618effc90d28cbec74f033d2ecaf4efc"
     },
     {
       "path": "scripts/tests/test_check_codex_attention.py",
-      "sha256": "74427903d6b6d9ce9f32f55134862cc783ef48892034905e4ff6698cd6812cde"
+      "sha256": "15f0387cd0c1361153d0efb6437f9a40bf9b40fa1cd9a0acd7b4123012cc02c3"
     },
     {
       "path": "evidence/codex-hooks-surface.json",

@@ -70,7 +70,9 @@ def hook_inventory_summary(result):
     if (
         hook.get("eventName") != "userPromptSubmit"
         or hook.get("handlerType") != "command"
-        or hook.get("command") != "/bin/sh -c 'printf x >> hook-ran.marker'"
+        or not isinstance(hook.get("command"), str)
+        or not hook["command"].startswith("/bin/sh -c 'printf x >> /")
+        or not hook["command"].endswith("/hook-ran.marker'")
         or hook.get("enabled") is not True
     ):
         raise RuntimeError("Unexpected disposable fixture hook declaration")
@@ -346,7 +348,7 @@ def trust_fixture_directory(home, cwd):
         )
 
 
-def write_fixture_hook(home):
+def write_fixture_hook(home, cwd):
     """Add one harmless hook to the already-created disposable fixture home."""
     with (home / "config.toml").open("a") as config:
         config.write(
@@ -354,7 +356,7 @@ def write_fixture_hook(home):
             "[[hooks.UserPromptSubmit]]\n"
             "[[hooks.UserPromptSubmit.hooks]]\n"
             'type = "command"\n'
-            "command = \"/bin/sh -c 'printf x >> hook-ran.marker'\"\n"
+            f"command = \"/bin/sh -c 'printf x >> {cwd / 'hook-ran.marker'}'\"\n"
             "timeout = 5\n"
         )
 
@@ -645,7 +647,7 @@ async def run(args, receipt):
         cwd.mkdir()
         trust_fixture_directory(home, cwd)
         if args.with_hooks:
-            write_fixture_hook(home)
+            write_fixture_hook(home, cwd)
         environment = {
             **os.environ,
             "CODEX_HOME": str(home),
@@ -778,7 +780,7 @@ def main():
     parser.add_argument(
         "--with-hooks",
         action="store_true",
-        help="Add one disposable UserPromptSubmit marker hook and require owner-scoped delivery",
+        help="Add one disposable UserPromptSubmit marker hook and require pre-attached delivery",
     )
     parser.add_argument("--case", choices=("input", "approval", "both"), default="both")
     parser.add_argument(
