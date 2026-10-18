@@ -57,6 +57,68 @@ def matches(message, method, thread, *, turn=None, request_id=None):
     return True
 
 
+def hook_inventory_summary(result):
+    """Validate and summarize hooks/list without retaining private source paths."""
+    data = result.get("data")
+    if not isinstance(data, list) or len(data) != 1:
+        raise RuntimeError("Unexpected hooks/list entry count")
+    entry = data[0]
+    hooks = entry.get("hooks")
+    if not isinstance(hooks, list) or len(hooks) != 1:
+        raise RuntimeError("Expected exactly one disposable fixture hook")
+    hook = hooks[0]
+    if (
+        hook.get("eventName") != "userPromptSubmit"
+        or hook.get("handlerType") != "command"
+        or not isinstance(hook.get("command"), str)
+        or not hook["command"].startswith("/bin/sh -c 'printf x >> /")
+        or not hook["command"].endswith("/hook-ran.marker'")
+        or hook.get("enabled") is not True
+    ):
+        raise RuntimeError("Unexpected disposable fixture hook declaration")
+    for name in ("warnings", "errors"):
+        if not isinstance(entry.get(name), list):
+            raise RuntimeError("Invalid disposable hook inventory diagnostics")
+    return {
+        "entries": 1,
+        "handlers": 1,
+        "event": hook.get("eventName"),
+        "handler_type": hook.get("handlerType"),
+        "source_origin": hook.get("source"),
+        "trust_status": hook.get("trustStatus"),
+        "warnings": len(entry["warnings"]),
+        "errors": len(entry["errors"]),
+    }
+
+
+def completed_fixture_hook(client, thread, turn):
+    """Find one fixture hook run with exact thread/turn identity and completion."""
+    diagnostic = ROOT / "build" / "codex-attention" / "hook-runs.json"
+    diagnostic.parent.mkdir(parents=True, exist_ok=True)
+    diagnostic.write_text(json.dumps(client.hook_runs, indent=2) + "\n")
+    statuses = [
+        event.get("params", {}).get("run", {}).get("status")
+        for event in client.hook_runs
+        if event.get("method") in ("hook/started", "hook/completed")
+        and event.get("params", {}).get("threadId") == thread
+        and event.get("params", {}).get("turnId") == turn
+    ]
+    if "running" not in statuses or "completed" not in statuses:
+        raise RuntimeError("Fixture hook did not start and complete with turn identity")
+    return {
+        "thread_identity": True,
+        "turn_identity": True,
+        "started": True,
+        "completed": True,
+        "attention_authority": False,
+    }
+
+
+def stage(receipt, name):
+    """Record sanitized progress so a timeout localizes without exposing payloads."""
+    receipt["stage"] = name
+
+
 class RpcError(RuntimeError):
     """Content-free source RPC error for capability probes."""
 
@@ -76,6 +138,7 @@ class Client:
         self.pending = {}
         self.event_boundaries = set()
         self.events = asyncio.Queue(maxsize=1024)
+        self.hook_runs = []
         self.failure = None
         self.task = asyncio.create_task(self.read())
 
@@ -84,6 +147,10 @@ class Client:
             while True:
                 message = await self.transport.receive_json()
                 if "method" in message:
+                    if message.get("method") in ("hook/started", "hook/completed"):
+                        self.hook_runs.append(message)
+                        if len(self.hook_runs) > 256:
+                            self.hook_runs.pop(0)
                     self.events.put_nowait(message)
                 elif message.get("id") in self.pending:
                     future = self.pending[message["id"]]
@@ -281,6 +348,19 @@ def trust_fixture_directory(home, cwd):
         )
 
 
+def write_fixture_hook(home, cwd):
+    """Add one harmless hook to the already-created disposable fixture home."""
+    with (home / "config.toml").open("a") as config:
+        config.write(
+            "\n[hooks]\n"
+            "[[hooks.UserPromptSubmit]]\n"
+            "[[hooks.UserPromptSubmit.hooks]]\n"
+            'type = "command"\n'
+            f"command = \"/bin/sh -c 'printf x >> {cwd / 'hook-ran.marker'}'\"\n"
+            "timeout = 5\n"
+        )
+
+
 def probe_configuration_arguments(base_url="http://127.0.0.1:3456/v1"):
     """Shared isolated GLM route for app-server and ordinary-TUI fixtures."""
     config = {
@@ -296,6 +376,7 @@ def probe_configuration_arguments(base_url="http://127.0.0.1:3456/v1"):
         "model_providers.lapis_probe.stream_max_retries": 0,
         "features.apps": False,
         "features.plugins": False,
+        "features.hooks": True,
         "agents.enabled": False,
         "features.multi_agent": False,
         "features.multi_agent_v2": False,
@@ -317,7 +398,10 @@ def server_arguments(binary, socket):
     ] + probe_configuration_arguments()
 
 
-async def roundtrip(case, owner, observer, connect, cwd, receipt, tui_arguments):
+async def roundtrip(
+    case, owner, observer, connect, clients, cwd, receipt, tui_arguments, require_hooks
+):
+    stage(receipt, f"{case}:thread_start")
     started = await owner.rpc(
         "thread/start",
         {
@@ -335,6 +419,36 @@ async def roundtrip(case, owner, observer, connect, cwd, receipt, tui_arguments)
     if started["model"] != MODEL or started["modelProvider"] != "lapis_probe":
         raise RuntimeError("Unexpected effective Codex model/provider")
     thread = started["thread"]["id"]
+    if require_hooks:
+        stage(receipt, f"{case}:hook_listener_setup")
+        setup = await owner.rpc(
+            "turn/start",
+            {
+                "threadId": thread,
+                "input": [{"type": "text", "text": "Reply exactly OK."}],
+            },
+        )
+        setup_turn = setup["turn"]["id"]
+
+        def setup_completed(message):
+            if matches(message, "error", thread):
+                raise RuntimeError("Hook-listener setup turn failed")
+            if not matches(message, "turn/completed", thread, turn=setup_turn):
+                return False
+            if message["params"]["turn"]["status"] != "completed":
+                raise RuntimeError("Hook-listener setup turn did not complete")
+            return True
+
+        await owner.event(setup_completed)
+        hook_listener = await connect()
+        await hook_listener.rpc(
+            "thread/resume", {"threadId": thread, "excludeTurns": True}
+        )
+    else:
+        hook_listener = None
+    marker = cwd / "hook-ran.marker"
+    marker_bytes_before = marker.stat().st_size if marker.is_file() else 0
+    stage(receipt, f"{case}:turn_start")
     params = {}
     if case == "input":
         prompt = "Use request_user_input now to ask one question with id color: choose Blue or Green. Do not use any other tool. After I answer, reply with just the selected color."
@@ -363,8 +477,10 @@ async def roundtrip(case, owner, observer, connect, cwd, receipt, tui_arguments)
             )
         return matches(message, METHODS[case], thread)
 
+    stage(receipt, f"{case}:request")
     # Wait for a real request before resume: a fresh zero-turn thread may have no rollout.
     original = await owner.event(requested)
+    stage(receipt, f"{case}:observer_resume")
     await observer.rpc("thread/resume", {"threadId": thread, "excludeTurns": True})
     request = await observer.event(requested)
     if (
@@ -373,7 +489,9 @@ async def roundtrip(case, owner, observer, connect, cwd, receipt, tui_arguments)
     ):
         raise RuntimeError("Request identity changed across clients")
     await observer.close()
+    stage(receipt, f"{case}:observer_reconnect")
     observer = await connect()
+    stage(receipt, f"{case}:resume_snapshot")
     active_view, pending = await resume_snapshot(observer, thread)
     expected_flag = "waitingOnUserInput" if case == "input" else "waitingOnApproval"
     if (
@@ -407,6 +525,7 @@ async def roundtrip(case, owner, observer, connect, cwd, receipt, tui_arguments)
     await witness.close()
     tui = Tui()
     try:
+        stage(receipt, f"{case}:tui")
         if tui_arguments:
             arguments, environment = tui_arguments
             await tui.start(
@@ -429,8 +548,15 @@ async def roundtrip(case, owner, observer, connect, cwd, receipt, tui_arguments)
                 if case == "approval"
                 else questions[0]["question"].encode()
             )
-            await tui.wait(needle)
+            try:
+                await tui.wait(needle)
+            except TimeoutError:
+                output = ROOT / "build" / "codex-attention" / "tui-timeout.output"
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_bytes(tui.output)
+                raise
         await observer.send({"id": replay["id"], "result": answer})
+        stage(receipt, f"{case}:response_completion")
         resolved = completed = False
 
         def completion(message):
@@ -448,6 +574,25 @@ async def roundtrip(case, owner, observer, connect, cwd, receipt, tui_arguments)
             return resolved and completed
 
         await observer.event(completion)
+        stage(receipt, f"{case}:reconciled_witness")
+        if require_hooks:
+            marker_bytes_after = marker.stat().st_size if marker.is_file() else 0
+            command_executed = marker_bytes_after > marker_bytes_before
+            if not command_executed:
+                raise RuntimeError("Fixture hook marker did not advance for this turn")
+            observer_events = len(hook_listener.hook_runs)
+            receipt.setdefault("hooks", {}).setdefault("runs_by_case", {})[case] = {
+                "marker_bytes_before": marker_bytes_before,
+                "marker_bytes_after": marker_bytes_after,
+                "command_executed": True,
+                "observer_events": observer_events,
+                "owner_events": len(owner.hook_runs),
+                "observer_open_during_hook": True,
+                "run": completed_fixture_hook(owner, thread, turn),
+                "observer_run": completed_fixture_hook(hook_listener, thread, turn),
+                "run_delivery": "turn-owner and pre-attached observer connections",
+            }
+            await hook_listener.close()
         witness = await connect()
         idle_view, remaining = await resume_snapshot(witness, thread)
         if remaining or idle_view["status"]["type"] != "idle":
@@ -501,6 +646,8 @@ async def run(args, receipt):
         home.mkdir()
         cwd.mkdir()
         trust_fixture_directory(home, cwd)
+        if args.with_hooks:
+            write_fixture_hook(home, cwd)
         environment = {
             **os.environ,
             "CODEX_HOME": str(home),
@@ -509,6 +656,7 @@ async def run(args, receipt):
         socket = root / "server.sock"
         arguments = server_arguments(binary, socket)
         try:
+            stage(receipt, "server_start")
             process = await asyncio.create_subprocess_exec(
                 *arguments,
                 stdin=asyncio.subprocess.DEVNULL,
@@ -544,6 +692,63 @@ async def run(args, receipt):
                 return client
 
             owner, observer = await connect(), await connect()
+            if args.with_hooks:
+                stage(receipt, "hooks_inventory")
+                inventory = await observer.rpc("hooks/list", {})
+                summary = hook_inventory_summary(inventory)
+                if summary["trust_status"] != "trusted":
+                    declaration = inventory["data"][0]["hooks"][0]
+                    stage(receipt, "hooks_fixture_trust")
+                    await owner.rpc(
+                        "config/batchWrite",
+                        {
+                            "edits": [
+                                {
+                                    "keyPath": "hooks.state",
+                                    "value": {
+                                        declaration["key"]: {
+                                            "trusted_hash": declaration["currentHash"]
+                                        }
+                                    },
+                                    "mergeStrategy": "upsert",
+                                }
+                            ],
+                            "reloadUserConfig": True,
+                        },
+                    )
+                    await owner.close()
+                    await observer.close()
+                    await stop(process)
+                    process = None
+                    socket.unlink(missing_ok=True)
+                    stage(receipt, "hooks_fixture_restart")
+                    process = await asyncio.create_subprocess_exec(
+                        *arguments,
+                        stdin=asyncio.subprocess.DEVNULL,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                        env=environment,
+                        cwd=cwd,
+                        start_new_session=True,
+                    )
+                    async with asyncio.timeout(10):
+                        while not socket.exists():
+                            if process.returncode is not None:
+                                raise RuntimeError(
+                                    "Private server exited before listening"
+                                )
+                            await asyncio.sleep(0.05)
+                    owner, observer = await connect(), await connect()
+                    inventory = await observer.rpc("hooks/list", {})
+                    summary = hook_inventory_summary(inventory)
+                    if summary["trust_status"] != "trusted":
+                        raise RuntimeError(
+                            "Disposable fixture hook trust was not established"
+                        )
+                receipt["hooks"] = {
+                    "inventory": summary,
+                    "fixture_trust_established": True,
+                }
             cases = ("input", "approval") if args.case == "both" else (args.case,)
             for case in cases:
                 observer = await roundtrip(
@@ -551,9 +756,11 @@ async def run(args, receipt):
                     owner,
                     observer,
                     connect,
+                    clients,
                     cwd,
                     receipt,
                     (arguments, environment) if args.with_tui else None,
+                    args.with_hooks,
                 )
         finally:
             await asyncio.gather(*(c.close() for c in clients), return_exceptions=True)
@@ -570,13 +777,18 @@ def main():
         help="Authorize bounded live turns via local CCR zai,glm-5.3; no fallback model",
     )
     parser.add_argument("--with-tui", action="store_true")
+    parser.add_argument(
+        "--with-hooks",
+        action="store_true",
+        help="Add one disposable UserPromptSubmit marker hook and require pre-attached delivery",
+    )
     parser.add_argument("--case", choices=("input", "approval", "both"), default="both")
     parser.add_argument(
         "--output", type=Path, default=ROOT / "build/codex-attention-live.json"
     )
     args = parser.parse_args()
     receipt = {
-        "schema": "lapis.codex-attention-live/1",
+        "schema": "lapis.codex-attention-live/2",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "passed": False,
         "configured_model": MODEL,
@@ -586,6 +798,7 @@ def main():
             "Isolated protocol/TUI fixture, not lapis service/desktop integration",
             "Resume/read boundary depends on this Codex implementation's same-thread serialization; requalify changed binaries",
             "Only blocking command approval and tool user-input requests are qualified; other request kinds remain unsupported",
+            "Hook inventory is adapter observation; hook run delivery is qualified only on the turn-owner connection and is not claimed for a separately resumed observer",
             "No claim of pixel-presentation or hardware keyboard latency",
         ],
     }
@@ -602,6 +815,8 @@ def main():
         asyncio.QueueFull,
     ) as error:
         receipt["error_type"] = type(error).__name__
+        if isinstance(error, RpcError):
+            receipt["rpc_error"] = {"method": error.method, "code": error.code}
         # Only locally constructed error messages are safe to publish.
         receipt["error"] = (
             str(error)

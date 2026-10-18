@@ -10,9 +10,12 @@ from unittest.mock import AsyncMock
 from scripts.check_codex_attention import (
     Client,
     approved_fixture,
+    completed_fixture_hook,
+    hook_inventory_summary,
     matches,
     resume_snapshot,
     trust_fixture_directory,
+    write_fixture_hook,
 )
 
 
@@ -67,6 +70,61 @@ class DecisionTests(unittest.TestCase):
             'python3 -c "',
         ):
             self.assertFalse(approved_fixture(command))
+
+    def test_disposable_hook_is_appended_only_after_config_creation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            cwd = home / "fixture"
+            marker = cwd / "hook-ran.marker"
+            trust_fixture_directory(home, cwd)
+            write_fixture_hook(home, cwd)
+            config = tomllib.loads((home / "config.toml").read_text())
+            self.assertEqual(
+                config["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
+                f"/bin/sh -c 'printf x >> {marker}'",
+            )
+
+    def test_hook_inventory_summary_accepts_only_fixture_declaration(self):
+        hook = {
+            "eventName": "userPromptSubmit",
+            "handlerType": "command",
+            "command": "/bin/sh -c 'printf x >> /fixture/hook-ran.marker'",
+            "enabled": True,
+            "source": "user",
+            "trustStatus": "untrusted",
+        }
+        entry = {"hooks": [hook], "warnings": [], "errors": []}
+        summary = hook_inventory_summary({"data": [entry]})
+        self.assertEqual(summary["handlers"], 1)
+        self.assertEqual(summary["trust_status"], "untrusted")
+        hook["command"] = "unexpected"
+        with self.assertRaisesRegex(RuntimeError, "Unexpected disposable fixture hook"):
+            hook_inventory_summary({"data": [entry]})
+
+    def test_hook_completion_requires_exact_turn_and_both_statuses(self):
+        class FixtureClient:
+            hook_runs = [
+                {
+                    "method": "hook/started",
+                    "params": {
+                        "threadId": "t",
+                        "turnId": "u",
+                        "run": {"status": "running"},
+                    },
+                },
+                {
+                    "method": "hook/completed",
+                    "params": {
+                        "threadId": "t",
+                        "turnId": "u",
+                        "run": {"status": "completed"},
+                    },
+                },
+            ]
+
+        self.assertTrue(completed_fixture_hook(FixtureClient(), "t", "u")["completed"])
+        with self.assertRaisesRegex(RuntimeError, "Fixture hook"):
+            completed_fixture_hook(FixtureClient(), "t", "other")
 
     def test_completion_requires_same_thread_turn_and_typed_request(self):
         event = {

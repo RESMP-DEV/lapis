@@ -26,6 +26,10 @@ class Observer final : public QObject {
     [[nodiscard]] QString diagnostic() const;
     [[nodiscard]] session::attention::ObservationPhase observationPhase() const;
     [[nodiscard]] QString threadId() const;
+    // Advisory only. Inventory is aggregated so source paths and hook payloads
+    // remain private; runs expose identity and classification, not hook output.
+    [[nodiscard]] QJsonObject hookInventory() const;
+    [[nodiscard]] QJsonArray hookRuns() const;
     // Display-only bounded details: method, command/cwd or questions/options.
     [[nodiscard]] QJsonObject details(const session::attention::RequestId& id) const;
     // Validate payload and complete encoded envelope, consume the exact State

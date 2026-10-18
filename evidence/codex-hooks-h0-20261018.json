@@ -1,0 +1,173 @@
+{
+  "schema": "lapis.codex-hooks-h0/1",
+  "recorded_at": "2026-10-18T14:00:00Z",
+  "passed": true,
+  "source_revision": "f7b7ce4075fc0e26d5186d26ff6a7e31cd7aaecd",
+  "source_dirty": true,
+  "source_identity": {
+    "lapis_adapter_revision": "f7b7ce4075fc0e26d5186d26ff6a7e31cd7aaecd",
+    "codex_binary_source_revision": "1f69eb089d22f7752b33c1530ac31c33e720e481",
+    "explanation": "The top-level source_revision is the lapis adapter checkout. The executable was built from the separate Codex checkout recorded in binary.source_revision."
+  },
+  "scope": "Codex H0 hook inventory plus live notification-delivery boundary. The observer sends hooks/list, exposes only aggregated inventory metadata, and strictly parses bounded hook-run notifications. The qualification harness installs one trusted disposable UserPromptSubmit marker hook and keeps a dedicated observer resumed before each hook-bearing turn; the production adapter and service install none.",
+  "binary": {
+    "sha256": "da306dac94448fa745dae78f42f049cb986fd7fb09aef34a54c10169f2e966fe",
+    "reported_version": "codex-cli 0.0.0",
+    "source_revision": "1f69eb089d22f7752b33c1530ac31c33e720e481",
+    "upstream_merge_basis": "17f29f3ff8",
+    "adapter_qualified_digest_added_in_same_change": true
+  },
+  "live_result": {
+    "recorded_at": "2026-10-18T14:56:53.460811+00:00",
+    "passed": true,
+    "configured_model": "zai,glm-5.3",
+    "configured_provider": "CCR on loopback port 3456",
+    "cases": ["input", "approval"],
+    "request_contract": {
+      "owner_delivery": true,
+      "observer_resume_replay": true,
+      "reconnect_replay": true,
+      "pending_at_serialized_read_boundary": true,
+      "resolved_while_disconnected_absent_at_boundary": true,
+      "explicit_observer_response": true,
+      "matching_resolution": true,
+      "completed_turn": true,
+      "tui_displayed_request": true
+    },
+    "request_contract_scope": "Existing harness-owned input/approval protocol round trips; hook observation is recorded separately and never receives response authority.",
+    "hooks": {
+      "inventory": {
+        "entries": 1,
+        "handlers": 1,
+        "event": "userPromptSubmit",
+        "handler_type": "command",
+        "source_origin": "user",
+        "trust_status": "trusted",
+        "warnings": 0,
+        "errors": 0
+      },
+      "fixture_trust_established": true,
+      "marker_path_scope": "Absolute path inside the disposable fixture cwd; deleted with the temporary fixture.",
+      "runs_by_case": {
+        "input": {
+          "marker_bytes_before": 1,
+          "marker_bytes_after": 2,
+          "command_executed": true,
+          "observer_events": 2,
+          "owner_events": 4,
+          "observer_open_during_hook": true,
+          "run": {
+            "thread_identity": true,
+            "turn_identity": true,
+            "started": true,
+            "completed": true,
+            "attention_authority": false
+          },
+          "observer_run": {
+            "thread_identity": true,
+            "turn_identity": true,
+            "started": true,
+            "completed": true,
+            "attention_authority": false
+          },
+          "run_delivery": "turn-owner and pre-attached observer connections"
+        },
+        "approval": {
+          "marker_bytes_before": 3,
+          "marker_bytes_after": 4,
+          "command_executed": true,
+          "observer_events": 2,
+          "owner_events": 8,
+          "observer_open_during_hook": true,
+          "run": {
+            "thread_identity": true,
+            "turn_identity": true,
+            "started": true,
+            "completed": true,
+            "attention_authority": false
+          },
+          "observer_run": {
+            "thread_identity": true,
+            "turn_identity": true,
+            "started": true,
+            "completed": true,
+            "attention_authority": false
+          },
+          "run_delivery": "turn-owner and pre-attached observer connections"
+        }
+      }
+    },
+    "cleanup_complete": true
+  },
+  "changed_file_digests": [
+    {
+      "path": "CONTRIBUTING.md",
+      "sha256": "53f25c966e30559d7cdf764171903438d7d76d17e68aef8329affe18532ce846"
+    },
+    {
+      "path": "adapters/codex/src/observer.hpp",
+      "sha256": "cb03835c590153cd93a8a7ac0005c4a2ba3f29ec08fa8ba5d798c8d11d49f625"
+    },
+    {
+      "path": "adapters/codex/src/observer.cpp",
+      "sha256": "49222b0db3bbddba03fac1094d4a7392f286e2c142a7256c0a2ded4db2ef127f"
+    },
+    {
+      "path": "adapters/codex/tests/observer_test.cpp",
+      "sha256": "11337169b390f53b49bb9479915bfa088b5e3f6a945917f67cc7288fad5a224c"
+    },
+    {
+      "path": "docs/architecture.md",
+      "sha256": "90236623a37c0fa85adc958eaa724ab12122071363d306cb77736514c0cdb554"
+    },
+    {
+      "path": "docs/status.md",
+      "sha256": "a4bb741fca3ff98366f51fbc10b9722626c4656665bed50b9ed3ae3bf109eef5"
+    },
+    {
+      "path": "scripts/check_codex_attention.py",
+      "sha256": "6bc83a75a908183a45bf701b231e76a7618effc90d28cbec74f033d2ecaf4efc"
+    },
+    {
+      "path": "scripts/tests/test_check_codex_attention.py",
+      "sha256": "15f0387cd0c1361153d0efb6437f9a40bf9b40fa1cd9a0acd7b4123012cc02c3"
+    },
+    {
+      "path": "evidence/codex-hooks-surface.json",
+      "sha256": "de61e7fe069daba241866abb45e00b2cc2a71904cef701bd19216f43725c35a9"
+    }
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/check_codex_attention.py --live-glm --with-tui --with-hooks --output build/codex-hooks-h0/codex-attention-hooks-live.json",
+      "exit_code": 0,
+      "result": "PASS; both input and approval cases passed with the hook inventory, per-case command execution, and exact delivery to the owner plus pre-attached observer."
+    },
+    {
+      "command": "python3 -m unittest scripts.tests.test_check_codex_attention -v",
+      "exit_code": 0,
+      "result": "PASS; 11 tests."
+    },
+    {
+      "command": "python3 scripts/lapis.py check --jobs 6",
+      "exit_code": 0,
+      "result": "PASS; build, 19 CTest suites, clang-format, cppcheck, and clang-tidy."
+    },
+    {
+      "command": "python3 scripts/lapis.py asan --jobs 6",
+      "exit_code": 0,
+      "result": "PASS; ASan/UBSan build and CTest suites."
+    },
+    {
+      "command": "python3 scripts/lapis.py tsan --jobs 6",
+      "exit_code": 0,
+      "result": "PASS; ThreadSanitizer build and CTest suites."
+    }
+  ],
+  "non_claims": [
+    "No production or global hook is installed, and no PermissionRequest, PreToolUse, SubagentStart, or SubagentStop handler is configured by lapis.",
+    "A pre-attached observer received exact hook events, but events missed before attachment are not recovered through thread history; first-hook attachment timing remains a boundary.",
+    "Hook inventory parsing is source-path-free and advisory; it creates no response authority.",
+    "This isolated protocol/TUI fixture does not qualify desktop GUI integration, native macOS input, provider identity beyond the configured local route, reboot behavior, or other request kinds."
+  ]
+}

@@ -118,6 +118,48 @@ Neither is a
 silent substitution. External-browser CDP attachment remains a different
 capability and does not solve profile ownership or process cleanup.
 
+## Codex native hooks
+
+Codex upstream ships a Claude Code-style hooks engine, enabled and stable. The
+surface below is source-verified at inspected checkout `1f69eb089d`, whose
+upstream merge basis is `17f29f3ff8`; upstream stable at the survey time was
+0.163.0. It is recorded in
+[codex-hooks-surface evidence](../evidence/codex-hooks-surface.json). It is
+design evidence plus the later H0 runtime boundary below: lapis installs no
+production hooks and claims no hook response capability. A separately resumed
+observer receives hook-run notifications when attached before the hook-bearing
+turn; Codex does not replay hook runs through thread history, so an observer
+that attaches after a hook has finished cannot recover that run. Hook work runs
+only on a binary that passed the Codex requalification procedure.
+
+Verified surface: twelve events (PreToolUse, PermissionRequest, PostToolUse,
+Pre/PostCompact, SessionStart/End, UserPromptSubmit, SubagentStart/Stop,
+Stop, Interrupt) with command, MCP-tool, prompt, and agent handlers, sync or
+async execution, thread or turn scope, per-event JSON schemas, and
+Claude-compatible decision JSON. PreToolUse can block a call and rewrite its
+input. PermissionRequest handlers return Allow or Deny, folded
+any-deny-wins, decided in core before Guardian or user approval UI. Stop
+carries a continuation guard, a changed-files list, and an internal
+memory-consolidation target, so a Stop hook never proves task completion;
+handler-added context spills to disk past a 2,500-token default. Since the
+surveyed 0.157.1, the app-server gained `hooks/list` (per-cwd hook inventory)
+beside the existing `hook/started`/`hook/completed` run notifications, and
+hooks additionally distribute through the plugin marketplace with
+content-hash trust.
+
+| Checkpoint | Bounded slice | Exit evidence |
+| --- | --- | --- |
+| H0: inventory and delivery boundary | On a requalified binary, the existing app-server observer enumerates bounded `hooks/list` metadata and parses `hook/started`/`hook/completed`. The qualification creates one harmless hook, attaches an observer before each hook-bearing turn, and requires exact thread/turn start/completion identity on both the turn-owner and pre-attached observer connections | A disposable-session receipt records inventory, command execution, owner and pre-attached observer delivery, the no-history-replay boundary, and cleanup; no production `[hooks]` configuration is written by lapis |
+| H1: per-session decision hook | A lapis-owned PermissionRequest command hook configured only inside the session's disposable Codex home can explore direct decision-policy integration distinct from passive observation | Live allow/deny round trips on a disposable session record any-deny folding and no-decision passthrough; no global or shared hook installation exists |
+| H2: subagent visibility | Consume pre-attached SubagentStart/SubagentStop agent identity and type as advisory signals within one Codex session | A receipt maps subagent lifecycles without promoting them to lapis sessions or claiming recovery for events missed before attachment |
+
+An approval-answering hook changes the agent's execution policy, so H1 is
+strictly per-session opt-in and never a global installation. The H0 receipt for
+binary `da306dac…` is retained in
+[Codex hooks H0 evidence](../evidence/codex-hooks-h0-20261018.json). Upstream
+has marked legacy `notify` for removal in favor of this engine. These
+checkpoints do not displace the delivery order above.
+
 ## Release gates
 
 **R1, process lifetime.** The GUI is not the production process owner. A
@@ -161,6 +203,7 @@ failures, and service disconnect without developer tools.
 | Credential environments | First birth requires an empty service environment | A reviewed contract must distinguish user consent, tool identity, same-UID exposure, and revoke/recovery behavior before admission |
 | Codex thread switch | Explicit proposal only | Select an exact persistent thread, rotate epoch, reconcile by exact ID, invalidate old tokens, and qualify foreign/archive recovery before UI navigation |
 | Codex external-agent import | Session-only importer and qualification probe exist | Consent, dedicated server ownership, duplicate reconciliation, launch/resume, and failure recovery must qualify before onboarding UI |
+| Codex native hooks | H0 inventory and delivery boundary are qualified; H1 per-session relay is the next candidate | A reviewed live receipt must qualify relay loss, trust and decision semantics; decision hooks are per-session opt-in and lapis never installs global hooks |
 | Native browser surfaces | W0 is an isolated engine probe; W1 begins only after R1/R4 close | Promote each checkpoint with its named runtime, input, isolation, credential, and workload receipt |
 | Performance thresholds | Existing 20/30/35 ms input budget is the only reviewed budget | Promote switch, frame, sustained-output, or memory numbers only from named candidate workloads and tails |
 
@@ -168,7 +211,8 @@ failures, and service disconnect without developer tools.
 
 The following are not release dependencies and must not displace the delivery
 order: new adapters, a provider-routing framework, a second terminal engine,
-web views, multiple windows, automatic carousel, widgets, triggers, Keychain
+web views, native Codex hook routes, multiple windows, automatic carousel,
+widgets, triggers, Keychain
 fill or Touch ID, Linux UI, and broader OS/CLI support claims. Existing
 prototype code and receipts remain valid dated observations, but no prototype
 becomes an advertised capability through this plan.
