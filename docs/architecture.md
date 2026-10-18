@@ -126,9 +126,11 @@ upstream merge basis is `17f29f3ff8`; upstream stable at the survey time was
 0.163.0. It is recorded in
 [codex-hooks-surface evidence](../evidence/codex-hooks-surface.json). It is
 design evidence plus the later H0 runtime boundary below: lapis installs no
-hooks, claims no hook response capability, and does not claim that a separately
-resumed observer receives hook-run notifications. Hook work runs only on a
-binary that passed the Codex requalification procedure.
+production hooks and claims no hook response capability. A separately resumed
+observer receives hook-run notifications when attached before the hook-bearing
+turn; Codex does not replay hook runs through thread history, so an observer
+that attaches after a hook has finished cannot recover that run. Hook work runs
+only on a binary that passed the Codex requalification procedure.
 
 Verified surface: twelve events (PreToolUse, PermissionRequest, PostToolUse,
 Pre/PostCompact, SessionStart/End, UserPromptSubmit, SubagentStart/Stop,
@@ -147,9 +149,9 @@ content-hash trust.
 
 | Checkpoint | Bounded slice | Exit evidence |
 | --- | --- | --- |
-| H0: inventory and delivery boundary | On a requalified binary, the existing app-server observer enumerates bounded `hooks/list` metadata and can parse `hook/started`/`hook/completed` if routed to it. The qualification harness also proves the current delivery scope: a harmless hook executes and its start/completion notifications reach the turn-owner connection, while the separately resumed observer receives zero | A disposable-session receipt records inventory, exact thread/turn run identity on the owner connection, observer event count, and cleanup; no production `[hooks]` configuration is written by lapis |
-| H1: per-session relay and decision hook | A lapis-owned PermissionRequest command hook configured only inside the session's disposable Codex home relays explicit decisions; this is required because the separate observer cannot passively consume owner-scoped run traffic | Live allow/deny round trips on a disposable session record any-deny folding and no-decision passthrough; no global or shared hook installation exists |
-| H2: subagent visibility | A per-session SubagentStart/SubagentStop relay reports Codex-internal agent identity and type as advisory signals | A receipt maps subagent lifecycles without promoting them to lapis sessions |
+| H0: inventory and delivery boundary | On a requalified binary, the existing app-server observer enumerates bounded `hooks/list` metadata and parses `hook/started`/`hook/completed`. The qualification creates one harmless hook, attaches an observer before each hook-bearing turn, and requires exact thread/turn start/completion identity on both the turn-owner and pre-attached observer connections | A disposable-session receipt records inventory, command execution, owner and pre-attached observer delivery, the no-history-replay boundary, and cleanup; no production `[hooks]` configuration is written by lapis |
+| H1: per-session decision hook | A lapis-owned PermissionRequest command hook configured only inside the session's disposable Codex home can explore direct decision-policy integration distinct from passive observation | Live allow/deny round trips on a disposable session record any-deny folding and no-decision passthrough; no global or shared hook installation exists |
+| H2: subagent visibility | Consume pre-attached SubagentStart/SubagentStop agent identity and type as advisory signals within one Codex session | A receipt maps subagent lifecycles without promoting them to lapis sessions or claiming recovery for events missed before attachment |
 
 An approval-answering hook changes the agent's execution policy, so H1 is
 strictly per-session opt-in and never a global installation. The H0 receipt for

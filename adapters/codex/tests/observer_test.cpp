@@ -166,6 +166,8 @@ class Source final : public QObject {
     bool empty_discovery{};
     bool fail_first_resume{};
     bool hooks_supported{true};
+    int hooks_error_code{};
+    bool malformed_hooks{};
     int replay_large_requests{};
     std::vector<QJsonObject> replay_requests;
 
@@ -202,6 +204,44 @@ class Source final : public QObject {
         }
     }
 
+    void handle_hooks_list(const QJsonValue& id, const QJsonObject& request) {
+        if (!hooks_supported || hooks_error_code != 0) {
+            send(QJsonObject{
+                {"id", id},
+                {"error", QJsonObject{{"code", hooks_error_code == 0 ? -32601 : hooks_error_code},
+                                      {"message", "no hook"}}}});
+            return;
+        }
+        if (malformed_hooks) {
+            send(QJsonObject{{"id", id}, {"result", QJsonObject{}}});
+            return;
+        }
+        require(request.value("params").toObject().isEmpty(),
+                "hooks/list must use the qualified empty parameter shape");
+        QJsonObject hook{{"key", "fixture:prompt:0:0"},
+                         {"eventName", "userPromptSubmit"},
+                         {"handlerType", "command"},
+                         {"command", "/usr/bin/true"},
+                         {"async", false},
+                         {"matcher", QStringLiteral("")},
+                         {"timeoutSec", 5},
+                         {"statusMessage", QJsonValue::Null},
+                         {"additionalContextLimit", 2500},
+                         {"sourcePath", "/fixture/config.toml"},
+                         {"source", "user"},
+                         {"pluginId", QJsonValue::Null},
+                         {"displayOrder", 0},
+                         {"enabled", true},
+                         {"isManaged", false},
+                         {"currentHash", QString(64, 'a')},
+                         {"trustStatus", "untrusted"}};
+        QJsonObject entry{{"cwd", "/fixture"},
+                          {"hooks", QJsonArray{hook}},
+                          {"warnings", QJsonArray{}},
+                          {"errors", QJsonArray{}}};
+        send(QJsonObject{{"id", id}, {"result", QJsonObject{{"data", QJsonArray{entry}}}}});
+    }
+
     void handle(const QJsonObject& request) {
         if (!request.contains(QStringLiteral("method")))
             return;
@@ -232,33 +272,7 @@ class Source final : public QObject {
                    QJsonObject{{"data", empty_discovery ? QJsonArray{}
                                                         : QJsonArray{"temporary", thread_name}}}}});
         } else if (method == QLatin1String("hooks/list")) {
-            if (!hooks_supported) {
-                send(QJsonObject{{"id", id},
-                                 {"error", QJsonObject{{"code", -32601}, {"message", "no hook"}}}});
-                return;
-            }
-            QJsonObject hook{{"key", "fixture:prompt:0:0"},
-                             {"eventName", "userPromptSubmit"},
-                             {"handlerType", "command"},
-                             {"command", "/usr/bin/true"},
-                             {"async", false},
-                             {"matcher", QJsonValue::Null},
-                             {"timeoutSec", 5},
-                             {"statusMessage", QJsonValue::Null},
-                             {"additionalContextLimit", 2500},
-                             {"sourcePath", "/fixture/config.toml"},
-                             {"source", "user"},
-                             {"pluginId", QJsonValue::Null},
-                             {"displayOrder", 0},
-                             {"enabled", true},
-                             {"isManaged", false},
-                             {"currentHash", QString(64, 'a')},
-                             {"trustStatus", "untrusted"}};
-            QJsonObject entry{{"cwd", "/fixture"},
-                              {"hooks", QJsonArray{hook}},
-                              {"warnings", QJsonArray{}},
-                              {"errors", QJsonArray{}}};
-            send(QJsonObject{{"id", id}, {"result", QJsonObject{{"data", QJsonArray{entry}}}}});
+            handle_hooks_list(id, request);
         } else if (method == QLatin1String("thread/resume") && fail_first_resume &&
                    !no_rollout_returned) {
             no_rollout_returned = true;
@@ -334,7 +348,6 @@ class Source final : public QObject {
             {"source", "user"},
             {"displayOrder", 0},
             {"status", status},
-            {"statusMessage", QJsonValue::Null},
             {"startedAt", 1},
             {"completedAt", status == QStringLiteral("running") ? QJsonValue::Null : QJsonValue(2)},
             {"durationMs", status == QStringLiteral("running") ? QJsonValue::Null : QJsonValue(1)},
@@ -789,6 +802,8 @@ void passive_hooks_are_advisory(bool hooks_supported) {
     State state{"hooks", "codex"};
     Source source;
     source.hooks_supported = hooks_supported;
+    if (!hooks_supported)
+        source.hooks_error_code = -32602;
     source.start();
     Observer observer{state};
     observer.start(source.path(), Observer::qualifiedBinarySha256());
@@ -815,6 +830,18 @@ void passive_hooks_are_advisory(bool hooks_supported) {
                            QStringLiteral("completed");
             }),
             "hook completion updates the same advisory run");
+    source.send(
+        {{"method", "turn/completed"},
+         {"params", QJsonObject{{"threadId", source.thread_name},
+                                {"turn", QJsonObject{{"id", "turn"}, {"status", "completed"}}}}}});
+    require(wait_for([&] {
+                return state.activity() == lapis::session::attention::Activity::turn_completed;
+            }),
+            "turn completion owns the authoritative activity state");
+    source.send(source.hook_event(QStringLiteral("running")));
+    pump(50);
+    require(state.activity() == lapis::session::attention::Activity::turn_completed,
+            "a late hook cannot reopen a completed turn");
     auto invalid = source.hook_event(QStringLiteral("running"));
     auto invalid_params = invalid["params"].toObject();
     auto invalid_run = invalid_params["run"].toObject();
@@ -850,6 +877,23 @@ void queued_hook_notifications_survive_reconciliation() {
     observer.stop();
 }
 
+void malformed_hook_inventory_remains_advisory() {
+    State state{"malformed-hooks", "codex"};
+    Source source;
+    source.malformed_hooks = true;
+    source.start();
+    Observer observer{state};
+    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    require(wait_for([&] { return state.ready(); }),
+            "malformed advisory inventory cannot block discovery");
+    const auto inventory = observer.hookInventory();
+    require(!inventory.value("available").toBool() &&
+                inventory.value("reason").toString() ==
+                    QStringLiteral("Codex hook inventory unavailable"),
+            "malformed inventory is explicitly unavailable");
+    observer.stop();
+}
+
 int run(int argc, char** argv) {
     QCoreApplication application(argc, argv);
     unsupported_approval_decisions_are_observed_only();
@@ -863,6 +907,7 @@ int run(int argc, char** argv) {
     unsupported_hash_survives_reconnect_until_qualified_restart();
     passive_hooks_are_advisory(true);
     passive_hooks_are_advisory(false);
+    malformed_hook_inventory_remains_advisory();
     queued_hook_notifications_survive_reconciliation();
     pending_details_budget();
     request_id_and_answer_boundaries();

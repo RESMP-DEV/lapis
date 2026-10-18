@@ -16,6 +16,7 @@
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <tuple>
 #include <utility>
 
 namespace lapis::codex {
@@ -78,6 +79,7 @@ struct HookRun {
 };
 struct HookInventory {
     bool available{};
+    QString unavailable_reason;
     int entries{};
     int handlers{};
     int warnings{};
@@ -231,8 +233,8 @@ HookRun parse_hook_run(const QJsonObject& params) {
         !one_of(result.status, {u"running", u"completed", u"failed", u"blocked", u"stopped"}))
         throw std::runtime_error("Invalid Codex hook run classification");
     const auto status_message = run.value("statusMessage");
-    if (!(status_message.isNull() ||
-          (status_message.isString() && text(status_message.toString(), 1024))))
+    if (!(status_message.isUndefined() || status_message.isNull() ||
+          (status_message.isString() && status_message.toString().toUtf8().size() <= 1024)))
         throw std::runtime_error("Invalid Codex hook status message");
     for (const auto* name : {"displayOrder", "startedAt"}) {
         const auto value = run.value(name);
@@ -269,6 +271,8 @@ QJsonObject json(const HookInventory& inventory) {
                        {"events", std::move(events)},
                        {"handlers_by_type", std::move(handlers)},
                        {"trust", std::move(trust)}};
+    if (!inventory.available)
+        result.insert("reason", inventory.unavailable_reason);
     return result;
 }
 QJsonObject json(const HookRun& run) {
@@ -282,18 +286,23 @@ QJsonObject json(const HookRun& run) {
             {"source", run.source},
             {"status", run.status}};
 }
-void parse_hook_diagnostics(const QJsonObject& entry, const char* collection, bool warnings,
+void parse_hook_diagnostics(const QJsonObject& entry, const char* collection,
                             HookInventory& inventory) {
     const auto values = entry.value(collection);
     if (!values.isArray() || values.toArray().size() > 32)
         throw std::runtime_error("Invalid Codex hook inventory diagnostics");
     for (const auto& value : values.toArray()) {
-        if (!value.isString() || !text(value.toString(), 4096))
-            throw std::runtime_error("Invalid Codex hook inventory diagnostic");
-        if (warnings)
+        if (QString::fromLatin1(collection) == QStringLiteral("warnings")) {
+            if (!value.isString() || !text(value.toString(), 4096))
+                throw std::runtime_error("Invalid Codex hook inventory warning");
             ++inventory.warnings;
-        else
-            ++inventory.errors;
+            continue;
+        }
+        const auto error = value.toObject();
+        if (!text(error.value("message").toString(), 4096) ||
+            !text(error.value("path").toString(), 4096))
+            throw std::runtime_error("Invalid Codex hook inventory error");
+        ++inventory.errors;
     }
 }
 void count_hook(const QJsonObject& hook, HookInventory& inventory) {
@@ -302,7 +311,7 @@ void count_hook(const QJsonObject& hook, HookInventory& inventory) {
     const auto trust = hook.value("trustStatus").toString();
     const auto matcher = hook.value("matcher");
     const auto plugin = hook.value("pluginId");
-    if (!text(hook.value("key").toString(), 256) ||
+    if (!text(hook.value("key").toString(), 4352) ||
         !one_of(event_name, {u"preToolUse", u"permissionRequest", u"postToolUse", u"preCompact",
                              u"postCompact", u"sessionStart", u"sessionEnd", u"userPromptSubmit",
                              u"subagentStart", u"subagentStop", u"stop", u"interrupt"}) ||
@@ -315,9 +324,9 @@ void count_hook(const QJsonObject& hook, HookInventory& inventory) {
                  u"legacyManagedConfigMdm", u"unknown"}))
         throw std::runtime_error("Invalid Codex hook inventory entry");
     if (!(matcher.isUndefined() || matcher.isNull() ||
-          (matcher.isString() && text(matcher.toString(), 1024))) ||
+          (matcher.isString() && matcher.toString().toUtf8().size() <= 1024)) ||
         !(plugin.isUndefined() || plugin.isNull() ||
-          (plugin.isString() && text(plugin.toString(), 256))))
+          (plugin.isString() && plugin.toString().toUtf8().size() <= 256)))
         throw std::runtime_error("Invalid Codex hook inventory identity");
     if (!hook.value("enabled").isBool() || !hook.value("isManaged").isBool() ||
         !hook.value("timeoutSec").isDouble() || hook.value("timeoutSec").toDouble() < 0 ||
@@ -340,8 +349,8 @@ void parse_hook_entry(const QJsonObject& entry, HookInventory& inventory) {
     if (!text(entry.value("cwd").toString(), 4096))
         throw std::runtime_error("Invalid Codex hook inventory cwd");
     ++inventory.entries;
-    parse_hook_diagnostics(entry, "warnings", true, inventory);
-    parse_hook_diagnostics(entry, "errors", false, inventory);
+    parse_hook_diagnostics(entry, "warnings", inventory);
+    parse_hook_diagnostics(entry, "errors", inventory);
     const auto hooks = entry.value("hooks");
     if (!hooks.isArray() || hooks.toArray().size() > 128)
         throw std::runtime_error("Invalid Codex hook inventory size");
@@ -599,7 +608,8 @@ class Observer::Impl final : public QObject {
         record_hook_run(run);
         // A hook is work inside the source turn, not attention authority.
         // Turn/thread notifications still own idle and turn completion.
-        if (method == "hook/started")
+        if (method == "hook/started" && state_.activity() != Activity::idle &&
+            state_.activity() != Activity::turn_completed)
             check(state_.activity(next(), Activity::working));
     }
     void apply_event(const QJsonObject& message) {
@@ -809,8 +819,9 @@ class Observer::Impl final : public QObject {
         deadline_.stop();
         if (message.contains("error")) {
             const auto error = message.value("error").toObject();
-            if (method == "hooks/list" && error.value("code").toInteger() == -32601) {
+            if (method == "hooks/list") {
                 hook_inventory_ = {};
+                hook_inventory_.unavailable_reason = "Codex hook inventory unavailable";
                 if (transport_)
                     rpc("thread/loaded/list", {{"limit", 128}});
                 return;
@@ -858,9 +869,14 @@ class Observer::Impl final : public QObject {
             QPointer<UnixWebSocket> current = transport_;
             emit owner_.initialized();
             if (alive && current && transport_ == current)
-                rpc("hooks/list", QJsonObject{{"cwds", QJsonArray{}}});
+                rpc("hooks/list", QJsonObject{});
         } else if (method == "hooks/list") {
-            hook_inventory_ = parse_hook_inventory(result);
+            try {
+                hook_inventory_ = parse_hook_inventory(result);
+            } catch (const std::exception&) {
+                hook_inventory_ = {};
+                hook_inventory_.unavailable_reason = "Codex hook inventory unavailable";
+            }
             rpc("thread/loaded/list", {{"limit", 128}});
         } else if (method == "thread/loaded/list") {
             loaded_threads(result);

@@ -397,7 +397,7 @@ def server_arguments(binary, socket):
 
 
 async def roundtrip(
-    case, owner, observer, connect, cwd, receipt, tui_arguments, require_hooks
+    case, owner, observer, connect, clients, cwd, receipt, tui_arguments, require_hooks
 ):
     stage(receipt, f"{case}:thread_start")
     started = await owner.rpc(
@@ -417,6 +417,33 @@ async def roundtrip(
     if started["model"] != MODEL or started["modelProvider"] != "lapis_probe":
         raise RuntimeError("Unexpected effective Codex model/provider")
     thread = started["thread"]["id"]
+    if require_hooks:
+        stage(receipt, f"{case}:hook_listener_setup")
+        setup = await owner.rpc(
+            "turn/start",
+            {
+                "threadId": thread,
+                "input": [{"type": "text", "text": "Reply exactly OK."}],
+            },
+        )
+        setup_turn = setup["turn"]["id"]
+
+        def setup_completed(message):
+            if matches(message, "error", thread):
+                raise RuntimeError("Hook-listener setup turn failed")
+            if not matches(message, "turn/completed", thread, turn=setup_turn):
+                return False
+            if message["params"]["turn"]["status"] != "completed":
+                raise RuntimeError("Hook-listener setup turn did not complete")
+            return True
+
+        await owner.event(setup_completed)
+        hook_listener = await connect()
+        await hook_listener.rpc(
+            "thread/resume", {"threadId": thread, "excludeTurns": True}
+        )
+    else:
+        hook_listener = None
     marker = cwd / "hook-ran.marker"
     marker_bytes_before = marker.stat().st_size if marker.is_file() else 0
     stage(receipt, f"{case}:turn_start")
@@ -551,15 +578,19 @@ async def roundtrip(
             command_executed = marker_bytes_after > marker_bytes_before
             if not command_executed:
                 raise RuntimeError("Fixture hook marker did not advance for this turn")
+            observer_events = len(hook_listener.hook_runs)
             receipt.setdefault("hooks", {}).setdefault("runs_by_case", {})[case] = {
                 "marker_bytes_before": marker_bytes_before,
                 "marker_bytes_after": marker_bytes_after,
                 "command_executed": True,
-                "observer_events": len(observer.hook_runs),
+                "observer_events": observer_events,
                 "owner_events": len(owner.hook_runs),
+                "observer_open_during_hook": True,
                 "run": completed_fixture_hook(owner, thread, turn),
-                "run_delivery": "turn-owner connection",
+                "observer_run": completed_fixture_hook(hook_listener, thread, turn),
+                "run_delivery": "turn-owner and pre-attached observer connections",
             }
+            await hook_listener.close()
         witness = await connect()
         idle_view, remaining = await resume_snapshot(witness, thread)
         if remaining or idle_view["status"]["type"] != "idle":
@@ -723,6 +754,7 @@ async def run(args, receipt):
                     owner,
                     observer,
                     connect,
+                    clients,
                     cwd,
                     receipt,
                     (arguments, environment) if args.with_tui else None,

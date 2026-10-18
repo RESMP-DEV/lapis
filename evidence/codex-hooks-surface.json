@@ -7,7 +7,7 @@
     "inspected_revision": "1f69eb089d (local daily-merge checkout of openai/codex; merge base with upstream main is 17f29f3ff8, merged 2026-10-18T03:02Z)",
     "upstream_stable_at_time": "0.163.0 (2026-10-15); 0.164.0-alpha.3 prerelease",
     "baseline_comparison": "rust-v0.157.1 (the 2026-09-27 survey baseline), queried through the GitHub contents API per file",
-    "installed_binary_observation": "The PATH-resolved codex was rebuilt 2026-10-18 to sha256 da306dac94448fa745dae78f42f049cb986fd7fb09aef34a54c10169f2e966fe (reports codex-cli 0.0.0). This digest is not in Observer::qualifiedBinarySha256s(), so managed-Codex structured attention stays disabled until the requalification procedure runs; that run is the natural vehicle for the first live hooks probe.",
+    "installed_binary_observation": "At this source survey, the PATH-resolved codex had just been rebuilt to sha256 da306dac94448fa745dae78f42f049cb986fd7fb09aef34a54c10169f2e966fe (reports codex-cli 0.0.0) and had not yet been added to Observer::qualifiedBinarySha256s(). The separate H0 receipt records its later request/hook qualification and same-change adapter pin.",
     "feature_flag": "hooks listed stable and enabled on the inspected build's features listing"
   },
   "verified_surface": {
@@ -61,7 +61,7 @@
     "h0_inventory_candidate": "The app-server exposes hooks/list for bounded inventory enumeration. The presence of hook/started and hook/completed notifications does not establish that a separately resumed observer receives them; runtime delivery scope requires a live probe.",
     "h1_per_session_decision_hook": "A lapis-owned PermissionRequest command hook configured only in the session's disposable Codex home would give the PTY-launched TUI an approval-answering route; strictly per-session opt-in because it changes the agent's execution policy.",
     "h2_subagent_visibility": "SubagentStart/SubagentStop expose Codex-internal fan-out identity as advisory signals.",
-    "constraints": "Qualification only on a requalified binary; never install global or shared hooks; Stop hooks never map to task completion; schema presence is not delivery evidence; owner-scoped notification routing cannot be generalized to a separate observer without a live receipt."
+    "constraints": "Qualification only on a requalified binary; never install global or shared hooks; Stop hooks never map to task completion; schema presence is not delivery evidence; observer attachment timing and no-history-replay behavior require a live receipt."
   },
   "non_claims": "No hook dispatch, payload identity, trust flow, loss/reconnect, notification routing, or decision round trip was exercised by this source survey. The inspected revision is a daily merge with local build commits on top, not a released artifact. TUI /hooks browser behavior is recorded from source and release notes only. No upstream contribution was made or drafted.",
   "commands": {
