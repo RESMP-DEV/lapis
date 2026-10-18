@@ -557,6 +557,11 @@ class Observer::Impl final : public QObject {
     void queue(const QJsonObject& message, qsizetype size) {
         if (replay_.size() >= 1024 || replay_bytes_ + size > UnixWebSocket::maximum_message_bytes)
             throw std::runtime_error("Codex replay exceeded limit");
+        const auto method = message.value("method").toString();
+        // Reconciliation may discard discovery queues before authoritative
+        // resume/read; retain hook identity at admission without activity authority.
+        if (method == "hook/started" || method == "hook/completed")
+            record_hook_run(parse_hook_run(message.value("params").toObject()));
         replay_.push_back(message);
         replay_bytes_ += size;
     }
@@ -570,8 +575,7 @@ class Observer::Impl final : public QObject {
         requests_.erase(id);
         check(state_.resolve(next(), id));
     }
-    void apply_hook_event(const QString& method, const QJsonObject& params) {
-        const auto run = parse_hook_run(params);
+    void record_hook_run(const HookRun& run) {
         const auto existing =
             std::find_if(hook_runs_.begin(), hook_runs_.end(),
                          [&](const HookRun& candidate) { return candidate.id == run.id; });
@@ -589,6 +593,10 @@ class Observer::Impl final : public QObject {
                 hook_runs_.pop_front();
             hook_runs_.push_back(run);
         }
+    }
+    void apply_hook_event(const QString& method, const QJsonObject& params) {
+        const auto run = parse_hook_run(params);
+        record_hook_run(run);
         // A hook is work inside the source turn, not attention authority.
         // Turn/thread notifications still own idle and turn completion.
         if (method == "hook/started")

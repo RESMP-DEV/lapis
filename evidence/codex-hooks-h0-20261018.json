@@ -4,15 +4,21 @@
   "passed": true,
   "source_revision": "f7b7ce4075fc0e26d5186d26ff6a7e31cd7aaecd",
   "source_dirty": true,
+  "source_identity": {
+    "lapis_adapter_revision": "f7b7ce4075fc0e26d5186d26ff6a7e31cd7aaecd",
+    "codex_binary_source_revision": "1f69eb089d22f7752b33c1530ac31c33e720e481",
+    "explanation": "The top-level source_revision is the lapis adapter checkout. The executable was built from the separate Codex checkout recorded in binary.source_revision."
+  },
   "scope": "Codex H0 hook inventory plus live notification-delivery boundary. The observer sends hooks/list, exposes only aggregated inventory metadata, and can strictly parse bounded hook-run notifications if a source routes them to it. The qualification harness installs one trusted disposable UserPromptSubmit marker hook; the production adapter and service install none.",
   "binary": {
     "sha256": "da306dac94448fa745dae78f42f049cb986fd7fb09aef34a54c10169f2e966fe",
     "reported_version": "codex-cli 0.0.0",
     "source_revision": "1f69eb089d22f7752b33c1530ac31c33e720e481",
-    "upstream_merge_basis": "17f29f3ff8"
+    "upstream_merge_basis": "17f29f3ff8",
+    "adapter_qualified_digest_added_in_same_change": true
   },
   "live_result": {
-    "recorded_at": "2026-10-18T13:54:15.164789+00:00",
+    "recorded_at": "2026-10-18T14:23:16.353459+00:00",
     "passed": true,
     "configured_model": "zai,glm-5.3",
     "configured_provider": "CCR on loopback port 3456",
@@ -28,29 +34,51 @@
       "completed_turn": true,
       "tui_displayed_request": true
     },
+    "request_contract_scope": "Existing harness-owned input/approval protocol round trips; these are not claims that hook-run notifications reached or were answered by the separate observer.",
     "hooks": {
       "inventory": {
         "entries": 1,
         "handlers": 1,
         "event": "userPromptSubmit",
         "handler_type": "command",
-        "source": "user",
+        "source_origin": "user",
         "trust_status": "trusted",
         "warnings": 0,
         "errors": 0
       },
       "fixture_trust_established": true,
-      "command_executed": true,
-      "observer_events": 0,
-      "owner_events": 2,
-      "run": {
-        "thread_identity": true,
-        "turn_identity": true,
-        "started": true,
-        "completed": true,
-        "attention_authority": false
-      },
-      "run_delivery": "turn-owner connection"
+      "runs_by_case": {
+        "input": {
+          "marker_bytes_before": 0,
+          "marker_bytes_after": 1,
+          "command_executed": true,
+          "observer_events": 0,
+          "owner_events": 2,
+          "run": {
+            "thread_identity": true,
+            "turn_identity": true,
+            "started": true,
+            "completed": true,
+            "attention_authority": false
+          },
+          "run_delivery": "turn-owner connection"
+        },
+        "approval": {
+          "marker_bytes_before": 1,
+          "marker_bytes_after": 2,
+          "command_executed": true,
+          "observer_events": 0,
+          "owner_events": 4,
+          "run": {
+            "thread_identity": true,
+            "turn_identity": true,
+            "started": true,
+            "completed": true,
+            "attention_authority": false
+          },
+          "run_delivery": "turn-owner connection"
+        }
+      }
     },
     "cleanup_complete": true
   },
@@ -65,15 +93,15 @@
     },
     {
       "path": "adapters/codex/src/observer.cpp",
-      "sha256": "0a3b8d42828aef2f561aaf82999ff129d585f6188892e50cb3f5a1cd8356c3b4"
+      "sha256": "7561349e7e49d169b75ede7a8311ae34cac56d88e202f79640b6c31f773ec551"
     },
     {
       "path": "adapters/codex/tests/observer_test.cpp",
-      "sha256": "d2643deb9fa4df316e51e9357af94a43ed3277a443d508fc974482c00e199503"
+      "sha256": "06ea561adc88cbf9608618a2a4d65dc44100589a26f255b6534d346459bea74d"
     },
     {
       "path": "docs/architecture.md",
-      "sha256": "61f342770372704c09eb85c403dd2dd705a61fa35c84205d7aeb1212a09eb22e"
+      "sha256": "33b9d6b1ceb7a9da1f6a13db7d1712f7011a14c5b6f261462072bd4a2cac1a84"
     },
     {
       "path": "docs/status.md",
@@ -81,15 +109,15 @@
     },
     {
       "path": "scripts/check_codex_attention.py",
-      "sha256": "04223ee6752799f2d67c19bc37ddf7c362f6bef0974770533dfa56f3ee122695"
+      "sha256": "009eeae797301839a5c79701579194209681bf87e9fb8852ef79fae45c997e74"
     },
     {
       "path": "scripts/tests/test_check_codex_attention.py",
-      "sha256": "f761198ff9e1f5ce08fe66d589653b7b65b872430e539e625169df501b4a996a"
+      "sha256": "74427903d6b6d9ce9f32f55134862cc783ef48892034905e4ff6698cd6812cde"
     },
     {
       "path": "evidence/codex-hooks-surface.json",
-      "sha256": "18151fb85364a9050fe72977c3a9fcff881d0dbb8835964bbafccc661a59c8f6"
+      "sha256": "5a7c84fdc2f43c25646c4af61b229c9858a097acf3ec06cac11b9a60efa9f597"
     }
   ],
   "validation": [

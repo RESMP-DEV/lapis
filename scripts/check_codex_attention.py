@@ -70,7 +70,7 @@ def hook_inventory_summary(result):
     if (
         hook.get("eventName") != "userPromptSubmit"
         or hook.get("handlerType") != "command"
-        or hook.get("command") != "/usr/bin/touch hook-ran.marker"
+        or hook.get("command") != "/bin/sh -c 'printf x >> hook-ran.marker'"
         or hook.get("enabled") is not True
     ):
         raise RuntimeError("Unexpected disposable fixture hook declaration")
@@ -82,7 +82,7 @@ def hook_inventory_summary(result):
         "handlers": 1,
         "event": hook.get("eventName"),
         "handler_type": hook.get("handlerType"),
-        "source": hook.get("source"),
+        "source_origin": hook.get("source"),
         "trust_status": hook.get("trustStatus"),
         "warnings": len(entry["warnings"]),
         "errors": len(entry["errors"]),
@@ -354,7 +354,7 @@ def write_fixture_hook(home):
             "[[hooks.UserPromptSubmit]]\n"
             "[[hooks.UserPromptSubmit.hooks]]\n"
             'type = "command"\n'
-            'command = "/usr/bin/touch hook-ran.marker"\n'
+            "command = \"/bin/sh -c 'printf x >> hook-ran.marker'\"\n"
             "timeout = 5\n"
         )
 
@@ -417,6 +417,8 @@ async def roundtrip(
     if started["model"] != MODEL or started["modelProvider"] != "lapis_probe":
         raise RuntimeError("Unexpected effective Codex model/provider")
     thread = started["thread"]["id"]
+    marker = cwd / "hook-ran.marker"
+    marker_bytes_before = marker.stat().st_size if marker.is_file() else 0
     stage(receipt, f"{case}:turn_start")
     params = {}
     if case == "input":
@@ -544,14 +546,20 @@ async def roundtrip(
 
         await observer.event(completion)
         stage(receipt, f"{case}:reconciled_witness")
-        if require_hooks and "run" not in receipt.get("hooks", {}):
-            receipt.setdefault("hooks", {})["command_executed"] = (
-                cwd / "hook-ran.marker"
-            ).is_file()
-            receipt["hooks"]["observer_events"] = len(observer.hook_runs)
-            receipt["hooks"]["owner_events"] = len(owner.hook_runs)
-            receipt["hooks"]["run"] = completed_fixture_hook(owner, thread, turn)
-            receipt["hooks"]["run_delivery"] = "turn-owner connection"
+        if require_hooks:
+            marker_bytes_after = marker.stat().st_size if marker.is_file() else 0
+            command_executed = marker_bytes_after > marker_bytes_before
+            if not command_executed:
+                raise RuntimeError("Fixture hook marker did not advance for this turn")
+            receipt.setdefault("hooks", {}).setdefault("runs_by_case", {})[case] = {
+                "marker_bytes_before": marker_bytes_before,
+                "marker_bytes_after": marker_bytes_after,
+                "command_executed": True,
+                "observer_events": len(observer.hook_runs),
+                "owner_events": len(owner.hook_runs),
+                "run": completed_fixture_hook(owner, thread, turn),
+                "run_delivery": "turn-owner connection",
+            }
         witness = await connect()
         idle_view, remaining = await resume_snapshot(witness, thread)
         if remaining or idle_view["status"]["type"] != "idle":

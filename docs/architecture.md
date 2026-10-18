@@ -121,8 +121,9 @@ capability and does not solve profile ownership or process cleanup.
 ## Codex native hooks
 
 Codex upstream ships a Claude Code-style hooks engine, enabled and stable. The
-surface below is source-verified at upstream `17f29f3ff8` (2026-10-18 daily
-merge; stable 0.163.0) and recorded in
+surface below is source-verified at inspected checkout `1f69eb089d`, whose
+upstream merge basis is `17f29f3ff8`; upstream stable at the survey time was
+0.163.0. It is recorded in
 [codex-hooks-surface evidence](../evidence/codex-hooks-surface.json). It is
 design evidence plus the later H0 runtime boundary below: lapis installs no
 hooks, claims no hook response capability, and does not claim that a separately

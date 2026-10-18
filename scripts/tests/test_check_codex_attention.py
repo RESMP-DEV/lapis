@@ -80,14 +80,14 @@ class DecisionTests(unittest.TestCase):
             config = tomllib.loads((home / "config.toml").read_text())
             self.assertEqual(
                 config["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
-                "/usr/bin/touch hook-ran.marker",
+                "/bin/sh -c 'printf x >> hook-ran.marker'",
             )
 
     def test_hook_inventory_summary_accepts_only_fixture_declaration(self):
         hook = {
             "eventName": "userPromptSubmit",
             "handlerType": "command",
-            "command": "/usr/bin/touch hook-ran.marker",
+            "command": "/bin/sh -c 'printf x >> hook-ran.marker'",
             "enabled": True,
             "source": "user",
             "trustStatus": "untrusted",

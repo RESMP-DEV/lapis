@@ -828,6 +828,28 @@ void passive_hooks_are_advisory(bool hooks_supported) {
     require(state.pending().size() == pending_before, "hooks never create attention authority");
 }
 
+void queued_hook_notifications_survive_reconciliation() {
+    State state{"queued-hooks", "codex"};
+    Source source;
+    source.empty_discovery = true;
+    source.start();
+    Observer observer{state};
+    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    require(
+        wait_for([&] { return observer.diagnostic() == "Waiting for a persistent Codex thread"; }),
+        "queued hook fixture waits for classification");
+    source.send(source.hook_event(QStringLiteral("running")));
+    source.send(
+        {{"method", "thread/started"},
+         {"params", QJsonObject{{"thread", QJsonObject{{"id", "thread"}, {"ephemeral", false}}}}}});
+    require(wait_for([&] { return state.ready(); }), "queued hook fixture reconciles");
+    require(observer.hookRuns().size() == 1 &&
+                observer.hookRuns().first().toObject().value("id").toString() ==
+                    QStringLiteral("hook"),
+            "bounded hook identity survives discovery replay");
+    observer.stop();
+}
+
 int run(int argc, char** argv) {
     QCoreApplication application(argc, argv);
     unsupported_approval_decisions_are_observed_only();
@@ -841,6 +863,7 @@ int run(int argc, char** argv) {
     unsupported_hash_survives_reconnect_until_qualified_restart();
     passive_hooks_are_advisory(true);
     passive_hooks_are_advisory(false);
+    queued_hook_notifications_survive_reconciliation();
     pending_details_budget();
     request_id_and_answer_boundaries();
     implicit_retirement_survives_replay();
