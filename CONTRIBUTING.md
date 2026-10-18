@@ -1265,6 +1265,16 @@ python3 scripts/check_codex_attention.py --live-glm --with-tui \
   --output build/codex-attention-live.json
 ```
 
+When requalifying native-hook inventory on a candidate that supports
+`hooks/list`, add `--with-hooks`. The runner creates and trusts one disposable
+`UserPromptSubmit` command that touches a marker in the fixture directory, then
+requires `hooks/list`, command execution, exact thread/turn start and completion
+on the turn-owner connection, and the existing input/approval round trips. It
+also records how many events reached a separately resumed observer; current
+Codex routing targets the owner and does not replay hook runs through thread
+history, so a zero there is a boundary observation rather than passive
+observer capability. No global hook configuration is changed.
+
 This submits one input fixture and one command-approval fixture to a disposable
 server, reconnects an observer, and answers exact pending request IDs. The approval
 fixture permits only `python3 -c 'print(123456789)'`, optionally wrapped by a known

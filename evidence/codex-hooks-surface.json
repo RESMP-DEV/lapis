@@ -1,0 +1,68 @@
+{
+  "receipt": "codex-hooks-surface",
+  "date": "2026-10-18",
+  "scope": "Source-level verification of the Codex hooks engine for future adapter build-out. No hook was installed, dispatched, or answered; no Codex binary was requalified; no live delivery, trust, loss, or response behavior is claimed. Findings are dated observations of the inspected upstream revision, not adapter capability.",
+  "sanitization": "Public upstream revisions, tags, PR numbers, and artifact digests only; no machine names, account IDs, credentials, private transcripts, or user-specific absolute paths.",
+  "source_basis": {
+    "inspected_revision": "1f69eb089d (local daily-merge checkout of openai/codex; merge base with upstream main is 17f29f3ff8, merged 2026-10-18T03:02Z)",
+    "upstream_stable_at_time": "0.163.0 (2026-10-15); 0.164.0-alpha.3 prerelease",
+    "baseline_comparison": "rust-v0.157.1 (the 2026-09-27 survey baseline), queried through the GitHub contents API per file",
+    "installed_binary_observation": "The PATH-resolved codex was rebuilt 2026-10-18 to sha256 da306dac94448fa745dae78f42f049cb986fd7fb09aef34a54c10169f2e966fe (reports codex-cli 0.0.0). This digest is not in Observer::qualifiedBinarySha256s(), so managed-Codex structured attention stays disabled until the requalification procedure runs; that run is the natural vehicle for the first live hooks probe.",
+    "feature_flag": "hooks listed stable and enabled on the inspected build's features listing"
+  },
+  "verified_surface": {
+    "events": [
+      "PreToolUse", "PermissionRequest", "PostToolUse", "PreCompact", "PostCompact",
+      "SessionStart", "SessionEnd", "UserPromptSubmit", "SubagentStart", "SubagentStop",
+      "Stop", "Interrupt"
+    ],
+    "handlers": "HookHandlerType command | mcp_tool | prompt | agent; HookExecutionMode sync | async; HookScope thread | turn; matcher groups per event in the [hooks] config table (codex-rs/config/src/hook_config.rs)",
+    "command_handler_fields": "command, commandWindows, timeout, async, statusMessage, additionalContextLimit (context spills to disk past a 2,500-token default, 0 disables)",
+    "decision_semantics": {
+      "pre_tool_use": "Can block with a reason and rewrite tool input (updated_input). Present at 0.157.1 (32 references in events/pre_tool_use.rs at that tag), so this is newly recorded by lapis, not newly added upstream.",
+      "permission_request": "Handlers return Allow or Deny{message}; decisions fold any-deny-wins, else last allow, else no verdict; the event runs in the approval path before Guardian or user approval UI. Response folding documented in codex-rs/hooks/src/events/permission_request.rs.",
+      "stop": "stop_hook_active continuation guard, last_assistant_message, changed-files collection (max 1,000 files, 5 s git timeout); targets Stop, internal MemoryConsolidation, and SubagentStop{agent_id, agent_type, transcript}; SubagentStop matchers key on agent_type. A Stop hook never proves task completion.",
+      "session_start_sources": "startup | resume | clear | compact | fork"
+    },
+    "output_parsing": "Claude-compatible decision JSON (hookSpecificOutput, permissionDecision, permissionDecisionReason, updatedInput, block reasons) parsed by the engine's output parser",
+    "schemas": "Per-event command input/output JSON schemas are generated and shipped by codex-rs/hooks/src/schema.rs; machine-readable contract material for adapter normalizers",
+    "app_server_surface": {
+      "hooks_list": "hooks/list (HooksListParams{cwds} -> HooksListResponse{data: [HooksListEntry{cwd, hooks, warnings, errors}]}) in protocol v2 beside the plugin/* marketplace methods",
+      "run_notifications": "hook/started and hook/completed carry thread_id, turn_id, and HookRunSummary (id, event_name, handler_type, execution_mode, scope, source_path, source, status, status_message, timing). These notifications existed at 0.157.1; hooks/list did not."
+    },
+    "tui": "/hooks slash command (hooks browser); hook status titles (#51433) and ANSI styles in hook messages (#50359) shipped in 0.162",
+    "distribution_and_trust": "codex plugin add/list/marketplace/remove; HooksFile manifests (description plus events); [hooks.state] per-hook enabled, trusted_hash, trusted_content_hash; plugin hook approval bound to plugin contents (#54619); managed layer with allow_managed_hooks_only and managed requirements dirs"
+  },
+  "new_since_0157_baseline": {
+    "method": "GitHub contents API fetch of individual files at tag rust-v0.157.1, compared against the inspected revision; release notes of 0.158.0 through 0.163.0 scanned for hooks-related PRs",
+    "added": [
+      "hooks/list app-server method (zero occurrences at rust-v0.157.1)",
+      "plugin marketplace protocol and codex plugin CLI",
+      "/hooks TUI browser polish (#51433, #50359, #51473 in 0.162)",
+      "hook matchers compiled during discovery (#49379, 0.161)",
+      "MCP hook argument expansion cache (#49956, 0.161)",
+      "native POSIX spawning for command hooks (#47610, 0.158)",
+      "hook configuration shared across cloned hook views (#53657, 0.163)"
+    ],
+    "preexisting_but_under_recorded": [
+      "PreToolUse input rewriting and blocking (32 references at the baseline tag)",
+      "mcp_tool, prompt, and agent handler variants (present in hook_config.rs at the baseline tag)",
+      "PermissionRequest allow/deny folding before Guardian/user UI (recorded 2026-09-27)",
+      "SubagentStart/SubagentStop events with agent identity",
+      "additionalContext disk spill"
+    ]
+  },
+  "lapis_relevance": {
+    "h0_inventory_candidate": "The app-server exposes hooks/list for bounded inventory enumeration. The presence of hook/started and hook/completed notifications does not establish that a separately resumed observer receives them; runtime delivery scope requires a live probe.",
+    "h1_per_session_decision_hook": "A lapis-owned PermissionRequest command hook configured only in the session's disposable Codex home would give the PTY-launched TUI an approval-answering route; strictly per-session opt-in because it changes the agent's execution policy.",
+    "h2_subagent_visibility": "SubagentStart/SubagentStop expose Codex-internal fan-out identity as advisory signals.",
+    "constraints": "Qualification only on a requalified binary; never install global or shared hooks; Stop hooks never map to task completion; schema presence is not delivery evidence; owner-scoped notification routing cannot be generalized to a separate observer without a live receipt."
+  },
+  "non_claims": "No hook dispatch, payload identity, trust flow, loss/reconnect, notification routing, or decision round trip was exercised by this source survey. The inspected revision is a daily merge with local build commits on top, not a released artifact. TUI /hooks browser behavior is recorded from source and release notes only. No upstream contribution was made or drafted.",
+  "commands": {
+    "feature_listing": "codex features list (hooks stable, true)",
+    "event_enum": "grep of HookEventName in codex-rs/protocol/src/protocol.rs at the inspected revision",
+    "baseline_dating": "gh api repos/openai/codex/contents/<path>?ref=rust-v0.157.1 for hook_config.rs, hooks/src/lib.rs, events/pre_tool_use.rs, and app-server-protocol hook.rs",
+    "release_scan": "gh api repos/openai/codex/releases/tags/rust-v0.15{8,9}.0 and rust-v0.16{0,1,2,3}.0 bodies grepped for hook"
+  }
+}

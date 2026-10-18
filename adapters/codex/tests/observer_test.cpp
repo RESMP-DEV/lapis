@@ -165,6 +165,7 @@ class Source final : public QObject {
     bool resolved_before_replay{};
     bool empty_discovery{};
     bool fail_first_resume{};
+    bool hooks_supported{true};
     int replay_large_requests{};
     std::vector<QJsonObject> replay_requests;
 
@@ -230,6 +231,34 @@ class Source final : public QObject {
                   {"result",
                    QJsonObject{{"data", empty_discovery ? QJsonArray{}
                                                         : QJsonArray{"temporary", thread_name}}}}});
+        } else if (method == QLatin1String("hooks/list")) {
+            if (!hooks_supported) {
+                send(QJsonObject{{"id", id},
+                                 {"error", QJsonObject{{"code", -32601}, {"message", "no hook"}}}});
+                return;
+            }
+            QJsonObject hook{{"key", "fixture:prompt:0:0"},
+                             {"eventName", "userPromptSubmit"},
+                             {"handlerType", "command"},
+                             {"command", "/usr/bin/true"},
+                             {"async", false},
+                             {"matcher", QJsonValue::Null},
+                             {"timeoutSec", 5},
+                             {"statusMessage", QJsonValue::Null},
+                             {"additionalContextLimit", 2500},
+                             {"sourcePath", "/fixture/config.toml"},
+                             {"source", "user"},
+                             {"pluginId", QJsonValue::Null},
+                             {"displayOrder", 0},
+                             {"enabled", true},
+                             {"isManaged", false},
+                             {"currentHash", QString(64, 'a')},
+                             {"trustStatus", "untrusted"}};
+            QJsonObject entry{{"cwd", "/fixture"},
+                              {"hooks", QJsonArray{hook}},
+                              {"warnings", QJsonArray{}},
+                              {"errors", QJsonArray{}}};
+            send(QJsonObject{{"id", id}, {"result", QJsonObject{{"data", QJsonArray{entry}}}}});
         } else if (method == QLatin1String("thread/resume") && fail_first_resume &&
                    !no_rollout_returned) {
             no_rollout_returned = true;
@@ -293,6 +322,29 @@ class Source final : public QObject {
                                      QStringLiteral("cancel")}}}}};
     }
 
+  public:
+    [[nodiscard]] QJsonObject hook_event(const QString& status) const {
+        QJsonObject run{
+            {"id", "hook"},
+            {"eventName", "userPromptSubmit"},
+            {"handlerType", "command"},
+            {"executionMode", "sync"},
+            {"scope", "turn"},
+            {"sourcePath", "/fixture/config.toml"},
+            {"source", "user"},
+            {"displayOrder", 0},
+            {"status", status},
+            {"statusMessage", QJsonValue::Null},
+            {"startedAt", 1},
+            {"completedAt", status == QStringLiteral("running") ? QJsonValue::Null : QJsonValue(2)},
+            {"durationMs", status == QStringLiteral("running") ? QJsonValue::Null : QJsonValue(1)},
+            {"entries", QJsonArray{}}};
+        QJsonObject params{{"threadId", thread_name}, {"turnId", "turn"}, {"run", run}};
+        return {{"method", status == QStringLiteral("running") ? "hook/started" : "hook/completed"},
+                {"params", params}};
+    }
+
+  private:
     // Unix transport fixture: a short path stays within macOS sockaddr_un limits.
     QTemporaryDir root{QStringLiteral("/tmp/lapis-observer-XXXXXX")};
     QLocalServer server;
@@ -733,6 +785,49 @@ void unsupported_approval_decisions_are_observed_only() {
             "unsupported approval decision is not routed");
 }
 
+void passive_hooks_are_advisory(bool hooks_supported) {
+    State state{"hooks", "codex"};
+    Source source;
+    source.hooks_supported = hooks_supported;
+    source.start();
+    Observer observer{state};
+    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    require(wait_for([&] { return state.ready(); }), "hook fixture ready");
+    const auto pending_before = state.pending().size();
+    const auto inventory = observer.hookInventory();
+    require(inventory.value("available").toBool() == hooks_supported,
+            "hook inventory availability follows the source capability");
+    if (hooks_supported) {
+        require(inventory.value("handlers").toInt() == 1 &&
+                    inventory.value("events").toObject().value("userPromptSubmit").toInt() == 1,
+                "hook inventory is aggregated without source paths");
+    }
+    source.send(source.hook_event(QStringLiteral("running")));
+    require(wait_for([&] {
+                return observer.hookRuns().size() == 1 &&
+                       state.activity() == lapis::session::attention::Activity::working;
+            }),
+            "a started hook is bounded advisory work");
+    source.send(source.hook_event(QStringLiteral("completed")));
+    require(wait_for([&] {
+                return observer.hookRuns().size() == 1 &&
+                       observer.hookRuns().first().toObject().value("status").toString() ==
+                           QStringLiteral("completed");
+            }),
+            "hook completion updates the same advisory run");
+    auto invalid = source.hook_event(QStringLiteral("running"));
+    auto invalid_params = invalid["params"].toObject();
+    auto invalid_run = invalid_params["run"].toObject();
+    invalid_run.insert("entries", QJsonArray{QJsonObject{{"kind", "unexpected"}}});
+    invalid_params.insert("run", invalid_run);
+    invalid.insert("params", invalid_params);
+    source.send(invalid);
+    require(wait_for([&] { return !state.connected(); }) &&
+                observer.diagnostic() == QStringLiteral("Invalid Codex hook output entry"),
+            "malformed hook output fails closed");
+    require(state.pending().size() == pending_before, "hooks never create attention authority");
+}
+
 int run(int argc, char** argv) {
     QCoreApplication application(argc, argv);
     unsupported_approval_decisions_are_observed_only();
@@ -744,6 +839,8 @@ int run(int argc, char** argv) {
     post_binding_unknown_budget(true);
     reconnect_during_initialization_and_start_new_source();
     unsupported_hash_survives_reconnect_until_qualified_restart();
+    passive_hooks_are_advisory(true);
+    passive_hooks_are_advisory(false);
     pending_details_budget();
     request_id_and_answer_boundaries();
     implicit_retirement_survives_replay();
