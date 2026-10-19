@@ -10,6 +10,8 @@ from the latest user message:
 - "ask" or "question": ask a structured multiple-choice question (Codex).
 - The two-pending-Bash scenario belongs only to the Anthropic Messages
   endpoint; Responses receives a plain rejection for that prompt.
+- Claude hook check (Messages only): "Use Bash to run exactly X and reply"
+  requests Bash with command X; "Use AskUserQuestion" asks A or B.
 - "flood": a long reply of many lines.
 - "fail": an HTTP 500 for this turn.
 - anything else: a short reply after one second.
@@ -22,6 +24,7 @@ import argparse
 import asyncio
 import itertools
 import json
+import re
 import time
 import zlib
 from pathlib import Path
@@ -34,6 +37,20 @@ PARALLEL_PROMPT = (
     "either result. Do not use any other tool."
 )
 PARALLEL_COMMANDS = ("echo lapis-parallel-one", "echo lapis-parallel-two")
+EXACT_COMMAND = re.compile(r"Use Bash to run exactly (.+?) and reply", re.DOTALL)
+QUESTION = {
+    "questions": [
+        {
+            "question": "Choose A or B?",
+            "header": "Choice",
+            "options": [
+                {"label": "A", "description": "Option A"},
+                {"label": "B", "description": "Option B"},
+            ],
+            "multiSelect": False,
+        }
+    ]
+}
 counter = itertools.count(1)
 # Claude Code 2.1.300 and newer gzip large request bodies.
 MAX_BODY_BYTES = 64 * 1024 * 1024
@@ -64,10 +81,14 @@ def plan(text, completed_tool_results=0, *, claude_messages=False):
         return "parallel_tools", [], 0.5
     if completed_tool_results:
         return "text", ["Fake model: the command finished."], 0.3
+    if claude_messages and (exact := EXACT_COMMAND.search(text)):
+        return "tool", [exact.group(1)], 0.5
+    if claude_messages and "use askuserquestion" in lowered:
+        return "ask_user", [], 0.5
     if "fail" in lowered:
         return "fail", [], 0
     if "approve" in lowered or "run" in lowered:
-        return "tool", [], 0.5
+        return "tool", [COMMAND], 0.5
     if "ask" in lowered or "question" in lowered:
         return "question", [], 0.5
     if "flood" in lowered:
@@ -337,6 +358,14 @@ def messages_input(body):
         # Claude Code prepends system reminders; the typed prompt is the last text block.
         if texts:
             text = texts[-1]
+        # A prompt typed after a cancelled tool follows its result in one message.
+        results = [i for i, b in enumerate(blocks) if b.get("type") == "tool_result"]
+        if results and any(
+            b.get("type") == "text"
+            and not b.get("text", "").lstrip().startswith("<system-reminder>")
+            for b in blocks[results[-1] + 1 :]
+        ):
+            tool_result_count = 0
     return text, tool_result_count
 
 
@@ -363,6 +392,8 @@ async def stream_messages(writer, body):
     kind, chunks, delay = plan(text, tool_result_count, claude_messages=True)
     if kind in ("tool", "parallel_tools") and "Bash" not in tools:
         kind, chunks, delay = "text", ["Fake model: no Bash tool was offered."], 0.3
+    if kind == "ask_user" and "AskUserQuestion" not in tools:
+        kind, chunks, delay = "text", ["Fake model: no AskUserQuestion tool."], 0.3
     if kind == "fail":
         return await http_error(writer, 500, "lapis fake model: intentional failure")
     if not body.get("stream"):
@@ -379,20 +410,24 @@ async def stream_messages(writer, body):
         ),
     )
     blocks: list[tuple[dict[str, object], str]] = []
-    if kind in ("tool", "parallel_tools"):
+    if kind in ("tool", "parallel_tools", "ask_user"):
         await asyncio.sleep(delay)
-        commands = [COMMAND] if kind == "tool" else list(PARALLEL_COMMANDS)
-        for index, command in enumerate(commands):
+        if kind == "ask_user":
+            calls = [("AskUserQuestion", QUESTION)]
+        else:
+            commands = PARALLEL_COMMANDS if kind == "parallel_tools" else chunks
+            calls = [
+                ("Bash", {"command": c, "description": "lapis QA approval fixture"})
+                for c in commands
+            ]
+        for index, (name, arguments) in enumerate(calls):
             block = {
                 "type": "tool_use",
                 "id": f"toolu_lapis_{serial}_{index}",
-                "name": "Bash",
+                "name": name,
                 "input": {},
             }
-            arguments = json.dumps(
-                {"command": command, "description": "lapis QA approval fixture"}
-            )
-            blocks.append((block, arguments))
+            blocks.append((block, json.dumps(arguments)))
         for index, (block, arguments) in enumerate(blocks):
             await send(
                 writer,

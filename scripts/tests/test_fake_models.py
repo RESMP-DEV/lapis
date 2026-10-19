@@ -21,6 +21,25 @@ from fake_models import (
 
 
 class ProtocolDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
+    def test_hook_check_prompts_ask_for_their_tools(self):
+        prompt = 'Use Bash to run exactly python3 -c "print(1)" and reply DONE.'
+        self.assertEqual(
+            plan(prompt, 0, claude_messages=True),
+            ("tool", ['python3 -c "print(1)"'], 0.5),
+        )
+        question = "Use AskUserQuestion now with exactly two options."
+        self.assertEqual(plan(question, 0, claude_messages=True)[0], "ask_user")
+        self.assertEqual(plan(question, 0)[0], "question")
+
+    def test_prompt_typed_after_a_cancelled_tool_is_new(self):
+        result = {"type": "tool_result", "tool_use_id": "toolu_1"}
+        reminder = {"type": "text", "text": "<system-reminder>x</system-reminder>"}
+        typed = {"type": "text", "text": "Use AskUserQuestion now."}
+        body = {"messages": [{"role": "user", "content": [result, reminder, typed]}]}
+        self.assertEqual(messages_input(body), ("Use AskUserQuestion now.", 0))
+        body = {"messages": [{"role": "user", "content": [typed, result, reminder]}]}
+        self.assertEqual(messages_input(body), (reminder["text"], 1))
+
     def test_parallel_scenario_uses_two_bash_calls_then_completes(self):
         prompt = "Use exactly two distinct Bash tool calls now."
         self.assertEqual(
