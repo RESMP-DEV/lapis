@@ -1,0 +1,31 @@
+{
+  "schema": "lapis.qa-receipt/1",
+  "recorded_at": "2026-10-19T20:46:03Z",
+  "scope": "Pin bump to Claude Code 2.1.303 (changelog: bug fixes and reliability improvements only)",
+  "source": {
+    "base": "b0d0d38 (main)",
+    "branch": "claude-code-2.1.303"
+  },
+  "hosts": {
+    "mac": "Apple Silicon, macOS 27.0"
+  },
+  "tools": {
+    "claude_code": "2.1.303",
+    "claude_code_sha256": "d2da3b003dc08b88b7230469014fe3e1dc6fe94bc8f648e89b34175d30269370",
+    "models": "scripts/fake_models.py and the probe's synthetic replies; no model usage"
+  },
+  "checks": [
+    {
+      "name": "permission and question hooks (scripts/check_claude_hooks.py --fake-model)",
+      "result": "PASS on 2.1.303 in 6.3 s, all 8 checks, global Claude settings unchanged. The scripted model only chooses the tool calls; the hooks, terminal and service are the real ones."
+    },
+    {
+      "name": "failure hooks (scripts/probe_claude_failure_hooks.py)",
+      "result": "PASS on 2.1.303: PostToolUseFailure observed; StopFailure not observed for the print-mode HTTP 400, as on 2.1.280 and 2.1.302"
+    }
+  ],
+  "not_run": [
+    "scripts/check_claude_hooks.py against a real model provider (the 127.0.0.1:3456 router), which this Mac does not run",
+    "scripts/check_restore.py: not rerun for a bug-fix-only release; last passed on 2.1.302"
+  ]
+}
