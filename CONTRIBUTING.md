@@ -890,6 +890,12 @@ Run with working local provider credentials. Do not put credentials into argumen
 receipts or version-controlled settings. The probe must retain its failure status
 when provider access or hook delivery fails.
 
+Without the router, `--fake-model` points Claude at `scripts/fake_models.py`,
+which answers the two fixture prompts with the Bash call and the A/B question,
+and spends no model usage. The hooks, terminal and service stay real; only the
+model's choice of tool call is scripted. `--claude PATH` checks another installed
+build, such as `~/.local/share/claude/versions/<version>`.
+
 Acceptance distinguishes replay from runtime: adapter tests own duplicate,
 wrong-session, exact/imprecise retirement, malformed input and transport bounds;
 the live probe owns installed-binary identity, actual attention delivery,

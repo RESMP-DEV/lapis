@@ -26,9 +26,15 @@
     {
       "name": "parallel approvals before the fixture change",
       "result": "FAIL on 2.1.286, 2.1.292, 2.1.295 and 2.1.302 alike: Claude Code raises one permission request at a time for a parallel batch, so the expectation of two pending requests never held on this Mac. After a resume Claude marks the interrupted calls, so no approval is pending after the second loss either."
+    },
+    {
+      "name": "permission and question hooks (scripts/check_claude_hooks.py --fake-model)",
+      "recorded_at": "2026-10-19T20:02:49Z",
+      "source": "c33b90b (main) plus the --fake-model change",
+      "result": "PASS on 2.1.302 in 6.3 s, all 8 checks: unsupported decision rejected with the attachment kept; same child and pending notice after detach/reattach; observer diagnostic refreshed; terminal answer retired the question and the turn completed; permission stayed terminal-only; new prompt retired the prior advisory; AskUserQuestion had its exact tool ID; fresh permission attention after /clear. Global Claude settings unchanged. The scripted model only chooses the tool calls; the hooks, terminal and service are the real ones."
     }
   ],
   "not_run": [
-    "scripts/check_claude_hooks.py: needs the real-provider router on 127.0.0.1:3456, which this Mac does not run"
+    "scripts/check_claude_hooks.py against a real model provider (the 127.0.0.1:3456 router), which this Mac does not run"
   ]
 }

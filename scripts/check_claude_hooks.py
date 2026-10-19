@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import contextlib
 import hashlib
 import json
 import re
@@ -20,6 +21,7 @@ from probe_terminal import run_process
 ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED_VERSION = "2.1.302"
 MODEL = "zai,glm-5.3"
+ROUTER_URL = "http://127.0.0.1:3456"
 FIXTURE_COMMAND = 'python3 -c "print(123456789)"'
 FIXTURE_PROMPT = (
     f"Use Bash to run exactly {FIXTURE_COMMAND} and reply DONE. Do not use other tools."
@@ -60,7 +62,7 @@ def claude_version(executable):
     return match.group()
 
 
-def launch_arguments(prompt):
+def launch_arguments(prompt, model=MODEL):
     return [
         "--setting-sources",
         "local",
@@ -68,7 +70,7 @@ def launch_arguments(prompt):
         "--mcp-config",
         '{"mcpServers":{}}',
         "--model",
-        MODEL,
+        model,
         "--permission-mode",
         "default",
         "--",
@@ -212,19 +214,64 @@ async def capture_desktop(args, service, receipt):
     receipt["desktop_capture"] = str(args.capture)
 
 
+@contextlib.contextmanager
+def model_endpoint(args):
+    """The router URL, or a scripted loopback model with --fake-model."""
+    if not args.fake_model:
+        yield ROUTER_URL
+        return
+    ready = args.output.parent / "fake-models-ready.json"
+    ready.unlink(missing_ok=True)
+    models = subprocess.Popen(
+        [
+            sys.executable,
+            str(ROOT / "scripts/fake_models.py"),
+            "--port",
+            "0",
+            "--ready-file",
+            str(ready),
+            "--log",
+            str(args.output.parent / "fake-models.jsonl"),
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists() and models.poll() is None:
+            require(time.monotonic() < deadline, "fake model did not listen")
+            time.sleep(0.05)
+        require(models.poll() is None, "fake model exited")
+        yield f"http://127.0.0.1:{json.loads(ready.read_text())['port']}"
+    finally:
+        models.terminate()
+        try:
+            models.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            models.kill()
+            models.wait()
+
+
 async def exercise(args, receipt):
-    executable = shutil.which("claude")
+    with model_endpoint(args) as url:
+        await exercise_with(args, receipt, url)
+
+
+async def exercise_with(args, receipt, url):
+    executable = args.claude or shutil.which("claude")
     require(executable is not None, "Claude Code is not installed")
     executable = Path(executable).resolve()
+    model = "lapis-fake" if args.fake_model else MODEL
     binary = args.build_dir / "services/session/lapis_session_service"
     require(binary.is_file(), "Build the desktop/service first")
     receipt.update(
         version=claude_version(executable),
         binary_sha256=file_hash(executable),
         service_sha256=file_hash(binary),
-        model=MODEL,
+        model=model,
         fixture={
-            "base_url": "http://127.0.0.1:3456",
+            "base_url": "scripted loopback model" if args.fake_model else url,
             "production_default": False,
             "private_config": True,
             "permission_mode": "default",
@@ -254,11 +301,12 @@ async def exercise(args, receipt):
             args.output.parent,
             "claude",
             str(executable),
-            launch_arguments(FIXTURE_PROMPT),
+            launch_arguments(FIXTURE_PROMPT, model),
             directory,
             {
                 "CLAUDE_CONFIG_DIR": str(config),
-                "ANTHROPIC_BASE_URL": "http://127.0.0.1:3456",
+                "ANTHROPIC_BASE_URL": url,
+                **({"ANTHROPIC_AUTH_TOKEN": "lapis-fake"} if args.fake_model else {}),
                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
             },
             claude=True,
@@ -434,9 +482,17 @@ def parse_args(argv=None):
         "--capture", type=Path, help="Capture the real pending notice in the GUI"
     )
     parser.add_argument("--timeout", type=float, default=300)
+    parser.add_argument("--claude", type=Path, help="Claude Code binary to check")
+    parser.add_argument(
+        "--fake-model",
+        action="store_true",
+        help="Use scripts/fake_models.py instead of the model router",
+    )
     args = parser.parse_args(argv)
     if not 30 <= args.timeout <= 900:
         parser.error("--timeout must be between 30 and 900 seconds")
+    if args.claude and not args.claude.is_file():
+        parser.error(f"--claude {args.claude} is not a file")
     args.build_dir = args.build_dir.resolve()
     args.output = args.output.resolve()
     if args.capture:
