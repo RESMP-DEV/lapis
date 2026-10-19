@@ -246,7 +246,11 @@ def model_endpoint(args):
         yield f"http://127.0.0.1:{json.loads(ready.read_text())['port']}"
     finally:
         models.terminate()
-        models.wait(timeout=5)
+        try:
+            models.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            models.kill()
+            models.wait()
 
 
 async def exercise(args, receipt):
@@ -487,6 +491,8 @@ def parse_args(argv=None):
     args = parser.parse_args(argv)
     if not 30 <= args.timeout <= 900:
         parser.error("--timeout must be between 30 and 900 seconds")
+    if args.claude and not args.claude.is_file():
+        parser.error(f"--claude {args.claude} is not a file")
     args.build_dir = args.build_dir.resolve()
     args.output = args.output.resolve()
     if args.capture:
