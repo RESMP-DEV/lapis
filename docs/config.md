@@ -49,6 +49,20 @@ before its waiting agents start. Every CLI that is absent or set to `true` keeps
 updating as before; `--no-harness-updates` still turns off updates for all of
 them. See [keeping CLIs current](agents.md#keeping-clis-current).
 
+## Scrolling
+
+Typing over a full-screen agent that you scrolled back returns it to the
+bottom of its own view before the key is delivered. That is
+`scrollToBottomOnTyping`, on by default; set it to `false` to leave a
+scrolled-back program where it is:
+
+```json
+"scrollToBottomOnTyping": false
+```
+
+The wheel still reaches a full-screen program either way. See
+[history](workspace.md#history).
+
 ## Alerts
 
 An unseen completed turn or request plays one quiet cue when `alerts.finished`

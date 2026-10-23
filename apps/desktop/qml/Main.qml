@@ -3487,6 +3487,7 @@ ApplicationWindow {
                     fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
                     fontPixelSize: window.terminalFontSize
                     holdResize: stage.resizing
+                    scrollToBottomOnTyping: (typeof keymap !== "undefined" && keymap !== null) ? keymap.scrollToBottomOnTyping : true
                     visible: document !== null
                     enabled: visible
                     // A history page stays interactive for the wheel, selection and
