@@ -776,6 +776,8 @@ void typing_scroll_preference_persists() {
     static_cast<void>(write_config(QDir(directory.path()), "{broken"));
     require(!restored.setScrollToBottomOnTyping(true) && !restored.scrollToBottomOnTyping(),
             "a failed typing return save rolls back");
+    require(!restored.load() && restored.scrollToBottomOnTyping(),
+            "an unparsable file resets the typing return to its default");
 }
 
 // The terminal font is validated, written immediately, restored on restart and

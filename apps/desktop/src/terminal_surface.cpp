@@ -1452,7 +1452,7 @@ void TerminalSurface::scrollProgram(int steps, QPoint cell) {
         static_cast<void>(document_->sendWheel(steps, cell.x(), cell.y()));
         return;
     }
-    static_cast<void>(document_->sendKeyScroll(steps, cell.x(), cell.y()));
+    static_cast<void>(document_->sendKeyScroll(steps));
 }
 std::optional<TerminalSurface::CellGrid> TerminalSurface::cellGrid() const {
     if (!document_)

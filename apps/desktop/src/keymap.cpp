@@ -641,6 +641,7 @@ void KeyMap::apply_defaults() {
     harness_arguments_.clear();
     harness_updates_off_.clear();
     terminal_font_size_ = kTerminalFontSizeDefault;
+    scroll_to_bottom_on_typing_ = true;
     layout_ = WorkspaceLayout::Focus;
     density_ = CardDensity::Comfortable;
     theme_ = QStringLiteral("lapis");

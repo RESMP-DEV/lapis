@@ -1119,7 +1119,6 @@ void long_pastes() {
             "Lost paste receipt must report uncertainty without replay");
 }
 
-// Dragging selects screen text and double-clicking selects a word. The copy
 // Typing returns a scrolled-back full-screen program to its bottom before the
 // key, whether it reports the mouse or scrolls with arrow keys, and the
 // setting can leave the view where it is.
@@ -1212,8 +1211,26 @@ void typing_returns_to_bottom() {
     typed(QStringLiteral("s"));
     require(text_frames(peer, 1) == QByteArray("s"),
             "A program already at the bottom was scrolled again");
+
+    // A mode flip drops the debt of the mode left behind: the wheel debt
+    // accrued above must not replay as a spurious wheel step after the
+    // program stops reporting the mouse, and the key debt below must not
+    // replay as arrows after it starts again.
+    alternate_screen(3);
+    scroll(120);
+    require(wire::decode_wheel(wire::decode_control(peer.read().payload).payload).steps == 1,
+            "Wheel debt for the flip fixture was lost");
+    alternate_screen(1);
+    typed(QStringLiteral("t"));
+    require(text_frames(peer, 1) == QByteArray("t"),
+            "Stale wheel debt replayed after the mode flipped");
+    alternate_screen(3);
+    typed(QStringLiteral("u"));
+    require(text_frames(peer, 1) == QByteArray("u"),
+            "Stale key debt replayed after the mode flipped back");
 }
 
+// Dragging selects screen text and double-clicking selects a word. The copy
 // chord copies without sending input, typing clears the selection, and the
 // wheel asks for older history on the normal screen.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)

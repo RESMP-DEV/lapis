@@ -56,7 +56,6 @@ void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpe
     program_wheel_debt_ = 0;
     program_wheel_cell_ = {-1, -1};
     program_key_debt_lines_ = 0;
-    program_key_cell_ = {-1, -1};
     live_ = std::make_unique<LiveConnection>(*this, endpoint, launch, mode);
 }
 void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
@@ -66,7 +65,6 @@ void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
         program_wheel_debt_ = 0;
         program_wheel_cell_ = {-1, -1};
         program_key_debt_lines_ = 0;
-        program_key_cell_ = {-1, -1};
     }
     live_snapshot_ = std::move(snapshot);
     live_snapshot_received_ = true;
@@ -123,7 +121,6 @@ bool SessionPreview::decodeWaiting() const {
             program_wheel_debt_ = 0;
             program_wheel_cell_ = {-1, -1};
             program_key_debt_lines_ = 0;
-            program_key_cell_ = {-1, -1};
         }
         live_snapshot_ = std::move(snapshot);
     } catch (const std::exception& error) {
@@ -397,7 +394,7 @@ bool SessionPreview::sendWheel(int steps, int column, int row) {
     }
     return true;
 }
-bool SessionPreview::sendKeyScroll(int steps, int column, int row) {
+bool SessionPreview::sendKeyScroll(int steps) {
     decodeWaiting();
     if (history_active_ || history_request_pending_ || live_snapshot_.accepts_wheel || steps == 0 ||
         !live_)
@@ -405,29 +402,20 @@ bool SessionPreview::sendKeyScroll(int steps, int column, int row) {
     // Three arrows are one wheel notch, and every notch the caller asked for
     // is delivered: nothing is clamped away. sendKeyLines counts what the
     // connection accepted, so typing returns exactly what moved.
-    return sendKeyLines(steps * 3, column, row);
+    return sendKeyLines(steps * 3);
 }
-bool SessionPreview::sendKeyLines(int lines, int column, int row) {
+bool SessionPreview::sendKeyLines(int lines) {
     const auto key = lines > 0 ? session::TerminalKey::up : session::TerminalKey::down;
     const int sign = lines > 0 ? 1 : -1;
-    // The service takes a bounded batch, so a long scroll is sent in pieces.
-    constexpr int limit = 64 * 3;
+    // One key frame per line: count each accepted key immediately, so arrows
+    // already on the ordered connection are never owed a second time, and a
+    // queue that fills mid-scroll owes exactly the lines still unsent.
     int remaining = std::abs(lines);
     while (remaining > 0) {
-        const int piece = std::min(remaining, limit);
-        int sent = 0;
-        while (sent < piece) {
-            if (!sendKey(key, {}))
-                break;
-            ++sent;
-            // Count each accepted key immediately: arrows already on the
-            // ordered connection must never be owed a second time.
-            program_key_debt_lines_ = std::max(0, program_key_debt_lines_ + sign);
-            program_key_cell_ = {column, row};
-        }
-        remaining -= sent;
-        if (sent < piece)
+        if (!sendKey(key, {}))
             return false;
+        program_key_debt_lines_ = std::max(0, program_key_debt_lines_ + sign);
+        --remaining;
     }
     return true;
 }
@@ -440,7 +428,12 @@ void SessionPreview::returnProgramToBottom() {
     decodeWaiting();
     if (!live_snapshot_.alternate_screen || history_active_ || history_request_pending_)
         return;
+    // The two debts are in different units for different modes; only the
+    // current mode's debt can be replayed, so the other is dropped first.
+    // Otherwise it would linger across the flip and scroll the program past
+    // where the user left it when the mode flips back.
     if (live_snapshot_.accepts_wheel) {
+        program_key_debt_lines_ = 0;
         while (program_wheel_debt_ > 0) {
             const int steps = std::min(64, program_wheel_debt_);
             if (!sendWheel(-steps, program_wheel_cell_.x(), program_wheel_cell_.y()))
@@ -448,9 +441,10 @@ void SessionPreview::returnProgramToBottom() {
         }
         return;
     }
+    program_wheel_debt_ = 0;
     while (program_key_debt_lines_ > 0) {
         const int lines = std::min(64 * 3, program_key_debt_lines_);
-        if (!sendKeyLines(-lines, program_key_cell_.x(), program_key_cell_.y()))
+        if (!sendKeyLines(-lines))
             return;
     }
 }
