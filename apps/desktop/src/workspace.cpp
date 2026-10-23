@@ -42,6 +42,33 @@
 
 namespace lapis::desktop {
 namespace {
+// OMP's main UI is inline, and its default `tui.resizeScrollback` rebuild
+// erases the scrollback and replays the whole transcript on every settled
+// resize. lapis shows that as the conversation scrolling past. Its config
+// overlay keeps the repaint to the viewport.
+QString omp_resize_overlay(const QString& directory) {
+    if (directory.isEmpty())
+        return {};
+    const auto path = QDir(directory).filePath(QStringLiteral("omp-lapis.yml"));
+    static const QByteArray content(
+        "# Written by lapis: keep an inline OMP transcript in place when the\n"
+        "# terminal resizes; the default rebuild erases and replays every row.\n"
+        "tui:\n  resizeScrollback: preserve\n");
+    QFile existing(path);
+    if (existing.open(QIODevice::ReadOnly)) {
+        const bool same = existing.readAll() == content;
+        existing.close();
+        if (same)
+            return path;
+    }
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly))
+        return {};
+    file.write(content);
+    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    return file.commit() ? path : QString();
+}
+
 bool directCodexLaunch(const session::LaunchSpec& launch) {
     return QFileInfo(launch.program).fileName() == QLatin1String("codex");
 }
@@ -2332,12 +2359,24 @@ QString Workspace::remoteAccountFailure(const AccountPool& accounts, const Agent
     return {};
 }
 bool Workspace::applyAccount(Agent& agent, SessionPreview& item) {
+    // A harness's own overlay is independent of which plan it signs in with.
+    QHash<QString, QString> environment;
+    if (agent.harness == QLatin1String("omp") && !remoteCommand(agent.launch)) {
+        const auto overlay = omp_resize_overlay(QFileInfo(storage_path_).absolutePath());
+        if (!overlay.isEmpty()) {
+            // Append to a user's overlays rather than replace them.
+            const auto existing = qEnvironmentVariable("PI_CONFIG_FILES");
+            environment.insert(QStringLiteral("PI_CONFIG_FILES"),
+                               existing.isEmpty() ? overlay
+                                                  : existing + QDir::listSeparator() + overlay);
+        }
+    }
     const auto cli = accountCli(agent.harness);
     if (cli.isEmpty() || !accounts_.configured(cli)) {
         if (remoteCommand(agent.launch))
             agent.launch.arguments.last().remove(remoteAccountPreamble());
         agent.account.clear();
-        item.setServiceEnvironment({});
+        item.setServiceEnvironment(std::move(environment));
         return true;
     }
     const auto machine = agentMachine(agent);
@@ -2355,7 +2394,6 @@ bool Workspace::applyAccount(Agent& agent, SessionPreview& item) {
         item.setServiceEnvironment({});
         return true;
     }
-    QHash<QString, QString> environment;
     if (kept && cli == QLatin1String("claude")) {
         QFile token(
             QDir(accountsRoot()).filePath(QStringLiteral("claude/%1.token").arg(account->name)));
