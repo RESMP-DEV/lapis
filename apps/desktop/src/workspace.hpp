@@ -200,6 +200,9 @@ class SessionPreview final : public QObject {
     // Programs that do not report the mouse scroll with arrow keys: another
     // three lines a step, counted so typing returns it to the bottom too.
     bool sendKeyScroll(int steps, int column, int row);
+    // The same in arrow-key lines, so a partially delivered scroll is counted
+    // exactly and a retry sends only the lines still owed.
+    bool sendKeyLines(int lines, int column, int row);
     // Sends queued scroll-back debt forward in bounded wheel messages.
     void returnProgramToBottom();
     void resizeTerminal(session::TerminalSize size);
@@ -312,8 +315,11 @@ class SessionPreview final : public QObject {
     // owed the debt.
     mutable int program_wheel_debt_{};
     mutable QPoint program_wheel_cell_{-1, -1};
-    // The same for a full-screen program that scrolls with arrow keys.
-    mutable int program_key_debt_{};
+    // The same for a full-screen program that scrolls with arrow keys, in
+    // arrow-key lines: one key is one line, and each key is counted the moment
+    // the ordered connection accepts it, so a queue that fills mid-scroll owes
+    // exactly the lines that never went out.
+    mutable int program_key_debt_lines_{};
     mutable QPoint program_key_cell_{-1, -1};
     // The screen when browsing was asked for: the archive answering is at
     // least as new, so it can repeat rows the screen shows but never miss one.

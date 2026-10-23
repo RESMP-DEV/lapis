@@ -1471,12 +1471,16 @@ void selection_and_scroll() {
     // different surface cannot forget it, and a wheel rejected while history
     // owns the view cannot erase it.
     require(f.document.sendWheel(65, 1, 1), "The service accepted only part of one wheel turn");
-    const auto oversized = peer.read();
-    require(oversized.kind == wire::Kind::wheel &&
-                wire::decode_wheel(wire::decode_control(oversized.payload).payload).steps == 64,
-            "A wheel turn larger than one service message was not bounded");
-    require(f.document.sendWheel(1, 1, 1), "The remainder of the wheel turn was not queued");
-    static_cast<void>(peer.read());
+    // A turn larger than one service message is split, not clamped: the
+    // remainder must not be dropped, or the program ends up short of where
+    // the user scrolled it.
+    for (const int expected : {64, 1}) {
+        const auto oversized = peer.read();
+        require(oversized.kind == wire::Kind::wheel &&
+                    wire::decode_wheel(wire::decode_control(oversized.payload).payload).steps ==
+                        expected,
+                "A wheel turn larger than one service message was not split");
+    }
     surface.setDocument(nullptr);
     surface.setDocument(&f.document);
     surface.forceActiveFocus();

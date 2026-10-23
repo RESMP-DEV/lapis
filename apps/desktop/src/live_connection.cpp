@@ -55,7 +55,7 @@ void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpe
     // Reattaching to the same connection keeps the debt.
     program_wheel_debt_ = 0;
     program_wheel_cell_ = {-1, -1};
-    program_key_debt_ = 0;
+    program_key_debt_lines_ = 0;
     program_key_cell_ = {-1, -1};
     live_ = std::make_unique<LiveConnection>(*this, endpoint, launch, mode);
 }
@@ -65,7 +65,7 @@ void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
     if (live_snapshot_.alternate_screen != snapshot.alternate_screen) {
         program_wheel_debt_ = 0;
         program_wheel_cell_ = {-1, -1};
-        program_key_debt_ = 0;
+        program_key_debt_lines_ = 0;
         program_key_cell_ = {-1, -1};
     }
     live_snapshot_ = std::move(snapshot);
@@ -122,7 +122,7 @@ bool SessionPreview::decodeWaiting() const {
         if (live_snapshot_.alternate_screen != snapshot.alternate_screen) {
             program_wheel_debt_ = 0;
             program_wheel_cell_ = {-1, -1};
-            program_key_debt_ = 0;
+            program_key_debt_lines_ = 0;
             program_key_cell_ = {-1, -1};
         }
         live_snapshot_ = std::move(snapshot);
@@ -378,17 +378,23 @@ bool SessionPreview::sendWheel(int steps, int column, int row) {
     if (history_active_ || history_request_pending_ || !live_snapshot_.accepts_wheel ||
         steps == 0 || !live_)
         return false;
+    // The service takes a bounded wheel step. A large event is sent in
+    // service-sized pieces instead of dropping everything past the first
+    // clamp, and each accepted piece is counted as it goes out, so a rejected
+    // piece keeps only the debt that never reached the connection.
     constexpr int limit = 64;
-    const int delivered = std::clamp(steps, -limit, limit);
-    if (!live_->send(wire::Kind::wheel,
-                     wire::encode_wheel({static_cast<qint16>(delivered),
-                                         static_cast<quint16>(std::clamp(column, 0, 0xFFFF)),
-                                         static_cast<quint16>(std::clamp(row, 0, 0xFFFF))})))
-        return false;
-    // Count only what actually went on the ordered connection, at the size
-    // the service can actually receive. A rejected wheel keeps prior debt.
-    program_wheel_debt_ = std::max(0, program_wheel_debt_ + delivered);
-    program_wheel_cell_ = {column, row};
+    int remaining = steps;
+    while (remaining != 0) {
+        const int piece = std::clamp(remaining, -limit, limit);
+        if (!live_->send(wire::Kind::wheel,
+                         wire::encode_wheel({static_cast<qint16>(piece),
+                                             static_cast<quint16>(std::clamp(column, 0, 0xFFFF)),
+                                             static_cast<quint16>(std::clamp(row, 0, 0xFFFF))})))
+            return false;
+        program_wheel_debt_ = std::max(0, program_wheel_debt_ + piece);
+        program_wheel_cell_ = {column, row};
+        remaining -= piece;
+    }
     return true;
 }
 bool SessionPreview::sendKeyScroll(int steps, int column, int row) {
@@ -396,22 +402,40 @@ bool SessionPreview::sendKeyScroll(int steps, int column, int row) {
     if (history_active_ || history_request_pending_ || live_snapshot_.accepts_wheel || steps == 0 ||
         !live_)
         return false;
-    constexpr int limit = 64;
-    const int delivered = std::clamp(steps, -limit, limit);
-    const auto key = delivered > 0 ? session::TerminalKey::up : session::TerminalKey::down;
-    for (int line = 0; line < std::abs(delivered) * 3; ++line) {
-        if (!sendKey(key, {}))
+    // Three arrows are one wheel notch, and every notch the caller asked for
+    // is delivered: nothing is clamped away. sendKeyLines counts what the
+    // connection accepted, so typing returns exactly what moved.
+    return sendKeyLines(steps * 3, column, row);
+}
+bool SessionPreview::sendKeyLines(int lines, int column, int row) {
+    const auto key = lines > 0 ? session::TerminalKey::up : session::TerminalKey::down;
+    const int sign = lines > 0 ? 1 : -1;
+    // The service takes a bounded batch, so a long scroll is sent in pieces.
+    constexpr int limit = 64 * 3;
+    int remaining = std::abs(lines);
+    while (remaining > 0) {
+        const int piece = std::min(remaining, limit);
+        int sent = 0;
+        while (sent < piece) {
+            if (!sendKey(key, {}))
+                break;
+            ++sent;
+            // Count each accepted key immediately: arrows already on the
+            // ordered connection must never be owed a second time.
+            program_key_debt_lines_ = std::max(0, program_key_debt_lines_ + sign);
+            program_key_cell_ = {column, row};
+        }
+        remaining -= sent;
+        if (sent < piece)
             return false;
     }
-    program_key_debt_ = std::max(0, program_key_debt_ + delivered);
-    program_key_cell_ = {column, row};
     return true;
 }
 // The same ordered connection replays forward before the next input. Keep
 // trying in service-sized chunks; a full queue leaves the remaining debt for
 // the next attempt.
 void SessionPreview::returnProgramToBottom() {
-    if (program_wheel_debt_ == 0 && program_key_debt_ == 0)
+    if (program_wheel_debt_ == 0 && program_key_debt_lines_ == 0)
         return;
     decodeWaiting();
     if (!live_snapshot_.alternate_screen || history_active_ || history_request_pending_)
@@ -424,9 +448,9 @@ void SessionPreview::returnProgramToBottom() {
         }
         return;
     }
-    while (program_key_debt_ > 0) {
-        const int steps = std::min(64, program_key_debt_);
-        if (!sendKeyScroll(-steps, program_key_cell_.x(), program_key_cell_.y()))
+    while (program_key_debt_lines_ > 0) {
+        const int lines = std::min(64 * 3, program_key_debt_lines_);
+        if (!sendKeyLines(-lines, program_key_cell_.x(), program_key_cell_.y()))
             return;
     }
 }
