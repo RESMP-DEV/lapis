@@ -6,7 +6,16 @@
     "1": "Right intent or action, but key specifics are missing or different, so the person would have to edit it.",
     "0": "A different intent."
   },
-  "actual_category": ["approve", "status", "ship", "fix", "new", "question", "correct", "other"],
+  "actual_category": [
+    "approve",
+    "status",
+    "ship",
+    "fix",
+    "new",
+    "question",
+    "correct",
+    "other"
+  ],
   "context_location": [
     "last_agent_reply",
     "prior_person_turn",
@@ -23,7 +32,7 @@
     "entity_error",
     "constraint_error",
     "multipart_loss",
-    "style_only",
+    "style_requires_edit",
     "ambiguous",
     "ranking",
     "other"
@@ -45,7 +54,7 @@
     "Did it carry the exact entity, number or referent? entity_error if not.",
     "Did it honor an explicit don't/only/keep? constraint_error if not.",
     "Did it keep every part of a multipart message? multipart_loss if not.",
-    "Is the difference only wording or detail? style_only if so.",
+    "Is the only difference wording, tone or a detail the person would rewrite? style_requires_edit if so; wording-only differences are still sendable (2) under semantic.2.",
     "Was a correct intent in the top three but not first? ranking if so.",
     "Was the actual underdetermined from the context? ambiguous if so."
   ]

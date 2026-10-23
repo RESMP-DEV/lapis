@@ -17,7 +17,7 @@
   },
   "method": {
     "prompt_variants": "The same bundle, provider chain and parser for every variant; only next_prompt.SYSTEM changed. Each item produced up to three candidates, graded in batches of eight by the judge (the batching of scripts/next_prompt_eval.py's judge()). Top-1 sendable means the first candidate scored 2; top-3 sendable means any candidate scored 2.",
-    "mode": "Question top-1 counts items the judge labelled question or status whose first candidate is itself a question (a question mark or a question word). Command top-1 counts first candidates that open with an imperative verb.",
+    "mode": "Question top-1 counts items the judge labelled question or status whose first candidate is itself a question (a question mark or a question word). The denominator is the judge's per-variant category count, not one fixed count: 14, 15, 17, 17, 15, 16 and 12 for baseline, mode, predictive, analysis, predictive_analysis, lean and examples. The labels come from the same judge pass as the scores, so the denominators differ across variants instead of sharing one fixed base; the rates compare shares of differently-sized question/status sets. Command top-1 counts first candidates that open with an imperative verb.",
     "variants": "baseline (the best-version checklist), mode (the checklist plus an explicit question/result/plan rule), predictive (actual-message framing plus the mode rule, checklist kept), analysis (one analysis field before the candidates), predictive_analysis (both), lean (actual-message framing and mode rule, checklist removed), examples (predictive plus five generic examples)."
   },
   "checks": [
@@ -113,6 +113,7 @@
     "One judge model. A second judge through Infinity was attempted, but the reasoning model exhausted the 4096-token budget on eight-item batches and many batches returned no content, so those partial scores are not used.",
     "The examples variant is scored on 32 of 41 items because the judge hit its weekly limit; its percentages are not directly comparable.",
     "No GUI Tab interaction was exercised.",
-    "The raw prompts and predictions are kept out of the repository; only aggregate metrics and aggregate mode counts are recorded."
+    "The raw prompts and predictions are kept out of the repository; only aggregate metrics and aggregate mode counts are recorded.",
+    "question_top1 denominators differ per variant (14 through 17, 12 for the 32-item examples variant) because they are the judge's per-run category counts; the lean 5/16 versus baseline 2/14 increase compares rates on non-identical bases and is weaker than a fixed-base comparison."
   ]
 }
