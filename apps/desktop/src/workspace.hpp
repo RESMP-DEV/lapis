@@ -192,11 +192,14 @@ class SessionPreview final : public QObject {
     // Requires service admission; pasteResult reports the eventual outcome.
     quint64 sendPasteAndSubmit(const QByteArray& bytes);
     quint64 requestPaste(const QByteArray& bytes, bool submit = false);
-    void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
+    bool sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
     // A turn of the wheel for the program on the alternate screen, over a
     // viewport cell; only when its snapshot says the service accepts wheels.
     // False means the clamped wheel was not queued.
     bool sendWheel(int steps, int column, int row);
+    // Programs that do not report the mouse scroll with arrow keys: another
+    // three lines a step, counted so typing returns it to the bottom too.
+    bool sendKeyScroll(int steps, int column, int row);
     // Sends queued scroll-back debt forward in bounded wheel messages.
     void returnProgramToBottom();
     void resizeTerminal(session::TerminalSize size);
@@ -309,6 +312,9 @@ class SessionPreview final : public QObject {
     // owed the debt.
     mutable int program_wheel_debt_{};
     mutable QPoint program_wheel_cell_{-1, -1};
+    // The same for a full-screen program that scrolls with arrow keys.
+    mutable int program_key_debt_{};
+    mutable QPoint program_key_cell_{-1, -1};
     // The screen when browsing was asked for: the archive answering is at
     // least as new, so it can repeat rows the screen shows but never miss one.
     std::optional<session::TerminalSnapshot> strip_screen_;

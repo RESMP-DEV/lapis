@@ -55,6 +55,8 @@ void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpe
     // Reattaching to the same connection keeps the debt.
     program_wheel_debt_ = 0;
     program_wheel_cell_ = {-1, -1};
+    program_key_debt_ = 0;
+    program_key_cell_ = {-1, -1};
     live_ = std::make_unique<LiveConnection>(*this, endpoint, launch, mode);
 }
 void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
@@ -63,6 +65,8 @@ void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
     if (live_snapshot_.alternate_screen != snapshot.alternate_screen) {
         program_wheel_debt_ = 0;
         program_wheel_cell_ = {-1, -1};
+        program_key_debt_ = 0;
+        program_key_cell_ = {-1, -1};
     }
     live_snapshot_ = std::move(snapshot);
     live_snapshot_received_ = true;
@@ -118,6 +122,8 @@ bool SessionPreview::decodeWaiting() const {
         if (live_snapshot_.alternate_screen != snapshot.alternate_screen) {
             program_wheel_debt_ = 0;
             program_wheel_cell_ = {-1, -1};
+            program_key_debt_ = 0;
+            program_key_cell_ = {-1, -1};
         }
         live_snapshot_ = std::move(snapshot);
     } catch (const std::exception& error) {
@@ -357,16 +363,15 @@ quint64 SessionPreview::requestPaste(const QByteArray& bytes, bool submit) {
 bool SessionPreview::terminate() {
     return live_ && input_ready_ && live_->send(wire::Kind::terminate, {});
 }
-void SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers modifiers) {
+bool SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers modifiers) {
     if (history_active_ || history_request_pending_)
-        return;
+        return false;
     const unsigned int mods = (modifiers.shift ? 1U : 0U) | (modifiers.control ? 2U : 0U) |
                               (modifiers.alt ? 4U : 0U) | (modifiers.super ? 8U : 0U);
     QByteArray bytes;
     bytes.append(static_cast<char>(key));
     bytes.append(static_cast<char>(mods));
-    if (live_)
-        live_->send(wire::Kind::key, bytes);
+    return live_ && live_->send(wire::Kind::key, bytes);
 }
 bool SessionPreview::sendWheel(int steps, int column, int row) {
     decodeWaiting();
@@ -386,19 +391,42 @@ bool SessionPreview::sendWheel(int steps, int column, int row) {
     program_wheel_cell_ = {column, row};
     return true;
 }
+bool SessionPreview::sendKeyScroll(int steps, int column, int row) {
+    decodeWaiting();
+    if (history_active_ || history_request_pending_ || live_snapshot_.accepts_wheel || steps == 0 ||
+        !live_)
+        return false;
+    constexpr int limit = 64;
+    const int delivered = std::clamp(steps, -limit, limit);
+    const auto key = delivered > 0 ? session::TerminalKey::up : session::TerminalKey::down;
+    for (int line = 0; line < std::abs(delivered) * 3; ++line) {
+        if (!sendKey(key, {}))
+            return false;
+    }
+    program_key_debt_ = std::max(0, program_key_debt_ + delivered);
+    program_key_cell_ = {column, row};
+    return true;
+}
 // The same ordered connection replays forward before the next input. Keep
 // trying in service-sized chunks; a full queue leaves the remaining debt for
 // the next attempt.
 void SessionPreview::returnProgramToBottom() {
-    if (program_wheel_debt_ == 0)
+    if (program_wheel_debt_ == 0 && program_key_debt_ == 0)
         return;
     decodeWaiting();
-    if (!live_snapshot_.alternate_screen || !live_snapshot_.accepts_wheel || history_active_ ||
-        history_request_pending_)
+    if (!live_snapshot_.alternate_screen || history_active_ || history_request_pending_)
         return;
-    while (program_wheel_debt_ > 0) {
-        const int steps = std::min(64, program_wheel_debt_);
-        if (!sendWheel(-steps, program_wheel_cell_.x(), program_wheel_cell_.y()))
+    if (live_snapshot_.accepts_wheel) {
+        while (program_wheel_debt_ > 0) {
+            const int steps = std::min(64, program_wheel_debt_);
+            if (!sendWheel(-steps, program_wheel_cell_.x(), program_wheel_cell_.y()))
+                return;
+        }
+        return;
+    }
+    while (program_key_debt_ > 0) {
+        const int steps = std::min(64, program_key_debt_);
+        if (!sendKeyScroll(-steps, program_key_cell_.x(), program_key_cell_.y()))
             return;
     }
 }

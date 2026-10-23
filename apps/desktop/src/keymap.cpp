@@ -692,6 +692,7 @@ bool KeyMap::load() {
     const QJsonObject root = document.object();
     sidebar_visible_ = root.value(QStringLiteral("sidebarVisible")).toBool(true);
     previews_visible_ = root.value(QStringLiteral("previewsVisible")).toBool(true);
+    scroll_to_bottom_on_typing_ = root.value(QStringLiteral("scrollToBottomOnTyping")).toBool(true);
     const QJsonObject keys = root.value(QStringLiteral("keybindings")).toObject();
     int applied = 0;
     for (auto it = keys.begin(); it != keys.end() && applied < kMaximumActions; ++it, ++applied) {
@@ -1084,6 +1085,20 @@ bool KeyMap::setSidebarVisible(bool visible) {
     return true;
 }
 
+bool KeyMap::setScrollToBottomOnTyping(bool on) {
+    if (scroll_to_bottom_on_typing_ == on)
+        return true;
+    const bool previous = scroll_to_bottom_on_typing_;
+    scroll_to_bottom_on_typing_ = on;
+    if (!save_without_tentative_change()) {
+        scroll_to_bottom_on_typing_ = previous;
+        emit changed();
+        return false;
+    }
+    emit changed();
+    return true;
+}
+
 bool KeyMap::setPreviewsVisible(bool visible) {
     if (previews_visible_ == visible)
         return true;
@@ -1206,6 +1221,7 @@ bool KeyMap::persist() {
     root.insert(QStringLiteral("density"), densityName());
     root.insert(QStringLiteral("sidebarVisible"), sidebar_visible_);
     root.insert(QStringLiteral("previewsVisible"), previews_visible_);
+    root.insert(QStringLiteral("scrollToBottomOnTyping"), scroll_to_bottom_on_typing_);
     // A malformed hand-written value must survive an unrelated appearance save.
     if (root.contains(QStringLiteral("terminalFont")) &&
         !root.value(QStringLiteral("terminalFont")).isObject())

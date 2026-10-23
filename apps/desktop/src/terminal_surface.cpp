@@ -1094,6 +1094,13 @@ void TerminalSurface::setHoldResize(bool hold) {
         requestResize();
 }
 
+void TerminalSurface::setScrollToBottomOnTyping(bool on) {
+    if (scroll_to_bottom_on_typing_ == on)
+        return;
+    scroll_to_bottom_on_typing_ = on;
+    emit scrollToBottomOnTypingChanged();
+}
+
 void TerminalSurface::setInteractive(bool enabled) {
     if (interactive_ == enabled)
         return;
@@ -1427,6 +1434,13 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
     if (rows != 0)
         document_->scrollHistory(rows);
 }
+// Typing returns a scrolled-back program to its bottom before the key, first
+// on the same ordered connection. The setting only governs typing; the wheel
+// itself always reaches the program.
+void TerminalSurface::returnProgramToBottom() {
+    if (scroll_to_bottom_on_typing_ && document_)
+        document_->returnProgramToBottom();
+}
 // Full-screen programs scroll themselves: the service sends the wheel as the
 // program asked (mouse wheel events when it reports the mouse, as Claude
 // Code's full-screen mode does, else arrow keys). A service from before wheel
@@ -1438,9 +1452,7 @@ void TerminalSurface::scrollProgram(int steps, QPoint cell) {
         static_cast<void>(document_->sendWheel(steps, cell.x(), cell.y()));
         return;
     }
-    const auto key = steps > 0 ? session::TerminalKey::up : session::TerminalKey::down;
-    for (int line = 0; line < std::abs(steps) * 3; ++line)
-        document_->sendKey(key, {});
+    static_cast<void>(document_->sendKeyScroll(steps, cell.x(), cell.y()));
 }
 std::optional<TerminalSurface::CellGrid> TerminalSurface::cellGrid() const {
     if (!document_)
@@ -1873,7 +1885,7 @@ void TerminalSurface::sendFilled() {
     const std::optional<Filled> taken = filled_;
     if (!taken || !taken->owner || taken->owner != document_)
         return;
-    document_->returnProgramToBottom();
+    returnProgramToBottom();
     document_->sendKey(session::TerminalKey::enter, {});
     typed_since_arrival_ = false;
     filled_.reset();
@@ -1917,7 +1929,7 @@ quint64 TerminalSurface::pasteTextRequest(const QString& text, std::optional<boo
     if (document_ != owner || !acceptsTerminalInput())
         return false;
     clearSelection();
-    document_->returnProgramToBottom();
+    returnProgramToBottom();
     const auto request = submit.has_value() ? document_->requestPaste(bytes, *submit)
                          : document_->sendText(bytes, true) ? quint64{1}
                                                             : quint64{0};
@@ -2271,7 +2283,7 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     if (key) {
         interaction::key_outcome(QStringLiteral("agent"));
         const auto mods = event->modifiers();
-        document_->returnProgramToBottom();
+        returnProgramToBottom();
         document_->sendKey(*key,
                            {mods.testFlag(Qt::ShiftModifier), mods.testFlag(Qt::ControlModifier),
                             mods.testFlag(Qt::AltModifier), false});
@@ -2279,7 +2291,7 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         const auto text = terminal_text_key(*event);
         interaction::key_outcome(text.isEmpty() ? QStringLiteral("none") : QStringLiteral("agent"));
         if (!text.isEmpty()) {
-            document_->returnProgramToBottom();
+            returnProgramToBottom();
             document_->sendText(text);
         }
     }
@@ -2298,7 +2310,7 @@ void TerminalSurface::commandKey(QKeyEvent& event) {
         interaction::key_outcome(QStringLiteral("agent"),
                                  {{QStringLiteral("as"), line_start ? QStringLiteral("line-start")
                                                                     : QStringLiteral("line-end")}});
-        document_->returnProgramToBottom();
+        returnProgramToBottom();
         document_->sendText(QByteArray(1, line_start ? '\x01' : '\x05'));
         event.accept();
         return;
@@ -2312,7 +2324,7 @@ void TerminalSurface::commandKey(QKeyEvent& event) {
                                  {{QStringLiteral("as"), event.key() == Qt::Key_Backspace
                                                              ? QStringLiteral("delete-to-start")
                                                              : QStringLiteral("delete-to-end")}});
-        document_->returnProgramToBottom();
+        returnProgramToBottom();
         document_->sendText(QByteArray(1, event.key() == Qt::Key_Backspace ? '\x15' : '\x0b'));
         event.accept();
         return;
@@ -2348,7 +2360,7 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
             return;
         }
         noteTyped();
-        document_->returnProgramToBottom();
+        returnProgramToBottom();
         document_->sendText(event->commitString().toUtf8());
     }
     if (composition_epoch != ime_epoch_) {

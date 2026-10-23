@@ -758,6 +758,26 @@ void sidebar_preference_and_commands() {
             "failed visibility saves never publish tentative values");
 }
 
+void typing_scroll_preference_persists() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "typing scroll fixture directory");
+    const auto path = write_config(QDir(directory.path()), R"({})");
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load() && keymap.scrollToBottomOnTyping(),
+            "typing returns to the bottom by default");
+    require(keymap.setScrollToBottomOnTyping(false), "the typing return can be turned off");
+    require(!read_config(path).value(QStringLiteral("scrollToBottomOnTyping")).toBool(true),
+            "the typing return is not persisted");
+    KeyMap restored;
+    restored.setSourcePathForTesting(path);
+    require(restored.load() && !restored.scrollToBottomOnTyping(),
+            "the typing return preference survives restart");
+    static_cast<void>(write_config(QDir(directory.path()), "{broken"));
+    require(!restored.setScrollToBottomOnTyping(true) && !restored.scrollToBottomOnTyping(),
+            "a failed typing return save rolls back");
+}
+
 // The terminal font is validated, written immediately, restored on restart and
 // rolled back when the file cannot be saved.
 void terminal_font_persists_and_rolls_back() {
@@ -1107,6 +1127,7 @@ int main(int argc, char** argv) {
         themes_are_complete();
         oled_theme_is_black();
         sidebar_preference_and_commands();
+        typing_scroll_preference_persists();
         selection_persists();
         layout_cycle_persists_from_every_layout();
         layout_cycle_preserves_malformed_config();

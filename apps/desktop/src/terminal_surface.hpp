@@ -93,6 +93,10 @@ class TerminalSurface : public QQuickItem {
     // While true the agent keeps its size: a divider or window being dragged
     // resizes the terminal once, when the drag ends, not every step.
     Q_PROPERTY(bool holdResize READ holdResize WRITE setHoldResize NOTIFY holdResizeChanged)
+    // Typing over a scrolled-back full-screen program returns it to its
+    // bottom before the key is delivered.
+    Q_PROPERTY(bool scrollToBottomOnTyping READ scrollToBottomOnTyping WRITE
+                   setScrollToBottomOnTyping NOTIFY scrollToBottomOnTypingChanged)
     Q_PROPERTY(bool composing READ composing NOTIFY inputOwnershipChanged)
     Q_PROPERTY(bool pasting READ pasting NOTIFY inputOwnershipChanged)
     // Requested family; empty or unavailable/proportional names use the
@@ -146,6 +150,8 @@ class TerminalSurface : public QQuickItem {
     [[nodiscard]] qreal minimumScale() const { return minimum_scale_; }
     [[nodiscard]] bool holdResize() const { return hold_resize_; }
     void setHoldResize(bool hold);
+    [[nodiscard]] bool scrollToBottomOnTyping() const { return scroll_to_bottom_on_typing_; }
+    void setScrollToBottomOnTyping(bool on);
     void setMinimumScale(qreal scale);
     void setFrameInterval(int milliseconds);
     [[nodiscard]] bool composing() const { return !preedit_.isEmpty(); }
@@ -181,6 +187,7 @@ class TerminalSurface : public QQuickItem {
     void frameIntervalChanged();
     void minimumScaleChanged();
     void holdResizeChanged();
+    void scrollToBottomOnTypingChanged();
     void inputOwnershipChanged();
     void fontChanged();
     void gridSizeChanged();
@@ -233,6 +240,8 @@ class TerminalSurface : public QQuickItem {
     void publishFrame(bool snapshot_changed);
     void updateInputContext(Qt::InputMethodQueries queries);
     void resetInputContext();
+    // Typing returns the program to the bottom first, when enabled.
+    void returnProgramToBottom();
     // Cell geometry of the current screen as laid out in this item.
     struct CellGrid {
         qreal width{};
@@ -294,6 +303,7 @@ class TerminalSurface : public QQuickItem {
     QSize grid_size_;
     bool interactive_{};
     bool hold_resize_{};
+    bool scroll_to_bottom_on_typing_{true};
     int frame_interval_{};
     qreal minimum_scale_{};
     QTimer throttle_;

@@ -1120,6 +1120,100 @@ void long_pastes() {
 }
 
 // Dragging selects screen text and double-clicking selects a word. The copy
+// Typing returns a scrolled-back full-screen program to its bottom before the
+// key, whether it reports the mouse or scrolls with arrow keys, and the
+// setting can leave the view where it is.
+void typing_returns_to_bottom() {
+    Fixture f;
+    QQuickWindow window;
+    window.setGeometry(100, 100, 640, 360);
+    lapis::desktop::TerminalSurface surface(window.contentItem());
+    surface.setSize(QSizeF(640, 360));
+    surface.setHoldResize(true);
+    surface.setDocument(&f.document);
+    surface.setInteractive(true);
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    window.show();
+    wait_terminal_focus(surface);
+    static_cast<void>(text_frames(peer));
+    surface.setFrameInterval(0);
+    const QPointF middle = surface.cellRect(0, 0).center();
+    const auto scroll = [&](int angle) {
+        QWheelEvent event(middle, surface.mapToGlobal(middle), QPoint(), QPoint(0, angle),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(&surface, &event);
+    };
+    const auto key_of = [](const wire::Frame& frame) {
+        require(frame.kind == wire::Kind::key, "Expected a key frame");
+        const auto control = wire::decode_control(frame.payload);
+        require(control.payload.size() == 2, "Key frame lacked its key and modifiers");
+        return static_cast<lapis::session::TerminalKey>(control.payload.at(0));
+    };
+    const auto typed = [&](const QString& text) {
+        QKeyEvent press(QEvent::KeyPress, text.at(0).unicode(), Qt::NoModifier, text);
+        QCoreApplication::sendEvent(&surface, &press);
+    };
+    quint64 sequence = 2;
+    const auto alternate_screen = [&](quint8 alternate) {
+        auto payload =
+            wire::encode_snapshot_message({{f.identity, 1}, ++sequence, f.terminal.snapshot()});
+        payload[wire::snapshot_header_bytes + 21] = static_cast<char>(alternate);
+        peer.send(wire::Kind::snapshot, payload);
+        until([&] {
+            return f.document.snapshot().alternate_screen &&
+                   f.document.snapshot().accepts_wheel == (alternate == 3);
+        });
+        static_cast<void>(text_frames(peer));
+    };
+
+    f.terminal.feed("\x1b[?1049h");
+    alternate_screen(3);
+    scroll(240);
+    const auto back = peer.read();
+    require(back.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(back.payload).payload).steps == 2,
+            "Two notches did not reach a screen-reading program");
+    typed(QStringLiteral("z"));
+    const auto returned = peer.read();
+    require(returned.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(returned.payload).payload).steps == -2,
+            "Typing did not return the wheel-scrolled program to its bottom");
+    require(text_frames(peer, 1) == QByteArray("z"), "The key after the return was lost");
+
+    surface.setScrollToBottomOnTyping(false);
+    scroll(120);
+    const auto left = peer.read();
+    require(left.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(left.payload).payload).steps == 1,
+            "A notch was lost with the setting off");
+    typed(QStringLiteral("q"));
+    require(text_frames(peer, 1) == QByteArray("q"),
+            "The setting off still returned the program to its bottom");
+
+    surface.setScrollToBottomOnTyping(true);
+    // An older service's full screen reports no wheel: lapis scrolls it with
+    // arrow keys and must return it the same way.
+    alternate_screen(1);
+    scroll(120);
+    for (int line = 0; line < 3; ++line) {
+        require(key_of(peer.read()) == lapis::session::TerminalKey::up,
+                "Arrow-key scroll back did not reach the program");
+    }
+    typed(QStringLiteral("r"));
+    for (int line = 0; line < 3; ++line) {
+        require(key_of(peer.read()) == lapis::session::TerminalKey::down,
+                "Typing did not return the key-scrolled program to its bottom");
+    }
+    require(text_frames(peer, 1) == QByteArray("r"), "The key after the key return was lost");
+    typed(QStringLiteral("s"));
+    require(text_frames(peer, 1) == QByteArray("s"),
+            "A program already at the bottom was scrolled again");
+}
+
 // chord copies without sending input, typing clears the selection, and the
 // wheel asks for older history on the normal screen.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -1582,6 +1676,7 @@ int main(int argc, char** argv) {
         suggestions();
         long_pastes();
         selection_and_scroll();
+        typing_returns_to_bottom();
         links_follow_wrapped_rows();
         command_links_open();
         size_returns_to_this_window();
