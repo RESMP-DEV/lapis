@@ -3476,12 +3476,18 @@ void ompGetsItsResizeOverlay() {
         require(written.open(QIODevice::ReadOnly), "lapis writes its OMP overlay");
         require(written.readAll().contains("resizeScrollback: preserve"),
                 "the overlay preserves scrollback on resize");
-        require(waitFor([&] { return QFileInfo::exists(capture); }, 5000),
+        // The stand-in's shell truncates the capture before it writes, so an
+        // existence check alone can read an empty file under load.
+        const auto expected_config = userOverlay + QDir::listSeparator() + overlay;
+        require(waitFor([&] {
+                    QFile probe(capture);
+                    return probe.open(QIODevice::ReadOnly) &&
+                           QString::fromUtf8(probe.readAll()) == expected_config;
+                }, 5000),
                 "the stand-in recorded its environment");
         QFile captured(capture);
         require(captured.open(QIODevice::ReadOnly), "the stand-in recorded its environment");
-        require(QString::fromUtf8(captured.readAll()) ==
-                    userOverlay + QDir::listSeparator() + overlay,
+        require(QString::fromUtf8(captured.readAll()) == expected_config,
                 "the OMP service keeps the user's overlays and appends lapis");
         require(workspace.closeSession(agent->sessionId()), "close the OMP stand-in");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
