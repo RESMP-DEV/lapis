@@ -3454,6 +3454,13 @@ void ompGetsItsResizeOverlay() {
             "make the stand-in executable");
     const auto path = qgetenv("PATH");
     qputenv("PATH", QFile::encodeName(root.filePath(QStringLiteral("bin"))) + ':' + path);
+    // A user's shell may already export PI_CONFIG_FILES. Pin it here so this
+    // test does not inherit the developer's overlays, and so the append that
+    // the OMP service performs can be asserted exactly.
+    const auto previousConfig = qgetenv("PI_CONFIG_FILES");
+    const bool hadConfig = qEnvironmentVariableIsSet("PI_CONFIG_FILES");
+    const auto userOverlay = root.filePath(QStringLiteral("user.yml"));
+    qputenv("PI_CONFIG_FILES", QFile::encodeName(userOverlay));
     WorkspaceOptions options;
     options.storagePath = root.filePath(QStringLiteral("workspace.json"));
     {
@@ -3473,12 +3480,17 @@ void ompGetsItsResizeOverlay() {
                 "the stand-in recorded its environment");
         QFile captured(capture);
         require(captured.open(QIODevice::ReadOnly), "the stand-in recorded its environment");
-        require(QString::fromUtf8(captured.readAll()) == overlay,
-                "the OMP service did not receive its overlay");
+        require(QString::fromUtf8(captured.readAll()) ==
+                    userOverlay + QDir::listSeparator() + overlay,
+                "the OMP service keeps the user's overlays and appends lapis");
         require(workspace.closeSession(agent->sessionId()), "close the OMP stand-in");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "the OMP stand-in closes");
     }
+    if (hadConfig)
+        qputenv("PI_CONFIG_FILES", previousConfig);
+    else
+        qunsetenv("PI_CONFIG_FILES");
     qputenv("PATH", path);
 }
 
