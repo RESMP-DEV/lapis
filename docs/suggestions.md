@@ -63,6 +63,14 @@ is 0.45 or more (from Oct 3 to 9, guesses scored that high were taken 65% of
 the time, against 25 to 34% below). None shows while an agent waits on a
 request such as a permission prompt.
 
+The prompt asks for what you would actually type, not an ideal message. It
+reads the agent's latest reply as a mode first: a question, a choice or a wait
+is answered or met with a clarifying question; a result can be approved,
+corrected, or used to start a new task; a list of next steps is not repeated
+as a command. On 41 past prompts this mode framing and a shorter prompt
+produced more sendable top guesses than the earlier best-version checklist,
+which turned question and status turns into new instructions.
+
 A turn the agent ends on its own, with no prompt from you since a guess you
 never saw (an agent woken by its background work), is not guessed at once: the
 guess is made when you next show that agent. From Oct 7 to 9 such repeats were

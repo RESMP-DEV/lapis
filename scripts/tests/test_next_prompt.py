@@ -1252,20 +1252,18 @@ class AcceptanceTests(unittest.TestCase):
         )
         self.assertEqual(bounded["failed"], {"context: helper failed": 100})
 
-    def test_next_message_policy_gates_before_go_and_stops_at_first_match(self):
+    def test_next_message_policy_decides_the_agents_mode_first(self):
         policy = " ".join(next_prompt.SYSTEM.split())
-        self.assertIn("stop at the first item that applies", policy)
-        gates = policy.index("spend money")
-        answer = policy.index("pick an option")
-        uncommitted = policy.index("Work is uncommitted")
-        self.assertLess(gates, answer)
-        self.assertLess(answer, uncommitted)
-        plain_go = policy.index('asks for a plain "go"')
-        follow_up = policy.index("answered a plain question")
-        watcher = policy.index("A watcher or notification")
-        self.assertLess(uncommitted, plain_go)
-        self.assertLess(follow_up, watcher)
-        self.assertNotIn("before anything else", policy)
+        self.assertIn("Write the message they will most likely send next", policy)
+        self.assertIn("not the ideal message", policy)
+        self.assertIn("The agent's latest reply decides the likely mode", policy)
+        question = policy.index("a question, a choice")
+        result = policy.index("a result")
+        plan = policy.index("a plan or a list")
+        self.assertLess(question, result)
+        self.assertLess(result, plan)
+        self.assertIn("Do not start the next work item", policy)
+        self.assertIn("Do not repeat the plan", policy)
 
     def test_summarize_preserves_top_scored_unknown(self):
         sys.path.insert(0, str(ROOT / "scripts"))
