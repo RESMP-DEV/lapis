@@ -37,7 +37,7 @@
     },
     {
       "name": "provider chain over 30 sampled prompts against Opus 5.5 (seed 23)",
-      "result": "30 of 30 prompts answered, all by the infinity provider; paired 2 versus 0 sendable against Opus, exact McNemar p=0.5. The comparison is weak evidence of equivalence, not a non-inferiority test."
+      "result": "30 of 30 prompts answered, all by the infinity provider; paired discordant counts 1 (Opus only) versus 0 (chain only) sendable, exact McNemar p=1.0. The comparison is weak evidence of equivalence, not a non-inferiority test."
     },
     {
       "name": "provider fallback (primary replaced by a dead port, OpenRouter live)",

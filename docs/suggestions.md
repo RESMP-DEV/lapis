@@ -27,7 +27,8 @@ OpenAI-compatible endpoints, tried first to last, for the main guess:
 ```json
 {"nextPrompt": {"providers": [
   {"name": "primary", "url": "http://gpu-host:8317/v1",
-   "model": "deepseek-v4.1", "apiKeyEnv": "PRIMARY_KEY", "timeoutSeconds": 20},
+   "model": "deepseek-v4.1", "apiKeyEnv": "PRIMARY_KEY", "timeoutSeconds": 20,
+   "allowInsecureHttp": true},
   {"name": "fallback", "url": "https://openrouter.ai/api/v1",
    "model": "deepseek/deepseek-v4.1-flash-1017", "apiKeyEnv": "OPENROUTER_API_KEY"}
 ]}}
@@ -37,7 +38,11 @@ OpenAI-compatible endpoints, tried first to last, for the main guess:
 a variable read from the process environment, then `~/.env_vars`; the key is
 never stored in `lapis.json`. Without it the request carries no
 `Authorization` header, for a local endpoint. The key is sent only to the
-endpoint it is configured for: a redirect does not carry it.
+endpoint it is configured for: a redirect does not carry it. A keyed
+`http://` endpoint off this machine is refused unless the provider sets
+`allowInsecureHttp: true`, since cleartext would expose the key and the
+prompt text to the network path; loopback endpoints and `https://` are
+unaffected.
 `timeoutSeconds` defaults to 30 (1 to 60), `maxTokens` to 4096 (128 to 8192)
 and `temperature` to 0 (0 to 2). An unreachable host, a missing key or an
 HTTP error moves to the next provider at once; an unreadable answer is asked

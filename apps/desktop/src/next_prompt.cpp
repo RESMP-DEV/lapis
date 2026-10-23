@@ -127,6 +127,8 @@ std::optional<QJsonObject> clean_provider(const QJsonObject& provider) {
     const auto key = provider.value(QStringLiteral("apiKeyEnv")).toString().trimmed();
     if (!key.isEmpty())
         clean.insert(QStringLiteral("apiKeyEnv"), key.left(80));
+    if (provider.value(QStringLiteral("allowInsecureHttp")).toBool(false))
+        clean.insert(QStringLiteral("allowInsecureHttp"), true);
     if (const auto seconds = provider.value(QStringLiteral("timeoutSeconds")); seconds.isDouble())
         // One attempt must leave room for the next provider: the
         // helper is killed at kPredictTimeoutMs (180s).

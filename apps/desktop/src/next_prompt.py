@@ -12,7 +12,9 @@ Standard library only; Python 3.9 or newer.
 import argparse
 import glob
 import http.client
+import ipaddress
 import json
+import urllib.parse
 import math
 import os
 import random
@@ -822,6 +824,8 @@ def clean_providers(value):
         env = str(entry.get("apiKeyEnv", "")).strip()[:80]
         if env:
             provider["apiKeyEnv"] = env
+        if entry.get("allowInsecureHttp") is True:
+            provider["allowInsecureHttp"] = True
         for key, low, high in (
             ("timeoutSeconds", 1, PROVIDER_TIMEOUT_SECONDS),
             ("maxTokens", 128, 8192),
@@ -854,6 +858,37 @@ def config_providers():
     )
 
 
+def is_loopback_url(url):
+    """True for loopback endpoints, where cleartext stays on this machine."""
+    try:
+        host = (urllib.parse.urlsplit(url).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    if host in ("localhost",):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def require_secure_key_transport(provider):
+    """Refuse to send a key over cleartext to a non-loopback host.
+
+    A keyed http:// endpoint off this machine would expose the bearer token
+    and the prompt text to the network path. Loopback endpoints, keyless
+    requests and https:// endpoints are unchanged; allowInsecureHttp opts a
+    provider into the cleartext route explicitly.
+    """
+    url = provider.get("url", "")
+    if (
+        url.startswith("http://")
+        and not is_loopback_url(url)
+        and provider.get("allowInsecureHttp") is not True
+    ):
+        raise RuntimeError("refusing to send the key over plain http")
+
+
 def ask_provider(provider, system, prompt, timeout=None):
     """One answer from a configured OpenAI-compatible provider."""
     key = provider_key(provider)
@@ -874,6 +909,7 @@ def ask_provider(provider, system, prompt, timeout=None):
         headers={"Content-Type": "application/json"},
     )
     if key:
+        require_secure_key_transport(provider)
         # Unredirected: a 301, 302 or 303 would otherwise carry the bearer
         # token to the redirect's host.
         request.add_unredirected_header("Authorization", "Bearer " + key)

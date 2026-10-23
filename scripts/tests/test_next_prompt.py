@@ -1119,6 +1119,78 @@ class ProviderTests(unittest.TestCase):
         self.assertLess(elapsed, 2.5, "the chain stopped at its own budget")
         self.assertLessEqual(timeouts[0], 1.5, "one attempt fits in what is left")
 
+    def test_a_key_is_refused_over_plain_http_off_this_machine(self):
+        providers = [
+            {
+                "name": "gpu",
+                "url": "http://gpu-host:8317/v1",
+                "model": "m",
+                "apiKeyEnv": "LAPIS_TEST_KEY",
+            }
+        ]
+        with patch.dict(os.environ, {"LAPIS_TEST_KEY": "secret"}):
+            with patch.object(
+                next_prompt.urllib.request,
+                "urlopen",
+                side_effect=AssertionError("sent"),
+            ) as opened:
+                result = next_prompt.predict(
+                    {}, "unused", "", "unused", providers=providers
+                )
+        self.assertIn("plain http", result.get("error", ""))
+        opened.assert_not_called()
+
+    def test_a_key_reaches_loopback_http_and_opted_in_hosts(self):
+        for url, extra in (
+            ("http://127.0.0.1:8317/v1", {}),
+            ("http://localhost:8317/v1", {}),
+            ("http://gpu-host:8317/v1", {"allowInsecureHttp": True}),
+            ("https://gpu-host:8317/v1", {}),
+        ):
+            providers = [
+                {
+                    "name": "ep",
+                    "url": url,
+                    "model": "m",
+                    "apiKeyEnv": "LAPIS_TEST_KEY",
+                    **extra,
+                }
+            ]
+            seen = {}
+
+            class Reply:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def read(self, limit):
+                    return json.dumps(
+                        {
+                            "choices": [
+                                {
+                                    "message": {
+                                        "content": '{"candidates": [{"text": "ok", "p": 0.9}]}'
+                                    }
+                                }
+                            ]
+                        }
+                    ).encode()
+
+            def open_request(request, timeout=None):
+                seen["url"] = request.full_url
+                seen["auth"] = request.get_header("Authorization")
+                return Reply()
+
+            with patch.dict(os.environ, {"LAPIS_TEST_KEY": "secret"}):
+                with patch.object(next_prompt.urllib.request, "urlopen", open_request):
+                    result = next_prompt.predict(
+                        {}, "unused", "", "unused", providers=providers
+                    )
+            self.assertNotIn("error", result, url)
+            self.assertEqual(seen.get("auth"), "Bearer secret", url)
+
     def test_a_lapis_config_supplies_the_order(self):
         folder = Path(tempfile.mkdtemp(prefix="lapis-providers-"))
         self.addCleanup(shutil.rmtree, folder)

@@ -129,11 +129,13 @@ void settingsReadFromTheConfig() {
             {"url": "https://two.test/v1", "model": "two"},
             {"url": "https://three.test/v1", "model": "three",
              "timeoutSeconds": 30.5, "maxTokens": 4096.5},
-            {"url": "https://four.test/v1", "model": "four", "timeoutSeconds": 999}
+            {"url": "https://four.test/v1", "model": "four", "timeoutSeconds": 999},
+            {"url": "http://lan.test/v1", "model": "lan", "apiKeyEnv": "K",
+             "allowInsecureHttp": true}
         ]})")
                                                              .object());
     require(
-        chain.providers.size() == 4 &&
+        chain.providers.size() == 5 &&
             chain.providers.at(0).toObject().value(QStringLiteral("name")).toString() ==
                 QLatin1String("one") &&
             chain.providers.at(0).toObject().value(QStringLiteral("timeoutSeconds")).toInt() == 1 &&
@@ -145,7 +147,10 @@ void settingsReadFromTheConfig() {
             chain.providers.at(2).toObject().value(QStringLiteral("timeoutSeconds")).toInt() ==
                 31 &&
             chain.providers.at(2).toObject().value(QStringLiteral("maxTokens")).toInt() == 4097 &&
-            chain.providers.at(3).toObject().value(QStringLiteral("timeoutSeconds")).toInt() == 60,
+            chain.providers.at(3).toObject().value(QStringLiteral("timeoutSeconds")).toInt() ==
+                60 &&
+            chain.providers.at(4).toObject().value(QStringLiteral("allowInsecureHttp")).toBool() ==
+                true,
         "providers are validated, clamped and named after their model");
 }
 
