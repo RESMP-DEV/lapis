@@ -19,7 +19,7 @@ from check_service_attention import View, cleanup_service, decision, process_gro
 from probe_terminal import run_process
 
 ROOT = Path(__file__).resolve().parents[1]
-SUPPORTED_VERSION = "2.1.302"
+SUPPORTED_VERSION = "2.1.303"
 MODEL = "zai,glm-5.3"
 ROUTER_URL = "http://127.0.0.1:3456"
 FIXTURE_COMMAND = 'python3 -c "print(123456789)"'

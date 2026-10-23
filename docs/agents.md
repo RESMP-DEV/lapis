@@ -102,6 +102,18 @@ mode 2026); lapis shows only the finished frame, as iTerm2 and Ghostty do, so
 scrolling never shows a screen half painted. An update that never ends is
 shown after 250 ms.
 
+OMP and Kimi keep their main transcript on the primary screen, so a resize
+makes them rebuild their scrollback: the renderer erases every kept row
+(`ESC [3J`) and replays the whole conversation, which reads as the transcript
+scrolling past. OMP does this by default (`tui.resizeScrollback: rebuild`).
+New OMP agents get a lapis-owned overlay through `PI_CONFIG_FILES`
+(`runtime/omp-lapis.yml`) that sets `tui.resizeScrollback: preserve`, so a
+resize repaints only the viewport. A user's own `PI_CONFIG_FILES` is kept and
+the lapis overlay is appended. Kimi has no equivalent setting; its
+experimental full-screen mode avoids the rebuild if you set
+`KIMI_CODE_TUI_FULL_SCREEN=1` (or `tui_mode = "fullscreen"` in its config),
+and its transcript then repaints like the other full-screen programs.
+
 ## Keeping CLIs current
 
 A new agent's CLI updates itself first (`claude update`, `omp update`, `grok

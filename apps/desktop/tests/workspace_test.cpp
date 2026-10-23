@@ -3433,6 +3433,75 @@ void skippedClaudeUpdateReportsTheCurrentOperation() {
             "Claude stand-in closes");
 }
 
+// OMP's inline UI rebuilds its scrollback on resize unless its config overlay
+// says preserve. New agents get that overlay through their service
+// environment, appended to any overlays the user already set.
+void ompGetsItsResizeOverlay() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-omp-overlay-XXXXXX"));
+    require(directory.isValid(), "OMP overlay directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    require(root.mkpath(QStringLiteral("bin")) && root.mkpath(QStringLiteral("project")),
+            "fixture folders");
+    const auto capture = root.filePath(QStringLiteral("bin/env"));
+    QFile script(root.filePath(QStringLiteral("bin/omp")));
+    require(script.open(QIODevice::WriteOnly), "write the stand-in OMP");
+    script.write(QByteArray("#!/bin/sh\n"
+                            "if [ \"$1\" = update ]; then echo updated; exit 0; fi\n"
+                            "printf '%s' \"$PI_CONFIG_FILES\" > '") +
+                 capture.toUtf8() + "'\necho omp ready\nexec sleep 600\n");
+    script.close();
+    require(script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make the stand-in executable");
+    const auto path = qgetenv("PATH");
+    qputenv("PATH", QFile::encodeName(root.filePath(QStringLiteral("bin"))) + ':' + path);
+    // A user's shell may already export PI_CONFIG_FILES. Pin it here so this
+    // test does not inherit the developer's overlays, and so the append that
+    // the OMP service performs can be asserted exactly.
+    const auto previousConfig = qgetenv("PI_CONFIG_FILES");
+    const bool hadConfig = qEnvironmentVariableIsSet("PI_CONFIG_FILES");
+    const auto userOverlay = root.filePath(QStringLiteral("user.yml"));
+    qputenv("PI_CONFIG_FILES", QFile::encodeName(userOverlay));
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.createAgent(root.filePath(QStringLiteral("project")),
+                                      QStringLiteral("overlay"), QStringLiteral("omp")),
+                "an OMP stand-in");
+        auto* agent = workspace.focusedSession();
+        require(agent != nullptr && waitFor([&] { return agent->inputReady(); }, 10000),
+                "the OMP stand-in starts");
+        const auto overlay = root.filePath(QStringLiteral("omp-lapis.yml"));
+        QFile written(overlay);
+        require(written.open(QIODevice::ReadOnly), "lapis writes its OMP overlay");
+        require(written.readAll().contains("resizeScrollback: preserve"),
+                "the overlay preserves scrollback on resize");
+        // The stand-in's shell truncates the capture before it writes, so an
+        // existence check alone can read an empty file under load.
+        const auto expected_config = userOverlay + QDir::listSeparator() + overlay;
+        require(waitFor(
+                    [&] {
+                        QFile probe(capture);
+                        return probe.open(QIODevice::ReadOnly) &&
+                               QString::fromUtf8(probe.readAll()) == expected_config;
+                    },
+                    5000),
+                "the stand-in recorded its environment");
+        QFile captured(capture);
+        require(captured.open(QIODevice::ReadOnly), "the stand-in recorded its environment");
+        require(QString::fromUtf8(captured.readAll()) == expected_config,
+                "the OMP service keeps the user's overlays and appends lapis");
+        require(workspace.closeSession(agent->sessionId()), "close the OMP stand-in");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the OMP stand-in closes");
+    }
+    if (hadConfig)
+        qputenv("PI_CONFIG_FILES", previousConfig);
+    else
+        qunsetenv("PI_CONFIG_FILES");
+    qputenv("PATH", path);
+}
+
 // A full-screen program that reports the mouse, as Claude Code's full-screen
 // mode does, gets the wheel as mouse wheel events at the cell under it. The
 // stand-in takes the alternate screen, reads what the wheel sends, and prints
@@ -6855,6 +6924,7 @@ int main(int argc, char** argv) {
         resumingAConversationStartsItsCli();
         terminalsRunPlainShells();
         wheelReachesAFullScreenProgram();
+        ompGetsItsResizeOverlay();
         historyJumpsToTheStart();
         unseenAgentsDecodeNothing();
         windowTakesTheWorkspaceFromTheHost();

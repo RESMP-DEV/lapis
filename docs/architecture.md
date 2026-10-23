@@ -292,6 +292,12 @@ selection, clipboard, and accessibility. Focused terminal glyphs render 1:1 on
 a whole-device-pixel cell grid. Only bounded previews may scale snapshots down,
 and scaled previews never resize PTYs.
 
+An inline agent renderer can rebuild its scrollback on a PTY resize by erasing
+every kept row and replaying the transcript (OMP's default
+`tui.resizeScrollback: rebuild`, and Kimi). OMP agents receive a lapis-owned
+`PI_CONFIG_FILES` overlay that sets `tui.resizeScrollback: preserve`, so a
+resize repaints only the viewport; a user's overlays are kept and appended.
+
 Typing while scrolled back returns the live screen, or sends a full-screen
 program to its bottom on the same ordered connection before the key. That
 return debt is tracked for programs that report the mouse (wheel notches) and

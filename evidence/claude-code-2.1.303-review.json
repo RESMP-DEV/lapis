@@ -1,0 +1,42 @@
+{
+  "schema": "lapis.qa-receipt/1",
+  "recorded_at": "2026-10-23T23:24:00Z",
+  "scope": "Pin bump to Claude Code 2.1.303 (changelog: bug fixes and reliability improvements only)",
+  "source": {
+    "base": "b0d0d38 (main)",
+    "branch": "claude-code-2.1.303",
+    "revision": "8f0f24169840d2fd4f0fb9db661239cb32f31359 (PR head; the runs below bound to this tree)",
+    "dirty": false,
+    "changed_digests": {
+      "scripts/check_claude_hooks.py": "5f76a8c8247a38eaeb18d3ed99169d688d55f4a3644a2e9dcb5a109041599c1b",
+      "scripts/probe_claude_failure_hooks.py": "e6939d31d994d8aa6128503591a1dd6202f40bb544bfd3639831acea2c407d70"
+    }
+  },
+  "hosts": {
+    "mac": "Apple Silicon, macOS 27.0"
+  },
+  "tools": {
+    "claude_code": "2.1.303",
+    "claude_code_sha256": "d2da3b003dc08b88b7230469014fe3e1dc6fe94bc8f648e89b34175d30269370",
+    "claude_code_source": "registry.npmjs.org @anthropic-ai/claude-code 2.1.303 tarball, run from an isolated prefix via --claude / PATH (the machine's default claude is 2.1.309)",
+    "models": "scripts/fake_models.py and the probe's synthetic replies; no model usage"
+  },
+  "checks": [
+    {
+      "name": "permission and question hooks (scripts/check_claude_hooks.py --fake-model)",
+      "recorded_at": "2026-10-23T23:23:08.532171+00:00",
+      "source": "8f0f241 (branch claude-code-2.1.303), dirty: False; service lapis_session_service from the PR-175 desktop build at 2ebbf36",
+      "result": "PASS on 2.1.303 in 8.232 s, all 8 checks: unsupported Claude decision rejected with exact token and attachment retained; same child and pending notice after detach/reattach; observer diagnostic refreshed after rejected decision; terminal answer retired question and turn completed; permission remained terminal-only; new prompt retired prior permission advisory; live AskUserQuestion has exact tool identity; same Claude child delivered fresh permission attention after /clear. Global Claude settings unchanged. The scripted model only chooses the tool calls; the hooks, terminal and service are the real ones."
+    },
+    {
+      "name": "failure hooks (scripts/probe_claude_failure_hooks.py)",
+      "recorded_at": "2026-10-23T23:23:39.692458+00:00",
+      "source": "8f0f241 (branch claude-code-2.1.303), dirty: False",
+      "result": "PASS on 2.1.303 in 0.712 s: PostToolUseFailure observed; StopFailure not observed for the print-mode HTTP 400, as on 2.1.280 and 2.1.302."
+    }
+  ],
+  "not_run": [
+    "scripts/check_claude_hooks.py against a real model provider (the 127.0.0.1:3456 router), which this Mac does not run",
+    "scripts/check_restore.py: not rerun for a bug-fix-only release; last passed on 2.1.302 (see evidence/claude-code-2.1.302-review.json)"
+  ]
+}
