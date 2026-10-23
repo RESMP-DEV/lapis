@@ -21,6 +21,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 
 # Tags and notes the CLIs add as user turns, which nobody typed. Tag notes are
@@ -104,6 +106,13 @@ RETRIEVED = 6
 INDEX_DAYS = 60
 INDEX_SECONDS = 3.0
 INDEX_NAME = "next_prompt_pairs.json"
+# Ordered OpenAI-compatible providers (`nextPrompt.providers`), tried in
+# order: a local or private endpoint first, then a hosted fallback. The chain
+# replaces the CLI for the guesses it is configured on; an unreachable host,
+# a missing key, an HTTP error or two unreadable answers moves to the next.
+PROVIDER_LIMIT = 8
+PROVIDER_MAX_TOKENS = 4096
+ENV_FILE = os.path.expanduser("~/.env_vars")
 
 
 def whole_note(text):
@@ -770,6 +779,129 @@ def parse(text):
 ATTENTION = ("needs", "steer", "fyi")
 
 
+def provider_key(provider):
+    """The provider's key from the process environment, then ~/.env_vars."""
+    name = str(provider.get("apiKeyEnv", "")).strip()
+    if not name:
+        return ""
+    value = os.environ.get(name)
+    if value:
+        return value.strip()
+    try:
+        with open(ENV_FILE, encoding="utf-8", errors="replace") as file:
+            for raw in file:
+                line = raw.strip()
+                if line.startswith("export "):
+                    line = line[7:].strip()
+                if line.startswith(name + "="):
+                    return line.split("=", 1)[1].strip().strip("\"'")
+    except OSError:
+        pass
+    return ""
+
+
+def provider_name(provider):
+    return str(
+        provider.get("name")
+        or provider.get("model")
+        or provider.get("url")
+        or "provider"
+    ).strip()[:40]
+
+
+def clean_providers(value):
+    """A validated, bounded provider list; invalid entries are dropped."""
+    if not isinstance(value, list):
+        return []
+    cleaned = []
+    for entry in value[:PROVIDER_LIMIT]:
+        if not isinstance(entry, dict):
+            continue
+        url = str(entry.get("url", "")).strip()[:300]
+        model = str(entry.get("model", "")).strip()[:100]
+        if not url.startswith(("http://", "https://")) or not model:
+            continue
+        provider = {
+            "url": url,
+            "model": model,
+            "name": str(entry.get("name") or model).strip()[:40],
+            "timeoutSeconds": 30,
+            "maxTokens": PROVIDER_MAX_TOKENS,
+            "temperature": 0.0,
+        }
+        env = str(entry.get("apiKeyEnv", "")).strip()[:80]
+        if env:
+            provider["apiKeyEnv"] = env
+        for key, low, high in (("timeoutSeconds", 1, 600), ("maxTokens", 128, 8192)):
+            number = entry.get(key)
+            if isinstance(number, (int, float)) and not isinstance(number, bool):
+                provider[key] = int(max(low, min(high, number)))
+        temperature = entry.get("temperature")
+        if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
+            provider["temperature"] = max(0.0, min(2.0, float(temperature)))
+        cleaned.append(provider)
+    return cleaned
+
+
+def config_providers():
+    """`nextPrompt.providers` from lapis.json, when no chain was passed."""
+    explicit = os.environ.get("LAPIS_CONFIG")
+    home = os.environ.get("LAPIS_HOME") or os.path.expanduser("~/.lapis")
+    path = explicit or os.path.join(home, "lapis.json")
+    try:
+        with open(path, encoding="utf-8") as file:
+            config = json.load(file)
+    except (OSError, ValueError):
+        return []
+    section = config.get("nextPrompt") if isinstance(config, dict) else None
+    return (
+        clean_providers(section.get("providers")) if isinstance(section, dict) else []
+    )
+
+
+def ask_provider(provider, system, prompt):
+    """One answer from a configured OpenAI-compatible provider."""
+    key = provider_key(provider)
+    if provider.get("apiKeyEnv") and not key:
+        raise RuntimeError("missing credential " + provider["apiKeyEnv"])
+    body = {
+        "model": provider["model"],
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": provider.get("temperature", 0.0),
+        "max_tokens": provider.get("maxTokens", PROVIDER_MAX_TOKENS),
+    }
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = "Bearer " + key
+    request = urllib.request.Request(
+        provider["url"].rstrip("/") + "/chat/completions",
+        data=json.dumps(body).encode(),
+        headers=headers,
+    )
+    with urllib.request.urlopen(
+        request, timeout=provider.get("timeoutSeconds", 30)
+    ) as response:
+        payload = json.loads(response.read(1 << 20))
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("malformed response: no choices")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("malformed response: no message content")
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    raw_cost = usage.get("cost", 0)
+    cost = (
+        float(raw_cost)
+        if isinstance(raw_cost, (int, float)) and not isinstance(raw_cost, bool)
+        else 0
+    )
+    return content.strip(), cost
+
+
 def ask_endpoint(system, prompt, endpoint, model, timeout=60):
     """One answer from an OpenAI-compatible chat endpoint (a local model, for
     the experiment arm), as (text, envelope) like ask()."""
@@ -973,8 +1105,50 @@ def spoken(text):
     return words
 
 
+def predict_providers(system, prompt, providers, arm, started):
+    """The first configured provider with a readable answer, in order."""
+    errors = []
+    for provider in providers:
+        name = provider_name(provider)
+        for _ in range(2):
+            try:
+                text, cost = ask_provider(provider, system, prompt)
+            except (OSError, ValueError, KeyError, RuntimeError) as error:
+                # Transport, auth and service failures move on; a malformed
+                # answer gets one repair attempt on the same provider.
+                errors.append((name, error))
+                break
+            try:
+                result = parse(text)
+                if not result["candidates"]:
+                    raise ValueError("no candidates in provider response")
+            except (ValueError, KeyError, TypeError, AttributeError) as error:
+                errors.append((name, error))
+                continue
+            result["ms"] = int((time.time() - started) * 1000)
+            result["cost"] = cost
+            result["context_arm"] = arm
+            result["provider"] = name
+            result["model"] = provider.get("model", "")
+            return result
+    if not errors:
+        return {"error": "no providers", "kind": "other"}
+    result = failure(errors[-1][1])
+    result["error"] = " | ".join(
+        "{}: {}".format(name, str(error).splitlines()[0]) for name, error in errors
+    )[:160]
+    return result
+
+
 def predict(
-    bundle, model, effort="", claude="claude", endpoint="", style="", arm="base"
+    bundle,
+    model,
+    effort="",
+    claude="claude",
+    endpoint="",
+    style="",
+    arm="base",
+    providers=None,
 ):
     if style == "personal":
         # The fine-tuned model writes the message itself: no JSON, no
@@ -1010,6 +1184,8 @@ def predict(
             files, reply, bundle.get("context", {}).get("conversation", "")
         )
     prompt = render(bundle, arm=arm, retrieved=retrieved)
+    if providers:
+        return predict_providers(system, prompt, providers, arm, started)
     last = None
     for _ in range(2):
         try:
@@ -1042,6 +1218,13 @@ def predict(
 
 def command_predict(arguments):
     bundle = json.loads(sys.stdin.readline())
+    if arguments.providers is None:
+        providers = config_providers()
+    else:
+        try:
+            providers = clean_providers(json.loads(arguments.providers))
+        except (TypeError, ValueError):
+            providers = []
     return predict(
         bundle,
         arguments.model,
@@ -1050,6 +1233,7 @@ def command_predict(arguments):
         arguments.endpoint,
         arguments.style,
         arguments.context_arm,
+        providers,
     )
 
 
@@ -1079,6 +1263,9 @@ def main(argv=None):
     # "personal": the local fine-tuned model's own plain-text format.
     predict_mode.add_argument("--style", default="")
     predict_mode.add_argument("--context-arm", choices=CONTEXT_ARMS, default="base")
+    # A JSON array of OpenAI-compatible endpoints, tried in order. Absent:
+    # nextPrompt.providers from lapis.json; `[]`: the CLI.
+    predict_mode.add_argument("--providers", default=None)
     arguments = parser.parse_args(argv)
     handler = {
         "context": command_context,

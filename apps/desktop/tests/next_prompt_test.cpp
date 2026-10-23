@@ -121,6 +121,29 @@ void settingsReadFromTheConfig() {
     const auto none = lapis::desktop::parse_next_prompt(
         QJsonDocument::fromJson(R"({"contextArms": []})").object());
     require(none.contextArms == QStringList{QStringLiteral("base")}, "no arms: the base one");
+    const auto chain = lapis::desktop::parse_next_prompt(
+        QJsonDocument::fromJson(R"({"providers": [
+            {"url": "https://one.test/v1", "model": "deepseek", "name": "one",
+             "apiKeyEnv": "KEY", "timeoutSeconds": 0, "maxTokens": 1,
+             "temperature": 9},
+            {"url": "file:///etc/passwd", "model": "bad"},
+            {"url": "https://two.test/v1", "model": "two"}
+        ]})")
+            .object());
+    require(chain.providers.size() == 2 &&
+                chain.providers.at(0).toObject().value(QStringLiteral("name")).toString() ==
+                    QLatin1String("one") &&
+                chain.providers.at(0)
+                        .toObject()
+                        .value(QStringLiteral("timeoutSeconds"))
+                        .toInt() == 1 &&
+                chain.providers.at(0).toObject().value(QStringLiteral("maxTokens")).toInt() ==
+                    128 &&
+                chain.providers.at(0).toObject().value(QStringLiteral("temperature")).toDouble() ==
+                    2.0 &&
+                chain.providers.at(1).toObject().value(QStringLiteral("name")).toString() ==
+                    QLatin1String("two"),
+            "providers are validated, clamped and named after their model");
 }
 
 void screensReadAsText() {
@@ -595,6 +618,32 @@ void repeatsWaitUntilShown() {
             }),
             "an experiment's guess is logged with its arm and model");
 
+    // The main guess carries the provider chain to the helper.
+    settings = on();
+    settings.providers = QJsonArray{QJsonObject{{QStringLiteral("url"),
+                                                   QStringLiteral("https://one.test/v1")},
+                                                  {QStringLiteral("model"),
+                                                   QStringLiteral("deepseek")},
+                                                  {QStringLiteral("name"),
+                                                   QStringLiteral("one")}}};
+    next.setSettings(settings);
+    next.seen(QStringLiteral("a"));
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] {
+                const auto last = events(log).last();
+                return last.value(QStringLiteral("event")) == QLatin1String("predicted");
+            }),
+            "a guess through the chain");
+    {
+        const auto arguments =
+            QString::fromUtf8(read(root.filePath(QStringLiteral("predict.args"))))
+                .split(QLatin1Char('\n'));
+        const auto at = arguments.indexOf(QStringLiteral("--providers"));
+        require(at > 0 && arguments.value(at + 1).contains(QLatin1String("https://one.test/v1")) &&
+                    arguments.value(at + 1).contains(QLatin1String("\"model\":\"deepseek\"")),
+                "the helper is given the provider chain");
+    }
+
     // The context arm goes to the helper and onto the guess; the floor arm
     // offers a p=0.6 guess at the 0 floor and holds it back at 0.9.
     settings = on();
@@ -603,12 +652,16 @@ void repeatsWaitUntilShown() {
     next.setSettings(settings);
     QSet<double> floors;
     for (int round = 0; round < 40 && floors.size() < 2; ++round) {
+        const auto before = events(log).size();
         next.seen(QStringLiteral("a"));
         next.turnFinished(QStringLiteral("a"));
         require(waitFor([&] {
-                    const auto last = events(log).last();
-                    return last.value(QStringLiteral("event")) == QLatin1String("predicted") &&
-                           last.value(QStringLiteral("context_arm")) == QLatin1String("retrieval");
+                    const auto all = events(log);
+                    return all.size() > before &&
+                           all.last().value(QStringLiteral("event")) ==
+                               QLatin1String("predicted") &&
+                           all.last().value(QStringLiteral("context_arm")) ==
+                               QLatin1String("retrieval");
                 }),
                 "a guess is logged with its context arm");
         const auto last = events(log).last();

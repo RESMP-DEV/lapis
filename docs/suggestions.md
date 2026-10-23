@@ -21,6 +21,30 @@ the call uses the account in this Mac's keychain. An attempt
 may retry a malformed answer once, so `maxPerHour` bounds attempts rather than
 individual provider requests.
 
+`providers` replaces that CLI call with an ordered list of
+OpenAI-compatible endpoints, tried first to last, for the main guess:
+
+```json
+{"nextPrompt": {"providers": [
+  {"name": "primary", "url": "http://gpu-host:8317/v1",
+   "model": "deepseek-v4.1", "apiKeyEnv": "PRIMARY_KEY", "timeoutSeconds": 20},
+  {"name": "fallback", "url": "https://openrouter.ai/api/v1",
+   "model": "deepseek/deepseek-v4.1-flash-1017", "apiKeyEnv": "OPENROUTER_API_KEY"}
+]}}
+```
+
+`url` and `model` are required; `name` defaults to the model. `apiKeyEnv` names
+a variable read from the process environment, then `~/.env_vars`; the key is
+never stored in `lapis.json`. Without it the request carries no
+`Authorization` header, for a local endpoint. `timeoutSeconds` defaults to 30
+(1 to 600), `maxTokens` to 4096 (128 to 8192) and `temperature` to 0 (0 to 2).
+An unreachable host, a missing key, an HTTP error or two unreadable answers
+moves to the next provider; if all fail, the guess records the chain of
+failures. The answering `provider` and its `model` are in
+`next_prompt.jsonl`. `[]` or no `providers` keeps the CLI route, and the
+top-level `model` and `effort` then apply as before. The experiment arms keep
+their own model or `localEndpoint`; the chain covers the control arm.
+
 Claude Code has its own prompt suggestions, which may show beneath lapis's. Set
 `promptSuggestionEnabled` to false in Claude Code's settings to leave only
 lapis's.

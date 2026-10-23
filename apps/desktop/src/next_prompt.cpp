@@ -128,6 +128,43 @@ NextPromptSettings parse_next_prompt(const QJsonValue& value) {
     settings.localEndpoint =
         object.value(QStringLiteral("localEndpoint")).toString().trimmed().left(200);
     settings.localModel = object.value(QStringLiteral("localModel")).toString().trimmed().left(100);
+    if (const auto list = object.value(QStringLiteral("providers")); list.isArray()) {
+        for (const auto& entry : list.toArray()) {
+            if (settings.providers.size() >= 8)
+                break;
+            const auto provider = entry.toObject();
+            const auto url = provider.value(QStringLiteral("url")).toString().trimmed();
+            const auto model = provider.value(QStringLiteral("model")).toString().trimmed();
+            if (!url.startsWith(QLatin1String("http://")) &&
+                !url.startsWith(QLatin1String("https://")))
+                continue;
+            if (url.isEmpty() || model.isEmpty())
+                continue;
+            QJsonObject clean{{QStringLiteral("url"), url.left(300)},
+                              {QStringLiteral("model"), model.left(100)},
+                              {QStringLiteral("name"),
+                               provider.value(QStringLiteral("name")).toString().trimmed().left(40)},
+                              {QStringLiteral("timeoutSeconds"), 30},
+                              {QStringLiteral("maxTokens"), 4096},
+                              {QStringLiteral("temperature"), 0.0}};
+            if (clean.value(QStringLiteral("name")).toString().isEmpty())
+                clean.insert(QStringLiteral("name"), model.left(40));
+            const auto key = provider.value(QStringLiteral("apiKeyEnv")).toString().trimmed();
+            if (!key.isEmpty())
+                clean.insert(QStringLiteral("apiKeyEnv"), key.left(80));
+            if (const auto seconds = provider.value(QStringLiteral("timeoutSeconds"));
+                seconds.isDouble())
+                clean.insert(QStringLiteral("timeoutSeconds"),
+                             std::clamp(seconds.toInt(), 1, 600));
+            if (const auto tokens = provider.value(QStringLiteral("maxTokens")); tokens.isDouble())
+                clean.insert(QStringLiteral("maxTokens"), std::clamp(tokens.toInt(), 128, 8192));
+            if (const auto temperature = provider.value(QStringLiteral("temperature"));
+                temperature.isDouble())
+                clean.insert(QStringLiteral("temperature"),
+                             std::clamp(temperature.toDouble(), 0.0, 2.0));
+            settings.providers.append(clean);
+        }
+    }
     if (const auto share = object.value(QStringLiteral("holdout")); share.isDouble())
         settings.holdoutShare = std::clamp(share.toDouble(), 0.0, 0.5);
     if (const auto arms = object.value(QStringLiteral("contextArms")); arms.isArray()) {
@@ -489,8 +526,15 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
     if (!endpoint.isEmpty())
         arguments << QStringLiteral("--endpoint") << endpoint << QStringLiteral("--style")
                   << QStringLiteral("personal");
-    else
+    else {
         arguments << QStringLiteral("--context-arm") << arms_made.context;
+        // The main guess uses the configured chain; an experiment model or
+        // the local endpoint keeps its own route.
+        if (model == settings_.model && !settings_.providers.isEmpty())
+            arguments << QStringLiteral("--providers")
+                      << QString::fromUtf8(QJsonDocument(settings_.providers)
+                                               .toJson(QJsonDocument::Compact));
+    }
     arms_made.arm = arm;
     arms_made.model = model;
     start(id, generation, program_(QStringLiteral("python3")), arguments, line(bundle),
@@ -533,7 +577,12 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     event.insert(QStringLiteral("event"), QStringLiteral("predicted"));
     event.insert(QStringLiteral("machine"), agent.machine);
     event.insert(QStringLiteral("cli"), agent.cli);
-    event.insert(QStringLiteral("model"), arms.model);
+    const auto answer_model = answer.value(QStringLiteral("model")).toString().trimmed();
+    event.insert(QStringLiteral("model"),
+                 answer_model.isEmpty() ? arms.model : answer_model.left(100));
+    if (const auto provider = answer.value(QStringLiteral("provider")).toString().trimmed();
+        !provider.isEmpty())
+        event.insert(QStringLiteral("provider"), provider.left(40));
     event.insert(QStringLiteral("arm"), arms.arm);
     // The local arm's own format takes no context arm.
     if (arms.arm != QLatin1String("local"))
@@ -601,7 +650,7 @@ void NextPrompt::failed(const QString& id, const Agent& agent, Stage stage, cons
         ++failure_streak_;
         static const QHash<QString, QString> plain{
             {QStringLiteral("limit"), QStringLiteral("a Claude usage limit")},
-            {QStringLiteral("auth"), QStringLiteral("Claude sign-in")},
+            {QStringLiteral("auth"), QStringLiteral("a model sign-in")},
             {QStringLiteral("timeout"), QStringLiteral("timeouts")},
             {QStringLiteral("network"), QStringLiteral("the network")},
             {QStringLiteral("malformed"), QStringLiteral("unreadable answers")}};

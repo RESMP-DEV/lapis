@@ -1,0 +1,74 @@
+{
+  "schema": "lapis.qa-receipt/1",
+  "recorded_at": "2026-10-23T18:05:00Z",
+  "scope": "lapis next-prompt (Tab) guesses through an ordered OpenAI-compatible provider chain: a private Infinity vLLM endpoint first, OpenRouter second. Model quality and helper behavior only; no desktop GUI, attention-protocol, long-run or 32-session load qualification. omp agent tabs use omp's own retry.fallbackChains and are covered separately in the checks.",
+  "source": {
+    "checkout": "lapis",
+    "head": "b0d0d38598e79dc62fc408316f646ecb74707691",
+    "dirty": true,
+    "dirty_note": "provider chain, docs, tests and the operator's lapis.json"
+  },
+  "tools": {
+    "python": "3.12.12",
+    "baseline": "claude-opus-5-5 through Claude Code print mode on a remote Mac",
+    "primary": "Infatoshi/DeepSeek-V4.1-Flash-1017-MXFP4-heretic served by vLLM",
+    "fallback": "deepseek/deepseek-v4.1-flash-1017 through OpenRouter's OpenAI-compatible endpoint",
+    "judge": "claude-opus-5-5, blind to route, 0/1/2 rubric"
+  },
+  "method": {
+    "tab_guesses": "30 prompts sampled from the operator's local interactive Claude Code and Codex transcripts since 2026-09-15 (seed 23). Both routes saw the same bundle, system prompt and parse from apps/desktop/src/next_prompt.py. Each produced up to three candidates; all six per prompt were graded in one blind Opus call. Top-1 sendable means the shown guess scored 2.",
+    "provider_fallback": "The primary URL was replaced with http://127.0.0.1:9/v1 and the live OpenRouter entry was kept. The helper returned the OpenRouter answer and its model.",
+    "omp_fallback": "A temporary dead provider used the same model id; omp logged retry_fallback_succeeded with openrouter/deepseek/deepseek-v4.1-flash-1017:high. The real infinity provider was then pointed at the dead URL and the same fallback fired with the :high model selector. The original models.yml was restored.",
+    "checks": "python3 -m unittest scripts.tests.test_next_prompt (43 tests), ctest -R '^next-prompt$' three times, and python3 scripts/lapis.py quality."
+  },
+  "results": {
+    "paired_30": {
+      "opus": {
+        "top1_sendable": 0.1,
+        "top1_intent": 0.2,
+        "top3_sendable": 0.1,
+        "top3_intent": 0.267,
+        "median_model_ms": 7572
+      },
+      "direct_chain": {
+        "top1_sendable": 0.067,
+        "top1_intent": 0.2,
+        "top3_sendable": 0.1,
+        "top3_intent": 0.3,
+        "median_model_ms": 2156
+      },
+      "paired": {
+        "both_sendable": 2,
+        "only_opus": 1,
+        "only_direct": 0
+      },
+      "answered": 30,
+      "answered_by": {
+        "infinity": 30
+      }
+    },
+    "fallback": {
+      "answered_by": "openrouter",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wall_ms": 6052,
+      "candidates": 3
+    },
+    "checks": {
+      "python_tests": "43 passed",
+      "cpp_test": "passed 3 of 3",
+      "quality": "passed"
+    }
+  },
+  "configuration": {
+    "live": "nextPrompt.experiment=0; providers[0] is the private Infinity endpoint (apiKeyEnv DEEPSEEK_4X_KEY, 20 s); providers[1] is OpenRouter (apiKeyEnv OPENROUTER_API_KEY, 30 s).",
+    "keys": "Read from the process environment, then ~/.env_vars. The key values are not stored in lapis.json and are not in this receipt.",
+    "omp": "~/.omp/agent/config.yml maps the Infinity model to openrouter/deepseek/deepseek-v4.1-flash-1017 under retry.fallbackChains."
+  },
+  "limitations": [
+    "One 30-prompt sample; the paired difference is one sendable top guess, so the quality comparison is weak evidence of equivalence, not a non-inferiority test.",
+    "The OpenRouter fallback answered with a capitalized style in the spot check while the primary stayed lowercase; style on the fallback was not measured over a sample.",
+    "The installed /Applications lapis.app predates this change and does not pass --providers; the built app and helper values above are the measured ones.",
+    "omp's fallback was exercised with a dead provider and the real provider temporarily pointed at a dead URL; it was not exercised by taking the real Infinity host down.",
+    "No GUI Tab interaction was exercised; the helper, its tests and the app build are the evidence."
+  ]
+}

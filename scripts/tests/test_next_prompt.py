@@ -8,7 +8,9 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -750,6 +752,212 @@ class ModelTests(unittest.TestCase):
             with patch.object(next_prompt, "ask", side_effect=failure) as call:
                 self.assertIn("error", next_prompt.predict({}, "m"))
                 self.assertEqual(call.call_count, 1)
+
+
+def endpoint_server(status, content, seen):
+    """A local /chat/completions stand-in that records the request."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            seen.append(
+                (self.path, dict(self.headers), json.loads(self.rfile.read(length)))
+            )
+            body = json.dumps(
+                {
+                    "choices": [{"message": {"content": content}}],
+                    "usage": {"cost": 0.0125},
+                }
+            ).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *arguments):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+class ProviderTests(unittest.TestCase):
+    """Ordered endpoint providers, their keys, and the fallback between them."""
+
+    answer = json.dumps(
+        {"category": "approve", "candidates": [{"text": "go", "p": 0.8}]}
+    )
+
+    def test_the_first_provider_that_answers_is_used(self):
+        seen = []
+        down, down_thread = endpoint_server(500, "unavailable", seen)
+        up, up_thread = endpoint_server(200, self.answer, seen)
+        self.addCleanup(down.server_close)
+        self.addCleanup(down.shutdown)
+        self.addCleanup(up.server_close)
+        self.addCleanup(up.shutdown)
+        providers = [
+            {
+                "name": "primary",
+                "url": "http://127.0.0.1:%d/v1" % down.server_port,
+                "model": "primary-model",
+                "apiKeyEnv": "TEST_PROVIDER_KEY",
+                "timeoutSeconds": 5,
+            },
+            {
+                "name": "backup",
+                "url": "http://127.0.0.1:%d/v1" % up.server_port,
+                "model": "backup-model",
+                "apiKeyEnv": "TEST_PROVIDER_KEY",
+                "timeoutSeconds": 5,
+            },
+        ]
+        with patch.dict(os.environ, {"TEST_PROVIDER_KEY": "test-key"}):
+            result = next_prompt.predict(
+                {"context": {"turns": [{"role": "agent", "text": "Done."}]}},
+                "unused",
+                "",
+                "unused",
+                providers=providers,
+            )
+        self.assertEqual(
+            (result["provider"], result["model"], result["cost"]),
+            ("backup", "backup-model", 0.0125),
+        )
+        self.assertEqual(
+            result["candidates"], [{"text": "go", "p": 0.8, "scored": True}]
+        )
+        self.assertEqual(len(seen), 2, "both providers were tried in order")
+        header = seen[1][1].get("Authorization")
+        self.assertEqual(header, "Bearer test-key")
+        self.assertEqual(seen[1][2]["model"], "backup-model")
+        self.assertEqual(seen[1][2]["messages"][0]["role"], "system")
+        self.assertNotIn("test-key", json.dumps(result))
+
+    def test_a_missing_key_moves_to_the_next_provider(self):
+        unused_seen = []
+        unused, unused_thread = endpoint_server(200, self.answer, unused_seen)
+        seen = []
+        up, thread = endpoint_server(200, self.answer, seen)
+        self.addCleanup(unused.server_close)
+        self.addCleanup(unused.shutdown)
+        self.addCleanup(up.server_close)
+        self.addCleanup(up.shutdown)
+        providers = [
+            {
+                "name": "no-key",
+                "url": "http://127.0.0.1:%d/v1" % unused.server_port,
+                "model": "m",
+                "apiKeyEnv": "TEST_MISSING_KEY",
+            },
+            {
+                "name": "backup",
+                "url": "http://127.0.0.1:%d/v1" % up.server_port,
+                "model": "m",
+                "apiKeyEnv": "TEST_PRESENT_KEY",
+            },
+        ]
+        with patch.dict(os.environ, {"TEST_PRESENT_KEY": "present"}, clear=False):
+            with patch.object(next_prompt, "ENV_FILE", "/nonexistent/env"):
+                os.environ.pop("TEST_MISSING_KEY", None)
+                result = next_prompt.predict(
+                    {}, "unused", "", "unused", providers=providers
+                )
+        self.assertEqual(result["provider"], "backup")
+        self.assertEqual(unused_seen, [], "the keyless provider sent no request")
+
+    def test_all_providers_failing_is_an_error(self):
+        seen = []
+        down, thread = endpoint_server(500, "unavailable", seen)
+        self.addCleanup(down.server_close)
+        self.addCleanup(down.shutdown)
+        providers = [
+            {
+                "name": "one",
+                "url": "http://127.0.0.1:%d/v1" % down.server_port,
+                "model": "m",
+                "apiKeyEnv": "TEST_PROVIDER_KEY",
+                "timeoutSeconds": 5,
+            },
+            {
+                "name": "two",
+                "url": "http://127.0.0.1:9/v1",
+                "model": "m",
+                "apiKeyEnv": "TEST_PROVIDER_KEY",
+                "timeoutSeconds": 2,
+            },
+        ]
+        with patch.dict(os.environ, {"TEST_PROVIDER_KEY": "k"}):
+            result = next_prompt.predict(
+                {}, "unused", "", "unused", providers=providers
+            )
+        self.assertIn("error", result)
+        self.assertIn("one:", result["error"])
+        self.assertIn("two:", result["error"])
+
+    def test_providers_are_bounded_and_validated(self):
+        cleaned = next_prompt.clean_providers(
+            [
+                {"url": "https://example.test/v1", "model": "m", "apiKeyEnv": "K"},
+                {"url": "file:///etc/passwd", "model": "m", "apiKeyEnv": "K"},
+                {"url": "https://example.test/v1", "model": "", "apiKeyEnv": "K"},
+                {"url": "https://example.test/v1", "model": "m", "apiKeyEnv": ""},
+                "not an object",
+            ]
+        )
+        self.assertEqual(len(cleaned), 2)
+        self.assertEqual([p["url"] for p in cleaned], ["https://example.test/v1"] * 2)
+        bounded = next_prompt.clean_providers(
+            [
+                {
+                    "url": "https://example.test/v1",
+                    "model": "m",
+                    "apiKeyEnv": "K",
+                    "timeoutSeconds": 999,
+                    "maxTokens": 1,
+                    "temperature": 9,
+                }
+            ]
+        )[0]
+        self.assertEqual(
+            (bounded["timeoutSeconds"], bounded["maxTokens"], bounded["temperature"]),
+            (600, 128, 2.0),
+        )
+
+    def test_a_lapis_config_supplies_the_order(self):
+        folder = Path(tempfile.mkdtemp(prefix="lapis-providers-"))
+        self.addCleanup(shutil.rmtree, folder)
+        config = folder / "lapis.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "nextPrompt": {
+                        "providers": [
+                            {
+                                "name": "infinity",
+                                "url": "https://one.test/v1",
+                                "model": "one",
+                                "apiKeyEnv": "ONE_KEY",
+                            },
+                            {
+                                "name": "openrouter",
+                                "url": "https://two.test/v1",
+                                "model": "two",
+                                "apiKeyEnv": "TWO_KEY",
+                            },
+                        ]
+                    }
+                }
+            )
+        )
+        with patch.dict(os.environ, {"LAPIS_CONFIG": str(config)}):
+            providers = next_prompt.config_providers()
+        self.assertEqual([p["name"] for p in providers], ["infinity", "openrouter"])
+        with patch.dict(os.environ, {"LAPIS_CONFIG": str(folder / "missing.json")}):
+            self.assertEqual(next_prompt.config_providers(), [])
 
 
 class AcceptanceTests(unittest.TestCase):
