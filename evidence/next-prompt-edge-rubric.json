@@ -54,8 +54,9 @@
     "Did it carry the exact entity, number or referent? entity_error if not.",
     "Did it honor an explicit don't/only/keep? constraint_error if not.",
     "Did it keep every part of a multipart message? multipart_loss if not.",
-    "Is the only difference wording, tone or a detail the person would rewrite? style_requires_edit if so; wording-only differences are still sendable (2) under semantic.2.",
+    "Is the only difference wording or tone? Then it is still sendable (2) under semantic.2 and has no miss cause. If the person would have to edit a specific detail, style_requires_edit at the score that edit implies (1 for a near miss, 0 if the edit changes the intent).",
     "Was a correct intent in the top three but not first? ranking if so.",
-    "Was the actual underdetermined from the context? ambiguous if so."
+    "Was the actual underdetermined from the context? ambiguous if so.",
+    "Did none of the above explain a miss that was determinable from the context? other."
   ]
 }

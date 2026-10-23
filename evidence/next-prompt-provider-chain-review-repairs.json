@@ -1,11 +1,23 @@
 {
   "schema": "lapis.qa-receipt/1",
-  "recorded_at": "2026-10-23T22:44:58Z",
+  "recorded_at": "2026-10-23T23:56:07Z",
   "scope": "Review repairs for the Tab provider chain and the three DeepSeek receipts introduced by RESMP-DEV/lapis PR #173 (feat/tab-provider-chain). Desktop routing, helper retry/security/budget behavior, docs and receipt contracts only; no new model evaluation, no GUI, attention-protocol, long-run or 32-session load qualification.",
   "source": {
     "base": "b0d0d38 (main, PR #173's base)",
-    "branch": "origin/feat/tab-provider-chain at 7f4dc48, repaired in-place",
-    "head": "7f4dc48 (the pinned PR head; the repairs are uncommitted in this receipt)"
+    "branch": "feat/tab-provider-chain",
+    "head": "2aaf708 (the repaired head this receipt qualifies; e8d56af carried the review repairs, 3f41cbe the denominator/rubric scoping, 803873c the complexity refactor, 2aaf708 the cleartext-key refusal)",
+    "dirty": true,
+    "dirty_note": "this receipt file itself plus the rubric ladder fix below were uncommitted at assembly; all other repaired files are committed at 2aaf708",
+    "changed_digests": {
+      "apps/desktop/src/next_prompt.cpp": "1e40ec7147ef59ae4e43da78805e7981f62ea0647e1bc668d252661f30122ae0",
+      "apps/desktop/src/next_prompt.py": "2a0df391efd052a8813db1405736d83181895ecf36b2387f40b4298b71b43105",
+      "apps/desktop/tests/next_prompt_test.cpp": "5216d5013cf03b4baacec400f98e9acf82537ead7627078db5a8ad2d4ba25d31",
+      "docs/suggestions.md": "3b248e439d7e3ad0da2553682501c12f6f13459dcf26b00d09c5c8a0348039ef",
+      "evidence/deepseek-provider-chain.json": "fc9ed0b907372387601eddd2e779c3e8c1e2e91f198f3d305ec4d03585fe1cbe",
+      "evidence/deepseek-tab-prompt.json": "4bdceb998d19ec32d60315d6b41856e7f9deafa8a83505aad1060a324976662a",
+      "evidence/deepseek-tab-review.json": "dc97005161dd65c18b80f1983640f417066d823f0e7784c3e0e1209013a44139",
+      "scripts/tests/test_next_prompt.py": "ff4a45b4db5b0c859c75962adce89d3a4b3958ea716dea1dd954e829139c657e"
+    }
   },
   "repairs": {
     "experiment_arm_isolation": "NextPrompt::predict passes --providers on every guess: the configured chain for the control arm, an empty list for experiment models and the local endpoint. An omitted flag used to make the helper read nextPrompt.providers from lapis.json, which sent the default 20% experiment share to the chain and mis-logged the provider's model under arm model. (PR findings 1, 4, 16.)",
@@ -16,12 +28,12 @@
     "time_budget": "timeoutSeconds is now capped at 60 in both the desktop's parsing and the helper's clean_providers, matching docs. The desktop passes --budget-seconds 150; the helper stops asking providers there and clamps each attempt to the time left, so a stalled provider cannot be cut off mid-chain by the 180 s watchdog. (PR findings 7, 19.)",
     "rounding": "Timeout and token settings are rounded, not truncated, in both parsers, so timeoutSeconds 30.5 means 31 s in the desktop and in the helper. (PR finding 3.)",
     "limit_wording": "The failure note for a rate limit is now a model usage limit, whether the limit came from the CLI or the chain. (PR finding 6.)",
-    "receipts": "The three receipts now carry the family's source.base/source.branch and a checks array of {name, result}, with recorded_at stamps written in UTC after their contents were assembled. Counts are numeric (python_tests 43, cases 3). The tab-review receipt states the judge's real eight-prompt batching, marks its missing raw report as not in the checkout, and scopes the unique-win and significance claims per route: deepseek-claude 2 versus 0 (exact McNemar p=0.5, no unique win), deepseek-omp 3 versus 1 (exact McNemar p=0.625, one unique sendable win). (PR findings 10 through 15.)"
+    "receipts": "The three receipts now carry the family's source.base/source.branch and a checks array of {name, result}, with recorded_at stamps in UTC. Counts are numeric (python_tests 43, cases 3). The tab-review receipt states the judge's real eight-prompt batching, marks its missing raw report as not in the checkout, and scopes the unique-win and significance claims per route: deepseek-claude 2 versus 0 (exact McNemar p=0.5, no unique win), deepseek-omp 3 versus 1 (exact McNemar p=0.625, one unique sendable win). The 30-prompt provider-chain table's discordant counts are 1 versus 0 (exact McNemar p=1.0). This repair receipt is assembled after the three it describes, so its recorded_at is the latest of the four."
   },
   "checks": [
     {
       "name": "python3 -m unittest discover -s scripts/tests -p 'test_next_prompt.py'",
-      "result": "48 tests: the 38 non-socket tests pass, including the 5 new provider tests (same-provider repeat, truncated body moves on, unredirected bearer, redacted server error, budget stop) and the updated numeric round/clamp tests; only the 3 pre-existing socket tests fail, with PermissionError [Errno 1] on bind() in this sandbox, identically at the pinned head."
+      "result": "50 tests: the 47 non-socket tests pass, including the 7 new provider tests (same-provider repeat, truncated body moves on, unredirected bearer, redacted server error, budget stop, cleartext refusal, loopback/opt-in delivery) and the updated numeric round/clamp tests; only the 3 pre-existing socket tests fail in a sandboxed worker, with PermissionError [Errno 1] on bind(), identically at the pinned head. Unrestricted, all 50 pass."
     },
     {
       "name": "ctest --test-dir build/dev -R '^next-prompt$' (pinned Qt 6.11.2, pinned Ghostty prefix, Ultra Tab subdirectory temporarily excluded because the pinned SDK has no Qt Svg)",
