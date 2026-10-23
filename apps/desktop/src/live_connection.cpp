@@ -370,6 +370,8 @@ bool SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers mod
     bytes.append(static_cast<char>(mods));
     return live_ && live_->send(wire::Kind::key, bytes);
 }
+// The wheel API is (steps, column, row) at every call site; the order is fixed
+// by the service protocol. NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool SessionPreview::sendWheel(int steps, int column, int row) {
     decodeWaiting();
     if (history_active_ || history_request_pending_ || !live_snapshot_.accepts_wheel ||
