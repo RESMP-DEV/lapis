@@ -11,6 +11,7 @@ Standard library only; Python 3.9 or newer.
 
 import argparse
 import glob
+import http.client
 import json
 import math
 import os
@@ -109,9 +110,15 @@ INDEX_NAME = "next_prompt_pairs.json"
 # Ordered OpenAI-compatible providers (`nextPrompt.providers`), tried in
 # order: a local or private endpoint first, then a hosted fallback. The chain
 # replaces the CLI for the guesses it is configured on; an unreachable host,
-# a missing key, an HTTP error or two unreadable answers moves to the next.
+# a missing key or an HTTP error moves to the next at once, an unreadable
+# answer is asked once more on the same provider.
 PROVIDER_LIMIT = 8
 PROVIDER_MAX_TOKENS = 4096
+# One provider attempt, and the whole chain. Both stay inside the desktop's
+# predict budget (180 s), so a slow provider cannot be cut off mid-chain by
+# the watchdog that kills the helper.
+PROVIDER_TIMEOUT_SECONDS = 60
+PROVIDER_BUDGET_SECONDS = 150
 ENV_FILE = os.path.expanduser("~/.env_vars")
 
 
@@ -815,10 +822,15 @@ def clean_providers(value):
         env = str(entry.get("apiKeyEnv", "")).strip()[:80]
         if env:
             provider["apiKeyEnv"] = env
-        for key, low, high in (("timeoutSeconds", 1, 600), ("maxTokens", 128, 8192)):
+        for key, low, high in (
+            ("timeoutSeconds", 1, PROVIDER_TIMEOUT_SECONDS),
+            ("maxTokens", 128, 8192),
+        ):
             number = entry.get(key)
             if isinstance(number, (int, float)) and not isinstance(number, bool):
-                provider[key] = int(max(low, min(high, number)))
+                # Rounded, not truncated, so a fractional setting means the
+                # same thing here as in the desktop's own parsing.
+                provider[key] = max(low, min(high, int(number + 0.5)))
         temperature = entry.get("temperature")
         if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
             provider["temperature"] = max(0.0, min(2.0, float(temperature)))
@@ -842,7 +854,7 @@ def config_providers():
     )
 
 
-def ask_provider(provider, system, prompt):
+def ask_provider(provider, system, prompt, timeout=None):
     """One answer from a configured OpenAI-compatible provider."""
     key = provider_key(provider)
     if provider.get("apiKeyEnv") and not key:
@@ -856,17 +868,18 @@ def ask_provider(provider, system, prompt):
         "temperature": provider.get("temperature", 0.0),
         "max_tokens": provider.get("maxTokens", PROVIDER_MAX_TOKENS),
     }
-    headers = {"Content-Type": "application/json"}
-    if key:
-        headers["Authorization"] = "Bearer " + key
     request = urllib.request.Request(
         provider["url"].rstrip("/") + "/chat/completions",
         data=json.dumps(body).encode(),
-        headers=headers,
+        headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(
-        request, timeout=provider.get("timeoutSeconds", 30)
-    ) as response:
+    if key:
+        # Unredirected: a 301, 302 or 303 would otherwise carry the bearer
+        # token to the redirect's host.
+        request.add_unredirected_header("Authorization", "Bearer " + key)
+    if timeout is None:
+        timeout = provider.get("timeoutSeconds", PROVIDER_TIMEOUT_SECONDS)
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         payload = json.loads(response.read(1 << 20))
     choices = payload.get("choices") if isinstance(payload, dict) else None
     if not isinstance(choices, list) or not choices:
@@ -1088,17 +1101,43 @@ def spoken(text):
     return words
 
 
-def predict_providers(system, prompt, providers, arm, started):
-    """The first configured provider with a readable answer, in order."""
+def predict_providers(
+    system, prompt, providers, arm, started, budget=PROVIDER_BUDGET_SECONDS
+):
+    """The first configured provider with a readable answer, in order.
+
+    The chain shares the desktop's predict budget: when the budget is spent
+    it stops asking providers, so a slow provider is cut short by the helper
+    instead of by the watchdog that kills it.
+    """
     errors = []
+    deadline = started + budget
     for provider in providers:
         name = provider_name(provider)
         for _ in range(2):
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                errors.append((name, RuntimeError("the provider chain timed out")))
+                break
+            timeout = provider.get("timeoutSeconds", PROVIDER_TIMEOUT_SECONDS)
             try:
-                text, cost = ask_provider(provider, system, prompt)
-            except (OSError, ValueError, KeyError, RuntimeError) as error:
-                # Transport, auth and service failures move on; a malformed
-                # answer gets one repair attempt on the same provider.
+                try:
+                    timeout = min(float(timeout), remaining)
+                except (TypeError, ValueError):
+                    timeout = remaining
+                text, cost = ask_provider(provider, system, prompt, timeout=timeout)
+            except ValueError as error:
+                # Malformed JSON or an empty completion: one repair attempt on
+                # this provider before the chain moves on.
+                errors.append((name, error))
+                continue
+            except (
+                OSError,
+                KeyError,
+                RuntimeError,
+                http.client.HTTPException,
+            ) as error:
+                # Transport, auth and service failures move on at once.
                 errors.append((name, error))
                 break
             try:
@@ -1114,11 +1153,14 @@ def predict_providers(system, prompt, providers, arm, started):
             result["provider"] = name
             result["model"] = provider.get("model", "")
             return result
+        if time.time() >= deadline:
+            break
     if not errors:
         return {"error": "no providers", "kind": "other"}
     result = failure(errors[-1][1])
+    # Every entry is cleaned the way the CLI route cleans its own failure.
     result["error"] = " | ".join(
-        "{}: {}".format(name, str(error).splitlines()[0]) for name, error in errors
+        "{}: {}".format(name, failure(error)["error"]) for name, error in errors
     )[:160]
     return result
 
@@ -1132,6 +1174,7 @@ def predict(
     style="",
     arm="base",
     providers=None,
+    budget=PROVIDER_BUDGET_SECONDS,
 ):
     if style == "personal":
         # The fine-tuned model writes the message itself: no JSON, no
@@ -1168,7 +1211,7 @@ def predict(
         )
     prompt = render(bundle, arm=arm, retrieved=retrieved)
     if providers:
-        return predict_providers(system, prompt, providers, arm, started)
+        return predict_providers(system, prompt, providers, arm, started, budget)
     last = None
     for _ in range(2):
         try:
@@ -1217,6 +1260,7 @@ def command_predict(arguments):
         arguments.style,
         arguments.context_arm,
         providers,
+        arguments.budget_seconds,
     )
 
 
@@ -1249,6 +1293,10 @@ def main(argv=None):
     # A JSON array of OpenAI-compatible endpoints, tried in order. Absent:
     # nextPrompt.providers from lapis.json; `[]`: the CLI.
     predict_mode.add_argument("--providers", default=None)
+    # The whole chain's share of the caller's time budget, in seconds.
+    predict_mode.add_argument(
+        "--budget-seconds", type=int, default=PROVIDER_BUDGET_SECONDS
+    )
     arguments = parser.parse_args(argv)
     handler = {
         "context": command_context,

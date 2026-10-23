@@ -1,12 +1,13 @@
 {
   "schema": "lapis.qa-receipt/1",
-  "recorded_at": "2026-10-23T19:30:40Z",
+  "recorded_at": "2026-10-23T22:36:23Z",
   "scope": "System-prompt variants for lapis next-prompt (Tab) guesses, measured against a fixed set of past prompts through the private Infinity DeepSeek endpoint. Prompt behavior only; no GUI, attention-protocol, long-run or 32-session load qualification.",
   "source": {
-    "checkout": "lapis",
+    "base": "b0d0d38 (main)",
+    "branch": "feat/tab-provider-chain",
     "head": "335cc4a",
     "dirty": true,
-    "dirty_note": "lean prompt, its test and docs; the provider chain commit is the base"
+    "dirty_note": "lean prompt, its test and docs were uncommitted at the measurement; the provider chain commit is the base"
   },
   "tools": {
     "python": "3.12.12",
@@ -15,10 +16,20 @@
     "set": "41 prompts sampled from local interactive Claude Code and Codex transcripts since 2026-09-15 (seed 23); fixed after sampling"
   },
   "method": {
-    "prompt_variants": "The same bundle, provider chain and parser for every variant; only next_prompt.SYSTEM changed. Each item produced up to three candidates, graded in batches of eight by the judge. Top-1 sendable means the first candidate scored 2; top-3 sendable means any candidate scored 2.",
+    "prompt_variants": "The same bundle, provider chain and parser for every variant; only next_prompt.SYSTEM changed. Each item produced up to three candidates, graded in batches of eight by the judge (the batching of scripts/next_prompt_eval.py's judge()). Top-1 sendable means the first candidate scored 2; top-3 sendable means any candidate scored 2.",
     "mode": "Question top-1 counts items the judge labelled question or status whose first candidate is itself a question (a question mark or a question word). Command top-1 counts first candidates that open with an imperative verb.",
     "variants": "baseline (the best-version checklist), mode (the checklist plus an explicit question/result/plan rule), predictive (actual-message framing plus the mode rule, checklist kept), analysis (one analysis field before the candidates), predictive_analysis (both), lean (actual-message framing and mode rule, checklist removed), examples (predictive plus five generic examples)."
   },
+  "checks": [
+    {
+      "name": "prompt_variants (41 sampled prompts, seven system-prompt variants, blind Opus judge)",
+      "result": "41 items graded per variant, 32 for the examples variant. lean: 5/41 sendable top guesses, 11/41 intent, 7 command top guesses, 1665 ms median. baseline: 3/41 sendable, 7/41 intent, 13 command top guesses, 2368 ms median."
+    },
+    {
+      "name": "second judge through Infinity",
+      "result": "not usable: the reasoning model exhausted the 4096-token budget on eight-item batches and many batches returned no content, so those partial scores are not used."
+    }
+  ],
   "results": {
     "baseline": {
       "n": 41,

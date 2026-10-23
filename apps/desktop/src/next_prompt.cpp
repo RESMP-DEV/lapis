@@ -30,6 +30,10 @@ struct Similarity {
 };
 constexpr int kContextTimeoutMs = 60 * 1000;
 constexpr int kPredictTimeoutMs = 180 * 1000;
+// The provider chain shares the predict budget: the helper stops asking
+// providers before the watchdog kills the process, so a slow provider cannot
+// cut the chain off instead of falling through to the next one.
+constexpr int kPredictBudgetSeconds = kPredictTimeoutMs / 1000 - 30;
 constexpr qint64 kHourMs = qint64{60} * 60 * 1000;
 constexpr int kScreenChars = 6000;
 constexpr qsizetype kCompared = 2000;
@@ -140,13 +144,14 @@ NextPromptSettings parse_next_prompt(const QJsonValue& value) {
                 continue;
             if (url.isEmpty() || model.isEmpty())
                 continue;
-            QJsonObject clean{{QStringLiteral("url"), url.left(300)},
-                              {QStringLiteral("model"), model.left(100)},
-                              {QStringLiteral("name"),
-                               provider.value(QStringLiteral("name")).toString().trimmed().left(40)},
-                              {QStringLiteral("timeoutSeconds"), 30},
-                              {QStringLiteral("maxTokens"), 4096},
-                              {QStringLiteral("temperature"), 0.0}};
+            QJsonObject clean{
+                {QStringLiteral("url"), url.left(300)},
+                {QStringLiteral("model"), model.left(100)},
+                {QStringLiteral("name"),
+                 provider.value(QStringLiteral("name")).toString().trimmed().left(40)},
+                {QStringLiteral("timeoutSeconds"), 30},
+                {QStringLiteral("maxTokens"), 4096},
+                {QStringLiteral("temperature"), 0.0}};
             if (clean.value(QStringLiteral("name")).toString().isEmpty())
                 clean.insert(QStringLiteral("name"), model.left(40));
             const auto key = provider.value(QStringLiteral("apiKeyEnv")).toString().trimmed();
@@ -154,10 +159,13 @@ NextPromptSettings parse_next_prompt(const QJsonValue& value) {
                 clean.insert(QStringLiteral("apiKeyEnv"), key.left(80));
             if (const auto seconds = provider.value(QStringLiteral("timeoutSeconds"));
                 seconds.isDouble())
+                // One attempt must leave room for the next provider: the
+                // helper is killed at kPredictTimeoutMs (180s).
                 clean.insert(QStringLiteral("timeoutSeconds"),
-                             std::clamp(seconds.toInt(), 1, 600));
+                             std::clamp(qRound(seconds.toDouble()), 1, 60));
             if (const auto tokens = provider.value(QStringLiteral("maxTokens")); tokens.isDouble())
-                clean.insert(QStringLiteral("maxTokens"), std::clamp(tokens.toInt(), 128, 8192));
+                clean.insert(QStringLiteral("maxTokens"),
+                             std::clamp(qRound(tokens.toDouble()), 128, 8192));
             if (const auto temperature = provider.value(QStringLiteral("temperature"));
                 temperature.isDouble())
                 clean.insert(QStringLiteral("temperature"),
@@ -459,7 +467,9 @@ void NextPrompt::start(const QString& id, quint64 generation, const QString& pro
 void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObject& context,
                          int returned) {
     const auto claude = program_(QStringLiteral("claude"));
-    if (claude.isEmpty()) {
+    // The chain replaces the CLI call, so the CLI is only required when it
+    // is the route that answers.
+    if (claude.isEmpty() && settings_.providers.isEmpty()) {
         failed(id, running_.take(id).agent, Stage::predict,
                QStringLiteral("no Claude Code CLI on this Mac"));
         emit stateChanged();
@@ -507,7 +517,7 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
     QString endpoint;
     QStringList arms;
     for (const auto& other : settings_.experimentModels)
-        if (other != settings_.model)
+        if (other != settings_.model && !claude.isEmpty())
             arms << other;
     if (!settings_.localEndpoint.isEmpty() && !settings_.localModel.isEmpty())
         arms << QStringLiteral("local");
@@ -526,15 +536,19 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
     if (!endpoint.isEmpty())
         arguments << QStringLiteral("--endpoint") << endpoint << QStringLiteral("--style")
                   << QStringLiteral("personal");
-    else {
+    else
         arguments << QStringLiteral("--context-arm") << arms_made.context;
-        // The main guess uses the configured chain; an experiment model or
-        // the local endpoint keeps its own route.
-        if (model == settings_.model && !settings_.providers.isEmpty())
-            arguments << QStringLiteral("--providers")
-                      << QString::fromUtf8(QJsonDocument(settings_.providers)
-                                               .toJson(QJsonDocument::Compact));
-    }
+    // The main guess uses the configured chain; an experiment model keeps its
+    // own model. The flag is passed either way: without it the helper reads
+    // nextPrompt.providers from lapis.json itself and would answer an
+    // experiment guess from the chain.
+    if (model == settings_.model && !settings_.providers.isEmpty() && endpoint.isEmpty())
+        arguments << QStringLiteral("--providers")
+                  << QString::fromUtf8(
+                         QJsonDocument(settings_.providers).toJson(QJsonDocument::Compact));
+    else
+        arguments << QStringLiteral("--providers") << QStringLiteral("[]");
+    arguments << QStringLiteral("--budget-seconds") << QString::number(kPredictBudgetSeconds);
     arms_made.arm = arm;
     arms_made.model = model;
     start(id, generation, program_(QStringLiteral("python3")), arguments, line(bundle),
@@ -649,7 +663,7 @@ void NextPrompt::failed(const QString& id, const Agent& agent, Stage stage, cons
     if (stage == Stage::predict || kind == QStringLiteral("timeout")) {
         ++failure_streak_;
         static const QHash<QString, QString> plain{
-            {QStringLiteral("limit"), QStringLiteral("a Claude usage limit")},
+            {QStringLiteral("limit"), QStringLiteral("a model usage limit")},
             {QStringLiteral("auth"), QStringLiteral("a model sign-in")},
             {QStringLiteral("timeout"), QStringLiteral("timeouts")},
             {QStringLiteral("network"), QStringLiteral("the network")},

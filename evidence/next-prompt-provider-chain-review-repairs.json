@@ -1,0 +1,58 @@
+{
+  "schema": "lapis.qa-receipt/1",
+  "recorded_at": "2026-10-23T22:44:58Z",
+  "scope": "Review repairs for the Tab provider chain and the three DeepSeek receipts introduced by RESMP-DEV/lapis PR #173 (feat/tab-provider-chain). Desktop routing, helper retry/security/budget behavior, docs and receipt contracts only; no new model evaluation, no GUI, attention-protocol, long-run or 32-session load qualification.",
+  "source": {
+    "base": "b0d0d38 (main, PR #173's base)",
+    "branch": "origin/feat/tab-provider-chain at 7f4dc48, repaired in-place",
+    "head": "7f4dc48 (the pinned PR head; the repairs are uncommitted in this receipt)"
+  },
+  "repairs": {
+    "experiment_arm_isolation": "NextPrompt::predict passes --providers on every guess: the configured chain for the control arm, an empty list for experiment models and the local endpoint. An omitted flag used to make the helper read nextPrompt.providers from lapis.json, which sent the default 20% experiment share to the chain and mis-logged the provider's model under arm model. (PR findings 1, 4, 16.)",
+    "chain_without_the_cli": "The missing-CLI failure is now gated on having no providers, so a configured chain runs on a Mac without the Claude Code CLI; experiment models are skipped when the CLI is absent, because they route through it. (PR finding 5.)",
+    "provider_retry": "A malformed answer (ValueError from ask_provider: non-JSON body, no choices, empty content) and an unparseable one (parse failure) each get one repair attempt on the same provider; transport, auth and service failures move to the next provider at once. http.client protocol errors (IncompleteRead, BadStatusLine, LineTooLong) move on too. (PR findings 2, 8, 17.)",
+    "bearer_token": "The key is sent with add_unredirected_header, so the endpoint sees it but a 301/302/303 redirect does not forward it to the Location host. (PR finding 18.)",
+    "failure_redaction": "The joined chain failure cleans each entry through failure(), so a server-controlled error line (for example an HTTP reason echoing a token, email or home path) is masked before it reaches next_prompt.jsonl. (PR findings 9, 20.)",
+    "time_budget": "timeoutSeconds is now capped at 60 in both the desktop's parsing and the helper's clean_providers, matching docs. The desktop passes --budget-seconds 150; the helper stops asking providers there and clamps each attempt to the time left, so a stalled provider cannot be cut off mid-chain by the 180 s watchdog. (PR findings 7, 19.)",
+    "rounding": "Timeout and token settings are rounded, not truncated, in both parsers, so timeoutSeconds 30.5 means 31 s in the desktop and in the helper. (PR finding 3.)",
+    "limit_wording": "The failure note for a rate limit is now a model usage limit, whether the limit came from the CLI or the chain. (PR finding 6.)",
+    "receipts": "The three receipts now carry the family's source.base/source.branch and a checks array of {name, result}, with recorded_at stamps written in UTC after their contents were assembled. Counts are numeric (python_tests 43, cases 3). The tab-review receipt states the judge's real eight-prompt batching, marks its missing raw report as not in the checkout, and scopes the unique-win and significance claims per route: deepseek-claude 2 versus 0 (exact McNemar p=0.5, no unique win), deepseek-omp 3 versus 1 (exact McNemar p=0.625, one unique sendable win). (PR findings 10 through 15.)"
+  },
+  "checks": [
+    {
+      "name": "python3 -m unittest discover -s scripts/tests -p 'test_next_prompt.py'",
+      "result": "48 tests: the 38 non-socket tests pass, including the 5 new provider tests (same-provider repeat, truncated body moves on, unredirected bearer, redacted server error, budget stop) and the updated numeric round/clamp tests; only the 3 pre-existing socket tests fail, with PermissionError [Errno 1] on bind() in this sandbox, identically at the pinned head."
+    },
+    {
+      "name": "ctest --test-dir build/dev -R '^next-prompt$' (pinned Qt 6.11.2, pinned Ghostty prefix, Ultra Tab subdirectory temporarily excluded because the pinned SDK has no Qt Svg)",
+      "result": "passed. The new providerChainKeepsItsOwnRoute case is load-bearing: it fails against the old routing ('the experiment arm keeps its own route') and passes with the repair."
+    },
+    {
+      "name": "ruff check --config ruff.toml, ruff format --config ruff.toml --check (helper and its tests)",
+      "result": "all checks passed; both files conform after the format pass."
+    },
+    {
+      "name": "clang-format --dry-run --Werror over every tracked C++ source",
+      "result": "clean for all tracked files after formatting the two PR C++ files (the only two failing)."
+    },
+    {
+      "name": "git diff --check",
+      "result": "clean."
+    },
+    {
+      "name": "McNemar exact p-values recomputed",
+      "result": "discordant 2 versus 0 gives p=0.5 and 3 versus 1 gives p=0.625."
+    }
+  ],
+  "results": {
+    "python_tests": 48,
+    "cases": 1,
+    "lint": "passed"
+  },
+  "limitations": [
+    "The full assembled gates are not green in this environment. just check: the same 10 CTest failures occur at the pinned PR head (7 socket-listener suites blocked by the sandbox bind() denial, agent-state keymap and usage suites failing identically at HEAD), so they pre-date the repairs. just quality: the same 39 Python unittest failures occur at HEAD (socket suites and two others in this sandbox). just doctor: reports the desktop app missing (this is a worktree; the desktop was built as test binaries only).",
+    "Evidence receipt changes were validated for schema shape, arithmetic and UTC clock order, not re-measured: the original eval model calls were not repeated.",
+    "The receipts' earlier pollution note stands: the raw per-prompt reports are not in the checkout, so their aggregate tables cannot be re-derived from the repository.",
+    "The C++ build excluded the Ultra Tab subdirectory (temporary local edit, now reverted) because the pinned Qt 6.11.2 SDK has no Qt Svg."
+  ]
+}

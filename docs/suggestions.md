@@ -36,11 +36,16 @@ OpenAI-compatible endpoints, tried first to last, for the main guess:
 `url` and `model` are required; `name` defaults to the model. `apiKeyEnv` names
 a variable read from the process environment, then `~/.env_vars`; the key is
 never stored in `lapis.json`. Without it the request carries no
-`Authorization` header, for a local endpoint. `timeoutSeconds` defaults to 30
-(1 to 600), `maxTokens` to 4096 (128 to 8192) and `temperature` to 0 (0 to 2).
-An unreachable host, a missing key, an HTTP error or two unreadable answers
-moves to the next provider; if all fail, the guess records the chain of
-failures. The answering `provider` and its `model` are in
+`Authorization` header, for a local endpoint. The key is sent only to the
+endpoint it is configured for: a redirect does not carry it.
+`timeoutSeconds` defaults to 30 (1 to 60), `maxTokens` to 4096 (128 to 8192)
+and `temperature` to 0 (0 to 2). An unreachable host, a missing key or an
+HTTP error moves to the next provider at once; an unreadable answer is asked
+once more on the same provider, and two unreadable answers move on. If all
+fail, the guess records the chain of failures. The whole chain shares the
+guess's time budget: it stops asking providers 150 seconds in, before the app
+gives up on the guess, so a provider that never answers cannot keep the next
+one from being tried. The answering `provider` and its `model` are in
 `next_prompt.jsonl`. `[]` or no `providers` keeps the CLI route, and the
 top-level `model` and `effort` then apply as before. The experiment arms keep
 their own model or `localEndpoint`; the chain covers the control arm.

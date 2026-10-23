@@ -1,15 +1,20 @@
 """lapis's next-prompt helper: reading Claude Code and Codex transcripts, the
 model's prompt and answer, and the call it makes on the person's plan."""
 
+import http.client
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -17,6 +22,29 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps" / "desktop" / "src"))
 import next_prompt  # noqa: E402
+
+ANSWER = json.dumps({"category": "approve", "candidates": [{"text": "go", "p": 0.8}]})
+
+
+def answer_bytes():
+    """A provider answer, as the body of a chat-completions response."""
+    return json.dumps({"choices": [{"message": {"content": ANSWER}}]}).encode()
+
+
+class FakeResponse:
+    """What urllib.request.urlopen returns: a readable context manager."""
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *arguments):
+        return False
+
+    def read(self, amount):
+        return self.payload
 
 
 def write_lines(path, entries):
@@ -787,9 +815,7 @@ def endpoint_server(status, content, seen):
 class ProviderTests(unittest.TestCase):
     """Ordered endpoint providers, their keys, and the fallback between them."""
 
-    answer = json.dumps(
-        {"category": "approve", "candidates": [{"text": "go", "p": 0.8}]}
-    )
+    answer = ANSWER
 
     def test_the_first_provider_that_answers_is_used(self):
         seen = []
@@ -924,8 +950,174 @@ class ProviderTests(unittest.TestCase):
         )[0]
         self.assertEqual(
             (bounded["timeoutSeconds"], bounded["maxTokens"], bounded["temperature"]),
-            (600, 128, 2.0),
+            (60, 128, 2.0),
         )
+        rounded = next_prompt.clean_providers(
+            [
+                {
+                    "url": "https://example.test/v1",
+                    "model": "m",
+                    "timeoutSeconds": 30.5,
+                    "maxTokens": 4096.5,
+                }
+            ]
+        )[0]
+        self.assertEqual(
+            (rounded["timeoutSeconds"], rounded["maxTokens"]),
+            (31, 4097),
+            "a fractional setting is rounded, not truncated to the minimum",
+        )
+
+    def test_an_unreadable_answer_is_asked_again_on_the_same_provider(self):
+        answers = [b"not json at all", answer_bytes()]
+        calls = []
+
+        def open_request(request, timeout=None):
+            calls.append(request)
+            return FakeResponse(answers[min(len(calls) - 1, len(answers) - 1)])
+
+        providers = [
+            {
+                "name": "primary",
+                "url": "https://one.test/v1",
+                "model": "primary-model",
+                "timeoutSeconds": 5,
+            }
+        ]
+        with patch.object(next_prompt.urllib.request, "urlopen", open_request):
+            result = next_prompt.predict(
+                {}, "unused", "", "unused", providers=providers
+            )
+        self.assertEqual(result.get("provider"), "primary")
+        self.assertEqual(len(calls), 2, "the unreadable answer was asked once more")
+
+    def test_a_truncated_body_moves_to_the_next_provider(self):
+        seen = []
+
+        def open_request(request, timeout=None):
+            seen.append(request.full_url)
+            if len(seen) == 1:
+                raise http.client.IncompleteRead(b'{"choices": [')
+            return FakeResponse(answer_bytes())
+
+        providers = [
+            {
+                "name": "truncated",
+                "url": "https://one.test/v1",
+                "model": "m",
+                "timeoutSeconds": 5,
+            },
+            {
+                "name": "backup",
+                "url": "https://two.test/v1",
+                "model": "m",
+                "timeoutSeconds": 5,
+            },
+        ]
+        with patch.object(next_prompt.urllib.request, "urlopen", open_request):
+            result = next_prompt.predict(
+                {}, "unused", "", "unused", providers=providers
+            )
+        self.assertEqual(result.get("provider"), "backup")
+        self.assertEqual(len(seen), 2)
+
+    def test_the_bearer_token_is_not_forwarded_to_a_redirect(self):
+        seen = []
+
+        def open_request(request, timeout=None):
+            seen.append(request)
+            raise urllib.error.URLError("no network in this test")
+
+        providers = [
+            {
+                "name": "one",
+                "url": "https://one.test/v1",
+                "model": "m",
+                "apiKeyEnv": "TEST_PROVIDER_KEY",
+            }
+        ]
+        with patch.dict(os.environ, {"TEST_PROVIDER_KEY": "test-key"}):
+            with patch.object(next_prompt.urllib.request, "urlopen", open_request):
+                result = next_prompt.predict(
+                    {}, "unused", "", "unused", providers=providers
+                )
+        self.assertIn("error", result)
+        request = seen[0]
+        self.assertEqual(
+            request.unredirected_hdrs.get("Authorization"),
+            "Bearer test-key",
+            "the key is sent to the endpoint it is configured for",
+        )
+        self.assertNotIn("Authorization", request.headers)
+        redirected = urllib.request.HTTPRedirectHandler().redirect_request(
+            request,
+            None,
+            302,
+            "Found",
+            {},
+            "https://elsewhere.test/chat/completions",
+        )
+        self.assertNotIn(
+            "Authorization",
+            redirected.headers,
+            "a redirect does not carry the key to the new host",
+        )
+
+    def test_a_provider_failure_is_redacted(self):
+        secret = "sk-abcdefghijklmnopqrstuvwxyz0123456789"
+
+        def open_request(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url,
+                500,
+                "token %s for user@example.com" % secret,
+                {},
+                None,
+            )
+
+        providers = [
+            {
+                "name": "one",
+                "url": "https://one.test/v1",
+                "model": "m",
+                "timeoutSeconds": 5,
+            }
+        ]
+        with patch.object(next_prompt.urllib.request, "urlopen", open_request):
+            result = next_prompt.predict(
+                {}, "unused", "", "unused", providers=providers
+            )
+        self.assertIn("error", result)
+        self.assertNotIn(secret, result["error"])
+        self.assertNotIn("example.com", result["error"])
+        self.assertIn("<redacted>", result["error"])
+
+    def test_the_chain_stops_at_its_budget(self):
+        timeouts = []
+
+        def open_request(request, timeout=None):
+            timeouts.append(timeout)
+            time.sleep(timeout)
+            raise socket.timeout("timed out")
+
+        providers = [
+            {
+                "name": "slow",
+                "url": "https://one.test/v1",
+                "model": "m",
+                "timeoutSeconds": 60,
+            }
+        ]
+        started = time.time()
+        with patch.object(next_prompt.urllib.request, "urlopen", open_request):
+            result = next_prompt.predict(
+                {}, "unused", "", "unused", providers=providers, budget=1
+            )
+        elapsed = time.time() - started
+        self.assertIn("error", result)
+        self.assertEqual(result.get("kind"), "timeout")
+        self.assertLess(elapsed, 2.5, "the chain stopped at its own budget")
+        self.assertLessEqual(timeouts[0], 1.5, "one attempt fits in what is left")
 
     def test_a_lapis_config_supplies_the_order(self):
         folder = Path(tempfile.mkdtemp(prefix="lapis-providers-"))
