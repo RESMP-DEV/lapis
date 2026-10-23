@@ -298,6 +298,12 @@ every kept row and replaying the transcript (OMP's default
 `PI_CONFIG_FILES` overlay that sets `tui.resizeScrollback: preserve`, so a
 resize repaints only the viewport; a user's overlays are kept and appended.
 
+Typing while scrolled back returns the live screen, or sends a full-screen
+program to its bottom on the same ordered connection before the key. That
+return debt is tracked for programs that report the mouse (wheel notches) and
+for those that scroll with arrow keys, and is reset when the program's screen
+changes. `scrollToBottomOnTyping` gates the behavior.
+
 Rate limits measure publish-to-publication time and publish the newest state at
 the deadline; they never queue stale snapshots or tax the first event of a
 burst with a full interval. Debounce is a separate named feature where waiting

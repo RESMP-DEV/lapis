@@ -135,6 +135,9 @@ class KeyMap final : public QObject {
     Q_PROPERTY(QString editor READ editor NOTIFY changed)
     // Keep this Mac from sleeping on power, so the phone can reach it.
     Q_PROPERTY(bool keepAwake READ keepAwake NOTIFY changed)
+    // Typing over a scrolled-back full-screen program returns it to its
+    // bottom before the key is delivered.
+    Q_PROPERTY(bool scrollToBottomOnTyping READ scrollToBottomOnTyping NOTIFY changed)
     // Plan usage under the categories, and the dashboard's machines.
     Q_PROPERTY(bool showUsage READ showUsage NOTIFY changed)
     Q_PROPERTY(QStringList usageMeter READ usageMeter NOTIFY changed)
@@ -210,6 +213,8 @@ class KeyMap final : public QObject {
     Q_INVOKABLE bool setFinishSound(bool on);
     Q_INVOKABLE bool setAlertRepeat(int times);
     Q_INVOKABLE bool setKeepAwake(bool on);
+    Q_INVOKABLE bool setScrollToBottomOnTyping(bool on);
+    [[nodiscard]] bool scrollToBottomOnTyping() const { return scroll_to_bottom_on_typing_; }
     Q_INVOKABLE bool setNotify(bool on);
     Q_INVOKABLE bool setShowUsage(bool on);
     // The values remote control may read. KeyMap owns their storage and their
@@ -335,6 +340,7 @@ class KeyMap final : public QObject {
     QString alert_sound_file_;
     QString finish_sound_file_;
     bool keep_awake_{true};
+    bool scroll_to_bottom_on_typing_{true};
     bool notify_{true};
     int away_after_s_{kAwayAfterDefault};
     int remind_after_min_{kRemindAfterDefault};

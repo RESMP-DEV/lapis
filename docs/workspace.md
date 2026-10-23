@@ -101,5 +101,10 @@ mouse wheel scrolls back through it a row at a time, and a bar appears down the
 terminal's right edge: drag it to jump anywhere, the top being the first line.
 Scrolling past the newest row, typing, or **Live** returns to the live screen,
 and a key you type reaches the agent. Over a full-screen program on the
-alternate screen, the wheel scrolls the program itself, as in other terminals.
-History actions are also under **Agent**.
+alternate screen, the wheel scrolls the program itself, as in other terminals;
+typing first sends the program back to its bottom, by wheel or arrow keys,
+before the key arrives. Reading lapis's own history still returns to live on
+the first key, since that is where input is delivered. Set
+`scrollToBottomOnTyping` to `false` in `lapis.json`
+([config](config.md#scrolling)) to leave a scrolled-back full-screen program
+where it is. History actions are also under **Agent**.

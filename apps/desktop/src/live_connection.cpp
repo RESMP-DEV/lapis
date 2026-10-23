@@ -55,6 +55,7 @@ void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpe
     // Reattaching to the same connection keeps the debt.
     program_wheel_debt_ = 0;
     program_wheel_cell_ = {-1, -1};
+    program_key_debt_lines_ = 0;
     live_ = std::make_unique<LiveConnection>(*this, endpoint, launch, mode);
 }
 void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
@@ -63,6 +64,7 @@ void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
     if (live_snapshot_.alternate_screen != snapshot.alternate_screen) {
         program_wheel_debt_ = 0;
         program_wheel_cell_ = {-1, -1};
+        program_key_debt_lines_ = 0;
     }
     live_snapshot_ = std::move(snapshot);
     live_snapshot_received_ = true;
@@ -118,6 +120,7 @@ bool SessionPreview::decodeWaiting() const {
         if (live_snapshot_.alternate_screen != snapshot.alternate_screen) {
             program_wheel_debt_ = 0;
             program_wheel_cell_ = {-1, -1};
+            program_key_debt_lines_ = 0;
         }
         live_snapshot_ = std::move(snapshot);
     } catch (const std::exception& error) {
@@ -357,48 +360,93 @@ quint64 SessionPreview::requestPaste(const QByteArray& bytes, bool submit) {
 bool SessionPreview::terminate() {
     return live_ && input_ready_ && live_->send(wire::Kind::terminate, {});
 }
-void SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers modifiers) {
+bool SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers modifiers) {
     if (history_active_ || history_request_pending_)
-        return;
+        return false;
     const unsigned int mods = (modifiers.shift ? 1U : 0U) | (modifiers.control ? 2U : 0U) |
                               (modifiers.alt ? 4U : 0U) | (modifiers.super ? 8U : 0U);
     QByteArray bytes;
     bytes.append(static_cast<char>(key));
     bytes.append(static_cast<char>(mods));
-    if (live_)
-        live_->send(wire::Kind::key, bytes);
+    return live_ && live_->send(wire::Kind::key, bytes);
 }
+// The wheel API is (steps, column, row) at every call site; the order is fixed
+// by the service protocol. NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool SessionPreview::sendWheel(int steps, int column, int row) {
     decodeWaiting();
     if (history_active_ || history_request_pending_ || !live_snapshot_.accepts_wheel ||
         steps == 0 || !live_)
         return false;
+    // The service takes a bounded wheel step. A large event is sent in
+    // service-sized pieces instead of dropping everything past the first
+    // clamp, and each accepted piece is counted as it goes out, so a rejected
+    // piece keeps only the debt that never reached the connection.
     constexpr int limit = 64;
-    const int delivered = std::clamp(steps, -limit, limit);
-    if (!live_->send(wire::Kind::wheel,
-                     wire::encode_wheel({static_cast<qint16>(delivered),
-                                         static_cast<quint16>(std::clamp(column, 0, 0xFFFF)),
-                                         static_cast<quint16>(std::clamp(row, 0, 0xFFFF))})))
+    int remaining = steps;
+    while (remaining != 0) {
+        const int piece = std::clamp(remaining, -limit, limit);
+        if (!live_->send(wire::Kind::wheel,
+                         wire::encode_wheel({static_cast<qint16>(piece),
+                                             static_cast<quint16>(std::clamp(column, 0, 0xFFFF)),
+                                             static_cast<quint16>(std::clamp(row, 0, 0xFFFF))})))
+            return false;
+        program_wheel_debt_ = std::max(0, program_wheel_debt_ + piece);
+        program_wheel_cell_ = {column, row};
+        remaining -= piece;
+    }
+    return true;
+}
+bool SessionPreview::sendKeyScroll(int steps) {
+    decodeWaiting();
+    if (history_active_ || history_request_pending_ || live_snapshot_.accepts_wheel || steps == 0 ||
+        !live_)
         return false;
-    // Count only what actually went on the ordered connection, at the size
-    // the service can actually receive. A rejected wheel keeps prior debt.
-    program_wheel_debt_ = std::max(0, program_wheel_debt_ + delivered);
-    program_wheel_cell_ = {column, row};
+    // Three arrows are one wheel notch, and every notch the caller asked for
+    // is delivered: nothing is clamped away. sendKeyLines counts what the
+    // connection accepted, so typing returns exactly what moved.
+    return sendKeyLines(steps * 3);
+}
+bool SessionPreview::sendKeyLines(int lines) {
+    const auto key = lines > 0 ? session::TerminalKey::up : session::TerminalKey::down;
+    const int sign = lines > 0 ? 1 : -1;
+    // One key frame per line: count each accepted key immediately, so arrows
+    // already on the ordered connection are never owed a second time, and a
+    // queue that fills mid-scroll owes exactly the lines still unsent.
+    int remaining = std::abs(lines);
+    while (remaining > 0) {
+        if (!sendKey(key, {}))
+            return false;
+        program_key_debt_lines_ = std::max(0, program_key_debt_lines_ + sign);
+        --remaining;
+    }
     return true;
 }
 // The same ordered connection replays forward before the next input. Keep
 // trying in service-sized chunks; a full queue leaves the remaining debt for
 // the next attempt.
 void SessionPreview::returnProgramToBottom() {
-    if (program_wheel_debt_ == 0)
+    if (program_wheel_debt_ == 0 && program_key_debt_lines_ == 0)
         return;
     decodeWaiting();
-    if (!live_snapshot_.alternate_screen || !live_snapshot_.accepts_wheel || history_active_ ||
-        history_request_pending_)
+    if (!live_snapshot_.alternate_screen || history_active_ || history_request_pending_)
         return;
-    while (program_wheel_debt_ > 0) {
-        const int steps = std::min(64, program_wheel_debt_);
-        if (!sendWheel(-steps, program_wheel_cell_.x(), program_wheel_cell_.y()))
+    // The two debts are in different units for different modes; only the
+    // current mode's debt can be replayed, so the other is dropped first.
+    // Otherwise it would linger across the flip and scroll the program past
+    // where the user left it when the mode flips back.
+    if (live_snapshot_.accepts_wheel) {
+        program_key_debt_lines_ = 0;
+        while (program_wheel_debt_ > 0) {
+            const int steps = std::min(64, program_wheel_debt_);
+            if (!sendWheel(-steps, program_wheel_cell_.x(), program_wheel_cell_.y()))
+                return;
+        }
+        return;
+    }
+    program_wheel_debt_ = 0;
+    while (program_key_debt_lines_ > 0) {
+        const int lines = std::min(64 * 3, program_key_debt_lines_);
+        if (!sendKeyLines(-lines))
             return;
     }
 }
