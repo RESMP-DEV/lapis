@@ -3479,11 +3479,13 @@ void ompGetsItsResizeOverlay() {
         // The stand-in's shell truncates the capture before it writes, so an
         // existence check alone can read an empty file under load.
         const auto expected_config = userOverlay + QDir::listSeparator() + overlay;
-        require(waitFor([&] {
-                    QFile probe(capture);
-                    return probe.open(QIODevice::ReadOnly) &&
-                           QString::fromUtf8(probe.readAll()) == expected_config;
-                }, 5000),
+        require(waitFor(
+                    [&] {
+                        QFile probe(capture);
+                        return probe.open(QIODevice::ReadOnly) &&
+                               QString::fromUtf8(probe.readAll()) == expected_config;
+                    },
+                    5000),
                 "the stand-in recorded its environment");
         QFile captured(capture);
         require(captured.open(QIODevice::ReadOnly), "the stand-in recorded its environment");
