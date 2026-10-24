@@ -1924,7 +1924,7 @@ def submit_paste(agent, text, timeout=5.0):
 # Ultra Tab's deck ------------------------------------------------------------
 
 # What the desktop publishes beside its registry for Ultra Tab
-# (docs/ultratab.md), with the limits Ultra Tab reads them by.
+# (RESMP-DEV/ultratab), with the limits Ultra Tab reads them by.
 DECK_FILES = {
     "state": ("agent_state.json", 4 * 1024 * 1024),
     "cards": ("ultratab_cards.json", 8 * 1024 * 1024),

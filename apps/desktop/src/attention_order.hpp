@@ -4,7 +4,7 @@
 #include <QStringView>
 
 // The order Tab visits agents that need you, shared by the workspace and by
-// readers of its published agent state (apps/ultratab). Header-only so a
+// readers of its published agent state (Ultra Tab, RESMP-DEV/ultratab). Header-only so a
 // reader needs no desktop library.
 namespace lapis::desktop {
 struct WaitingFacts {

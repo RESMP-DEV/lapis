@@ -16,7 +16,7 @@ class Workspace;
 
 // Publishes what the window knows about each agent and nothing else reads
 // from disk, for other local apps that show the same agents (Ultra Tab,
-// apps/ultratab): `runtime/agent_state.json` beside the workspace registry.
+// RESMP-DEV/ultratab): `runtime/agent_state.json` beside the workspace registry.
 // Read-only toward lapis: nothing in lapis reads the file back.
 //
 // Version 1: {"version": 1, "pid": <this window>, "publishedAtMs": ...,
