@@ -289,6 +289,8 @@ if(BUILD_TESTING)
     add_executable(lapis_ui_preview_tests tests/ui_preview_test.cpp tests/model_change_recorder.hpp)
     target_link_libraries(lapis_ui_preview_tests PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
     target_compile_definitions(lapis_ui_preview_tests PRIVATE LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
+    # The desktop view embeds the service path; the offscreen fixture launches it.
+    add_dependencies(lapis_ui_preview_tests lapis_session_service)
     # GUI tests run offscreen by default so they never show a window or take
     # focus on the machine someone is using; configure with
     # -DLAPIS_NATIVE_GUI_TESTS=ON for native windows, Vulkan and real focus.

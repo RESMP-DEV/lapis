@@ -59,6 +59,7 @@ if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
         lapis_project_options lapis_supervisor_runtime Qt6::Core Qt6::Network)
     target_compile_definitions(lapis_supervisor_daemon PRIVATE
         LAPIS_SUPERVISOR_SESSION_SERVICE="$<TARGET_FILE:lapis_session_service>")
+    add_dependencies(lapis_supervisor_daemon lapis_session_service)
     add_executable(lapis_supervisor src/cli.cpp)
     set_target_properties(lapis_supervisor PROPERTIES OUTPUT_NAME lapis)
     target_link_libraries(lapis_supervisor PRIVATE
@@ -86,6 +87,7 @@ if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
             lapis_project_options lapis_supervisor_runtime)
         target_compile_definitions(lapis_supervisor_runtime_tests PRIVATE
             LAPIS_SUPERVISOR_CHILD_FIXTURE="$<TARGET_FILE:lapis_supervisor_child_fixture>")
+        add_dependencies(lapis_supervisor_runtime_tests lapis_supervisor_child_fixture)
         add_test(NAME supervisor-runtime COMMAND lapis_supervisor_runtime_tests)
         set_tests_properties(supervisor-runtime PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 75)
         add_executable(lapis_supervisor_runtime_session_tests
@@ -94,6 +96,7 @@ if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
             lapis_project_options lapis_supervisor_runtime lapis_session_launch Qt6::Network)
         target_compile_definitions(lapis_supervisor_runtime_session_tests PRIVATE
             LAPIS_SUPERVISOR_SESSION_SERVICE="$<TARGET_FILE:lapis_session_service>")
+        add_dependencies(lapis_supervisor_runtime_session_tests lapis_session_service)
         add_test(NAME supervisor-session-service
             COMMAND lapis_supervisor_runtime_session_tests)
         set_tests_properties(supervisor-session-service PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 75)
@@ -107,6 +110,7 @@ if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
             LAPIS_SUPERVISOR_DAEMON="$<TARGET_FILE:lapis_supervisor_daemon>")
         target_compile_definitions(lapis_supervisor_daemon_tests PRIVATE
             LAPIS_SUPERVISOR_CLI="$<TARGET_FILE:lapis_supervisor>")
+        add_dependencies(lapis_supervisor_daemon_tests lapis_supervisor_daemon lapis_supervisor)
         add_executable(lapis_supervisor_client_tests tests/supervisor_client_test.cpp)
         target_link_libraries(lapis_supervisor_client_tests PRIVATE
             lapis_project_options lapis_supervisor_runtime)

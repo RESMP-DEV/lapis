@@ -1,11 +1,15 @@
 {
   "schema": "lapis.code-quality-sweep/1",
-  "recorded_at": "2026-10-24T20:58:11Z",
+  "recorded_at": "2026-10-24T21:46:29Z",
   "agent": "Codex parent with eight read-only CCR review workers",
   "source": {
     "base_revision": "4c66a0d6613ee7288f1b033ec9775a154a6e3f07",
+    "current_main_revision": "2111356008b3de1999bc7bd3027d46973a90ab04",
+    "original_quality_sweep_commit": "67d2746840e3cfd243ea388097cd91bc7ffcd600",
+    "rebased_quality_sweep_commit": "1ea79f3",
     "worktree": ".worktrees/quality-sweep-20261024",
-    "dirty": true,
+    "dirty": false,
+    "initial_record_was_dirty": true,
     "platform": "macOS 26.7.1 arm64",
     "toolchain": {
       "clang": "Homebrew clang 23.1.4",
@@ -17,13 +21,13 @@
   "scope": {
     "included": [
       "Read-only review of session/supervisor, desktop input/rendering, adapters, QML state, Python tooling, build policy, tests, and documentation/evidence",
-      "Bounded repairs for receipt integrity, fixture isolation, supervisor convergence, advisory Claude metadata, terminal keyboard ownership, modal input gating, bounded QML lists, and direct documentation contradictions",
+      "Bounded repairs for receipt integrity, fixture isolation, supervisor convergence, advisory Claude metadata, terminal keyboard ownership, modal input gating, and direct documentation contradictions",
       "Focused and common local verification"
     ],
     "excluded": [
       "New product features or adapter contracts",
       "Provider credentials, live model turns, package/release publication, or external PRs",
-      "Native macOS AppKit/IME acceptance, native GPU acceptance, Android device runs, sanitizers, reboot, and load qualification"
+      "Native macOS AppKit/IME acceptance, native GPU acceptance, Android device runs, sanitizers, reboot, load qualification, and the separate RESMP-DEV/ultratab repository"
     ]
   },
   "decomposition": {
@@ -54,15 +58,33 @@
     "Record measured supervisor integration elapsed times",
     "Use unique RAII-owned attention-audit fixture directories",
     "Drive supervisor convergence from the daemon loop and test dead-service replacement with epoch rotation",
-    "Make bind-denied supervisor runtime and missing-Python Ultra Tab composer paths explicit skips",
+    "Make bind-denied supervisor runtime paths an explicit CTest skip",
     "Collect supervisor receipt tests with unittest and propagate worker-thread failures",
     "Drop non-string optional Claude hook identities before advisory event validation",
     "Encode Control-/ and Control-?, preserve suggestion focus ownership, and tolerate keypad copy modifiers",
-    "Block plan-sign-in and category context interactions consistently and cap Ultra Tab footer lights",
+    "Block plan-sign-in and category context interactions consistently",
     "Fail iOS UI acceptance when the harness promises a missing Claude/Codex agent",
     "Correct README limit-reset default, merged-R4 status wording, suggestion status evidence, and a private overlay route",
     "Expose Ghostty headers as SYSTEM and declare the desktop thread dependency"
   ],
+  "judgment_review": {
+    "model": "gemini-4-argon-high",
+    "conversation_id": "e2f16639-2c80-4806-bc27-4edbd8a730c0",
+    "status": "SUCCESS",
+    "reviewed_revision": "67d2746840e3cfd243ea388097cd91bc7ffcd600",
+    "duration_seconds": 1237.798,
+    "semantic_index_used": false,
+    "reason_semantic_index_was_not_used": "sindexer-doctor reported degraded freshness with one missing collection; exact source reads and git history were used instead.",
+    "subagents": [
+      {"id": "2166b9b8-1ace-4a6f-bbe0-f984ea70cc89", "domain": "supervisor-session-lifecycle", "status": "completed"},
+      {"id": "2df9ad16-8fb0-44e9-bbce-8504ef3bdd57", "domain": "adapter-contract-integrity", "status": "completed"},
+      {"id": "d494fec2-e44d-4547-8dce-f8dd280497ab", "domain": "desktop-input-render-coherence", "status": "completed"},
+      {"id": "e856eb98-f365-49e7-92f1-422a75bcd21d", "domain": "verification-build-release-gates", "status": "completed"}
+    ],
+    "accepted_followup": "Added the missing runtime target dependencies for lapis_ui_preview_tests and supervisor targets whose compile definitions consume $<TARGET_FILE> paths.",
+    "rejected_followup": "Did not change daemon converge() exception handling from this review alone: SessionServiceLauncher::peer_preserved catches its read failures, and the preserved-peer retry contract needs a daemon-specific fixture before shutdown semantics change.",
+    "highest_value_future_sequence": "Complete R1 order 1, add supervisor sanitizer coverage and the R1 order 2 birth seam, enforce local R3 credential preflight before terminating a healthy session, then harden typed Codex uncertain-delivery outcomes."
+  },
   "checks": [
     {
       "name": "python-unittest-and-quality",
@@ -94,17 +116,20 @@
       "observed": "Includes new Control-/ and Control-? bytes and the delayed paste/focus ownership case."
     },
     {
-      "name": "ultratab-overlay-composer",
+      "name": "ultratab-overlay-composer-before-lapis-rebase",
       "command": "ctest --test-dir build/desktop -R '^(ultratab-overlay|ultratab-composer)$' --output-on-failure",
       "exit_code": 0,
-      "passed": true
+      "passed": true,
+      "applicable_to_final_lapis_tree": false,
+      "observed": "Passed before PR #176 moved Ultra Tab to RESMP-DEV/ultratab; the final lapis branch correctly carries no Ultra Tab app changes."
     },
     {
       "name": "ios-unit-and-ui-build",
       "command": "python3 scripts/check_ios_remote.py --unit",
       "exit_code": 0,
       "passed": true,
-      "evidence": "build/ios/results/20261024-135046-unit.xcresult"
+      "evidence": "build/ios/results/20261024-145048-unit.xcresult",
+      "observed": "Rerun on the clean rebased source after PR #176; the iOS unit/build path succeeded."
     },
     {
       "name": "python-importability",
@@ -147,21 +172,38 @@
       "exit_code": 1,
       "passed": false,
       "evidence": "build/reports/ui-review/20261024T205437Z-3fx9a7_j/receipt.json",
-      "observed": "Configure, build, shortcut-focus, and terminal-input passed. The full preview failed later at ui_preview_test.cpp:2268 because the side terminal panel stayed invisible after 'Could not start session service'. Removing only the new plan-sign-in inputBlocked binding reproduced the identical failure, so the negative control does not attribute it to this diff. The run passed through the new plan-sign-in assertion and saved captures."
+      "observed": "Configure, build, shortcut-focus, and terminal-input passed. The full preview initially failed later at ui_preview_test.cpp:2268 because the partial target build omitted lapis_session_service. Removing only the new plan-sign-in inputBlocked binding reproduced the failure, which ruled out that binding but did not identify the build-graph root cause."
+    },
+    {
+      "name": "background-ui-review-after-target-dependency-repair",
+      "command": "python3 scripts/check_ui_review.py --json --jobs 8",
+      "exit_code": 0,
+      "passed": true,
+      "evidence": "build/reports/ui-review/20261024T213834Z-utickzsw/receipt.json",
+      "observed": "Building lapis_ui_preview_tests alone produced lapis_session_service; full preview, shortcut-focus, and terminal-input all passed, including the side-terminal and plan-sign-in captures."
+    },
+    {
+      "name": "background-ui-review-after-rebase",
+      "command": "python3 scripts/check_ui_review.py --json --jobs 8",
+      "exit_code": 0,
+      "passed": true,
+      "evidence": "build/reports/ui-review/20261024T214531Z-23iw7xbc/receipt.json",
+      "observed": "On the clean rebased lapis source with PR #176 applied, full preview, shortcut-focus, and terminal-input all passed."
     }
   ],
-  "known_unrelated_failure": {
+  "resolved_followup": {
     "check": "ui-full-background",
     "diagnostic": "ui_preview_test: panel->isVisible() at line 2268",
-    "negative_control": "With the only new production QML modal binding temporarily removed, the same command failed at the same assertion."
+    "root_cause": "lapis_ui_preview_tests inherited LAPIS_SESSION_SERVICE_PATH from lapis_desktop_view without add_dependencies(lapis_ui_preview_tests lapis_session_service); the official partial build therefore did not create the service executable.",
+    "verification": "The missing service binary was observed, the target dependency was added, building only lapis_ui_preview_tests created it, and the full official UI review passed."
   },
   "non_claims": [
     "No live Claude/Codex provider turn, external adapter schema, credential, package, notarization, reboot, load, native AppKit/IME, or native GPU qualification was run.",
     "The supervisor repair proves one real dead-service replacement in the focused daemon fixture; it does not qualify launchd, reboot, upgrade, restart storms, or GUI replacement.",
     "The iOS unit/build path does not exercise the changed Claude/Codex UI acceptance cases against missing rows in the simulator.",
-    "The QML footer cap has offscreen overlay coverage but no 32-agent visual layout measurement.",
+    "The pre-rebase Ultra Tab footer cap and composer skip were not transferred automatically to RESMP-DEV/ultratab after PR #176 moved that app; that repository needs its own bounded follow-up.",
     "Deferred findings from the eight reports remain source-review hypotheses until their named focused checks run."
   ],
-  "passed": false,
-  "outcome": "Bounded repairs verified; common, C++, supervisor, terminal, Ultra Tab, Python, docs, and iOS-unit gates passed, with the pre-existing/full-preview side-terminal failure documented by a negative control."
+  "passed": true,
+  "outcome": "Bounded lapis repairs verified after rebasing on PR #176; common, C++, supervisor, terminal, full background UI, Python, docs, and iOS-unit gates passed after the Gemini-identified target-dependency repair."
 }
