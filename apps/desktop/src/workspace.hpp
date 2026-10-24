@@ -267,6 +267,7 @@ class SessionPreview final : public QObject {
     QMap<QString, QString> requests_;
     std::optional<session::wire::AttentionSnapshot> attention_;
     QSet<QString> submitted_attention_;
+    QHash<QString, QString> attention_token_aliases_;
     quint32 attention_serial_{};
     bool awaiting_first_prompt_{};
     bool live_snapshot_ready_{};
@@ -880,6 +881,10 @@ class Workspace final : public QObject {
     [[nodiscard]] static QString remoteAccountFailure(const AccountPool& accounts,
                                                       const Agent& agent,
                                                       const QString& accountsRoot);
+    // Rejects a selected local plan before a healthy session is ended.
+    [[nodiscard]] static QString localAccountFailure(const AccountPool& accounts,
+                                                     const Agent& agent,
+                                                     const QString& accountsRoot);
     // Chooses the agent's plan and writes it where its start reads it: a
     // remote command's preamble, or the card's service environment.
     [[nodiscard]] bool applyAccount(Agent& agent, SessionPreview& item);

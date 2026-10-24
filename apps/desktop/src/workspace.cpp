@@ -328,7 +328,6 @@ const QRegularExpression& remoteAccountPreamble() {
         QStringLiteral(R"(\{ a=[A-Za-z0-9._-]+; .*?; true; \} && )"));
     return preamble;
 }
-constexpr int maximum_remote_token_bytes = 8192;
 
 QString withRemoteAccount(QString command, const Account* account) {
     command.remove(remoteAccountPreamble());
@@ -2210,6 +2209,16 @@ Workspace::ReloadResult Workspace::requestReload(const QString& id) {
         const auto diagnostic = remoteAccountFailure(accounts_, *entry, accountsRoot());
         if (!diagnostic.isEmpty())
             return {ReloadOutcome::failed, diagnostic};
+    } else {
+        const auto diagnostic = localAccountFailure(accounts_, *entry, accountsRoot());
+        if (!diagnostic.isEmpty())
+            return {ReloadOutcome::failed, diagnostic};
+        const auto cli = accountCli(entry->harness);
+        if (!entry->account.isEmpty() && !switching_.contains(id) &&
+            accounts_.choose(cli, QString(), entry->account) != entry->account)
+            return {ReloadOutcome::failed,
+                    QStringLiteral("Selected plan %1 is no longer usable for this reload.")
+                        .arg(entry->account)};
     }
     if (!item->terminate())
         return {ReloadOutcome::failed,
@@ -2332,31 +2341,23 @@ QString Workspace::remoteAccountFailure(const AccountPool& accounts, const Agent
     const auto* account = accounts.find(cli, chosen);
     if (account == nullptr || (account->hasHome && account->home == machine))
         return {};
-    if (cli == QLatin1String("claude")) {
-        const QFileInfo token(
-            QDir(accountsRoot).filePath(QStringLiteral("claude/%1.token").arg(account->name)));
-        QFile file(token.absoluteFilePath());
-        const auto bytes = token.isFile() && token.isReadable() && file.open(QIODevice::ReadOnly)
-                               ? file.read(maximum_remote_token_bytes + 1)
-                               : QByteArray();
-        if (bytes.size() > maximum_remote_token_bytes)
-            return QStringLiteral("Claude Code plan %1 has no usable token.").arg(account->name);
-        const auto text = QString::fromUtf8(bytes);
-        const auto first_line = text.section(QLatin1Char('\n'), 0, 0);
-        if (first_line.isEmpty() || first_line != first_line.trimmed() || bytes.count('\n') > 1 ||
-            bytes.contains('\0'))
-            return QStringLiteral("Claude Code plan %1 has no usable token.").arg(account->name);
+    return account_credential_failure(cli, account->name, accountsRoot, false);
+}
+QString Workspace::localAccountFailure(const AccountPool& accounts, const Agent& agent,
+                                       const QString& accountsRoot) {
+    const auto cli = accountCli(agent.harness);
+    if (cli.isEmpty() || !accounts.configured(cli) || agent.account.isEmpty())
         return {};
-    }
-    const QFileInfo auth(
-        QDir(accountsRoot).filePath(QStringLiteral("codex/%1/auth.json").arg(account->name)));
-    if (!auth.isFile() || !auth.isReadable() || auth.size() > qsizetype{1024} * 1024)
-        return QStringLiteral("Codex plan %1 has no usable login.").arg(account->name);
-    QFile file(auth.absoluteFilePath());
-    if (!file.open(QIODevice::ReadOnly) ||
-        !QJsonDocument::fromJson(file.read(1024 * 1024 + 1)).isObject())
-        return QStringLiteral("Codex plan %1 has no usable login.").arg(account->name);
-    return {};
+    const auto* account = accounts.find(cli, agent.account);
+    if (account == nullptr)
+        return QStringLiteral("Selected plan %1 is no longer configured.").arg(agent.account);
+    const auto machine = agentMachine(agent);
+    if (account->hasHome && account->home == machine)
+        return {};
+    if (!accounts.usable(*account, machine))
+        return QStringLiteral("Selected plan %1 is no longer usable for this reload.")
+            .arg(agent.account);
+    return account_credential_failure(cli, account->name, accountsRoot, true);
 }
 bool Workspace::applyAccount(Agent& agent, SessionPreview& item) {
     // A harness's own overlay is independent of which plan it signs in with.
@@ -2394,28 +2395,29 @@ bool Workspace::applyAccount(Agent& agent, SessionPreview& item) {
         item.setServiceEnvironment({});
         return true;
     }
-    if (kept && cli == QLatin1String("claude")) {
-        QFile token(
-            QDir(accountsRoot()).filePath(QStringLiteral("claude/%1.token").arg(account->name)));
-        const auto text = token.open(QIODevice::ReadOnly)
-                              ? QString::fromUtf8(token.read(8192)).trimmed()
-                              : QString();
-        if (text.isEmpty() || text.contains(QLatin1Char('\n')) || text.contains(QChar::Null))
-            return fail(QStringLiteral("Claude Code plan %1 has no usable token on this Mac.")
-                            .arg(account->name));
-        environment.insert(QStringLiteral("CLAUDE_CODE_OAUTH_TOKEN"), text);
-    } else if (kept) {
-        const auto home = QDir(accountsRoot()).filePath(QStringLiteral("codex/") + account->name);
-        const QFileInfo auth(QDir(home).filePath(QStringLiteral("auth.json")));
-        if (!auth.isFile() || !auth.isReadable())
-            return fail(QStringLiteral("Codex plan %1 has no readable login on this Mac.")
-                            .arg(account->name));
-        const auto diagnostic = link_codex_home(
-            qEnvironmentVariable("CODEX_HOME", QDir::homePath() + QStringLiteral("/.codex")), home);
-        if (!diagnostic.isEmpty())
-            return fail(
-                QStringLiteral("Cannot prepare Codex plan %1: %2").arg(account->name, diagnostic));
-        environment.insert(QStringLiteral("CODEX_HOME"), home);
+    if (kept) {
+        if (const auto diagnostic =
+                account_credential_failure(cli, account->name, accountsRoot(), true);
+            !diagnostic.isEmpty())
+            return fail(diagnostic);
+        if (cli == QLatin1String("claude")) {
+            QFile token(QDir(accountsRoot())
+                            .filePath(QStringLiteral("claude/%1.token").arg(account->name)));
+            const auto text = token.open(QIODevice::ReadOnly)
+                                  ? QString::fromUtf8(token.read(8192)).trimmed()
+                                  : QString();
+            environment.insert(QStringLiteral("CLAUDE_CODE_OAUTH_TOKEN"), text);
+        } else {
+            const auto home =
+                QDir(accountsRoot()).filePath(QStringLiteral("codex/") + account->name);
+            const auto diagnostic = link_codex_home(
+                qEnvironmentVariable("CODEX_HOME", QDir::homePath() + QStringLiteral("/.codex")),
+                home);
+            if (!diagnostic.isEmpty())
+                return fail(QStringLiteral("Cannot prepare Codex plan %1: %2")
+                                .arg(account->name, diagnostic));
+            environment.insert(QStringLiteral("CODEX_HOME"), home);
+        }
     }
     agent.account = chosen;
     item.setServiceEnvironment(std::move(environment));

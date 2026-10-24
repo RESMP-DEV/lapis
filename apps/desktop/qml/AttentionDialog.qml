@@ -18,6 +18,12 @@ Dialog {
     property string lastDraftToken: ""
     property var draftCache: ({})
     readonly property int maximumDrafts: 64
+    // Four UTF-8 bytes per UTF-16 code unit is the conservative transport bound;
+    // the unused quarter leaves room for JSON keys, IDs, and the envelope.
+    readonly property int maximumAnswerCharacters: {
+        const questions = draft ? (draft.details.questions || []) : []
+        return Math.max(1, Math.floor(28672 / (4 * Math.max(1, questions.length))))
+    }
     readonly property var requests: session ? session.attentionRequests : []
     readonly property var current: {
         if (draft) {
@@ -34,7 +40,8 @@ Dialog {
     readonly property bool answersComplete: {
         const questions = draft ? (draft.details.questions || []) : []
         for (const question of questions) {
-            if (!answers[question.id] || !answers[question.id].answers[0].length)
+            if (!answers[question.id] || !answers[question.id].answers[0].length ||
+                    answers[question.id].answers[0].length > maximumAnswerCharacters)
                 return false
         }
         return true
@@ -325,7 +332,7 @@ Dialog {
                             Layout.fillWidth: true
                             visible: questionForm.options.length === 0 || questionForm.modelData.isOther === true
                             placeholderText: qsTr("Type an answer")
-                            maximumLength: 8192
+                            maximumLength: dialog.maximumAnswerCharacters
                             echoMode: questionForm.modelData.isSecret === true ? TextInput.Password : TextInput.Normal
                             text: questionForm.optionSelected ? "" : questionForm.savedAnswer
                             onTextEdited: {

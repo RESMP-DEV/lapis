@@ -1623,16 +1623,17 @@ class SessionService final : public QObject {
             schedule_attention();
             return;
         }
-        if (!codex_observer_->decide(decision.source_epoch, decision.request_id, decision.revision,
-                                     decision.choice, decision.answers)) {
-            if (codex_observer_->diagnostic().contains(
-                    QStringLiteral("Codex response delivery is uncertain"))) {
-                decision_error_ =
-                    QStringLiteral("Delivery outcome is unknown; reconnect before deciding again");
-                attention_dirty_ = true;
-                schedule_attention();
-                return;
-            }
+        switch (codex_observer_->decide(decision.source_epoch, decision.request_id,
+                                        decision.revision, decision.choice, decision.answers)) {
+        case lapis::codex::DecisionOutcome::uncertain:
+            decision_error_ =
+                QStringLiteral("Delivery outcome is unknown; reconnect before deciding again");
+            attention_dirty_ = true;
+            schedule_attention();
+            return;
+        case lapis::codex::DecisionOutcome::delivered:
+            break;
+        case lapis::codex::DecisionOutcome::rejected:
             try {
                 record_refused_decision(*attention_journal_, approval);
                 journaled_.erase(decision.request_id);

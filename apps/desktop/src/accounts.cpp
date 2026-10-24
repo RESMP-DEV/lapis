@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <algorithm>
@@ -14,6 +15,8 @@ namespace {
 // A five hour window this full means a block within the session.
 constexpr double kHotShortWindow = 85;
 constexpr std::size_t kMostAccounts = 64;
+constexpr qint64 kMaximumTokenBytes = 8192;
+constexpr qint64 kMaximumCodexAuthBytes = qint64{1024} * 1024;
 
 // "local" (or nothing) is this Mac; anything else must be an ssh host name.
 std::optional<QString> machine_name(const QJsonValue& value) {
@@ -33,6 +36,45 @@ QString account_load_key(const QString& cli, const QString& email) {
 
 QString account_home_name(const QString& machine) {
     return QStringLiteral("@") + (machine.isEmpty() ? QStringLiteral("local") : machine);
+}
+
+QString account_credential_failure(const QString& cli, const QString& name,
+                                   const QString& accountsRoot, bool on_this_mac) {
+    if (name.isEmpty())
+        return QStringLiteral("No plan was selected.");
+    if (cli == QLatin1String("claude")) {
+        const QFileInfo token(
+            QDir(accountsRoot).filePath(QStringLiteral("claude/%1.token").arg(name)));
+        QFile file(token.absoluteFilePath());
+        const auto bytes = token.isFile() && token.isReadable() && file.open(QIODevice::ReadOnly)
+                               ? file.read(kMaximumTokenBytes + 1)
+                               : QByteArray();
+        const auto text = QString::fromUtf8(bytes);
+        const auto first_line = text.section(QLatin1Char('\n'), 0, 0);
+        if (bytes.isEmpty() || bytes.size() > kMaximumTokenBytes || first_line.isEmpty() ||
+            first_line != first_line.trimmed() || bytes.count('\n') > 1 || bytes.contains('\0')) {
+            return QStringLiteral("Claude Code plan %1 has no usable token%2.")
+                .arg(name, on_this_mac ? QStringLiteral(" on this Mac") : QString());
+        }
+        return {};
+    }
+    if (cli == QLatin1String("codex")) {
+        const QFileInfo auth(
+            QDir(accountsRoot).filePath(QStringLiteral("codex/%1/auth.json").arg(name)));
+        QFile file(auth.absoluteFilePath());
+        const auto bytes = auth.isFile() && auth.isReadable() &&
+                                   auth.size() <= kMaximumCodexAuthBytes &&
+                                   file.open(QIODevice::ReadOnly)
+                               ? file.read(kMaximumCodexAuthBytes + 1)
+                               : QByteArray();
+        if (bytes.isEmpty() || bytes.size() > kMaximumCodexAuthBytes ||
+            !QJsonDocument::fromJson(bytes).isObject()) {
+            return QStringLiteral("Codex plan %1 has no usable login%2.")
+                .arg(name, on_this_mac ? QStringLiteral(" on this Mac") : QString());
+        }
+        return {};
+    }
+    return QStringLiteral("Plan %1 has no credential lapis can prepare.").arg(name);
 }
 
 AccountsConfig parse_accounts(const QJsonValue& value) {

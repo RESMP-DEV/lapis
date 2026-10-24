@@ -555,6 +555,38 @@ void truthfulStatus() {
     require(item.statusKind() == QStringLiteral("unknown"), "stale activity must not look current");
 }
 
+void submittedAttentionKeepsItsDisplayToken() {
+    lapis::desktop::SessionPreview item(QStringLiteral("Codex"), {}, {}, QColor{}, "");
+    item.setConnection(QStringLiteral("ready"), true);
+    lapis::session::wire::AttentionSnapshot attention;
+    attention.available = attention.connected = attention.ready = true;
+    attention.activity = lapis::session::attention::Activity::working;
+    lapis::session::wire::AttentionItem request;
+    request.pending.request.id = std::string("uncertain");
+    request.pending.source_epoch = 7;
+    request.pending.revision = 9;
+    request.pending.request.choices = {"accept"};
+    attention.requests.push_back(request);
+    int arrivals = 0;
+    QObject::connect(&item, &lapis::desktop::SessionPreview::attentionArrived,
+                     [&arrivals] { ++arrivals; });
+    item.applyAttention(attention);
+    require(arrivals == 1, "the original pending request arrives");
+    const auto before = item.attentionRequests().first().toMap();
+    request.pending.revision = 10;
+    request.pending.submitted = true;
+    request.pending.status = lapis::session::attention::RequestStatus::responding;
+    attention.requests.front() = request;
+    item.applyAttention(attention);
+    const auto after = item.attentionRequests().first().toMap();
+    require(arrivals == 1 &&
+                after.value(QStringLiteral("token")) == before.value(QStringLiteral("token")),
+            "a consumed response keeps the draft's stable display token");
+    require(after.value(QStringLiteral("responding")).toBool() &&
+                !after.value(QStringLiteral("enabled")).toBool(),
+            "an uncertain consumed response stays held by the same request");
+}
+
 bool waitFor(const std::function<bool()>& condition, int milliseconds) {
     QElapsedTimer clock;
     clock.start();
@@ -3085,6 +3117,65 @@ void remoteAccountsRefuseBeforeReplacement() {
         }
     }
 }
+
+void localAccountsRefuseBeforeReplacingAHealthySession() {
+    QTemporaryDir directory(QStringLiteral("/private/tmp/lapis-local-account-XXXXXX"));
+    require(directory.isValid(), "local account fixture directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    require(root.mkpath(QStringLiteral("project")) &&
+                root.mkpath(QStringLiteral("accounts/claude")),
+            "create local-account fixture");
+    const auto id = uuid();
+    const auto endpoint = root.filePath(id + QStringLiteral(".sock"));
+    QLocalServer::removeServer(endpoint);
+    QLocalServer service;
+    service.setSocketOptions(QLocalServer::UserAccessOption);
+    require(service.listen(endpoint), "the local service endpoint listens");
+    auto record = agentRecord(root.path(), id, "general");
+    record.insert(QStringLiteral("endpoint"), endpoint);
+    record.insert(QStringLiteral("program"), QStringLiteral("/bin/true"));
+    record.insert(QStringLiteral("harness"), QStringLiteral("claude"));
+    record.insert(QStringLiteral("account"), QStringLiteral("spare"));
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    options.headless = true;
+    options.accounts = lapis::desktop::parse_accounts(QJsonDocument::fromJson(R"({"claude": [
+        {"name": "spare", "email": "spare@example.test", "machines": ["local"]}]})")
+                                                          .object());
+    writeRegistry(options.storagePath,
+                  {{"version", 2},
+                   {"activeCategory", "general"},
+                   {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                   {"agents", QJsonArray{record}}});
+    Workspace workspace(WorkspaceMode::live, options);
+    workspace.setAccountsRootForTesting(root.filePath(QStringLiteral("accounts")));
+    auto* item = workspace.focusedSession();
+    require(item != nullptr && !item->closing(), "the healthy local fixture loads");
+    const auto token = root.filePath(QStringLiteral("accounts/claude/spare.token"));
+    for (const auto& body : std::array<QByteArray, 4>{
+             QByteArray{},
+             QByteArrayLiteral(" leading\n"),
+             QByteArrayLiteral("one\ntwo\n"),
+             QByteArray(8193, 'a'),
+         }) {
+        QFile credential(token);
+        require(credential.open(QIODevice::WriteOnly | QIODevice::Truncate),
+                "write the local Claude fixture");
+        require(credential.write(body) == body.size(), "complete the local Claude fixture");
+        credential.close();
+        require(workspace.reloadAgent(id) == 0 && !item->closing() &&
+                    workspace.workspaceError() ==
+                        QStringLiteral("Claude Code plan spare has no usable token on this Mac."),
+                "reload rejects a bad local credential before ending the healthy session");
+        while (auto* connection = service.nextPendingConnection()) {
+            require(!connection->waitForReadyRead(50) || connection->readAll().isEmpty(),
+                    "local credential preflight sent a control frame to the healthy session");
+            connection->deleteLater();
+        }
+        QCoreApplication::processEvents();
+    }
+}
+
 void incompleteCodexHomeNeverStartsAnAgent() {
     UpdaterFixture fixture("#!/bin/sh\necho started > \"${0%/*}/started\"\nexec sleep 600\n",
                            QStringLiteral("codex"));
@@ -3097,7 +3188,7 @@ void incompleteCodexHomeNeverStartsAnAgent() {
     require(fixture.root.mkpath("accounts/codex/spare"), "create kept account home");
     QFile auth(fixture.root.filePath("accounts/codex/spare/auth.json"));
     require(auth.open(QIODevice::WriteOnly), "write fixture credential");
-    auth.write("fixture credential");
+    auth.write("{}\n");
     auth.close();
     const ScopedCodexHome shared(QFile::encodeName(fixture.root.filePath("missing-shared-home")));
     Workspace workspace(WorkspaceMode::live, fixture.options);
@@ -3111,7 +3202,7 @@ void incompleteCodexHomeNeverStartsAnAgent() {
                 workspace.workspaceError().contains(QStringLiteral("Cannot prepare Codex plan")),
             "a failed shared-home preparation refuses activation with its cause");
     require(!QFileInfo::exists(fixture.root.filePath("bin/started")) &&
-                auth.open(QIODevice::ReadOnly) && auth.readAll() == "fixture credential",
+                auth.open(QIODevice::ReadOnly) && auth.readAll() == "{}\n",
             "failed activation starts no child and preserves the kept credential");
 }
 
@@ -6820,6 +6911,7 @@ int main(int argc, char** argv) {
                 plansFollowTheirLoad();
             } else if (selected == QStringLiteral("remote-accounts")) {
                 remoteAccountsRefuseBeforeReplacement();
+                localAccountsRefuseBeforeReplacingAHealthySession();
             } else if (selected == QStringLiteral("remote-account-reset")) {
                 remoteAccountsDropPreambleWithoutConfiguration();
             } else if (selected == QStringLiteral("remote-options")) {
@@ -6861,6 +6953,7 @@ int main(int argc, char** argv) {
         categoriesAndIdentity();
         projectPaths();
         explicitAgentIdentity();
+        submittedAttentionKeepsItsDisplayToken();
         categoryCountsChangeOnlyWhenNeeded();
         persistence();
         restoreAgentIdentity();
@@ -6920,6 +7013,7 @@ int main(int argc, char** argv) {
         remoteOptionsRespectTheArgumentLimit();
         remoteClaudeReconnectsToItsConversation();
         remoteAgentsReportTurnsThroughTheirTerminal();
+        localAccountsRefuseBeforeReplacingAHealthySession();
         reloadStartsAgentsAgain();
         incompleteCodexHomeNeverStartsAnAgent();
         plansFollowTheirLoad();
