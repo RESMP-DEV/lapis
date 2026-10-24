@@ -400,6 +400,25 @@ void handshake_and_reconnect() {
     require(lapis::session::read_descriptor(f.endpoint, fingerprint) == f.identity,
             "Stale frame changed saved identity");
 }
+// A transient PTY backpressure refusal is not a terminal session failure.
+// The attachment stays usable so the user can retry the input.
+void overloaded_status_keeps_the_attachment() {
+    Fixture f;
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    peer.send(wire::Kind::status,
+              wire::encode_status({wire::StatusCode::overloaded,
+                                   QStringLiteral("PTY input queue full; input was not queued")}));
+    settle();
+    require(f.document.connectionState() == QStringLiteral("ready") && f.document.inputReady(),
+            "A transient overload detached a usable session");
+    require(!f.server.hasPendingConnections(),
+            "A transient overload started a reconnect the service did not ask for");
+}
+
 void missing_and_replaced() {
     Fixture f;
     f.document.startLive(f.endpoint, f.launch);
@@ -869,6 +888,7 @@ int main(int argc, char** argv) {
         preview_decode_failure_paces_retry();
         history_browsing_and_input_gating();
         stale_reconnect_and_history_errors();
+        overloaded_status_keeps_the_attachment();
         history_capability_tracks_current_page();
         unqueued_history_is_rejected_immediately();
         missing_and_replaced();

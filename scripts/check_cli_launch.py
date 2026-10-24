@@ -1799,8 +1799,9 @@ with open(sys.argv[1], 'wb', buffering=0) as output:
                     except (BrokenPipeError, ConnectionResetError):
                         pass
                     require(
-                        "PTY input queue full" in client.status(),
-                        "Queue overflow was silent",
+                        "PTY input queue full" in client.status()
+                        and client.socket.fileno() >= 0,
+                        "Queue overflow was silent or detached the client",
                     )
                     require(
                         service.process.poll() is None, "Queue overflow killed service"

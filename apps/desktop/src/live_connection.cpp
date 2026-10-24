@@ -1062,6 +1062,10 @@ void LiveConnection::handle(const wire::Frame& frame) {
             });
             return;
         }
+        if (status.code == wire::StatusCode::overloaded) {
+            report(status.message);
+            return;
+        }
         fail(status.message, status.code);
         return;
     }

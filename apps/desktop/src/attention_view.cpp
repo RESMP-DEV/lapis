@@ -170,7 +170,8 @@ void SessionPreview::applyAttention(session::wire::AttentionSnapshot snapshot) {
                                })
                 : attention_->requests.end();
         const auto stable_key =
-            old != attention_->requests.end()
+            old != attention_->requests.end() &&
+                    attention_->attachment.generation == snapshot.attachment.generation
                 ? display_token(*attention_, old->pending, attention_token_aliases_)
                 : current_key;
         next_aliases.insert(current_key, stable_key);
@@ -231,9 +232,10 @@ bool SessionPreview::respondAttention(const QString& key, const QVariantMap& res
     const auto answers = response.value(QStringLiteral("answers")).toMap();
     if (!live_ || !attention_ || !attentionReady() || submitted_attention_.contains(key))
         return false;
-    const auto item =
-        std::find_if(attention_->requests.begin(), attention_->requests.end(),
-                     [&](const auto& value) { return token(*attention_, value.pending) == key; });
+    const auto item = std::find_if(
+        attention_->requests.begin(), attention_->requests.end(), [&](const auto& value) {
+            return display_token(*attention_, value.pending, attention_token_aliases_) == key;
+        });
     if (item == attention_->requests.end() || item->pending.submitted ||
         item->pending.status != session::attention::RequestStatus::pending ||
         std::find(item->pending.request.choices.begin(), item->pending.request.choices.end(),

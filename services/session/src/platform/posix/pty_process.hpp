@@ -31,6 +31,7 @@ class PtyProcess final : public QObject {
     // another batch.
     static constexpr qsizetype max_read_batch = qsizetype{64} * 1024;
     [[nodiscard]] qint64 processId() const { return process_.processId(); }
+    [[nodiscard]] bool terminalClosed() const { return !master_; }
     // End the agent the way closing its terminal would: SIGHUP to the owned
     // process group, then SIGTERM and SIGKILL if it is still running.
     [[nodiscard]] bool hangup();

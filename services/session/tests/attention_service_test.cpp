@@ -57,6 +57,30 @@ class AttentionServiceTestAccess final {
         service.receive_output(output);
     }
 
+    static void write_text(SessionService& service, const QByteArray& bytes) {
+        service.write_input(wire::Kind::text, bytes);
+    }
+
+    static void resize(SessionService& service, TerminalSize size) { service.apply_resize(size); }
+
+    static void retire(SessionService& service, QLocalSocket* socket) { service.retire(socket); }
+
+    [[nodiscard]] static bool process_started(const SessionService& service) {
+        return service.process_started_;
+    }
+
+    [[nodiscard]] static bool terminal_closed(const SessionService& service) {
+        return service.pty_.terminalClosed();
+    }
+
+    [[nodiscard]] static bool client_attached(const SessionService& service) {
+        return service.client_ != nullptr;
+    }
+
+    [[nodiscard]] static std::vector<QLocalSocket*> retired_order(const SessionService& service) {
+        return {service.retired_.begin(), service.retired_.end()};
+    }
+
     [[nodiscard]] static quint64 pty_read_ns(const SessionService& service) {
         return service.timing_.pty_read_ns;
     }
@@ -348,6 +372,73 @@ void a_split_marker_waits_when_the_client_snapshot_is_in_flight() {
     Access::feed_output(service, output);
     require(Access::pending_output(service) == QByteArrayLiteral("\x1b[?202"));
 }
+
+void input_backpressure_preserves_attachment() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-input-XXXXXX")};
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    Access::use_client(service, &client);
+    for (int attempt = 0; attempt < 500 && !Access::process_started(service); ++attempt)
+        QCoreApplication::processEvents();
+    require(Access::process_started(service));
+
+    Access::write_text(service, QByteArray(2 * 1024 * 1024, 'q'));
+    require(Access::client_attached(service));
+}
+
+void resize_after_terminal_close_is_ignored_during_final_drain() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-drain-resize-XXXXXX")};
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/sh"),
+                            .arguments = {QStringLiteral("-c"), QStringLiteral("exit 0")},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    Access::use_client(service, &client);
+    for (int attempt = 0; attempt < 500 && !Access::terminal_closed(service); ++attempt)
+        QCoreApplication::processEvents();
+    require(Access::terminal_closed(service));
+    Access::resize(service, {100, 30});
+    require(Access::client_attached(service));
+}
+
+void retired_sockets_evict_in_arrival_order() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-retired-XXXXXX")};
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    std::vector<QLocalSocket*> sockets;
+    sockets.reserve(9);
+    for (int index = 0; index < 9; ++index) {
+        sockets.push_back(new QLocalSocket());
+        Access::retire(service, sockets.back());
+    }
+    const auto retired = Access::retired_order(service);
+    require(retired.size() == 8 && retired.front() == sockets[1] && retired.back() == sockets[8]);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -362,6 +453,9 @@ int main(int argc, char** argv) {
         a_completed_frame_waits_for_the_paced_publication();
         a_completed_frame_waits_for_an_in_flight_snapshot();
         a_split_marker_waits_when_the_client_snapshot_is_in_flight();
+        input_backpressure_preserves_attachment();
+        resize_after_terminal_close_is_ignored_during_final_drain();
+        retired_sockets_evict_in_arrival_order();
         std::cout << "attention-service: ok\n";
         return 0;
     } catch (const std::exception& error) {
