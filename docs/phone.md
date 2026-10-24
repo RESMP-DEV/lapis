@@ -102,7 +102,7 @@ show in the same alert as delivery results.
 
 ## Ultra Tab
 
-[Ultra Tab for iPhone](ultratab.md#on-the-iphone) uses the same gateway, with
+[Ultra Tab for iPhone](https://github.com/RESMP-DEV/ultratab) uses the same gateway, with
 the same admission (the owner's devices over Tailscale or the Mac's ZeroTier
 networks, the `X-Lapis-Client` header, no browsers) and the same port. Two
 routes serve it:

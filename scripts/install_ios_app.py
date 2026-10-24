@@ -1,13 +1,13 @@
 """Build the lapis iPhone app for a device and install it with devicectl.
 
 Signs with an installed Apple Development identity and a development
-provisioning profile that covers the app's identifier (dev.lapis.remote, or
-dev.lapis.ultratab with --app ultratab; a wildcard profile works) and includes
+provisioning profile that covers the app's identifier (dev.lapis.remote; a
+wildcard profile works) and includes
 the phone. The app's default gateway is this Mac's Tailscale
 name. With --build-only, omit --host to leave the gateway unset without querying
 Tailscale. Without --device, the one paired iPhone that devicectl can reach is used.
 
-    uv run --no-project python scripts/install_ios_app.py [--app lapis|ultratab]
+    uv run --no-project python scripts/install_ios_app.py [--app lapis]
         [--device ID] [--build-only] [--wait MINUTES]
 """
 
@@ -30,7 +30,6 @@ PRODUCTS = ROOT / "build" / "ios" / "device"
 # Each iPhone app: its bundle identifier, sources and executable name.
 APPS = {
     "lapis": ("dev.lapis.remote", ROOT / "apps" / "ios" / "Lapis", "Lapis"),
-    "ultratab": ("dev.lapis.ultratab", ROOT / "apps" / "ios" / "UltraTab", "UltraTab"),
 }
 APP_ID, APP_SOURCES, APP_NAME = APPS["lapis"]
 PROFILE_DIRECTORIES = [

@@ -887,7 +887,7 @@ keep_gui_state(lapis::desktop::Workspace& workspace,
     return state;
 }
 
-// What this window knows about each agent, for Ultra Tab (apps/ultratab),
+// What this window knows about each agent, for Ultra Tab (RESMP-DEV/ultratab),
 // beside the registry; only from the window that owns the workspace.
 void keep_agent_state(std::optional<lapis::desktop::AgentStatePublisher>& kept,
                       lapis::desktop::Workspace& workspace,
