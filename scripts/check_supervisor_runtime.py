@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the isolated R1 supervisor build and write a focused runtime receipt."""
+"""Run the isolated supervisor build and write a focused runtime receipt."""
 
 import argparse
 import json
@@ -177,30 +177,37 @@ def client_integration_result(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--output", type=Path, default=ROOT / "build/reports/r1-supervisor/receipt.json"
+        "--preset",
+        choices=("supervisor", "supervisor-asan", "supervisor-tsan"),
+        default="supervisor",
     )
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--jobs", type=int, default=4)
     arguments = parser.parse_args()
-    receipt_path = arguments.output.resolve()
+    receipt_path = (
+        arguments.output
+        if arguments.output is not None
+        else ROOT / "build" / "reports" / f"{arguments.preset}-runtime" / "receipt.json"
+    ).resolve()
     if not receipt_path.is_relative_to(ROOT):
         parser.error("--output must name a receipt inside the repository checkout")
     receipt_path.unlink(missing_ok=True)
     logs = receipt_path.parent
     scope = (
-        "Focused supervisor-runtime and daemon build/tests in build/r1-runtime. It does not "
+        f"Focused supervisor-runtime and daemon build/tests in build/{arguments.preset}. It does not "
         "prove launchd ownership, GUI integration, package replacement, reboot recovery, load, "
         "latency, or real integrations that report a QLocalServer bind skip."
     )
     os.environ["CCACHE_DISABLE"] = "1"
     commands = (
-        ("configure", ("cmake", "--preset", "r1-runtime")),
+        ("configure", ("cmake", "--preset", arguments.preset)),
         (
             "build",
             (
                 "cmake",
                 "--build",
                 "--preset",
-                "r1-runtime",
+                arguments.preset,
                 "--target",
                 *TARGETS,
                 "--parallel",
@@ -212,7 +219,7 @@ def main() -> int:
             (
                 "ctest",
                 "--test-dir",
-                "build/r1-runtime",
+                f"build/{arguments.preset}",
                 "-R",
                 "supervisor-(state|runtime|session-service|client|daemon)$",
                 "--output-on-failure",
@@ -240,7 +247,7 @@ def main() -> int:
         "platform": sys.platform,
         "source_revision": revision,
         "source_dirty": dirty,
-        "build_directory": str((ROOT / "build/r1-runtime").relative_to(ROOT)),
+        "build_directory": str((ROOT / "build" / arguments.preset).relative_to(ROOT)),
         "scope": scope,
         "passed": passed,
         "checks": results,

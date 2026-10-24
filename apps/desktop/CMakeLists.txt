@@ -42,6 +42,7 @@ add_library(lapis_desktop_view STATIC
     src/interaction_log.cpp src/interaction_log.hpp
     src/interaction_recorder.cpp src/interaction_recorder.hpp
     src/live_connection.cpp src/live_connection.hpp
+    src/birth_route.cpp src/birth_route.hpp
     src/platform/updater_process.cpp src/platform/updater_process.hpp
     src/platform/reset_journal.cpp src/platform/reset_journal.hpp
     src/platform/published_task.hpp

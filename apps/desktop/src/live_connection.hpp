@@ -1,5 +1,6 @@
 #ifndef LAPIS_DESKTOP_LIVE_CONNECTION_HPP
 #define LAPIS_DESKTOP_LIVE_CONNECTION_HPP
+#include "launch_spec.hpp"
 #include "transport/local_protocol.hpp"
 #include <QFutureWatcher>
 #include <QHash>
@@ -21,6 +22,10 @@ struct LaunchSpec;
 namespace lapis::desktop {
 class SessionPreview;
 
+struct BirthRequest;
+struct BirthTicket;
+class BirthRoute;
+
 struct ServiceLaunchRequest {
     QString program;
     QStringList arguments;
@@ -36,7 +41,7 @@ class LiveConnection final : public QObject {
     LiveConnection(SessionPreview& document, QString endpoint, const session::LaunchSpec& launch,
                    session::wire::AttachMode mode,
                    std::shared_ptr<session::DescriptorStore> descriptor_store = {},
-                   ServiceLauncher launcher = {});
+                   ServiceLauncher launcher = {}, std::unique_ptr<BirthRoute> birth_route = {});
     ~LiveConnection() override;
     void begin(session::wire::AttachMode mode);
     bool send(session::wire::Kind kind, const QByteArray& payload);
@@ -81,6 +86,8 @@ class LiveConnection final : public QObject {
     QStringList service_arguments_;
     std::shared_ptr<session::DescriptorStore> descriptor_store_;
     ServiceLauncher launcher_;
+    session::LaunchSpec launch_;
+    std::unique_ptr<BirthRoute> birth_route_;
     QByteArray fingerprint_;
     std::unique_ptr<QLocalSocket> socket_;
     std::unique_ptr<QFutureWatcher<QString>> descriptor_write_;

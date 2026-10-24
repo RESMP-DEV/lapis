@@ -392,7 +392,7 @@ void input_backpressure_preserves_attachment() {
         QCoreApplication::processEvents();
     require(Access::process_started(service));
 
-    Access::write_text(service, QByteArray(2 * 1024 * 1024, 'q'));
+    Access::write_text(service, QByteArray(qsizetype{2} * 1024 * 1024, 'q'));
     require(Access::client_attached(service));
 }
 

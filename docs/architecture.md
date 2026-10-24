@@ -58,7 +58,7 @@ that uses `lapis_project_options`.
 | Session wire | Internal version 6 framing with epochs, generations, history paging, and attention messages | Incompatible changes need rejection/migration tests and a private endpoint |
 | Codex route | Managed ordinary TUI with a service-owned observer and app-server backend | Observation, response, and replay capabilities are declared separately |
 | Claude route | Hook/terminal observation with explicit answers in Claude's terminal | No GUI response routing until a supported protocol is version-pinned and qualified |
-| Process birth | Experimental same-UID one-session supervisor daemon exists | The first production client is headless `lapis supervisor`; launchd and GUI routes follow it |
+| Process birth | Experimental same-UID one-session supervisor daemon exists; desktop birth is split into default `DirectBirthRoute` and explicit `SupervisorBirthRoute` seams | The first production client is headless `lapis supervisor`; launchd and GUI routes follow it, and a GUI-observed supervised session must close the order-2 gate |
 | Settings | Tracked `lapis.json` defaults plus private runtime workspace/window state | Machine-local state never becomes a portable credential or session transcript |
 | Native browser surfaces | CEF 8037 is a provisional engine candidate; no runtime is implemented | Run the isolated W0 probe first; product and service wiring wait for R1/R4 |
 

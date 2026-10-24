@@ -1,5 +1,6 @@
 #include "live_connection.hpp"
 #include "app_paths.hpp"
+#include "birth_route.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "session_descriptor.hpp"
 #include "workspace.hpp"
@@ -9,7 +10,6 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
-#include <QProcess>
 #include <QPromise>
 #include <QThreadPool>
 #include <algorithm>
@@ -31,20 +31,6 @@ constexpr int history_timeout_ms = 5000;
 // length and the attachment.
 constexpr qint64 input_queue_bytes = qint64{1024} * 1024;
 constexpr qint64 message_overhead = 45;
-bool start_service_detached(const ServiceLaunchRequest& launch) {
-    QProcess service;
-    service.setProgram(launch.program);
-    service.setArguments(launch.arguments);
-    service.setStandardOutputFile(launch.log, QIODevice::Append);
-    service.setStandardErrorFile(launch.log, QIODevice::Append);
-    if (!launch.environment.isEmpty()) {
-        auto environment = QProcessEnvironment::systemEnvironment();
-        for (auto it = launch.environment.cbegin(); it != launch.environment.cend(); ++it)
-            environment.insert(it.key(), it.value());
-        service.setProcessEnvironment(environment);
-    }
-    return service.startDetached();
-}
 } // namespace
 SessionPreview::~SessionPreview() { live_.reset(); }
 void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpec& launch,
@@ -495,14 +481,14 @@ void SessionPreview::setServiceIdentity(const QByteArray& identity) {
 LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
                                const session::LaunchSpec& launch, wire::AttachMode mode,
                                std::shared_ptr<session::DescriptorStore> descriptor_store,
-                               ServiceLauncher launcher)
+                               ServiceLauncher launcher, std::unique_ptr<BirthRoute> birth_route)
     : document_(document), endpoint_(std::move(endpoint)),
       service_arguments_{QStringList{endpoint_, launch.directory, launch.program} +
                          launch.arguments},
       descriptor_store_{descriptor_store ? std::move(descriptor_store)
                                          : std::make_shared<session::DescriptorStore>()},
-      launcher_{std::move(launcher)}, fingerprint_(session::launch_fingerprint(launch)),
-      wanted_size_(launch.size) {
+      launcher_{std::move(launcher)}, launch_{launch}, birth_route_{std::move(birth_route)},
+      fingerprint_(session::launch_fingerprint(launch)), wanted_size_(launch.size) {
     retry_.setSingleShot(true);
     retry_.setInterval(100);
     handshake_.setSingleShot(true);
@@ -579,16 +565,16 @@ void LiveConnection::begin(wire::AttachMode mode) {
             }
             request_.expected = *saved;
         } else if (mode == wire::AttachMode::create) {
-            request_.expected.session_id = wire::new_id();
-            const QStringList arguments =
-                QStringList{QStringLiteral("--session-id"),
-                            QString::fromLatin1(request_.expected.session_id.toHex())} +
-                service_arguments_;
-            const ServiceLaunchRequest launch_request{session_service_program(), arguments,
-                                                      endpoint_ + QStringLiteral(".log"),
-                                                      document_.serviceEnvironment()};
-            if (!(launcher_ ? launcher_(launch_request) : start_service_detached(launch_request)))
-                throw std::runtime_error("Could not start session service");
+            const BirthRequest birth_request{endpoint_,
+                                             QString::fromLatin1(fingerprint_.toHex()),
+                                             launch_,
+                                             service_arguments_,
+                                             endpoint_ + QStringLiteral(".log"),
+                                             document_.serviceEnvironment()};
+            if (!birth_route_)
+                birth_route_ = std::make_unique<DirectBirthRoute>(launcher_);
+            const BirthTicket ticket = birth_route_->birth(birth_request);
+            request_.expected.session_id = ticket.session_id;
         }
         connectSocket();
     } catch (const std::exception& error) {

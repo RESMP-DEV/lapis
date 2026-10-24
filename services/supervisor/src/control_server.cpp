@@ -243,7 +243,8 @@ struct LocalControlServer::State {
 };
 
 LocalControlServer::LocalControlServer(
-    std::string endpoint, ControlHandler handler) // NOLINT(bugprone-easily-swappable-parameters)
+    const std::string& endpoint,
+    ControlHandler handler) // NOLINT(bugprone-easily-swappable-parameters)
     : state_{std::make_unique<State>()} {
     if (endpoint.empty() || endpoint.front() != '/' || endpoint.size() >= 104)
         failed("Supervisor control endpoint must be an absolute bounded path");

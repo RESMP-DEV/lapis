@@ -32,14 +32,16 @@
     },
     {"name": "desktop", "inherits": "profile", "cacheVariables": {"LAPIS_BUILD_DESKTOP": "ON"}},
     {
-      "name": "r1-runtime",
+      "name": "supervisor",
       "inherits": "dev",
       "cacheVariables": {
         "LAPIS_BUILD_SESSION": "ON",
         "LAPIS_BUILD_DESKTOP": "OFF",
         "LAPIS_BUILD_SUPERVISOR_RUNTIME": "ON"
       }
-    }
+    },
+    {"name": "supervisor-asan", "inherits": "supervisor", "cacheVariables": {"LAPIS_SANITIZER": "address"}},
+    {"name": "supervisor-tsan", "inherits": "supervisor", "cacheVariables": {"LAPIS_SANITIZER": "thread"}}
   ],
   "buildPresets": [
     {"name": "dev", "configurePreset": "dev"},
@@ -47,7 +49,9 @@
     {"name": "tsan", "configurePreset": "tsan"},
     {"name": "profile", "configurePreset": "profile"},
     {"name": "desktop", "configurePreset": "desktop"},
-    {"name": "r1-runtime", "configurePreset": "r1-runtime"}
+    {"name": "supervisor", "configurePreset": "supervisor"},
+    {"name": "supervisor-asan", "configurePreset": "supervisor-asan"},
+    {"name": "supervisor-tsan", "configurePreset": "supervisor-tsan"}
   ],
   "testPresets": [
     {"name": "dev", "configurePreset": "dev", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
@@ -55,6 +59,8 @@
     {"name": "tsan", "configurePreset": "tsan", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
     {"name": "profile", "configurePreset": "profile", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
     {"name": "desktop", "configurePreset": "desktop", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
-    {"name": "r1-runtime", "configurePreset": "r1-runtime", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}}
+    {"name": "supervisor", "configurePreset": "supervisor", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
+    {"name": "supervisor-asan", "configurePreset": "supervisor-asan", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
+    {"name": "supervisor-tsan", "configurePreset": "supervisor-tsan", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}}
   ]
 }

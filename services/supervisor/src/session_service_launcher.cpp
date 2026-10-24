@@ -263,6 +263,7 @@ bool SessionServiceLauncher::handshake(const DesiredSession& session, pid_t chil
             const wire::AttachRequest request{
                 .mode = wire::AttachMode::join,
                 .fingerprint = QByteArray::fromHex(QByteArray::fromStdString(session.fingerprint)),
+                .expected = {},
                 .hyperlinks = true,
                 .attention_phase = false,
                 .paste_transactions = false,

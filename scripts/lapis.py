@@ -21,7 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_BUILD = ROOT / "build" / "desktop"
-SUPERVISOR_BUILD = ROOT / "build" / "r1-runtime" / "services" / "supervisor"
+SUPERVISOR_BUILD = ROOT / "build" / "supervisor" / "services" / "supervisor"
 GHOSTTY_RUNS = ROOT / "build" / "terminal-probe" / "reproduce" / "ghostty" / "runs"
 RUNTIME_DIR = ROOT / "runtime"
 DEFAULT_SOCKET = RUNTIME_DIR / "desktop-v6.sock"
