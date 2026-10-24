@@ -86,8 +86,8 @@ QByteArray hook_settings(const QString& command) {
 QJsonObject relay_event(const QJsonObject& source, bool include_derived) {
     QJsonObject event;
     for (const auto& key : relay_identity_fields)
-        if (source.contains(key))
-            event.insert(key, source.value(key));
+        if (const auto value = source.value(key); value.isString())
+            event.insert(key, value);
     const auto in_flight = include_derived ? background_work(source) : QString();
     if (!in_flight.isNull())
         event.insert(relay_in_flight_field.toString(), in_flight);

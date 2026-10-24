@@ -35,6 +35,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -2091,22 +2092,29 @@ void windowWaitsForTheRestoreHelper() {
             "restore the unpublished marker");
     marker.close();
     // The helper exits: its marker goes with its lock.
-    std::thread release([&helper, &options] {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        QFile marker(options.storagePath + QStringLiteral(".restoring"));
-        require(marker.open(QIODevice::WriteOnly | QIODevice::Truncate),
-                "open the marker in the helper race");
-        require(marker.write(QByteArray::number(QCoreApplication::applicationPid())) > 0,
-                "the helper names itself after taking the lock");
-        marker.close();
-        std::this_thread::sleep_for(std::chrono::milliseconds(700));
-        QFile::remove(options.storagePath + QStringLiteral(".restoring"));
-        helper.unlock();
+    std::exception_ptr worker_error;
+    std::thread release([&helper, &options, &worker_error] {
+        try {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            QFile marker(options.storagePath + QStringLiteral(".restoring"));
+            require(marker.open(QIODevice::WriteOnly | QIODevice::Truncate),
+                    "open the marker in the helper race");
+            require(marker.write(QByteArray::number(QCoreApplication::applicationPid())) > 0,
+                    "the helper names itself after taking the lock");
+            marker.close();
+            std::this_thread::sleep_for(std::chrono::milliseconds(700));
+            QFile::remove(options.storagePath + QStringLiteral(".restoring"));
+            helper.unlock();
+        } catch (...) {
+            worker_error = std::current_exception();
+        }
     });
     QElapsedTimer clock;
     clock.start();
     Workspace window(WorkspaceMode::live, options);
     release.join();
+    if (worker_error)
+        std::rethrow_exception(worker_error);
     require(window.workspaceError().isEmpty() && clock.elapsed() >= 700,
             "a window waits for the login helper");
     clock.restart();

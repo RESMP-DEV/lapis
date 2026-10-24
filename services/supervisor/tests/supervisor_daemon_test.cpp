@@ -287,6 +287,22 @@ pid_t service_pid_from_ownership(const std::string& endpoint) {
     return value;
 }
 
+QString persisted_epoch(const QString& directory) {
+    QFile file{QDir(directory).filePath(QStringLiteral("supervisor.json"))};
+    require(file.open(QIODevice::ReadOnly), "read persisted supervisor state");
+    const auto document = QJsonDocument::fromJson(file.readAll());
+    file.close();
+    const auto epoch = document.object()
+                           .value(QStringLiteral("session"))
+                           .toObject()
+                           .value(QStringLiteral("identity"))
+                           .toObject()
+                           .value(QStringLiteral("epoch"))
+                           .toString();
+    require(!epoch.isEmpty(), "read persisted supervisor epoch");
+    return epoch;
+}
+
 void write_all(QLocalSocket& socket, const QByteArray& bytes) {
     require(socket.write(bytes) == bytes.size() && socket.flush() &&
                 (socket.bytesToWrite() == 0 || socket.waitForBytesWritten(2000)),
@@ -746,6 +762,105 @@ void daemon_birth_and_real_service_clients() {
     }
 }
 
+void daemon_replaces_a_dead_service() {
+    const QString previous = QDir::currentPath();
+    QTemporaryDir directory =
+        owned_test_directory(QStringLiteral("lapis-r1-daemon-converge-XXXXXX"));
+    require(directory.isValid(), "create the convergence daemon test directory");
+    QDir::setCurrent(directory.path());
+    const std::string control = directory.filePath(QStringLiteral("control.sock")).toStdString();
+    const std::string endpoint = directory.filePath(QStringLiteral("session.sock")).toStdString();
+    require_bindable(directory.filePath(QStringLiteral("bind.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = lapis::session::AgentMode::terminal};
+    const QString fingerprint = QString::fromLatin1(
+        lapis::session::launch_fingerprint(lapis::session::validate_launch(launch)).toHex());
+    pid_t daemon = -1;
+    pid_t old_service = -1;
+    pid_t replacement = -1;
+    quint64 old_terminal_child = 0;
+    try {
+        daemon = start_daemon(directory.path().toStdString(), control);
+        std::string session_id;
+        std::string epoch;
+        {
+            const QJsonObject service{{QStringLiteral("environment"), QJsonObject{}}};
+            ControlClient client{control};
+            send_frame(client, birth_json(fingerprint, service));
+            const auto reply = reply_object(receive_reply(client));
+            require(reply.value(QStringLiteral("status")).toString() == QLatin1String("born"),
+                    "the convergence fixture births a service");
+            session_id = reply.value(QStringLiteral("session_id")).toString().toStdString();
+            epoch = reply.value(QStringLiteral("epoch")).toString().toStdString();
+        }
+        old_service = service_pid_from_ownership(endpoint);
+        const QString old_epoch = persisted_epoch(directory.path());
+        {
+            QLocalSocket client;
+            client.connectToServer(QString::fromStdString(endpoint), QLocalSocket::ReadWrite);
+            require(client.waitForConnected(5000), "the convergence fixture attaches");
+            const auto hello = attach(client, fingerprint.toStdString(), session_id, epoch, false);
+            old_terminal_child = hello.pid;
+            static_cast<void>(synchronize(client));
+            detach(client);
+        }
+
+        require(::kill(old_service, SIGKILL) == 0, "crash the supervised service");
+        wait_gone(old_service);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (QFile::exists(QString::fromStdString(endpoint + ".supervisor-owner"))) {
+                const auto candidate = service_pid_from_ownership(endpoint);
+                if (candidate > 0 && candidate != old_service && ::kill(candidate, 0) == 0) {
+                    replacement = candidate;
+                    break;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds{50});
+        }
+        require(replacement > 0 && replacement != daemon,
+                "the daemon replaces a dead service without a control request");
+        require(persisted_epoch(directory.path()) != old_epoch,
+                "the replacement rotates the persisted epoch");
+        const auto live =
+            cli_json(run_supervisor_cli({QStringLiteral("--control-endpoint"),
+                                         QString::fromStdString(control), QStringLiteral("status"),
+                                         QStringLiteral("--json")}),
+                     "the replacement status CLI succeeds");
+        require(live.value(QStringLiteral("slot")).toString() == QLatin1String("started") &&
+                    live.value(QStringLiteral("service_live")).toBool(),
+                "status reports the replacement service live");
+
+        require(::kill(daemon, SIGTERM) == 0, "stop the convergence daemon");
+        int status = 0;
+        require(::waitpid(daemon, &status, 0) == daemon && WIFEXITED(status) &&
+                    WEXITSTATUS(status) == 0,
+                "the convergence daemon exits cleanly");
+        daemon = -1;
+        wait_gone(replacement);
+        if (old_terminal_child != 0)
+            wait_gone(static_cast<pid_t>(old_terminal_child));
+    } catch (...) {
+        if (daemon > 0) {
+            static_cast<void>(::kill(daemon, SIGTERM));
+            int status = 0;
+            static_cast<void>(::waitpid(daemon, &status, 0));
+        }
+        if (old_service > 0)
+            wait_gone(old_service);
+        if (replacement > 0)
+            wait_gone(replacement);
+        if (old_terminal_child != 0)
+            wait_gone(static_cast<pid_t>(old_terminal_child));
+        QDir::setCurrent(previous);
+        throw;
+    }
+    QDir::setCurrent(previous);
+}
+
 void daemon_sigkill_reconstructs_the_live_service() {
     const QString previous = QDir::currentPath();
     QTemporaryDir directory =
@@ -889,6 +1004,7 @@ int main(int argc, char** argv) {
     try {
         failed_service_birth_never_reports_born();
         daemon_birth_and_real_service_clients();
+        daemon_replaces_a_dead_service();
         daemon_sigkill_reconstructs_the_live_service();
         std::cout << "supervisor-daemon: ok\n";
         return 0;

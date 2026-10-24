@@ -787,6 +787,8 @@ def main():
         "--output", type=Path, default=ROOT / "build/codex-attention-live.json"
     )
     args = parser.parse_args()
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.unlink(missing_ok=True)
     receipt = {
         "schema": "lapis.codex-attention-live/2",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -823,7 +825,6 @@ def main():
             if type(error) is RuntimeError
             else "Fixture failed; inspect local reproduction"
         )
-    args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(receipt, indent=2) + "\n")
     print(f"{'PASS' if receipt['passed'] else 'FAIL'}: {args.output}")
     return 0 if receipt["passed"] else 1

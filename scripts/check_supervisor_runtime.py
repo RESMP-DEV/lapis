@@ -103,7 +103,7 @@ def integration_result(
         "timed_out": test_result["timed_out"],
         "exit_code": exit_code,
         "diagnostic": diagnostic,
-        "elapsed_seconds": 0.0,
+        "elapsed_seconds": test_result["elapsed_seconds"],
         "log": str((logs / "test.log").relative_to(ROOT)),
         "integration_skipped": integration_skipped,
     }
@@ -141,7 +141,7 @@ def daemon_integration_result(
         "timed_out": test_result["timed_out"],
         "exit_code": exit_code,
         "diagnostic": diagnostic,
-        "elapsed_seconds": 0.0,
+        "elapsed_seconds": test_result["elapsed_seconds"],
         "log": str((logs / "test.log").relative_to(ROOT)),
         "integration_skipped": integration_skipped,
     }
@@ -169,7 +169,7 @@ def client_integration_result(
         "timed_out": test_result["timed_out"],
         "exit_code": exit_code,
         "diagnostic": diagnostic,
-        "elapsed_seconds": 0.0,
+        "elapsed_seconds": test_result["elapsed_seconds"],
         "log": str((logs / "test.log").relative_to(ROOT)),
     }
 

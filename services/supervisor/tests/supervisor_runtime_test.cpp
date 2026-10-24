@@ -32,6 +32,10 @@
 namespace {
 using namespace lapis::supervisor;
 
+struct BindUnavailable final : std::runtime_error {
+    explicit BindUnavailable(const std::string& diagnostic) : std::runtime_error(diagnostic) {}
+};
+
 void require(bool value, const char* message,
              std::source_location where = std::source_location::current()) {
     if (!value)
@@ -414,7 +418,7 @@ void strict_local_server() {
         if (std::string_view{error.what()}.find("Operation not permitted") !=
             std::string_view::npos) {
             std::cout << "supervisor-runtime: control socket bind unavailable\n";
-            return;
+            throw BindUnavailable{error.what()};
         }
         throw;
     }
@@ -504,6 +508,8 @@ int main() {
         harmless_child_ownership_fixture();
         strict_local_server();
         std::cout << "supervisor-runtime: ok\n";
+    } catch (const BindUnavailable&) {
+        return 75;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

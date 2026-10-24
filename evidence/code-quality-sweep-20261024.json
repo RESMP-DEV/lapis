@@ -1,0 +1,167 @@
+{
+  "schema": "lapis.code-quality-sweep/1",
+  "recorded_at": "2026-10-24T20:58:11Z",
+  "agent": "Codex parent with eight read-only CCR review workers",
+  "source": {
+    "base_revision": "4c66a0d6613ee7288f1b033ec9775a154a6e3f07",
+    "worktree": ".worktrees/quality-sweep-20261024",
+    "dirty": true,
+    "platform": "macOS 26.7.1 arm64",
+    "toolchain": {
+      "clang": "Homebrew clang 23.1.4",
+      "cmake": "4.4.4",
+      "ruff": "0.17.1",
+      "qt": "6.11.2"
+    }
+  },
+  "scope": {
+    "included": [
+      "Read-only review of session/supervisor, desktop input/rendering, adapters, QML state, Python tooling, build policy, tests, and documentation/evidence",
+      "Bounded repairs for receipt integrity, fixture isolation, supervisor convergence, advisory Claude metadata, terminal keyboard ownership, modal input gating, bounded QML lists, and direct documentation contradictions",
+      "Focused and common local verification"
+    ],
+    "excluded": [
+      "New product features or adapter contracts",
+      "Provider credentials, live model turns, package/release publication, or external PRs",
+      "Native macOS AppKit/IME acceptance, native GPU acceptance, Android device runs, sanitizers, reboot, and load qualification"
+    ]
+  },
+  "decomposition": {
+    "dispatch_incident": {
+      "description": "The first eight launches received the literal 16-byte prompt 'codex-ccr-worker' because ccr-worker-lease prepends the worker binary and the parent also named it.",
+      "recovery": "Six running misdispatches were stopped; two completed self-scoped reports were used as evidence only after source verification; all eight intended briefs were relaunched and verified at 856-1010 bytes before acceptance.",
+      "corrected_briefs": [
+        "session.txt",
+        "desktop.txt",
+        "adapters.txt",
+        "qml.txt",
+        "python.txt",
+        "build.txt",
+        "tests.txt",
+        "docs.txt"
+      ]
+    },
+    "worker_reports": "build/quality-sweep/workers/*.txt plus FILE.status.json; reports are worker evidence, not acceptance",
+    "parent_owned": [
+      "Finding adjudication and bounded integration",
+      "All edits and live verification",
+      "Receipt consolidation"
+    ]
+  },
+  "changes": [
+    "Invalidate eight fixed-path check/probe receipts at startup and test interruption behavior",
+    "Make six sibling-import scripts package-importable; all check modules import",
+    "Record measured supervisor integration elapsed times",
+    "Use unique RAII-owned attention-audit fixture directories",
+    "Drive supervisor convergence from the daemon loop and test dead-service replacement with epoch rotation",
+    "Make bind-denied supervisor runtime and missing-Python Ultra Tab composer paths explicit skips",
+    "Collect supervisor receipt tests with unittest and propagate worker-thread failures",
+    "Drop non-string optional Claude hook identities before advisory event validation",
+    "Encode Control-/ and Control-?, preserve suggestion focus ownership, and tolerate keypad copy modifiers",
+    "Block plan-sign-in and category context interactions consistently and cap Ultra Tab footer lights",
+    "Fail iOS UI acceptance when the harness promises a missing Claude/Codex agent",
+    "Correct README limit-reset default, merged-R4 status wording, suggestion status evidence, and a private overlay route",
+    "Expose Ghostty headers as SYSTEM and declare the desktop thread dependency"
+  ],
+  "checks": [
+    {
+      "name": "python-unittest-and-quality",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "passed": true,
+      "evidence": "build/reports/quality/receipt.json"
+    },
+    {
+      "name": "cpp-dev-build-ctest-format-cppcheck-clang-tidy",
+      "command": "CMAKE_PREFIX_PATH=<primary-checkout>/build/release/qt LAPIS_GHOSTTY_PREFIX=<primary-checkout>/build/terminal-probe/reproduce/ghostty/runs/059c2552dd9a4a7681b11e5c52a5c059/prefix python3 scripts/check_cpp.py dev --jobs 8",
+      "exit_code": 0,
+      "passed": true,
+      "evidence": "build/reports/dev/receipt.json"
+    },
+    {
+      "name": "supervisor-runtime-daemon-client",
+      "command": "CMAKE_PREFIX_PATH=<primary-checkout>/build/release/qt LAPIS_GHOSTTY_PREFIX=<primary-checkout>/build/terminal-probe/reproduce/ghostty/runs/059c2552dd9a4a7681b11e5c52a5c059/prefix python3 scripts/check_supervisor_runtime.py --jobs 8",
+      "exit_code": 0,
+      "passed": true,
+      "evidence": "build/reports/r1-supervisor/receipt.json",
+      "observed": "All three integration markers passed and now inherit the measured 6.546 second test duration."
+    },
+    {
+      "name": "terminal-input-background",
+      "command": "build/desktop/apps/desktop/lapis_terminal_input_tests --background",
+      "exit_code": 0,
+      "passed": true,
+      "observed": "Includes new Control-/ and Control-? bytes and the delayed paste/focus ownership case."
+    },
+    {
+      "name": "ultratab-overlay-composer",
+      "command": "ctest --test-dir build/desktop -R '^(ultratab-overlay|ultratab-composer)$' --output-on-failure",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "ios-unit-and-ui-build",
+      "command": "python3 scripts/check_ios_remote.py --unit",
+      "exit_code": 0,
+      "passed": true,
+      "evidence": "build/ios/results/20261024-135046-unit.xcresult"
+    },
+    {
+      "name": "python-importability",
+      "command": "PYTHONPATH=. python3 -c \"import importlib,pathlib; [importlib.import_module('scripts.'+p.stem) for p in pathlib.Path('scripts').glob('check_*.py')]\"",
+      "exit_code": 0,
+      "passed": true,
+      "observed": "19 scripts/check_*.py modules imported; 0 failed."
+    },
+    {
+      "name": "focused-python-receipt-tests",
+      "command": "PYTHONPATH=. python3 -m unittest -v scripts.tests.test_check_supervisor_runtime scripts.tests.test_receipt_startup_invalidation scripts.tests.test_check_claude_hooks",
+      "exit_code": 0,
+      "passed": true,
+      "observed": "18 tests passed."
+    },
+    {
+      "name": "markdown-links-and-privacy",
+      "command": "python3 scripts/check_markdown_links.py && git diff --check && ! rg -n '10\\.243\\.' README.md docs evidence",
+      "exit_code": 0,
+      "passed": true,
+      "observed": "Links passed, diff whitespace clean, and no tracked current overlay address remains."
+    },
+    {
+      "name": "swift-ui-syntax",
+      "command": "xcrun -sdk iphonesimulator swiftc -parse apps/ios/LapisUITests/LapisUITests.swift",
+      "exit_code": 0,
+      "passed": true,
+      "note": "Parse emits the expected cross-target sysroot warning; full simulator UI build is covered by the iOS unit path."
+    },
+    {
+      "name": "ghostty-system-include",
+      "command": "cmake --preset dev and inspect build/dev/compile_commands.json for terminal.cpp",
+      "exit_code": 0,
+      "passed": true,
+      "observed": "The pinned Ghostty prefix appears as -isystem rather than a first-party -I include."
+    },
+    {
+      "name": "background-ui-review",
+      "command": "python3 scripts/check_ui_review.py --json --jobs 8",
+      "exit_code": 1,
+      "passed": false,
+      "evidence": "build/reports/ui-review/20261024T205437Z-3fx9a7_j/receipt.json",
+      "observed": "Configure, build, shortcut-focus, and terminal-input passed. The full preview failed later at ui_preview_test.cpp:2268 because the side terminal panel stayed invisible after 'Could not start session service'. Removing only the new plan-sign-in inputBlocked binding reproduced the identical failure, so the negative control does not attribute it to this diff. The run passed through the new plan-sign-in assertion and saved captures."
+    }
+  ],
+  "known_unrelated_failure": {
+    "check": "ui-full-background",
+    "diagnostic": "ui_preview_test: panel->isVisible() at line 2268",
+    "negative_control": "With the only new production QML modal binding temporarily removed, the same command failed at the same assertion."
+  },
+  "non_claims": [
+    "No live Claude/Codex provider turn, external adapter schema, credential, package, notarization, reboot, load, native AppKit/IME, or native GPU qualification was run.",
+    "The supervisor repair proves one real dead-service replacement in the focused daemon fixture; it does not qualify launchd, reboot, upgrade, restart storms, or GUI replacement.",
+    "The iOS unit/build path does not exercise the changed Claude/Codex UI acceptance cases against missing rows in the simulator.",
+    "The QML footer cap has offscreen overlay coverage but no 32-agent visual layout measurement.",
+    "Deferred findings from the eight reports remain source-review hypotheses until their named focused checks run."
+  ],
+  "passed": false,
+  "outcome": "Bounded repairs verified; common, C++, supervisor, terminal, Ultra Tab, Python, docs, and iOS-unit gates passed, with the pre-existing/full-preview side-terminal failure documented by a negative control."
+}

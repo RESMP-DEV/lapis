@@ -12,7 +12,10 @@ import tempfile
 import time
 from pathlib import Path
 
-from check_cli_launch import TEXT, CheckError, Service, require
+if __package__:
+    from .check_cli_launch import TEXT, CheckError, Service, require
+else:
+    from check_cli_launch import TEXT, CheckError, Service, require
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = r"""
@@ -106,6 +109,7 @@ def main():
     )
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.unlink(missing_ok=True)
     receipt = {"schema": "lapis.sync-output-check/1", "passed": False}
     try:
         with tempfile.TemporaryDirectory(prefix="lapis-sync-", dir="/tmp") as directory:

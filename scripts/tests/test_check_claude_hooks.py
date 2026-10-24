@@ -9,7 +9,8 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from check_cli_launch import CheckError
-from check_claude_hooks import main, stable_notice, terminal_notice
+from check_claude_hooks import SUPPORTED_VERSION, main, stable_notice, terminal_notice
+from probe_claude_failure_hooks import SUPPORTED_VERSION as FAILURE_SUPPORTED_VERSION
 
 
 class NoticeTests(unittest.TestCase):
@@ -51,6 +52,9 @@ class NoticeTests(unittest.TestCase):
 
 
 class EntryPointTests(unittest.TestCase):
+    def test_live_and_failure_probes_pin_the_same_claude_version(self):
+        self.assertEqual(SUPPORTED_VERSION, FAILURE_SUPPORTED_VERSION)
+
     def test_main_runs_event_loop_and_does_not_launder_failures(self):
         for failure in (
             None,
@@ -76,6 +80,7 @@ class EntryPointTests(unittest.TestCase):
     def test_main_does_not_launder_keyboard_interrupt(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "receipt.json"
+            output.write_text('{"passed": true, "stale": true}')
             fixture = AsyncMock(side_effect=KeyboardInterrupt)
             with (
                 patch("check_claude_hooks.exercise", fixture),

@@ -541,7 +541,9 @@ void privacy_bounds_and_transport() {
     auto request = event("PermissionRequest", "Bash");
     request.insert("tool_input", QJsonObject{{"command", "private content"}});
     request.insert("prompt", "private prompt");
+    request.insert("tool_use_id", QJsonValue::Null);
     f.raw(QJsonDocument(request).toJson(QJsonDocument::Compact));
+    require(f.state.ready() && f.state.pending().size() == 1);
     require(!QJsonDocument(f.observer.details(f.state.pending().begin()->first))
                  .toJson()
                  .contains("private"));

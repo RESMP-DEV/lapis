@@ -102,7 +102,7 @@ These facts are the port's foundation; cite them in review, not folklore.
   `zerotier-cli -j listnetworks` returns per network `id`, `name`,
   `status` (`"OK"` when joined), `type` (`"PRIVATE"`/`"PUBLIC"`),
   `assignedAddresses` (CIDR strings), and `routes` with
-  `target`/`via` (`{"target": "10.243.0.0/16", "via": null}`). There is no
+  `target`/`via` (`{"target": "<private-managed-route>", "via": null}`). There is no
   `whois` equivalent: a peer's owner login and device OS are not knowable.
 
 Open verification item: Tailscale is expected to report OS `"android"` for

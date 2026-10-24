@@ -48,7 +48,7 @@ if(NOT lapis_ghostty_engine STREQUAL "ghostty" OR
 endif()
 
 add_library(lapis_ghostty_vt STATIC IMPORTED GLOBAL)
-target_include_directories(lapis_ghostty_vt INTERFACE
+target_include_directories(lapis_ghostty_vt SYSTEM INTERFACE
   "${LAPIS_GHOSTTY_PREFIX_NORMAL}/include")
 set_target_properties(lapis_ghostty_vt PROPERTIES
   IMPORTED_LOCATION "${LAPIS_GHOSTTY_STATIC_LIBRARY}")

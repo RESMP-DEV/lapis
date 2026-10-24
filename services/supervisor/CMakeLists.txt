@@ -87,7 +87,7 @@ if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
         target_compile_definitions(lapis_supervisor_runtime_tests PRIVATE
             LAPIS_SUPERVISOR_CHILD_FIXTURE="$<TARGET_FILE:lapis_supervisor_child_fixture>")
         add_test(NAME supervisor-runtime COMMAND lapis_supervisor_runtime_tests)
-        set_tests_properties(supervisor-runtime PROPERTIES TIMEOUT 30)
+        set_tests_properties(supervisor-runtime PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 75)
         add_executable(lapis_supervisor_runtime_session_tests
             tests/supervisor_session_service_test.cpp)
         target_link_libraries(lapis_supervisor_runtime_session_tests PRIVATE

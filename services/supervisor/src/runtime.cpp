@@ -531,8 +531,7 @@ Convergence SupervisorRuntime::converge() {
         static_cast<void>(stop_desired("supervisor launch failed"));
         return Convergence::failed;
     }
-    return initial_admission_used_ && !restart_admissions_.empty() ? Convergence::restarted
-                                                                   : Convergence::started;
+    return Convergence::started;
 }
 
 const SupervisorState& SupervisorRuntime::state() const noexcept { return registry_->state(); }

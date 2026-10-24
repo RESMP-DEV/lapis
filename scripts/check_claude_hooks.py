@@ -14,9 +14,14 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from check_cli_launch import ATTENTION_DECISION, TEXT, Service, require
-from check_service_attention import View, cleanup_service, decision, process_groups
-from probe_terminal import run_process
+if __package__:
+    from .check_cli_launch import ATTENTION_DECISION, TEXT, Service, require
+    from .check_service_attention import View, cleanup_service, decision, process_groups
+    from .probe_terminal import run_process
+else:
+    from check_cli_launch import ATTENTION_DECISION, TEXT, Service, require
+    from check_service_attention import View, cleanup_service, decision, process_groups
+    from probe_terminal import run_process
 
 ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED_VERSION = "2.1.303"
@@ -504,6 +509,7 @@ def parse_args(argv=None):
 def main(argv=None):
     args = parse_args(argv)
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.unlink(missing_ok=True)
     receipt = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "passed": False,

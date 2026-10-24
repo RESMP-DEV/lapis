@@ -1,5 +1,6 @@
 find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network)
 find_package(Vulkan REQUIRED)
+find_package(Threads REQUIRED)
 set(CMAKE_AUTOMOC ON)
 if(APPLE)
     enable_language(OBJCXX)
@@ -93,6 +94,7 @@ configure_file(src/remote_hook_relay.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generat
 target_include_directories(lapis_desktop_view PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options lapis_session_platform
     lapis_claude_adapter
+    Threads::Threads
     PUBLIC lapis_terminal lapis_attention lapis_session_launch lapis_local_protocol
         Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network)
 if(LAPIS_PACKAGE)

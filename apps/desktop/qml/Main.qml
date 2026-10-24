@@ -85,6 +85,7 @@ ApplicationWindow {
             || usageDialog.visible
             || toolsDialog.visible
             || settingsDialog.visible
+            || planSignInDialog.visible
             || attentionDialog.visible
             || agentDialog.visible
             || closeAgentDialog.visible
@@ -2880,6 +2881,7 @@ ApplicationWindow {
 
                         TapHandler {
                             acceptedButtons: Qt.RightButton
+                            enabled: window.interactionArmed
                             onTapped: {
                                 workspace.selectCategory(categoryButton.modelData.id)
                                 window.popupAt(categoryMenu, categoryButton)

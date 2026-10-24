@@ -262,6 +262,8 @@ int main(int argc, char** argv) {
             }};
 
         while (!stop_requested) {
+            if (runtime)
+                static_cast<void>(runtime->converge());
             server.poll_once(100);
         }
         stop_runtime(runtime);

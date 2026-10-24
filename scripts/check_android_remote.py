@@ -1091,6 +1091,9 @@ def main():
     parser.add_argument("--keep", action="store_true", help="keep the fixture running")
     arguments = parser.parse_args()
 
+    BUILD.mkdir(parents=True, exist_ok=True)
+    (BUILD / "remote-check.json").unlink(missing_ok=True)
+
     if not SERVICE.exists():
         print("missing the desktop build; build the desktop first", file=sys.stderr)
         return SKIP_EXIT
