@@ -24,6 +24,7 @@ struct SupervisorStatus {
 [[nodiscard]] std::string encode_status_request();
 [[nodiscard]] std::string encode_status_reply(const SupervisorState& state, bool service_live);
 [[nodiscard]] std::string encode_stop_request(const SupervisorState& state);
+[[nodiscard]] std::string encode_reset_request(const SupervisorState& state);
 [[nodiscard]] SupervisorStatus decode_status_reply(const std::string& bytes);
 [[nodiscard]] SupervisorState read_control_state(const std::string& directory);
 [[nodiscard]] std::string send_control_request(const std::string& endpoint,

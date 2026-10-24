@@ -62,8 +62,9 @@ int main(int argc, char** argv) {
     const auto positional = parser.positionalArguments();
     const auto command = positional.isEmpty() ? QString{} : positional.first();
     if (positional.size() != 1 ||
-        (command != QLatin1String("status") && command != QLatin1String("stop"))) {
-        std::cerr << "Expected exactly one command: status or stop\n";
+        (command != QLatin1String("status") && command != QLatin1String("stop") &&
+         command != QLatin1String("reset"))) {
+        std::cerr << "Expected exactly one command: status, stop or reset\n";
         return 2;
     }
     if (!parser.isSet(QStringLiteral("control-endpoint"))) {
@@ -79,12 +80,14 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (!parser.isSet(QStringLiteral("state-directory"))) {
-            std::cerr << "--state-directory is required by stop\n";
+            std::cerr << "--state-directory is required by stop and reset\n";
             return 2;
         }
         const auto state =
             read_control_state(parser.value(QStringLiteral("state-directory")).toStdString());
-        const auto reply = send_control_request(endpoint, encode_stop_request(state));
+        const auto request = command == QLatin1String("stop") ? encode_stop_request(state)
+                                                              : encode_reset_request(state);
+        const auto reply = send_control_request(endpoint, request);
         if (parser.isSet(QStringLiteral("json")))
             std::cout << reply << '\n';
         else

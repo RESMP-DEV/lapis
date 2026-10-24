@@ -118,6 +118,16 @@ void protocol_round_trip() {
                     repeat('8', spawn_token_hex_bytes) &&
                 stop.value(QStringLiteral("session")).isNull(),
             "stop request carries exact supervisor identity and token");
+
+    const auto reset = json(encode_reset_request(stopped_state()));
+    require(reset.size() == 5 &&
+                reset.value(QStringLiteral("action")).toString() == QLatin1String("reset") &&
+                reset.value(QStringLiteral("supervisor_epoch")).toString().toStdString() ==
+                    repeat('4', epoch_hex_bytes) &&
+                reset.value(QStringLiteral("token")).toString().toStdString() ==
+                    repeat('8', spawn_token_hex_bytes) &&
+                reset.value(QStringLiteral("session")).isNull(),
+            "reset request carries exact supervisor identity and token");
 }
 
 void private_state_loading() {

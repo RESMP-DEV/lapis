@@ -222,13 +222,11 @@ int main(int argc, char** argv) {
                     return encode_status_reply(registry->state(),
                                                runtime && runtime->child_pid() > 0);
                 }
-                if (action == "stop") {
+                if (action == "stop" || action == "reset") {
                     if (!runtime)
                         return encode_control_reply(ControlReplyStatus::rejected);
                     return runtime->control(peer_uid, request);
                 }
-                if (runtime)
-                    return encode_birth_rejected();
                 // A convergence failure deliberately retains its stopped slot: this
                 // experimental daemon is one-shot, and silent replacement could hide
                 // a launch failure or create a retry storm. Reconstruction and an
@@ -263,10 +261,17 @@ int main(int argc, char** argv) {
 
         while (!stop_requested) {
             if (runtime)
-                static_cast<void>(runtime->converge());
+                try {
+                    static_cast<void>(runtime->converge());
+                } catch (const ConvergenceRefused&) {
+                    // The refusal is durable in the blocked slot and the peer
+                    // remains retryable; do not turn it into an operator stop.
+                }
             server.poll_once(100);
         }
-        stop_runtime(runtime);
+        // SIGTERM/SIGINT detaches this daemon without changing desired state or
+        // ending the service. Explicit stop/reset remains the operator action.
+        runtime.reset();
         return 0;
     } catch (const std::exception& error) {
         stop_runtime(runtime);

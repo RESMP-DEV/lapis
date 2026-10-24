@@ -167,7 +167,12 @@ per-user supervisor owns birth and convergence; clients attach by validated
 identity. Qualify GUI close/crash/replacement, daemon SIGKILL, service death,
 login/logout, reboot, restart-storm bounds, and explicit operator disposition.
 Same-child survival and replacement with a new epoch are different outcomes and
-must be reported separately.
+must be reported separately. A supervisor daemon signal detaches the daemon and
+preserves the supervised service, its terminal child, and its ownership record;
+only an explicit authenticated stop ends the service, and only an explicit
+authenticated reset clears the private slot after no live child remains. A
+retained peer that refuses verification stays retryable and is never converted
+into an operator stop.
 
 **R2, input integrity.** Paste admission, mode-aware encoding, attachment
 identity, cancellation, and reconnect reporting stay service-owned. Candidate

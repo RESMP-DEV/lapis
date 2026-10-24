@@ -199,6 +199,16 @@ std::string stop_request(const std::string& token, const std::string& epoch = re
     });
 }
 
+std::string reset_request(const std::string& token, const std::string& epoch = repeat('3', 32)) {
+    return json(QJsonObject{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("action"), QStringLiteral("reset")},
+        {QStringLiteral("supervisor_epoch"), QString::fromStdString(epoch)},
+        {QStringLiteral("token"), QString::fromStdString(token)},
+        {QStringLiteral("session"), QJsonValue::Null},
+    });
+}
+
 std::string start_request(const std::string& token, const std::string& endpoint) {
     const auto session = record(endpoint);
     return json(QJsonObject{
@@ -284,6 +294,43 @@ void restarted_runtime_adopts_without_duplicate() {
     const auto stopped = restarted.control(::geteuid(), stop_request(saved.session->spawn_token));
     require(control_status(stopped) == "applied" && world->terminations == 1,
             "the restarted supervisor can stop its adopted child");
+}
+
+void explicit_reset_refuses_live_and_clears_stopped_slot() {
+    auto world = std::make_shared<FakeLauncherWorld>();
+    auto owner = registry(std::make_shared<MemoryStateStorage>());
+    SupervisorRuntime runtime{owner, std::make_shared<FakeLauncher>(world)};
+    const auto bootstrapped = runtime.bootstrap(record());
+    const auto token = bootstrapped.session->spawn_token;
+
+    require(control_status(runtime.control(::geteuid(), reset_request(token))) == "rejected",
+            "reset does not silently clear a live child");
+    require(control_status(runtime.control(
+                ::geteuid(), reset_request(repeat('e', spawn_token_hex_bytes)))) == "unauthorized",
+            "a stale token cannot reset the slot");
+    require(world->terminations == 0 && runtime.state().session.has_value() &&
+                runtime.state().session->desired_state == DesiredState::started,
+            "a refused live reset preserves the child and slot");
+
+    const uid_t foreign_uid = ::geteuid() == 0 ? 1 : 0;
+    require(control_status(runtime.control(foreign_uid, reset_request(token))) == "unauthorized",
+            "a foreign peer cannot reset the slot");
+    require(control_status(runtime.control(::geteuid(), reset_request(token, repeat('9', 32)))) ==
+                "stale_epoch",
+            "reset is bound to the supervisor epoch");
+
+    require(control_status(runtime.control(::geteuid(), stop_request(token))) == "applied",
+            "explicit stop precedes reset of a launched slot");
+    require(control_status(runtime.control(
+                ::geteuid(), reset_request(owner->state().session->spawn_token))) == "applied",
+            "authenticated reset clears the stopped slot");
+    require(!runtime.state().enabled && !runtime.state().session &&
+                runtime.state().instance_epoch == bootstrapped.instance_epoch,
+            "reset clears the private slot without rotating the supervisor epoch");
+    require(world->terminations == 1, "reset itself does not signal another child");
+    static_cast<void>(runtime.bootstrap(record()));
+    require(world->launches == 2 && runtime.state().session.has_value(),
+            "a reset slot can birth another session");
 }
 
 void preserved_peer_failure_retains_identity_for_retry() {
@@ -502,6 +549,7 @@ int main() {
     try {
         authenticated_control_and_stop();
         restarted_runtime_adopts_without_duplicate();
+        explicit_reset_refuses_live_and_clears_stopped_slot();
         preserved_peer_failure_retains_identity_for_retry();
         bounded_restart_admission();
         explicit_disable();

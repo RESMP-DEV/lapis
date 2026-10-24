@@ -657,40 +657,45 @@ bool SessionServiceLauncher::alive(const ChildProcess& child) {
 bool SessionServiceLauncher::terminate(const ChildProcess& child) {
     if (child.pid <= 0)
         return true;
-    // The PID was validated when the child was adopted or launched, but it may
-    // have exited and been recycled since. Never signal a process or group that
-    // no longer provably runs this exact service program.
-    if (!process_runs_program(child.pid, launch_.service_program)) {
-        int status = 0;
-        static_cast<void>(::waitpid(child.pid, &status, WNOHANG));
-        return !process_alive(child.pid);
-    }
-    // Executable identity alone does not distinguish this instance from a
-    // recycled PID running the same program. Revalidate the endpoint protocol;
-    // only an exact identity/PID match may receive a process-group signal.
-    bool ownership_matches = false;
-    try {
-        const auto record = read_ownership_record(owner_path(child.endpoint));
-        ownership_matches = record.has_value() && record->pid == child.pid &&
-                            record->spawn_token == child.spawn_token;
-    } catch (...) {
-        ownership_matches = false;
-    }
-    if (!ownership_matches)
-        return !process_alive(child.pid);
-    bool protocol_matches = false;
-    try {
-        protocol_matches = protocol_identity_matches(child);
-    } catch (...) {
-        protocol_matches = false;
-    }
-    const auto signal_peer = [pid = child.pid, group = protocol_matches](int signal_value) {
-        static_cast<void>(group ? ::killpg(pid, signal_value) : ::kill(pid, signal_value));
+    // Revalidate immediately before every signal. The PID was validated when
+    // adopted or launched, but it can exit and recycle while SIGTERM waits.
+    const auto signal_verified = [this, &child](int signal_value) {
+        if (!process_runs_program(child.pid, launch_.service_program)) {
+            int status = 0;
+            static_cast<void>(::waitpid(child.pid, &status, WNOHANG));
+            return false;
+        }
+        bool ownership_matches = false;
+        try {
+            const auto record = read_ownership_record(owner_path(child.endpoint));
+            ownership_matches = record.has_value() && record->pid == child.pid &&
+                                record->spawn_token == child.spawn_token;
+        } catch (...) {
+            ownership_matches = false;
+        }
+        if (!ownership_matches)
+            return false;
+        bool protocol_matches = false;
+        try {
+            protocol_matches = protocol_identity_matches(child);
+        } catch (...) {
+            protocol_matches = false;
+        }
+        // A verified program and ownership record identify this instance, but
+        // only a verified protocol identity makes the whole process group
+        // safe to signal. Without it, signal this PID alone.
+        if (protocol_matches)
+            static_cast<void>(::killpg(child.pid, signal_value));
+        else
+            static_cast<void>(::kill(child.pid, signal_value));
+        return true;
     };
-    signal_peer(SIGTERM);
+    if (!signal_verified(SIGTERM))
+        return !process_alive(child.pid);
     if (wait_terminated(child.pid))
         return true;
-    signal_peer(SIGKILL);
+    if (!signal_verified(SIGKILL))
+        return !process_alive(child.pid);
     return wait_terminated(child.pid);
 }
 

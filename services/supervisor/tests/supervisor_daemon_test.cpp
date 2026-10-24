@@ -700,6 +700,28 @@ void daemon_birth_and_real_service_clients() {
                 "a stale token cannot stop the supervisor");
         }
         {
+            auto stale =
+                QJsonDocument::fromJson(QByteArray::fromStdString(encode_reset_request(persisted)))
+                    .object();
+            stale.insert(QStringLiteral("token"),
+                         QString::fromStdString(repeat('e', spawn_token_hex_bytes)));
+            ControlClient client{control};
+            send_frame(client, QJsonDocument(stale).toJson(QJsonDocument::Compact).toStdString());
+            require(
+                reply_object(receive_reply(client)).value(QStringLiteral("status")).toString() ==
+                    "unauthorized",
+                "a stale token cannot reset the supervisor");
+        }
+        {
+            const auto refused = run_supervisor_cli(
+                {QStringLiteral("--control-endpoint"), QString::fromStdString(control),
+                 QStringLiteral("--state-directory"),
+                 QFileInfo(directory.path()).canonicalFilePath(), QStringLiteral("reset")});
+            require(refused.exit_code != 0 &&
+                        refused.standard_output.contains(QStringLiteral("rejected")),
+                    "a live child is not silently cleared by reset");
+        }
+        {
             const auto stopped = run_supervisor_cli(
                 {QStringLiteral("--control-endpoint"), QString::fromStdString(control),
                  QStringLiteral("--state-directory"),
@@ -731,6 +753,59 @@ void daemon_birth_and_real_service_clients() {
                     QLatin1String("rejected"),
                 "an explicit stop does not expose another one-shot birth");
         }
+        {
+            const auto reset = run_supervisor_cli(
+                {QStringLiteral("--control-endpoint"), QString::fromStdString(control),
+                 QStringLiteral("--state-directory"),
+                 QFileInfo(directory.path()).canonicalFilePath(), QStringLiteral("reset")});
+            require(reset.exit_code == 0 &&
+                        reset.standard_output.contains(QStringLiteral("applied")),
+                    "authenticated reset clears the stopped private slot");
+        }
+        std::string next_session_id;
+        std::string next_epoch;
+        pid_t next_service = -1;
+        quint64 next_terminal_child = 0;
+        {
+            const auto empty =
+                cli_json(run_supervisor_cli({QStringLiteral("--control-endpoint"),
+                                             QString::fromStdString(control),
+                                             QStringLiteral("status"), QStringLiteral("--json")}),
+                         "the post-reset status CLI succeeds");
+            require(empty.value(QStringLiteral("slot")).toString() == QLatin1String("empty") &&
+                        !empty.value(QStringLiteral("enabled")).toBool() &&
+                        !empty.value(QStringLiteral("service_live")).toBool(),
+                    "reset reports an empty private slot");
+
+            ControlClient client{control};
+            const QJsonObject reborn_service{{QStringLiteral("environment"), QJsonObject{}}};
+            send_frame(client, birth_json(fingerprint, reborn_service));
+            const auto reply = reply_object(receive_reply(client));
+            require(reply.value(QStringLiteral("status")).toString() == QLatin1String("born"),
+                    "reset exposes a subsequent birth");
+            next_session_id = reply.value(QStringLiteral("session_id")).toString().toStdString();
+            next_epoch = reply.value(QStringLiteral("epoch")).toString().toStdString();
+            next_service = service_pid_from_ownership(endpoint);
+
+            QLocalSocket reborn;
+            reborn.connectToServer(QString::fromStdString(endpoint), QLocalSocket::ReadWrite);
+            require(reborn.waitForConnected(5000), "the reset service accepts a client");
+            const auto reborn_hello =
+                attach(reborn, fingerprint.toStdString(), next_session_id, next_epoch, false);
+            next_terminal_child = reborn_hello.pid;
+            static_cast<void>(synchronize(reborn));
+            detach(reborn);
+        }
+        {
+            const auto stopped = run_supervisor_cli(
+                {QStringLiteral("--control-endpoint"), QString::fromStdString(control),
+                 QStringLiteral("--state-directory"),
+                 QFileInfo(directory.path()).canonicalFilePath(), QStringLiteral("stop")});
+            require(stopped.exit_code == 0,
+                    "the service born after reset can be explicitly stopped");
+        }
+        wait_gone(next_service);
+        wait_gone(static_cast<pid_t>(next_terminal_child));
 
         require(::kill(daemon, SIGTERM) == 0, "request explicit daemon stop");
         int status = 0;
@@ -781,7 +856,9 @@ void daemon_replaces_a_dead_service() {
     pid_t daemon = -1;
     pid_t old_service = -1;
     pid_t replacement = -1;
+    pid_t replacement_daemon = -1;
     quint64 old_terminal_child = 0;
+    QByteArray ownership_before_detach;
     try {
         daemon = start_daemon(directory.path().toStdString(), control);
         std::string session_id;
@@ -823,6 +900,10 @@ void daemon_replaces_a_dead_service() {
         }
         require(replacement > 0 && replacement != daemon,
                 "the daemon replaces a dead service without a control request");
+        QFile ownership_file{QString::fromStdString(endpoint + ".supervisor-owner")};
+        require(ownership_file.open(QIODevice::ReadOnly), "read ownership before daemon detach");
+        ownership_before_detach = ownership_file.readAll();
+        ownership_file.close();
         require(persisted_epoch(directory.path()) != old_epoch,
                 "the replacement rotates the persisted epoch");
         const auto live =
@@ -840,6 +921,30 @@ void daemon_replaces_a_dead_service() {
                     WEXITSTATUS(status) == 0,
                 "the convergence daemon exits cleanly");
         daemon = -1;
+        require(::kill(replacement, 0) == 0, "daemon signal exit preserves the service");
+        QFile detached_ownership{QString::fromStdString(endpoint + ".supervisor-owner")};
+        require(detached_ownership.open(QIODevice::ReadOnly), "read ownership after detach");
+        require(detached_ownership.readAll() == ownership_before_detach,
+                "daemon signal exit preserves ownership bytes");
+        detached_ownership.close();
+
+        replacement_daemon = start_daemon(directory.path().toStdString(), control);
+        require(service_pid_from_ownership(endpoint) == replacement,
+                "a replacement daemon adopts the detached service");
+        {
+            const auto stopped = run_supervisor_cli(
+                {QStringLiteral("--control-endpoint"), QString::fromStdString(control),
+                 QStringLiteral("--state-directory"),
+                 QFileInfo(directory.path()).canonicalFilePath(), QStringLiteral("stop")});
+            require(stopped.exit_code == 0,
+                    "explicit stop ends the service after daemon reattachment");
+        }
+        require(::kill(replacement_daemon, SIGTERM) == 0, "detach the replacement daemon");
+        int replacement_status = 0;
+        require(::waitpid(replacement_daemon, &replacement_status, 0) == replacement_daemon &&
+                    WIFEXITED(replacement_status) && WEXITSTATUS(replacement_status) == 0,
+                "the replacement daemon exits cleanly");
+        replacement_daemon = -1;
         wait_gone(replacement);
         if (old_terminal_child != 0)
             wait_gone(static_cast<pid_t>(old_terminal_child));
@@ -851,8 +956,16 @@ void daemon_replaces_a_dead_service() {
         }
         if (old_service > 0)
             wait_gone(old_service);
-        if (replacement > 0)
+        if (replacement_daemon > 0) {
+            static_cast<void>(::kill(replacement_daemon, SIGTERM));
+            int status = 0;
+            static_cast<void>(::waitpid(replacement_daemon, &status, 0));
+            replacement_daemon = -1;
+        }
+        if (replacement > 0) {
+            static_cast<void>(::kill(replacement, SIGKILL));
             wait_gone(replacement);
+        }
         if (old_terminal_child != 0)
             wait_gone(static_cast<pid_t>(old_terminal_child));
         QDir::setCurrent(previous);
@@ -957,12 +1070,37 @@ void daemon_sigkill_reconstructs_the_live_service() {
                     WIFEXITED(status) && WEXITSTATUS(status) == 0,
                 "the replacement daemon exits cleanly");
         replacement_daemon = -1;
+        require(::kill(service_pid, 0) == 0 && ::kill(static_cast<pid_t>(terminal_child), 0) == 0,
+                "replacement-daemon signal exit preserves the service and terminal child");
+        QFile detached_ownership{QString::fromStdString(endpoint + ".supervisor-owner")};
+        require(detached_ownership.open(QIODevice::ReadOnly), "read ownership after detach");
+        require(detached_ownership.readAll() == ownership_before_crash,
+                "replacement-daemon signal exit preserves ownership bytes");
+        detached_ownership.close();
+
+        replacement_daemon = start_daemon(directory.path().toStdString(), control);
+        require(service_pid_from_ownership(endpoint) == service_pid,
+                "the next daemon adopts the detached service");
+        {
+            const auto stopped = run_supervisor_cli(
+                {QStringLiteral("--control-endpoint"), QString::fromStdString(control),
+                 QStringLiteral("--state-directory"),
+                 QFileInfo(directory.path()).canonicalFilePath(), QStringLiteral("stop")});
+            require(stopped.exit_code == 0,
+                    "explicit stop ends the detached service after reattachment");
+        }
+        require(::kill(replacement_daemon, SIGTERM) == 0, "detach the reattached daemon");
+        int detach_status = 0;
+        require(::waitpid(replacement_daemon, &detach_status, 0) == replacement_daemon &&
+                    WIFEXITED(detach_status) && WEXITSTATUS(detach_status) == 0,
+                "the reattached daemon exits cleanly");
+        replacement_daemon = -1;
         wait_gone(service_pid);
         wait_gone(static_cast<pid_t>(terminal_child));
         struct stat ownership_info{};
         require(::lstat((endpoint + ".supervisor-owner").c_str(), &ownership_info) != 0 &&
                     errno == ENOENT,
-                "replacement-daemon stop removes service ownership");
+                "explicit stop removes service ownership");
         QFile state_file{directory.filePath(QStringLiteral("supervisor.json"))};
         require(state_file.open(QIODevice::ReadOnly), "read persisted state after stop");
         const auto state_document = QJsonDocument::fromJson(state_file.readAll());

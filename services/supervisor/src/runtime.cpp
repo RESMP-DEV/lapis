@@ -438,12 +438,30 @@ std::string SupervisorRuntime::control(
     ControlOutcome outcome;
     try {
         const JsonStateCodec codec;
-        outcome = registry_->control(codec.decode_control(request));
+        const auto decoded = codec.decode_control(request);
+        const auto authorized = registry_->authorize(decoded);
+        if (authorized.status != ControlStatus::applied)
+            return encode_control_reply(control_reply_status(authorized.status));
+        if (decoded.action == ControlAction::reset) {
+            if (child_) {
+                if (launcher_->alive(*child_))
+                    return encode_control_reply(ControlReplyStatus::rejected);
+                launcher_->release(*child_);
+                child_.reset();
+            }
+            const auto& persisted = registry_->state();
+            if (persisted.session &&
+                launcher_->peer_preserved(*persisted.session, persisted.session->spawn_token))
+                return encode_control_reply(ControlReplyStatus::rejected);
+        }
+        outcome = registry_->control(decoded);
     } catch (const std::exception&) {
         return encode_control_reply(ControlReplyStatus::rejected);
     }
     if (outcome.status != ControlStatus::applied)
         return encode_control_reply(control_reply_status(outcome.status));
+    if (!outcome.state.session)
+        return encode_control_reply(ControlReplyStatus::applied);
 
     const bool has_child = child_.has_value();
     const auto& next_session = outcome.state.session;
@@ -499,7 +517,8 @@ Convergence SupervisorRuntime::converge() {
     if (launcher_->peer_preserved(session, session.spawn_token)) {
         static_cast<void>(
             registry_->note_block("Supervisor service peer is alive but did not verify"));
-        failed("Supervisor service peer is alive but did not verify; identity retained for retry");
+        throw ConvergenceRefused(
+            "Supervisor service peer is alive but did not verify; identity retained for retry");
     }
     if (initial_admission_used_) {
         const auto now = clock_->nanoseconds();

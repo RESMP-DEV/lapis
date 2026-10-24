@@ -330,6 +330,10 @@ ControlRequest JsonStateCodec::decode_control(const std::string& bytes) const {
         result.action = ControlAction::disable;
         if (!root.value(QStringLiteral("session")).isNull())
             invalid("A disable request has a session payload");
+    } else if (name == QLatin1String("reset")) {
+        result.action = ControlAction::reset;
+        if (!root.value(QStringLiteral("session")).isNull())
+            invalid("A reset request has a session payload");
     } else {
         invalid("Unknown supervisor control action");
     }

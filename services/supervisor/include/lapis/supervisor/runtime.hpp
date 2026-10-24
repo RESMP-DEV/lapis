@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,11 @@ enum class Convergence : std::uint8_t {
     disabled = 4,
     exhausted = 5,
     failed = 6
+};
+
+class ConvergenceRefused final : public std::runtime_error {
+  public:
+    explicit ConvergenceRefused(const std::string& diagnostic) : std::runtime_error(diagnostic) {}
 };
 
 struct ChildProcess {
