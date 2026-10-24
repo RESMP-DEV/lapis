@@ -1,7 +1,7 @@
 {
   "schema": "lapis.code-quality-sweep/1",
-  "recorded_at": "2026-10-24T21:46:29Z",
-  "agent": "Codex parent with eight read-only CCR review workers",
+  "recorded_at": "2026-10-24T23:21:45.650087+00:00",
+  "agent": "Codex parent with eleven read-only CCR review workers and four Gemini 4 Argon sub-agent reports",
   "source": {
     "base_revision": "4c66a0d6613ee7288f1b033ec9775a154a6e3f07",
     "current_main_revision": "2111356008b3de1999bc7bd3027d46973a90ab04",
@@ -16,18 +16,28 @@
       "cmake": "4.4.4",
       "ruff": "0.17.1",
       "qt": "6.11.2"
-    }
+    },
+    "final_revision": "2cfea1065f25cc93f4ff08f8be7ee89a0aa0b360",
+    "followup_commits": [
+      "7a1da5e9bcfab1111bc4c2279a4c8d4b3ac2677c",
+      "652f5ded5219c2807f2fb2ac776f10dd23f498de",
+      "2ecad6d089558813558b59dcde35ce6f503782a1",
+      "2cfea1065f25cc93f4ff08f8be7ee89a0aa0b360"
+    ]
   },
   "scope": {
     "included": [
       "Read-only review of session/supervisor, desktop input/rendering, adapters, QML state, Python tooling, build policy, tests, and documentation/evidence",
       "Bounded repairs for receipt integrity, fixture isolation, supervisor convergence, advisory Claude metadata, terminal keyboard ownership, modal input gating, and direct documentation contradictions",
-      "Focused and common local verification"
+      "Focused and common local verification",
+      "Authenticated supervisor reset, daemon signal detach, live-child safety, reset-after-stop birth admission, and pre-signal identity checks",
+      "Session continuity under PTY input backpressure, final-drain resize, bounded rollout probing, and FIFO retired-socket eviction",
+      "Desktop attention display-token repair, default direct birth route, explicit supervisor birth route, supervisor presets, and sanitizer coverage"
     ],
     "excluded": [
-      "New product features or adapter contracts",
-      "Provider credentials, live model turns, package/release publication, or external PRs",
-      "Native macOS AppKit/IME acceptance, native GPU acceptance, Android device runs, sanitizers, reboot, load qualification, and the separate RESMP-DEV/ultratab repository"
+      "New provider credentials, live model turns, package/release publication, or external PRs",
+      "Native macOS AppKit/IME acceptance, native GPU acceptance, Android device runs, reboot, load qualification, and non-supervisor sanitizer coverage",
+      "The separate RESMP-DEV/ultratab repository"
     ]
   },
   "decomposition": {
@@ -50,6 +60,20 @@
       "Finding adjudication and bounded integration",
       "All edits and live verification",
       "Receipt consolidation"
+    ],
+    "active_followup_workers": [
+      {
+        "report": "build/quality-sweep/workers/active-r1-lifecycle.txt",
+        "domain": "supervisor lifecycle and reset test map"
+      },
+      {
+        "report": "build/quality-sweep/workers/active-session-continuity.txt",
+        "domain": "session continuity and backpressure patch map"
+      },
+      {
+        "report": "build/quality-sweep/workers/active-gates-birth.txt",
+        "domain": "supervisor analysis gates and birth seam map"
+      }
     ]
   },
   "changes": [
@@ -65,7 +89,13 @@
     "Block plan-sign-in and category context interactions consistently",
     "Fail iOS UI acceptance when the harness promises a missing Claude/Codex agent",
     "Correct README limit-reset default, merged-R4 status wording, suggestion status evidence, and a private overlay route",
-    "Expose Ghostty headers as SYSTEM and declare the desktop thread dependency"
+    "Expose Ghostty headers as SYSTEM and declare the desktop thread dependency",
+    "Add authenticated supervisor reset with stale-token/live-child refusal and post-reset birth admission from persisted slot state",
+    "Detach the daemon on SIGTERM/SIGINT without ending its service; revalidate program, ownership, and protocol identity immediately before each signal",
+    "Keep text/key clients attached on whole-input queue refusal with a non-terminal overloaded status and no-op resize after PTY master close",
+    "Bound rollout probes with a kill timeout and evict retired sockets oldest-first",
+    "Resolve attention display tokens only within the same attachment generation while accepting aliased submission revisions",
+    "Add DirectBirthRoute, SupervisorBirthRoute, BirthTicket, supervisor/sanitizer presets, and preset-selectable focused checks"
   ],
   "judgment_review": {
     "model": "gemini-4-argon-high",
@@ -76,10 +106,26 @@
     "semantic_index_used": false,
     "reason_semantic_index_was_not_used": "sindexer-doctor reported degraded freshness with one missing collection; exact source reads and git history were used instead.",
     "subagents": [
-      {"id": "2166b9b8-1ace-4a6f-bbe0-f984ea70cc89", "domain": "supervisor-session-lifecycle", "status": "completed"},
-      {"id": "2df9ad16-8fb0-44e9-bbce-8504ef3bdd57", "domain": "adapter-contract-integrity", "status": "completed"},
-      {"id": "d494fec2-e44d-4547-8dce-f8dd280497ab", "domain": "desktop-input-render-coherence", "status": "completed"},
-      {"id": "e856eb98-f365-49e7-92f1-422a75bcd21d", "domain": "verification-build-release-gates", "status": "completed"}
+      {
+        "id": "2166b9b8-1ace-4a6f-bbe0-f984ea70cc89",
+        "domain": "supervisor-session-lifecycle",
+        "status": "completed"
+      },
+      {
+        "id": "2df9ad16-8fb0-44e9-bbce-8504ef3bdd57",
+        "domain": "adapter-contract-integrity",
+        "status": "completed"
+      },
+      {
+        "id": "d494fec2-e44d-4547-8dce-f8dd280497ab",
+        "domain": "desktop-input-render-coherence",
+        "status": "completed"
+      },
+      {
+        "id": "e856eb98-f365-49e7-92f1-422a75bcd21d",
+        "domain": "verification-build-release-gates",
+        "status": "completed"
+      }
     ],
     "accepted_followup": "Added the missing runtime target dependencies for lapis_ui_preview_tests and supervisor targets whose compile definitions consume $<TARGET_FILE> paths.",
     "rejected_followup": "Did not change daemon converge() exception handling from this review alone: SessionServiceLauncher::peer_preserved catches its read failures, and the preserved-peer retry contract needs a daemon-specific fixture before shutdown semantics change.",
@@ -102,11 +148,11 @@
     },
     {
       "name": "supervisor-runtime-daemon-client",
-      "command": "CMAKE_PREFIX_PATH=<primary-checkout>/build/release/qt LAPIS_GHOSTTY_PREFIX=<primary-checkout>/build/terminal-probe/reproduce/ghostty/runs/059c2552dd9a4a7681b11e5c52a5c059/prefix python3 scripts/check_supervisor_runtime.py --jobs 8",
+      "command": "python3 scripts/check_supervisor_runtime.py --preset supervisor --jobs 8",
       "exit_code": 0,
       "passed": true,
-      "evidence": "build/reports/r1-supervisor/receipt.json",
-      "observed": "All three integration markers passed and now inherit the measured 6.546 second test duration."
+      "evidence": "build/reports/supervisor-runtime/receipt.json",
+      "observed": "All five supervisor CTest targets and all three real-process integration markers passed."
     },
     {
       "name": "terminal-input-background",
@@ -189,6 +235,81 @@
       "passed": true,
       "evidence": "build/reports/ui-review/20261024T214531Z-23iw7xbc/receipt.json",
       "observed": "On the clean rebased lapis source with PR #176 applied, full preview, shortcut-focus, and terminal-input all passed."
+    },
+    {
+      "name": "supervisor-asan-ubsan",
+      "command": "python3 scripts/check_supervisor_runtime.py --preset supervisor-asan --jobs 8",
+      "exit_code": 0,
+      "passed": true,
+      "evidence": "build/reports/supervisor-asan-runtime/receipt.json"
+    },
+    {
+      "name": "supervisor-tsan",
+      "command": "python3 scripts/check_supervisor_runtime.py --preset supervisor-tsan --jobs 8",
+      "exit_code": 0,
+      "passed": true,
+      "evidence": "build/reports/supervisor-tsan-runtime/receipt.json",
+      "observed": "Passed after raising only the TSan-heavy daemon CTest timeout from 45 to 90 seconds; no data-race report was emitted."
+    },
+    {
+      "name": "pty-and-attention-service",
+      "command": "ctest --test-dir build/dev -R '^(attention-service|pty-process)$' --output-on-failure --no-tests=error -V",
+      "exit_code": 0,
+      "passed": true,
+      "observed": "Queue refusal attachment, final-drain resize, FIFO retired sockets, and terminalClosed behavior passed."
+    },
+    {
+      "name": "real-service-backpressure",
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/dev --output build/reports/cli-backpressure/receipt.json --case backpressure",
+      "exit_code": 0,
+      "passed": true,
+      "evidence": "build/reports/cli-backpressure/receipt.json",
+      "observed": "Whole-input refusal and output retention/recovery passed against the real service process."
+    },
+    {
+      "name": "desktop-live-connection",
+      "command": "ctest --test-dir build/desktop -R '^live-connection$' --output-on-failure --no-tests=error -V",
+      "exit_code": 0,
+      "passed": true,
+      "observed": "Transient overload, supervisor route refusal/no-fallback, and supervisor-issued identity passed."
+    },
+    {
+      "name": "workspace-tests",
+      "command": "./build/desktop/apps/desktop/lapis_workspace_tests",
+      "exit_code": 0,
+      "passed": true,
+      "observed": "Full desktop workspace suite passed after the attention-token fix."
+    },
+    {
+      "name": "common-quality-followup",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "passed": true,
+      "evidence": "build/reports/quality/receipt.json"
+    },
+    {
+      "name": "background-ui-review-followup",
+      "command": "python3 scripts/check_ui_review.py --json --jobs 8",
+      "exit_code": 0,
+      "passed": true,
+      "evidence": "build/reports/ui-review/20261024T232000Z-czppd77h/receipt.json",
+      "observed": "Full background preview, shortcut focus, and terminal input all passed after the continuity and birth-route changes."
+    },
+    {
+      "name": "supervisor-static-analysis-first-pass",
+      "command": "python3 scripts/check_cpp.py supervisor --jobs 8",
+      "exit_code": 1,
+      "passed": false,
+      "evidence": "build/reports/supervisor/receipt.json",
+      "observed": "Configure, build, all CTest cases, clang-format, and 40 clang-tidy translation units passed. Cppcheck and 12 clang-tidy units exposed pre-existing supervisor findings, including optional-access assertions in tests, client transport complexity, and size constants; this is diagnostic evidence, not a clean gate."
+    },
+    {
+      "name": "desktop-static-analysis-followup",
+      "command": "python3 scripts/check_cpp.py desktop --jobs 8",
+      "exit_code": 1,
+      "passed": false,
+      "evidence": "build/reports/desktop/receipt.json",
+      "observed": "Configure, full build, all CTest cases, clang-format, and most clang-tidy units passed. Existing static-analysis findings remained in accounts.cpp, attention_view.cpp, terminal_surface.cpp, workspace.cpp, and several tests; no runtime test failed."
     }
   ],
   "resolved_followup": {
@@ -199,11 +320,26 @@
   },
   "non_claims": [
     "No live Claude/Codex provider turn, external adapter schema, credential, package, notarization, reboot, load, native AppKit/IME, or native GPU qualification was run.",
-    "The supervisor repair proves one real dead-service replacement in the focused daemon fixture; it does not qualify launchd, reboot, upgrade, restart storms, or GUI replacement.",
-    "The iOS unit/build path does not exercise the changed Claude/Codex UI acceptance cases against missing rows in the simulator.",
-    "The pre-rebase Ultra Tab footer cap and composer skip were not transferred automatically to RESMP-DEV/ultratab after PR #176 moved that app; that repository needs its own bounded follow-up.",
-    "Deferred findings from the eight reports remain source-review hypotheses until their named focused checks run."
+    "The supervisor birth seam is exercised against a framed fixture and the real supervisor protocol shape, but no GUI-observed supervised close/crash/replacement or launchd registration is claimed.",
+    "Supervisor static analysis is not a release gate: first-pass clang-tidy/cppcheck findings remain. Desktop static analysis also remains non-clean from pre-existing findings.",
+    "TSan passed the supervisor suite after a test-timeout increase; this is not a general desktop/session TSan qualification.",
+    "The background UI review does not exercise native GPU, AppKit input routing, system IME, or pasteboard.",
+    "The pre-rebase Ultra Tab follow-up belongs to RESMP-DEV/ultratab and is not part of this lapis branch."
   ],
   "passed": true,
-  "outcome": "Bounded lapis repairs verified after rebasing on PR #176; common, C++, supervisor, terminal, full background UI, Python, docs, and iOS-unit gates passed after the Gemini-identified target-dependency repair."
+  "outcome": "Completed the Gemini-selected repair sequence through supervisor lifecycle/reset, session continuity, credential/Codex protections, and the explicit supervisor birth seam. Runtime, ASan/TSan, real-service, desktop, Python, and background UI checks passed; supervisor and desktop static-analysis diagnostics remain explicitly unresolved rather than being claimed as gates.",
+  "followup_resolution": {
+    "supervisor_lifecycle": {
+      "commit": "652f5ded5219c2807f2fb2ac776f10dd23f498de",
+      "result": "Authenticated reset, live-child refusal, signal-preserving daemon detach, replacement adoption, and reset-to-new-birth are implemented and exercised."
+    },
+    "session_continuity": {
+      "commit": "2ecad6d089558813558b59dcde35ce6f503782a1",
+      "result": "Queue-full overload, final-drain resize no-op, bounded lsof kill timeout, FIFO retirement, and attention token resolution are implemented and exercised."
+    },
+    "supervisor_gates_and_birth": {
+      "commit": "2cfea1065f25cc93f4ff08f8be7ee89a0aa0b360",
+      "result": "Deduplicated the endpoint target, added supervisor/sanitizer presets, and added default-direct plus explicit supervisor birth seams; supervisor ASan/TSan passed. Static analysis remains non-gating until pre-existing findings are repaired."
+    }
+  }
 }
