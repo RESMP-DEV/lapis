@@ -21,6 +21,40 @@ the call uses the account in this Mac's keychain. An attempt
 may retry a malformed answer once, so `maxPerHour` bounds attempts rather than
 individual provider requests.
 
+`providers` replaces that CLI call with an ordered list of
+OpenAI-compatible endpoints, tried first to last, for the main guess:
+
+```json
+{"nextPrompt": {"providers": [
+  {"name": "primary", "url": "http://gpu-host:8317/v1",
+   "model": "deepseek-v4.1", "apiKeyEnv": "PRIMARY_KEY", "timeoutSeconds": 20,
+   "allowInsecureHttp": true},
+  {"name": "fallback", "url": "https://openrouter.ai/api/v1",
+   "model": "deepseek/deepseek-v4.1-flash-1017", "apiKeyEnv": "OPENROUTER_API_KEY"}
+]}}
+```
+
+`url` and `model` are required; `name` defaults to the model. `apiKeyEnv` names
+a variable read from the process environment, then `~/.env_vars`; the key is
+never stored in `lapis.json`. Without it the request carries no
+`Authorization` header, for a local endpoint. The key is sent only to the
+endpoint it is configured for: a redirect does not carry it. A keyed
+`http://` endpoint off this machine is refused unless the provider sets
+`allowInsecureHttp: true`, since cleartext would expose the key and the
+prompt text to the network path; loopback endpoints and `https://` are
+unaffected.
+`timeoutSeconds` defaults to 30 (1 to 60), `maxTokens` to 4096 (128 to 8192)
+and `temperature` to 0 (0 to 2). An unreachable host, a missing key or an
+HTTP error moves to the next provider at once; an unreadable answer is asked
+once more on the same provider, and two unreadable answers move on. If all
+fail, the guess records the chain of failures. The whole chain shares the
+guess's time budget: it stops asking providers 150 seconds in, before the app
+gives up on the guess, so a provider that never answers cannot keep the next
+one from being tried. The answering `provider` and its `model` are in
+`next_prompt.jsonl`. `[]` or no `providers` keeps the CLI route, and the
+top-level `model` and `effort` then apply as before. The experiment arms keep
+their own model or `localEndpoint`; the chain covers the control arm.
+
 Claude Code has its own prompt suggestions, which may show beneath lapis's. Set
 `promptSuggestionEnabled` to false in Claude Code's settings to leave only
 lapis's.
@@ -38,6 +72,14 @@ passes `minConfidence`: dim, or nearly as bright as text when the probability
 is 0.45 or more (from Oct 3 to 9, guesses scored that high were taken 65% of
 the time, against 25 to 34% below). None shows while an agent waits on a
 request such as a permission prompt.
+
+The prompt asks for what you would actually type, not an ideal message. It
+reads the agent's latest reply as a mode first: a question, a choice or a wait
+is answered or met with a clarifying question; a result can be approved,
+corrected, or used to start a new task; a list of next steps is not repeated
+as a command. On 41 past prompts this mode framing and a shorter prompt
+produced more sendable top guesses than the earlier best-version checklist,
+which turned question and status turns into new instructions.
 
 A turn the agent ends on its own, with no prompt from you since a guess you
 never saw (an agent woken by its background work), is not guessed at once: the

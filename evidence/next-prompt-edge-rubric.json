@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "purpose": "Grade a next-message prediction and locate the first failing gate on hard, voice-typed follow-ups.",
+  "semantic": {
+    "2": "The person could have sent it instead with the same effect on the agent; wording and minor details may differ.",
+    "1": "Right intent or action, but key specifics are missing or different, so the person would have to edit it.",
+    "0": "A different intent."
+  },
+  "actual_category": [
+    "approve",
+    "status",
+    "ship",
+    "fix",
+    "new",
+    "question",
+    "correct",
+    "other"
+  ],
+  "context_location": [
+    "last_agent_reply",
+    "prior_person_turn",
+    "earlier_turn",
+    "screen",
+    "other_agent",
+    "not_present",
+    "ambiguous"
+  ],
+  "miss_cause": [
+    "context_missing",
+    "context_not_used",
+    "mode_error",
+    "entity_error",
+    "constraint_error",
+    "multipart_loss",
+    "style_requires_edit",
+    "ambiguous",
+    "ranking",
+    "other"
+  ],
+  "hit_cause": [
+    "explicit_cue",
+    "referent_resolved",
+    "constraint_recalled",
+    "mode_matched",
+    "entity_recalled",
+    "style_matched",
+    "generic_match",
+    "ambiguous"
+  ],
+  "ladder": [
+    "Is the needed detail in the supplied context? context_missing if not.",
+    "Did the top guess use it? context_not_used if not.",
+    "Did it match the person's mode? mode_error if not.",
+    "Did it carry the exact entity, number or referent? entity_error if not.",
+    "Did it honor an explicit don't/only/keep? constraint_error if not.",
+    "Did it keep every part of a multipart message? multipart_loss if not.",
+    "Is the only difference wording or tone? Then it is still sendable (2) under semantic.2 and has no miss cause. If the person would have to edit a specific detail, style_requires_edit at the score that edit implies (1 for a near miss, 0 if the edit changes the intent).",
+    "Was a correct intent in the top three but not first? ranking if so.",
+    "Was the actual underdetermined from the context? ambiguous if so.",
+    "Did none of the above explain a miss that was determinable from the context? other."
+  ]
+}

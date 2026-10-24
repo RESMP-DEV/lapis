@@ -121,6 +121,37 @@ void settingsReadFromTheConfig() {
     const auto none = lapis::desktop::parse_next_prompt(
         QJsonDocument::fromJson(R"({"contextArms": []})").object());
     require(none.contextArms == QStringList{QStringLiteral("base")}, "no arms: the base one");
+    const auto chain = lapis::desktop::parse_next_prompt(QJsonDocument::fromJson(R"({"providers": [
+            {"url": "https://one.test/v1", "model": "deepseek", "name": "one",
+             "apiKeyEnv": "KEY", "timeoutSeconds": 0, "maxTokens": 1,
+             "temperature": 9},
+            {"url": "file:///etc/passwd", "model": "bad"},
+            {"url": "https://two.test/v1", "model": "two"},
+            {"url": "https://three.test/v1", "model": "three",
+             "timeoutSeconds": 30.5, "maxTokens": 4096.5},
+            {"url": "https://four.test/v1", "model": "four", "timeoutSeconds": 999},
+            {"url": "http://lan.test/v1", "model": "lan", "apiKeyEnv": "K",
+             "allowInsecureHttp": true}
+        ]})")
+                                                             .object());
+    require(
+        chain.providers.size() == 5 &&
+            chain.providers.at(0).toObject().value(QStringLiteral("name")).toString() ==
+                QLatin1String("one") &&
+            chain.providers.at(0).toObject().value(QStringLiteral("timeoutSeconds")).toInt() == 1 &&
+            chain.providers.at(0).toObject().value(QStringLiteral("maxTokens")).toInt() == 128 &&
+            chain.providers.at(0).toObject().value(QStringLiteral("temperature")).toDouble() ==
+                2.0 &&
+            chain.providers.at(1).toObject().value(QStringLiteral("name")).toString() ==
+                QLatin1String("two") &&
+            chain.providers.at(2).toObject().value(QStringLiteral("timeoutSeconds")).toInt() ==
+                31 &&
+            chain.providers.at(2).toObject().value(QStringLiteral("maxTokens")).toInt() == 4097 &&
+            chain.providers.at(3).toObject().value(QStringLiteral("timeoutSeconds")).toInt() ==
+                60 &&
+            chain.providers.at(4).toObject().value(QStringLiteral("allowInsecureHttp")).toBool() ==
+                true,
+        "providers are validated, clamped and named after their model");
 }
 
 void screensReadAsText() {
@@ -459,7 +490,7 @@ void predictsAndOffers() {
                     QLatin1String("Claude AI usage limit reached"),
             "a classified failure keeps what it was");
     require(next.failureStreak() == streak_before + 3 &&
-                next.lastFailure() == QLatin1String("a Claude usage limit"),
+                next.lastFailure() == QLatin1String("a model usage limit"),
             "failures in a row are counted and named");
     write(root.filePath(QStringLiteral("predict.reply")), valid_predict);
     next.turnFinished(QStringLiteral("a"));
@@ -595,6 +626,30 @@ void repeatsWaitUntilShown() {
             }),
             "an experiment's guess is logged with its arm and model");
 
+    // The main guess carries the provider chain to the helper.
+    settings = on();
+    settings.providers =
+        QJsonArray{QJsonObject{{QStringLiteral("url"), QStringLiteral("https://one.test/v1")},
+                               {QStringLiteral("model"), QStringLiteral("deepseek")},
+                               {QStringLiteral("name"), QStringLiteral("one")}}};
+    next.setSettings(settings);
+    next.seen(QStringLiteral("a"));
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] {
+                const auto last = events(log).last();
+                return last.value(QStringLiteral("event")) == QLatin1String("predicted");
+            }),
+            "a guess through the chain");
+    {
+        const auto arguments =
+            QString::fromUtf8(read(root.filePath(QStringLiteral("predict.args"))))
+                .split(QLatin1Char('\n'));
+        const auto at = arguments.indexOf(QStringLiteral("--providers"));
+        require(at > 0 && arguments.value(at + 1).contains(QLatin1String("https://one.test/v1")) &&
+                    arguments.value(at + 1).contains(QLatin1String("\"model\":\"deepseek\"")),
+                "the helper is given the provider chain");
+    }
+
     // The context arm goes to the helper and onto the guess; the floor arm
     // offers a p=0.6 guess at the 0 floor and holds it back at 0.9.
     settings = on();
@@ -603,12 +658,16 @@ void repeatsWaitUntilShown() {
     next.setSettings(settings);
     QSet<double> floors;
     for (int round = 0; round < 40 && floors.size() < 2; ++round) {
+        const auto before = events(log).size();
         next.seen(QStringLiteral("a"));
         next.turnFinished(QStringLiteral("a"));
         require(waitFor([&] {
-                    const auto last = events(log).last();
-                    return last.value(QStringLiteral("event")) == QLatin1String("predicted") &&
-                           last.value(QStringLiteral("context_arm")) == QLatin1String("retrieval");
+                    const auto all = events(log);
+                    return all.size() > before &&
+                           all.last().value(QStringLiteral("event")) ==
+                               QLatin1String("predicted") &&
+                           all.last().value(QStringLiteral("context_arm")) ==
+                               QLatin1String("retrieval");
                 }),
                 "a guess is logged with its context arm");
         const auto last = events(log).last();
@@ -669,6 +728,103 @@ void repeatsWaitUntilShown() {
     next.focused(QStringLiteral("a"));
     QCoreApplication::processEvents();
     require(count_returns() == before + 1, "each offer's return is decided once");
+}
+
+// The chain answers the main guess, an experiment model keeps its own route,
+// and the chain works on a Mac without the Claude Code CLI.
+void providerChainKeepsItsOwnRoute() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-next-XXXXXX"));
+    require(directory.isValid(), "fixture directory");
+    const QDir root(directory.path());
+    require(root.mkpath(QStringLiteral("bin")), "fixture bin");
+    standIns(root);
+    write(root.filePath(QStringLiteral("context.reply")),
+          R"({"conversation": "c1", "turn": 7, "turns": [{"role": "agent", "text": "Done."}]})");
+    write(root.filePath(QStringLiteral("predict.reply")),
+          R"({"attention": "fyi", "candidates": [{"text": "go", "p": 0.6}]})");
+    const auto log = root.filePath(QStringLiteral("logs/next_prompt.jsonl"));
+    NextPrompt next(
+        [](const QString&) -> std::optional<NextPrompt::Agent> {
+            return NextPrompt::Agent{{},
+                                     QStringLiteral("~/x"),
+                                     QStringLiteral("claude"),
+                                     QStringLiteral("c1"),
+                                     QStringLiteral("paste fix"),
+                                     QStringLiteral("lapis"),
+                                     {}};
+        },
+        [] { return QJsonArray{}; },
+        [&root](const QString& name) { return fixtureProgram(root, name); }, {root.path(), log});
+    const QJsonArray chain{
+        QJsonObject{{QStringLiteral("url"), QStringLiteral("https://one.test/v1")},
+                    {QStringLiteral("model"), QStringLiteral("deepseek")},
+                    {QStringLiteral("name"), QStringLiteral("one")}}};
+    const auto helper_arguments = [&root] {
+        return QString::fromUtf8(read(root.filePath(QStringLiteral("predict.args"))))
+            .split(QLatin1Char('\n'));
+    };
+    // The control guess carries the chain and the time budget it shares.
+    auto settings = on();
+    settings.providers = chain;
+    next.setSettings(settings);
+    const auto before_control = events(log).size();
+    next.seen(QStringLiteral("a"));
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] {
+                const auto all = events(log);
+                return all.size() > before_control &&
+                       all.last().value(QStringLiteral("event")) == QLatin1String("predicted");
+            }),
+            "a guess through the chain");
+    {
+        const auto arguments = helper_arguments();
+        const auto at = arguments.indexOf(QStringLiteral("--providers"));
+        require(at > 0 && arguments.value(at + 1).contains(QLatin1String("https://one.test/v1")),
+                "the control guess carries the chain");
+        const auto budget = arguments.indexOf(QStringLiteral("--budget-seconds"));
+        require(budget > 0 && arguments.value(budget + 1).toInt() > 0,
+                "the chain is given the guess's time budget");
+    }
+    // An experiment model keeps its own route: the chain is not passed, and
+    // an empty list is, so the helper cannot read lapis.json itself.
+    settings.experimentShare = 1;
+    settings.experimentModels = {QStringLiteral("claude-sonnet-5-5")};
+    next.setSettings(settings);
+    const auto before_experiment = events(log).size();
+    next.seen(QStringLiteral("a"));
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] {
+                const auto all = events(log);
+                return all.size() > before_experiment &&
+                       all.last().value(QStringLiteral("event")) == QLatin1String("predicted") &&
+                       all.last().value(QStringLiteral("arm")) == QLatin1String("model");
+            }),
+            "the experiment's guess is made");
+    {
+        const auto arguments = helper_arguments();
+        const auto at = arguments.indexOf(QStringLiteral("--providers"));
+        require(at > 0 && arguments.value(at + 1) == QLatin1String("[]"),
+                "the experiment arm keeps its own route");
+    }
+    // The chain replaces the CLI call, so a Mac without the CLI still guesses.
+    write(root.filePath(QStringLiteral("no-claude")), "yes");
+    settings = on();
+    settings.providers = chain;
+    next.setSettings(settings);
+    const auto without_cli = events(log).size();
+    next.seen(QStringLiteral("a"));
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] {
+                const auto all = events(log);
+                return all.size() > without_cli &&
+                       all.last().value(QStringLiteral("event")) == QLatin1String("predicted");
+            }),
+            "the chain answers without the Claude Code CLI");
+    for (const auto& event : events(log))
+        require(event.value(QStringLiteral("error")).toString() !=
+                    QLatin1String("no Claude Code CLI on this Mac"),
+                "the chain does not need the CLI");
+    QFile::remove(root.filePath(QStringLiteral("no-claude")));
 }
 
 void outcomesCompareWhatWasSent() {
@@ -1102,6 +1258,7 @@ int main(int argc, char** argv) {
         missingProbabilityIsNotOffered();
         predictsAndOffers();
         repeatsWaitUntilShown();
+        providerChainKeepsItsOwnRoute();
         outcomesCompareWhatWasSent();
         savedEntriesRespectRestoreBounds();
         restoredStateIsChecked();

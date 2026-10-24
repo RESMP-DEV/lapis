@@ -1,0 +1,119 @@
+{
+  "schema": "lapis.qa-receipt/1",
+  "recorded_at": "2026-10-23T22:36:23Z",
+  "scope": "System-prompt variants for lapis next-prompt (Tab) guesses, measured against a fixed set of past prompts through the private Infinity DeepSeek endpoint. Prompt behavior only; no GUI, attention-protocol, long-run or 32-session load qualification.",
+  "source": {
+    "base": "b0d0d38 (main)",
+    "branch": "feat/tab-provider-chain",
+    "head": "335cc4a",
+    "dirty": true,
+    "dirty_note": "lean prompt, its test and docs were uncommitted at the measurement; the provider chain commit is the base"
+  },
+  "tools": {
+    "python": "3.12.12",
+    "predictor": "Infatoshi/DeepSeek-V4.1-Flash-1017-MXFP4-heretic served by vLLM, temperature 0, max 4096 tokens",
+    "judge": "claude-opus-5-5, blind to variant, 0/1/2 rubric",
+    "set": "41 prompts sampled from local interactive Claude Code and Codex transcripts since 2026-09-15 (seed 23); fixed after sampling"
+  },
+  "method": {
+    "prompt_variants": "The same bundle, provider chain and parser for every variant; only next_prompt.SYSTEM changed. Each item produced up to three candidates, graded in batches of eight by the judge (the batching of scripts/next_prompt_eval.py's judge()). Top-1 sendable means the first candidate scored 2; top-3 sendable means any candidate scored 2.",
+    "mode": "Question top-1 counts items the judge labelled question or status whose first candidate is itself a question (a question mark or a question word). The denominator is the judge's per-variant category count, not one fixed count: 14, 15, 17, 17, 15, 16 and 12 for baseline, mode, predictive, analysis, predictive_analysis, lean and examples. The labels come from the same judge pass as the scores, so the denominators differ across variants instead of sharing one fixed base; the rates compare shares of differently-sized question/status sets. Command top-1 counts first candidates that open with an imperative verb.",
+    "variants": "baseline (the best-version checklist), mode (the checklist plus an explicit question/result/plan rule), predictive (actual-message framing plus the mode rule, checklist kept), analysis (one analysis field before the candidates), predictive_analysis (both), lean (actual-message framing and mode rule, checklist removed), examples (predictive plus five generic examples)."
+  },
+  "checks": [
+    {
+      "name": "prompt_variants (41 sampled prompts, seven system-prompt variants, blind Opus judge)",
+      "result": "41 items graded per variant, 32 for the examples variant. lean: 5/41 sendable top guesses, 11/41 intent, 7 command top guesses, 1665 ms median. baseline: 3/41 sendable, 7/41 intent, 13 command top guesses, 2368 ms median."
+    },
+    {
+      "name": "second judge through Infinity",
+      "result": "not usable: the reasoning model exhausted the 4096-token budget on eight-item batches and many batches returned no content, so those partial scores are not used."
+    }
+  ],
+  "results": {
+    "baseline": {
+      "n": 41,
+      "top1_sendable": 0.073,
+      "top1_intent": 0.171,
+      "top3_sendable": 0.098,
+      "top3_intent": 0.293,
+      "question_top1": "2/14",
+      "command_top1": 13,
+      "median_ms": 2368
+    },
+    "mode": {
+      "n": 41,
+      "top1_sendable": 0.024,
+      "top1_intent": 0.244,
+      "top3_sendable": 0.098,
+      "top3_intent": 0.293,
+      "question_top1": "4/15",
+      "command_top1": 15,
+      "median_ms": 2134
+    },
+    "predictive": {
+      "n": 41,
+      "top1_sendable": 0.024,
+      "top1_intent": 0.22,
+      "top3_sendable": 0.073,
+      "top3_intent": 0.317,
+      "question_top1": "3/17",
+      "command_top1": 12,
+      "median_ms": 1945
+    },
+    "analysis": {
+      "n": 41,
+      "top1_sendable": 0.073,
+      "top1_intent": 0.171,
+      "top3_sendable": 0.122,
+      "top3_intent": 0.293,
+      "question_top1": "5/17",
+      "command_top1": 14,
+      "median_ms": 2727
+    },
+    "predictive_analysis": {
+      "n": 41,
+      "top1_sendable": 0.049,
+      "top1_intent": 0.195,
+      "top3_sendable": 0.146,
+      "top3_intent": 0.366,
+      "question_top1": "4/15",
+      "command_top1": 11,
+      "median_ms": 2226
+    },
+    "lean": {
+      "n": 41,
+      "top1_sendable": 0.122,
+      "top1_intent": 0.268,
+      "top3_sendable": 0.122,
+      "top3_intent": 0.317,
+      "question_top1": "5/16",
+      "command_top1": 7,
+      "median_ms": 1665
+    },
+    "examples": {
+      "n": 32,
+      "top1_sendable": 0.125,
+      "top1_intent": 0.25,
+      "top3_sendable": 0.125,
+      "top3_intent": 0.375,
+      "question_top1": "5/12",
+      "command_top1": 11,
+      "median_ms": 1843,
+      "note": "nine items ungraded when the judge hit its weekly limit"
+    }
+  },
+  "findings": {
+    "winner": "lean: 5/41 sendable top guesses against 3/41 baseline, 11/41 intent against 7/41, 7 command top guesses against 13, and 1665 ms against 2368 ms. The improvement is within sampling noise on sendable count, but the command reduction and question-mode increase are the targeted mechanism.",
+    "introspection": "analysis alone left top-1 sendable at 3/41, raised top-3 sendable to 5/41 and question top-1 to 5/17, and cost 359 ms. predictive_analysis had the best top-3 coverage (6/41 sendable, 15/41 intent) but a lower top-1 (2/41). Introspection improves candidate coverage, not the first candidate.",
+    "checklist": "keeping the 11-item best-version checklist (mode, predictive) raised intent matches but did not raise sendable top guesses; removing it (lean) halved command top guesses. The checklist is the main source of the action bias."
+  },
+  "limitations": [
+    "41 prompts is a screen, not a release gate; the top-1 difference is two prompts.",
+    "One judge model. A second judge through Infinity was attempted, but the reasoning model exhausted the 4096-token budget on eight-item batches and many batches returned no content, so those partial scores are not used.",
+    "The examples variant is scored on 32 of 41 items because the judge hit its weekly limit; its percentages are not directly comparable.",
+    "No GUI Tab interaction was exercised.",
+    "The raw prompts and predictions are kept out of the repository; only aggregate metrics and aggregate mode counts are recorded.",
+    "question_top1 denominators differ per variant (14 through 17, 12 for the 32-item examples variant) because they are the judge's per-run category counts; the lean 5/16 versus baseline 2/14 increase compares rates on non-identical bases and is weaker than a fixed-base comparison."
+  ]
+}

@@ -42,6 +42,12 @@ struct NextPromptSettings {
     QStringList experimentModels{QStringLiteral("claude-sonnet-5-5")};
     QString localEndpoint; // e.g. http://host:8000/v1; empty: no local arm
     QString localModel;
+    // Ordered OpenAI-compatible endpoints (`providers`) that replace the CLI
+    // as one chain for the main guess: {url, model}, optionally name,
+    // apiKeyEnv, timeoutSeconds, maxTokens and temperature. A transport,
+    // auth or HTTP failure moves to the next; the chain is skipped for the
+    // experiment arms, which keep their own model or local endpoint.
+    QJsonArray providers;
     // Held out: this share of guesses is made but never shown, and compared
     // with what the person then typed, so prediction can be measured apart
     // from acceptance (a shown guess shapes what is sent).

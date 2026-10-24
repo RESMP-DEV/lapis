@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -30,6 +31,10 @@ struct Similarity {
 };
 constexpr int kContextTimeoutMs = 60 * 1000;
 constexpr int kPredictTimeoutMs = 180 * 1000;
+// The provider chain shares the predict budget: the helper stops asking
+// providers before the watchdog kills the process, so a slow provider cannot
+// cut the chain off instead of falling through to the next one.
+constexpr int kPredictBudgetSeconds = kPredictTimeoutMs / 1000 - 30;
 constexpr qint64 kHourMs = qint64{60} * 60 * 1000;
 constexpr int kScreenChars = 6000;
 constexpr qsizetype kCompared = 2000;
@@ -102,6 +107,76 @@ QString quoted(const QString& word) {
 QByteArray line(const QJsonObject& object) {
     return QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n';
 }
+// One validated provider entry, or nothing for a malformed one. A rounded
+// timeout or token count means the same here as in the helper's own parsing.
+std::optional<QJsonObject> clean_provider(const QJsonObject& provider) {
+    const auto url = provider.value(QStringLiteral("url")).toString().trimmed();
+    const auto model = provider.value(QStringLiteral("model")).toString().trimmed();
+    if ((!url.startsWith(QLatin1String("http://")) && !url.startsWith(QLatin1String("https://"))) ||
+        url.isEmpty() || model.isEmpty())
+        return std::nullopt;
+    QJsonObject clean{{QStringLiteral("url"), url.left(300)},
+                      {QStringLiteral("model"), model.left(100)},
+                      {QStringLiteral("name"),
+                       provider.value(QStringLiteral("name")).toString().trimmed().left(40)},
+                      {QStringLiteral("timeoutSeconds"), 30},
+                      {QStringLiteral("maxTokens"), 4096},
+                      {QStringLiteral("temperature"), 0.0}};
+    if (clean.value(QStringLiteral("name")).toString().isEmpty())
+        clean.insert(QStringLiteral("name"), model.left(40));
+    const auto key = provider.value(QStringLiteral("apiKeyEnv")).toString().trimmed();
+    if (!key.isEmpty())
+        clean.insert(QStringLiteral("apiKeyEnv"), key.left(80));
+    if (provider.value(QStringLiteral("allowInsecureHttp")).toBool(false))
+        clean.insert(QStringLiteral("allowInsecureHttp"), true);
+    if (const auto seconds = provider.value(QStringLiteral("timeoutSeconds")); seconds.isDouble())
+        // One attempt must leave room for the next provider: the
+        // helper is killed at kPredictTimeoutMs (180s).
+        clean.insert(QStringLiteral("timeoutSeconds"),
+                     std::clamp(qRound(seconds.toDouble()), 1, 60));
+    if (const auto tokens = provider.value(QStringLiteral("maxTokens")); tokens.isDouble())
+        clean.insert(QStringLiteral("maxTokens"), std::clamp(qRound(tokens.toDouble()), 128, 8192));
+    if (const auto temperature = provider.value(QStringLiteral("temperature"));
+        temperature.isDouble())
+        clean.insert(QStringLiteral("temperature"), std::clamp(temperature.toDouble(), 0.0, 2.0));
+    return clean;
+}
+
+void parse_experiment_models(const QJsonObject& object, NextPromptSettings& settings) {
+    const auto models = object.value(QStringLiteral("experimentModels"));
+    if (!models.isArray())
+        return;
+    settings.experimentModels.clear();
+    for (const auto& model : models.toArray())
+        if (const auto name = model.toString().trimmed(); !name.isEmpty())
+            settings.experimentModels.append(name.left(100));
+}
+
+void parse_providers(const QJsonObject& object, NextPromptSettings& settings) {
+    const auto list = object.value(QStringLiteral("providers"));
+    if (!list.isArray())
+        return;
+    for (const auto& entry : list.toArray()) {
+        if (settings.providers.size() >= 8)
+            break;
+        if (const auto clean = clean_provider(entry.toObject()))
+            settings.providers.append(*clean);
+    }
+}
+
+void parse_context_arms(const QJsonObject& object, NextPromptSettings& settings) {
+    const auto arms = object.value(QStringLiteral("contextArms"));
+    if (!arms.isArray())
+        return;
+    static const QStringList known{QStringLiteral("base"), QStringLiteral("thread"),
+                                   QStringLiteral("retrieval"), QStringLiteral("evidence")};
+    settings.contextArms.clear();
+    for (const auto& arm : arms.toArray())
+        if (known.contains(arm.toString()) && !settings.contextArms.contains(arm.toString()))
+            settings.contextArms.append(arm.toString());
+    if (settings.contextArms.isEmpty())
+        settings.contextArms.append(QStringLiteral("base"));
+}
 } // namespace
 
 NextPromptSettings parse_next_prompt(const QJsonValue& value) {
@@ -119,27 +194,14 @@ NextPromptSettings parse_next_prompt(const QJsonValue& value) {
         settings.maxPerHour = std::max(0, cap.toInt());
     if (const auto share = object.value(QStringLiteral("experiment")); share.isDouble())
         settings.experimentShare = std::clamp(share.toDouble(), 0.0, 1.0);
-    if (const auto models = object.value(QStringLiteral("experimentModels")); models.isArray()) {
-        settings.experimentModels.clear();
-        for (const auto& model : models.toArray())
-            if (const auto name = model.toString().trimmed(); !name.isEmpty())
-                settings.experimentModels.append(name.left(100));
-    }
+    parse_experiment_models(object, settings);
     settings.localEndpoint =
         object.value(QStringLiteral("localEndpoint")).toString().trimmed().left(200);
     settings.localModel = object.value(QStringLiteral("localModel")).toString().trimmed().left(100);
+    parse_providers(object, settings);
     if (const auto share = object.value(QStringLiteral("holdout")); share.isDouble())
         settings.holdoutShare = std::clamp(share.toDouble(), 0.0, 0.5);
-    if (const auto arms = object.value(QStringLiteral("contextArms")); arms.isArray()) {
-        static const QStringList known{QStringLiteral("base"), QStringLiteral("thread"),
-                                       QStringLiteral("retrieval"), QStringLiteral("evidence")};
-        settings.contextArms.clear();
-        for (const auto& arm : arms.toArray())
-            if (known.contains(arm.toString()) && !settings.contextArms.contains(arm.toString()))
-                settings.contextArms.append(arm.toString());
-        if (settings.contextArms.isEmpty())
-            settings.contextArms.append(QStringLiteral("base"));
-    }
+    parse_context_arms(object, settings);
     if (const auto p = object.value(QStringLiteral("experimentMinConfidence")); p.isDouble())
         settings.experimentMinConfidence = std::clamp(p.toDouble(), 0.0, 1.0);
     if (const auto minutes = object.value(QStringLiteral("returnMinutes")); minutes.isDouble())
@@ -419,10 +481,73 @@ void NextPrompt::start(const QString& id, quint64 generation, const QString& pro
     process->closeWriteChannel();
 }
 
+// The drawn arm: which route answers this guess and with what identity.
+struct DrawnArm {
+    QString arm = QStringLiteral("control");
+    QString model;
+    QString endpoint;
+};
+
+DrawnArm draw_predict_arm(const NextPromptSettings& settings, bool claude_present) {
+    DrawnArm drawn;
+    drawn.model = settings.model;
+    QStringList arms;
+    for (const auto& other : settings.experimentModels)
+        if (other != settings.model && claude_present)
+            arms << other;
+    if (!settings.localEndpoint.isEmpty() && !settings.localModel.isEmpty())
+        arms << QStringLiteral("local");
+    if (arms.isEmpty() || QRandomGenerator::global()->generateDouble() >= settings.experimentShare)
+        return drawn;
+    const auto& pick = arms.at(QRandomGenerator::global()->bounded(arms.size()));
+    const bool local = pick == QLatin1String("local");
+    drawn.arm = local ? pick : QStringLiteral("model");
+    drawn.model = local ? settings.localModel : pick;
+    if (local)
+        drawn.endpoint = settings.localEndpoint;
+    return drawn;
+}
+
+// The helper's predict arguments for one drawn arm. --providers is passed
+// either way: without it the helper reads nextPrompt.providers from
+// lapis.json itself and would answer an experiment guess from the chain.
+struct PredictArguments {
+    QString script;
+    QString model;
+    QString claude;
+    QString effort;
+    QString endpoint;
+    QString context_arm;
+    QJsonArray providers;
+    QString main_model;
+};
+
+QStringList predict_arguments(const PredictArguments& args) {
+    QStringList arguments{args.script, QStringLiteral("predict"),  QStringLiteral("--model"),
+                          args.model,  QStringLiteral("--claude"), args.claude};
+    if (!args.effort.isEmpty() && args.endpoint.isEmpty() && args.model == args.main_model)
+        arguments << QStringLiteral("--effort") << args.effort;
+    if (!args.endpoint.isEmpty())
+        arguments << QStringLiteral("--endpoint") << args.endpoint << QStringLiteral("--style")
+                  << QStringLiteral("personal");
+    else
+        arguments << QStringLiteral("--context-arm") << args.context_arm;
+    if (args.model == args.main_model && !args.providers.isEmpty() && args.endpoint.isEmpty())
+        arguments << QStringLiteral("--providers")
+                  << QString::fromUtf8(
+                         QJsonDocument(args.providers).toJson(QJsonDocument::Compact));
+    else
+        arguments << QStringLiteral("--providers") << QStringLiteral("[]");
+    arguments << QStringLiteral("--budget-seconds") << QString::number(kPredictBudgetSeconds);
+    return arguments;
+}
+
 void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObject& context,
                          int returned) {
     const auto claude = program_(QStringLiteral("claude"));
-    if (claude.isEmpty()) {
+    // The chain replaces the CLI call, so the CLI is only required when it
+    // is the route that answers.
+    if (claude.isEmpty() && settings_.providers.isEmpty()) {
         failed(id, running_.take(id).agent, Stage::predict,
                QStringLiteral("no Claude Code CLI on this Mac"));
         emit stateChanged();
@@ -465,34 +590,15 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
                               random->generateDouble() < 0.5
                           ? settings_.experimentMinConfidence
                           : settings_.minConfidence;
-    QString arm = QStringLiteral("control");
-    QString model = settings_.model;
-    QString endpoint;
-    QStringList arms;
-    for (const auto& other : settings_.experimentModels)
-        if (other != settings_.model)
-            arms << other;
-    if (!settings_.localEndpoint.isEmpty() && !settings_.localModel.isEmpty())
-        arms << QStringLiteral("local");
-    if (!arms.isEmpty() &&
-        QRandomGenerator::global()->generateDouble() < settings_.experimentShare) {
-        const auto& pick = arms.at(QRandomGenerator::global()->bounded(arms.size()));
-        arm = pick == QLatin1String("local") ? pick : QStringLiteral("model");
-        model = pick == QLatin1String("local") ? settings_.localModel : pick;
-        if (pick == QLatin1String("local"))
-            endpoint = settings_.localEndpoint;
-    }
-    QStringList arguments{script_path_, QStringLiteral("predict"),  QStringLiteral("--model"),
-                          model,        QStringLiteral("--claude"), claude};
-    if (!settings_.effort.isEmpty() && endpoint.isEmpty() && model == settings_.model)
-        arguments << QStringLiteral("--effort") << settings_.effort;
-    if (!endpoint.isEmpty())
-        arguments << QStringLiteral("--endpoint") << endpoint << QStringLiteral("--style")
-                  << QStringLiteral("personal");
-    else
-        arguments << QStringLiteral("--context-arm") << arms_made.context;
-    arms_made.arm = arm;
-    arms_made.model = model;
+    // Most guesses come from the chosen model; a share goes to an experiment
+    // arm, evenly among the other models and the local endpoint.
+    const auto drawn = draw_predict_arm(settings_, !claude.isEmpty());
+    const PredictArguments args{script_path_,        drawn.model,    claude,
+                                settings_.effort,    drawn.endpoint, arms_made.context,
+                                settings_.providers, settings_.model};
+    const auto arguments = predict_arguments(args);
+    arms_made.arm = drawn.arm;
+    arms_made.model = drawn.model;
     start(id, generation, program_(QStringLiteral("python3")), arguments, line(bundle),
           Stage::predict, [this, id, agent, context, arms_made](const QJsonObject& answer) {
               running_.remove(id);
@@ -533,7 +639,12 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     event.insert(QStringLiteral("event"), QStringLiteral("predicted"));
     event.insert(QStringLiteral("machine"), agent.machine);
     event.insert(QStringLiteral("cli"), agent.cli);
-    event.insert(QStringLiteral("model"), arms.model);
+    const auto answer_model = answer.value(QStringLiteral("model")).toString().trimmed();
+    event.insert(QStringLiteral("model"),
+                 answer_model.isEmpty() ? arms.model : answer_model.left(100));
+    if (const auto provider = answer.value(QStringLiteral("provider")).toString().trimmed();
+        !provider.isEmpty())
+        event.insert(QStringLiteral("provider"), provider.left(40));
     event.insert(QStringLiteral("arm"), arms.arm);
     // The local arm's own format takes no context arm.
     if (arms.arm != QLatin1String("local"))
@@ -600,8 +711,8 @@ void NextPrompt::failed(const QString& id, const Agent& agent, Stage stage, cons
     if (stage == Stage::predict || kind == QStringLiteral("timeout")) {
         ++failure_streak_;
         static const QHash<QString, QString> plain{
-            {QStringLiteral("limit"), QStringLiteral("a Claude usage limit")},
-            {QStringLiteral("auth"), QStringLiteral("Claude sign-in")},
+            {QStringLiteral("limit"), QStringLiteral("a model usage limit")},
+            {QStringLiteral("auth"), QStringLiteral("a model sign-in")},
             {QStringLiteral("timeout"), QStringLiteral("timeouts")},
             {QStringLiteral("network"), QStringLiteral("the network")},
             {QStringLiteral("malformed"), QStringLiteral("unreadable answers")}};

@@ -1,20 +1,50 @@
 """lapis's next-prompt helper: reading Claude Code and Codex transcripts, the
 model's prompt and answer, and the call it makes on the person's plan."""
 
+import http.client
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
+import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps" / "desktop" / "src"))
 import next_prompt  # noqa: E402
+
+ANSWER = json.dumps({"category": "approve", "candidates": [{"text": "go", "p": 0.8}]})
+
+
+def answer_bytes():
+    """A provider answer, as the body of a chat-completions response."""
+    return json.dumps({"choices": [{"message": {"content": ANSWER}}]}).encode()
+
+
+class FakeResponse:
+    """What urllib.request.urlopen returns: a readable context manager."""
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *arguments):
+        return False
+
+    def read(self, amount):
+        return self.payload
 
 
 def write_lines(path, entries):
@@ -752,6 +782,448 @@ class ModelTests(unittest.TestCase):
                 self.assertEqual(call.call_count, 1)
 
 
+def endpoint_server(status, content, seen):
+    """A local /chat/completions stand-in that records the request."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            seen.append(
+                (self.path, dict(self.headers), json.loads(self.rfile.read(length)))
+            )
+            body = json.dumps(
+                {
+                    "choices": [{"message": {"content": content}}],
+                    "usage": {"cost": 0.0125},
+                }
+            ).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *arguments):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+class ProviderTests(unittest.TestCase):
+    """Ordered endpoint providers, their keys, and the fallback between them."""
+
+    answer = ANSWER
+
+    def test_the_first_provider_that_answers_is_used(self):
+        seen = []
+        down, down_thread = endpoint_server(500, "unavailable", seen)
+        up, up_thread = endpoint_server(200, self.answer, seen)
+        self.addCleanup(down.server_close)
+        self.addCleanup(down.shutdown)
+        self.addCleanup(up.server_close)
+        self.addCleanup(up.shutdown)
+        providers = [
+            {
+                "name": "primary",
+                "url": "http://127.0.0.1:%d/v1" % down.server_port,
+                "model": "primary-model",
+                "apiKeyEnv": "TEST_PROVIDER_KEY",
+                "timeoutSeconds": 5,
+            },
+            {
+                "name": "backup",
+                "url": "http://127.0.0.1:%d/v1" % up.server_port,
+                "model": "backup-model",
+                "apiKeyEnv": "TEST_PROVIDER_KEY",
+                "timeoutSeconds": 5,
+            },
+        ]
+        with patch.dict(os.environ, {"TEST_PROVIDER_KEY": "test-key"}):
+            result = next_prompt.predict(
+                {"context": {"turns": [{"role": "agent", "text": "Done."}]}},
+                "unused",
+                "",
+                "unused",
+                providers=providers,
+            )
+        self.assertEqual(
+            (result["provider"], result["model"], result["cost"]),
+            ("backup", "backup-model", 0.0125),
+        )
+        self.assertEqual(
+            result["candidates"], [{"text": "go", "p": 0.8, "scored": True}]
+        )
+        self.assertEqual(len(seen), 2, "both providers were tried in order")
+        header = seen[1][1].get("Authorization")
+        self.assertEqual(header, "Bearer test-key")
+        self.assertEqual(seen[1][2]["model"], "backup-model")
+        self.assertEqual(seen[1][2]["messages"][0]["role"], "system")
+        self.assertNotIn("test-key", json.dumps(result))
+
+    def test_a_missing_key_moves_to_the_next_provider(self):
+        unused_seen = []
+        unused, unused_thread = endpoint_server(200, self.answer, unused_seen)
+        seen = []
+        up, thread = endpoint_server(200, self.answer, seen)
+        self.addCleanup(unused.server_close)
+        self.addCleanup(unused.shutdown)
+        self.addCleanup(up.server_close)
+        self.addCleanup(up.shutdown)
+        providers = [
+            {
+                "name": "no-key",
+                "url": "http://127.0.0.1:%d/v1" % unused.server_port,
+                "model": "m",
+                "apiKeyEnv": "TEST_MISSING_KEY",
+            },
+            {
+                "name": "backup",
+                "url": "http://127.0.0.1:%d/v1" % up.server_port,
+                "model": "m",
+                "apiKeyEnv": "TEST_PRESENT_KEY",
+            },
+        ]
+        with patch.dict(os.environ, {"TEST_PRESENT_KEY": "present"}, clear=False):
+            with patch.object(next_prompt, "ENV_FILE", "/nonexistent/env"):
+                os.environ.pop("TEST_MISSING_KEY", None)
+                result = next_prompt.predict(
+                    {}, "unused", "", "unused", providers=providers
+                )
+        self.assertEqual(result["provider"], "backup")
+        self.assertEqual(unused_seen, [], "the keyless provider sent no request")
+
+    def test_all_providers_failing_is_an_error(self):
+        seen = []
+        down, thread = endpoint_server(500, "unavailable", seen)
+        self.addCleanup(down.server_close)
+        self.addCleanup(down.shutdown)
+        providers = [
+            {
+                "name": "one",
+                "url": "http://127.0.0.1:%d/v1" % down.server_port,
+                "model": "m",
+                "apiKeyEnv": "TEST_PROVIDER_KEY",
+                "timeoutSeconds": 5,
+            },
+            {
+                "name": "two",
+                "url": "http://127.0.0.1:9/v1",
+                "model": "m",
+                "apiKeyEnv": "TEST_PROVIDER_KEY",
+                "timeoutSeconds": 2,
+            },
+        ]
+        with patch.dict(os.environ, {"TEST_PROVIDER_KEY": "k"}):
+            result = next_prompt.predict(
+                {}, "unused", "", "unused", providers=providers
+            )
+        self.assertIn("error", result)
+        self.assertIn("one:", result["error"])
+        self.assertIn("two:", result["error"])
+
+    def test_providers_are_bounded_and_validated(self):
+        cleaned = next_prompt.clean_providers(
+            [
+                {"url": "https://example.test/v1", "model": "m", "apiKeyEnv": "K"},
+                {"url": "file:///etc/passwd", "model": "m", "apiKeyEnv": "K"},
+                {"url": "https://example.test/v1", "model": "", "apiKeyEnv": "K"},
+                {"url": "https://example.test/v1", "model": "m", "apiKeyEnv": ""},
+                "not an object",
+            ]
+        )
+        self.assertEqual(len(cleaned), 2)
+        self.assertEqual([p["url"] for p in cleaned], ["https://example.test/v1"] * 2)
+        bounded = next_prompt.clean_providers(
+            [
+                {
+                    "url": "https://example.test/v1",
+                    "model": "m",
+                    "apiKeyEnv": "K",
+                    "timeoutSeconds": 999,
+                    "maxTokens": 1,
+                    "temperature": 9,
+                }
+            ]
+        )[0]
+        self.assertEqual(
+            (bounded["timeoutSeconds"], bounded["maxTokens"], bounded["temperature"]),
+            (60, 128, 2.0),
+        )
+        rounded = next_prompt.clean_providers(
+            [
+                {
+                    "url": "https://example.test/v1",
+                    "model": "m",
+                    "timeoutSeconds": 30.5,
+                    "maxTokens": 4096.5,
+                }
+            ]
+        )[0]
+        self.assertEqual(
+            (rounded["timeoutSeconds"], rounded["maxTokens"]),
+            (31, 4097),
+            "a fractional setting is rounded, not truncated to the minimum",
+        )
+
+    def test_an_unreadable_answer_is_asked_again_on_the_same_provider(self):
+        answers = [b"not json at all", answer_bytes()]
+        calls = []
+
+        def open_request(request, timeout=None):
+            calls.append(request)
+            return FakeResponse(answers[min(len(calls) - 1, len(answers) - 1)])
+
+        providers = [
+            {
+                "name": "primary",
+                "url": "https://one.test/v1",
+                "model": "primary-model",
+                "timeoutSeconds": 5,
+            }
+        ]
+        with patch.object(next_prompt.urllib.request, "urlopen", open_request):
+            result = next_prompt.predict(
+                {}, "unused", "", "unused", providers=providers
+            )
+        self.assertEqual(result.get("provider"), "primary")
+        self.assertEqual(len(calls), 2, "the unreadable answer was asked once more")
+
+    def test_a_truncated_body_moves_to_the_next_provider(self):
+        seen = []
+
+        def open_request(request, timeout=None):
+            seen.append(request.full_url)
+            if len(seen) == 1:
+                raise http.client.IncompleteRead(b'{"choices": [')
+            return FakeResponse(answer_bytes())
+
+        providers = [
+            {
+                "name": "truncated",
+                "url": "https://one.test/v1",
+                "model": "m",
+                "timeoutSeconds": 5,
+            },
+            {
+                "name": "backup",
+                "url": "https://two.test/v1",
+                "model": "m",
+                "timeoutSeconds": 5,
+            },
+        ]
+        with patch.object(next_prompt.urllib.request, "urlopen", open_request):
+            result = next_prompt.predict(
+                {}, "unused", "", "unused", providers=providers
+            )
+        self.assertEqual(result.get("provider"), "backup")
+        self.assertEqual(len(seen), 2)
+
+    def test_the_bearer_token_is_not_forwarded_to_a_redirect(self):
+        seen = []
+
+        def open_request(request, timeout=None):
+            seen.append(request)
+            raise urllib.error.URLError("no network in this test")
+
+        providers = [
+            {
+                "name": "one",
+                "url": "https://one.test/v1",
+                "model": "m",
+                "apiKeyEnv": "TEST_PROVIDER_KEY",
+            }
+        ]
+        with patch.dict(os.environ, {"TEST_PROVIDER_KEY": "test-key"}):
+            with patch.object(next_prompt.urllib.request, "urlopen", open_request):
+                result = next_prompt.predict(
+                    {}, "unused", "", "unused", providers=providers
+                )
+        self.assertIn("error", result)
+        request = seen[0]
+        self.assertEqual(
+            request.unredirected_hdrs.get("Authorization"),
+            "Bearer test-key",
+            "the key is sent to the endpoint it is configured for",
+        )
+        self.assertNotIn("Authorization", request.headers)
+        redirected = urllib.request.HTTPRedirectHandler().redirect_request(
+            request,
+            None,
+            302,
+            "Found",
+            {},
+            "https://elsewhere.test/chat/completions",
+        )
+        self.assertNotIn(
+            "Authorization",
+            redirected.headers,
+            "a redirect does not carry the key to the new host",
+        )
+
+    def test_a_provider_failure_is_redacted(self):
+        secret = "sk-abcdefghijklmnopqrstuvwxyz0123456789"
+
+        def open_request(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url,
+                500,
+                "token %s for user@example.com" % secret,
+                {},
+                None,
+            )
+
+        providers = [
+            {
+                "name": "one",
+                "url": "https://one.test/v1",
+                "model": "m",
+                "timeoutSeconds": 5,
+            }
+        ]
+        with patch.object(next_prompt.urllib.request, "urlopen", open_request):
+            result = next_prompt.predict(
+                {}, "unused", "", "unused", providers=providers
+            )
+        self.assertIn("error", result)
+        self.assertNotIn(secret, result["error"])
+        self.assertNotIn("example.com", result["error"])
+        self.assertIn("<redacted>", result["error"])
+
+    def test_the_chain_stops_at_its_budget(self):
+        timeouts = []
+
+        def open_request(request, timeout=None):
+            timeouts.append(timeout)
+            time.sleep(timeout)
+            raise socket.timeout("timed out")
+
+        providers = [
+            {
+                "name": "slow",
+                "url": "https://one.test/v1",
+                "model": "m",
+                "timeoutSeconds": 60,
+            }
+        ]
+        started = time.time()
+        with patch.object(next_prompt.urllib.request, "urlopen", open_request):
+            result = next_prompt.predict(
+                {}, "unused", "", "unused", providers=providers, budget=1
+            )
+        elapsed = time.time() - started
+        self.assertIn("error", result)
+        self.assertEqual(result.get("kind"), "timeout")
+        self.assertLess(elapsed, 2.5, "the chain stopped at its own budget")
+        self.assertLessEqual(timeouts[0], 1.5, "one attempt fits in what is left")
+
+    def test_a_key_is_refused_over_plain_http_off_this_machine(self):
+        providers = [
+            {
+                "name": "gpu",
+                "url": "http://gpu-host:8317/v1",
+                "model": "m",
+                "apiKeyEnv": "LAPIS_TEST_KEY",
+            }
+        ]
+        with patch.dict(os.environ, {"LAPIS_TEST_KEY": "secret"}):
+            with patch.object(
+                next_prompt.urllib.request,
+                "urlopen",
+                side_effect=AssertionError("sent"),
+            ) as opened:
+                result = next_prompt.predict(
+                    {}, "unused", "", "unused", providers=providers
+                )
+        self.assertIn("plain http", result.get("error", ""))
+        opened.assert_not_called()
+
+    def test_a_key_reaches_loopback_http_and_opted_in_hosts(self):
+        for url, extra in (
+            ("http://127.0.0.1:8317/v1", {}),
+            ("http://localhost:8317/v1", {}),
+            ("http://gpu-host:8317/v1", {"allowInsecureHttp": True}),
+            ("https://gpu-host:8317/v1", {}),
+        ):
+            providers = [
+                {
+                    "name": "ep",
+                    "url": url,
+                    "model": "m",
+                    "apiKeyEnv": "LAPIS_TEST_KEY",
+                    **extra,
+                }
+            ]
+            seen = {}
+
+            class Reply:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def read(self, limit):
+                    return json.dumps(
+                        {
+                            "choices": [
+                                {
+                                    "message": {
+                                        "content": '{"candidates": [{"text": "ok", "p": 0.9}]}'
+                                    }
+                                }
+                            ]
+                        }
+                    ).encode()
+
+            def open_request(request, timeout=None):
+                seen["url"] = request.full_url
+                seen["auth"] = request.get_header("Authorization")
+                return Reply()
+
+            with patch.dict(os.environ, {"LAPIS_TEST_KEY": "secret"}):
+                with patch.object(next_prompt.urllib.request, "urlopen", open_request):
+                    result = next_prompt.predict(
+                        {}, "unused", "", "unused", providers=providers
+                    )
+            self.assertNotIn("error", result, url)
+            self.assertEqual(seen.get("auth"), "Bearer secret", url)
+
+    def test_a_lapis_config_supplies_the_order(self):
+        folder = Path(tempfile.mkdtemp(prefix="lapis-providers-"))
+        self.addCleanup(shutil.rmtree, folder)
+        config = folder / "lapis.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "nextPrompt": {
+                        "providers": [
+                            {
+                                "name": "infinity",
+                                "url": "https://one.test/v1",
+                                "model": "one",
+                                "apiKeyEnv": "ONE_KEY",
+                            },
+                            {
+                                "name": "openrouter",
+                                "url": "https://two.test/v1",
+                                "model": "two",
+                                "apiKeyEnv": "TWO_KEY",
+                            },
+                        ]
+                    }
+                }
+            )
+        )
+        with patch.dict(os.environ, {"LAPIS_CONFIG": str(config)}):
+            providers = next_prompt.config_providers()
+        self.assertEqual([p["name"] for p in providers], ["infinity", "openrouter"])
+        with patch.dict(os.environ, {"LAPIS_CONFIG": str(folder / "missing.json")}):
+            self.assertEqual(next_prompt.config_providers(), [])
+
+
 class AcceptanceTests(unittest.TestCase):
     """The acceptance rate counts offers seen on screen, not every guess."""
 
@@ -1044,20 +1516,18 @@ class AcceptanceTests(unittest.TestCase):
         )
         self.assertEqual(bounded["failed"], {"context: helper failed": 100})
 
-    def test_next_message_policy_gates_before_go_and_stops_at_first_match(self):
+    def test_next_message_policy_decides_the_agents_mode_first(self):
         policy = " ".join(next_prompt.SYSTEM.split())
-        self.assertIn("stop at the first item that applies", policy)
-        gates = policy.index("spend money")
-        answer = policy.index("pick an option")
-        uncommitted = policy.index("Work is uncommitted")
-        self.assertLess(gates, answer)
-        self.assertLess(answer, uncommitted)
-        plain_go = policy.index('asks for a plain "go"')
-        follow_up = policy.index("answered a plain question")
-        watcher = policy.index("A watcher or notification")
-        self.assertLess(uncommitted, plain_go)
-        self.assertLess(follow_up, watcher)
-        self.assertNotIn("before anything else", policy)
+        self.assertIn("Write the message they will most likely send next", policy)
+        self.assertIn("not the ideal message", policy)
+        self.assertIn("The agent's latest reply decides the likely mode", policy)
+        question = policy.index("a question, a choice")
+        result = policy.index("a result")
+        plan = policy.index("a plan or a list")
+        self.assertLess(question, result)
+        self.assertLess(result, plan)
+        self.assertIn("Do not start the next work item", policy)
+        self.assertIn("Do not repeat the plan", policy)
 
     def test_summarize_preserves_top_scored_unknown(self):
         sys.path.insert(0, str(ROOT / "scripts"))

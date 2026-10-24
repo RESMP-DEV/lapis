@@ -11,7 +11,10 @@ Standard library only; Python 3.9 or newer.
 
 import argparse
 import glob
+import http.client
+import ipaddress
 import json
+import urllib.parse
 import math
 import os
 import random
@@ -21,6 +24,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 
 # Tags and notes the CLIs add as user turns, which nobody typed. Tag notes are
@@ -104,6 +109,19 @@ RETRIEVED = 6
 INDEX_DAYS = 60
 INDEX_SECONDS = 3.0
 INDEX_NAME = "next_prompt_pairs.json"
+# Ordered OpenAI-compatible providers (`nextPrompt.providers`), tried in
+# order: a local or private endpoint first, then a hosted fallback. The chain
+# replaces the CLI for the guesses it is configured on; an unreachable host,
+# a missing key or an HTTP error moves to the next at once, an unreadable
+# answer is asked once more on the same provider.
+PROVIDER_LIMIT = 8
+PROVIDER_MAX_TOKENS = 4096
+# One provider attempt, and the whole chain. Both stay inside the desktop's
+# predict budget (180 s), so a slow provider cannot be cut off mid-chain by
+# the watchdog that kills the helper.
+PROVIDER_TIMEOUT_SECONDS = 60
+PROVIDER_BUDGET_SECONDS = 150
+ENV_FILE = os.path.expanduser("~/.env_vars")
 
 
 def whole_note(text):
@@ -583,38 +601,21 @@ priors, tone and habits.
 
 You get one agent's conversation up to its latest reply, what its terminal shows
 now, what every other agent is doing, the person's latest prompts to other agents,
-and the time. Write
-the message they should send next: what the best version of them, holding
-their standing instructions, would type, in their style (length, casing,
-voice-typing quirks). Not their habit: they often poll for status, change
-subject past an open question, or wave through work that is not committed.
-Check the agent's latest reply and stop at the first item that applies:
-1. It asks them to spend money, touch prod, kill a GPU job, decide something
-   legal, or send a message as them: do not approve it. Name the gate.
-2. It asks them to pick an option or confirm a name: answer that as they
-   would say it. A bare "go" or "yes" does not answer a choice. Do not invent
-   the choice when the reply does not show it; return no candidate when only
-   they can decide.
-3. Work is uncommitted, unpushed or unlogged: say to commit it (or push, or
-   log it).
-4. A lane, GPU, host or agent is named as idle or waiting: put it to work on
-   the next independent task, or say why not.
-5. It claims done, fixed or verified with no artifact (commit, result file,
-   screenshot, number): ask for the artifact.
-6. The same failure repeated, or a loop is slow: order the one concrete fix,
-   such as finding the cause before relaunching.
-7. Long work with no loop time or ETA: ask for one in every update.
-8. It measured a keep or discard: the next experiment, or "go"; never
-   re-argue the number.
-9. It answered a plain question with nothing pending: the natural follow-up,
-   not "go".
-10. A watcher or notification already owns the wait, and nothing above
-   applies: the shortest acknowledgement, never a status poll.
-11. It asks for a plain "go" and nothing above applies: "go" plus at most one
-   instruction, never a restatement of the agent's plan.
-Keep it short when short does the job. Give the probability that they would
-send this message, or one with the same effect on the agent; be calibrated,
-not hopeful.
+and the time. Write the message they will most likely send next, in their style (length,
+casing, voice-typing quirks), not the ideal message. Their habits matter:
+they often poll for status, change the subject past an open question, or wave
+through work that is not committed.
+
+The agent's latest reply decides the likely mode:
+- a question, a choice, or a wait for their answer: answer it, or ask a
+  clarifying question. Do not start the next work item.
+- a result: approve, correct it, ask for the artifact, or start a new task.
+- a plan or a list of next steps: ask for status or why, or choose a
+  different step. Do not repeat the plan.
+
+Keep it short when short does the job. Give the probability they would send
+this message, or one with the same effect on the agent; be calibrated, not
+hopeful.
 
 Also judge whether the agent needs the person now ("attention"):
 - "needs": it asked a question, needs a decision or approval, or is blocked
@@ -768,6 +769,169 @@ def parse(text):
 
 
 ATTENTION = ("needs", "steer", "fyi")
+
+
+def provider_key(provider):
+    """The provider's key from the process environment, then ~/.env_vars."""
+    name = str(provider.get("apiKeyEnv", "")).strip()
+    if not name:
+        return ""
+    value = os.environ.get(name)
+    if value:
+        return value.strip()
+    try:
+        with open(ENV_FILE, encoding="utf-8", errors="replace") as file:
+            for raw in file:
+                line = raw.strip()
+                if line.startswith("export "):
+                    line = line[7:].strip()
+                if line.startswith(name + "="):
+                    return line.split("=", 1)[1].strip().strip("\"'")
+    except OSError:
+        pass
+    return ""
+
+
+def provider_name(provider):
+    return str(
+        provider.get("name")
+        or provider.get("model")
+        or provider.get("url")
+        or "provider"
+    ).strip()[:40]
+
+
+def clean_providers(value):
+    """A validated, bounded provider list; invalid entries are dropped."""
+    if not isinstance(value, list):
+        return []
+    cleaned = []
+    for entry in value[:PROVIDER_LIMIT]:
+        if not isinstance(entry, dict):
+            continue
+        url = str(entry.get("url", "")).strip()[:300]
+        model = str(entry.get("model", "")).strip()[:100]
+        if not url.startswith(("http://", "https://")) or not model:
+            continue
+        provider = {
+            "url": url,
+            "model": model,
+            "name": str(entry.get("name") or model).strip()[:40],
+            "timeoutSeconds": 30,
+            "maxTokens": PROVIDER_MAX_TOKENS,
+            "temperature": 0.0,
+        }
+        env = str(entry.get("apiKeyEnv", "")).strip()[:80]
+        if env:
+            provider["apiKeyEnv"] = env
+        if entry.get("allowInsecureHttp") is True:
+            provider["allowInsecureHttp"] = True
+        for key, low, high in (
+            ("timeoutSeconds", 1, PROVIDER_TIMEOUT_SECONDS),
+            ("maxTokens", 128, 8192),
+        ):
+            number = entry.get(key)
+            if isinstance(number, (int, float)) and not isinstance(number, bool):
+                # Rounded, not truncated, so a fractional setting means the
+                # same thing here as in the desktop's own parsing.
+                provider[key] = max(low, min(high, int(number + 0.5)))
+        temperature = entry.get("temperature")
+        if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
+            provider["temperature"] = max(0.0, min(2.0, float(temperature)))
+        cleaned.append(provider)
+    return cleaned
+
+
+def config_providers():
+    """`nextPrompt.providers` from lapis.json, when no chain was passed."""
+    explicit = os.environ.get("LAPIS_CONFIG")
+    home = os.environ.get("LAPIS_HOME") or os.path.expanduser("~/.lapis")
+    path = explicit or os.path.join(home, "lapis.json")
+    try:
+        with open(path, encoding="utf-8") as file:
+            config = json.load(file)
+    except (OSError, ValueError):
+        return []
+    section = config.get("nextPrompt") if isinstance(config, dict) else None
+    return (
+        clean_providers(section.get("providers")) if isinstance(section, dict) else []
+    )
+
+
+def is_loopback_url(url):
+    """True for loopback endpoints, where cleartext stays on this machine."""
+    try:
+        host = (urllib.parse.urlsplit(url).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    if host in ("localhost",):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def require_secure_key_transport(provider):
+    """Refuse to send a key over cleartext to a non-loopback host.
+
+    A keyed http:// endpoint off this machine would expose the bearer token
+    and the prompt text to the network path. Loopback endpoints, keyless
+    requests and https:// endpoints are unchanged; allowInsecureHttp opts a
+    provider into the cleartext route explicitly.
+    """
+    url = provider.get("url", "")
+    if (
+        url.startswith("http://")
+        and not is_loopback_url(url)
+        and provider.get("allowInsecureHttp") is not True
+    ):
+        raise RuntimeError("refusing to send the key over plain http")
+
+
+def ask_provider(provider, system, prompt, timeout=None):
+    """One answer from a configured OpenAI-compatible provider."""
+    key = provider_key(provider)
+    if provider.get("apiKeyEnv") and not key:
+        raise RuntimeError("missing credential " + provider["apiKeyEnv"])
+    body = {
+        "model": provider["model"],
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": provider.get("temperature", 0.0),
+        "max_tokens": provider.get("maxTokens", PROVIDER_MAX_TOKENS),
+    }
+    request = urllib.request.Request(
+        provider["url"].rstrip("/") + "/chat/completions",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    if key:
+        require_secure_key_transport(provider)
+        # Unredirected: a 301, 302 or 303 would otherwise carry the bearer
+        # token to the redirect's host.
+        request.add_unredirected_header("Authorization", "Bearer " + key)
+    if timeout is None:
+        timeout = provider.get("timeoutSeconds", PROVIDER_TIMEOUT_SECONDS)
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        payload = json.loads(response.read(1 << 20))
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("malformed response: no choices")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("malformed response: no message content")
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    raw_cost = usage.get("cost", 0)
+    cost = (
+        float(raw_cost)
+        if isinstance(raw_cost, (int, float)) and not isinstance(raw_cost, bool)
+        else 0
+    )
+    return content.strip(), cost
 
 
 def ask_endpoint(system, prompt, endpoint, model, timeout=60):
@@ -973,8 +1137,80 @@ def spoken(text):
     return words
 
 
+def predict_providers(
+    system, prompt, providers, arm, started, budget=PROVIDER_BUDGET_SECONDS
+):
+    """The first configured provider with a readable answer, in order.
+
+    The chain shares the desktop's predict budget: when the budget is spent
+    it stops asking providers, so a slow provider is cut short by the helper
+    instead of by the watchdog that kills it.
+    """
+    errors = []
+    deadline = started + budget
+    for provider in providers:
+        name = provider_name(provider)
+        for _ in range(2):
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                errors.append((name, RuntimeError("the provider chain timed out")))
+                break
+            timeout = provider.get("timeoutSeconds", PROVIDER_TIMEOUT_SECONDS)
+            try:
+                try:
+                    timeout = min(float(timeout), remaining)
+                except (TypeError, ValueError):
+                    timeout = remaining
+                text, cost = ask_provider(provider, system, prompt, timeout=timeout)
+            except ValueError as error:
+                # Malformed JSON or an empty completion: one repair attempt on
+                # this provider before the chain moves on.
+                errors.append((name, error))
+                continue
+            except (
+                OSError,
+                KeyError,
+                RuntimeError,
+                http.client.HTTPException,
+            ) as error:
+                # Transport, auth and service failures move on at once.
+                errors.append((name, error))
+                break
+            try:
+                result = parse(text)
+                if not result["candidates"]:
+                    raise ValueError("no candidates in provider response")
+            except (ValueError, KeyError, TypeError, AttributeError) as error:
+                errors.append((name, error))
+                continue
+            result["ms"] = int((time.time() - started) * 1000)
+            result["cost"] = cost
+            result["context_arm"] = arm
+            result["provider"] = name
+            result["model"] = provider.get("model", "")
+            return result
+        if time.time() >= deadline:
+            break
+    if not errors:
+        return {"error": "no providers", "kind": "other"}
+    result = failure(errors[-1][1])
+    # Every entry is cleaned the way the CLI route cleans its own failure.
+    result["error"] = " | ".join(
+        "{}: {}".format(name, failure(error)["error"]) for name, error in errors
+    )[:160]
+    return result
+
+
 def predict(
-    bundle, model, effort="", claude="claude", endpoint="", style="", arm="base"
+    bundle,
+    model,
+    effort="",
+    claude="claude",
+    endpoint="",
+    style="",
+    arm="base",
+    providers=None,
+    budget=PROVIDER_BUDGET_SECONDS,
 ):
     if style == "personal":
         # The fine-tuned model writes the message itself: no JSON, no
@@ -1010,6 +1246,8 @@ def predict(
             files, reply, bundle.get("context", {}).get("conversation", "")
         )
     prompt = render(bundle, arm=arm, retrieved=retrieved)
+    if providers:
+        return predict_providers(system, prompt, providers, arm, started, budget)
     last = None
     for _ in range(2):
         try:
@@ -1042,6 +1280,13 @@ def predict(
 
 def command_predict(arguments):
     bundle = json.loads(sys.stdin.readline())
+    if arguments.providers is None:
+        providers = config_providers()
+    else:
+        try:
+            providers = clean_providers(json.loads(arguments.providers))
+        except (TypeError, ValueError):
+            providers = []
     return predict(
         bundle,
         arguments.model,
@@ -1050,6 +1295,8 @@ def command_predict(arguments):
         arguments.endpoint,
         arguments.style,
         arguments.context_arm,
+        providers,
+        arguments.budget_seconds,
     )
 
 
@@ -1079,6 +1326,13 @@ def main(argv=None):
     # "personal": the local fine-tuned model's own plain-text format.
     predict_mode.add_argument("--style", default="")
     predict_mode.add_argument("--context-arm", choices=CONTEXT_ARMS, default="base")
+    # A JSON array of OpenAI-compatible endpoints, tried in order. Absent:
+    # nextPrompt.providers from lapis.json; `[]`: the CLI.
+    predict_mode.add_argument("--providers", default=None)
+    # The whole chain's share of the caller's time budget, in seconds.
+    predict_mode.add_argument(
+        "--budget-seconds", type=int, default=PROVIDER_BUDGET_SECONDS
+    )
     arguments = parser.parse_args(argv)
     handler = {
         "context": command_context,

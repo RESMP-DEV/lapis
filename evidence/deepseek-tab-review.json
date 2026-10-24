@@ -1,0 +1,198 @@
+{
+  "schema": "lapis.qa-receipt/1",
+  "recorded_at": "2026-10-23T22:35:59Z",
+  "scope": "Whether Infinity's DeepSeek-V4.1-Flash-1017 endpoint, reached through claude-infinity and omp-infinity, can replace Claude Opus 5.5 for lapis's next-prompt (Tab) guesses and for agent tabs. Model behavior and CLI integration only; no GUI, attention-protocol, long-run or 32-session load qualification.",
+  "source": {
+    "base": "10751d7 (main)",
+    "branch": "main (the merge of RESMP-DEV/feature/ultratab-m1, PR #117)",
+    "head": "10751d7",
+    "dirty": true,
+    "dirty_note": "lapis.json was already modified by the operator"
+  },
+  "tools": {
+    "claude_code": "2.1.309",
+    "omp": "18.7.0",
+    "baseline": "claude-opus-5-5 on a remote Mac, Claude Code 2.1.306",
+    "candidate": "Infatoshi/DeepSeek-V4.1-Flash-1017-MXFP4-heretic served by vLLM on 4x B300, 300k context",
+    "candidate_clients": [
+      "claude-infinity (Claude Code print mode)",
+      "omp-infinity (omp print mode)"
+    ]
+  },
+  "method": {
+    "tab_guesses": "55 prompts sampled from the operator's local interactive Claude Code and Codex transcripts since 2026-09-15 (seed 17, 3775 eligible). The system prompt, user turn, parse and metrics are apps/desktop/src/next_prompt.py and the replay logic in scripts/next_prompt_eval.py. Each route produced up to three candidates, graded blind with the existing 0/1/2 rubric. The grading was batched, not one call per prompt: scripts/next_prompt_eval.py's judge() sends eight items (prompts) per Opus call and runs four calls at a time, so 55 prompts take seven calls and a prompt's candidates are graded beside seven other prompts'. Top-1 sendable means the judge scored the shown guess 2.",
+    "tab_guesses_source": "The aggregate table below was copied from build/reports/next-prompt/deepseek-routes-20261023T105407.json. That report is not in this checkout and the invocation that produced it is not recorded here, so neither the batching nor the per-prompt blindness of that run can be re-derived from the repository. Nothing in this receipt re-measures the candidate.",
+    "agent_tasks": "Two verified tasks in fresh directories: implement merge_intervals and parse_duration to docstrings, and fix an infinite-loop binary search. Each run was followed by an independent python3 check.py; both printed PASS. Times are wall clock for the whole CLI run, including tool calls.",
+    "hooks": "A PostToolUse and Stop hook wrote to a file while the agent ran one Bash command. Tested through the stock claude-infinity, the stock wrapper with a lapis-style trailing --settings, a merged-settings wrapper, and a CLAUDE_CONFIG_DIR profile with the endpoint env plus a lapis-style --settings."
+  },
+  "checks": [
+    {
+      "name": "tab_guesses (55 sampled prompts, three routes, blind Opus judge)",
+      "result": "55 of 55 prompts answered on every route. Opus 5.5 top-1 sendable 10/55 (18.2%), deepseek-claude 8/55 (14.5%), deepseek-omp 8/55 (14.5%). Paired discordant counts 2 versus 0 for deepseek-claude (exact McNemar p=0.5) and 3 versus 1 for deepseek-omp (exact McNemar p=0.625): neither difference is significant at n=55."
+    },
+    {
+      "name": "agent_tasks (two tasks per route, each checked by an independent python3 check.py)",
+      "result": "all six runs printed PASS: implement 20.8 s (Opus), 4.6 s (deepseek-claude), 3.5 s (deepseek-omp); debug 8.4 s (Opus), 3.0 s (deepseek-claude), 2.6 s (deepseek-omp)."
+    },
+    {
+      "name": "hooks (PostToolUse and Stop through four wrapper shapes)",
+      "result": "stock wrapper with hooks from the config dir PASS (1.3 s); stock wrapper with a lapis-style trailing --settings FAIL (the trailing --settings replaced the wrapper's apiKeyHelper settings and Claude reported the selected model unavailable); merged-settings wrapper with a lapis-style --settings PASS (1.9 s); CLAUDE_CONFIG_DIR endpoint profile with a lapis-style --settings PASS for Stop (the Bash call correctly waited for approval in print mode, so no PostToolUse without an approval path)."
+    }
+  ],
+  "tab_guesses": {
+    "sampled": 55,
+    "graded": 55,
+    "composition": {
+      "claude_transcripts": 51,
+      "codex_transcripts": 4,
+      "categories": {
+        "other": 6,
+        "question": 12,
+        "correct": 5,
+        "ship": 5,
+        "new": 13,
+        "fix": 1,
+        "approve": 10,
+        "status": 3
+      },
+      "short_prompts_4_words_or_less": 17
+    },
+    "routes": {
+      "opus-5.5": {
+        "answered": 55,
+        "missing": 0,
+        "top1_sendable": 0.182,
+        "top1_intent": 0.345,
+        "top3_sendable": 0.236,
+        "top3_intent": 0.473,
+        "at_p40_shown": 19,
+        "at_p40_sendable": 0.368,
+        "median_wall_ms": 4193,
+        "p90_wall_ms": 5426
+      },
+      "deepseek-claude": {
+        "answered": 55,
+        "missing": 0,
+        "top1_sendable": 0.145,
+        "top1_intent": 0.327,
+        "top3_sendable": 0.164,
+        "top3_intent": 0.4,
+        "at_p40_shown": 14,
+        "at_p40_sendable": 0.357,
+        "median_wall_ms": 3291,
+        "p90_wall_ms": 4320
+      },
+      "deepseek-omp": {
+        "answered": 55,
+        "missing": 0,
+        "top1_sendable": 0.145,
+        "top1_intent": 0.327,
+        "top3_sendable": 0.164,
+        "top3_intent": 0.418,
+        "at_p40_shown": 13,
+        "at_p40_sendable": 0.462,
+        "median_wall_ms": 3002,
+        "p90_wall_ms": 4109
+      }
+    },
+    "paired_with_opus": {
+      "deepseek-claude": {
+        "both_sendable": 8,
+        "only_opus_sendable": 2,
+        "only_this_sendable": 0,
+        "discordant": "2 versus 0, exact McNemar p=0.5"
+      },
+      "deepseek-omp": {
+        "both_sendable": 7,
+        "only_opus_sendable": 3,
+        "only_this_sendable": 1,
+        "discordant": "3 versus 1, exact McNemar p=0.625"
+      }
+    },
+    "action_prompts": {
+      "count": 21,
+      "opus-5.5": {
+        "sendable": 8,
+        "intent": 12
+      },
+      "deepseek-claude": {
+        "sendable": 7,
+        "intent": 13
+      },
+      "deepseek-omp": {
+        "sendable": 7,
+        "intent": 11
+      }
+    },
+    "judge": "Opus 5.5 graded all routes blind. Its preference for its own phrasing biases against the candidate. deepseek-claude added no sendable top guess Opus did not have (0 against 2 Opus-only); deepseek-omp added one sendable top guess Opus did not have, against 3 Opus-only wins.",
+    "report": "build/reports/next-prompt/deepseek-routes-20261023T105407.json"
+  },
+  "agent_tasks": {
+    "implement": [
+      {
+        "route": "opus-5.5",
+        "seconds": 20.8,
+        "verified": true
+      },
+      {
+        "route": "deepseek-claude",
+        "seconds": 4.6,
+        "verified": true
+      },
+      {
+        "route": "deepseek-omp",
+        "seconds": 3.5,
+        "verified": true
+      }
+    ],
+    "debug": [
+      {
+        "route": "opus-5.5",
+        "seconds": 8.4,
+        "verified": true
+      },
+      {
+        "route": "deepseek-claude",
+        "seconds": 3.0,
+        "verified": true
+      },
+      {
+        "route": "deepseek-omp",
+        "seconds": 2.6,
+        "verified": true
+      }
+    ],
+    "reports": [
+      "build/reports/next-prompt/tab-agent-matrix.json",
+      "build/reports/next-prompt/tab-agent-search.json"
+    ]
+  },
+  "hooks": {
+    "stock_wrapper_with_hooks_from_config_dir": "PASS: PostToolUse and Stop fired, 1.3 s",
+    "stock_wrapper_with_lapis_style_settings": "FAIL: the trailing --settings replaced the wrapper's apiKeyHelper settings; Claude reported the selected model unavailable",
+    "merged_settings_wrapper_with_lapis_style_settings": "PASS: PostToolUse and Stop fired, 1.9 s",
+    "config_dir_endpoint_profile_with_lapis_settings": "PASS: Stop fired; the Bash call correctly waited for approval in print mode (no PostToolUse without an approval path)"
+  },
+  "findings": [
+    "Tab guesses: deepseek-claude top-1 sendable 8/55 (14.5%) and deepseek-omp 8/55 (14.5%) versus Opus 10/55 (18.2%). The paired discordant counts are 2 versus 0 for deepseek-claude (exact McNemar p=0.5) and 3 versus 1 for deepseek-omp (exact McNemar p=0.625); neither difference is significant at n=55. On action prompts (approve/ship/fix/correct) Opus is 8/21 sendable and 12/21 intent, deepseek-claude 7/21 and 13/21, deepseek-omp 7/21 and 11/21.",
+    "Every sendable deepseek-claude guess was also sendable for Opus: that route added no unique win (0 against 2 Opus-only). deepseek-omp added one unique sendable win against 3 Opus-only wins, so the no-unique-win result holds for deepseek-claude only. The misses are near-misses on long, new instructions, where the candidate tends to over-specify or answer a related question.",
+    "Latency: candidate median 3.0 to 3.3 s, Opus 4.2 s (p90 4.1 to 4.3 s versus 5.4 s) on the same prompts. The Opus baseline ran over ssh on a remote Mac because this Mac's own Claude OAuth session was expired; local Opus calls on a 25k-character prompt took up to 194 s on the available local account.",
+    "Agent tasks: both candidate clients solved both tasks and passed independent verification; 2.6 to 4.6 s versus 8.4 to 20.8 s for Opus. One task pair is not a broad coding-quality claim.",
+    "Agent attention: Claude hooks fire on the DeepSeek backend. The stock claude-infinity cannot be used unchanged in a lapis Claude tab because lapis's hook adapter passes its own --settings, which replaces the wrapper's endpoint auth; a 20-line merge fixes it and was verified.",
+    "The wrapper hardcodes --permission-mode bypassPermissions, so a tab using it never raises a permission request. lapis resolves the Claude harness by the command name claude, so the wrapper also needs an absolute-path shim rather than replacing claude on PATH (the wrapper itself execs claude).",
+    "omp is a lapis terminal-adapter harness, not a Claude hook adapter. It runs and edits correctly, but Claude's request/finished-turn attention protocol does not apply."
+  ],
+  "not_run": [
+    "The live lapis desktop with these clients, including Tab presentation, Ultra Tab cards and native input.",
+    "Attention delivery through the real session service with the DeepSeek backend.",
+    "Long-running or heavy multi-file agent work, memory, and 8/32-session workload.",
+    "Ultra Tab composed-card quality under the endpoint; only the next-prompt path was measured.",
+    "A local Opus 5.5 baseline under the Mac's own plan (OAuth expired during the test)."
+  ],
+  "limitations": [
+    "The raw report behind the table is not in this checkout, so the aggregate numbers and the per-prompt blindness they rest on cannot be re-derived from the repository.",
+    "The grading batches eight prompts per judge call, so a prompt's candidates are graded beside seven other prompts'; only the routes are blind to each other within a call.",
+    "55 prompts and 21 action prompts are a screen, not a release gate.",
+    "One judge model, and it is the baseline model being compared against."
+  ]
+}
