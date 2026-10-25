@@ -17,31 +17,58 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from check_cli_launch import (
-    ATTENTION_DECISION,
-    ATTENTION_RETRY,
-    ATTENTION_SNAPSHOT,
-    SNAPSHOT,
-    STATUS,
-    TEXT,
-    VERSION,
-    CheckError,
-    FrameDeadline,
-    Service,
-    decode_snapshot,
-    decode_attention_snapshot,
-    require,
-)
-from check_codex_attention import (
-    MODEL,
-    Client,
-    approved_fixture,
-    probe_configuration_arguments,
-    trust_fixture_directory,
-)
-from codex_probe_transport import UnixWebSocketTransport
-from probe_codex_attention import initialize
-from probe_terminal import run_process
+if __package__:
+    from .check_cli_launch import (
+        ATTENTION_DECISION,
+        ATTENTION_RETRY,
+        ATTENTION_SNAPSHOT,
+        SNAPSHOT,
+        STATUS,
+        TEXT,
+        VERSION,
+        CheckError,
+        FrameDeadline,
+        Service,
+        decode_snapshot,
+        decode_attention_snapshot,
+        require,
+    )
+    from .check_codex_attention import (
+        MODEL,
+        Client,
+        approved_fixture,
+        probe_configuration_arguments,
+        trust_fixture_directory,
+    )
+    from .codex_probe_transport import UnixWebSocketTransport
+    from .probe_codex_attention import initialize
+    from .probe_terminal import run_process
+else:
+    from check_cli_launch import (
+        ATTENTION_DECISION,
+        ATTENTION_RETRY,
+        ATTENTION_SNAPSHOT,
+        SNAPSHOT,
+        STATUS,
+        TEXT,
+        VERSION,
+        CheckError,
+        FrameDeadline,
+        Service,
+        decode_snapshot,
+        decode_attention_snapshot,
+        require,
+    )
+    from check_codex_attention import (
+        MODEL,
+        Client,
+        approved_fixture,
+        probe_configuration_arguments,
+        trust_fixture_directory,
+    )
+    from codex_probe_transport import UnixWebSocketTransport
+    from probe_codex_attention import initialize
+    from probe_terminal import run_process
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -1042,6 +1069,7 @@ def main():
     args.build_dir = args.build_dir.resolve()
     args.output = args.output.resolve()
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.unlink(missing_ok=True)
     receipt = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "checks": [],

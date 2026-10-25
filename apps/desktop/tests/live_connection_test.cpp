@@ -1,4 +1,5 @@
 #include "app_paths.hpp"
+#include "birth_route.hpp"
 #include "live_connection.hpp"
 #include "session_descriptor.hpp"
 #include "transport/local_protocol.hpp"
@@ -25,6 +26,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 namespace wire = lapis::session::wire;
@@ -33,11 +35,64 @@ using lapis::desktop::tests::settle;
 using lapis::desktop::tests::until;
 using Fixture = lapis::desktop::tests::WireFixture;
 using Peer = lapis::desktop::tests::WirePeer;
+using lapis::desktop::BirthRequest;
 using lapis::desktop::ServiceLaunchRequest;
 using lapis::desktop::SessionPreview;
+using lapis::desktop::SupervisorBirthRoute;
 using lapis::session::DescriptorStore;
 using lapis::session::DescriptorTicket;
 // The first row's text, blanks trimmed.
+void write_control_json(QLocalSocket* socket, const QJsonObject& root) {
+    const auto payload = QJsonDocument{root}.toJson(QJsonDocument::Compact);
+    const quint32 length = static_cast<quint32>(payload.size());
+    QByteArray frame;
+    frame.append(static_cast<char>((length >> 24U) & 0xffU));
+    frame.append(static_cast<char>((length >> 16U) & 0xffU));
+    frame.append(static_cast<char>((length >> 8U) & 0xffU));
+    frame.append(static_cast<char>(length & 0xffU));
+    frame.append(payload);
+    require(socket->write(frame) == frame.size() && socket->waitForBytesWritten(5000),
+            "Could not write supervisor fixture reply");
+}
+
+class BirthControlService final {
+  public:
+    BirthControlService(const QString& endpoint,
+                        std::function<QJsonObject(const QJsonObject&)> responder)
+        : responder_{std::move(responder)} {
+        require(server_.listen(endpoint), "Supervisor fixture control listen failed");
+        QObject::connect(&server_, &QLocalServer::newConnection, &server_, [this] {
+            auto* socket = server_.nextPendingConnection();
+            peers_.push_back(socket);
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [this, socket] {
+                buffer(socket) += socket->readAll();
+                const auto& bytes = buffer(socket);
+                if (bytes.size() < 4)
+                    return;
+                const quint32 length =
+                    static_cast<quint32>(static_cast<unsigned char>(bytes[0])) << 24U |
+                    static_cast<quint32>(static_cast<unsigned char>(bytes[1])) << 16U |
+                    static_cast<quint32>(static_cast<unsigned char>(bytes[2])) << 8U |
+                    static_cast<quint32>(static_cast<unsigned char>(bytes[3]));
+                if (length == 0 || bytes.size() < 4 + static_cast<int>(length))
+                    return;
+                const auto document =
+                    QJsonDocument::fromJson(bytes.mid(4, static_cast<int>(length)));
+                require(document.isObject(), "Invalid supervisor birth fixture request");
+                write_control_json(socket, responder_(document.object()));
+            });
+        });
+    }
+
+  private:
+    QByteArray& buffer(QLocalSocket* socket) { return buffers_[socket]; }
+
+    QLocalServer server_;
+    std::function<QJsonObject(const QJsonObject&)> responder_;
+    std::vector<QLocalSocket*> peers_;
+    QHash<QLocalSocket*, QByteArray> buffers_;
+};
+
 std::string first_row(const lapis::session::TerminalSnapshot& snapshot) {
     std::string text;
     for (std::size_t column = 0; column < snapshot.size.columns; ++column) {
@@ -400,6 +455,95 @@ void handshake_and_reconnect() {
     require(lapis::session::read_descriptor(f.endpoint, fingerprint) == f.identity,
             "Stale frame changed saved identity");
 }
+// A transient PTY backpressure refusal is not a terminal session failure.
+// The attachment stays usable so the user can retry the input.
+void supervisor_birth_route_refuses_environment_and_rejection_is_terminal() {
+    Fixture f;
+    const QString control_endpoint =
+        QDir(f.directory.path()).filePath(QStringLiteral("supervisor.sock"));
+    QJsonObject observed;
+    BirthControlService control{control_endpoint, [&](const QJsonObject& request) {
+                                    observed = request;
+                                    return QJsonObject{
+                                        {QStringLiteral("version"), 1},
+                                        {QStringLiteral("status"), QStringLiteral("rejected")}};
+                                }};
+
+    SupervisorBirthRoute refusing_environment{control_endpoint, 5000};
+    BirthRequest override_request;
+    override_request.launch = f.launch;
+    override_request.environment.insert(QStringLiteral("LAPIS_TEST"), QStringLiteral("1"));
+    bool refused = false;
+    try {
+        static_cast<void>(refusing_environment.birth(override_request));
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    require(refused && !observed.contains(QStringLiteral("action")),
+            "Supervisor birth admitted an environment override");
+
+    auto route = std::make_unique<SupervisorBirthRoute>(control_endpoint, 5000);
+    lapis::desktop::LiveConnection connection(f.document, f.endpoint, f.launch,
+                                              wire::AttachMode::create, {}, {}, std::move(route));
+    until([&] { return f.document.connectionState() == QStringLiteral("disconnected"); });
+    settle();
+    require(observed.value(QStringLiteral("action")).toString() == QLatin1String("birth") &&
+                observed.value(QStringLiteral("endpoint")).toString() == f.endpoint &&
+                observed.value(QStringLiteral("service"))
+                    .toObject()
+                    .value(QStringLiteral("environment"))
+                    .toObject()
+                    .isEmpty(),
+            "Supervisor birth request changed its endpoint or environment contract");
+    require(!f.server.hasPendingConnections(),
+            "Supervisor birth refusal fell back to a direct launch");
+}
+
+void supervisor_birth_route_uses_the_supervisor_identity() {
+    Fixture f;
+    const QString control_endpoint =
+        QDir(f.directory.path()).filePath(QStringLiteral("supervisor.sock"));
+    const QByteArray selected_id(16, 'a');
+    const QByteArray selected_epoch(16, 'b');
+    f.identity = {selected_id, selected_epoch};
+    BirthControlService control{
+        control_endpoint, [&](const QJsonObject&) {
+            return QJsonObject{
+                {QStringLiteral("version"), 1},
+                {QStringLiteral("status"), QStringLiteral("born")},
+                {QStringLiteral("session_id"), QString::fromLatin1(selected_id.toHex())},
+                {QStringLiteral("epoch"), QString::fromLatin1(selected_epoch.toHex())}};
+        }};
+
+    auto route = std::make_unique<SupervisorBirthRoute>(control_endpoint, 5000);
+    lapis::desktop::LiveConnection connection(f.document, f.endpoint, f.launch,
+                                              wire::AttachMode::create, {}, {}, std::move(route));
+    auto service = f.accept();
+    const auto attach = f.request(service);
+    require(attach.mode == wire::AttachMode::create && attach.expected.session_id == selected_id,
+            "Supervisor-selected identity was not the attach authority");
+    f.hello(service);
+    f.screen(service);
+    require(f.document.inputReady(), "Supervisor-born session did not synchronize");
+}
+
+void overloaded_status_keeps_the_attachment() {
+    Fixture f;
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    peer.send(wire::Kind::status,
+              wire::encode_status({wire::StatusCode::overloaded,
+                                   QStringLiteral("PTY input queue full; input was not queued")}));
+    settle();
+    require(f.document.connectionState() == QStringLiteral("ready") && f.document.inputReady(),
+            "A transient overload detached a usable session");
+    require(!f.server.hasPendingConnections(),
+            "A transient overload started a reconnect the service did not ask for");
+}
+
 void missing_and_replaced() {
     Fixture f;
     f.document.startLive(f.endpoint, f.launch);
@@ -869,6 +1013,9 @@ int main(int argc, char** argv) {
         preview_decode_failure_paces_retry();
         history_browsing_and_input_gating();
         stale_reconnect_and_history_errors();
+        overloaded_status_keeps_the_attachment();
+        supervisor_birth_route_refuses_environment_and_rejection_is_terminal();
+        supervisor_birth_route_uses_the_supervisor_identity();
         history_capability_tracks_current_page();
         unqueued_history_is_rejected_immediately();
         missing_and_replaced();

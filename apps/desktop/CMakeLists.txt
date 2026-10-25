@@ -1,5 +1,6 @@
 find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network)
 find_package(Vulkan REQUIRED)
+find_package(Threads REQUIRED)
 set(CMAKE_AUTOMOC ON)
 if(APPLE)
     enable_language(OBJCXX)
@@ -41,6 +42,7 @@ add_library(lapis_desktop_view STATIC
     src/interaction_log.cpp src/interaction_log.hpp
     src/interaction_recorder.cpp src/interaction_recorder.hpp
     src/live_connection.cpp src/live_connection.hpp
+    src/birth_route.cpp src/birth_route.hpp
     src/platform/updater_process.cpp src/platform/updater_process.hpp
     src/platform/reset_journal.cpp src/platform/reset_journal.hpp
     src/platform/published_task.hpp
@@ -93,6 +95,7 @@ configure_file(src/remote_hook_relay.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generat
 target_include_directories(lapis_desktop_view PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options lapis_session_platform
     lapis_claude_adapter
+    Threads::Threads
     PUBLIC lapis_terminal lapis_attention lapis_session_launch lapis_local_protocol
         Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network)
 if(LAPIS_PACKAGE)
@@ -287,6 +290,8 @@ if(BUILD_TESTING)
     add_executable(lapis_ui_preview_tests tests/ui_preview_test.cpp tests/model_change_recorder.hpp)
     target_link_libraries(lapis_ui_preview_tests PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
     target_compile_definitions(lapis_ui_preview_tests PRIVATE LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
+    # The desktop view embeds the service path; the offscreen fixture launches it.
+    add_dependencies(lapis_ui_preview_tests lapis_session_service)
     # GUI tests run offscreen by default so they never show a window or take
     # focus on the machine someone is using; configure with
     # -DLAPIS_NATIVE_GUI_TESTS=ON for native windows, Vulkan and real focus.

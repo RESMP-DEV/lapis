@@ -14,24 +14,44 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import urlopen
 
-from check_cli_launch import ATTENTION_DECISION, Service, TEXT
-from check_codex_attention import (
-    MODEL,
-    Client,
-    RpcError,
-    probe_configuration_arguments,
-    trust_fixture_directory,
-)
-from check_service_attention import (
-    View,
-    cleanup_service,
-    decision,
-    fixture_trust_prompt,
-    initialize_fixture_owner,
-    process_groups,
-    record_launch_contract,
-)
-from codex_probe_transport import UnixWebSocketTransport
+if __package__:
+    from .check_cli_launch import ATTENTION_DECISION, Service, TEXT
+    from .check_codex_attention import (
+        MODEL,
+        Client,
+        RpcError,
+        probe_configuration_arguments,
+        trust_fixture_directory,
+    )
+    from .check_service_attention import (
+        View,
+        cleanup_service,
+        decision,
+        fixture_trust_prompt,
+        initialize_fixture_owner,
+        process_groups,
+        record_launch_contract,
+    )
+    from .codex_probe_transport import UnixWebSocketTransport
+else:
+    from check_cli_launch import ATTENTION_DECISION, Service, TEXT
+    from check_codex_attention import (
+        MODEL,
+        Client,
+        RpcError,
+        probe_configuration_arguments,
+        trust_fixture_directory,
+    )
+    from check_service_attention import (
+        View,
+        cleanup_service,
+        decision,
+        fixture_trust_prompt,
+        initialize_fixture_owner,
+        process_groups,
+        record_launch_contract,
+    )
+    from codex_probe_transport import UnixWebSocketTransport
 
 
 ROOT = Path(__file__).resolve().parents[1]

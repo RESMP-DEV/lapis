@@ -1544,11 +1544,12 @@ void TerminalSurface::resumeLiveForTyping(const QKeyEvent& event) {
 // Command-C on macOS; Control-Shift-C elsewhere, where Control-C belongs to
 // the terminal. Either copies the selection, and never reaches the agent.
 bool TerminalSurface::copySelection(const QKeyEvent& event) {
+    const auto modifiers = event.modifiers() & ~Qt::KeypadModifier;
 #ifdef Q_OS_MACOS
-    const bool copy = event.key() == Qt::Key_C && event.modifiers() == Qt::MetaModifier;
+    const bool copy = event.key() == Qt::Key_C && modifiers == Qt::MetaModifier;
 #else
     const bool copy =
-        event.key() == Qt::Key_C && event.modifiers() == (Qt::ControlModifier | Qt::ShiftModifier);
+        event.key() == Qt::Key_C && modifiers == (Qt::ControlModifier | Qt::ShiftModifier);
 #endif
     if (!copy)
         return false;
@@ -1879,8 +1880,8 @@ void TerminalSurface::filledAdmitted(const Filled& made, bool queued) {
 void TerminalSurface::sendFilled() {
     // SessionPreview::sendKey silently drops Enter in these states. Keep the
     // admitted guess armed so a later Tab can send it after history settles.
-    if (!document_ || document_->historyActive() || document_->historyRequestPending() ||
-        !document_->live() || document_->attentionPending())
+    if (!acceptsTerminalInput() || document_->historyActive() ||
+        document_->historyRequestPending() || !document_->live() || document_->attentionPending())
         return;
     const std::optional<Filled> taken = filled_;
     if (!taken || !taken->owner || taken->owner != document_)
@@ -2167,6 +2168,10 @@ QByteArray terminal_text_key(const QKeyEvent& event) {
             control = 30;
         else if (key == Qt::Key_Minus)
             control = 31;
+        else if (key == Qt::Key_Slash)
+            control = 31;
+        else if (key == Qt::Key_Question)
+            control = 127;
         if (control >= 0)
             text.append(static_cast<char>(control));
     } else if (mods.testFlag(Qt::AltModifier) && event.key() >= Qt::Key_Space &&

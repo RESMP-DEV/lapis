@@ -28,6 +28,7 @@ using attention::RequestId;
 constexpr qsizetype message_limit = qsizetype{64} * 1024;
 constexpr qsizetype details_limit = qsizetype{16} * 1024;
 constexpr qsizetype aggregate_details_limit = qsizetype{512} * 1024;
+constexpr qsizetype answers_limit = qsizetype{30} * 1024;
 constexpr std::size_t hook_run_limit = 64;
 constexpr int rpc_timeout = 10000;
 constexpr auto waiting_for_history = QLatin1String("Waiting for Codex thread history");
@@ -171,6 +172,8 @@ Request parse_request(const QJsonObject& message) {
 qsizetype details_cost(const Request& request) { return json(request.details).size(); }
 bool valid_answers(const Request& request, const QJsonObject& answers) {
     if (answers.size() != request.questions.size())
+        return false;
+    if (json(QJsonObject{{"answers", answers}}).size() > answers_limit)
         return false;
     for (const auto& value : request.questions) {
         const auto question = value.toObject();
@@ -457,41 +460,41 @@ class Observer::Impl final : public QObject {
             result.append(json(run));
         return result;
     }
-    bool decide(quint64 epoch, const RequestId& id, quint64 revision, const QString& choice,
-                const QJsonObject& answers) {
+    DecisionOutcome decide(quint64 epoch, const RequestId& id, quint64 revision,
+                           const QString& choice, const QJsonObject& answers) {
         const auto entry = requests_.find(id);
         if (!state_.ready() || !transport_ || entry == requests_.end() || epoch != state_.epoch())
-            return false;
+            return DecisionOutcome::rejected;
         const auto& request = entry->second;
         if (std::find(request.core.choices.begin(), request.core.choices.end(),
                       choice.toStdString()) == request.core.choices.end())
-            return false;
+            return DecisionOutcome::rejected;
         QJsonObject result;
         if (request.method == "item/tool/requestUserInput") {
             if (!valid_answers(request, answers))
-                return false;
+                return DecisionOutcome::rejected;
             result.insert("answers", answers);
         } else {
             if (!answers.isEmpty())
-                return false;
+                return DecisionOutcome::rejected;
             result.insert("decision", choice);
         }
         const auto bytes = json({{"id", json_id(id)}, {"result", result}});
         if (bytes.size() > message_limit)
-            return false;
+            return DecisionOutcome::rejected;
         try {
             if (!state_.respond(epoch, id, revision, choice.toStdString()))
-                return false;
+                return DecisionOutcome::rejected;
         } catch (const std::exception& error) {
             fail(QString::fromUtf8(error.what()));
-            return false;
+            return DecisionOutcome::rejected;
         }
         if (!transport_->send(bytes)) {
             fail("Codex response delivery is uncertain; reconnect before deciding again");
-            return false;
+            return DecisionOutcome::uncertain;
         }
         emit owner_.changed();
-        return true;
+        return DecisionOutcome::delivered;
     }
 
   private:
@@ -950,8 +953,8 @@ QString Observer::threadId() const { return impl_->thread_id(); }
 QJsonObject Observer::hookInventory() const { return impl_->hook_inventory(); }
 QJsonArray Observer::hookRuns() const { return impl_->hook_runs(); }
 QJsonObject Observer::details(const RequestId& id) const { return impl_->details(id); }
-bool Observer::decide(quint64 epoch, const RequestId& id, quint64 revision, const QString& choice,
-                      const QJsonObject& answers) {
+DecisionOutcome Observer::decide(quint64 epoch, const RequestId& id, quint64 revision,
+                                 const QString& choice, const QJsonObject& answers) {
     return impl_->decide(epoch, id, revision, choice, answers);
 }
 } // namespace lapis::codex

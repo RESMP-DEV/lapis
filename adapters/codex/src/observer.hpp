@@ -5,11 +5,18 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <cstdint>
 #include <lapis/session/attention.hpp>
 #include <lapis/session/observation_phase.hpp>
 #include <memory>
 
 namespace lapis::codex {
+enum class DecisionOutcome : std::uint8_t {
+    rejected = 0,
+    uncertain = 1,
+    delivered = 2,
+};
+
 // One dedicated server/TUI source. The service owns State and validates GUI
 // attachment authority before decide(). All calls and signals share its thread.
 class Observer final : public QObject {
@@ -33,16 +40,15 @@ class Observer final : public QObject {
     // Display-only bounded details: method, command/cwd or questions/options.
     [[nodiscard]] QJsonObject details(const session::attention::RequestId& id) const;
     // Validate payload and complete encoded envelope, consume the exact State
-    // token, then send once. True means queued locally, not delivered or resolved.
-    // Source resolution or explicit reconciliation determines the final outcome.
-    // False may mean rejected before consumption OR consumed with delivery
-    // uncertain. A send failure disconnects the source and retains submission;
-    // reconcile explicitly before another decision. Never automatically replay.
+    // token, then send once. Rejected means the token was not consumed.
+    // Uncertain means it was consumed but socket delivery failed; reconcile
+    // explicitly before another decision. Delivered means queued locally, not
+    // source resolution; the source still owns the final outcome. Never replay.
     // Approval choice: accept/decline/cancel. Input choice: submit; answers maps
     // question IDs to {"answers":[label or free text]}, as the source requires.
-    [[nodiscard]] bool decide(quint64 epoch, const session::attention::RequestId& id,
-                              quint64 revision, const QString& choice,
-                              const QJsonObject& answers = {});
+    [[nodiscard]] DecisionOutcome decide(quint64 epoch, const session::attention::RequestId& id,
+                                         quint64 revision, const QString& choice,
+                                         const QJsonObject& answers = {});
   signals:
     void initialized(); // Source initialized; service may start its TUI now.
     void changed();

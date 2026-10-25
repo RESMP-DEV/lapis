@@ -9,14 +9,24 @@ import tempfile
 import time
 from pathlib import Path
 
-from check_cli_launch import (
-    RESIZE,
-    SNAPSHOT,
-    TEXT,
-    Service,
-    decode_snapshot,
-    require,
-)
+if __package__:
+    from .check_cli_launch import (
+        RESIZE,
+        SNAPSHOT,
+        TEXT,
+        Service,
+        decode_snapshot,
+        require,
+    )
+else:
+    from check_cli_launch import (
+        RESIZE,
+        SNAPSHOT,
+        TEXT,
+        Service,
+        decode_snapshot,
+        require,
+    )
 
 ROOT = Path(__file__).resolve().parents[1]
 HISTORY_REQUEST, HISTORY_PAGE = 10, 11
@@ -238,6 +248,7 @@ def main():
     )
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.unlink(missing_ok=True)
     receipt = {"schema": "lapis.history-check/1", "passed": False}
     try:
         with tempfile.TemporaryDirectory(

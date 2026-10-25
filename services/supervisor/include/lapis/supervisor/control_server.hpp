@@ -13,7 +13,7 @@ using ControlHandler = std::function<std::string(uid_t peer_uid, const std::stri
 
 class LocalControlServer final {
   public:
-    LocalControlServer(std::string endpoint, ControlHandler handler);
+    LocalControlServer(const std::string& endpoint, ControlHandler handler);
     ~LocalControlServer();
     LocalControlServer(const LocalControlServer&) = delete;
     LocalControlServer& operator=(const LocalControlServer&) = delete;

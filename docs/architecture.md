@@ -58,7 +58,7 @@ that uses `lapis_project_options`.
 | Session wire | Internal version 6 framing with epochs, generations, history paging, and attention messages | Incompatible changes need rejection/migration tests and a private endpoint |
 | Codex route | Managed ordinary TUI with a service-owned observer and app-server backend | Observation, response, and replay capabilities are declared separately |
 | Claude route | Hook/terminal observation with explicit answers in Claude's terminal | No GUI response routing until a supported protocol is version-pinned and qualified |
-| Process birth | Experimental same-UID one-session supervisor daemon exists | The first production client is headless `lapis supervisor`; launchd and GUI routes follow it |
+| Process birth | Experimental same-UID one-session supervisor daemon exists; desktop birth is split into default `DirectBirthRoute` and explicit `SupervisorBirthRoute` seams | The first production client is headless `lapis supervisor`; launchd and GUI routes follow it, and a GUI-observed supervised session must close the order-2 gate |
 | Settings | Tracked `lapis.json` defaults plus private runtime workspace/window state | Machine-local state never becomes a portable credential or session transcript |
 | Native browser surfaces | CEF 8037 is a provisional engine candidate; no runtime is implemented | Run the isolated W0 probe first; product and service wiring wait for R1/R4 |
 
@@ -167,7 +167,12 @@ per-user supervisor owns birth and convergence; clients attach by validated
 identity. Qualify GUI close/crash/replacement, daemon SIGKILL, service death,
 login/logout, reboot, restart-storm bounds, and explicit operator disposition.
 Same-child survival and replacement with a new epoch are different outcomes and
-must be reported separately.
+must be reported separately. A supervisor daemon signal detaches the daemon and
+preserves the supervised service, its terminal child, and its ownership record;
+only an explicit authenticated stop ends the service, and only an explicit
+authenticated reset clears the private slot after no live child remains. A
+retained peer that refuses verification stays retryable and is never converted
+into an operator stop.
 
 **R2, input integrity.** Paste admission, mode-aware encoding, attachment
 identity, cancellation, and reconnect reporting stay service-owned. Candidate

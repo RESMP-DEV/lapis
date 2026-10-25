@@ -47,23 +47,26 @@ int main(int argc, char** argv) {
     QCoreApplication::setApplicationName(QStringLiteral("lapis"));
     QCommandLineParser parser;
     parser.setApplicationDescription(
-        QStringLiteral("Headless supervisor status and explicit stop client"));
+        QStringLiteral("Headless supervisor status, stop, and reset client"));
     parser.addHelpOption();
     parser.addOption({QStringLiteral("control-endpoint"),
                       QStringLiteral("Absolute supervisor control socket path"),
                       QStringLiteral("path")});
-    parser.addOption({QStringLiteral("state-directory"),
-                      QStringLiteral("Private supervisor state directory required by stop"),
-                      QStringLiteral("path")});
+    parser.addOption(
+        {QStringLiteral("state-directory"),
+         QStringLiteral("Private supervisor state directory required by stop and reset"),
+         QStringLiteral("path")});
     parser.addOption({QStringLiteral("json"), QStringLiteral("Print machine-readable JSON")});
-    parser.addPositionalArgument(QStringLiteral("command"), QStringLiteral("status | stop"));
+    parser.addPositionalArgument(QStringLiteral("command"),
+                                 QStringLiteral("status | stop | reset"));
     parser.process(application.arguments());
 
     const auto positional = parser.positionalArguments();
     const auto command = positional.isEmpty() ? QString{} : positional.first();
     if (positional.size() != 1 ||
-        (command != QLatin1String("status") && command != QLatin1String("stop"))) {
-        std::cerr << "Expected exactly one command: status or stop\n";
+        (command != QLatin1String("status") && command != QLatin1String("stop") &&
+         command != QLatin1String("reset"))) {
+        std::cerr << "Expected exactly one command: status, stop or reset\n";
         return 2;
     }
     if (!parser.isSet(QStringLiteral("control-endpoint"))) {
@@ -79,16 +82,19 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (!parser.isSet(QStringLiteral("state-directory"))) {
-            std::cerr << "--state-directory is required by stop\n";
+            std::cerr << "--state-directory is required by stop and reset\n";
             return 2;
         }
         const auto state =
             read_control_state(parser.value(QStringLiteral("state-directory")).toStdString());
-        const auto reply = send_control_request(endpoint, encode_stop_request(state));
+        const auto request = command == QLatin1String("stop") ? encode_stop_request(state)
+                                                              : encode_reset_request(state);
+        const auto reply = send_control_request(endpoint, request);
         if (parser.isSet(QStringLiteral("json")))
             std::cout << reply << '\n';
         else
-            std::cout << "supervisor stop: " << reply_status(reply) << '\n';
+            std::cout << "supervisor " << command.toStdString() << ": " << reply_status(reply)
+                      << '\n';
         return reply_status(reply) == "applied" ? 0 : 1;
     } catch (const std::exception& error) {
         std::cerr << "lapis supervisor: " << error.what() << '\n';

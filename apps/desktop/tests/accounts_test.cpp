@@ -6,10 +6,12 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
+#include <array>
 #include <iostream>
 #include <stdexcept>
 
 namespace {
+using lapis::desktop::account_credential_failure;
 using lapis::desktop::account_home_name;
 using lapis::desktop::account_load_key;
 using lapis::desktop::AccountLoad;
@@ -126,6 +128,49 @@ void linksACodexHome() {
     require(diagnostic.contains("Could not link"),
             "a failed link cannot report successful preparation");
 }
+
+void validatesHeldCredentialsWithoutLeakingThem() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "credential fixture folder");
+    const QDir root(directory.path());
+    require(root.mkpath(QStringLiteral("claude")) && root.mkpath(QStringLiteral("codex/spare")),
+            "credential fixture folders");
+    const auto write = [&root](const QString& path, const QByteArray& bytes) {
+        QFile file(root.filePath(path));
+        require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "write credential fixture");
+        require(file.write(bytes) == bytes.size(), "complete credential fixture");
+    };
+    const auto claude = QStringLiteral("claude");
+    const auto codex = QStringLiteral("codex");
+    const auto spare = QStringLiteral("spare");
+    const auto local = [&](const QString& cli) {
+        return account_credential_failure(cli, spare, root.path(), true);
+    };
+
+    for (const auto& body :
+         std::array<QByteArray, 6>{"", " leading\n", "\nleading\n", "one\ntwo\n",
+                                   QByteArray{"token\0other", 10}, QByteArray(8193, 'a')}) {
+        write(QStringLiteral("claude/spare.token"), body);
+        require(local(claude) ==
+                    QStringLiteral("Claude Code plan spare has no usable token on this Mac."),
+                "reject a Claude token the service environment cannot represent");
+    }
+    write(QStringLiteral("claude/spare.token"), QByteArrayLiteral("token-for-spare\n"));
+    require(local(claude).isEmpty(), "accept a bounded single-line Claude token");
+
+    for (const auto& body :
+         std::array<QByteArray, 4>{"", "null\n", "[]\n", QByteArray(1024 * 1024 + 1, ' ')}) {
+        write(QStringLiteral("codex/spare/auth.json"), body);
+        require(local(codex) == QStringLiteral("Codex plan spare has no usable login on this Mac."),
+                "reject a missing or malformed Codex login object");
+    }
+    write(QStringLiteral("codex/spare/auth.json"), QByteArrayLiteral("{\"token\":\"fixture\"}\n"));
+    require(local(codex).isEmpty(), "accept a bounded Codex JSON object");
+    write(QStringLiteral("claude/spare.token"), QByteArray(8193, 'a'));
+    require(account_credential_failure(claude, spare, root.path(), false) ==
+                QStringLiteral("Claude Code plan spare has no usable token."),
+            "remote diagnostics omit this Mac's location");
+}
 } // namespace
 
 int main() {
@@ -133,6 +178,7 @@ int main() {
         parsesTheConfig();
         choosesAsOmpRanksAccounts();
         linksACodexHome();
+        validatesHeldCredentialsWithoutLeakingThem();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return 1;

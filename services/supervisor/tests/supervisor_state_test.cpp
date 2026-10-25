@@ -82,6 +82,8 @@ QJsonObject control_document(ControlAction action, const std::string& epoch,
         name = QStringLiteral("start");
     else if (action == ControlAction::stop)
         name = QStringLiteral("stop");
+    else if (action == ControlAction::reset)
+        name = QStringLiteral("reset");
     else
         name = QStringLiteral("disable");
     QJsonObject result{
@@ -369,7 +371,8 @@ void fresh_registry_rejects_every_control_token() {
     auto owner = registry(storage);
     const auto epoch = owner->state().instance_epoch;
     const auto zero = repeat('0', spawn_token_hex_bytes);
-    for (const auto action : {ControlAction::start, ControlAction::stop, ControlAction::disable}) {
+    for (const auto action : {ControlAction::start, ControlAction::stop, ControlAction::disable,
+                              ControlAction::reset}) {
         const ControlRequest request{
             .instance_epoch = epoch, .token = zero, .action = action, .session = std::nullopt};
         require(owner->control(request).status == ControlStatus::unauthorized,
@@ -436,6 +439,13 @@ void control_parsing_and_authentication() {
     require(request.action == ControlAction::stop && request.instance_epoch == epoch &&
                 request.token == token && !request.session.has_value(),
             "bounded stop request");
+
+    const auto reset_bytes = json_bytes(
+        control_document(ControlAction::reset, epoch, token, QJsonValue{QJsonValue::Null}));
+    const auto reset_request = codec.decode_control(reset_bytes);
+    require(reset_request.action == ControlAction::reset && reset_request.instance_epoch == epoch &&
+                reset_request.token == token && !reset_request.session.has_value(),
+            "bounded reset request");
 
     const auto start_bytes =
         json_bytes(control_document(ControlAction::start, epoch, token, start_payload()));
@@ -505,6 +515,17 @@ void control_parsing_and_authentication() {
     missing_session.session = std::nullopt;
     require(owner->control(missing_session).status == ControlStatus::rejected,
             "start requires its session payload");
+
+    ControlRequest reset;
+    reset.instance_epoch = epoch;
+    reset.token = stopped.session->spawn_token;
+    reset.action = ControlAction::reset;
+    reset.session = std::nullopt;
+    const auto reset_outcome = owner->control(reset);
+    require(reset_outcome.status == ControlStatus::applied && !reset_outcome.state.enabled &&
+                !reset_outcome.state.session &&
+                reset_outcome.state.instance_epoch == stopped.instance_epoch,
+            "authenticated reset clears the slot and preserves the supervisor epoch");
 }
 
 } // namespace

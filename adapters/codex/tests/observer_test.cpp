@@ -25,6 +25,7 @@
 
 namespace {
 
+using lapis::codex::DecisionOutcome;
 using lapis::codex::Observer;
 using lapis::session::attention::ObservationPhase;
 using lapis::session::attention::RequestId;
@@ -508,7 +509,7 @@ void initial_binding_requires_persistent_metadata(bool temporary_first) {
                 observer.details(id).value("command") == "echo fixture",
             "authoritative replay replaces early requests with the same request ID");
     const auto revision = state.pending().at(id).revision;
-    require(observer.decide(state.epoch(), id, revision, "accept"),
+    require(observer.decide(state.epoch(), id, revision, "accept") == DecisionOutcome::delivered,
             "classified persistent request accepts an explicit response");
     require(wait_for([&] {
                 return std::any_of(
@@ -743,10 +744,12 @@ void request_id_and_answer_boundaries() {
     require(wait_for([&] { return state.pending().contains(answer_id); }),
             "answer request accepted");
     const auto revision = state.pending().at(answer_id).revision;
-    require(!observer.decide(state.epoch(), answer_id, revision, "submit", oversized) &&
+    require(observer.decide(state.epoch(), answer_id, revision, "submit", oversized) ==
+                    DecisionOutcome::rejected &&
                 !state.pending().at(answer_id).submitted,
             "oversized response is rejected before consuming its token");
-    require(observer.decide(state.epoch(), answer_id, revision, "submit", corrected),
+    require(observer.decide(state.epoch(), answer_id, revision, "submit", corrected) ==
+                DecisionOutcome::delivered,
             "corrected bounded answer reuses the unconsumed token");
     for (const auto invalid : {1.5, -1.5, 9223372036854775808.0, -9223372036854777856.0}) {
         auto request = large_approval(0);
@@ -794,7 +797,8 @@ void unsupported_approval_decisions_are_observed_only() {
                 core.choices.empty(),
             "unsupported approval choices explicitly require terminal response");
     const auto revision = state.pending().at(identifier).revision;
-    require(!observer.decide(state.epoch(), identifier, revision, QStringLiteral("accept"), {}),
+    require(observer.decide(state.epoch(), identifier, revision, QStringLiteral("accept"), {}) ==
+                DecisionOutcome::rejected,
             "unsupported approval decision is not routed");
 }
 
@@ -977,8 +981,8 @@ int run(int argc, char** argv) {
     require(observer.details(identifier).value(QStringLiteral("command")) ==
                 QStringLiteral("echo fixture"),
             "bounded approval details");
-    require(!observer.decide(state.epoch(), identifier, pending->second.revision + 1,
-                             QStringLiteral("accept")),
+    require(observer.decide(state.epoch(), identifier, pending->second.revision + 1,
+                            QStringLiteral("accept")) == DecisionOutcome::rejected,
             "stale token rejected before send");
     const QString question_id = QString::number(std::numeric_limits<std::int64_t>::max());
     const RequestId question_key{question_id.toStdString()};
@@ -1000,10 +1004,12 @@ int run(int argc, char** argv) {
             "numeric and matching string IDs coexist");
     const auto question_revision = state.pending().at(question_key).revision;
     const QJsonObject invalid{{"color", QJsonObject{{"answers", QJsonArray{"Red"}}}}};
-    require(!observer.decide(state.epoch(), question_key, question_revision, "submit", invalid),
+    require(observer.decide(state.epoch(), question_key, question_revision, "submit", invalid) ==
+                DecisionOutcome::rejected,
             "invalid option must not consume token");
     const QJsonObject answer{{"color", QJsonObject{{"answers", QJsonArray{"Blue"}}}}};
-    require(observer.decide(state.epoch(), question_key, question_revision, "submit", answer),
+    require(observer.decide(state.epoch(), question_key, question_revision, "submit", answer) ==
+                DecisionOutcome::delivered,
             "validated user answer is routed");
     require(wait_for([&] { return source.received.back().value("id") == question_id; }),
             "string ID preserved in response");
@@ -1016,7 +1022,7 @@ int run(int argc, char** argv) {
             "resolving one simultaneous request preserves the other");
     const auto before_response = source.received.size();
     require(observer.decide(state.epoch(), identifier, pending->second.revision,
-                            QStringLiteral("accept")),
+                            QStringLiteral("accept")) == DecisionOutcome::delivered,
             "decision token consumed");
     require(wait_for([&] { return source.received.size() == before_response + 1; }),
             "decision sent exactly once");
@@ -1028,8 +1034,8 @@ int run(int argc, char** argv) {
                 QStringLiteral("accept"),
             "approval response result");
     require(state.pending().at(identifier).submitted, "sending does not resolve state");
-    require(!observer.decide(state.epoch(), identifier, pending->second.revision,
-                             QStringLiteral("accept")),
+    require(observer.decide(state.epoch(), identifier, pending->second.revision,
+                            QStringLiteral("accept")) == DecisionOutcome::rejected,
             "token is one-shot");
 
     source.send(QJsonObject{

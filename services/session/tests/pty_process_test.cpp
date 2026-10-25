@@ -113,6 +113,8 @@ void resize(const QString& directory) {
     require(result.failure.isEmpty() && result.exited && result.code == 0 &&
                 result.output.contains("17 61\r\n"),
             "Interactive shell input/resize failed");
+    require(process.terminalClosed() && !process.resize({61, 17}),
+            "A closed final-drain terminal did not report resize as unavailable");
 }
 void cleanup(const QString& directory) {
     auto process = std::make_unique<PtyProcess>();

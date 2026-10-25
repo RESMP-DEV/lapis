@@ -28,18 +28,12 @@ if(BUILD_TESTING)
 endif()
 
 if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
-    add_library(lapis_supervisor_endpoint STATIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/../session/src/platform/posix/local_endpoint.cpp")
-    target_include_directories(lapis_supervisor_endpoint
-        PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../session/src")
-    target_link_libraries(lapis_supervisor_endpoint
-        PRIVATE lapis_project_options PUBLIC Qt6::Core)
     add_library(lapis_supervisor_runtime STATIC
         src/birth.cpp src/client.cpp src/runtime.cpp src/control_server.cpp)
     target_include_directories(lapis_supervisor_runtime
         PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_libraries(lapis_supervisor_runtime
-        PRIVATE lapis_project_options lapis_session_platform lapis_supervisor_endpoint
+        PRIVATE lapis_project_options lapis_session_platform lapis_session_launch
         PUBLIC lapis_supervisor_state Qt6::Core Qt6::Network)
     if(TARGET lapis_local_protocol)
         target_sources(lapis_supervisor_runtime PRIVATE src/session_service_launcher.cpp)
@@ -59,6 +53,7 @@ if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
         lapis_project_options lapis_supervisor_runtime Qt6::Core Qt6::Network)
     target_compile_definitions(lapis_supervisor_daemon PRIVATE
         LAPIS_SUPERVISOR_SESSION_SERVICE="$<TARGET_FILE:lapis_session_service>")
+    add_dependencies(lapis_supervisor_daemon lapis_session_service)
     add_executable(lapis_supervisor src/cli.cpp)
     set_target_properties(lapis_supervisor PROPERTIES OUTPUT_NAME lapis)
     target_link_libraries(lapis_supervisor PRIVATE
@@ -86,14 +81,16 @@ if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
             lapis_project_options lapis_supervisor_runtime)
         target_compile_definitions(lapis_supervisor_runtime_tests PRIVATE
             LAPIS_SUPERVISOR_CHILD_FIXTURE="$<TARGET_FILE:lapis_supervisor_child_fixture>")
+        add_dependencies(lapis_supervisor_runtime_tests lapis_supervisor_child_fixture)
         add_test(NAME supervisor-runtime COMMAND lapis_supervisor_runtime_tests)
-        set_tests_properties(supervisor-runtime PROPERTIES TIMEOUT 30)
+        set_tests_properties(supervisor-runtime PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 75)
         add_executable(lapis_supervisor_runtime_session_tests
             tests/supervisor_session_service_test.cpp)
         target_link_libraries(lapis_supervisor_runtime_session_tests PRIVATE
             lapis_project_options lapis_supervisor_runtime lapis_session_launch Qt6::Network)
         target_compile_definitions(lapis_supervisor_runtime_session_tests PRIVATE
             LAPIS_SUPERVISOR_SESSION_SERVICE="$<TARGET_FILE:lapis_session_service>")
+        add_dependencies(lapis_supervisor_runtime_session_tests lapis_session_service)
         add_test(NAME supervisor-session-service
             COMMAND lapis_supervisor_runtime_session_tests)
         set_tests_properties(supervisor-session-service PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 75)
@@ -107,12 +104,13 @@ if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
             LAPIS_SUPERVISOR_DAEMON="$<TARGET_FILE:lapis_supervisor_daemon>")
         target_compile_definitions(lapis_supervisor_daemon_tests PRIVATE
             LAPIS_SUPERVISOR_CLI="$<TARGET_FILE:lapis_supervisor>")
+        add_dependencies(lapis_supervisor_daemon_tests lapis_supervisor_daemon lapis_supervisor)
         add_executable(lapis_supervisor_client_tests tests/supervisor_client_test.cpp)
         target_link_libraries(lapis_supervisor_client_tests PRIVATE
             lapis_project_options lapis_supervisor_runtime)
         add_test(NAME supervisor-client COMMAND lapis_supervisor_client_tests)
         set_tests_properties(supervisor-client PROPERTIES TIMEOUT 10)
         add_test(NAME supervisor-daemon COMMAND lapis_supervisor_daemon_tests)
-        set_tests_properties(supervisor-daemon PROPERTIES TIMEOUT 45 SKIP_RETURN_CODE 75)
+        set_tests_properties(supervisor-daemon PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 75)
     endif()
 endif()

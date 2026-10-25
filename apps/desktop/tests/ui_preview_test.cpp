@@ -2069,6 +2069,7 @@ void check_plan_sign_in(QQuickWindow& window, lapis::desktop::PlanSignIn& signIn
     auto* dialog = window.findChild<QObject*>(QStringLiteral("planSignInDialog"));
     CHECK(dialog != nullptr);
     wait_popup(*dialog, true);
+    CHECK(window.property("inputBlocked").toBool());
     QElapsedTimer waited;
     waited.start();
     while (signIn.state() != QLatin1String("waiting") && waited.elapsed() < 10000)

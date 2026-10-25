@@ -7,10 +7,12 @@
 #include <source_location>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include <csignal>
 #include <sys/resource.h>
+#include <unistd.h>
 
 namespace {
 using namespace lapis::session;
@@ -52,11 +54,34 @@ std::size_t count_kind(const std::vector<AttentionJournal::Entry>& entries,
     return result;
 }
 
+int next_directory = 0;
+
+std::filesystem::path temporary_directory(const std::string& name) {
+    return std::filesystem::temp_directory_path() /
+           ("lapis-attention-" + name + "-" + std::to_string(::getpid()) + "-" +
+            std::to_string(++next_directory));
+}
+
+class TemporaryDirectory {
+  public:
+    explicit TemporaryDirectory(const std::string& name) : directory_{temporary_directory(name)} {
+        std::filesystem::create_directories(directory_);
+    }
+    ~TemporaryDirectory() {
+        std::error_code ignored;
+        std::filesystem::remove_all(directory_, ignored);
+    }
+    TemporaryDirectory(const TemporaryDirectory&) = delete;
+    TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
+    [[nodiscard]] const std::filesystem::path& path() const { return directory_; }
+
+  private:
+    std::filesystem::path directory_;
+};
+
 void headless_ask_decision_refusal_and_restart() {
-    const auto directory = std::filesystem::temp_directory_path() / "lapis-attention-audit";
-    std::filesystem::remove_all(directory);
-    std::filesystem::create_directories(directory);
-    const auto path = directory / "service.attention";
+    const TemporaryDirectory directory{"audit"};
+    const auto path = directory.path() / "service.attention";
     attention::State state{"session", "test"};
     state.connect(1, {true, true, true});
     const auto outcome = state.reconcile({1, 1}, {request()}, 0);
@@ -98,14 +123,11 @@ void headless_ask_decision_refusal_and_restart() {
     require(count_kind(entries, AttentionJournal::Kind::resolved,
                        AttentionJournal::Origin::agent) == 1);
     require(open_questions(entries).empty());
-    std::filesystem::remove_all(directory);
 }
 
 void delivered_decision_confirms_intent() {
-    const auto directory = std::filesystem::temp_directory_path() / "lapis-attention-delivered";
-    std::filesystem::remove_all(directory);
-    std::filesystem::create_directories(directory);
-    const auto path = directory / "delivered.attention";
+    const TemporaryDirectory directory{"delivered"};
+    const auto path = directory.path() / "delivered.attention";
     attention::State state{"session", "test"};
     state.connect(1, {true, true, true});
     require(state.reconcile({1, 1}, {request()}, 0) == attention::Outcome::applied);
@@ -116,14 +138,11 @@ void delivered_decision_confirms_intent() {
     require(!open_questions(journal.entries()).empty());
     record_delivered_decision(journal, approval());
     require(journal.entries().empty());
-    std::filesystem::remove_all(directory);
 }
 
 void unavailable_journal_fails_closed() {
-    const auto directory = std::filesystem::temp_directory_path() / "lapis-attention-locked";
-    std::filesystem::remove_all(directory);
-    std::filesystem::create_directories(directory);
-    const auto path = directory / "locked.attention";
+    const TemporaryDirectory directory{"locked"};
+    const auto path = directory.path() / "locked.attention";
     AttentionJournal leased(path);
     {
         std::unique_ptr<AttentionJournal> service_journal;
@@ -137,14 +156,11 @@ void unavailable_journal_fails_closed() {
     }
     // The decision path checks this null owner before forwarding; the test pins
     // the observable setup used by that fail-closed branch.
-    std::filesystem::remove_all(directory);
 }
 
 void append_failure_refuses_then_accepts_retry() {
-    const auto directory = std::filesystem::temp_directory_path() / "lapis-attention-failure";
-    std::filesystem::remove_all(directory);
-    std::filesystem::create_directories(directory);
-    const auto path = directory / "failure.attention";
+    const TemporaryDirectory directory{"failure"};
+    const auto path = directory.path() / "failure.attention";
     attention::State state{"session", "test"};
     state.connect(1, {true, true, true});
     require(state.reconcile({1, 1}, {request()}, 0) == attention::Outcome::applied);
@@ -191,7 +207,6 @@ void append_failure_refuses_then_accepts_retry() {
     require(!open_questions(journal.entries()).empty());
     record_delivered_decision(journal, approval());
     require(journal.entries().empty());
-    std::filesystem::remove_all(directory);
 }
 
 } // namespace

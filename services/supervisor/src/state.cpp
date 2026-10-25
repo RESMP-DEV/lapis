@@ -226,6 +226,8 @@ SupervisorState SupervisorRegistry::stop(const std::string& blocked_reason) {
 SupervisorState SupervisorRegistry::note_block(const std::string& blocked_reason) {
     check(!poisoned_, "Supervisor persistence failed; reload before transitioning");
     check(state_.session.has_value(), "No desired session to annotate");
+    if (state_.session->blocked_reason == blocked_reason)
+        return state_;
     SupervisorState next = state_;
     next.session->blocked_reason = blocked_reason;
     commit(std::move(next));
@@ -245,17 +247,21 @@ SupervisorState SupervisorRegistry::disable() {
     return state_;
 }
 
+SupervisorState SupervisorRegistry::reset() {
+    check(!poisoned_, "Supervisor persistence failed; reload before resetting");
+    check(state_.session.has_value(), "No desired session to reset");
+    SupervisorState next = state_;
+    next.enabled = false;
+    next.session.reset();
+    commit(std::move(next));
+    return state_;
+}
+
 ControlOutcome SupervisorRegistry::control(const ControlRequest& request) {
     check(!poisoned_, "Supervisor persistence failed; reload before controlling");
-    if (request.instance_epoch != state_.instance_epoch)
-        return {ControlStatus::stale_epoch, state_};
-    // A fresh or disabled registry has no authenticated control capability.
-    // Local authoritative initialization must create the first slot; a
-    // predictable sentinel would instead create a bypass token.
-    if (!state_.session || state_.session->spawn_token.empty())
-        return {ControlStatus::unauthorized, state_};
-    if (!constant_time_equal(state_.session->spawn_token, request.token))
-        return {ControlStatus::unauthorized, state_};
+    const auto authorized = authorize(request);
+    if (authorized.status != ControlStatus::applied)
+        return authorized;
     switch (request.action) {
     case ControlAction::start:
         if (!request.session)
@@ -267,8 +273,25 @@ ControlOutcome SupervisorRegistry::control(const ControlRequest& request) {
         return {ControlStatus::applied, stop()};
     case ControlAction::disable:
         return {ControlStatus::applied, disable()};
+    case ControlAction::reset:
+        if (!state_.session || request.session)
+            return {ControlStatus::rejected, state_};
+        return {ControlStatus::applied, reset()};
     }
     throw std::runtime_error("Unknown supervisor control action");
+}
+
+ControlOutcome SupervisorRegistry::authorize(const ControlRequest& request) const {
+    check(!poisoned_, "Supervisor persistence failed; reload before controlling");
+    if (request.instance_epoch != state_.instance_epoch)
+        return {ControlStatus::stale_epoch, state_};
+    // A fresh or disabled registry has no authenticated control capability.
+    // Local authoritative initialization must create the first slot; a
+    // predictable sentinel would instead create a bypass token.
+    if (!state_.session || state_.session->spawn_token.empty() ||
+        !constant_time_equal(state_.session->spawn_token, request.token))
+        return {ControlStatus::unauthorized, state_};
+    return {ControlStatus::applied, state_};
 }
 
 void SupervisorRegistry::commit(SupervisorState next) {

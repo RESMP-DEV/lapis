@@ -10,6 +10,7 @@
 #include <QJsonObject>
 #include <QUuid>
 
+#include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <iostream>
@@ -196,9 +197,8 @@ int main(int argc, char** argv) {
             auto reconstructed_runtime =
                 std::make_unique<SupervisorRuntime>(registry, std::move(reconstructed_launcher));
             const auto& converged = *reconstructed_runtime->state().session;
-            // A stopped v2 slot still validates launcher construction above, but has no
-            // child to adopt. Birth stays refused until an explicit reset protocol
-            // replaces this one-shot experimental daemon.
+            // A stopped v2 slot still validates launcher construction above, but has
+            // no child to adopt. Birth stays refused until an explicit reset.
             if (persisted.desired_state == DesiredState::started &&
                 (converged.desired_state != DesiredState::started ||
                  reconstructed_runtime->child_pid() <= 0))
@@ -222,17 +222,14 @@ int main(int argc, char** argv) {
                     return encode_status_reply(registry->state(),
                                                runtime && runtime->child_pid() > 0);
                 }
-                if (action == "stop") {
+                if (action == "stop" || action == "reset") {
                     if (!runtime)
                         return encode_control_reply(ControlReplyStatus::rejected);
                     return runtime->control(peer_uid, request);
                 }
-                if (runtime)
-                    return encode_birth_rejected();
-                // A convergence failure deliberately retains its stopped slot: this
-                // experimental daemon is one-shot, and silent replacement could hide
-                // a launch failure or create a retry storm. Reconstruction and an
-                // explicit reset protocol remain later supervisor work.
+                // A convergence failure deliberately retains its stopped slot:
+                // silent replacement could hide a launch failure. Explicit reset
+                // is the recovery path.
                 if (registry->state().session)
                     return encode_birth_rejected();
                 try {
@@ -243,17 +240,17 @@ int main(int argc, char** argv) {
                         std::make_unique<SessionServiceLauncher>(service, birth.fingerprint);
                     auto next_runtime =
                         std::make_unique<SupervisorRuntime>(registry, std::move(next_launcher));
+                    runtime = std::move(next_runtime);
                     DesiredSession desired;
                     desired.endpoint = birth.endpoint;
                     desired.fingerprint = birth.fingerprint;
                     desired.launch = launch;
-                    const auto born = next_runtime->bootstrap(desired);
-                    const auto& converged = next_runtime->state();
+                    const auto born = runtime->bootstrap(desired);
+                    const auto& converged = runtime->state();
                     if (!born.session || !converged.session ||
                         converged.session->desired_state != DesiredState::started ||
-                        next_runtime->child_pid() <= 0)
+                        runtime->child_pid() <= 0)
                         throw std::runtime_error("Supervisor birth produced no session");
-                    runtime = std::move(next_runtime);
                     return encode_birth_reply(born.session->identity);
                 } catch (const std::exception&) { // NOLINT(bugprone-empty-catch) -- the
                     // bounded protocol reply is rejection, never internal diagnostics.
@@ -261,10 +258,22 @@ int main(int argc, char** argv) {
                 }
             }};
 
+        auto next_convergence = std::chrono::steady_clock::time_point{};
         while (!stop_requested) {
+            const auto now = std::chrono::steady_clock::now();
+            if (runtime && now >= next_convergence)
+                try {
+                    static_cast<void>(runtime->converge());
+                } catch (const ConvergenceRefused&) {
+                    // The refusal is durable in the blocked slot and the peer
+                    // remains retryable. Retry later while control stays responsive.
+                    next_convergence = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+                }
             server.poll_once(100);
         }
-        stop_runtime(runtime);
+        // SIGTERM/SIGINT detaches this daemon without changing desired state or
+        // ending the service. Explicit stop/reset remains the operator action.
+        runtime.reset();
         return 0;
     } catch (const std::exception& error) {
         stop_runtime(runtime);

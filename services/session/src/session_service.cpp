@@ -33,6 +33,7 @@
 #include <array>
 #include <chrono>
 #include <cstring>
+#include <deque>
 #include <exception>
 #include <filesystem>
 #include <limits>
@@ -55,6 +56,7 @@ constexpr int codex_sync_timeout_ms = 15000;
 constexpr int terminal_sync_timeout_ms = 3000;
 constexpr int backend_probe_interval_ms = 25;
 constexpr int backend_probe_attempts = 400;
+constexpr int rollout_probe_timeout_ms = 5000;
 // Admission is atomic at the 64 KiB service boundary once sustained pressure
 // opens. Until then ordinary batches parse immediately, so pressure mode has a
 // hard retained bound of one admission limit plus one maximum PTY batch.
@@ -894,6 +896,7 @@ class SessionService final : public QObject {
             rollout_probing_ = false;
             probe->deleteLater();
         });
+        QTimer::singleShot(rollout_probe_timeout_ms, probe, [probe] { probe->kill(); });
         probe->setStandardInputFile(QProcess::nullDevice());
         probe->start(QStringLiteral("/usr/sbin/lsof"),
                      {QStringLiteral("-p"), QString::number(pid), QStringLiteral("-Fn")});
@@ -1623,16 +1626,17 @@ class SessionService final : public QObject {
             schedule_attention();
             return;
         }
-        if (!codex_observer_->decide(decision.source_epoch, decision.request_id, decision.revision,
-                                     decision.choice, decision.answers)) {
-            if (codex_observer_->diagnostic().contains(
-                    QStringLiteral("Codex response delivery is uncertain"))) {
-                decision_error_ =
-                    QStringLiteral("Delivery outcome is unknown; reconnect before deciding again");
-                attention_dirty_ = true;
-                schedule_attention();
-                return;
-            }
+        switch (codex_observer_->decide(decision.source_epoch, decision.request_id,
+                                        decision.revision, decision.choice, decision.answers)) {
+        case lapis::codex::DecisionOutcome::uncertain:
+            decision_error_ =
+                QStringLiteral("Delivery outcome is unknown; reconnect before deciding again");
+            attention_dirty_ = true;
+            schedule_attention();
+            return;
+        case lapis::codex::DecisionOutcome::delivered:
+            break;
+        case lapis::codex::DecisionOutcome::rejected:
             try {
                 record_refused_decision(*attention_journal_, approval);
                 journaled_.erase(decision.request_id);
@@ -1696,13 +1700,13 @@ class SessionService final : public QObject {
             return;
         case wire::Kind::wheel:
             // Scrolling reads; it does not take the size as typing does.
-            write_input(frame.kind, control.payload);
+            write_input(client_.data(), frame.kind, control.payload);
             return;
         case wire::Kind::text:
         case wire::Kind::paste:
         case wire::Kind::key:
             claim_size(client_wanted_);
-            write_input(frame.kind, control.payload);
+            write_input(client_.data(), frame.kind, control.payload);
             return;
         case wire::Kind::resize:
             client_wanted_ = decode_size(control.payload);
@@ -1736,11 +1740,17 @@ class SessionService final : public QObject {
             {(mods & 1U) != 0, (mods & 2U) != 0, (mods & 4U) != 0, (mods & 8U) != 0});
         return {encoded.data(), static_cast<qsizetype>(encoded.size())};
     }
-    void write_input(wire::Kind kind, const QByteArray& payload) {
+    void write_input(QLocalSocket* source, wire::Kind kind, const QByteArray& payload) {
         // A wheel over the primary screen sends the program nothing.
         const auto bytes = input_bytes(kind, payload);
-        if (!bytes.isEmpty() && !pty_.writeBytes(bytes))
-            throw std::runtime_error("PTY input queue full");
+        if (!bytes.isEmpty() && !pty_.writeBytes(bytes)) {
+            if (pty_.terminalClosed())
+                return;
+            if (source)
+                send_status(source, wire::StatusCode::overloaded,
+                            QStringLiteral("PTY input queue full; input was not queued"));
+            return;
+        }
         if ((kind == wire::Kind::key || kind == wire::Kind::text) && bytes.contains('\r'))
             note_submitted();
     }
@@ -1812,6 +1822,8 @@ class SessionService final : public QObject {
             throw std::runtime_error("Agent process could not be ended");
     }
     void apply_resize(TerminalSize size) {
+        if (pty_.terminalClosed())
+            return;
         if (!pty_.resize(size))
             throw std::runtime_error("PTY resize failed");
         try {
@@ -1840,13 +1852,14 @@ class SessionService final : public QObject {
     void retire(QLocalSocket* socket) {
         // Let a typed final status drain, but bound both time and retired sockets.
         if (retired_.size() >= 8) {
-            auto* oldest = *retired_.begin();
-            retired_.remove(oldest);
+            auto* oldest = retired_.front();
+            retired_.pop_front();
             oldest->abort();
             oldest->deleteLater();
         }
-        retired_.insert(socket);
-        connect(socket, &QObject::destroyed, this, [this, socket] { retired_.remove(socket); });
+        retired_.push_back(socket);
+        connect(socket, &QObject::destroyed, this,
+                [this, socket] { std::erase(retired_, socket); });
         socket->disconnectFromServer();
         if (socket->state() == QLocalSocket::UnconnectedState)
             socket->deleteLater();
@@ -2093,7 +2106,7 @@ class SessionService final : public QObject {
             return;
         }
         if (frame.kind == wire::Kind::wheel) {
-            write_input(frame.kind, control.payload);
+            write_input(view.socket.data(), frame.kind, control.payload);
             return;
         }
         if (frame.kind != wire::Kind::text && frame.kind != wire::Kind::paste &&
@@ -2101,7 +2114,7 @@ class SessionService final : public QObject {
             throw std::runtime_error(
                 "A joined view may only type, scroll, resize and page history");
         claim_size(view.wanted, view.id);
-        write_input(frame.kind, control.payload);
+        write_input(view.socket.data(), frame.kind, control.payload);
     }
     void detach_client() {
         if (!client_)
@@ -2125,7 +2138,7 @@ class SessionService final : public QObject {
     quint64 size_view_{}; // the joined view whose size applies; 0 for the client
     std::vector<std::unique_ptr<View>> views_;
     QSet<QLocalSocket*> pending_;
-    QSet<QLocalSocket*> retired_;
+    std::deque<QLocalSocket*> retired_;
     QByteArray fingerprint_;
     wire::SessionIdentity identity_;
     wire::Attachment attachment_;

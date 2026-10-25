@@ -104,6 +104,18 @@ std::string encode_stop_request(const SupervisorState& state) {
     });
 }
 
+std::string encode_reset_request(const SupervisorState& state) {
+    if (!state.session || state.session->spawn_token.empty())
+        invalid("Supervisor state has no authenticated reset token");
+    return json_bytes(QJsonObject{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("action"), QStringLiteral("reset")},
+        {QStringLiteral("supervisor_epoch"), QString::fromStdString(state.instance_epoch)},
+        {QStringLiteral("token"), QString::fromStdString(state.session->spawn_token)},
+        {QStringLiteral("session"), QJsonValue::Null},
+    });
+}
+
 SupervisorStatus decode_status_reply(const std::string& bytes) {
     constexpr auto* message = "Invalid supervisor status reply";
     const auto root = object(bytes, message);

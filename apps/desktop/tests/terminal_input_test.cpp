@@ -188,6 +188,13 @@ void input_contract(bool background) {
     QKeyEvent printable(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
     QCoreApplication::sendEvent(&surface, &printable);
     require(text_frames(peer, 1) == QByteArray("x"), "Printable key fixture did not reach PTY");
+    for (const auto& [key, expected] :
+         std::array{std::pair{Qt::Key_Slash, '\x1f'}, std::pair{Qt::Key_Question, '\x7f'}}) {
+        QKeyEvent control_key(QEvent::KeyPress, key, Qt::ControlModifier);
+        QCoreApplication::sendEvent(&surface, &control_key);
+        require(control_key.isAccepted() && text_frames(peer, 1) == QByteArray(1, expected),
+                "Control-/ and Control-? must send their terminal control bytes");
+    }
     // After a key, frames keep coming for a moment, so a display that slows
     // down when nothing changes is still at its full rate for the echo; once
     // typing pauses they stop.
@@ -962,6 +969,37 @@ void suggestions() {
     require(paste_is(typed[0], longer.toUtf8(), false) && !used.empty() &&
                 used.back() == std::pair{false, 0} && nothing_sent(),
             "A suggestion not shown whole was submitted");
+
+    // Focus owns the later Return even when paste admission races it: an
+    // unfocused surface keeps the admitted guess armed instead of sending Enter.
+    surface.setSuggestion(QStringLiteral("focus race"));
+    settle();
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    std::optional<wire::Frame> paste_request;
+    until([&] {
+        peer.bytes += peer.socket->readAll();
+        wire::Frame frame;
+        while (wire::take_frame(peer.bytes, frame)) {
+            if (frame.kind == wire::Kind::paste_request)
+                paste_request = frame;
+        }
+        return paste_request.has_value();
+    });
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    QQuickItem other_focus(window.contentItem());
+    other_focus.forceActiveFocus();
+    until([&] { return !surface.hasActiveFocus(); });
+    const auto delayed = wire::decode_paste_request(paste_request->payload);
+    peer.send(wire::Kind::paste_result,
+              wire::encode_paste_result({delayed.attachment, delayed.request_id, true, {}}));
+    require(nothing_sent(), "An unfocused terminal submitted an admitted suggestion");
+    surface.forceActiveFocus();
+    wait_terminal_focus(surface);
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(is_key(typed[0], lapis::session::TerminalKey::enter),
+            "A refocused terminal did not send its still-armed suggestion");
+    used.clear();
 
     // A pending request (a permission dialog) is never answered by Tab. It may
     // ask the attention queue for a destination, but with none it is consumed

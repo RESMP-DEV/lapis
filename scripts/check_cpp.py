@@ -203,7 +203,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "mode",
-        choices=("dev", "asan", "tsan", "profile", "desktop", "format"),
+        choices=(
+            "dev",
+            "asan",
+            "tsan",
+            "profile",
+            "desktop",
+            "supervisor",
+            "supervisor-asan",
+            "supervisor-tsan",
+            "format",
+        ),
         default="dev",
         nargs="?",
     )
@@ -290,7 +300,7 @@ def _run_gate(tools, arguments, log_dir):
         return results
 
     tasks = []
-    if arguments.mode in ("dev", "desktop"):
+    if arguments.mode in ("dev", "desktop", "supervisor"):
         analysis_failed = False
         try:
             tasks.extend(_analysis_tasks(tools, arguments, log_dir))

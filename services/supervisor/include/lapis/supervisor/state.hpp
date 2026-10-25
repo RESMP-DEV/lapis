@@ -65,7 +65,7 @@ struct SupervisorState {
     bool operator==(const SupervisorState&) const = default;
 };
 
-enum class ControlAction : std::uint8_t { start = 0, stop = 1, disable = 2 };
+enum class ControlAction : std::uint8_t { start = 0, stop = 1, disable = 2, reset = 3 };
 
 struct ControlRequest {
     std::string instance_epoch;
@@ -213,6 +213,8 @@ class SupervisorRegistry final {
     // Record a retryable diagnostic without rotating identity or desired state.
     [[nodiscard]] SupervisorState note_block(const std::string& blocked_reason);
     [[nodiscard]] SupervisorState disable();
+    [[nodiscard]] SupervisorState reset();
+    [[nodiscard]] ControlOutcome authorize(const ControlRequest& request) const;
     [[nodiscard]] ControlOutcome control(const ControlRequest& request);
 
   private:

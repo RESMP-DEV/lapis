@@ -913,15 +913,18 @@ def main():
         stamp = time.strftime("%Y%m%d-%H%M%S")
         results = BUILD / "results" / (stamp + ".xcresult")
         results.parent.mkdir(parents=True, exist_ok=True)
-        xctestrun = write_xctestrun(
-            {
-                "LAPIS_HOST": f"127.0.0.1:{PORT}",
-                "LAPIS_ECHO_ID": echo_id,
-                "LAPIS_MAC_CLIENT": "1",
-                "LAPIS_NEW_AGENT_FOLDER": str(new_folder),
-                "LAPIS_FOLDER_FIXTURE": "1",
-            }
-        )
+        environment = {
+            "LAPIS_HOST": f"127.0.0.1:{PORT}",
+            "LAPIS_ECHO_ID": echo_id,
+            "LAPIS_MAC_CLIENT": "1",
+            "LAPIS_NEW_AGENT_FOLDER": str(new_folder),
+            "LAPIS_FOLDER_FIXTURE": "1",
+        }
+        if args.claude:
+            environment["LAPIS_CLAUDE_FIXTURE"] = "1"
+        if args.codex:
+            environment["LAPIS_CODEX_FIXTURE"] = "1"
+        xctestrun = write_xctestrun(environment)
 
         # The agent the phone starts is closed from the phone later in the same
         # test, so its launch is caught while it exists.

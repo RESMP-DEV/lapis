@@ -160,6 +160,8 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.unlink(missing_ok=True)
     receipt = {
         "schema": "lapis.codex-shared-server/1",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -192,7 +194,6 @@ def main(argv=None):
         receipt["error"] = str(error) if type(error) is RuntimeError else "Probe failed"
         if isinstance(error, RpcError):
             receipt["rpc_error"] = {"method": error.method, "code": error.code}
-    args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(receipt, indent=2) + "\n")
     print(f"{'PASS' if receipt['passed'] else 'FAIL'}: {args.output}")
     return 0 if receipt["passed"] else 1

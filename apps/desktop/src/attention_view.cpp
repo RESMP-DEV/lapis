@@ -23,6 +23,12 @@ QString token(const session::wire::AttentionSnapshot& snapshot,
            QString::number(attachment.generation) + ':' + QString::number(pending.source_epoch) +
            ':' + QString::number(pending.revision) + ':' + request_id;
 }
+QString display_token(const session::wire::AttentionSnapshot& snapshot,
+                      const session::attention::Pending& pending,
+                      const QHash<QString, QString>& aliases) {
+    const auto current = token(snapshot, pending);
+    return aliases.value(current, current);
+}
 } // namespace
 // A connected agent without an observer reads from the output estimate.
 QString SessionPreview::unobservedStatusKind() const {
@@ -125,7 +131,7 @@ QVariantList SessionPreview::attentionRequests() const {
         return values;
     for (const auto& item : attention_->requests) {
         const auto& pending = item.pending;
-        const auto key = token(*attention_, pending);
+        const auto key = display_token(*attention_, pending, attention_token_aliases_);
         const bool responding = pending.submitted || submitted_attention_.contains(key);
         const bool eligible = attentionReady() && !responding &&
                               pending.status == session::attention::RequestStatus::pending;
@@ -151,19 +157,38 @@ void SessionPreview::applyAttention(session::wire::AttentionSnapshot snapshot) {
                   [](const auto& item) { return idle_notice(item.pending.request); });
     bool arrived = false;
     QSet<QString> current;
+    QHash<QString, QString> next_aliases;
     for (const auto& item : snapshot.requests) {
-        current.insert(token(snapshot, item.pending));
         const auto& id = item.pending.request.id;
-        if (!attention_ || std::none_of(attention_->requests.begin(), attention_->requests.end(),
-                                        [&](const auto& old) {
-                                            return old.pending.request.id == id &&
-                                                   old.pending.source_epoch ==
-                                                       item.pending.source_epoch &&
-                                                   old.pending.revision == item.pending.revision;
-                                        }))
+        const auto current_key = token(snapshot, item.pending);
+        const session::wire::AttentionItem* old = nullptr;
+        if (attention_) {
+            const auto found = std::find_if(
+                attention_->requests.begin(), attention_->requests.end(), [&](const auto& value) {
+                    return value.pending.request.id == id &&
+                           value.pending.source_epoch == item.pending.source_epoch;
+                });
+            if (found != attention_->requests.end())
+                old = &*found;
+        }
+        const auto stable_key =
+            old != nullptr && attention_->attachment.generation == snapshot.attachment.generation
+                ? display_token(*attention_, old->pending, attention_token_aliases_)
+                : current_key;
+        next_aliases.insert(current_key, stable_key);
+        current.insert(stable_key);
+        const bool submission_transition =
+            old != nullptr && item.pending.submitted && !old->pending.submitted;
+        if (submission_transition)
+            submitted_attention_.insert(stable_key);
+        const bool item_arrived =
+            old == nullptr ||
+            (item.pending.revision != old->pending.revision && !submission_transition);
+        if (item_arrived)
             arrived = true;
     }
     submitted_attention_.intersect(current);
+    attention_token_aliases_ = std::move(next_aliases);
     // A typed `reconciling` update preserves an already-established wait.
     // Legacy snapshots have no phase byte and conservatively remain unknown.
     using Phase = session::attention::ObservationPhase;
@@ -197,7 +222,8 @@ void SessionPreview::retryAttention(const session::wire::AttentionDecision& deci
         const auto& pending = item.pending;
         if (pending.request.id == decision.request_id && pending.revision == decision.revision &&
             !pending.submitted && pending.status == session::attention::RequestStatus::pending) {
-            submitted_attention_.remove(token(*attention_, pending));
+            submitted_attention_.remove(
+                display_token(*attention_, pending, attention_token_aliases_));
             emit attentionChanged();
             return;
         }
@@ -208,9 +234,10 @@ bool SessionPreview::respondAttention(const QString& key, const QVariantMap& res
     const auto answers = response.value(QStringLiteral("answers")).toMap();
     if (!live_ || !attention_ || !attentionReady() || submitted_attention_.contains(key))
         return false;
-    const auto item =
-        std::find_if(attention_->requests.begin(), attention_->requests.end(),
-                     [&](const auto& value) { return token(*attention_, value.pending) == key; });
+    const auto item = std::find_if(
+        attention_->requests.begin(), attention_->requests.end(), [&](const auto& value) {
+            return display_token(*attention_, value.pending, attention_token_aliases_) == key;
+        });
     if (item == attention_->requests.end() || item->pending.submitted ||
         item->pending.status != session::attention::RequestStatus::pending ||
         std::find(item->pending.request.choices.begin(), item->pending.request.choices.end(),

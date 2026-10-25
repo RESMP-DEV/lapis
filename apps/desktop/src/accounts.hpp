@@ -31,6 +31,10 @@ struct AccountsConfig {
     double switchAt{95};
 };
 [[nodiscard]] AccountsConfig parse_accounts(const QJsonValue& value);
+// Validates a plan's locally held credential without reading its contents into
+// a diagnostic. An empty result is usable; a non-empty result is user-facing.
+[[nodiscard]] QString account_credential_failure(const QString& cli, const QString& name,
+                                                 const QString& accountsRoot, bool on_this_mac);
 // Links every entry of the shared Codex home into an account's home, but its
 // auth.json, so sessions and settings stay shared across plans.
 [[nodiscard]] QString link_codex_home(const QString& shared, const QString& home);

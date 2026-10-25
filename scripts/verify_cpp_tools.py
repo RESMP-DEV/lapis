@@ -4,7 +4,10 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from check_cpp import ROOT, run, toolchain, write_receipt
+if __package__:
+    from .check_cpp import ROOT, run, toolchain, write_receipt
+else:
+    from check_cpp import ROOT, run, toolchain, write_receipt
 
 
 def main():

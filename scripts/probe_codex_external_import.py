@@ -455,6 +455,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.unlink(missing_ok=True)
     receipt = base_receipt()
     try:
         executable = shutil.which(args.codex)
@@ -472,7 +474,6 @@ def main(argv: list[str] | None = None) -> int:
         receipt["isolation"]["cleanup_complete"] = False
         receipt["error_type"] = "ProbeError"
         receipt["error"] = "Probe failed without recording source error text"
-    args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(receipt, indent=2) + "\n")
     print(f"{'PASS' if receipt['passed'] else 'FAIL'}: {args.output}")
     return 0 if receipt["passed"] else 1
