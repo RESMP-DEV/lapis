@@ -1,6 +1,6 @@
 {
   "schema": "lapis.code-quality-sweep/1",
-  "recorded_at": "2026-10-24T23:21:45.650087+00:00",
+  "recorded_at": "2026-10-25T00:06:35.508517+00:00",
   "agent": "Codex parent with eleven read-only CCR review workers and four Gemini 4 Argon sub-agent reports",
   "source": {
     "base_revision": "4c66a0d6613ee7288f1b033ec9775a154a6e3f07",
@@ -23,7 +23,8 @@
       "652f5ded5219c2807f2fb2ac776f10dd23f498de",
       "2ecad6d089558813558b59dcde35ce6f503782a1",
       "2cfea1065f25cc93f4ff08f8be7ee89a0aa0b360"
-    ]
+    ],
+    "review_repair_revision": "d47121f322ac07f47636da12e615ed67aab37abb"
   },
   "scope": {
     "included": [
@@ -152,7 +153,7 @@
       "exit_code": 0,
       "passed": true,
       "evidence": "build/reports/supervisor-runtime/receipt.json",
-      "observed": "All five supervisor CTest targets and all three real-process integration markers passed."
+      "observed": "All five supervisor CTest targets and all three real-process integration markers passed after review repairs."
     },
     {
       "name": "terminal-input-background",
@@ -285,7 +286,8 @@
       "command": "python3 scripts/lapis.py quality",
       "exit_code": 0,
       "passed": true,
-      "evidence": "build/reports/quality/receipt.json"
+      "evidence": "build/reports/quality/receipt.json",
+      "observed": "Passed after review repairs."
     },
     {
       "name": "background-ui-review-followup",
@@ -341,5 +343,34 @@
       "commit": "2cfea1065f25cc93f4ff08f8be7ee89a0aa0b360",
       "result": "Deduplicated the endpoint target, added supervisor/sanitizer presets, and added default-direct plus explicit supervisor birth seams; supervisor ASan/TSan passed. Static analysis remains non-gating until pre-existing findings are repaired."
     }
+  },
+  "review_resolution": {
+    "service": "CodeRabbit PR 177 initial review",
+    "finding_count": 13,
+    "implemented": [
+      "Guard first-attention optional state and remove the aliased display token on retry",
+      "Defer supervisor birth-reply length failure until outside the Qt slot",
+      "Validate the account plan actually chosen by local reload and use only the first Claude token line",
+      "Gate iOS provider assertions on provider-specific fixture flags",
+      "Make receipt interruption tests independent of an installed Codex binary",
+      "Route PTY overload status to the originating client or joined view",
+      "Bound test event waits",
+      "Retain a runtime for a failed birth, stop failed bootstrap state, back off preserved-peer convergence, and deduplicate unchanged blocked-state writes",
+      "Correct reset CLI descriptions and reply wording"
+    ],
+    "validation": [
+      "build/desktop/apps/desktop/lapis_workspace_tests",
+      "ctest --test-dir build/desktop -R '^live-connection$'",
+      "ctest --test-dir build/dev -R '^attention-service$'",
+      "ctest --test-dir build/supervisor -R '^(supervisor-state|supervisor-runtime|supervisor-client|supervisor-daemon)$'",
+      "python3 -m unittest -v scripts.tests.test_receipt_startup_invalidation",
+      "python3 scripts/check_cli_launch.py --build-dir build/dev --output build/reports/cli-backpressure/receipt.json --case backpressure",
+      "python3 scripts/lapis.py quality",
+      "python3 scripts/check_supervisor_runtime.py --preset supervisor --jobs 8"
+    ],
+    "non_claims": [
+      "The real-service backpressure case demonstrates the overloaded status on the same live attachment; the white-box service test additionally proves client_ remains set. It does not drain the full queued echo flood.",
+      "Provider-specific iOS assertions are source/test repaired; the simulator provider-missing branch was not rerun."
+    ]
   }
 }
