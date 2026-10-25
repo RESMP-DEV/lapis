@@ -4,7 +4,11 @@
 // NOLINTNEXTLINE(bugprone-suspicious-include)
 #include "session_service.cpp"
 
+#include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QTemporaryDir>
+#include <QThread>
+#include <functional>
 #include <iostream>
 #include <source_location>
 #include <stdexcept>
@@ -57,8 +61,8 @@ class AttentionServiceTestAccess final {
         service.receive_output(output);
     }
 
-    static void write_text(SessionService& service, const QByteArray& bytes) {
-        service.write_input(wire::Kind::text, bytes);
+    static void write_text(SessionService& service, QLocalSocket* source, const QByteArray& bytes) {
+        service.write_input(source, wire::Kind::text, bytes);
     }
 
     static void resize(SessionService& service, TerminalSize size) { service.apply_resize(size); }
@@ -129,6 +133,18 @@ void require(bool value, std::source_location where = std::source_location::curr
     if (!value)
         throw std::runtime_error("Attention service check failed at line " +
                                  std::to_string(where.line()));
+}
+
+bool wait_for(const std::function<bool()>& condition) {
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (!condition()) {
+        if (elapsed.elapsed() >= 5000)
+            return false;
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        QThread::msleep(1);
+    }
+    return true;
 }
 
 attention::Request request() {
@@ -388,11 +404,9 @@ void input_backpressure_preserves_attachment() {
     client.connectToServer(endpoint);
     require(client.waitForConnected(5000));
     Access::use_client(service, &client);
-    for (int attempt = 0; attempt < 500 && !Access::process_started(service); ++attempt)
-        QCoreApplication::processEvents();
-    require(Access::process_started(service));
+    require(wait_for([&] { return Access::process_started(service); }));
 
-    Access::write_text(service, QByteArray(qsizetype{2} * 1024 * 1024, 'q'));
+    Access::write_text(service, &client, QByteArray(qsizetype{2} * 1024 * 1024, 'q'));
     require(Access::client_attached(service));
 }
 
@@ -411,9 +425,7 @@ void resize_after_terminal_close_is_ignored_during_final_drain() {
     client.connectToServer(endpoint);
     require(client.waitForConnected(5000));
     Access::use_client(service, &client);
-    for (int attempt = 0; attempt < 500 && !Access::terminal_closed(service); ++attempt)
-        QCoreApplication::processEvents();
-    require(Access::terminal_closed(service));
+    require(wait_for([&] { return Access::terminal_closed(service); }));
     Access::resize(service, {100, 30});
     require(Access::client_attached(service));
 }

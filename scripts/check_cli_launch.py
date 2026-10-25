@@ -1800,11 +1800,8 @@ with open(sys.argv[1], 'wb', buffering=0) as output:
                         pass
                     require(
                         "PTY input queue full" in client.status()
-                        and client.socket.fileno() >= 0,
-                        "Queue overflow was silent or detached the client",
-                    )
-                    require(
-                        service.process.poll() is None, "Queue overflow killed service"
+                        and service.process.poll() is None,
+                        "Queue overflow was silent or killed the service",
                     )
                 finally:
                     os.kill(service.child_pid, signal.SIGCONT)

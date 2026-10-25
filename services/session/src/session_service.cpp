@@ -1700,13 +1700,13 @@ class SessionService final : public QObject {
             return;
         case wire::Kind::wheel:
             // Scrolling reads; it does not take the size as typing does.
-            write_input(frame.kind, control.payload);
+            write_input(client_.data(), frame.kind, control.payload);
             return;
         case wire::Kind::text:
         case wire::Kind::paste:
         case wire::Kind::key:
             claim_size(client_wanted_);
-            write_input(frame.kind, control.payload);
+            write_input(client_.data(), frame.kind, control.payload);
             return;
         case wire::Kind::resize:
             client_wanted_ = decode_size(control.payload);
@@ -1740,14 +1740,15 @@ class SessionService final : public QObject {
             {(mods & 1U) != 0, (mods & 2U) != 0, (mods & 4U) != 0, (mods & 8U) != 0});
         return {encoded.data(), static_cast<qsizetype>(encoded.size())};
     }
-    void write_input(wire::Kind kind, const QByteArray& payload) {
+    void write_input(QLocalSocket* source, wire::Kind kind, const QByteArray& payload) {
         // A wheel over the primary screen sends the program nothing.
         const auto bytes = input_bytes(kind, payload);
         if (!bytes.isEmpty() && !pty_.writeBytes(bytes)) {
             if (pty_.terminalClosed())
                 return;
-            send_status(client_, wire::StatusCode::overloaded,
-                        QStringLiteral("PTY input queue full; input was not queued"));
+            if (source)
+                send_status(source, wire::StatusCode::overloaded,
+                            QStringLiteral("PTY input queue full; input was not queued"));
             return;
         }
         if ((kind == wire::Kind::key || kind == wire::Kind::text) && bytes.contains('\r'))
@@ -2105,7 +2106,7 @@ class SessionService final : public QObject {
             return;
         }
         if (frame.kind == wire::Kind::wheel) {
-            write_input(frame.kind, control.payload);
+            write_input(view.socket.data(), frame.kind, control.payload);
             return;
         }
         if (frame.kind != wire::Kind::text && frame.kind != wire::Kind::paste &&
@@ -2113,7 +2114,7 @@ class SessionService final : public QObject {
             throw std::runtime_error(
                 "A joined view may only type, scroll, resize and page history");
         claim_size(view.wanted, view.id);
-        write_input(frame.kind, control.payload);
+        write_input(view.socket.data(), frame.kind, control.payload);
     }
     void detach_client() {
         if (!client_)

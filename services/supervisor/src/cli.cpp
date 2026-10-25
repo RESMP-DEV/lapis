@@ -47,16 +47,18 @@ int main(int argc, char** argv) {
     QCoreApplication::setApplicationName(QStringLiteral("lapis"));
     QCommandLineParser parser;
     parser.setApplicationDescription(
-        QStringLiteral("Headless supervisor status and explicit stop client"));
+        QStringLiteral("Headless supervisor status, stop, and reset client"));
     parser.addHelpOption();
     parser.addOption({QStringLiteral("control-endpoint"),
                       QStringLiteral("Absolute supervisor control socket path"),
                       QStringLiteral("path")});
-    parser.addOption({QStringLiteral("state-directory"),
-                      QStringLiteral("Private supervisor state directory required by stop"),
-                      QStringLiteral("path")});
+    parser.addOption(
+        {QStringLiteral("state-directory"),
+         QStringLiteral("Private supervisor state directory required by stop and reset"),
+         QStringLiteral("path")});
     parser.addOption({QStringLiteral("json"), QStringLiteral("Print machine-readable JSON")});
-    parser.addPositionalArgument(QStringLiteral("command"), QStringLiteral("status | stop"));
+    parser.addPositionalArgument(QStringLiteral("command"),
+                                 QStringLiteral("status | stop | reset"));
     parser.process(application.arguments());
 
     const auto positional = parser.positionalArguments();
@@ -91,7 +93,8 @@ int main(int argc, char** argv) {
         if (parser.isSet(QStringLiteral("json")))
             std::cout << reply << '\n';
         else
-            std::cout << "supervisor stop: " << reply_status(reply) << '\n';
+            std::cout << "supervisor " << command.toStdString() << ": " << reply_status(reply)
+                      << '\n';
         return reply_status(reply) == "applied" ? 0 : 1;
     } catch (const std::exception& error) {
         std::cerr << "lapis supervisor: " << error.what() << '\n';

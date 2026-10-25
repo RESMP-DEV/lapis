@@ -161,27 +161,28 @@ void SessionPreview::applyAttention(session::wire::AttentionSnapshot snapshot) {
     for (const auto& item : snapshot.requests) {
         const auto& id = item.pending.request.id;
         const auto current_key = token(snapshot, item.pending);
-        const auto old =
-            attention_
-                ? std::find_if(attention_->requests.begin(), attention_->requests.end(),
-                               [&](const auto& value) {
-                                   return value.pending.request.id == id &&
-                                          value.pending.source_epoch == item.pending.source_epoch;
-                               })
-                : attention_->requests.end();
+        const session::wire::AttentionItem* old = nullptr;
+        if (attention_) {
+            const auto found = std::find_if(
+                attention_->requests.begin(), attention_->requests.end(), [&](const auto& value) {
+                    return value.pending.request.id == id &&
+                           value.pending.source_epoch == item.pending.source_epoch;
+                });
+            if (found != attention_->requests.end())
+                old = &*found;
+        }
         const auto stable_key =
-            old != attention_->requests.end() &&
-                    attention_->attachment.generation == snapshot.attachment.generation
+            old != nullptr && attention_->attachment.generation == snapshot.attachment.generation
                 ? display_token(*attention_, old->pending, attention_token_aliases_)
                 : current_key;
         next_aliases.insert(current_key, stable_key);
         current.insert(stable_key);
         const bool submission_transition =
-            old != attention_->requests.end() && item.pending.submitted && !old->pending.submitted;
+            old != nullptr && item.pending.submitted && !old->pending.submitted;
         if (submission_transition)
             submitted_attention_.insert(stable_key);
         const bool item_arrived =
-            !attention_ || old == attention_->requests.end() ||
+            old == nullptr ||
             (item.pending.revision != old->pending.revision && !submission_transition);
         if (item_arrived)
             arrived = true;
@@ -221,7 +222,8 @@ void SessionPreview::retryAttention(const session::wire::AttentionDecision& deci
         const auto& pending = item.pending;
         if (pending.request.id == decision.request_id && pending.revision == decision.revision &&
             !pending.submitted && pending.status == session::attention::RequestStatus::pending) {
-            submitted_attention_.remove(token(*attention_, pending));
+            submitted_attention_.remove(
+                display_token(*attention_, pending, attention_token_aliases_));
             emit attentionChanged();
             return;
         }

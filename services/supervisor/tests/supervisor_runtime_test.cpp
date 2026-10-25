@@ -335,7 +335,8 @@ void explicit_reset_refuses_live_and_clears_stopped_slot() {
 
 void preserved_peer_failure_retains_identity_for_retry() {
     auto world = std::make_shared<FakeLauncherWorld>();
-    const auto owner = registry(std::make_shared<MemoryStateStorage>());
+    auto storage = std::make_shared<MemoryStateStorage>();
+    const auto owner = registry(storage);
     const auto saved = [&] {
         SupervisorRuntime runtime{owner, std::make_shared<FakeLauncher>(world)};
         return runtime.bootstrap(record());
@@ -360,6 +361,15 @@ void preserved_peer_failure_retains_identity_for_retry() {
         require(blocked.state().session->blocked_reason ==
                     "Supervisor service peer is alive but did not verify",
                 "a preserved peer records an explicit blocked reason");
+        const auto writes_before = storage->write_count();
+        bool refused_again = false;
+        try {
+            static_cast<void>(blocked.converge());
+        } catch (const ConvergenceRefused&) {
+            refused_again = true;
+        }
+        require(refused_again && storage->write_count() == writes_before,
+                "an unchanged preserved-peer diagnostic does not rewrite state");
     }
 
     world->decline_adoption = false;

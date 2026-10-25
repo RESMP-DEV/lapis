@@ -226,6 +226,8 @@ SupervisorState SupervisorRegistry::stop(const std::string& blocked_reason) {
 SupervisorState SupervisorRegistry::note_block(const std::string& blocked_reason) {
     check(!poisoned_, "Supervisor persistence failed; reload before transitioning");
     check(state_.session.has_value(), "No desired session to annotate");
+    if (state_.session->blocked_reason == blocked_reason)
+        return state_;
     SupervisorState next = state_;
     next.session->blocked_reason = blocked_reason;
     commit(std::move(next));

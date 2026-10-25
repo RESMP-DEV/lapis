@@ -95,6 +95,7 @@ bool start_service_detached(const ServiceLaunchRequest& launch) {
     QByteArray buffer;
     QEventLoop loop;
     bool timed_out = false;
+    bool invalid_length = false;
     const auto ready = [&] {
         buffer += socket.readAll();
         if (buffer.size() < 4)
@@ -103,8 +104,11 @@ bool start_service_detached(const ServiceLaunchRequest& launch) {
                                static_cast<quint32>(static_cast<unsigned char>(buffer[1])) << 16U |
                                static_cast<quint32>(static_cast<unsigned char>(buffer[2])) << 8U |
                                static_cast<quint32>(static_cast<unsigned char>(buffer[3]));
-        if (length == 0 || length > 1024 * 1024)
-            failed("Supervisor birth reply length is invalid");
+        if (length == 0 || length > 1024 * 1024) {
+            invalid_length = true;
+            loop.quit();
+            return;
+        }
         if (buffer.size() >= 4 + static_cast<int>(length))
             loop.quit();
     };
@@ -115,7 +119,10 @@ bool start_service_detached(const ServiceLaunchRequest& launch) {
         loop.quit();
     });
     ready();
-    loop.exec();
+    if (!invalid_length)
+        loop.exec();
+    if (invalid_length)
+        failed("Supervisor birth reply length is invalid");
     if (timed_out || buffer.size() < 4)
         failed("Supervisor birth reply timed out");
     const quint32 length = static_cast<quint32>(static_cast<unsigned char>(buffer[0])) << 24U |

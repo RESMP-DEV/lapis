@@ -103,8 +103,15 @@ class ReceiptInvalidationTests(unittest.TestCase):
                 "--output",
                 str(output),
             ]
+            codex = Path(temporary) / "codex"
+            codex.write_text("#!/usr/bin/env bash\nexit 0\n")
+            codex.chmod(0o700)
             with (
                 patch("sys.argv", argv),
+                patch(
+                    "probe_codex_attention.shutil.which",
+                    return_value=str(codex),
+                ),
                 patch(
                     "probe_codex_attention.run_probe",
                     side_effect=KeyboardInterrupt,
@@ -125,8 +132,15 @@ class ReceiptInvalidationTests(unittest.TestCase):
                 "--output",
                 str(output),
             ]
+            codex = Path(temporary) / "codex"
+            codex.write_text("#!/usr/bin/env bash\nexit 0\n")
+            codex.chmod(0o700)
             with (
                 patch("sys.argv", argv),
+                patch(
+                    "probe_codex_external_import.shutil.which",
+                    return_value=str(codex),
+                ),
                 patch(
                     "probe_codex_external_import.run_probe",
                     side_effect=KeyboardInterrupt,

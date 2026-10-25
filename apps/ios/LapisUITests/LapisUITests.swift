@@ -699,7 +699,7 @@ final class LapisUITests: XCTestCase {
     func testClaudeAgent() throws {
         let row = app.buttons["agent-claude fake"]
         guard row.waitForExistence(timeout: 20) else {
-            if ProcessInfo.processInfo.environment["LAPIS_MAC_CLIENT"] == "1" {
+            if ProcessInfo.processInfo.environment["LAPIS_CLAUDE_FIXTURE"] == "1" {
                 XCTFail("the harness promised a Claude agent, but it was not listed")
             }
             throw XCTSkip("no Claude agent in this run")
@@ -715,7 +715,7 @@ final class LapisUITests: XCTestCase {
     func testCodexAgent() throws {
         let row = app.buttons["agent-codex fake"]
         guard row.waitForExistence(timeout: 20) else {
-            if ProcessInfo.processInfo.environment["LAPIS_MAC_CLIENT"] == "1" {
+            if ProcessInfo.processInfo.environment["LAPIS_CODEX_FIXTURE"] == "1" {
                 XCTFail("the harness promised a Codex agent, but it was not listed")
             }
             throw XCTSkip("no Codex agent in this run")

@@ -427,7 +427,14 @@ SupervisorRuntime::SupervisorRuntime(
 
 SupervisorState SupervisorRuntime::bootstrap(DesiredSession session) {
     const auto state = registry_->start(std::move(session));
-    static_cast<void>(converge());
+    try {
+        static_cast<void>(converge());
+    } catch (const std::exception&) {
+        // A failed birth must not leave a started slot that the daemon keeps
+        // retrying. The stopped slot is explicit state that reset can clear.
+        static_cast<void>(stop_desired("supervisor launch failed"));
+        throw;
+    }
     return state;
 }
 

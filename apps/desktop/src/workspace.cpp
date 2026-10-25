@@ -2213,12 +2213,6 @@ Workspace::ReloadResult Workspace::requestReload(const QString& id) {
         const auto diagnostic = localAccountFailure(accounts_, *entry, accountsRoot());
         if (!diagnostic.isEmpty())
             return {ReloadOutcome::failed, diagnostic};
-        const auto cli = accountCli(entry->harness);
-        if (!entry->account.isEmpty() && !switching_.contains(id) &&
-            accounts_.choose(cli, QString(), entry->account) != entry->account)
-            return {ReloadOutcome::failed,
-                    QStringLiteral("Selected plan %1 is no longer usable for this reload.")
-                        .arg(entry->account)};
     }
     if (!item->terminate())
         return {ReloadOutcome::failed,
@@ -2346,13 +2340,14 @@ QString Workspace::remoteAccountFailure(const AccountPool& accounts, const Agent
 QString Workspace::localAccountFailure(const AccountPool& accounts, const Agent& agent,
                                        const QString& accountsRoot) {
     const auto cli = accountCli(agent.harness);
-    if (cli.isEmpty() || !accounts.configured(cli) || agent.account.isEmpty())
+    if (cli.isEmpty() || !accounts.configured(cli))
         return {};
-    const auto* account = accounts.find(cli, agent.account);
-    if (account == nullptr)
-        return QStringLiteral("Selected plan %1 is no longer configured.").arg(agent.account);
     const auto machine = agentMachine(agent);
-    if (account->hasHome && account->home == machine)
+    const auto chosen = accounts.choose(cli, machine, agent.account);
+    if (!agent.account.isEmpty() && chosen.isEmpty())
+        return QStringLiteral("Selected plan %1 is no longer configured.").arg(agent.account);
+    const auto* account = accounts.find(cli, chosen);
+    if (account == nullptr || (account->hasHome && account->home == machine))
         return {};
     if (!accounts.usable(*account, machine))
         return QStringLiteral("Selected plan %1 is no longer usable for this reload.")
@@ -2403,9 +2398,13 @@ bool Workspace::applyAccount(Agent& agent, SessionPreview& item) {
         if (cli == QLatin1String("claude")) {
             QFile token(QDir(accountsRoot())
                             .filePath(QStringLiteral("claude/%1.token").arg(account->name)));
-            const auto text = token.open(QIODevice::ReadOnly)
-                                  ? QString::fromUtf8(token.read(8192)).trimmed()
-                                  : QString();
+            const auto text =
+                token.open(QIODevice::ReadOnly)
+                    ? QString::fromUtf8(token.read(8192)).section(QLatin1Char('\n'), 0, 0)
+                    : QString();
+            if (text.isEmpty())
+                return fail(QStringLiteral("Claude Code plan %1 has no usable token on this Mac.")
+                                .arg(account->name));
             environment.insert(QStringLiteral("CLAUDE_CODE_OAUTH_TOKEN"), text);
         } else {
             const auto home =
