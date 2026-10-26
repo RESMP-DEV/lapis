@@ -106,9 +106,11 @@ void settingsReadFromTheConfig() {
                 set.effort == QLatin1String("low") && set.minConfidence == 1.0 &&
                 set.maxPerHour == 0,
             "each field, clamped");
-    require(defaults.contextArms == QStringList{QStringLiteral("wide")} && defaults.experimentMinConfidence == 0.4 &&
-                defaults.returnMinutes == 30 && defaults.returnShare == 0.5,
-            "every context arm, a 0.4 floor arm, and half of returns after 30 minutes");
+    require(defaults.contextArms == QStringList{QStringLiteral("wide")} &&
+                defaults.experimentShare == 0.0 && defaults.holdoutShare == 0.0 &&
+                defaults.experimentMinConfidence == 0.0 && defaults.returnMinutes == 30 &&
+                defaults.returnShare == 1.0,
+            "wide against base only: no model arm, holdout or floor arm, every return guessed");
     const auto arms = lapis::desktop::parse_next_prompt(
         QJsonDocument::fromJson(R"({"contextArms": ["thread", "bogus", "thread"],
                                     "experimentMinConfidence": 2, "returnMinutes": 0,

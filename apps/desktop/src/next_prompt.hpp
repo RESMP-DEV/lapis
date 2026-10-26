@@ -37,8 +37,10 @@ struct NextPromptSettings {
     // from `experimentModels` (other Claude models, through the same CLI)
     // and, when `localEndpoint` is set, a local model behind an
     // OpenAI-compatible endpoint. Each guess records its arm, so arms can be
-    // compared on what the person then sent.
-    double experimentShare{0.2};
+    // compared on what the person then sent. Off by default: at a few dozen
+    // guesses a day, one live comparison (the context arm) is all that can
+    // reach a verdict.
+    double experimentShare{0.0};
     QStringList experimentModels{QStringLiteral("claude-sonnet-5-5")};
     QString localEndpoint; // e.g. http://host:8000/v1; empty: no local arm
     QString localModel;
@@ -50,20 +52,22 @@ struct NextPromptSettings {
     QJsonArray providers;
     // Held out: this share of guesses is made but never shown, and compared
     // with what the person then typed, so prediction can be measured apart
-    // from acceptance (a shown guess shapes what is sent).
-    double holdoutShare{0.1};
-    // Arms compared live, each picked at random and recorded on the guess:
-    // the context the helper adds (`contextArms`; see next_prompt.py), a
-    // stricter floor for half the guesses (`experimentMinConfidence`, when
-    // above `minConfidence`), and, when the person comes back to an agent
-    // whose guess is at least `returnMinutes` old, a fresh guess for
-    // `returnShare` of those returns.
-    // wide is five generated candidates, three shown; one guess in five
-    // stays on the base prompt as the live holdout.
+    // from acceptance (a shown guess shapes what is sent). Off by default.
+    double holdoutShare{0.0};
+    // The live comparison: the context the helper adds (`contextArms`; see
+    // next_prompt.py), picked at random and recorded on the guess. wide is
+    // five generated candidates, three shown; alone it is compared half and
+    // half with the base prompt.
     QStringList contextArms{QStringLiteral("wide")};
-    double experimentMinConfidence{0.4};
+    // A stricter floor for half the guesses, when above `minConfidence`. Off
+    // by default: a guess's probability is the model's own, and models do not
+    // share a scale (DeepSeek's top guess rarely passes 0.3 where Opus's
+    // often passed 0.4), so a fixed floor hides one model's every guess.
+    double experimentMinConfidence{0.0};
+    // When the person comes back to an agent whose guess is at least
+    // `returnMinutes` old, `returnShare` of those returns guess again.
     int returnMinutes{30};
-    double returnShare{0.5};
+    double returnShare{1.0};
     bool operator==(const NextPromptSettings&) const = default;
 };
 [[nodiscard]] NextPromptSettings parse_next_prompt(const QJsonValue& value);

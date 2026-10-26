@@ -168,10 +168,10 @@ void parse_context_arms(const QJsonObject& object, NextPromptSettings& settings)
     const auto arms = object.value(QStringLiteral("contextArms"));
     if (!arms.isArray())
         return;
-    static const QStringList known{
-        QStringLiteral("base"),    QStringLiteral("thread"), QStringLiteral("retrieval"),
-        QStringLiteral("evidence"), QStringLiteral("moves"), QStringLiteral("legacy"),
-        QStringLiteral("pack"),    QStringLiteral("wide")};
+    static const QStringList known{QStringLiteral("base"),      QStringLiteral("thread"),
+                                   QStringLiteral("retrieval"), QStringLiteral("evidence"),
+                                   QStringLiteral("moves"),     QStringLiteral("legacy"),
+                                   QStringLiteral("pack"),      QStringLiteral("wide")};
     settings.contextArms.clear();
     for (const auto& arm : arms.toArray())
         if (known.contains(arm.toString()) && !settings.contextArms.contains(arm.toString()))
@@ -345,8 +345,7 @@ void NextPrompt::run(const QString& id, bool force, int returned) {
     dropRestored(id, "new_turn");
     withdraw(id, returned >= 0 ? Withdrawal::returned : Withdrawal::next_turn);
     const auto agent = lookup_(id);
-    if (!agent || (agent->cli != QLatin1String("claude") &&
-                   agent->cli != QLatin1String("codex") &&
+    if (!agent || (agent->cli != QLatin1String("claude") && agent->cli != QLatin1String("codex") &&
                    agent->cli != QLatin1String("omp"))) {
         emit judged(id, {});
         return;
@@ -589,11 +588,10 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
     if (settings_.contextArms.isEmpty())
         arms_made.context = QStringLiteral("base");
     else if (settings_.contextArms == QStringList{QStringLiteral("wide")} &&
-             random->generateDouble() < 0.2)
+             random->generateDouble() < 0.5)
         arms_made.context = QStringLiteral("base");
     else
-        arms_made.context = settings_.contextArms.at(
-            random->bounded(settings_.contextArms.size()));
+        arms_made.context = settings_.contextArms.at(random->bounded(settings_.contextArms.size()));
     arms_made.floor = settings_.experimentMinConfidence > settings_.minConfidence &&
                               random->generateDouble() < 0.5
                           ? settings_.experimentMinConfidence

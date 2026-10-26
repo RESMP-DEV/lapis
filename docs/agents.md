@@ -64,8 +64,10 @@ suggestions as a local agent's do; that needs `python3` there.
 
 Codex and Claude Code report their turns: Codex through its observer, Claude
 Code through the session service's hook adapter, which also reports permission
-prompts and questions. Other CLIs show an estimate from their output, **Output
-active** or **Quiet**, rather than guessing at turns. **Turn finished** means a
+prompts and questions. OMP on this Mac reports finished turns through an
+extension lapis's OMP overlay loads; between turns its status is estimated.
+Other CLIs show an estimate from their output, **Output active** or **Quiet**,
+rather than guessing at turns. **Turn finished** means a
 turn ended, not that the task or the process did. A new Codex agent reads **No
 prompt yet** until its first turn. Claude Code's idle reminder after a turn is
 not a request.

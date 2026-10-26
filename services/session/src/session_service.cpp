@@ -415,7 +415,7 @@ class SessionService final : public QObject {
                     else
                         finish_session(QStringLiteral("Process exited (%1)").arg(code), code);
                 });
-        if (remote_transport(launch))
+        if (remote_transport(launch) || omp_launch(launch))
             terminal_hooks_.emplace();
         if (launch.agent == AgentMode::codex)
             start_codex(endpoint, launch);
@@ -452,6 +452,12 @@ class SessionService final : public QObject {
     static bool remote_transport(const LaunchSpec& launch) {
         return launch.agent == AgentMode::terminal &&
                QFileInfo(launch.program).fileName() == QStringLiteral("ssh");
+    }
+    // A local OMP agent reports its turns through the same terminal sequences,
+    // printed by the extension lapis's OMP overlay loads.
+    static bool omp_launch(const LaunchSpec& launch) {
+        return launch.agent == AgentMode::terminal &&
+               QFileInfo(launch.program).fileName() == QStringLiteral("omp");
     }
     const attention::State* attention_state() const {
         return codex_state_    ? codex_state_.get()
@@ -497,6 +503,23 @@ class SessionService final : public QObject {
                 notify_turns_ = std::make_unique<NotifyTurns>(*notify_state_);
             }
             if (notify_turns_->completed(hook.source, attention_tick()))
+                observer_changed();
+        } else if (hook.cli == QLatin1String("omp")) {
+            // agent_end ends the person's turn; the start of the next one is
+            // their submitted input, as for Codex (note_submitted).
+            if (!notify_turns_) {
+                notify_state_ = std::make_unique<attention::State>(
+                    identity_.session_id.toHex().toStdString(), "omp-extension");
+                notify_turns_ =
+                    std::make_unique<NotifyTurns>(*notify_state_, QStringLiteral("OMP extension"));
+            }
+            const auto session = hook.source.value(QStringLiteral("session_id")).toString();
+            if (!session.isEmpty())
+                note_conversation(QStringLiteral("omp"), session, ResumeSource::terminal);
+            if (hook.source.value(QStringLiteral("type")) == QLatin1String("agent_end") &&
+                notify_turns_->completed(
+                    {{QStringLiteral("type"), QStringLiteral("agent-turn-complete")}},
+                    attention_tick()))
                 observer_changed();
         }
     }

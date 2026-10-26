@@ -219,7 +219,8 @@ def narration(parts):
                 counts[key] = 0
             counts[key] += 1
     lines = [
-        line + (" (x{})".format(counts[line.lower()]) if counts[line.lower()] > 1 else "")
+        line
+        + (" (x{})".format(counts[line.lower()]) if counts[line.lower()] > 1 else "")
         for line in order
     ]
     text = " | ".join(lines)
@@ -422,9 +423,7 @@ def codex_snippets(path):
             continue
         text = payload.get("output")
         if isinstance(text, str) and text.strip():
-            found.append(
-                {"time": entry.get("timestamp", ""), "text": text.strip()}
-            )
+            found.append({"time": entry.get("timestamp", ""), "text": text.strip()})
     return found
 
 
@@ -494,9 +493,7 @@ def find_transcript(cli, conversation, folder):
     else:
         root = os.path.join(omp_home(), "agent", "sessions")
         if conversation:
-            found = glob.glob(
-                os.path.join(root, "*", "*_" + conversation + ".jsonl")
-            )
+            found = glob.glob(os.path.join(root, "*", "*_" + conversation + ".jsonl"))
             if not found:
                 found = glob.glob(
                     os.path.join(root, "*", "*" + conversation + "*.jsonl")
@@ -541,9 +538,7 @@ def history(turns, limit=CONTEXT_CHARS, legacy=False):
         text = clip(source, 1500 if person else (3000 if legacy else 4000))
         if used + len(text) > limit and kept:
             break
-        kept.append(
-            {"role": turn["role"], "text": text, "time": turn.get("time", "")}
-        )
+        kept.append({"role": turn["role"], "text": text, "time": turn.get("time", "")})
         used += len(text)
     return list(reversed(kept))
 
@@ -638,8 +633,7 @@ def snippet_pack(turns, snippets, target=None, limit=2, chars=600):
             scored.append((count, snippet.get("time", ""), text))
     scored.sort(key=lambda item: (-item[0], item[1]))
     return [
-        {"time": time, "text": clip(text, chars)}
-        for _, time, text in scored[:limit]
+        {"time": time, "text": clip(text, chars)} for _, time, text in scored[:limit]
     ]
 
 
@@ -734,23 +728,27 @@ def age_label(minutes):
 
 def command_sample(arguments):
     """Random past prompts, each with the conversation before it."""
-    paths = [
-        ("claude", p)
-        for p in glob.glob(os.path.join(claude_home(), "projects", "*", "*.jsonl"))
-        if claude_interactive(p)
-    ] + [
-        ("codex", p)
-        for p in glob.glob(
-            os.path.join(codex_home(), "sessions", "*", "*", "*", "rollout-*.jsonl")
-        )
-        if codex_interactive(codex_meta(p))
-    ] + [
-        ("omp", p)
-        for p in glob.glob(
-            os.path.join(omp_home(), "agent", "sessions", "*", "*.jsonl")
-        )
-        if omp_interactive(omp_meta(p))
-    ]
+    paths = (
+        [
+            ("claude", p)
+            for p in glob.glob(os.path.join(claude_home(), "projects", "*", "*.jsonl"))
+            if claude_interactive(p)
+        ]
+        + [
+            ("codex", p)
+            for p in glob.glob(
+                os.path.join(codex_home(), "sessions", "*", "*", "*", "rollout-*.jsonl")
+            )
+            if codex_interactive(codex_meta(p))
+        ]
+        + [
+            ("omp", p)
+            for p in glob.glob(
+                os.path.join(omp_home(), "agent", "sessions", "*", "*.jsonl")
+            )
+            if omp_interactive(omp_meta(p))
+        ]
+    )
     since = arguments.since or ""
     oldest = utc_timestamp(since) if since else 0
     exclude = set(arguments.exclude or ())
@@ -784,12 +782,8 @@ def command_sample(arguments):
             before = utc_timestamp(target["time"])
         except (ValueError, TypeError):
             pass
-        recent = (
-            recent_prompts(path, before=before, files=files) if before else []
-        )
-        replies = [
-            t for t in turns[:index] if t["role"] == "agent" and t.get("time")
-        ]
+        recent = recent_prompts(path, before=before, files=files) if before else []
+        replies = [t for t in turns[:index] if t["role"] == "agent" and t.get("time")]
         returned = 0
         if before and replies:
             try:
@@ -874,9 +868,7 @@ def pair_index(folder, now=None, budget=INDEX_SECONDS):
     codex = glob.glob(
         os.path.join(codex_home(), "sessions", "*", "*", "*", "rollout-*.jsonl")
     )
-    omp = glob.glob(
-        os.path.join(omp_home(), "agent", "sessions", "*", "*.jsonl")
-    )
+    omp = glob.glob(os.path.join(omp_home(), "agent", "sessions", "*", "*.jsonl"))
     for cli, paths in (("claude", claude), ("codex", codex), ("omp", omp)):
         for name in paths:
             try:
@@ -1099,8 +1091,10 @@ def render(bundle, fence=None, arm="base", retrieved=()):
             label = age_label(age_minutes(r.get("time"), target))
             where = "[{}] ".format(r["where"]) if r.get("where") else ""
             recent.append(
-                "- " + label + where + mark_taken(str(r.get("text", "")), taken)
-                .replace("\n", " ")
+                "- "
+                + label
+                + where
+                + mark_taken(str(r.get("text", "")), taken).replace("\n", " ")
             )
         lines += [
             "Their latest prompts to other agents (newest first); [took a guess]"
@@ -1151,8 +1145,7 @@ def render(bundle, fence=None, arm="base", retrieved=()):
             block(
                 "snippets",
                 "\n".join(
-                    "- " + str(s.get("text", "")).replace("\n", " ")
-                    for s in snippets
+                    "- " + str(s.get("text", "")).replace("\n", " ") for s in snippets
                 ),
             ),
         ]

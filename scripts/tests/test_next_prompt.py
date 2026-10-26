@@ -197,9 +197,7 @@ class Homes(unittest.TestCase):
                     "timestamp": "2026-09-28T10:00:03Z",
                     "message": {
                         "role": "toolResult",
-                        "content": [
-                            {"type": "text", "text": "model-x uses 203 GB"}
-                        ],
+                        "content": [{"type": "text", "text": "model-x uses 203 GB"}],
                     },
                 },
                 {
@@ -653,9 +651,7 @@ class TranscriptTests(Homes):
                 "candidates": [{"text": "go", "p": 0.5}],
             }
         )
-        with patch.object(
-            next_prompt, "ask", return_value=(response, {})
-        ) as ask:
+        with patch.object(next_prompt, "ask", return_value=(response, {})) as ask:
             next_prompt.predict({"context": {"turns": []}}, "m", arm="moves")
         system = ask.call_args.args[0]
         self.assertIn("Pivot", system)
@@ -687,9 +683,7 @@ class TranscriptTests(Homes):
             {"time": "2026-09-28T10:00:00Z", "text": "paste bug fixed"},
             {"time": "2026-09-28T12:00:00Z", "text": "model-x result after the target"},
         ]
-        pack = next_prompt.snippet_pack(
-            turns, snippets, target="2026-09-28T11:00:00Z"
-        )
+        pack = next_prompt.snippet_pack(turns, snippets, target="2026-09-28T11:00:00Z")
         self.assertEqual(len(pack), 1)
         self.assertIn("203 GB", pack[0]["text"])
         self.assertNotIn("after the target", pack[0]["text"])
@@ -709,19 +703,13 @@ class TranscriptTests(Homes):
             }
         )
         with patch.object(next_prompt, "ask", return_value=(response, {})) as ask:
-            answer = next_prompt.predict(
-                {"context": {"turns": []}}, "m", arm="wide"
-            )
+            answer = next_prompt.predict({"context": {"turns": []}}, "m", arm="wide")
         self.assertIn("five candidates", ask.call_args.args[0])
         self.assertEqual(len(answer["candidates"]), 5)
 
     def test_parse_keeps_three_by_default_and_five_when_asked(self):
         body = json.dumps(
-            {
-                "candidates": [
-                    {"text": str(n), "p": 0.1} for n in range(5)
-                ]
-            }
+            {"candidates": [{"text": str(n), "p": 0.1} for n in range(5)]}
         )
         self.assertEqual(len(next_prompt.parse(body)["candidates"]), 3)
         self.assertEqual(len(next_prompt.parse(body, limit=5)["candidates"]), 5)
@@ -1482,6 +1470,28 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual([p["name"] for p in providers], ["infinity", "openrouter"])
         with patch.dict(os.environ, {"LAPIS_CONFIG": str(folder / "missing.json")}):
             self.assertEqual(next_prompt.config_providers(), [])
+
+
+class ManifestTests(unittest.TestCase):
+    """A sampled replay is saved where a later run can name it."""
+
+    def test_saved_sample_is_private_and_found_by_name(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(next_prompt_eval, "MANIFESTS", Path(directory) / "m"):
+                saved = next_prompt_eval.save_manifest([{"time": "t", "text": "x"}])
+                self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(next_prompt_eval.manifest_path(saved.stem), saved)
+                self.assertEqual(
+                    json.loads(saved.read_text()),
+                    {"items": [{"time": "t", "text": "x"}]},
+                )
+                elsewhere = Path(directory) / "other.json"
+                self.assertEqual(
+                    next_prompt_eval.manifest_path(str(elsewhere)), elsewhere
+                )
 
 
 class AcceptanceTests(unittest.TestCase):

@@ -15,6 +15,7 @@ prompts, which never belong in the repository.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from collections import defaultdict
@@ -23,6 +24,29 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# Fixed samples: every replay that samples saves its items here (private
+# transcript text, owner-only, ignored by git), so a comparison can be rerun on
+# the identical prompts with `--manifest NAME`.
+MANIFESTS = ROOT / "build" / "reports" / "next-prompt" / "manifests"
+
+
+def manifest_path(name):
+    """A manifest by path, or by name in MANIFESTS."""
+    path = Path(name).expanduser()
+    if path.exists() or path.is_absolute() or len(path.parts) > 1:
+        return path
+    return MANIFESTS / (name if name.endswith(".json") else name + ".json")
+
+
+def save_manifest(items):
+    MANIFESTS.mkdir(parents=True, exist_ok=True)
+    path = MANIFESTS / "sample-{}.json".format(datetime.now().strftime("%Y%m%dT%H%M%S"))
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as out:
+        json.dump({"items": items}, out)
+    return path
+
+
 HELPER = ROOT / "apps" / "desktop" / "src" / "next_prompt.py"
 sys.path.insert(0, str(HELPER.parent))
 import next_prompt  # noqa: E402
@@ -160,13 +184,9 @@ def summarize(rows):
         "top1_sendable": rate(rows, lambda r: r["scores"][:1] == [2]),
         "top1_intent": rate(rows, lambda r: (r["scores"] or [0])[0] >= 1),
         "top3_sendable": rate(rows, lambda r: 2 in r["scores"][:3]),
-        "top3_intent": rate(
-            rows, lambda r: max(r["scores"][:3] or [0]) >= 1
-        ),
+        "top3_intent": rate(rows, lambda r: max(r["scores"][:3] or [0]) >= 1),
         "top5_sendable": rate(rows, lambda r: 2 in r["scores"][:5]),
-        "top5_intent": rate(
-            rows, lambda r: max(r["scores"][:5] or [0]) >= 1
-        ),
+        "top5_intent": rate(rows, lambda r: max(r["scores"][:5] or [0]) >= 1),
         "by_length": {},
         "by_category": {},
         "by_confidence": [],
@@ -232,11 +252,11 @@ def replay(arguments):
             print("oracle file: {}".format(error), file=sys.stderr)
     items = []
     if arguments.manifest:
-        loaded = json.loads(Path(arguments.manifest).read_text())
+        loaded = json.loads(manifest_path(arguments.manifest).read_text())
         items = loaded.get("items", loaded) if isinstance(loaded, dict) else loaded
         for item in items:
             item.setdefault("machine", "")
-    for machine in ([] if arguments.manifest else [""] + (arguments.machine or [])):
+    for machine in [] if arguments.manifest else [""] + (arguments.machine or []):
         sample = on_machine(
             machine,
             [
@@ -257,6 +277,9 @@ def replay(arguments):
         for item in sample["items"]:
             item["machine"] = machine
             items.append(item)
+    if items and not arguments.manifest:
+        saved = save_manifest(items)
+        print("manifest:", saved.relative_to(ROOT), file=sys.stderr)
     for number, item in enumerate(items):
         item["id"] = number
 
@@ -744,7 +767,9 @@ def main(argv=None):
     replay_mode.add_argument(
         "--manifest",
         default="",
-        help="JSON sample (or item list) to replay instead of sampling again",
+        help="JSON sample (or item list) to replay instead of sampling again: a "
+        "path, or a name in build/reports/next-prompt/manifests (every sampled "
+        "replay saves one there)",
     )
     replay_mode.add_argument(
         "--machine", action="append", help="an ssh host to sample too"
