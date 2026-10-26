@@ -106,7 +106,7 @@ void settingsReadFromTheConfig() {
                 set.effort == QLatin1String("low") && set.minConfidence == 1.0 &&
                 set.maxPerHour == 0,
             "each field, clamped");
-    require(defaults.contextArms.size() == 4 && defaults.experimentMinConfidence == 0.4 &&
+    require(defaults.contextArms == QStringList{QStringLiteral("wide")} && defaults.experimentMinConfidence == 0.4 &&
                 defaults.returnMinutes == 30 && defaults.returnShare == 0.5,
             "every context arm, a 0.4 floor arm, and half of returns after 30 minutes");
     const auto arms = lapis::desktop::parse_next_prompt(

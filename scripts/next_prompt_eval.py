@@ -159,8 +159,14 @@ def summarize(rows):
         ),
         "top1_sendable": rate(rows, lambda r: r["scores"][:1] == [2]),
         "top1_intent": rate(rows, lambda r: (r["scores"] or [0])[0] >= 1),
-        "top3_sendable": rate(rows, lambda r: 2 in r["scores"]),
-        "top3_intent": rate(rows, lambda r: max(r["scores"] or [0]) >= 1),
+        "top3_sendable": rate(rows, lambda r: 2 in r["scores"][:3]),
+        "top3_intent": rate(
+            rows, lambda r: max(r["scores"][:3] or [0]) >= 1
+        ),
+        "top5_sendable": rate(rows, lambda r: 2 in r["scores"][:5]),
+        "top5_intent": rate(
+            rows, lambda r: max(r["scores"][:5] or [0]) >= 1
+        ),
         "by_length": {},
         "by_category": {},
         "by_confidence": [],
@@ -172,7 +178,7 @@ def summarize(rows):
         part = [r for r in rows if test(r["words"])]
         report["by_length"][label] = {
             "count": len(part),
-            "top3_sendable": rate(part, lambda r: 2 in r["scores"]),
+            "top3_sendable": rate(part, lambda r: 2 in r["scores"][:3]),
         }
     groups = defaultdict(list)
     for r in rows:
@@ -180,8 +186,8 @@ def summarize(rows):
     for category, part in sorted(groups.items(), key=lambda kv: -len(kv[1])):
         report["by_category"][category] = {
             "count": len(part),
-            "top3_sendable": rate(part, lambda r: 2 in r["scores"]),
-            "top3_intent": rate(part, lambda r: max(r["scores"] or [0]) >= 1),
+            "top3_sendable": rate(part, lambda r: 2 in r["scores"][:3]),
+            "top3_intent": rate(part, lambda r: max(r["scores"][:3] or [0]) >= 1),
         }
     # Offered only at or above a threshold: how often, and how often right.
     for threshold in THRESHOLDS:
@@ -218,8 +224,19 @@ def grading_coverage(requested: int, graded: int) -> dict[str, object]:
 
 
 def replay(arguments):
+    oracle = {}
+    if arguments.oracle:
+        try:
+            oracle = json.loads(Path(arguments.oracle).read_text())
+        except (OSError, ValueError) as error:
+            print("oracle file: {}".format(error), file=sys.stderr)
     items = []
-    for machine in [""] + (arguments.machine or []):
+    if arguments.manifest:
+        loaded = json.loads(Path(arguments.manifest).read_text())
+        items = loaded.get("items", loaded) if isinstance(loaded, dict) else loaded
+        for item in items:
+            item.setdefault("machine", "")
+    for machine in ([] if arguments.manifest else [""] + (arguments.machine or [])):
         sample = on_machine(
             machine,
             [
@@ -243,6 +260,14 @@ def replay(arguments):
     for number, item in enumerate(items):
         item["id"] = number
 
+    if arguments.providers is None:
+        providers = next_prompt.config_providers()
+    else:
+        try:
+            providers = next_prompt.clean_providers(json.loads(arguments.providers))
+        except (TypeError, ValueError):
+            providers = []
+
     def guess(item):
         when = item["time"]
         try:
@@ -250,7 +275,11 @@ def replay(arguments):
             when = when.strftime("%a %-I:%M %p")
         except ValueError:
             pass
-        turns = item["turns"]
+        turns = (
+            item.get("legacy_turns", item["turns"])
+            if arguments.context_arm == "legacy"
+            else item["turns"]
+        )
         if arguments.context == "last":
             # Only what the agent last said: whether the rest of the context
             # earns its cost.
@@ -258,10 +287,27 @@ def replay(arguments):
             turns = said[-1:]
         bundle = {
             "agent": {"cli": item["cli"], "machine": item["machine"]},
-            "context": {"turns": turns},
+            "context": {
+                "turns": turns,
+                "recent": item.get("recent", []),
+                "snippets": item.get("snippets", []),
+                "conversation": item["conversation"],
+            },
             "time": when,
+            "target": item["time"],
         }
-        return next_prompt.predict(bundle, arguments.model, arguments.effort)
+        if item.get("returned_minutes"):
+            bundle["returned_minutes"] = item["returned_minutes"]
+        topic = oracle.get(item["conversation"])
+        if topic:
+            bundle["oracle"] = topic
+        return next_prompt.predict(
+            bundle,
+            arguments.model,
+            arguments.effort,
+            arm=arguments.context_arm,
+            providers=providers,
+        )
 
     with ThreadPoolExecutor(arguments.parallel) as pool:
         guesses = list(pool.map(guess, items))
@@ -309,6 +355,8 @@ def replay(arguments):
     report["grading"] = grading_coverage(len(graded), len(rows))
     report["model"] = arguments.model
     report["context"] = arguments.context
+    report["context_arm"] = arguments.context_arm
+    report["oracle"] = bool(oracle)
     if graded:
         report["median_ms"] = sorted(g["ms"] for g in graded)[len(graded) // 2]
     return report, rows
@@ -494,10 +542,22 @@ def acceptance(events):
     report["by_context_arm"] = {}
     for arm, part in sorted(contexts.items()):
         arm_seen = [o for o in part if o["shown"] and o["seen"]]
+        arm_used = [o for o in arm_seen if o["used"]]
+        arm_waits = sorted(
+            o["used"].get("ms_after_seen", -1)
+            for o in arm_used
+            if o["used"].get("ms_after_seen", -1) >= 0
+        )
         report["by_context_arm"][arm] = {
             "predicted": len(part),
             "seen": len(arm_seen),
-            "acceptance": rate([o for o in arm_seen if o["used"]], arm_seen),
+            "used": len(arm_used),
+            "acceptance": rate(arm_used, arm_seen),
+            "p95_ms_to_use": (
+                arm_waits[min(len(arm_waits) - 1, int(len(arm_waits) * 0.95))]
+                if arm_waits
+                else None
+            ),
             "outcome_own": sum(
                 1 for o in part if (o["outcome"] or {}).get("result") == "own"
             ),
@@ -682,6 +742,11 @@ def main(argv=None):
     )
     replay_mode.add_argument("--seed", type=int, default=0)
     replay_mode.add_argument(
+        "--manifest",
+        default="",
+        help="JSON sample (or item list) to replay instead of sampling again",
+    )
+    replay_mode.add_argument(
         "--machine", action="append", help="an ssh host to sample too"
     )
     replay_mode.add_argument(
@@ -693,6 +758,22 @@ def main(argv=None):
         choices=("full", "last"),
         default="full",
         help="the conversation, or only the agent's last message",
+    )
+    replay_mode.add_argument(
+        "--context-arm",
+        choices=next_prompt.CONTEXT_ARMS,
+        default="base",
+        help="base is the final-block view; legacy is the old merged clip",
+    )
+    replay_mode.add_argument(
+        "--oracle",
+        default="",
+        help="JSON file mapping conversation id to a topic hint",
+    )
+    replay_mode.add_argument(
+        "--providers",
+        default=None,
+        help="JSON provider array; absent uses nextPrompt.providers from lapis.json",
     )
     replay_mode.add_argument("--effort", default="")
     replay_mode.add_argument("--parallel", type=int, default=6)

@@ -74,3 +74,6 @@ CMakeLists.txt.user*
 # Canonical project instructions and their relative symlink are source files.
 !/AGENTS.md
 !/CLAUDE.md
+
+# Machine-local next-prompt pair/person index (private runtime cache).
+apps/desktop/src/next_prompt_pairs.json

@@ -98,12 +98,28 @@ METERED = (
 # A conversation id as the CLIs name them: no paths.
 CONVERSATION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 CONTEXT_CHARS = 24000
-RECENT_HOURS = 6
+# The final assistant text block is kept whole; the narration before it is
+# deduplicated to one line per step. These are the characters each may use.
+FINAL_CHARS = 3500
+NARRATION_CHARS = 400
+# Cross-session prompts count only when they were typed in the hour before
+# the target message, not merely when their transcript was touched.
+RECENT_HOURS = 1
 # Context arms, compared live (each guess records its arm): the conversation
 # alone; with the person's earlier messages in it; with how they answered
-# similar replies before; or with an instruction to find the reply's weakest
-# claim. An offline replay (Oct 16) could not tell them apart.
-CONTEXT_ARMS = ("base", "thread", "retrieval", "evidence")
+# similar replies before; with an instruction to find the reply's weakest
+# claim; or with three candidates split by conversational move. "legacy" keeps
+# the older merged-and-clipped agent turns, for the ablation baseline.
+CONTEXT_ARMS = (
+    "base",
+    "thread",
+    "retrieval",
+    "evidence",
+    "moves",
+    "legacy",
+    "pack",
+    "wide",
+)
 EARLIER_MESSAGES = 25
 RETRIEVED = 6
 INDEX_DAYS = 60
@@ -188,9 +204,61 @@ def blocks_text(content, kind):
     )
 
 
+def narration(parts):
+    """One line per distinct pre-tool step, repeats counted, bounded."""
+    order = []
+    counts = {}
+    for part in parts:
+        for raw in part.splitlines():
+            line = " ".join(raw.split())
+            if not line:
+                continue
+            key = line.lower()
+            if key not in counts:
+                order.append(line)
+                counts[key] = 0
+            counts[key] += 1
+    lines = [
+        line + (" (x{})".format(counts[line.lower()]) if counts[line.lower()] > 1 else "")
+        for line in order
+    ]
+    text = " | ".join(lines)
+    if len(text) > NARRATION_CHARS:
+        text = text[: NARRATION_CHARS - 3].rstrip() + "..."
+    return text
+
+
+def agent_text(parts):
+    """The final assistant text block whole (tail-anchored), after a compact
+    header of the steps that came before it. The middle of a long assistant
+    turn is where the link, the numbers and the plan live; the old clip cut
+    exactly that."""
+    final = parts[-1]
+    if len(final) > FINAL_CHARS:
+        final = "[...]\n" + final[-(FINAL_CHARS - len("[...]\n")) :]
+    head = narration(parts[:-1])
+    return head + "\n" + final if head else final
+
+
 def add(turns, role, text, stamp):
-    if turns and turns[-1]["role"] == role == "agent":
-        turns[-1]["text"] += "\n" + text
+    if role == "agent":
+        if turns and turns[-1]["role"] == "agent":
+            turn = turns[-1]
+            turn["parts"].append(text)
+            turn["legacy"] = turn["legacy"] + "\n" + text if turn["legacy"] else text
+            turn["text"] = agent_text(turn["parts"])
+            if stamp:
+                turn["time"] = stamp
+        else:
+            turns.append(
+                {
+                    "role": "agent",
+                    "text": agent_text([text]),
+                    "time": stamp,
+                    "parts": [text],
+                    "legacy": text,
+                }
+            )
     else:
         turns.append({"role": role, "text": text, "time": stamp})
 
@@ -251,6 +319,123 @@ def codex_turns(path):
     return turns
 
 
+def omp_home():
+    return os.environ.get("OMP_HOME") or os.path.expanduser("~/.omp")
+
+
+def omp_meta(path):
+    for entry in records(path):
+        if entry.get("type") == "session":
+            return {
+                "id": entry.get("id", ""),
+                "cwd": entry.get("cwd", ""),
+                "timestamp": entry.get("timestamp", ""),
+            }
+    return None
+
+
+def omp_interactive(meta):
+    return isinstance(meta, dict) and bool(meta.get("cwd"))
+
+
+def omp_turns(path):
+    """oh-my-pi's own JSONL: user/assistant message entries; toolResult
+    entries are outputs, not visible turns."""
+    turns = []
+    for entry in records(path):
+        if entry.get("type") != "message":
+            continue
+        message = entry.get("message")
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        content = message.get("content")
+        stamp = entry.get("timestamp", "")
+        if role == "user":
+            text = typed(blocks_text(content, ("text",)))
+            if text:
+                add(turns, "person", text, stamp)
+        elif role == "assistant":
+            text = blocks_text(content, ("text",)).strip()
+            if text:
+                add(turns, "agent", text, stamp)
+    return turns
+
+
+def omp_snippets(path):
+    found = []
+    for entry in records(path):
+        if entry.get("type") != "message":
+            continue
+        message = entry.get("message")
+        if not isinstance(message, dict) or message.get("role") != "toolResult":
+            continue
+        text = blocks_text(message.get("content"), ("text",)).strip()
+        if text:
+            found.append({"time": entry.get("timestamp", ""), "text": text})
+    return found
+
+
+def tool_text(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            str(block.get("text", ""))
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return ""
+
+
+def claude_snippets(path):
+    """Tool and subagent outputs the visible-turn parser drops. Each is a
+    timestamped exact result, which the pack arm may quote."""
+    found = []
+    for entry in records(path):
+        if entry.get("isSidechain") or entry.get("isMeta"):
+            continue
+        content = (
+            entry.get("message", {}).get("content")
+            if isinstance(entry.get("message"), dict)
+            else None
+        )
+        if entry.get("type") == "user" and isinstance(content, list):
+            text = "\n".join(
+                tool_text(block.get("content"))
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "tool_result"
+            ).strip()
+            if text:
+                found.append({"time": entry.get("timestamp", ""), "text": text})
+    return found
+
+
+def codex_snippets(path):
+    found = []
+    for entry in records(path):
+        payload = entry.get("payload", {})
+        if entry.get("type") != "response_item" or payload.get("type") not in (
+            "function_call_output",
+            "custom_tool_call_output",
+        ):
+            continue
+        text = payload.get("output")
+        if isinstance(text, str) and text.strip():
+            found.append(
+                {"time": entry.get("timestamp", ""), "text": text.strip()}
+            )
+    return found
+
+
+def snippets_of(cli, path):
+    if cli == "claude":
+        return claude_snippets(path)
+    if cli == "codex":
+        return codex_snippets(path)
+    return omp_snippets(path)
+
+
 def claude_home():
     return os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
 
@@ -286,7 +471,7 @@ def find_transcript(cli, conversation, folder):
         slug = re.sub(r"[^A-Za-z0-9]", "-", folder_path(folder))
         candidates = glob.glob(os.path.join(claude_home(), "projects", slug, "*.jsonl"))
         candidates = [p for p in candidates if claude_interactive(p)]
-    else:
+    elif cli == "codex":
         root = os.path.join(codex_home(), "sessions")
         if conversation:
             name = (
@@ -306,11 +491,36 @@ def find_transcript(cli, conversation, folder):
                 folder
             ):
                 candidates.append(path)
+    else:
+        root = os.path.join(omp_home(), "agent", "sessions")
+        if conversation:
+            found = glob.glob(
+                os.path.join(root, "*", "*_" + conversation + ".jsonl")
+            )
+            if not found:
+                found = glob.glob(
+                    os.path.join(root, "*", "*" + conversation + "*.jsonl")
+                )
+            return max(found, key=os.path.getmtime) if found else None
+        cutoff = time.time() - 3 * 86400
+        candidates = []
+        for path in glob.glob(os.path.join(root, "*", "*.jsonl")):
+            if os.path.getmtime(path) < cutoff:
+                continue
+            meta = omp_meta(path)
+            if omp_interactive(meta) and folder_path(meta.get("cwd")) == folder_path(
+                folder
+            ):
+                candidates.append(path)
     return max(candidates, key=os.path.getmtime) if candidates else None
 
 
 def turns_of(cli, path):
-    return claude_turns(path) if cli == "claude" else codex_turns(path)
+    if cli == "claude":
+        return claude_turns(path)
+    if cli == "codex":
+        return codex_turns(path)
+    return omp_turns(path)
 
 
 def clip(text, limit):
@@ -319,40 +529,118 @@ def clip(text, limit):
     return text[: limit // 3] + "\n[...]\n" + text[-(limit - limit // 3) :]
 
 
-def history(turns, limit=CONTEXT_CHARS):
-    """The newest turns that fit in `limit` characters, oldest first."""
+def history(turns, limit=CONTEXT_CHARS, legacy=False):
+    """The newest turns that fit in `limit` characters, oldest first.
+
+    Agent turns already carry their final block and compact narration. The
+    legacy view re-clips the merged text the way the ablation baseline did."""
     kept, used = [], 0
     for turn in reversed(turns):
-        text = clip(turn["text"], 1500 if turn["role"] == "person" else 3000)
+        person = turn["role"] == "person"
+        source = turn.get("legacy", turn["text"]) if legacy else turn["text"]
+        text = clip(source, 1500 if person else (3000 if legacy else 4000))
         if used + len(text) > limit and kept:
             break
-        kept.append({"role": turn["role"], "text": text})
+        kept.append(
+            {"role": turn["role"], "text": text, "time": turn.get("time", "")}
+        )
         used += len(text)
     return list(reversed(kept))
 
 
-def recent_prompts(skip, hours=RECENT_HOURS, limit=20):
-    """The person's newest prompts to other conversations on this machine."""
-    cutoff = time.time() - hours * 3600
+def recent_prompts(skip, hours=RECENT_HOURS, limit=20, before=None, files=None):
+    """The person's prompts to other conversations in the window before the
+    target message. `files` is an up-to-date pair_index(); without it this
+    falls back to reading the transcripts, which is slower."""
+    end = before if before is not None else time.time()
+    cutoff = end - hours * 3600
     found = []
-    claude = glob.glob(os.path.join(claude_home(), "projects", "*", "*.jsonl"))
-    codex = glob.glob(
-        os.path.join(codex_home(), "sessions", "*", "*", "*", "rollout-*.jsonl")
-    )
-    for cli, paths in (("claude", claude), ("codex", codex)):
-        for path in paths:
-            if path == skip or os.path.getmtime(path) < cutoff:
+    if files is not None:
+        for name, entry in files.items():
+            if name == skip:
                 continue
-            if cli == "claude" and not claude_interactive(path):
-                continue
-            if cli == "codex" and not codex_interactive(codex_meta(path)):
-                continue
-            folder = os.path.basename(os.path.dirname(path)) if cli == "claude" else ""
-            for turn in turns_of(cli, path):
-                if turn["role"] == "person":
-                    found.append((turn["time"], folder, clip(turn["text"], 400)))
-    found.sort(reverse=True)
-    return [{"time": t, "where": w, "text": x} for t, w, x in found[:limit]]
+            for stamp, folder, text in entry.get("prompts", []):
+                try:
+                    when = utc_timestamp(stamp)
+                except (ValueError, TypeError):
+                    continue
+                if cutoff <= when <= end:
+                    found.append((when, folder, text))
+    else:
+        claude = glob.glob(os.path.join(claude_home(), "projects", "*", "*.jsonl"))
+        codex = glob.glob(
+            os.path.join(codex_home(), "sessions", "*", "*", "*", "rollout-*.jsonl")
+        )
+        for cli, paths in (("claude", claude), ("codex", codex)):
+            for path in paths:
+                if os.path.getmtime(path) < cutoff:
+                    continue
+                if cli == "claude" and not claude_interactive(path):
+                    continue
+                if cli == "codex" and not codex_interactive(codex_meta(path)):
+                    continue
+                folder = (
+                    os.path.basename(os.path.dirname(path)) if cli == "claude" else ""
+                )
+                for turn in turns_of(cli, path):
+                    if turn["role"] != "person":
+                        continue
+                    try:
+                        when = utc_timestamp(turn["time"])
+                    except (ValueError, TypeError):
+                        continue
+                    if cutoff <= when <= end:
+                        found.append((when, folder, clip(turn["text"], 400)))
+    found.sort(key=lambda f: f[0], reverse=True)
+    return [
+        {
+            "time": datetime.fromtimestamp(t, timezone.utc).isoformat(),
+            "where": w,
+            "text": x,
+        }
+        for t, w, x in found[:limit]
+    ]
+
+
+def snippet_pack(turns, snippets, target=None, limit=2, chars=600):
+    """One or two exact tool/subagent results matching the live topic.
+
+    The topic words come from the newest visible turns, so the pack follows
+    what the person and agent are actually discussing. Results after the
+    target are never quoted."""
+    query = " ".join(turn.get("text", "") for turn in turns[-8:])
+    words = set(WORD.findall(query.lower()))
+    if not words or not snippets:
+        return []
+    cutoff = None
+    if target:
+        try:
+            cutoff = (
+                float(target)
+                if isinstance(target, (int, float))
+                else utc_timestamp(target)
+            )
+        except (ValueError, TypeError):
+            cutoff = None
+    scored = []
+    for snippet in snippets:
+        text = str(snippet.get("text", ""))
+        if not text:
+            continue
+        if cutoff is not None and snippet.get("time"):
+            try:
+                if utc_timestamp(snippet["time"]) > cutoff:
+                    continue
+            except (ValueError, TypeError):
+                pass
+        count = len(words & set(WORD.findall(text.lower())))
+        if count:
+            scored.append((count, snippet.get("time", ""), text))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [
+        {"time": time, "text": clip(text, chars)}
+        for _, time, text in scored[:limit]
+    ]
 
 
 def command_context(arguments):
@@ -364,12 +652,28 @@ def command_context(arguments):
     turns = turns_of(arguments.cli, path)
     prompts = [t for t in turns if t["role"] == "person"]
     shown = history(turns)
+    now = time.time()
+    try:
+        files = pair_index(os.path.dirname(os.path.abspath(__file__)))
+    except OSError:
+        files = {}
     result = {
         "conversation": os.path.basename(path)[: -len(".jsonl")],
         "turn": len(prompts),
         "turns": shown,
-        "recent": recent_prompts(path),
+        "recent": recent_prompts(path, before=now, files=files),
+        "snippets": snippet_pack(
+            shown, files.get(path, {}).get("snippets", []), target=now
+        ),
     }
+    replies = [t for t in turns if t["role"] == "agent" and t.get("time")]
+    if replies:
+        try:
+            minutes = int((now - utc_timestamp(replies[-1]["time"])) / 60)
+        except (ValueError, TypeError):
+            minutes = 0
+        if minutes > 0:
+            result["returned_minutes"] = minutes
     # The person's messages from before the turns shown (the thread arm).
     earlier = [
         clip(t["text"], 220)
@@ -411,6 +715,23 @@ def utc_timestamp(value):
     return parsed.timestamp()
 
 
+def age_minutes(stamp, target):
+    """Whole minutes from a turn to the target message, or None if either
+    stamp is absent or not ISO. A future or same-minute turn is 0."""
+    if not stamp or not target:
+        return None
+    try:
+        return int((utc_timestamp(target) - utc_timestamp(stamp)) / 60)
+    except (ValueError, TypeError):
+        return None
+
+
+def age_label(minutes):
+    if minutes is None or minutes < 0:
+        return ""
+    return "[-<1m] " if minutes == 0 else "[-{}m] ".format(minutes)
+
+
 def command_sample(arguments):
     """Random past prompts, each with the conversation before it."""
     paths = [
@@ -423,6 +744,12 @@ def command_sample(arguments):
             os.path.join(codex_home(), "sessions", "*", "*", "*", "rollout-*.jsonl")
         )
         if codex_interactive(codex_meta(p))
+    ] + [
+        ("omp", p)
+        for p in glob.glob(
+            os.path.join(omp_home(), "agent", "sessions", "*", "*.jsonl")
+        )
+        if omp_interactive(omp_meta(p))
     ]
     since = arguments.since or ""
     oldest = utc_timestamp(since) if since else 0
@@ -444,21 +771,53 @@ def command_sample(arguments):
             if seen > 2 and after_cutoff and turns[index - 1]["role"] == "agent":
                 eligible.append((cli, path, index))
     random.Random(arguments.seed).shuffle(eligible)
+    try:
+        files = pair_index(os.path.dirname(os.path.abspath(__file__)))
+    except OSError:
+        files = {}
     items = []
     for cli, path, index in eligible[: arguments.count]:
         turns = turns_of(cli, path)
-        items.append(
-            {
-                "cli": cli,
-                "conversation": os.path.basename(path)[: -len(".jsonl")],
-                "folder": os.path.basename(os.path.dirname(path))
-                if cli == "claude"
-                else "",
-                "time": turns[index]["time"],
-                "turns": history(turns[:index]),
-                "actual": turns[index]["text"],
-            }
+        target = turns[index]
+        before = None
+        try:
+            before = utc_timestamp(target["time"])
+        except (ValueError, TypeError):
+            pass
+        recent = (
+            recent_prompts(path, before=before, files=files) if before else []
         )
+        replies = [
+            t for t in turns[:index] if t["role"] == "agent" and t.get("time")
+        ]
+        returned = 0
+        if before and replies:
+            try:
+                returned = int((before - utc_timestamp(replies[-1]["time"])) / 60)
+            except (ValueError, TypeError):
+                returned = 0
+        item = {
+            "cli": cli,
+            "conversation": os.path.basename(path)[: -len(".jsonl")],
+            "folder": os.path.basename(os.path.dirname(path))
+            if cli == "claude"
+            else os.path.basename((omp_meta(path) or {}).get("cwd", ""))
+            if cli == "omp"
+            else "",
+            "time": target["time"],
+            "turns": history(turns[:index]),
+            "legacy_turns": history(turns[:index], legacy=True),
+            "recent": recent,
+            "snippets": snippet_pack(
+                history(turns[:index]),
+                files.get(path, {}).get("snippets", []),
+                target=before,
+            ),
+            "actual": target["text"],
+        }
+        if returned > 0:
+            item["returned_minutes"] = returned
+        items.append(item)
     return {"eligible": len(eligible), "items": items}
 
 
@@ -482,6 +841,21 @@ def transcript_pairs(cli, path):
     ]
 
 
+def transcript_prompts(cli, path):
+    """Every person prompt in a transcript, for the cross-session window."""
+    if cli == "claude":
+        folder = os.path.basename(os.path.dirname(path))
+    elif cli == "omp":
+        folder = os.path.basename((omp_meta(path) or {}).get("cwd", ""))
+    else:
+        folder = ""
+    return [
+        [turn.get("time") or "", folder, clip(turn["text"], 400)]
+        for turn in turns_of(cli, path)
+        if turn["role"] == "person" and turn.get("time")
+    ]
+
+
 def pair_index(folder, now=None, budget=INDEX_SECONDS):
     """Past exchanges on this Mac, cached in `folder` and brought up to date
     within `budget` seconds a call, newest transcripts first."""
@@ -500,7 +874,10 @@ def pair_index(folder, now=None, budget=INDEX_SECONDS):
     codex = glob.glob(
         os.path.join(codex_home(), "sessions", "*", "*", "*", "rollout-*.jsonl")
     )
-    for cli, paths in (("claude", claude), ("codex", codex)):
+    omp = glob.glob(
+        os.path.join(omp_home(), "agent", "sessions", "*", "*.jsonl")
+    )
+    for cli, paths in (("claude", claude), ("codex", codex), ("omp", omp)):
         for name in paths:
             try:
                 stamp = os.path.getmtime(name)
@@ -512,17 +889,29 @@ def pair_index(folder, now=None, budget=INDEX_SECONDS):
     started = time.time()
     changed = False
     for name, (cli, stamp) in sorted(found.items(), key=lambda f: -f[1][1]):
-        if files.get(name, {}).get("mtime") == stamp:
+        if (
+            files.get(name, {}).get("mtime") == stamp
+            and "prompts" in files.get(name, {})
+            and "snippets" in files.get(name, {})
+        ):
             continue
         if time.time() - started > budget:
             break
-        interactive = (
-            claude_interactive(name)
-            if cli == "claude"
-            else codex_interactive(codex_meta(name))
-        )
+        if cli == "claude":
+            interactive = claude_interactive(name)
+        elif cli == "codex":
+            interactive = codex_interactive(codex_meta(name))
+        else:
+            interactive = omp_interactive(omp_meta(name))
         pairs = transcript_pairs(cli, name) if interactive else []
-        files[name] = {"mtime": stamp, "pairs": pairs}
+        prompts = transcript_prompts(cli, name) if interactive else []
+        snippets = snippets_of(cli, name) if interactive else []
+        files[name] = {
+            "mtime": stamp,
+            "pairs": pairs,
+            "prompts": prompts,
+            "snippets": snippets,
+        }
         changed = True
     if changed or len(files) != len(index["files"]):
         temporary = path + ".tmp"
@@ -578,6 +967,28 @@ or proposal rests on an assumption, an unmeasured number or an unchecked
 source, and what state of the world (machines, people, inboxes, money, time)
 it depends on. When one of those decides what they should send, ask for that
 measurement or state instead of approving."""
+
+MOVES = """
+
+Write three candidates in these roles, in this order:
+1. Reply to the latest turn. If it reports a running job, a timing breakdown,
+   or an assumption, challenge the bottleneck or the unmeasured claim instead of
+   only approving.
+2. Pivot. If the latest turn is a blocked side check, a completed housekeeping
+   step, or the person has been away for at least ten minutes, return to the
+   session's main deliverable.
+3. Re-raise a cross-session or earlier open thread from the person's recent
+   prompts or earlier turns.
+Do not write three versions of the agent's latest thread. The roles may share a
+mode when one thread is live, but each must be a different move."""
+
+
+WIDE = """
+
+Write five candidates, not three. The first three are the ones you would
+show in the Tab list; the fourth and fifth are other plausible next messages
+whose mode or thread differs from those three. Keep them in likelihood order
+and give each a calibrated probability."""
 
 
 def priors():
@@ -681,18 +1092,21 @@ def render(bundle, fence=None, arm="base", retrieved=()):
         block("agents", "\n".join(others)),
     ]
     taken = taken_set(bundle)
+    target = bundle.get("target") or bundle.get("time")
     if context.get("recent"):
+        recent = []
+        for r in context["recent"][:15]:
+            label = age_label(age_minutes(r.get("time"), target))
+            where = "[{}] ".format(r["where"]) if r.get("where") else ""
+            recent.append(
+                "- " + label + where + mark_taken(str(r.get("text", "")), taken)
+                .replace("\n", " ")
+            )
         lines += [
             "Their latest prompts to other agents (newest first); [took a guess]"
             " marks one they sent by accepting a guess like yours, so it shows"
             " what they accept, not what they would have written:",
-            block(
-                "recent",
-                "\n".join(
-                    "- " + mark_taken(r["text"], taken).replace("\n", " ")
-                    for r in context["recent"][:15]
-                ),
-            ),
+            block("recent", "\n".join(recent)),
         ]
     if bundle.get("screen"):
         lines += ["Its terminal now:", block("screen", bundle["screen"])]
@@ -723,24 +1137,40 @@ def render(bundle, fence=None, arm="base", retrieved=()):
                 ),
             ),
         ]
+    if bundle.get("oracle"):
+        lines += [
+            "The person's next message is likely about this topic (a hint, not"
+            " their words):",
+            block("oracle", bundle["oracle"]),
+        ]
+    snippets = bundle.get("snippets") or context.get("snippets")
+    if arm == "pack" and snippets:
+        lines += [
+            "Exact tool or subagent results around this topic, copied as"
+            " evidence (clipped):",
+            block(
+                "snippets",
+                "\n".join(
+                    "- " + str(s.get("text", "")).replace("\n", " ")
+                    for s in snippets
+                ),
+            ),
+        ]
     lines.append("This conversation, oldest first:")
     for turn in context.get("turns", []):
         person = turn["role"] == "person"
-        lines.append(
-            block(
-                "person" if person else "agent",
-                mark_taken(turn["text"], taken) if person else turn["text"],
-            )
-        )
+        label = age_label(age_minutes(turn.get("time"), target))
+        text = mark_taken(turn["text"], taken) if person else turn["text"]
+        lines.append(block("person" if person else "agent", label + text))
     lines.append("Write the person's next message.")
     return "\n".join(lines)
 
 
-def parse(text):
+def parse(text, limit=3):
     """The model's JSON, however it was wrapped, with candidates in order."""
     body = json.loads(text[text.index("{") : text.rindex("}") + 1])
     candidates = []
-    for c in body.get("candidates", [])[:3]:
+    for c in body.get("candidates", [])[:limit]:
         if isinstance(c, str):
             c = {"text": c}
         words = str(c.get("text", "")).strip()
@@ -1177,7 +1607,7 @@ def predict_providers(
                 errors.append((name, error))
                 break
             try:
-                result = parse(text)
+                result = parse(text, limit=5 if arm == "wide" else 3)
                 if not result["candidates"]:
                     raise ValueError("no candidates in provider response")
             except (ValueError, KeyError, TypeError, AttributeError) as error:
@@ -1233,6 +1663,10 @@ def predict(
     system = SYSTEM.format(priors=priors(), categories=", ".join(CATEGORIES))
     if arm == "evidence":
         system += EVIDENCE
+    elif arm == "moves":
+        system += MOVES + EVIDENCE
+    elif arm == "wide":
+        system += WIDE
     started = time.time()
     retrieved = []
     if arm == "retrieval":
@@ -1266,7 +1700,7 @@ def predict(
             # In particular, never immediately repeat a rate-limited call.
             return failure(error)
         try:
-            result = parse(text)
+            result = parse(text, limit=5 if arm == "wide" else 3)
             result["ms"] = int((time.time() - started) * 1000)
             result["cost"] = envelope.get("total_cost_usd", 0)
             result["context_arm"] = arm
@@ -1304,12 +1738,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     modes = parser.add_subparsers(dest="mode", required=True)
     context = modes.add_parser("context")
-    context.add_argument("--cli", choices=("claude", "codex"), required=True)
+    context.add_argument("--cli", choices=("claude", "codex", "omp"), required=True)
     context.add_argument("--conversation", default="")
     context.add_argument("--answered", type=int, default=-1)
     context.add_argument("--folder", default="")
     actual = modes.add_parser("actual")
-    actual.add_argument("--cli", choices=("claude", "codex"), required=True)
+    actual.add_argument("--cli", choices=("claude", "codex", "omp"), required=True)
     actual.add_argument("--conversation", required=True)
     actual.add_argument("--turn", type=int, required=True)
     sample = modes.add_parser("sample")

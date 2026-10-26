@@ -58,8 +58,9 @@ struct NextPromptSettings {
     // above `minConfidence`), and, when the person comes back to an agent
     // whose guess is at least `returnMinutes` old, a fresh guess for
     // `returnShare` of those returns.
-    QStringList contextArms{QStringLiteral("base"), QStringLiteral("thread"),
-                            QStringLiteral("retrieval"), QStringLiteral("evidence")};
+    // wide is five generated candidates, three shown; one guess in five
+    // stays on the base prompt as the live holdout.
+    QStringList contextArms{QStringLiteral("wide")};
     double experimentMinConfidence{0.4};
     int returnMinutes{30};
     double returnShare{0.5};
