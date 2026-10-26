@@ -3503,7 +3503,7 @@ ApplicationWindow {
                     // offered moves to the next agent that needs you.
                     readonly property bool predicting: typeof nextPrompt !== "undefined" && nextPrompt !== null
                                                        && nextPrompt.enabled && document !== null
-                    tabFlow: predicting && ["claude", "codex"].indexOf(document.harnessId) >= 0
+                    tabFlow: predicting && nextPrompt.guesses(document.harnessId)
                     suggestion: predicting && nextPrompt.revision >= 0 && !document.historyActive
                                 && ["finished", "idle"].indexOf(document.statusKind) >= 0
                                 ? nextPrompt.suggestion(document.sessionId) : ""
