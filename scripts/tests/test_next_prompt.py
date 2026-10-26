@@ -707,6 +707,31 @@ class TranscriptTests(Homes):
         self.assertIn("five candidates", ask.call_args.args[0])
         self.assertEqual(len(answer["candidates"]), 5)
 
+    def test_the_checks_prompt_arm_adds_only_the_checks(self):
+        reply = '{"category": "approve", "candidates": [{"text": "yes go", "p": 0.5}]}'
+        with patch.object(next_prompt, "ask", return_value=(reply, {})) as call:
+            answer = next_prompt.predict(
+                {"context": {"turns": []}}, "m", arm="wide", prompt_arm="checks"
+            )
+        system = call.call_args[0][0]
+        self.assertTrue(system.endswith(next_prompt.CHECKS))
+        self.assertIn(next_prompt.WIDE, system)
+        self.assertEqual(answer["prompt_arm"], "checks")
+        with patch.object(next_prompt, "ask", return_value=(reply, {})) as call:
+            answer = next_prompt.predict({"context": {"turns": []}}, "m")
+        self.assertNotIn(next_prompt.CHECKS, call.call_args[0][0])
+        self.assertEqual(answer["prompt_arm"], "base")
+
+    def test_the_provider_chain_records_the_prompt_arm(self):
+        reply = '{"category": "approve", "candidates": [{"text": "go", "p": 0.5}]}'
+        chain = [{"name": "one", "url": "http://one.test/v1", "model": "m"}]
+        with patch.object(next_prompt, "ask_provider", return_value=(reply, 0)) as call:
+            answer = next_prompt.predict(
+                {"context": {"turns": []}}, "m", providers=chain, prompt_arm="checks"
+            )
+        self.assertTrue(call.call_args[0][1].endswith(next_prompt.CHECKS))
+        self.assertEqual(answer["prompt_arm"], "checks")
+
     def test_parse_keeps_three_by_default_and_five_when_asked(self):
         body = json.dumps(
             {"candidates": [{"text": str(n), "p": 0.1} for n in range(5)]}
@@ -1614,6 +1639,92 @@ class AcceptanceTests(unittest.TestCase):
             report["failed"],
             {"unknown: no transcript": 2, "predict: no Claude Code CLI on this Mac": 1},
         )
+
+    def test_redo_kinds_read_the_start_of_the_next_message(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        cases = {
+            "no thats not what i asked": "pushback",
+            "what do you mean by floor": "confused",
+            "keep going": "continue",
+            "status?": "status",
+            "yes go": None,
+            "ok now add the export button": None,
+        }
+        for text, kind in cases.items():
+            self.assertEqual(next_prompt_eval.redo_kind(text), kind, text)
+
+    def test_redo_after_splits_by_how_the_prompt_was_made_and_prompt_arm(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        def offer(result, arm):
+            return {
+                "outcome": {"result": result},
+                "prompt_arm": arm,
+                "conversation": "c",
+            }
+
+        offers = {
+            "a:1": offer("as_offered", "checks"),
+            "a:2": offer("as_offered", "base"),
+            "a:3": offer("own", "base"),
+            "a:4": offer("edited", "checks"),
+            "a:5": offer("own", "checks"),
+        }
+        found = {
+            "a:1": "ship it",
+            "a:2": "no, the other repo",
+            "a:3": "",
+            "a:4": "status",
+            "a:5": None,
+        }
+        report = next_prompt_eval.redo_after(offers, found)
+        self.assertEqual(report["by_result:as_offered"]["redo_rate"], 0.5)
+        self.assertEqual(report["by_result:own"]["pending"], 1)
+        self.assertEqual(report["by_result:own"]["missing"], 1)
+        self.assertEqual(report["by_result:own"]["redo_rate"], None)
+        self.assertEqual(report["taken_by_prompt_arm:checks"]["redo"], 1)
+        self.assertEqual(report["taken_by_prompt_arm:checks"]["kinds"], {"status": 1})
+        self.assertEqual(report["taken_by_prompt_arm:base"]["kinds"], {"pushback": 1})
+
+    def test_prompt_arms_are_reported_apart(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        def predicted(key, arm, text, category="approve"):
+            return dict(
+                event="predicted",
+                offer=key,
+                agent="a",
+                t=key,
+                shown=True,
+                context_arm="wide",
+                prompt_arm=arm,
+                category=category,
+                candidates=[{"text": text, "p": 0.3}],
+            )
+
+        events = [
+            predicted("a:1", "checks", "yes go"),
+            {"event": "seen", "offer": "a:1"},
+            {"event": "used", "offer": "a:1"},
+            predicted("a:2", "checks", "no, name the missed file", "correct"),
+            {"event": "seen", "offer": "a:2"},
+            predicted(
+                "a:3", "base", "looks good, go ahead and merge it then run the suite"
+            ),
+            {"event": "seen", "offer": "a:3"},
+        ]
+        _, report = next_prompt_eval.acceptance(events)
+        checks = report["by_prompt_arm"]["checks"]
+        self.assertEqual(
+            (checks["seen"], checks["used"], checks["acceptance"]), (2, 1, 0.5)
+        )
+        self.assertEqual(checks["guessed_corrections"], 0.5)
+        self.assertEqual(report["by_prompt_arm"]["base"]["top_guess_words_median"], 11)
+        self.assertEqual(report["by_prompt_arm"]["base"]["acceptance"], 0.0)
 
     def test_live_arms_are_reported_apart(self):
         sys.path.insert(0, str(ROOT / "scripts"))

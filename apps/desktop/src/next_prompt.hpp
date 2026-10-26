@@ -59,6 +59,10 @@ struct NextPromptSettings {
     // five generated candidates, three shown; alone it is compared half and
     // half with the base prompt.
     QStringList contextArms{QStringLiteral("wide")};
+    // The second live comparison, drawn apart from the context arm: the
+    // system prompt as it is, or with the helper's three checks (`promptArms`;
+    // see next_prompt.py's CHECKS), picked at random and recorded on the guess.
+    QStringList promptArms{QStringLiteral("base"), QStringLiteral("checks")};
     // A stricter floor for half the guesses, when above `minConfidence`. Off
     // by default: a guess's probability is the model's own, and models do not
     // share a scale (DeepSeek's top guess rarely passes 0.3 where Opus's
@@ -261,6 +265,7 @@ class NextPrompt final : public QObject {
         QString arm; // "control", "model" or "local"
         QString model;
         QString context;  // a contextArms entry
+        QString prompt;   // a promptArms entry
         double floor{};   // the minimum confidence it was offered at
         int returned{-1}; // see run()
     };

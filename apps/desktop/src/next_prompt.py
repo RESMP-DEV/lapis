@@ -120,6 +120,13 @@ CONTEXT_ARMS = (
     "pack",
     "wide",
 )
+# Prompt arms, compared live beside the context arm (each guess records its
+# own): the system prompt as it is, or with three checks drawn from the
+# person's own Claude Code history (Oct 2026). Seen guesses of 1-5 words were
+# taken 26% of the time, over 40 words 8%; a quarter of their corrections
+# supplied a fact the agent lacked; and a redo round cost a median 47
+# minutes, while the guesser almost never guessed a correction (2.6%).
+PROMPT_ARMS = ("base", "checks")
 EARLIER_MESSAGES = 25
 RETRIEVED = 6
 INDEX_DAYS = 60
@@ -975,6 +982,22 @@ Do not write three versions of the agent's latest thread. The roles may share a
 mode when one thread is live, but each must be a different move."""
 
 
+CHECKS = """
+
+Three checks before you write:
+- When the move is to approve, continue or ship, write it in five words or
+  fewer, the way they do ("yes go", "do it", "merge it").
+- Before approving a result, compare the reply's opening restatement of the
+  goal with what they last asked for in this conversation. If it names a
+  different target, drops an item they listed, or chases something they did
+  not ask for, they will correct it: write that correction, name what was
+  missed, and judge attention "needs".
+- If the agent is about to act on a machine, folder, conversation or number
+  that their recent prompts or another agent show is different, their message
+  supplies that fact in their words ("its on the other box btw", "not that
+  repo, the new one")."""
+
+
 WIDE = """
 
 Write five candidates, not three. The first three are the ones you would
@@ -1634,6 +1657,7 @@ def predict(
     arm="base",
     providers=None,
     budget=PROVIDER_BUDGET_SECONDS,
+    prompt_arm="base",
 ):
     if style == "personal":
         # The fine-tuned model writes the message itself: no JSON, no
@@ -1660,6 +1684,8 @@ def predict(
         system += MOVES + EVIDENCE
     elif arm == "wide":
         system += WIDE
+    if prompt_arm == "checks":
+        system += CHECKS
     started = time.time()
     retrieved = []
     if arm == "retrieval":
@@ -1674,7 +1700,10 @@ def predict(
         )
     prompt = render(bundle, arm=arm, retrieved=retrieved)
     if providers:
-        return predict_providers(system, prompt, providers, arm, started, budget)
+        result = predict_providers(system, prompt, providers, arm, started, budget)
+        if "candidates" in result:
+            result["prompt_arm"] = prompt_arm
+        return result
     last = None
     for _ in range(2):
         try:
@@ -1697,6 +1726,7 @@ def predict(
             result["ms"] = int((time.time() - started) * 1000)
             result["cost"] = envelope.get("total_cost_usd", 0)
             result["context_arm"] = arm
+            result["prompt_arm"] = prompt_arm
             if arm == "retrieval":
                 result["retrieved"] = len(retrieved)
             return result
@@ -1724,6 +1754,7 @@ def command_predict(arguments):
         arguments.context_arm,
         providers,
         arguments.budget_seconds,
+        arguments.prompt_arm,
     )
 
 
@@ -1753,6 +1784,7 @@ def main(argv=None):
     # "personal": the local fine-tuned model's own plain-text format.
     predict_mode.add_argument("--style", default="")
     predict_mode.add_argument("--context-arm", choices=CONTEXT_ARMS, default="base")
+    predict_mode.add_argument("--prompt-arm", choices=PROMPT_ARMS, default="base")
     # A JSON array of OpenAI-compatible endpoints, tried in order. Absent:
     # nextPrompt.providers from lapis.json; `[]`: the CLI.
     predict_mode.add_argument("--providers", default=None)

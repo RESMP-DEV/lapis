@@ -123,6 +123,16 @@ void settingsReadFromTheConfig() {
     const auto none = lapis::desktop::parse_next_prompt(
         QJsonDocument::fromJson(R"({"contextArms": []})").object());
     require(none.contextArms == QStringList{QStringLiteral("base")}, "no arms: the base one");
+    require(defaults.promptArms == QStringList({QStringLiteral("base"), QStringLiteral("checks")}),
+            "the prompt checks are compared half and half by default");
+    const auto prompts = lapis::desktop::parse_next_prompt(
+        QJsonDocument::fromJson(R"({"promptArms": ["checks", "bogus", "checks"]})").object());
+    require(prompts.promptArms == QStringList{QStringLiteral("checks")},
+            "known prompt arms once each");
+    const auto no_prompts = lapis::desktop::parse_next_prompt(
+        QJsonDocument::fromJson(R"({"promptArms": []})").object());
+    require(no_prompts.promptArms == QStringList{QStringLiteral("base")},
+            "no prompt arms: the prompt as it is");
     const auto chain = lapis::desktop::parse_next_prompt(QJsonDocument::fromJson(R"({"providers": [
             {"url": "https://one.test/v1", "model": "deepseek", "name": "one",
              "apiKeyEnv": "KEY", "timeoutSeconds": 0, "maxTokens": 1,
@@ -656,6 +666,7 @@ void repeatsWaitUntilShown() {
     // offers a p=0.6 guess at the 0 floor and holds it back at 0.9.
     settings = on();
     settings.contextArms = {QStringLiteral("retrieval")};
+    settings.promptArms = {QStringLiteral("checks")};
     settings.experimentMinConfidence = 0.9;
     next.setSettings(settings);
     QSet<double> floors;
@@ -685,6 +696,11 @@ void repeatsWaitUntilShown() {
     const auto at = arguments.indexOf(QStringLiteral("--context-arm"));
     require(at > 0 && arguments.value(at + 1) == QLatin1String("retrieval"),
             "the helper is told the context arm");
+    const auto prompt_at = arguments.indexOf(QStringLiteral("--prompt-arm"));
+    require(prompt_at > 0 && arguments.value(prompt_at + 1) == QLatin1String("checks"),
+            "the helper is told the prompt arm");
+    require(events(log).last().value(QStringLiteral("prompt_arm")) == QLatin1String("checks"),
+            "a guess is logged with its prompt arm");
 
     // Coming back to an old guess: guessed again, and the return is logged.
     settings = on();

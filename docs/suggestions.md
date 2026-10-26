@@ -94,8 +94,10 @@ behind an OpenAI-compatible endpoint (for example
 `model` or `local`) and `model` are in `next_prompt.jsonl`, so arms can be
 compared on what you then sent. Set `experiment` above 0 to compare models.
 
-At a few dozen guesses a day only one live comparison can reach a verdict, so
-by default only the context arm is split. The others stay available:
+At a few dozen guesses a day few live comparisons can reach a verdict, so by
+default two are split: the context arm and the prompt arm. Each is drawn on its
+own for every guess, so each comparison uses every guess. The others stay
+available:
 
 - **Context** (`contextArms`, default `["wide"]`): `wide` asks for five
   candidates and shows three; alone in the list it is compared half and half
@@ -108,6 +110,17 @@ by default only the context arm is split. The others stay available:
   from the last 60 days of transcripts, indexed in the runtime folder
   (owner-only, `next_prompt_pairs.json`) a few seconds of work per guess until
   it is complete. Logged as `context_arm`.
+- **Prompt** (`promptArms`, default `["base", "checks"]`): `checks` adds three
+  checks to the system prompt. An approval, continue or ship is five words or
+  fewer. Before approving a result, the model compares the reply's restated
+  goal with what you last asked for and, when the target drifted or an item was
+  dropped, writes your correction instead. When your recent prompts or another
+  agent show a different machine, folder, conversation or number than the
+  agent is about to use, your message supplies it. They come from your Claude
+  Code history (Oct 2026): seen guesses of 1 to 5 words were taken 26% of the
+  time and those over 40 words 8%; a quarter of your corrections supplied a
+  fact the agent lacked; a redo round cost a median 47 minutes; and 2.6% of
+  guesses were corrections. Logged as `prompt_arm`; `["base"]` turns it off.
 - **Floor**: half the guesses use `experimentMinConfidence` (default 0, off) as
   their floor instead of `minConfidence`, when it is higher. A guess's
   probability is the model's own estimate and models do not share a scale: on
@@ -119,8 +132,12 @@ by default only the context arm is split. The others stay available:
   rest keep the old guess. Each is logged as a `return` event with its `arm`
   (`reguess` or `keep`). Set `returnShare` to 0 to keep old guesses.
 
-`next_prompt_eval.py log` reports these as `by_context_arm`, `by_floor` and
-`returns`. An offline replay of 232 past guesses (Oct 16) could not tell the
+`next_prompt_eval.py log` reports these as `by_context_arm`, `by_prompt_arm`,
+`by_floor` and `returns`. Taking a guess is not the whole result: `log --redo`
+reads, for each prompt you sent after a guess, your next message after the
+agent answered it, and reports how often that was a redo (pushback, confusion,
+continue or status), by whether you sent the guess, edited it or typed your
+own, and for taken guesses by prompt arm. An offline replay of 232 past guesses (Oct 16) could not tell the
 context arms apart; guessing again after a return was the largest effect it
 found.
 
@@ -224,6 +241,8 @@ python3 scripts/runtime_digest.py                  # the last day: guesses that 
 python3 scripts/tab_away_eval.py log               # Tab's ranker against your logged choices
 python3 scripts/next_prompt_eval.py log            # acceptance: of the guesses you saw, the share you used
 python3 scripts/next_prompt_eval.py log --judge    # the ones you passed over, against what you typed
+python3 scripts/next_prompt_eval.py log --redo     # how often your next message was a redo, taken or not, by prompt arm
+python3 scripts/next_prompt_eval.py replay --manifest NAME --prompt-arm checks   # one saved sample under the checks
 python3 scripts/next_prompt_eval.py replay --machine HOST   # the same prediction on past transcripts
 ```
 

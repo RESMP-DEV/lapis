@@ -16,6 +16,7 @@ prompts, which never belong in the repository.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -66,6 +67,52 @@ feature), question (asks why/how/explain), correct (pushback or redirecting the
 agent), other. Return only JSON:
 {"grades": [{"id": 0, "scores": [2, 0, 1], "category": "approve"}]}"""
 THRESHOLDS = (0.0, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+# A redo: the person's message after the agent answered the guessed prompt
+# pushes back, asks what it meant, tells it to continue, or asks for status.
+# Each pattern reads only the message's start, as the history analysis that
+# chose the prompt checks did (Oct 2026: 28% of tasks needed a redo, each
+# round a median 47 minutes).
+REDO = (
+    (
+        "pushback",
+        220,
+        r"^(no|nope|wrong|nah|stop)\b|that'?s not (it|what|right|true)|not what i|"
+        r"\bi (said|asked|told you)\b|you didn'?t|why did you|why would you|"
+        r"why are you|you'?re wrong|incorrect|doesn'?t make sense|makes no sense|"
+        r"nonsense|\blie\b|lying|\bfake\b|made (that|this|it) up|did you (even|actually)|"
+        r"the whole point|i already (told|said|asked|did)|"
+        r"still (not|doesn'?t|isn'?t|broken|wrong)|wtf|what the (fuck|hell)|"
+        r"bullshit|stupid|useless|that'?s wrong",
+    ),
+    (
+        "confused",
+        300,
+        r"what do you mean|what does .{1,40} mean\b|plain english|plain language|"
+        r"i don'?t (understand|get it|follow)|confus|explain (this|that|it|again|like)|"
+        r"eli5|in simpler terms|i'?m lost|unclear|too (dense|technical)|jargon",
+    ),
+    (
+        "continue",
+        80,
+        r"^(keep going|continue|go on|carry on|keep at it|resume|keep pushing|"
+        r"don'?t stop|and\?|so\?|finish (it|the rest)|you stopped|why did you stop)",
+    ),
+    (
+        "status",
+        60,
+        r"^(status|eta|update|progress|how'?s it going|where are we|any update|how far)\b",
+    ),
+)
+REDO_PATTERNS = tuple((kind, n, re.compile(rx, re.I)) for kind, n, rx in REDO)
+
+
+def redo_kind(text):
+    """The kind of redo a person's message is, or None."""
+    text = (text or "").strip()
+    for kind, n, pattern in REDO_PATTERNS:
+        if pattern.search(text[:n]):
+            return kind
+    return None
 
 
 def on_machine(machine, arguments):
@@ -191,6 +238,16 @@ def summarize(rows):
         "by_category": {},
         "by_confidence": [],
     }
+    guess_words = sorted(r["guess_words"] for r in rows if "guess_words" in r)
+    if guess_words:
+        report["top_guess_words_median"] = guess_words[len(guess_words) // 2]
+        report["top_guess_five_words_or_fewer"] = rate(
+            [r for r in rows if "guess_words" in r], lambda r: r["guess_words"] <= 5
+        )
+        report["guessed_corrections"] = rate(
+            [r for r in rows if "guess_category" in r],
+            lambda r: r["guess_category"] == "correct",
+        )
     for label, test in (
         ("up to 4 words", lambda w: w <= 4),
         ("longer", lambda w: w > 4),
@@ -330,6 +387,7 @@ def replay(arguments):
             arguments.effort,
             arm=arguments.context_arm,
             providers=providers,
+            prompt_arm=getattr(arguments, "prompt_arm", "base"),
         )
 
     with ThreadPoolExecutor(arguments.parallel) as pool:
@@ -345,6 +403,7 @@ def replay(arguments):
                     "actual": item["actual"],
                     "candidates": answer["candidates"],
                     "ms": answer.get("ms", 0),
+                    "guess_category": answer.get("category", "other"),
                 }
             )
     grades = judge(graded, arguments.judge_model)
@@ -366,6 +425,8 @@ def replay(arguments):
             ),
             "scores": grade.get("scores", [])[: len(g["candidates"])],
             "ms": g["ms"],
+            "guess_words": len(str(g["candidates"][0].get("text", "")).split()),
+            "guess_category": g["guess_category"],
         }
         if arguments.keep_text:
             row.update(actual=g["actual"], candidates=g["candidates"])
@@ -377,8 +438,16 @@ def replay(arguments):
     report["judge_missing_grades"] = sum(g["id"] not in grades for g in graded)
     report["grading"] = grading_coverage(len(graded), len(rows))
     report["model"] = arguments.model
+    # The provider chain answers when one is configured, so `model` alone
+    # does not say which model wrote the guesses.
+    answered = defaultdict(int)
+    for answer in guesses:
+        if answer.get("candidates"):
+            answered[answer.get("model") or arguments.model] += 1
+    report["answered_by"] = dict(answered)
     report["context"] = arguments.context
     report["context_arm"] = arguments.context_arm
+    report["prompt_arm"] = getattr(arguments, "prompt_arm", "base")
     report["oracle"] = bool(oracle)
     if graded:
         report["median_ms"] = sorted(g["ms"] for g in graded)[len(graded) // 2]
@@ -437,6 +506,7 @@ def acceptance(events):
                 hidden=bool(e.get("hidden")),
                 arm=str(e.get("arm") or "control"),
                 context_arm=str(e.get("context_arm") or "none"),
+                prompt_arm=str(e.get("prompt_arm") or "none"),
                 floor=e.get("min_confidence"),
                 returned=e.get("returned_minutes"),
                 agent=e.get("agent", ""),
@@ -585,6 +655,29 @@ def acceptance(events):
                 1 for o in part if (o["outcome"] or {}).get("result") == "own"
             ),
         }
+    # The prompt arm is drawn apart from the context arm, so each compares
+    # on every guess. A guess's length is what the checks aim to shorten.
+    prompts = defaultdict(list)
+    for o in offers.values():
+        if "shown" in o:
+            prompts[o["prompt_arm"]].append(o)
+    report["by_prompt_arm"] = {}
+    for arm, part in sorted(prompts.items()):
+        arm_seen = [o for o in part if o["shown"] and o["seen"]]
+        arm_used = [o for o in arm_seen if o["used"]]
+        words = sorted(
+            len(str((o["candidates"] or [{}])[0].get("text", "")).split()) for o in part
+        )
+        report["by_prompt_arm"][arm] = {
+            "predicted": len(part),
+            "seen": len(arm_seen),
+            "used": len(arm_used),
+            "acceptance": rate(arm_used, arm_seen),
+            "top_guess_words_median": words[len(words) // 2] if words else None,
+            "guessed_corrections": rate(
+                [o for o in part if o["category"] == "correct"], part
+            ),
+        }
     report["by_floor"] = {}
     for floor, part in sorted(floors.items()):
         floor_seen = [o for o in part if o["shown"] and o["seen"]]
@@ -665,6 +758,106 @@ def log_files(path):
     return [p for p in archives + [Path(str(path) + ".1"), path] if p.is_file()]
 
 
+def next_messages(offers):
+    """For each offer with a settled prompt, the person's message after the
+    agent answered it: turn + 1 in the same conversation. Local transcripts
+    are read once each; another machine's go through its helper."""
+    prompts = {}
+    found = {}
+    for key, o in offers.items():
+        if not (o.get("outcome") and o.get("conversation")):
+            continue
+        conversation, cli, machine = (
+            o["conversation"],
+            o.get("cli", "claude"),
+            o.get("machine", ""),
+        )
+        turn = int(o.get("turn") or 0) + 1
+        if machine:
+            answer = on_machine(
+                machine,
+                [
+                    "actual",
+                    "--cli",
+                    cli,
+                    "--conversation",
+                    conversation,
+                    "--turn",
+                    str(turn),
+                ],
+            )
+            found[key] = answer.get("text") if not answer.get("error") else None
+            continue
+        if (cli, conversation) not in prompts:
+            path = next_prompt.find_transcript(cli, conversation, "")
+            prompts[(cli, conversation)] = (
+                [
+                    t["text"]
+                    for t in next_prompt.turns_of(cli, path)
+                    if t["role"] == "person"
+                ]
+                if path
+                else None
+            )
+        said = prompts[(cli, conversation)]
+        if said is None:
+            found[key] = None
+        else:
+            found[key] = said[turn] if turn < len(said) else ""
+    return found
+
+
+def redo_after(offers, found=None):
+    """Of prompts settled after a guess (sent as offered, edited, or the
+    person's own), how often the person's next message was a redo, by how
+    the prompt was made and by prompt arm. Pending: no next message yet."""
+    found = next_messages(offers) if found is None else found
+    groups = defaultdict(
+        lambda: {
+            "settled": 0,
+            "pending": 0,
+            "missing": 0,
+            "redo": 0,
+            "kinds": defaultdict(int),
+        }
+    )
+
+    def add(group, text):
+        if text is None:
+            group["missing"] += 1
+            return
+        group["settled"] += 1
+        if not text:
+            group["pending"] += 1
+            return
+        kind = redo_kind(text)
+        if kind:
+            group["redo"] += 1
+            group["kinds"][kind] += 1
+
+    for key, o in offers.items():
+        if key not in found:
+            continue
+        result = (o.get("outcome") or {}).get("result", "other")
+        text = found[key]
+        add(groups["by_result:" + result], text)
+        if result in ("as_offered", "edited"):
+            add(groups["taken_by_prompt_arm:" + o.get("prompt_arm", "none")], text)
+    report = {}
+    for name, g in sorted(groups.items()):
+        answered = g["settled"] - g["pending"]
+        report[name] = {
+            "settled": g["settled"],
+            "answered": answered,
+            "pending": g["pending"],
+            "missing": g["missing"],
+            "redo": g["redo"],
+            "redo_rate": round(g["redo"] / answered, 3) if answered else None,
+            "kinds": dict(g["kinds"]),
+        }
+    return report
+
+
 def log(arguments):
     events = []
     path = Path(arguments.log).expanduser()
@@ -675,6 +868,8 @@ def log(arguments):
             except ValueError:
                 continue
     offers, report = acceptance(events)
+    if getattr(arguments, "redo", False):
+        report["redo"] = redo_after(offers)
     if not arguments.judge:
         # Both report shapes carry the coverage field; without judging there
         # is nothing graded, which is the honest zero, not a missing key.
@@ -800,6 +995,12 @@ def main(argv=None):
         default=None,
         help="JSON provider array; absent uses nextPrompt.providers from lapis.json",
     )
+    replay_mode.add_argument(
+        "--prompt-arm",
+        choices=next_prompt.PROMPT_ARMS,
+        default="base",
+        help="checks adds the helper's CHECKS to the system prompt",
+    )
     replay_mode.add_argument("--effort", default="")
     replay_mode.add_argument("--parallel", type=int, default=6)
     log_mode = modes.add_parser(
@@ -808,6 +1009,12 @@ def main(argv=None):
     log_mode.add_argument("--log", default="~/.lapis/runtime/next_prompt.jsonl")
     log_mode.add_argument(
         "--judge", action="store_true", help="grade offers seen but not used"
+    )
+    log_mode.add_argument(
+        "--redo",
+        action="store_true",
+        help="read each settled prompt's next message and report how often it "
+        "was a redo (pushback, confusion, continue, status)",
     )
     arguments = parser.parse_args(argv)
     report, rows = (replay if arguments.mode == "replay" else log)(arguments)
