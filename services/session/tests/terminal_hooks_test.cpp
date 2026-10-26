@@ -106,6 +106,16 @@ void authenticates_events() {
 // An oversized incomplete hook never erases terminal output that arrived
 // before it, a bare backslash does not end quarantine, and quarantine itself
 // cannot suppress later output indefinitely.
+// lapis's OMP extension binds as "omp", and its events carry that name.
+void binds_omp() {
+    TerminalHookChannel channel;
+    std::vector<TerminalHookEvent> events;
+    const QJsonObject end{{"type", "agent_end"}, {"session_id", "s"}};
+    require(channel.filter(init("omp") + event(end), events).isEmpty() && channel.bound());
+    require(events.size() == 1 && events.front().cli == QStringLiteral("omp") &&
+            events.front().source == end);
+}
+
 void bounds_oversized_quarantine() {
     const QByteArray prefix = "login\r\n";
     const QByteArray marker = "\x1b]7717;lapis-event;" + QByteArray(nonce) + ";";
@@ -201,6 +211,7 @@ int main() {
     try {
         removes_sequences_across_reads();
         authenticates_events();
+        binds_omp();
         bounds_oversized_quarantine();
         notify_turns();
         notify_turn_recovery();

@@ -61,7 +61,7 @@ lapis's.
 
 ## How a guess is made
 
-When a Claude Code or Codex agent finishes a turn, lapis reads its conversation
+When a Claude Code, Codex or OMP agent finishes a turn, lapis reads its conversation
 where it runs (over ssh for another machine) and asks the model, on this Mac,
 with your `~/.claude/CLAUDE.md`, the agent's screen, every other agent's state
 and your latest prompts elsewhere. The model writes one guess, preferring a
@@ -86,40 +86,63 @@ never saw (an agent woken by its background work), is not guessed at once: the
 guess is made when you next show that agent. From Oct 7 to 9 such repeats were
 44% of guesses, and 72% of them went unseen.
 
-Experiments: `experiment` (default 0.2) of guesses go to another arm, chosen
+Experiments: `experiment` (default 0) of guesses go to another arm, chosen
 evenly from `experimentModels` (default `["claude-sonnet-5-5"]`, through the
 same CLI) and, when `localEndpoint` and `localModel` are set, a local model
 behind an OpenAI-compatible endpoint (for example
 `"localEndpoint": "http://gpu-host:8000/v1"`). Each guess's `arm` (`control`,
 `model` or `local`) and `model` are in `next_prompt.jsonl`, so arms can be
-compared on what you then sent. Set `experiment` to 0 to always use `model`.
+compared on what you then sent. Set `experiment` above 0 to compare models.
 
-Three more arms run on every guess, each drawn at random and logged with it:
+At a few dozen guesses a day few live comparisons can reach a verdict, so by
+default two are split: the context arm and the prompt arm. Each is drawn on its
+own for every guess, so each comparison uses every guess. The others stay
+available:
 
-- **Context** (`contextArms`, default all four): `base` sends the conversation
-  as above; `thread` adds your earlier messages in the conversation, from
-  before the turns shown; `retrieval` adds the six past exchanges on this Mac
-  whose agent reply best matches this one, with what you sent to each; and
+- **Context** (`contextArms`, default `["wide"]`): `wide` asks for five
+  candidates and shows three; alone in the list it is compared half and half
+  with `base`, which sends the conversation as above. Listing other arms draws
+  evenly among them: `thread` adds your earlier messages in the conversation,
+  from before the turns shown; `retrieval` adds the six past exchanges on this
+  Mac whose agent reply best matches this one, with what you sent to each;
   `evidence` tells the model to look for the reply's unmeasured claim and ask
-  for it. Past exchanges come from the last 60 days of transcripts, indexed in
-  the runtime folder (owner-only, `next_prompt_pairs.json`) a few seconds of
-  work per guess until it is complete. Logged as `context_arm`.
-- **Floor**: half the guesses use `experimentMinConfidence` (default 0.4) as
-  their floor instead of `minConfidence`, when it is higher. The floor a guess
-  was offered against is its `min_confidence`.
+  for it; `moves`, `pack` and `legacy` are evaluator arms. Past exchanges come
+  from the last 60 days of transcripts, indexed in the runtime folder
+  (owner-only, `next_prompt_pairs.json`) a few seconds of work per guess until
+  it is complete. Logged as `context_arm`.
+- **Prompt** (`promptArms`, default `["base", "checks"]`): `checks` adds three
+  checks to the system prompt. An approval, continue or ship is five words or
+  fewer. Before approving a result, the model compares the reply's restated
+  goal with what you last asked for and, when the target drifted or an item was
+  dropped, writes your correction instead. When your recent prompts or another
+  agent show a different machine, folder, conversation or number than the
+  agent is about to use, your message supplies it. They come from your Claude
+  Code history (Oct 2026): seen guesses of 1 to 5 words were taken 26% of the
+  time and those over 40 words 8%; a quarter of your corrections supplied a
+  fact the agent lacked; a redo round cost a median 47 minutes; and 2.6% of
+  guesses were corrections. Logged as `prompt_arm`; `["base"]` turns it off.
+- **Floor**: half the guesses use `experimentMinConfidence` (default 0, off) as
+  their floor instead of `minConfidence`, when it is higher. A guess's
+  probability is the model's own estimate and models do not share a scale: on
+  Oct 24 DeepSeek's top guess never passed 0.3, so a 0.4 floor hid every guess
+  it applied to. The floor a guess was offered against is its `min_confidence`.
 - **Return**: when you show an agent whose guess is at least `returnMinutes`
-  old (default 30) and was not typed, `returnShare` (default 0.5) of those
-  returns guess again, telling the model how long it has been; the rest keep
-  the old guess. Each is logged as a `return` event with its `arm` (`reguess`
-  or `keep`). Set `returnShare` to 0 to keep old guesses.
+  old (default 30) and was not typed, `returnShare` (default 1, every return)
+  of those returns guess again, telling the model how long it has been; the
+  rest keep the old guess. Each is logged as a `return` event with its `arm`
+  (`reguess` or `keep`). Set `returnShare` to 0 to keep old guesses.
 
-`next_prompt_eval.py log` reports these as `by_context_arm`, `by_floor` and
-`returns`. An offline replay of 232 past guesses (Oct 16) could not tell the
+`next_prompt_eval.py log` reports these as `by_context_arm`, `by_prompt_arm`,
+`by_floor` and `returns`. Taking a guess is not the whole result: `log --redo`
+reads, for each prompt you sent after a guess, your next message after the
+agent answered it, and reports how often that was a redo (pushback, confusion,
+continue or status), by whether you sent the guess, edited it or typed your
+own, and for taken guesses by prompt arm. An offline replay of 232 past guesses (Oct 16) could not tell the
 context arms apart; guessing again after a return was the largest effect it
 found.
 
 A shown guess shapes what you send (you can take it), so how often you take
-guesses is not how well they predict you. `holdout` (default 0.1, at most 0.5)
+guesses is not how well they predict you. `holdout` (default 0, at most 0.5)
 of guesses are made and logged but never shown, and compared with what you then
 typed; `next_prompt_eval.py log` reports them as `held_out` beside the same
 figures for shown guesses, and acceptance per arm as `by_arm`. The model is
@@ -132,6 +155,13 @@ that run a small relay with that machine's `python3` (Python 3.11+ to preserve
 Codex's configured notify program through `tomllib`). Nothing is installed or
 left there. Without `python3` there, or for an agent started before this, its
 turns are not reported and no guess is made; restart it to add the hooks.
+
+An OMP agent on this Mac reports its turns through an extension lapis writes
+next to its OMP overlay in the runtime folder (`omp-lapis-turns.ts`, loaded by
+`omp-lapis.yml`). It prints the same terminal sequences with a nonce lapis puts
+in OMP's environment, only for the top-level agent (not subagents), and carries
+the event and OMP's session id, never text. An OMP agent started before this
+build has no extension loaded; reload it once.
 
 ## Tab
 
@@ -211,6 +241,8 @@ python3 scripts/runtime_digest.py                  # the last day: guesses that 
 python3 scripts/tab_away_eval.py log               # Tab's ranker against your logged choices
 python3 scripts/next_prompt_eval.py log            # acceptance: of the guesses you saw, the share you used
 python3 scripts/next_prompt_eval.py log --judge    # the ones you passed over, against what you typed
+python3 scripts/next_prompt_eval.py log --redo     # how often your next message was a redo, taken or not, by prompt arm
+python3 scripts/next_prompt_eval.py replay --manifest NAME --prompt-arm checks   # one saved sample under the checks
 python3 scripts/next_prompt_eval.py replay --machine HOST   # the same prediction on past transcripts
 ```
 

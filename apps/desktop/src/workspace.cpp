@@ -22,6 +22,7 @@
 #include <QLocalSocket>
 #include <QPointer>
 #include <QProcess>
+#include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QScopeGuard>
@@ -42,31 +43,84 @@
 
 namespace lapis::desktop {
 namespace {
-// OMP's main UI is inline, and its default `tui.resizeScrollback` rebuild
-// erases the scrollback and replays the whole transcript on every settled
-// resize. lapis shows that as the conversation scrolling past. Its config
-// overlay keeps the repaint to the viewport.
-QString omp_resize_overlay(const QString& directory) {
-    if (directory.isEmpty())
-        return {};
-    const auto path = QDir(directory).filePath(QStringLiteral("omp-lapis.yml"));
-    static const QByteArray content(
-        "# Written by lapis: keep an inline OMP transcript in place when the\n"
-        "# terminal resizes; the default rebuild erases and replays every row.\n"
-        "tui:\n  resizeScrollback: preserve\n");
+// Writes `content` to `path` unless it already holds exactly that, owner-only.
+bool write_private_file(const QString& path, const QByteArray& content) {
     QFile existing(path);
     if (existing.open(QIODevice::ReadOnly)) {
         const bool same = existing.readAll() == content;
         existing.close();
         if (same)
-            return path;
+            return true;
     }
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly))
-        return {};
+        return false;
     file.write(content);
     file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    return file.commit() ? path : QString();
+    return file.commit();
+}
+// OMP has no hook socket or observer, so its turns are reported by an
+// extension the overlay below loads. It prints the terminal sequences of the
+// session service's terminal_hooks.hpp with the nonce lapis puts in OMP's
+// environment, from the top-level agent only (OMP rebinds extensions to every
+// subagent). Without the nonce, as in an OMP lapis did not start, it prints
+// nothing. Frames carry the event name and OMP's session id, never text.
+constexpr char kOmpTurnsExtension[] =
+    R"ts(// Written by lapis: report this OMP agent's turns to lapis.
+const nonce = process.env.LAPIS_HOOK_NONCE ?? "";
+let bound = false;
+function send(event: Record<string, string>) {
+  const body = Buffer.from(JSON.stringify(event)).toString("base64");
+  process.stdout.write(`\x1b]7717;lapis-event;${nonce};${body}\x07`);
+}
+export default function lapisTurns(api: any) {
+  if (!/^[0-9a-f]{32}$/.test(nonce)) return;
+  const main = (ctx: any) => (ctx?.agent?.kind ?? "main") === "main";
+  const report = (type: string) => (_event: unknown, ctx: any) => {
+    if (!main(ctx)) return;
+    if (!bound) {
+      process.stdout.write(`\x1b]7717;lapis-init;omp;${nonce}\x07`);
+      bound = true;
+    }
+    const session = ctx?.sessionManager?.getSessionId?.();
+    send(typeof session === "string" && session ? { type, session_id: session } : { type });
+  };
+  api.on("session_start", report("session_start"));
+  api.on("session_switch", report("session_switch"));
+  api.on("agent_end", report("agent_end"));
+}
+)ts";
+// lapis's OMP config overlay (PI_CONFIG_FILES). OMP's main UI is inline, and
+// its default `tui.resizeScrollback` rebuild erases the scrollback and replays
+// the whole transcript on every settled resize; lapis shows that as the
+// conversation scrolling past, so the overlay keeps the repaint to the
+// viewport. It also loads the turn extension above.
+QString omp_overlay(const QString& directory) {
+    if (directory.isEmpty())
+        return {};
+    const QDir root(directory);
+    const auto extension = root.filePath(QStringLiteral("omp-lapis-turns.ts"));
+    if (!write_private_file(extension, QByteArray(kOmpTurnsExtension)))
+        return {};
+    const auto path = root.filePath(QStringLiteral("omp-lapis.yml"));
+    const QByteArray content =
+        "# Written by lapis: keep an inline OMP transcript in place when the\n"
+        "# terminal resizes; the default rebuild erases and replays every row.\n"
+        "tui:\n  resizeScrollback: preserve\n"
+        "# Report this agent's turns to lapis.\n"
+        "extensions:\n  - " +
+        QJsonDocument(QJsonArray{extension}).toJson(QJsonDocument::Compact).mid(1).chopped(1) +
+        "\n";
+    return write_private_file(path, content) ? path : QString();
+}
+// A fresh 32-hex-digit nonce for the terminal hook channel.
+QString hook_nonce() {
+    std::array<quint32, 4> words{};
+    QRandomGenerator::system()->fillRange(words.data(), words.size());
+    QString text;
+    for (const auto word : words)
+        text += QStringLiteral("%1").arg(word, 8, 16, QLatin1Char('0'));
+    return text;
 }
 
 bool directCodexLaunch(const session::LaunchSpec& launch) {
@@ -2358,13 +2412,14 @@ bool Workspace::applyAccount(Agent& agent, SessionPreview& item) {
     // A harness's own overlay is independent of which plan it signs in with.
     QHash<QString, QString> environment;
     if (agent.harness == QLatin1String("omp") && !remoteCommand(agent.launch)) {
-        const auto overlay = omp_resize_overlay(QFileInfo(storage_path_).absolutePath());
+        const auto overlay = omp_overlay(QFileInfo(storage_path_).absolutePath());
         if (!overlay.isEmpty()) {
             // Append to a user's overlays rather than replace them.
             const auto existing = qEnvironmentVariable("PI_CONFIG_FILES");
             environment.insert(QStringLiteral("PI_CONFIG_FILES"),
                                existing.isEmpty() ? overlay
                                                   : existing + QDir::listSeparator() + overlay);
+            environment.insert(QStringLiteral("LAPIS_HOOK_NONCE"), hook_nonce());
         }
     }
     const auto cli = accountCli(agent.harness);

@@ -6,13 +6,16 @@
 #include <QString>
 #include <cstdint>
 #include <lapis/session/attention.hpp>
+#include <utility>
 #include <vector>
 
 namespace lapis::session {
 // An agent on another machine runs behind ssh, where lapis's local hook
 // socket and app-server cannot reach. Its hooks (Claude Code) or notify
 // program (Codex) instead print private sequences to the agent's own
-// terminal, which ssh already carries here:
+// terminal, which ssh already carries here. OMP has neither a hook socket nor
+// an observer, so lapis's OMP extension prints the same sequences for a local
+// OMP agent too:
 //
 //   ESC ] 7717 ; lapis-init ; <cli> ; <nonce> BEL    once, by lapis's launch
 //   ESC ] 7717 ; lapis-event ; <nonce> ; <base64 JSON> BEL    per hook
@@ -24,7 +27,7 @@ namespace lapis::session {
 // a hook. Every lapis sequence is removed from the output before the
 // terminal sees it. Frames carry bounded metadata only, never prompts.
 struct TerminalHookEvent {
-    QString cli; // "claude" or "codex", as bound by the init sequence
+    QString cli; // "claude", "codex" or "omp", as bound by the init sequence
     QJsonObject source;
 };
 
@@ -59,12 +62,14 @@ class TerminalHookChannel {
 
 // Turn boundaries of a CLI whose only real signal is a finished turn: Codex
 // runs its notify program when a turn completes and has no matching start
-// signal. A completed turn is observed; once the person submits input the
-// activity is unknown again, and the desktop falls back to its output
-// estimate until the next completed turn.
+// signal, and lapis's OMP extension reports OMP's agent_end the same way. A
+// completed turn is observed; once the person submits input the activity is
+// unknown again, and the desktop falls back to its output estimate until the
+// next completed turn.
 class NotifyTurns {
   public:
-    explicit NotifyTurns(attention::State& state) : state_(state) {}
+    explicit NotifyTurns(attention::State& state, QString label = QStringLiteral("Codex notify"))
+        : state_(state), label_(std::move(label)) {}
     // Whether the state changed.
     bool completed(const QJsonObject& source, attention::Tick now);
     bool submitted();
@@ -74,6 +79,7 @@ class NotifyTurns {
     friend class NotifyTurnsTestAccess;
 
     attention::State& state_;
+    QString label_;
     std::uint64_t sequence_{};
     bool skip_completion_{};
     bool prompt_active_{};

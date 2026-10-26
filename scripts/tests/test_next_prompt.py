@@ -93,9 +93,14 @@ class Homes(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.root)
         self.claude = self.root / "claude"
         self.codex = self.root / "codex"
+        self.omp = self.root / "omp"
         environment = patch.dict(
             os.environ,
-            {"CLAUDE_CONFIG_DIR": str(self.claude), "CODEX_HOME": str(self.codex)},
+            {
+                "CLAUDE_CONFIG_DIR": str(self.claude),
+                "CODEX_HOME": str(self.codex),
+                "OMP_HOME": str(self.omp),
+            },
         )
         environment.start()
         self.addCleanup(environment.stop)
@@ -145,8 +150,64 @@ class Homes(unittest.TestCase):
                     "<environment_context>...</environment_context>",
                     "2026-09-28T09:00:00Z",
                 ),
-                codex_message("user", "run the suite", "2026-09-28T09:00:01Z"),
-                codex_message("assistant", "All 29 pass.", "2026-09-28T09:05:00Z"),
+                codex_message("user", "run the suite", "2026-09-28T09:30:01Z"),
+                codex_message("assistant", "All 29 pass.", "2026-09-28T09:35:00Z"),
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-09-28T09:35:00Z",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": "call-1",
+                        "output": "model-x uses 203 GB; host-b has 70 GB free",
+                    },
+                },
+            ],
+        )
+        self.omp_path = write_lines(
+            self.omp
+            / "agent"
+            / "sessions"
+            / "-work"
+            / "2026-09-28T10-00-00-000Z_omp1.jsonl",
+            [
+                {
+                    "type": "session",
+                    "id": "omp1",
+                    "timestamp": "2026-09-28T10:00:00Z",
+                    "cwd": str(self.work),
+                },
+                {
+                    "type": "message",
+                    "timestamp": "2026-09-28T10:00:01Z",
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "check the disk"}],
+                    },
+                },
+                {
+                    "type": "message",
+                    "timestamp": "2026-09-28T10:00:02Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "Looking."}],
+                    },
+                },
+                {
+                    "type": "message",
+                    "timestamp": "2026-09-28T10:00:03Z",
+                    "message": {
+                        "role": "toolResult",
+                        "content": [{"type": "text", "text": "model-x uses 203 GB"}],
+                    },
+                },
+                {
+                    "type": "message",
+                    "timestamp": "2026-09-28T10:00:04Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "host-a has 55 GB free."}],
+                    },
+                },
             ],
         )
 
@@ -368,10 +429,18 @@ class TranscriptTests(Homes):
         arguments = next_prompt.argparse.Namespace(
             cli="claude", conversation="", folder=str(self.work)
         )
-        context = next_prompt.command_context(arguments)
+        when = next_prompt.utc_timestamp("2026-09-28T10:05:00Z")
+        with patch.object(next_prompt.time, "time", return_value=when):
+            context = next_prompt.command_context(arguments)
         self.assertEqual((context["conversation"], context["turn"]), ("c1", 2))
-        self.assertEqual(context["turns"][-1], {"role": "agent", "text": "Installed."})
-        self.assertEqual([r["text"] for r in context["recent"]], ["run the suite"])
+        self.assertEqual(
+            context["turns"][-1],
+            {"role": "agent", "text": "Installed.", "time": "2026-09-28T10:04:00Z"},
+        )
+        self.assertEqual(
+            [r["text"] for r in context["recent"]],
+            ["check the disk", "run the suite"],
+        )
         self.assertNotIn("answered", context)
 
     def test_context_brings_the_persons_messages_before_the_window(self):
@@ -383,7 +452,16 @@ class TranscriptTests(Homes):
             next_prompt, "history", lambda turns: window(turns, limit=11)
         ):
             context = next_prompt.command_context(arguments)
-        self.assertEqual(context["turns"], [{"role": "agent", "text": "Installed."}])
+        self.assertEqual(
+            context["turns"],
+            [
+                {
+                    "role": "agent",
+                    "text": "Installed.",
+                    "time": "2026-09-28T10:04:00Z",
+                }
+            ],
+        )
         self.assertEqual(context["earlier"], ["fix the paste bug", "go"])
 
     def test_past_exchanges_are_indexed_privately_and_retrieved(self):
@@ -465,6 +543,10 @@ class TranscriptTests(Homes):
         item = sample["items"][0]
         self.assertEqual((item["conversation"], item["actual"]), (path.stem, "three"))
         self.assertEqual([t["text"] for t in item["turns"]], ["one", "a", "two", "b"])
+        self.assertEqual(
+            [t["text"] for t in item["legacy_turns"]], ["one", "a", "two", "b"]
+        )
+        self.assertIn("recent", item)
         for since in ("2026-09-28T11:01:00Z", "2026-09-28T14:01:00+03:00"):
             same = next_prompt.command_sample(
                 next_prompt.argparse.Namespace(
@@ -478,6 +560,197 @@ class TranscriptTests(Homes):
         kept = next_prompt.history(turns, limit=5000)
         self.assertEqual(kept[-1]["text"], "39" * 500)
         self.assertLessEqual(sum(len(t["text"]) for t in kept), 5000)
+
+    def test_an_agent_turn_keeps_its_final_block_and_counts_repeats(self):
+        text = next_prompt.agent_text(
+            ["host-a is still offline"] * 17
+            + ["Only 55 GB of disk is free"]
+            + ["V" * 5000]
+        )
+        self.assertIn("host-a is still offline (x17)", text)
+        self.assertIn("Only 55 GB of disk is free", text)
+        self.assertTrue(text.splitlines()[-1].strip("V") == "")
+        self.assertEqual(
+            len(text.splitlines()[-1]),
+            next_prompt.FINAL_CHARS - len("[...]\n"),
+        )
+        self.assertLessEqual(
+            len(text), next_prompt.NARRATION_CHARS + 1 + next_prompt.FINAL_CHARS
+        )
+
+    def test_the_legacy_history_keeps_the_old_merged_clip(self):
+        turns = [
+            {
+                "role": "agent",
+                "text": "head\nfinal",
+                "legacy": "head\n" + "M" * 5000,
+                "time": "2026-09-28T10:00:00Z",
+            }
+        ]
+        self.assertEqual(next_prompt.history(turns)[0]["text"], "head\nfinal")
+        legacy = next_prompt.history(turns, legacy=True)[0]["text"]
+        self.assertIn("[...]", legacy)
+        self.assertEqual(len(legacy), 3000 + len("\n[...]\n"))
+
+    def test_turns_carry_their_age_relative_to_the_target(self):
+        prompt = next_prompt.render(
+            {
+                "target": "2026-09-28T11:48:00Z",
+                "context": {
+                    "turns": [
+                        {
+                            "role": "person",
+                            "text": "the blue jacket",
+                            "time": "2026-09-28T10:00:00Z",
+                        },
+                        {
+                            "role": "agent",
+                            "text": "the washer is free",
+                            "time": "2026-09-28T10:05:00Z",
+                        },
+                    ]
+                },
+            },
+            fence="f",
+        )
+        self.assertIn("[-108m] the blue jacket", prompt)
+        self.assertIn("[-103m] the washer is free", prompt)
+
+    def test_the_topic_hint_and_recent_prompts_reach_the_prompt(self):
+        prompt = next_prompt.render(
+            {
+                "target": "2026-09-28T11:48:00Z",
+                "oracle": "blue jacket",
+                "context": {
+                    "turns": [],
+                    "recent": [
+                        {
+                            "time": "2026-09-28T11:30:00Z",
+                            "where": "-dev",
+                            "text": "check the disk",
+                        }
+                    ],
+                },
+            },
+            fence="f",
+        )
+        self.assertIn('kind="oracle"', prompt)
+        self.assertIn("blue jacket", prompt)
+        self.assertIn("[-18m] [-dev] check the disk", prompt)
+
+    def test_the_three_move_instruction_names_all_three_moves(self):
+        self.assertIn("Pivot", next_prompt.MOVES)
+        self.assertIn("cross-session", next_prompt.MOVES)
+        self.assertIn("different move", next_prompt.MOVES)
+
+    def test_the_moves_arm_sends_the_three_move_instruction(self):
+        response = json.dumps(
+            {
+                "category": "other",
+                "attention": "steer",
+                "candidates": [{"text": "go", "p": 0.5}],
+            }
+        )
+        with patch.object(next_prompt, "ask", return_value=(response, {})) as ask:
+            next_prompt.predict({"context": {"turns": []}}, "m", arm="moves")
+        system = ask.call_args.args[0]
+        self.assertIn("Pivot", system)
+        self.assertIn("Before writing, read the agent's latest reply", system)
+
+    def test_omp_turns_snippets_and_session_lookup(self):
+        turns = next_prompt.omp_turns(str(self.omp_path))
+        self.assertEqual([t["role"] for t in turns], ["person", "agent"])
+        self.assertIn("host-a has 55 GB free", turns[-1]["text"])
+        snippets = next_prompt.omp_snippets(str(self.omp_path))
+        self.assertEqual([s["text"] for s in snippets], ["model-x uses 203 GB"])
+        found = next_prompt.find_transcript("omp", "omp1", str(self.work))
+        self.assertEqual(found, str(self.omp_path))
+
+    def test_tool_and_codex_outputs_are_kept_as_exact_snippets(self):
+        claude = next_prompt.claude_snippets(str(self.claude_path))
+        self.assertEqual([s["text"] for s in claude], ["output"])
+        codex = next_prompt.codex_snippets(str(self.codex_path))
+        self.assertEqual(len(codex), 1)
+        self.assertIn("model-x uses 203 GB", codex[0]["text"])
+
+    def test_snippet_pack_keeps_matching_results_from_before_the_target(self):
+        turns = [{"role": "agent", "text": "model-x is using space on host-a"}]
+        snippets = [
+            {
+                "time": "2026-09-28T10:00:00Z",
+                "text": "model-x uses 203 GB; host-b has 70 GB free",
+            },
+            {"time": "2026-09-28T10:00:00Z", "text": "paste bug fixed"},
+            {"time": "2026-09-28T12:00:00Z", "text": "model-x result after the target"},
+        ]
+        pack = next_prompt.snippet_pack(turns, snippets, target="2026-09-28T11:00:00Z")
+        self.assertEqual(len(pack), 1)
+        self.assertIn("203 GB", pack[0]["text"])
+        self.assertNotIn("after the target", pack[0]["text"])
+
+    def test_the_wide_arm_asks_for_five_candidates(self):
+        response = json.dumps(
+            {
+                "category": "other",
+                "attention": "steer",
+                "candidates": [
+                    {"text": "a", "p": 0.3},
+                    {"text": "b", "p": 0.25},
+                    {"text": "c", "p": 0.2},
+                    {"text": "d", "p": 0.15},
+                    {"text": "e", "p": 0.1},
+                ],
+            }
+        )
+        with patch.object(next_prompt, "ask", return_value=(response, {})) as ask:
+            answer = next_prompt.predict({"context": {"turns": []}}, "m", arm="wide")
+        self.assertIn("five candidates", ask.call_args.args[0])
+        self.assertEqual(len(answer["candidates"]), 5)
+
+    def test_the_checks_prompt_arm_adds_only_the_checks(self):
+        reply = '{"category": "approve", "candidates": [{"text": "yes go", "p": 0.5}]}'
+        with patch.object(next_prompt, "ask", return_value=(reply, {})) as call:
+            answer = next_prompt.predict(
+                {"context": {"turns": []}}, "m", arm="wide", prompt_arm="checks"
+            )
+        system = call.call_args[0][0]
+        self.assertTrue(system.endswith(next_prompt.CHECKS))
+        self.assertIn(next_prompt.WIDE, system)
+        self.assertEqual(answer["prompt_arm"], "checks")
+        with patch.object(next_prompt, "ask", return_value=(reply, {})) as call:
+            answer = next_prompt.predict({"context": {"turns": []}}, "m")
+        self.assertNotIn(next_prompt.CHECKS, call.call_args[0][0])
+        self.assertEqual(answer["prompt_arm"], "base")
+
+    def test_the_provider_chain_records_the_prompt_arm(self):
+        reply = '{"category": "approve", "candidates": [{"text": "go", "p": 0.5}]}'
+        chain = [{"name": "one", "url": "http://one.test/v1", "model": "m"}]
+        with patch.object(next_prompt, "ask_provider", return_value=(reply, 0)) as call:
+            answer = next_prompt.predict(
+                {"context": {"turns": []}}, "m", providers=chain, prompt_arm="checks"
+            )
+        self.assertTrue(call.call_args[0][1].endswith(next_prompt.CHECKS))
+        self.assertEqual(answer["prompt_arm"], "checks")
+
+    def test_parse_keeps_three_by_default_and_five_when_asked(self):
+        body = json.dumps(
+            {"candidates": [{"text": str(n), "p": 0.1} for n in range(5)]}
+        )
+        self.assertEqual(len(next_prompt.parse(body)["candidates"]), 3)
+        self.assertEqual(len(next_prompt.parse(body, limit=5)["candidates"]), 5)
+
+    def test_the_pack_arm_quotes_exact_results_and_base_does_not(self):
+        bundle = {
+            "context": {
+                "turns": [],
+                "snippets": [{"text": "model-x uses 203 GB; host-b has 70 GB free"}],
+            }
+        }
+        pack = next_prompt.render(bundle, fence="f", arm="pack")
+        base = next_prompt.render(bundle, fence="f")
+        self.assertIn('kind="snippets"', pack)
+        self.assertIn("model-x uses 203 GB", pack)
+        self.assertNotIn("model-x uses 203 GB", base)
 
 
 class ModelTests(unittest.TestCase):
@@ -1224,6 +1497,28 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(next_prompt.config_providers(), [])
 
 
+class ManifestTests(unittest.TestCase):
+    """A sampled replay is saved where a later run can name it."""
+
+    def test_saved_sample_is_private_and_found_by_name(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(next_prompt_eval, "MANIFESTS", Path(directory) / "m"):
+                saved = next_prompt_eval.save_manifest([{"time": "t", "text": "x"}])
+                self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(next_prompt_eval.manifest_path(saved.stem), saved)
+                self.assertEqual(
+                    json.loads(saved.read_text()),
+                    {"items": [{"time": "t", "text": "x"}]},
+                )
+                elsewhere = Path(directory) / "other.json"
+                self.assertEqual(
+                    next_prompt_eval.manifest_path(str(elsewhere)), elsewhere
+                )
+
+
 class AcceptanceTests(unittest.TestCase):
     """The acceptance rate counts offers seen on screen, not every guess."""
 
@@ -1344,6 +1639,92 @@ class AcceptanceTests(unittest.TestCase):
             report["failed"],
             {"unknown: no transcript": 2, "predict: no Claude Code CLI on this Mac": 1},
         )
+
+    def test_redo_kinds_read_the_start_of_the_next_message(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        cases = {
+            "no thats not what i asked": "pushback",
+            "what do you mean by floor": "confused",
+            "keep going": "continue",
+            "status?": "status",
+            "yes go": None,
+            "ok now add the export button": None,
+        }
+        for text, kind in cases.items():
+            self.assertEqual(next_prompt_eval.redo_kind(text), kind, text)
+
+    def test_redo_after_splits_by_how_the_prompt_was_made_and_prompt_arm(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        def offer(result, arm):
+            return {
+                "outcome": {"result": result},
+                "prompt_arm": arm,
+                "conversation": "c",
+            }
+
+        offers = {
+            "a:1": offer("as_offered", "checks"),
+            "a:2": offer("as_offered", "base"),
+            "a:3": offer("own", "base"),
+            "a:4": offer("edited", "checks"),
+            "a:5": offer("own", "checks"),
+        }
+        found = {
+            "a:1": "ship it",
+            "a:2": "no, the other repo",
+            "a:3": "",
+            "a:4": "status",
+            "a:5": None,
+        }
+        report = next_prompt_eval.redo_after(offers, found)
+        self.assertEqual(report["by_result:as_offered"]["redo_rate"], 0.5)
+        self.assertEqual(report["by_result:own"]["pending"], 1)
+        self.assertEqual(report["by_result:own"]["missing"], 1)
+        self.assertEqual(report["by_result:own"]["redo_rate"], None)
+        self.assertEqual(report["taken_by_prompt_arm:checks"]["redo"], 1)
+        self.assertEqual(report["taken_by_prompt_arm:checks"]["kinds"], {"status": 1})
+        self.assertEqual(report["taken_by_prompt_arm:base"]["kinds"], {"pushback": 1})
+
+    def test_prompt_arms_are_reported_apart(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        def predicted(key, arm, text, category="approve"):
+            return dict(
+                event="predicted",
+                offer=key,
+                agent="a",
+                t=key,
+                shown=True,
+                context_arm="wide",
+                prompt_arm=arm,
+                category=category,
+                candidates=[{"text": text, "p": 0.3}],
+            )
+
+        events = [
+            predicted("a:1", "checks", "yes go"),
+            {"event": "seen", "offer": "a:1"},
+            {"event": "used", "offer": "a:1"},
+            predicted("a:2", "checks", "no, name the missed file", "correct"),
+            {"event": "seen", "offer": "a:2"},
+            predicted(
+                "a:3", "base", "looks good, go ahead and merge it then run the suite"
+            ),
+            {"event": "seen", "offer": "a:3"},
+        ]
+        _, report = next_prompt_eval.acceptance(events)
+        checks = report["by_prompt_arm"]["checks"]
+        self.assertEqual(
+            (checks["seen"], checks["used"], checks["acceptance"]), (2, 1, 0.5)
+        )
+        self.assertEqual(checks["guessed_corrections"], 0.5)
+        self.assertEqual(report["by_prompt_arm"]["base"]["top_guess_words_median"], 11)
+        self.assertEqual(report["by_prompt_arm"]["base"]["acceptance"], 0.0)
 
     def test_live_arms_are_reported_apart(self):
         sys.path.insert(0, str(ROOT / "scripts"))

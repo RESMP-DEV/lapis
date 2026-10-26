@@ -3573,8 +3573,16 @@ void ompGetsItsResizeOverlay() {
         const auto overlay = root.filePath(QStringLiteral("omp-lapis.yml"));
         QFile written(overlay);
         require(written.open(QIODevice::ReadOnly), "lapis writes its OMP overlay");
-        require(written.readAll().contains("resizeScrollback: preserve"),
+        const auto overlay_text = written.readAll();
+        require(overlay_text.contains("resizeScrollback: preserve"),
                 "the overlay preserves scrollback on resize");
+        const auto extension = root.filePath(QStringLiteral("omp-lapis-turns.ts"));
+        require(overlay_text.contains("extensions:\n  - \"" + QFile::encodeName(extension) + "\""),
+                "the overlay loads lapis's OMP turn extension");
+        QFile turns(extension);
+        require(turns.open(QIODevice::ReadOnly) &&
+                    turns.readAll().contains("lapis-init;omp;${nonce}"),
+                "lapis writes its OMP turn extension");
         // The stand-in's shell truncates the capture before it writes, so an
         // existence check alone can read an empty file under load.
         const auto expected_config = userOverlay + QDir::listSeparator() + overlay;

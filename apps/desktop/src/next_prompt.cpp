@@ -168,14 +168,29 @@ void parse_context_arms(const QJsonObject& object, NextPromptSettings& settings)
     const auto arms = object.value(QStringLiteral("contextArms"));
     if (!arms.isArray())
         return;
-    static const QStringList known{QStringLiteral("base"), QStringLiteral("thread"),
-                                   QStringLiteral("retrieval"), QStringLiteral("evidence")};
+    static const QStringList known{QStringLiteral("base"),      QStringLiteral("thread"),
+                                   QStringLiteral("retrieval"), QStringLiteral("evidence"),
+                                   QStringLiteral("moves"),     QStringLiteral("legacy"),
+                                   QStringLiteral("pack"),      QStringLiteral("wide")};
     settings.contextArms.clear();
     for (const auto& arm : arms.toArray())
         if (known.contains(arm.toString()) && !settings.contextArms.contains(arm.toString()))
             settings.contextArms.append(arm.toString());
     if (settings.contextArms.isEmpty())
         settings.contextArms.append(QStringLiteral("base"));
+}
+
+void parse_prompt_arms(const QJsonObject& object, NextPromptSettings& settings) {
+    const auto arms = object.value(QStringLiteral("promptArms"));
+    if (!arms.isArray())
+        return;
+    static const QStringList known{QStringLiteral("base"), QStringLiteral("checks")};
+    settings.promptArms.clear();
+    for (const auto& arm : arms.toArray())
+        if (known.contains(arm.toString()) && !settings.promptArms.contains(arm.toString()))
+            settings.promptArms.append(arm.toString());
+    if (settings.promptArms.isEmpty())
+        settings.promptArms.append(QStringLiteral("base"));
 }
 } // namespace
 
@@ -202,6 +217,7 @@ NextPromptSettings parse_next_prompt(const QJsonValue& value) {
     if (const auto share = object.value(QStringLiteral("holdout")); share.isDouble())
         settings.holdoutShare = std::clamp(share.toDouble(), 0.0, 0.5);
     parse_context_arms(object, settings);
+    parse_prompt_arms(object, settings);
     if (const auto p = object.value(QStringLiteral("experimentMinConfidence")); p.isDouble())
         settings.experimentMinConfidence = std::clamp(p.toDouble(), 0.0, 1.0);
     if (const auto minutes = object.value(QStringLiteral("returnMinutes")); minutes.isDouble())
@@ -343,7 +359,8 @@ void NextPrompt::run(const QString& id, bool force, int returned) {
     dropRestored(id, "new_turn");
     withdraw(id, returned >= 0 ? Withdrawal::returned : Withdrawal::next_turn);
     const auto agent = lookup_(id);
-    if (!agent || (agent->cli != QLatin1String("claude") && agent->cli != QLatin1String("codex"))) {
+    if (!agent || (agent->cli != QLatin1String("claude") && agent->cli != QLatin1String("codex") &&
+                   agent->cli != QLatin1String("omp"))) {
         emit judged(id, {});
         return;
     }
@@ -520,6 +537,7 @@ struct PredictArguments {
     QString context_arm;
     QJsonArray providers;
     QString main_model;
+    QString prompt_arm;
 };
 
 QStringList predict_arguments(const PredictArguments& args) {
@@ -531,7 +549,8 @@ QStringList predict_arguments(const PredictArguments& args) {
         arguments << QStringLiteral("--endpoint") << args.endpoint << QStringLiteral("--style")
                   << QStringLiteral("personal");
     else
-        arguments << QStringLiteral("--context-arm") << args.context_arm;
+        arguments << QStringLiteral("--context-arm") << args.context_arm
+                  << QStringLiteral("--prompt-arm") << args.prompt_arm;
     if (args.model == args.main_model && !args.providers.isEmpty() && args.endpoint.isEmpty())
         arguments << QStringLiteral("--providers")
                   << QString::fromUtf8(
@@ -582,10 +601,16 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
     Arms arms_made;
     arms_made.returned = returned;
     auto* random = QRandomGenerator::global();
-    arms_made.context =
-        settings_.contextArms.isEmpty()
-            ? QStringLiteral("base")
-            : settings_.contextArms.at(random->bounded(settings_.contextArms.size()));
+    if (settings_.contextArms.isEmpty())
+        arms_made.context = QStringLiteral("base");
+    else if (settings_.contextArms == QStringList{QStringLiteral("wide")} &&
+             random->generateDouble() < 0.5)
+        arms_made.context = QStringLiteral("base");
+    else
+        arms_made.context = settings_.contextArms.at(random->bounded(settings_.contextArms.size()));
+    arms_made.prompt = settings_.promptArms.isEmpty()
+                           ? QStringLiteral("base")
+                           : settings_.promptArms.at(random->bounded(settings_.promptArms.size()));
     arms_made.floor = settings_.experimentMinConfidence > settings_.minConfidence &&
                               random->generateDouble() < 0.5
                           ? settings_.experimentMinConfidence
@@ -593,9 +618,9 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
     // Most guesses come from the chosen model; a share goes to an experiment
     // arm, evenly among the other models and the local endpoint.
     const auto drawn = draw_predict_arm(settings_, !claude.isEmpty());
-    const PredictArguments args{script_path_,        drawn.model,    claude,
-                                settings_.effort,    drawn.endpoint, arms_made.context,
-                                settings_.providers, settings_.model};
+    const PredictArguments args{script_path_,        drawn.model,     claude,
+                                settings_.effort,    drawn.endpoint,  arms_made.context,
+                                settings_.providers, settings_.model, arms_made.prompt};
     const auto arguments = predict_arguments(args);
     arms_made.arm = drawn.arm;
     arms_made.model = drawn.model;
@@ -647,8 +672,10 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
         event.insert(QStringLiteral("provider"), provider.left(40));
     event.insert(QStringLiteral("arm"), arms.arm);
     // The local arm's own format takes no context arm.
-    if (arms.arm != QLatin1String("local"))
+    if (arms.arm != QLatin1String("local")) {
         event.insert(QStringLiteral("context_arm"), arms.context);
+        event.insert(QStringLiteral("prompt_arm"), arms.prompt);
+    }
     if (arms.returned >= 0)
         event.insert(QStringLiteral("returned_minutes"), arms.returned);
     event.insert(QStringLiteral("attention"), answer.value(QStringLiteral("attention")));
@@ -984,7 +1011,8 @@ constexpr qsizetype kSavedAgents = 128;
 constexpr qsizetype kSavedText = 8000;
 constexpr qsizetype kSavedTextTotal = qsizetype{256} * 1024;
 bool chats(const QString& cli) {
-    return cli == QLatin1String("claude") || cli == QLatin1String("codex");
+    return cli == QLatin1String("claude") || cli == QLatin1String("codex") ||
+           cli == QLatin1String("omp");
 }
 } // namespace
 

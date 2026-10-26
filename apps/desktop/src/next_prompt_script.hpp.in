@@ -3,6 +3,20 @@
 #define LAPIS_DESKTOP_NEXT_PROMPT_SCRIPT_HPP
 namespace lapis::desktop {
 // Run by this Mac's python3, or sent to another machine's (see NextPrompt).
+// The helper outgrew the 65,536 characters the standard requires compilers to
+// accept in one literal; Clang and GCC, the supported toolchains, take more.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Woverlength-strings"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Woverlength-strings"
+#endif
 inline constexpr char kNextPromptScript[] = R"lapis(@LAPIS_NEXT_PROMPT_SCRIPT@)lapis";
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 } // namespace lapis::desktop
 #endif
