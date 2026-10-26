@@ -3,9 +3,9 @@
 #include <QLatin1StringView>
 #include <QStringView>
 
-// The order Tab visits agents that need you, shared by the workspace and by
-// readers of its published agent state (Ultra Tab, RESMP-DEV/ultratab). Header-only so a
-// reader needs no desktop library.
+// The tiers Ultra Tab (RESMP-DEV/ultratab, which pins lapis) deals waiting
+// agents in, from the published agent state. lapis's own Tab ranks with
+// TabRanker instead. Header-only so a reader needs no desktop library.
 namespace lapis::desktop {
 struct WaitingFacts {
     bool guessed{};     // a next-prompt guess is offered

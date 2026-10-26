@@ -56,9 +56,8 @@ struct NextPromptSettings {
     double holdoutShare{0.0};
     // The live comparison: the context the helper adds (`contextArms`; see
     // next_prompt.py), picked at random and recorded on the guess. wide is
-    // five generated candidates, three shown; alone it is compared half and
-    // half with the base prompt.
-    QStringList contextArms{QStringLiteral("wide")};
+    // five generated candidates, three shown.
+    QStringList contextArms{QStringLiteral("wide"), QStringLiteral("base")};
     // The second live comparison, drawn apart from the context arm: the
     // system prompt as it is, or with the helper's three checks (`promptArms`;
     // see next_prompt.py's CHECKS), picked at random and recorded on the guess.

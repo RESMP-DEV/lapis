@@ -483,6 +483,23 @@ class TranscriptTests(Homes):
         self.assertEqual(next_prompt.pair_index(str(folder)), files)
         self.assertEqual(index.stat().st_mtime_ns, stamp)
 
+    def test_the_index_holds_no_tool_output(self):
+        # Tool output is read from the transcript in use; an index that held
+        # it for every transcript reached 188 MB, rewritten on each guess.
+        folder = self.root / "runtime"
+        folder.mkdir()
+        files = next_prompt.pair_index(str(folder))
+        self.assertTrue(files)
+        self.assertFalse(any("snippets" in entry for entry in files.values()))
+        index = folder / next_prompt.INDEX_NAME
+        old = json.loads(index.read_text())
+        for entry in old["files"].values():
+            entry["snippets"] = [{"time": "", "text": "x" * 100}]
+        index.write_text(json.dumps(old))
+        again = next_prompt.pair_index(str(folder))
+        self.assertEqual(again, files)
+        self.assertNotIn("snippets", index.read_text())
+
     def test_context_brings_what_was_sent_for_an_earlier_offer(self):
         ask = next_prompt.argparse.Namespace
         context = next_prompt.command_context(

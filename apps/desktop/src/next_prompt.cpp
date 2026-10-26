@@ -596,18 +596,13 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
                         QDateTime::currentDateTime().toString(QStringLiteral("ddd h:mm ap"))}};
     if (returned >= 0)
         bundle.insert(QStringLiteral("returned_minutes"), returned);
-    // Most guesses come from the chosen model; a share goes to an experiment
-    // arm, evenly among the other models and the local endpoint.
     Arms arms_made;
     arms_made.returned = returned;
     auto* random = QRandomGenerator::global();
-    if (settings_.contextArms.isEmpty())
-        arms_made.context = QStringLiteral("base");
-    else if (settings_.contextArms == QStringList{QStringLiteral("wide")} &&
-             random->generateDouble() < 0.5)
-        arms_made.context = QStringLiteral("base");
-    else
-        arms_made.context = settings_.contextArms.at(random->bounded(settings_.contextArms.size()));
+    arms_made.context =
+        settings_.contextArms.isEmpty()
+            ? QStringLiteral("base")
+            : settings_.contextArms.at(random->bounded(settings_.contextArms.size()));
     arms_made.prompt = settings_.promptArms.isEmpty()
                            ? QStringLiteral("base")
                            : settings_.promptArms.at(random->bounded(settings_.promptArms.size()));

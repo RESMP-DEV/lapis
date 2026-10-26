@@ -106,7 +106,7 @@ void settingsReadFromTheConfig() {
                 set.effort == QLatin1String("low") && set.minConfidence == 1.0 &&
                 set.maxPerHour == 0,
             "each field, clamped");
-    require(defaults.contextArms == QStringList{QStringLiteral("wide")} &&
+    require(defaults.contextArms == QStringList({QStringLiteral("wide"), QStringLiteral("base")}) &&
                 defaults.experimentShare == 0.0 && defaults.holdoutShare == 0.0 &&
                 defaults.experimentMinConfidence == 0.0 && defaults.returnMinutes == 30 &&
                 defaults.returnShare == 1.0,
