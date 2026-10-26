@@ -66,6 +66,8 @@ Codex and Claude Code report their turns: Codex through its observer, Claude
 Code through the session service's hook adapter, which also reports permission
 prompts and questions. OMP on this Mac reports finished turns through an
 extension lapis's OMP overlay loads; between turns its status is estimated.
+That extension also names the main conversation to resume, so a subagent's
+session never replaces it.
 Other CLIs show an estimate from their output, **Output active** or **Quiet**,
 rather than guessing at turns. **Turn finished** means a
 turn ended, not that the task or the process did. A new Codex agent reads **No

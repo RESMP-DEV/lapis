@@ -292,6 +292,14 @@ void omp_turns_arrive_through_the_terminal() {
     require(Access::resume(service).agent == QStringLiteral("omp") &&
             Access::resume(service).session_id ==
                 QStringLiteral("01a00000-0000-7000-8000-000000000001"));
+    // A subagent's printed checkpoint names a session `omp --resume` cannot find.
+    const QJsonObject subagent{
+        {"version", 1}, {"agent", "omp"}, {"session_id", "01a00000-0000-7000-8000-000000000002"}};
+    Access::receive(service, "\x1b]1337;SetUserVar=agent_checkpoint=" +
+                                 QJsonDocument(subagent).toJson(QJsonDocument::Compact).toBase64() +
+                                 "\x07");
+    require(Access::resume(service).session_id ==
+            QStringLiteral("01a00000-0000-7000-8000-000000000001"));
     Access::receive(service, frame("agent_end"));
     require(Access::notify_turn_completed(service));
 }

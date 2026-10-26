@@ -514,8 +514,10 @@ class SessionService final : public QObject {
                     std::make_unique<NotifyTurns>(*notify_state_, QStringLiteral("OMP extension"));
             }
             const auto session = hook.source.value(QStringLiteral("session_id")).toString();
-            if (!session.isEmpty())
+            if (!session.isEmpty()) {
+                omp_extension_ = true;
                 note_conversation(QStringLiteral("omp"), session, ResumeSource::terminal);
+            }
             if (hook.source.value(QStringLiteral("type")) == QLatin1String("agent_end") &&
                 notify_turns_->completed(
                     {{QStringLiteral("type"), QStringLiteral("agent-turn-complete")}},
@@ -580,8 +582,10 @@ class SessionService final : public QObject {
         } else {
             schedule_output_processing();
         }
+        // OMP subagents print their own checkpoints into the same terminal;
+        // once lapis's extension reports the main session, those cannot win.
         if (const auto found = checkpoint_scanner_.scan(bytes);
-            found && found->agent == checkpoint_agent_)
+            found && found->agent == checkpoint_agent_ && !omp_extension_)
             note_conversation(found->agent, found->session_id, ResumeSource::terminal);
     }
     void observe_output_pressure(const QByteArray& bytes) {
@@ -2215,6 +2219,7 @@ class SessionService final : public QObject {
     QString resume_endpoint_;
     CheckpointScanner checkpoint_scanner_;
     QString checkpoint_agent_;
+    bool omp_extension_ = false;
     ResumeRecord resume_;
     std::unique_ptr<attention::State> codex_state_;
     std::unique_ptr<lapis::codex::Observer> codex_observer_;
