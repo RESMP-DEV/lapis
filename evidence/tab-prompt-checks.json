@@ -1,0 +1,110 @@
+{
+ "schema": "lapis.qa-receipt/1",
+ "recorded_at": "2026-10-26T06:44:55Z",
+ "scope": "The `checks` prompt arm for next-prompt (Tab) guesses: the history it came from, an offline replay against the current prompt, the live log baseline, and the live split that decides it. Model behavior and evaluator only; no GUI, attention-protocol, long-run or 32-session qualification.",
+ "source": {
+  "checkout": "lapis",
+  "branch": "tab/live-omp",
+  "head": "c29f7ec",
+  "base": "903d250"
+ },
+ "history_basis": {
+  "source": "The operator's Claude Code transcripts on all their machines, 2026-09-22 to 2026-10-26, typed prompts only; corrections tagged by a separate model (obvious, taste or missing context).",
+  "tasks": 1561,
+  "tasks_needing_a_redo": 0.277,
+  "median_minutes_added_per_redo_round": 47,
+  "corrections": 349,
+  "corrections_missing_context": 0.26,
+  "prompt_length_and_constraints": "No effect on redo at any prompt length; more stated constraints went with more redo (odds 1.38x at 2, 1.56x at 3+, June to October), read as task difficulty.",
+  "seen_guess_acceptance_by_top_guess_words": {
+   "1-5": 0.259,
+   "6-10": 0.169,
+   "11-20": 0.118,
+   "21-40": 0.158,
+   "over 40": 0.079
+  },
+  "seen_guess_acceptance_by_week": {
+   "2026-10-05": 0.21,
+   "2026-10-12": 0.192,
+   "2026-10-19": 0.079
+  },
+  "guesses_that_were_corrections": 0.026
+ },
+ "live_log_baseline_redo": {
+  "method": "scripts/next_prompt_eval.py log --redo on the live log before this change (2026-09-30 to 2026-10-26): the person's next message after the agent answered each settled prompt, regex-classified.",
+  "sent_as_offered": {
+   "answered": 144,
+   "redo": 18,
+   "redo_rate": 0.125,
+   "kinds": {
+    "pushback": 7,
+    "confused": 1,
+    "status": 4,
+    "continue": 6
+   }
+  },
+  "edited": {
+   "answered": 26,
+   "redo": 4,
+   "redo_rate": 0.154,
+   "kinds": {
+    "status": 1,
+    "continue": 1,
+    "pushback": 1,
+    "confused": 1
+   }
+  },
+  "own": {
+   "answered": 654,
+   "redo": 34,
+   "redo_rate": 0.052,
+   "kinds": {
+    "pushback": 23,
+    "status": 3,
+    "continue": 6,
+    "confused": 2
+   }
+  },
+  "note": "Taken guesses are followed by more continue and status messages than the person's own prompts; pushback alone is close (8 of 170 against 23 of 654). Taken and own prompts are not randomized, so this is a baseline, not an effect."
+ },
+ "replay": {
+  "method": "60 prompts sampled from local Claude Code and Codex transcripts since 2026-10-01 (seed 26), saved as one manifest and run under each prompt arm with the base context arm and the configured provider chain (a private DeepSeek V4.1 Flash 1017 deployment first, a hosted fallback second). One Opus 5.5 judge call per eight items graded each arm's three candidates blind with the existing 0/1/2 rubric.",
+  "base": {
+   "top1_sendable": 0.133,
+   "top1_intent": 0.283,
+   "top3_sendable": 0.183,
+   "top3_intent": 0.4,
+   "top_guess_words_median": 11,
+   "top_guess_five_words_or_fewer": 0.317,
+   "guessed_corrections": 0.033,
+   "median_ms": 5992
+  },
+  "checks": {
+   "top1_sendable": 0.1,
+   "top1_intent": 0.3,
+   "top3_sendable": 0.117,
+   "top3_intent": 0.417,
+   "top_guess_words_median": 7,
+   "top_guess_five_words_or_fewer": 0.383,
+   "guessed_corrections": 0.0,
+   "median_ms": 6762
+  },
+  "approve_top3_sendable": {
+   "base": 0.7,
+   "checks": 0.4,
+   "count": 10
+  },
+  "reading": "The checks shortened guesses (median 11 to 7 words) without raising sendable guesses (top-1 8 to 6 of 60, top-3 11 to 7) and produced no correction guesses (2 to 0). At 60 prompts these differences are within noise. Most sampled replies predate the 2026-10-20 instruction that agents restate the goal first, so the misread check had little to compare offline."
+ },
+ "live_decision": {
+  "split": "promptArms base and checks, half and half, drawn apart from the context arm and logged as prompt_arm.",
+  "rule": "Keep checks if, at about 200 seen guesses per arm, its acceptance is higher and the redo rate after its taken guesses is not higher; otherwise set promptArms to [\"base\"].",
+  "power": "A 7-point acceptance gap (8% against 15%) is about 2.2 standard errors at 200 seen guesses per arm; at recent volumes that is roughly two weeks."
+ },
+ "limitations": [
+  "The replay grades against what was typed, so a shorter guess with the right intent but missing specifics scores 1, not 2; acceptance and redo are measured live only.",
+  "The judge labels each actual message's category per run, so category counts differ slightly between the two arms.",
+  "Redo is a regex on the start of the next message; interrupts and corrections phrased without the listed cues are missed.",
+  "Replay rows did not record which provider answered each guess; `answered_by` was added to the replay report after these runs."
+ ]
+}
