@@ -359,8 +359,7 @@ void NextPrompt::run(const QString& id, bool force, int returned) {
     dropRestored(id, "new_turn");
     withdraw(id, returned >= 0 ? Withdrawal::returned : Withdrawal::next_turn);
     const auto agent = lookup_(id);
-    if (!agent || (agent->cli != QLatin1String("claude") && agent->cli != QLatin1String("codex") &&
-                   agent->cli != QLatin1String("omp"))) {
+    if (!agent || !guessable(agent->cli)) {
         emit judged(id, {});
         return;
     }
@@ -1005,11 +1004,12 @@ namespace {
 constexpr qsizetype kSavedAgents = 128;
 constexpr qsizetype kSavedText = 8000;
 constexpr qsizetype kSavedTextTotal = qsizetype{256} * 1024;
-bool chats(const QString& cli) {
+} // namespace
+
+bool NextPrompt::guessable(const QString& cli) {
     return cli == QLatin1String("claude") || cli == QLatin1String("codex") ||
            cli == QLatin1String("omp");
 }
-} // namespace
 
 QJsonObject NextPrompt::encodeOffer(const Offer& offer, qsizetype& budget) const {
     if (offer.key.size() > 400 || offer.conversation.size() > 200 || offer.text.isEmpty() ||
@@ -1104,7 +1104,7 @@ auto NextPrompt::savedOffer(const QString& id, const QJsonValue& value) -> std::
 auto NextPrompt::restorable(const QString& id, QStringView conversation) const
     -> std::optional<Agent> {
     auto agent = lookup_(id);
-    if (!agent || !chats(agent->cli) ||
+    if (!agent || !guessable(agent->cli) ||
         (!agent->conversation.isEmpty() && !conversation.isEmpty() &&
          agent->conversation != conversation))
         return std::nullopt;
@@ -1145,7 +1145,7 @@ bool NextPrompt::restoreOffers(const QJsonObject& offers) {
         const auto known = lookup_(id);
         const char* reason = "gone";
         if (known != std::nullopt) {
-            if (!chats(known->cli))
+            if (!guessable(known->cli))
                 reason = "unsupported";
             else if (!known->conversation.isEmpty() && !offer->conversation.isEmpty() &&
                      known->conversation != offer->conversation)
@@ -1227,7 +1227,7 @@ void NextPrompt::resumeOwed(const QString& id, int tries) {
         return;
     const auto agent = lookup_(id);
     const auto conversation = owed_.value(id);
-    if (!agent || !chats(agent->cli) ||
+    if (!agent || !guessable(agent->cli) ||
         (!agent->conversation.isEmpty() && !conversation.isEmpty() &&
          agent->conversation != conversation)) {
         owed_.remove(id);

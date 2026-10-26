@@ -166,6 +166,14 @@ void settingsReadFromTheConfig() {
         "providers are validated, clamped and named after their model");
 }
 
+// Tab types and sends a guess for every CLI that gets one (OMP lacked it).
+void tabWorksWhereverGuessesAre() {
+    for (const auto* cli : {"claude", "codex", "omp"})
+        require(NextPrompt::guessable(QLatin1String(cli)), "a guessed CLI takes Tab");
+    for (const auto* cli : {"kimi", "opencode", "grok", ""})
+        require(!NextPrompt::guessable(QLatin1String(cli)), "no guess, no Tab flow");
+}
+
 void screensReadAsText() {
     lapis::session::Terminal terminal({12, 4});
     terminal.feed("hi\r\n> go   ");
@@ -1271,6 +1279,7 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
         settingsReadFromTheConfig();
+        tabWorksWhereverGuessesAre();
         screensReadAsText();
         concurrentContextsRespectCap();
         missingProbabilityIsNotOffered();
