@@ -73,14 +73,24 @@ bool read_input(QByteArray& input, QDeadlineTimer& deadline) {
     return false;
 }
 } // namespace
-QByteArray hook_settings(const QString& command) {
+QByteArray hook_settings(const QString& command, bool permission_requests) {
     QJsonObject hooks;
     for (const auto& event : hook_event_names)
-        hooks.insert(event.toString(),
-                     QJsonArray{QJsonObject{{"hooks", QJsonArray{QJsonObject{{"type", "command"},
-                                                                             {"command", command},
-                                                                             {"timeout", 2}}}}}});
+        if (permission_requests || event != QLatin1String("PermissionRequest"))
+            hooks.insert(
+                event.toString(),
+                QJsonArray{QJsonObject{
+                    {"hooks", QJsonArray{QJsonObject{
+                                  {"type", "command"}, {"command", command}, {"timeout", 2}}}}}});
     return QJsonDocument(QJsonObject{{"hooks", hooks}}).toJson(QJsonDocument::Compact);
+}
+
+bool skips_dangerous_rm_prompts() {
+    const auto value = qEnvironmentVariable("CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS")
+                           .trimmed()
+                           .toLower();
+    return value == QLatin1String("1") || value == QLatin1String("true") ||
+           value == QLatin1String("yes") || value == QLatin1String("on");
 }
 
 QJsonObject relay_event(const QJsonObject& source, bool include_derived) {

@@ -34,8 +34,17 @@ inline constexpr std::array<QStringView, 9> hook_event_names{
     QStringView{u"SessionEnd"}};
 
 // Claude Code settings (for --settings) that run `command` for every event
-// above. The command must never print a decision or exit 2.
-[[nodiscard]] QByteArray hook_settings(const QString& command);
+// above, or every event but PermissionRequest. The command must never print a
+// decision or exit 2.
+[[nodiscard]] QByteArray hook_settings(const QString& command, bool permission_requests = true);
+
+// Whether this environment sets CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS,
+// which lets dangerous rm commands run without a prompt in bypass permissions
+// mode. Claude Code ignores it while any PermissionRequest hook is configured
+// (observed on 2.1.312), so a launch that sets it gets no PermissionRequest
+// hook: reporting must not change what the agent may run. The
+// permission_prompt notification still reports each prompt.
+[[nodiscard]] bool skips_dangerous_rm_prompts();
 
 // The hook command names the frame shape its service reads, so a relay never
 // sends a field the listening service predates. The hook runs whatever binary

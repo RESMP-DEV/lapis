@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-28T19:06:14Z",
+  "passed": true,
+  "scope": "Claude Code ignores CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS while any PermissionRequest hook is configured, so lapis's reporting hooks cancelled the user's dangerous-rm waiver. A local Claude launch whose environment sets it now omits only the PermissionRequest hook.",
+  "source": {
+    "baseline": "fe03933",
+    "tested_worktree_dirty": true,
+    "source_sha256": {
+      "adapters/claude/src/hook_relay.hpp": "efdc8fddc9ab12b0501493ff755cbee1f3455843be48e71b62c0d01bb1cd8bb5",
+      "adapters/claude/src/hook_relay.cpp": "d7b1623b0f56342915158fa0ee17431edc737472eeca76c8ba322230830f6165",
+      "adapters/claude/src/claude_observer.cpp": "4e72f5a1b25119021e943a30147fa776dede5f7e8f282cca828da90a678481ef",
+      "adapters/claude/tests/claude_observer_test.cpp": "187a440e8f011fc8775dab4d454e9a8d9659282a3c05c620d30658ca6a2a6742"
+    }
+  },
+  "claude_code": {
+    "version": "2.1.312",
+    "binary_sha256": "6b5ec691195e551b02c41df9f7d723f4ea61eaa03c2df90acefe3736f1aeb620",
+    "messages": {
+      "inactive": "CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS has no effect in this session: dangerous rm commands keep their usual checks.",
+      "active": "CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS is set, so dangerous rm commands can run without a prompt in bypass permissions mode once managed settings and plugin hooks have loaded."
+    },
+    "source_reading": "The waiver is also off for child sessions, a permission prompt tool, policy or plugin PermissionRequest hooks, and some Bash deny or ask rules (minified source, not exercised here)."
+  },
+  "method": "A top-level `claude -p --dangerously-skip-permissions --permission-prompts none` run asked to execute `rm -rf \"$(printf %s <canary>)\"`. A command-substitution rm target is always a dangerous-rm prompt, and --permission-prompts none turns a prompt into a denial, so a surviving canary means the prompt fired.",
+  "runs": [
+    {"case": "no waiver, user PermissionRequest hook", "denials": 1, "canary": "kept"},
+    {"case": "waiver, user PermissionRequest hook", "notice": "inactive", "denials": 1, "canary": "kept"},
+    {"case": "waiver, no PermissionRequest hook", "notice": "active", "denials": 0, "canary": "deleted"},
+    {
+      "case": "waiver, installed lapis 0.5.0 lapis_session_service --claude",
+      "service_sha256": "2caa590e2fa3d5ade734160884408be15d6af1c6b35a4553532c63bda13895ee",
+      "hooks": 9,
+      "notice": "inactive",
+      "denials": 1,
+      "canary": "kept"
+    },
+    {
+      "case": "waiver, this change's lapis_session_service --claude",
+      "hooks": 8,
+      "hooks_omitted": ["PermissionRequest"],
+      "notice": "active",
+      "denials": 0,
+      "canary": "deleted"
+    }
+  ],
+  "service_runs_note": "Both service runs launched a stand-in program that copied the --settings file and environment the service passed, then ran the installed Claude Code with that file. The parent session markers present in the launching shell were absent from the agent's environment in both.",
+  "limitations": [
+    "Agents on another machine still receive the PermissionRequest hook on their command line, so the waiver stays off there.",
+    "lapis treats 1, true, yes and on (any case) as set; another value keeps the hook, which keeps Claude Code's prompt.",
+    "Not exercised in the desktop app with a native window."
+  ]
+}

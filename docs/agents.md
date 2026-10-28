@@ -87,6 +87,14 @@ time, so a batch of parallel tool calls shows as one request, then the next.
 Idle compaction, mods, fork subagents and other Claude Code behaviors stay as
 your Claude Code settings choose; lapis does not override them.
 
+One hook is left out when your login shell sets
+`CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS` (to `1`, `true`, `yes` or
+`on`), which lets dangerous `rm` commands run without a prompt in Full access.
+Claude Code ignores that variable while any PermissionRequest hook is
+configured, so an agent on this Mac then gets no lapis PermissionRequest hook,
+and Claude Code's permission notice still reports each prompt. An agent on
+another machine keeps the hook, so the variable has no effect there.
+
 ## Full-screen CLIs
 
 lapis runs Claude Code and Grok full screen (Claude Code through

@@ -128,7 +128,7 @@ class Observer::Impl {
                              quote(socket_) + QLatin1Char(' ') + quote(nonce_) + QLatin1Char(' ') +
                              relay_contract.toString();
         QFile settings(temporary_->filePath(QStringLiteral("settings.json")));
-        const auto data = hook_settings(command);
+        const auto data = hook_settings(command, !skips_dangerous_rm_prompts());
         if (!settings.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
             !settings.setPermissions(QFile::ReadOwner | QFile::WriteOwner) ||
             settings.write(data) != data.size() || !settings.flush())

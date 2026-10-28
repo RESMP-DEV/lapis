@@ -601,11 +601,56 @@ void terminal_transport() {
     require(state.activity() == attention::Activity::turn_completed);
     observer.stop();
 }
+// Claude Code ignores its dangerous-rm waiver while any PermissionRequest hook
+// exists, so a launch that sets it registers every other hook, and the
+// permission_prompt notification alone still reports a prompt.
+void dangerous_rm_waiver() {
+    constexpr const char* waiver = "CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS";
+    const auto hooks = [](const QByteArray& settings) {
+        return QJsonDocument::fromJson(settings).object()["hooks"].toObject();
+    };
+    require(hooks(lapis::claude::hook_settings(QStringLiteral("true"))).size() == 9);
+    const auto reduced = hooks(lapis::claude::hook_settings(QStringLiteral("true"), false));
+    require(reduced.size() == 8 && !reduced.contains(QStringLiteral("PermissionRequest")) &&
+            reduced.contains(QStringLiteral("Notification")));
+    for (const auto* value : {"1", "true", " YES ", "on"}) {
+        qputenv(waiver, value);
+        require(lapis::claude::skips_dangerous_rm_prompts());
+    }
+    for (const auto* value : {"", "0", "false", "off", "2"}) {
+        qputenv(waiver, value);
+        require(!lapis::claude::skips_dangerous_rm_prompts());
+    }
+    qputenv(waiver, "1");
+    {
+        attention::State state{"session", "claude-code"};
+        lapis::claude::Observer observer(state);
+        const auto arguments =
+            observer.launchArguments({}, QCoreApplication::applicationFilePath());
+        QFile settings(arguments.value(1));
+        require(arguments.value(0) == QStringLiteral("--settings") &&
+                settings.open(QIODevice::ReadOnly));
+        const auto launched = hooks(settings.readAll());
+        require(launched.size() == 8 && !launched.contains(QStringLiteral("PermissionRequest")));
+        observer.stop();
+    }
+    qunsetenv(waiver);
+    Fixture f;
+    f.begin();
+    auto prompt = event("Notification");
+    prompt.insert("notification_type", "permission_prompt");
+    f.send(prompt);
+    require(f.state.pending().size() == 1);
+    f.send(event("UserPromptSubmit", {}, {}, "turn-2"));
+    require(f.state.pending().empty());
+}
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     if (app.arguments().value(1) == QStringLiteral("--claude-hook"))
         return lapis::claude::run_hook_relay(app.arguments().value(2), app.arguments().value(3),
                                              app.arguments().value(4));
+    // The fixture expects every hook, whatever the developer's shell sets.
+    qunsetenv("CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS");
     try {
         callback_shutdown();
         callback_destruction();
@@ -620,6 +665,7 @@ int main(int argc, char** argv) {
         background_work_pauses_the_turn();
         privacy_bounds_and_transport();
         terminal_transport();
+        dangerous_rm_waiver();
         std::cout << "Claude live relay, identity, retirement, bounds, privacy and deadline cases "
                      "passed\n";
         return 0;
