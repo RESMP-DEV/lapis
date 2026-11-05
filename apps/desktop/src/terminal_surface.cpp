@@ -443,6 +443,25 @@ QColor blend(const QColor& from, const QColor& to, qreal share) {
 
 } // namespace
 
+bool text_after_cursor(const session::TerminalSnapshot& snapshot) {
+    if (!snapshot.cursor.in_viewport || snapshot.cursor.row >= snapshot.size.rows)
+        return false;
+    const std::size_t columns = snapshot.size.columns;
+    const std::size_t row = static_cast<std::size_t>(snapshot.cursor.row) * columns;
+    for (std::size_t column = snapshot.cursor.column; column + 2 < columns; ++column) {
+        const auto index = row + column;
+        if (index >= snapshot.cells.size())
+            break;
+        const auto& style = snapshot.cells[index].style;
+        if (style.faint || style.invisible)
+            continue;
+        for (const char32_t c : snapshot.text(index))
+            if (c != U' ' && c != U' ')
+                return true;
+    }
+    return false;
+}
+
 SuggestionLayout lay_out_suggestion(const session::TerminalSnapshot& snapshot,
                                     const QFontMetricsF& metrics, const QString& suggestion) {
     SuggestionLayout layout;
@@ -450,7 +469,7 @@ SuggestionLayout lay_out_suggestion(const session::TerminalSnapshot& snapshot,
     const int first = snapshot.cursor.column + 1;
     const int last = static_cast<int>(snapshot.size.columns) - 2;
     if (!snapshot.cursor.in_viewport || snapshot.cursor.row >= snapshot.size.rows ||
-        last - first < 4)
+        last - first < 4 || text_after_cursor(snapshot))
         return layout;
     const qreal room = (last - first) * cell_width;
     const QString text = suggestion.trimmed();
@@ -1804,7 +1823,10 @@ bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
     if ((tab || fill) && takeFilled(tab))
         return true;
     if (tab || fill) {
-        if (!suggestion_.isEmpty() && !document_->attentionPending()) {
+        // With the cursor moved back into typed text, Tab belongs to the agent:
+        // the suggestion is not drawn there and would land mid-line.
+        if (!suggestion_.isEmpty() && !document_->attentionPending() &&
+            !text_after_cursor(document_->snapshot())) {
             if (!fillSuggestion())
                 return false; // Nothing was typed; let Tab keep its old meaning.
             interaction::key_outcome(QStringLiteral("suggestion-fill"));

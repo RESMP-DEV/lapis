@@ -1,11 +1,17 @@
 #include "terminal_surface.hpp"
 #include <lapis/session/terminal.hpp>
 
+#include <QFont>
+#include <QFontMetricsF>
+#include <QGuiApplication>
+
 #include <iostream>
 #include <stdexcept>
 
 namespace {
+using lapis::desktop::lay_out_suggestion;
 using lapis::desktop::terminal_find;
+using lapis::desktop::text_after_cursor;
 
 void require(bool condition, const char* message) {
     if (!condition)
@@ -35,11 +41,44 @@ void find_walks_the_page() {
                 !terminal_find(page, {}, QPoint(0, 0), false),
             "no match, and no empty search");
 }
+
+// The offered next prompt is drawn after the cursor over a filled strip, so it
+// shows only where nothing typed follows the cursor: moving left into typed
+// text hides it rather than covering the text, and moving back shows it again.
+void suggestion_never_covers_typed_text() {
+    const QFontMetricsF metrics(QFont(QStringLiteral("Menlo"), 14));
+    const auto shown = [&](const lapis::session::TerminalSnapshot& screen) {
+        const auto layout = lay_out_suggestion(screen, metrics, QStringLiteral("run the tests"));
+        return !layout.shown.isEmpty();
+    };
+    lapis::session::Terminal terminal({40, 3});
+    terminal.feed("> fix the build");
+    auto screen = terminal.snapshot();
+    require(!text_after_cursor(screen) && shown(screen), "at the end of the line it shows");
+    terminal.feed("\x1b[5D");
+    screen = terminal.snapshot();
+    require(text_after_cursor(screen) && !shown(screen), "inside typed text it hides");
+    terminal.feed("\x1b[5C");
+    require(shown(terminal.snapshot()), "back at the end it shows again");
+
+    // A faint placeholder at the cursor (Codex draws one) does not count, nor
+    // does a border in the row's last two cells (Claude Code's input box).
+    lapis::session::Terminal codex({40, 3});
+    codex.feed("> \x1b[2mAsk Codex to do anything\x1b[22m\x1b[1;3H");
+    require(shown(codex.snapshot()), "a faint placeholder is covered as before");
+    lapis::session::Terminal claude({40, 3});
+    claude.feed("\x1b[1;40H|\x1b[1;1H> hi");
+    require(shown(claude.snapshot()), "a border at the row's end does not hide it");
+}
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+    const QGuiApplication app(argc, argv);
     try {
         find_walks_the_page();
+        suggestion_never_covers_typed_text();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return 1;

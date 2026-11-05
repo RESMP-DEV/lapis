@@ -61,10 +61,16 @@ terminal_link_at(const session::TerminalSnapshot& snapshot, int column, int row)
                                                          const QString& needle, QPoint from,
                                                          bool backwards);
 
+// Whether the cursor's row holds text from the cursor up to its last two cells,
+// as when the cursor moved back into typed text. Blanks and faint text (a CLI's
+// placeholder, such as Codex's) do not count.
+[[nodiscard]] bool text_after_cursor(const session::TerminalSnapshot& snapshot);
+
 // How an offered next prompt lays out after the cursor: the one line shown
 // (elided to the room left before the row's last two cells), whether that is
 // the whole suggestion (else it ends in an ellipsis), the keys hint, the first column
-// and the width drawn. Empty `shown` when there is no room.
+// and the width drawn. Empty `shown` when there is no room or text follows the
+// cursor, which the suggestion would cover.
 struct SuggestionLayout {
     QString shown;
     QString keys;
