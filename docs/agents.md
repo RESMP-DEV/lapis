@@ -41,7 +41,11 @@ The form's **Machine** row offers this Mac and the hosts in your ssh config (lef
 and right arrows, while up and down choose the CLI). On another machine the agent
 runs over ssh in that machine's `newAgent` folder, else its home, in its login
 shell. When such a Claude Code agent's connection drops (the Mac changed
-networks or slept), lapis reconnects it and it resumes its conversation. The
+networks or slept), lapis reconnects it and it resumes its conversation. It
+keeps retrying while the machine is unreachable, retries at once when the Mac
+joins a network, and an agent restored at login before the network is up
+connects when it can. A window that loses its own attachment to a running
+agent (as when every agent restores at once after login) attaches again.
 The agent strip's **+** opens the same form, machines included. The category
 rail's **+** creates a category instead.
 

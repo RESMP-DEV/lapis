@@ -920,6 +920,21 @@ class Workspace final : public QObject {
     std::chrono::milliseconds reconnect_first_hold_{std::chrono::seconds(20)};
     std::optional<std::chrono::milliseconds> reconnect_wait_;
     void reconnectIfDropped(const QString& id);
+    // Remote agents that reached their machine before: restored ones, and
+    // ones whose connection held. They retry without giving up.
+    QSet<QString> worked_remotely_;
+    // A view's reattachment to a service that is still running.
+    struct Reattach {
+        std::size_t count{};
+        int generation{};
+        bool was_ready{};
+        bool discovered{};
+    };
+    QHash<QString, Reattach> reattaches_;
+    void reattachIfDisconnected(const QString& id);
+    QTimer network_settle_;
+    void watchNetwork();
+    void retryConnectionsNow();
     int focused_index_{-1};
     bool preview_mode_{};
 };

@@ -20,6 +20,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
+#include <QNetworkInformation>
 #include <QPointer>
 #include <QProcess>
 #include <QRandomGenerator>
@@ -545,10 +546,14 @@ void addRemoteHooks(session::LaunchSpec& launch, const QString& harness) {
 // through the user's ControlMaster ends with the ssh that opened it, so
 // closing one agent ended every other session to that machine. Keepalives end
 // a connection whose network went away within a minute, so it can reconnect.
+// A connect timeout ends an attempt made before the network is up (at login,
+// or while switching networks) instead of leaving ssh waiting forever; it
+// also bounds a ProxyCommand's banner exchange.
 const QStringList& remoteOptions() {
     static const QStringList options{QStringLiteral("-o"), QStringLiteral("ControlPath=none"),
                                      QStringLiteral("-o"), QStringLiteral("ServerAliveInterval=15"),
-                                     QStringLiteral("-o"), QStringLiteral("ServerAliveCountMax=4")};
+                                     QStringLiteral("-o"), QStringLiteral("ServerAliveCountMax=4"),
+                                     QStringLiteral("-o"), QStringLiteral("ConnectTimeout=15")};
     return options;
 }
 // An agent on another machine: ssh runs the CLI in an interactive login shell
@@ -1170,6 +1175,7 @@ void Workspace::watch(SessionPreview* item) {
         QTimer::singleShot(0, this, [this, id] {
             finishReload(id);
             reconnectIfDropped(id);
+            reattachIfDisconnected(id);
         });
     });
     // A request pings as a finished turn does, and marks the agent the same way
@@ -1688,6 +1694,8 @@ bool Workspace::discardSession(const QString& id) {
         return false;
     }
     reconnects_.remove(id);
+    reattaches_.remove(id);
+    worked_remotely_.remove(id);
     reloading_.remove(id);
     switching_.remove(id);
     last_kind_.remove(item);
@@ -2621,8 +2629,10 @@ void Workspace::reconnectIfDropped(const QString& id) {
     if (reloading_.contains(id))
         return;                 // ssh ends 255 when lapis ends it for a reload too
     constexpr auto held = 3min; // a reconnect that lasted this long worked
-    constexpr auto give_up = 15min;
-    constexpr std::array waits{2s, 5s, 10s, 20s, 30s};
+    // A machine that has worked keeps being retried: the network may be down
+    // for hours (a laptop asleep, or offline) and the agent should come back
+    // on its own once it returns. A network change retries at once.
+    constexpr std::array waits{2s, 5s, 10s, 20s, 30s, 60s};
     auto* item = session(id);
     const auto entry = agents_.constFind(id);
     if (item == nullptr || entry == agents_.cend())
@@ -2641,17 +2651,16 @@ void Workspace::reconnectIfDropped(const QString& id) {
         return;
     const std::chrono::milliseconds lasted{attempts.ready.isValid() ? attempts.ready.elapsed() : 0};
     attempts.ready.invalidate();
+    if (lasted >= reconnect_first_hold_)
+        worked_remotely_.insert(id);
     if (!attempts.since.isValid() || lasted >= held) {
-        if (lasted < reconnect_first_hold_) // it never worked: a wrong host, say
+        // It never worked (a mistyped host, say), unless it worked before
+        // this window: a restored agent whose first attempt ran before the
+        // network was up after login.
+        if (!worked_remotely_.contains(id))
             return;
         attempts.since.start();
         attempts.count = 0;
-    } else if (std::chrono::milliseconds{attempts.since.elapsed()} >= give_up) {
-        attempts.since.invalidate();
-        item->setActivity(
-            QStringLiteral("Could not reconnect to %1. Restart the agent to try again.")
-                .arg(remote->first));
-        return;
     }
     const std::chrono::milliseconds wait =
         reconnect_wait_.value_or(waits.at(std::min<std::size_t>(attempts.count, waits.size() - 1)));
@@ -2669,6 +2678,118 @@ void Workspace::reconnectIfDropped(const QString& id) {
             return;
         restartAgent(id);
     });
+}
+// A view that lost its own service while the service still runs attaches
+// again: under load (every agent restoring at login) the service's
+// ready-acknowledgement window can pass before this window answers, and the
+// socket can close mid-handshake. Retries back off and continue while the
+// service answers; an ended service is restartAgent's and
+// reconnectIfDropped's.
+void Workspace::reattachIfDisconnected(const QString& id) {
+    using namespace std::chrono_literals;
+    constexpr std::array waits{1s, 2s, 5s, 10s, 30s};
+    auto* item = session(id);
+    if (item == nullptr || preview_mode_ || headless_ || !agents_.contains(id))
+        return;
+    auto& attempts = reattaches_[id];
+    const auto& state = item->connectionState();
+    if (state == QLatin1String("ready")) {
+        attempts.count = 0;
+        attempts.was_ready = true;
+        attempts.discovered = false;
+        return;
+    }
+    if (item->closing())
+        return;
+    bool discover = false;
+    if (state == QLatin1String("replaced")) {
+        // Another view took over a ready session: leave it there.
+        if (std::exchange(attempts.was_ready, false))
+            return;
+        // Refused before it was ever ready here: the saved identity is
+        // stale, as when a service started for this card was not yet
+        // confirmed when its attachment timed out. The launch fingerprint
+        // still authenticates discovery; try it once.
+        if (attempts.discovered)
+            return;
+        discover = true;
+    } else if (state != QLatin1String("disconnected")) {
+        return;
+    }
+    const std::chrono::milliseconds wait =
+        reconnect_wait_.value_or(waits.at(std::min<std::size_t>(attempts.count, waits.size() - 1)));
+    ++attempts.count;
+    const auto generation = ++attempts.generation;
+    QTimer::singleShot(wait, this, [this, id, generation, discover] {
+        auto* again = session(id);
+        const auto entry = agents_.constFind(id);
+        if (again == nullptr || entry == agents_.cend() ||
+            reattaches_.value(id).generation != generation || again->closing() ||
+            (again->connectionState() != QLatin1String("disconnected") &&
+             again->connectionState() != QLatin1String("replaced")))
+            return;
+        if (!serviceRunning(entry->endpoint)) {
+            // Its service ended before this window attached: an ssh that
+            // failed at once, as before the network is up after login. A
+            // remote agent that worked before starts again, resuming.
+            const auto remote = remoteCommand(entry->launch);
+            if (!discover && remote && worked_remotely_.contains(id) &&
+                remoteConversation().match(remote->second).hasMatch())
+                restartAgent(id);
+            return;
+        }
+        if (discover) {
+            reattaches_[id].discovered = true;
+            again->discoverSession();
+        } else {
+            again->reconnect();
+        }
+    });
+}
+// Switching networks (Ethernet, Wi-Fi, a phone's hotspot) or coming back
+// online retries every agent waiting to reconnect at once, after a short
+// settle for routes and overlay networks, instead of at its next backoff.
+void Workspace::watchNetwork() {
+    if (!QNetworkInformation::loadBackendByFeatures(QNetworkInformation::Feature::Reachability))
+        return;
+    auto* network = QNetworkInformation::instance();
+    network_settle_.setSingleShot(true);
+    network_settle_.setInterval(3000);
+    connect(&network_settle_, &QTimer::timeout, this, [this] { retryConnectionsNow(); });
+    connect(network, &QNetworkInformation::reachabilityChanged, this,
+            [this](QNetworkInformation::Reachability reachability) {
+                if (reachability == QNetworkInformation::Reachability::Online ||
+                    reachability == QNetworkInformation::Reachability::Site)
+                    network_settle_.start();
+            });
+    connect(network, &QNetworkInformation::transportMediumChanged, this,
+            [this] { network_settle_.start(); });
+}
+void Workspace::retryConnectionsNow() {
+    for (const auto& item : sessions_) {
+        const auto id = item->sessionId();
+        const auto entry = agents_.constFind(id);
+        if (entry == agents_.cend() || item->closing())
+            continue;
+        const auto& state = item->connectionState();
+        if (state == QLatin1String("ended") && reconnects_.value(id).since.isValid() &&
+            remoteCommand(entry->launch) && !serviceRunning(entry->endpoint)) {
+            ++reconnects_[id].generation; // cancels the pending backoff
+            reconnects_[id].count = 0;
+            qInfo().noquote() << "Network changed; reconnecting" << item->title();
+            restartAgent(id);
+        } else if (state == QLatin1String("disconnected")) {
+            const bool running = serviceRunning(entry->endpoint);
+            if (!running && !(remoteCommand(entry->launch) && worked_remotely_.contains(id)))
+                continue;
+            ++reattaches_[id].generation;
+            reattaches_[id].count = 0;
+            if (running)
+                item->reconnect();
+            else
+                restartAgent(id);
+        }
+    }
 }
 bool Workspace::serviceRunning(const QString& endpoint) {
     if (!QFileInfo::exists(endpoint))
@@ -2982,6 +3103,10 @@ void Workspace::connectRestoredAgents() {
         if (entry == agents_.end())
             throw std::runtime_error("Missing restored agent metadata");
         auto& agent = entry.value();
+        // A saved remote agent reached its machine before; one that cannot
+        // yet (the network still coming up after login) keeps retrying.
+        if (remoteCommand(agent.launch))
+            worked_remotely_.insert(item->sessionId());
         // A card still in the workspace whose service is gone comes back,
         // like a restored terminal tab; Command-W is what removes an agent.
         if (restore_agents_ && !serviceRunning(agent.endpoint)) {
@@ -3024,6 +3149,8 @@ void Workspace::connectRestoredAgents() {
                 Qt::UniqueConnection);
         unsized_timer_.start(unsized_wait_ms);
     }
+    if (restore_agents_ && !headless_)
+        watchNetwork();
     if (restore_agents_ && !headless_) {
         conversation_timer_.setInterval(60000);
         connect(&conversation_timer_, &QTimer::timeout, this, &Workspace::recordConversations);

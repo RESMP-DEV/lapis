@@ -2224,15 +2224,15 @@ void remoteOptionsRespectTheArgumentLimit() {
         bool rejected{};
         bool live{};
     };
-    const QStringList policy{"-o", "ControlPath=none",     "-o", "ServerAliveInterval=15",
-                             "-o", "ServerAliveCountMax=4"};
-    const std::vector<Case> cases{{58, {}, policy},
-                                  {60, {}, {}, true},
+    const QStringList policy{"-o", "ControlPath=none",      "-o", "ServerAliveInterval=15",
+                             "-o", "ServerAliveCountMax=4", "-o", "ConnectTimeout=15"};
+    const std::vector<Case> cases{{56, {}, policy},
+                                  {58, {}, {}, true},
                                   {62, {}, {}, true},
                                   {64, policy, {}},
                                   {62, policy.mid(2), policy.mid(0, 2)},
-                                  {58, {"-o", "ControlPath=shared"}, policy},
-                                  {58, {"ControlPath=none"}, policy},
+                                  {56, {"-o", "ControlPath=shared"}, policy},
+                                  {56, {"ControlPath=none"}, policy},
                                   {58, {"-v", "-o", "ControlPath=none"}, policy.mid(2)},
                                   {62, {}, {}, false, true}};
     for (const auto& variant : cases) {
@@ -2284,6 +2284,57 @@ void remoteOptionsRespectTheArgumentLimit() {
     }
 }
 
+// A running service whose saved session descriptor names another session (a
+// service started at login whose attachment timed out before it was
+// confirmed) is reattached by discovery, without a restart.
+void staleDescriptorReattachesTheRunningService() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-stale-XXXXXX"));
+    require(directory.isValid(), "stale descriptor directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    options.restoreAgents = true;
+    QString id;
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.createAgent(root.path(), QStringLiteral("stale"), QStringLiteral("grok")),
+                "a local agent");
+        auto* agent = workspace.focusedSession();
+        require(agent != nullptr && waitFor([agent] { return agent->inputReady(); }, 10000),
+                "it attaches");
+        id = agent->sessionId();
+    }
+    const auto endpoint = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                              .object()[QStringLiteral("agents")]
+                              .toArray()
+                              .first()
+                              .toObject()[QStringLiteral("endpoint")]
+                              .toString();
+    {
+        // Another session's id in the descriptor's session field.
+        QFile descriptor(endpoint + QStringLiteral(".session"));
+        require(descriptor.open(QIODevice::ReadWrite), "open the saved descriptor");
+        auto bytes = descriptor.readAll();
+        require(bytes.startsWith("LAPIS-S1\n") && bytes.size() > 25, "a saved descriptor");
+        for (int at = 9; at < 25; ++at)
+            bytes[at] = static_cast<char>(bytes[at] ^ 0x5a);
+        require(descriptor.seek(0) && descriptor.write(bytes) == bytes.size(),
+                "write a stale descriptor");
+    }
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        auto* agent = workspace.session(id);
+        require(agent != nullptr && waitFor([agent] { return agent->inputReady(); }, 15000),
+                "the running service is reattached despite the stale descriptor");
+        require(screenText(agent->snapshot()).contains(QStringLiteral("grok ready")),
+                "it is the same running agent, not a new one");
+        require(workspace.closeSession(id, true) &&
+                    waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agent closes");
+    }
+    qputenv("PATH", path);
+}
 // A Claude Code agent on another machine keeps one conversation: its first
 // launch names it, and a reconnect after the connection dropped, a restart
 // and nothing else resume it. A stand-in ssh records what it was given, per
@@ -2303,7 +2354,7 @@ d=$(dirname "$0"); host=$(printf '%s\n' "$@" | sed -n '/^-t$/{n;p;q;}')
 n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1))
 printf '%s\n' "$@" > "$d/$host.call$n"
 echo $n > "$d/$host.count"
-case "$host:$n" in typo:*) exit 255;; devbox:1) sleep 1; exit 255;; devbox:2) sleep 1; exit 1;; esac
+case "$host:$n" in typo:*) exit 255;; boot:1) exit 255;; devbox:1) sleep 1; exit 255;; devbox:2) sleep 1; exit 1;; esac
 echo connected
 exec sleep 600
 )");
@@ -2337,20 +2388,39 @@ exec sleep 600
     older.insert(QStringLiteral("harness"), QStringLiteral("claude"));
     older.insert(QStringLiteral("arguments"),
                  QJsonArray{"-t", "older", R"(cd ~ && exec "${SHELL:-/bin/sh}" -lic claude)"});
+    // A saved agent whose first connection after login fails at once (the
+    // network not up yet) reconnects to its conversation by itself.
+    const auto booted_id = QStringLiteral("5a1d0000-0000-4000-8000-000000000002");
+    const auto booted_conversation = QStringLiteral("5a1d0000-0000-4000-8000-0000000000b0");
+    auto booted = agentRecord(root.path(), booted_id, "general");
+    booted.insert(QStringLiteral("title"), QStringLiteral("booted"));
+    booted.insert(QStringLiteral("program"), root.filePath(QStringLiteral("bin/ssh")));
+    booted.insert(QStringLiteral("directory"), QDir::homePath());
+    booted.insert(QStringLiteral("harness"), QStringLiteral("claude"));
+    booted.insert(
+        QStringLiteral("arguments"),
+        QJsonArray{"-t", "boot",
+                   QStringLiteral(R"(cd ~ && s=%1 && exec "${SHELL:-/bin/sh}" -lic claude)")
+                       .arg(booted_conversation)});
     writeRegistry(options.storagePath,
                   QJsonObject{{"version", 2},
                               {"activeCategory", "general"},
                               {"categories", QJsonArray{QJsonObject{{"id", "general"},
                                                                     {"name", "General"},
                                                                     {"selected", older_id}}}},
-                              {"agents", QJsonArray{older}}});
+                              {"agents", QJsonArray{older, booted}}});
     {
         Workspace workspace(WorkspaceMode::live, options);
+        require(waitFor([&] { return calls(QStringLiteral("boot")) >= 2; }, 15000) &&
+                    conversation(call(QStringLiteral("boot"), 2)) == booted_conversation,
+                "a restored agent that could not connect at login reconnects to its "
+                "conversation");
         require(waitFor([&] { return calls(QStringLiteral("older")) >= 1; }, 10000) &&
                     call(QStringLiteral("older"), 1)
                         .startsWith(QStringLiteral("-o\nControlPath=none\n-o\n"
                                                    "ServerAliveInterval=15\n-o\n"
-                                                   "ServerAliveCountMax=4\n-t\nolder\n")),
+                                                   "ServerAliveCountMax=4\n-o\n"
+                                                   "ConnectTimeout=15\n-t\nolder\n")),
                 "an agent saved before gets its own connection and keepalives");
         workspace.setSshConfigForTesting(config.fileName());
         workspace.setReconnectTimingForTesting({.first_hold = std::chrono::milliseconds(300),
@@ -2365,7 +2435,8 @@ exec sleep 600
         const auto first = call(QStringLiteral("devbox"), 1);
         require(
             first.startsWith(QStringLiteral("-o\nControlPath=none\n-o\nServerAliveInterval=15\n"
-                                            "-o\nServerAliveCountMax=4\n-t\ndevbox\n")) &&
+                                            "-o\nServerAliveCountMax=4\n-o\nConnectTimeout=15\n"
+                                            "-t\ndevbox\n")) &&
                 first.contains(QStringLiteral("cd ~/dev/far && s=")) &&
                 !conversation(first).isEmpty() &&
                 first.contains(QStringLiteral(R"(-lic 'export LAPIS_HOOK_NONCE=)")) &&
@@ -2469,7 +2540,7 @@ exec sleep 600
         waitFor([&] { return settle.elapsed() >= 300; }, 1000);
         require(calls(QStringLiteral("typo")) == 1, "a connection that never worked stays ended");
         // The unreachable one is abandoned; the others end.
-        for (const auto& closing : {older_id, id, split, typo->sessionId()})
+        for (const auto& closing : {older_id, booted_id, id, split, typo->sessionId()})
             require(workspace.closeSession(closing, true), "close the stand-in agents");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "the stand-in agents close");
@@ -6647,7 +6718,7 @@ void savedGrokDefaultsPreserveLaunchOwnership() {
         // remote command itself never receives the local fullscreen default.
         {"ssh",
          {"-o", "ControlPath=none", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4",
-          "-t", "fixture", "exec grok"}},
+          "-o", "ConnectTimeout=15", "-t", "fixture", "exec grok"}},
         {"custom-agent", {"--custom"}},
     };
     for (const auto& variant : cases) {
@@ -6722,8 +6793,8 @@ void savedCodexDefaultsKeepTheScreenMode() {
         {{"--", "--no-alt-screen"}, {"-c", update, "--", "--no-alt-screen"}},
         {{"resume", "conversation"}, {"-c", update, "resume", "conversation"}, true},
         {{"-o", "ControlPath=none", "-t", "fixture", "codex"},
-         {"-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4", "-o", "ControlPath=none",
-          "-t", "fixture", "codex"},
+         {"-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4", "-o", "ConnectTimeout=15",
+          "-o", "ControlPath=none", "-t", "fixture", "codex"},
          false,
          QStringLiteral("ssh")},
     };
@@ -7159,6 +7230,7 @@ int main(int argc, char** argv) {
         phoneStartsAnAgentInItsCategory();
         remoteOptionsRespectTheArgumentLimit();
         remoteClaudeReconnectsToItsConversation();
+        staleDescriptorReattachesTheRunningService();
         remoteAgentsReportTurnsThroughTheirTerminal();
         localAccountsRefuseBeforeReplacingAHealthySession();
         reloadStartsAgentsAgain();
