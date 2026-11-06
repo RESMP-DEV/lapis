@@ -1408,10 +1408,23 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
         pixel_remainder_ = 0;
         wheel_program_ = program;
     }
+    const auto grid = cellGrid();
+    const bool pixels = !event->pixelDelta().isNull() && grid && grid->height > 0;
     if (program) {
-        wheel_remainder_ += event->angleDelta().y();
-        const int steps = wheel_remainder_ / 120;
-        wheel_remainder_ -= steps * 120;
+        // A program reading the mouse gets a wheel event per row a trackpad
+        // moved, as in other terminals: agents such as Claude Code move one
+        // row per event, so a step per 120 of angle lagged far behind the
+        // fingers. A wheel's notch, or arrow-key scrolling, stays one step.
+        int steps = 0;
+        if (pixels && document_->snapshot().accepts_wheel) {
+            pixel_remainder_ += event->pixelDelta().y();
+            steps = static_cast<int>(pixel_remainder_ / grid->height);
+            pixel_remainder_ -= steps * grid->height;
+        } else {
+            wheel_remainder_ += event->angleDelta().y();
+            steps = wheel_remainder_ / 120;
+            wheel_remainder_ -= steps * 120;
+        }
         interaction::wheel_outcome(QStringLiteral("program"), steps);
         if (steps != 0)
             scrollProgram(steps, cellAt(event->position()));
@@ -1420,8 +1433,7 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
     // Kept history scrolls by rows, as in other terminals: a trackpad's
     // pixels a row at a time, a wheel's notch three rows. Positive is back.
     int rows = 0;
-    const auto grid = cellGrid();
-    if (!event->pixelDelta().isNull() && grid && grid->height > 0) {
+    if (pixels) {
         pixel_remainder_ += event->pixelDelta().y();
         rows = static_cast<int>(pixel_remainder_ / grid->height);
         pixel_remainder_ -= rows * grid->height;

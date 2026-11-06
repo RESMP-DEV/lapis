@@ -1221,6 +1221,21 @@ void typing_returns_to_bottom() {
             "Typing did not return the wheel-scrolled program to its bottom");
     require(text_frames(peer, 1) == QByteArray("z"), "The key after the return was lost");
 
+    // A trackpad sends a wheel step per row its pixels cover, not per 120 of
+    // angle: 3.5 rows of travel with the angle of a single notch is 3 steps.
+    const int row = qRound(surface.cellRect(0, 0).height());
+    QWheelEvent trackpad(middle, surface.mapToGlobal(middle), QPoint(0, row * 7 / 2),
+                         QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false);
+    QCoreApplication::sendEvent(&surface, &trackpad);
+    const auto rows = peer.read();
+    require(rows.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(rows.payload).payload).steps == 3,
+            "A trackpad did not scroll the program a step per row");
+    typed(QStringLiteral("y"));
+    require(wire::decode_wheel(wire::decode_control(peer.read().payload).payload).steps == -3,
+            "Typing did not return the trackpad-scrolled program to its bottom");
+    require(text_frames(peer, 1) == QByteArray("y"), "The key after the trackpad return was lost");
+
     surface.setScrollToBottomOnTyping(false);
     scroll(120);
     const auto left = peer.read();
