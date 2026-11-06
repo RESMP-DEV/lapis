@@ -89,15 +89,17 @@ your Claude Code settings choose; lapis does not override them.
 
 ## Full-screen CLIs
 
-lapis runs Claude Code and Grok full screen (Claude Code through
-`CLAUDE_CODE_NO_FLICKER=1`, also over ssh, and Grok with `--fullscreen`); Codex
-and OpenCode are full screen already. A full-screen program repaints when its
-terminal is resized, where a classic renderer can leave a torn prompt. Set
-`CLAUDE_CODE_NO_FLICKER=0` in your login shell to keep Claude Code's classic
-renderer. Every CLI starts at the stage's size.
+lapis runs Claude Code with its classic renderer (`CLAUDE_CODE_NO_FLICKER=0`,
+also over ssh, which overrides Claude Code's own `"tui"` setting), so its
+conversation is kept in lapis's history and the wheel scrolls it there. On a
+resize Claude Code redraws only its live area at the bottom; the history above
+it is not replayed. Set `CLAUDE_CODE_NO_FLICKER=1` in your login shell for
+Claude Code's full-screen renderer. Grok runs full screen with `--fullscreen`;
+Codex and OpenCode are full screen already. Every CLI starts at the stage's
+size.
 
 A full-screen program repaints its whole screen for every scroll step and
-streamed line. Claude Code brackets each repaint in a synchronized update (DEC
+streamed line. Claude Code's full-screen renderer brackets each repaint in a synchronized update (DEC
 mode 2026); lapis shows only the finished frame, as iTerm2 and Ghostty do, so
 scrolling never shows a screen half painted. An update that never ends is
 shown after 250 ms.

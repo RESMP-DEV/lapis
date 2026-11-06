@@ -252,6 +252,9 @@ class TerminalSurface : public QQuickItem {
         qreal scale{};
     };
     [[nodiscard]] std::optional<CellGrid> cellGrid() const;
+    // Item pixels the history page is drawn below its rows: the part of a row
+    // a trackpad scrolled back past it. 0 when live or at the oldest row.
+    [[nodiscard]] qreal historySlide() const;
     [[nodiscard]] QPoint cellAt(QPointF position) const;
     [[nodiscard]] QString textBetween(QPoint start, QPoint end) const;
     void setSelection(QPoint anchor, QPoint head);
