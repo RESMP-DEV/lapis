@@ -93,7 +93,10 @@ lapis runs Claude Code with its classic renderer (`CLAUDE_CODE_NO_FLICKER=0`,
 also over ssh, which overrides Claude Code's own `"tui"` setting), so its
 conversation is kept in lapis's history and the wheel scrolls it there. On a
 resize Claude Code redraws only its live area at the bottom; the history above
-it is not replayed. Set `CLAUDE_CODE_NO_FLICKER=1` in your login shell for
+it is not replayed. A resumed conversation is printed in one burst; lapis
+shows a CLI's first text only once its output has been quiet for 150 ms (at
+most 2 seconds), so a tab opens at the end of its conversation rather than
+showing it run past. Set `CLAUDE_CODE_NO_FLICKER=1` in your login shell for
 Claude Code's full-screen renderer. Grok runs full screen with `--fullscreen`;
 Codex and OpenCode are full screen already. Every CLI starts at the stage's
 size.

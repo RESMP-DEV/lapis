@@ -100,6 +100,10 @@ class AttentionServiceTestAccess final {
 
     [[nodiscard]] static bool in_sync(const SessionService& service) { return service.in_sync_; }
 
+    [[nodiscard]] static qint64 settle_wait(SessionService& service) {
+        return service.settle_wait_ms();
+    }
+
     static void defer_next_snapshot(SessionService& service) {
         service.snapshot_pace_.published(service.snapshot_clock_.elapsed());
     }
@@ -287,6 +291,35 @@ void adjacent_updates_do_not_hide_a_finished_frame() {
     require(Access::in_sync(service));
 }
 
+// A program's first text waits for its output to go quiet, so a resumed
+// conversation printed in one burst opens at its end; a blank screen does not
+// wait, and once settled the screen is never held again.
+void a_first_burst_of_text_settles_before_it_is_shown() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-settle-XXXXXX")};
+    require(directory.isValid());
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    Access::feed_output(service, QByteArrayLiteral("\x1b[?25l\x1b]0;title\x07"));
+    require(Access::settle_wait(service) == 0);
+    Access::feed_output(service, QByteArrayLiteral("first line of a long transcript\r\n"));
+    require(Access::settle_wait(service) > 0);
+    QThread::msleep(80);
+    Access::feed_output(service, QByteArrayLiteral("more of it\r\n"));
+    const auto still = Access::settle_wait(service);
+    require(still > 100 && still <= 150);
+    QThread::msleep(170);
+    require(Access::settle_wait(service) == 0);
+    Access::feed_output(service, QByteArrayLiteral("a later line\r\n"));
+    require(Access::settle_wait(service) == 0);
+}
+
 void a_marker_crossing_the_chunk_boundary_feeds_as_one_unit() {
     using Access = lapis::session::AttentionServiceTestAccess;
     QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-sync-XXXXXX")};
@@ -461,6 +494,7 @@ int main(int argc, char** argv) {
         filtered_output_still_records_pty_timing();
         parser_carries_a_split_synchronized_marker();
         adjacent_updates_do_not_hide_a_finished_frame();
+        a_first_burst_of_text_settles_before_it_is_shown();
         a_marker_crossing_the_chunk_boundary_feeds_as_one_unit();
         a_completed_frame_waits_for_the_paced_publication();
         a_completed_frame_waits_for_an_in_flight_snapshot();
