@@ -482,6 +482,21 @@ class TranscriptTests(Homes):
         )
         self.assertEqual(context["earlier"], ["fix the paste bug", "go"])
 
+    def test_context_falls_back_to_snippets_when_the_index_lacks_a_transcript(self):
+        runtime = self.root / "runtime"
+        runtime.mkdir()
+        installed = runtime / "next_prompt.py"
+        installed.write_text("")
+        arguments = next_prompt.argparse.Namespace(
+            cli="omp", conversation="omp1", folder=""
+        )
+        with (
+            patch.object(next_prompt, "__file__", str(installed)),
+            patch.object(next_prompt, "pair_index", return_value={}),
+        ):
+            context = next_prompt.command_context(arguments)
+        self.assertTrue([snippet["text"] for snippet in context["snippets"]])
+
     def test_past_exchanges_are_indexed_privately_and_retrieved(self):
         folder = self.root / "runtime"
         folder.mkdir()
@@ -618,6 +633,14 @@ class TranscriptTests(Homes):
                 )
             )
             self.assertEqual(same["items"], sample["items"])
+        with patch.object(next_prompt, "__file__", "<stdin>"):
+            remote = next_prompt.command_sample(
+                next_prompt.argparse.Namespace(
+                    count=1, since="", seed=1, exclude=["c1"]
+                )
+            )
+        self.assertEqual(remote["items"][0]["snippets"], sample["items"][0]["snippets"])
+        self.assertEqual(list(self.root.rglob(next_prompt.INDEX_NAME)), [])
 
     def test_history_keeps_the_newest_turns_that_fit(self):
         turns = [{"role": "person", "text": "%02d" % n * 500} for n in range(40)]
@@ -1739,6 +1762,7 @@ class AcceptanceTests(unittest.TestCase):
 
         cases = {
             "no thats not what i asked": "pushback",
+            "applying the patch now": None,
             "what do you mean by floor": "confused",
             "keep going": "continue",
             "status?": "status",

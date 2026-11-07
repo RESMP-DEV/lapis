@@ -353,7 +353,8 @@ void NextPrompt::run(const QString& id, bool force, int returned) {
     // that verdict once the model answers.
     const auto judged_for = [this, &id](const QString& attention) { emit judged(id, attention); };
     if (const auto shown = offers_.constFind(id); shown != offers_.cend())
-        previous_.insert(id, {shown->conversation, judged_for, shown->turn, shown->seen_ms != 0});
+        previous_.insert(id,
+                         {offerConversation(*shown), judged_for, shown->turn, shown->seen_ms != 0});
     deferred_.remove(id);
     owed_.remove(id);
     dropRestored(id, "new_turn");
@@ -605,8 +606,6 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
     auto* random = QRandomGenerator::global();
     QStringList context_arms = settings_.contextArms;
     if (context_arms.isEmpty())
-        context_arms = QStringList{QStringLiteral("base")};
-    if (context_arms == QStringList{QStringLiteral("wide")} && random->generateDouble() < 0.5)
         context_arms = QStringList{QStringLiteral("base")};
     arms_made.context = context_arms.at(random->bounded(context_arms.size()));
     arms_made.prompt = settings_.promptArms.isEmpty()

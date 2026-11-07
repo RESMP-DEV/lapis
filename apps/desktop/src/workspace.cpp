@@ -50,8 +50,13 @@ bool write_private_file(const QString& path, const QByteArray& content) {
     if (existing.open(QIODevice::ReadOnly)) {
         const bool same = existing.readAll() == content;
         existing.close();
-        if (same)
+        if (same) {
+            if (!QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
+                qWarning() << "lapis cannot restrict" << path;
+                return false;
+            }
             return true;
+        }
     }
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {

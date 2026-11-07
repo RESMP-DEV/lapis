@@ -708,11 +708,8 @@ def command_context(arguments):
             files = pair_index(folder)
         except OSError:
             files = None
-    snippets = (
-        files.get(path, {}).get("snippets", [])
-        if files is not None
-        else snippets_of(arguments.cli, path)
-    )
+    entry = files.get(path) if files is not None else None
+    snippets = entry.get("snippets", []) if entry else snippets_of(arguments.cli, path)
     result = {
         "conversation": os.path.basename(path)[: -len(".jsonl")],
         "conversation_id": transcript_conversation_id(arguments.cli, path),
@@ -836,10 +833,13 @@ def command_sample(arguments):
             if seen > 2 and after_cutoff and turns[index - 1]["role"] == "agent":
                 eligible.append((cli, path, index))
     random.Random(arguments.seed).shuffle(eligible)
-    try:
-        files = pair_index(os.path.dirname(os.path.abspath(__file__)))
-    except OSError:
-        files = {}
+    folder = index_folder()
+    files = None
+    if folder is not None:
+        try:
+            files = pair_index(folder)
+        except OSError:
+            files = None
     items = []
     for cli, path, index in eligible[: arguments.count]:
         turns = turns_of(cli, path)
@@ -850,6 +850,8 @@ def command_sample(arguments):
         except (ValueError, TypeError):
             pass
         recent = recent_prompts(path, before=before, files=files) if before else []
+        entry = files.get(path) if files is not None else None
+        snippets = entry.get("snippets", []) if entry else snippets_of(cli, path)
         replies = [t for t in turns[:index] if t["role"] == "agent" and t.get("time")]
         returned = 0
         if before and replies:
@@ -869,11 +871,7 @@ def command_sample(arguments):
             "turns": history(turns[:index]),
             "legacy_turns": history(turns[:index], legacy=True),
             "recent": recent,
-            "snippets": snippet_pack(
-                history(turns[:index]),
-                files.get(path, {}).get("snippets", []),
-                target=before,
-            ),
+            "snippets": snippet_pack(history(turns[:index]), snippets, target=before),
             "actual": target["text"],
         }
         if returned > 0:
@@ -975,8 +973,9 @@ def pair_index(folder, now=None, budget=INDEX_SECONDS):
         }
         changed = True
     if changed or len(files) != len(index["files"]):
-        temporary = path + ".tmp"
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        descriptor, temporary = tempfile.mkstemp(
+            dir=folder, prefix=os.path.basename(path) + ".", suffix=".tmp"
+        )
         with os.fdopen(descriptor, "w") as stream:
             json.dump({"version": INDEX_VERSION, "files": files}, stream)
         os.replace(temporary, path)
@@ -1753,13 +1752,17 @@ def predict(
     if arm == "retrieval":
         turns = bundle.get("context", {}).get("turns", [])
         reply = turns[-1]["text"] if turns and turns[-1]["role"] != "person" else ""
-        try:
-            files = pair_index(os.path.dirname(os.path.abspath(__file__)))
-        except OSError:
-            files = {}
-        retrieved = retrieve(
-            files, reply, bundle.get("context", {}).get("conversation", "")
-        )
+        folder = index_folder()
+        files = None
+        if folder is not None:
+            try:
+                files = pair_index(folder)
+            except OSError:
+                files = None
+        if files is not None:
+            retrieved = retrieve(
+                files, reply, bundle.get("context", {}).get("conversation", "")
+            )
     prompt = render(bundle, arm=arm, retrieved=retrieved)
     if providers:
         result = predict_providers(system, prompt, providers, arm, started, budget)

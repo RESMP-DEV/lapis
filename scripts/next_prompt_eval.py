@@ -82,7 +82,7 @@ REDO = (
         r"^(no|nope|wrong|nah|stop)\b|that'?s not (it|what|right|true)|not what i|"
         r"\bi (said|asked|told you)\b|you didn'?t|why did you|why would you|"
         r"why are you|you'?re wrong|incorrect|doesn'?t make sense|makes no sense|"
-        r"nonsense|\blie\b|lying|\bfake\b|made (that|this|it) up|did you (even|actually)|"
+        r"nonsense|\blie\b|\blying\b|\bfake\b|made (that|this|it) up|did you (even|actually)|"
         r"the whole point|i already (told|said|asked|did)|"
         r"still (not|doesn'?t|isn'?t|broken|wrong)|wtf|what the (fuck|hell)|"
         r"bullshit|stupid|useless|that'?s wrong",
