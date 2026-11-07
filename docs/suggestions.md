@@ -99,9 +99,11 @@ default two are split: the context arm and the prompt arm. Each is drawn on its
 own for every guess, so each comparison uses every guess. The others stay
 available:
 
-- **Context** (`contextArms`, default `["wide", "base"]`, drawn evenly):
-  `wide` asks for five candidates and shows three; `base` sends the
-  conversation as above. Other arms: `thread` adds your earlier messages in the conversation,
+- **Context** (`contextArms`, default `["base"]`): `base` sends the
+  conversation as above. The opt-in `wide` arm asks for five candidates, logs
+  all five, and offers the first; listing it with `base` compares them evenly.
+  Listing other arms draws
+  evenly among them: `thread` adds your earlier messages in the conversation,
   from before the turns shown; `retrieval` adds the six past exchanges on this
   Mac whose agent reply best matches this one, with what you sent to each;
   `evidence` tells the model to look for the reply's unmeasured claim and ask

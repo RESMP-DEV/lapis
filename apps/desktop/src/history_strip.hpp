@@ -31,8 +31,13 @@ class HistoryStrip {
     [[nodiscard]] std::optional<std::uint64_t> missing() const;
     // The view in the screen's size and colors; rows no page holds are blank.
     [[nodiscard]] session::TerminalSnapshot view() const;
+    // The one row just above the view, drawn above it while a trackpad has
+    // scrolled part of a row; none at the oldest row.
+    [[nodiscard]] std::optional<session::TerminalSnapshot> rowAbove() const;
 
   private:
+    [[nodiscard]] session::TerminalSnapshot rows_from(std::uint64_t first_row,
+                                                      std::uint16_t count) const;
     [[nodiscard]] const session::TerminalSnapshot* holding(std::uint64_t row,
                                                            std::uint64_t* first) const;
     void forget();

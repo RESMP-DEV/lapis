@@ -15,10 +15,12 @@ prompts, which never belong in the repository.
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
 import sys
+import tempfile
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -41,8 +43,9 @@ def manifest_path(name):
 
 def save_manifest(items):
     MANIFESTS.mkdir(parents=True, exist_ok=True)
-    path = MANIFESTS / "sample-{}.json".format(datetime.now().strftime("%Y%m%dT%H%M%S"))
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    prefix = "sample-{}-".format(datetime.now().strftime("%Y%m%dT%H%M%S"))
+    fd, name = tempfile.mkstemp(prefix=prefix, suffix=".json", dir=MANIFESTS)
+    path = Path(name)
     with os.fdopen(fd, "w") as out:
         json.dump({"items": items}, out)
     return path
@@ -54,7 +57,7 @@ import next_prompt  # noqa: E402
 
 JUDGE = """You grade next-message predictions for a person supervising coding agents.
 For each item you get the end of the agent's latest reply, the message the person
-actually sent, and up to three predicted messages. Grade each prediction:
+actually sent, and up to five predicted messages. Grade each prediction:
 2 = they could have sent it instead, with the same effect on the agent (wording
     and minor details may differ);
 1 = right intent or action, but key specifics are missing or different, so they
@@ -65,7 +68,7 @@ status (asks how it is going or to check), ship (install, merge, release, send a
 drafted thing), fix (reports a bug or asks for a fix), new (new task or
 feature), question (asks why/how/explain), correct (pushback or redirecting the
 agent), other. Return only JSON:
-{"grades": [{"id": 0, "scores": [2, 0, 1], "category": "approve"}]}"""
+{"grades": [{"id": 0, "scores": [2, 0, 1, 0, 2], "category": "approve"}]}"""
 THRESHOLDS = (0.0, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 # A redo: the person's message after the agent answered the guessed prompt
 # pushes back, asks what it meant, tells it to continue, or asks for status.
@@ -79,7 +82,7 @@ REDO = (
         r"^(no|nope|wrong|nah|stop)\b|that'?s not (it|what|right|true)|not what i|"
         r"\bi (said|asked|told you)\b|you didn'?t|why did you|why would you|"
         r"why are you|you'?re wrong|incorrect|doesn'?t make sense|makes no sense|"
-        r"nonsense|\blie\b|lying|\bfake\b|made (that|this|it) up|did you (even|actually)|"
+        r"nonsense|\blie\b|\blying\b|\bfake\b|made (that|this|it) up|did you (even|actually)|"
         r"the whole point|i already (told|said|asked|did)|"
         r"still (not|doesn'?t|isn'?t|broken|wrong)|wtf|what the (fuck|hell)|"
         r"bullshit|stupid|useless|that'?s wrong",
@@ -301,52 +304,112 @@ def grading_coverage(requested: int, graded: int) -> dict[str, object]:
 
 
 def replay(arguments):
-    oracle = {}
-    if arguments.oracle:
-        try:
-            oracle = json.loads(Path(arguments.oracle).read_text())
-        except (OSError, ValueError) as error:
-            print("oracle file: {}".format(error), file=sys.stderr)
     items = []
     if arguments.manifest:
-        loaded = json.loads(manifest_path(arguments.manifest).read_text())
-        items = loaded.get("items", loaded) if isinstance(loaded, dict) else loaded
-        for item in items:
-            item.setdefault("machine", "")
-    for machine in [] if arguments.manifest else [""] + (arguments.machine or []):
-        sample = on_machine(
-            machine,
-            [
-                "sample",
-                "--count",
-                str(arguments.count),
-                "--seed",
-                str(arguments.seed),
-                *(["--since", arguments.since] if arguments.since else []),
-                *(["--exclude", *arguments.exclude] if arguments.exclude else []),
-            ],
-        )
-        if "error" in sample:
-            print(
-                "{}: {}".format(machine or "this Mac", sample["error"]), file=sys.stderr
+        try:
+            loaded = json.loads(manifest_path(arguments.manifest).read_text())
+        except (OSError, ValueError) as error:
+            print("manifest: {}".format(error), file=sys.stderr)
+            items = None
+        else:
+            items = loaded.get("items", loaded) if isinstance(loaded, dict) else loaded
+    else:
+        for machine in [""] + (arguments.machine or []):
+            sample = on_machine(
+                machine,
+                [
+                    "sample",
+                    "--count",
+                    str(arguments.count),
+                    "--seed",
+                    str(arguments.seed),
+                    *(["--since", arguments.since] if arguments.since else []),
+                    *(["--exclude", *arguments.exclude] if arguments.exclude else []),
+                ],
             )
-            continue
-        for item in sample["items"]:
-            item["machine"] = machine
-            items.append(item)
+            if "error" in sample:
+                print(
+                    "{}: {}".format(machine or "this Mac", sample["error"]),
+                    file=sys.stderr,
+                )
+                continue
+            items.extend(sample["items"])
+
+    def stopped(message):
+        report = {
+            "error": message,
+            "sampled": len(items or []),
+            "predicted": 0,
+            "prediction_failures": 0,
+            "model": arguments.model,
+            "context": arguments.context,
+            "context_arm": arguments.context_arm,
+            "prompt_arm": getattr(arguments, "prompt_arm", "base"),
+            "grading": grading_coverage(0, 0),
+        }
+        return report, []
+
+    if items is None:
+        return stopped("manifest unavailable")
+    if not isinstance(items, list):
+        print(
+            "manifest: expected an item list or an object containing one",
+            file=sys.stderr,
+        )
+        return stopped("manifest is not an item list")
+    for item in items:
+        if not isinstance(item, dict):
+            print("manifest: every item must be an object", file=sys.stderr)
+            return stopped("manifest item is not an object")
+        item.setdefault("machine", "")
+        missing = [key for key in ("cli", "time", "actual") if key not in item]
+        if missing:
+            print(
+                "manifest item is missing: {}".format(", ".join(missing)),
+                file=sys.stderr,
+            )
+            return stopped("manifest item is incomplete")
+        for key in ("turns", "legacy_turns"):
+            if key in item and not isinstance(item[key], list):
+                print(
+                    "manifest item field is not a list: {}".format(key), file=sys.stderr
+                )
+                return stopped("manifest item is malformed")
+    if arguments.context_arm == "thread" and any(
+        "earlier" not in item for item in items
+    ):
+        print(
+            "thread context requires sampled items to carry earlier messages",
+            file=sys.stderr,
+        )
+        return stopped("thread context data is unavailable")
+
     if items and not arguments.manifest:
         saved = save_manifest(items)
         print("manifest:", saved.relative_to(ROOT), file=sys.stderr)
     for number, item in enumerate(items):
         item["id"] = number
 
+    oracle = {}
+    if arguments.oracle:
+        try:
+            loaded_oracle = json.loads(Path(arguments.oracle).read_text())
+        except (OSError, ValueError) as error:
+            print("oracle file: {}".format(error), file=sys.stderr)
+        else:
+            if not isinstance(loaded_oracle, dict):
+                print("oracle file: expected a JSON object", file=sys.stderr)
+                return stopped("oracle is not an object")
+            oracle = loaded_oracle
+
     if arguments.providers is None:
         providers = next_prompt.config_providers()
     else:
         try:
             providers = next_prompt.clean_providers(json.loads(arguments.providers))
-        except (TypeError, ValueError):
-            providers = []
+        except (TypeError, ValueError) as error:
+            print("providers JSON: {}".format(error), file=sys.stderr)
+            return stopped("providers JSON is invalid")
 
     def guess(item):
         when = item["time"]
@@ -355,30 +418,33 @@ def replay(arguments):
             when = when.strftime("%a %-I:%M %p")
         except ValueError:
             pass
+        item_turns = item.get("turns", [])
         turns = (
-            item.get("legacy_turns", item["turns"])
+            item.get("legacy_turns", item_turns)
             if arguments.context_arm == "legacy"
-            else item["turns"]
+            else item_turns
         )
         if arguments.context == "last":
             # Only what the agent last said: whether the rest of the context
             # earns its cost.
             said = [t for t in turns if t["role"] == "agent"]
             turns = said[-1:]
+        conversation = item.get("conversation", "")
         bundle = {
             "agent": {"cli": item["cli"], "machine": item["machine"]},
             "context": {
                 "turns": turns,
                 "recent": item.get("recent", []),
                 "snippets": item.get("snippets", []),
-                "conversation": item["conversation"],
+                "earlier": item.get("earlier", []),
+                "conversation": conversation,
             },
             "time": when,
             "target": item["time"],
         }
-        if item.get("returned_minutes"):
+        if type(item.get("returned_minutes")) is int:
             bundle["returned_minutes"] = item["returned_minutes"]
-        topic = oracle.get(item["conversation"])
+        topic = oracle.get(conversation)
         if topic:
             bundle["oracle"] = topic
         return next_prompt.predict(
@@ -395,7 +461,7 @@ def replay(arguments):
     graded = []
     for item, answer in zip(items, guesses):
         if answer.get("candidates"):
-            agent_turns = [t for t in item["turns"] if t["role"] == "agent"]
+            agent_turns = [t for t in item.get("turns", []) if t["role"] == "agent"]
             graded.append(
                 {
                     "id": item["id"],
@@ -647,9 +713,7 @@ def acceptance(events):
             "used": len(arm_used),
             "acceptance": rate(arm_used, arm_seen),
             "p95_ms_to_use": (
-                arm_waits[min(len(arm_waits) - 1, int(len(arm_waits) * 0.95))]
-                if arm_waits
-                else None
+                arm_waits[math.ceil(len(arm_waits) * 0.95) - 1] if arm_waits else None
             ),
             "outcome_own": sum(
                 1 for o in part if (o["outcome"] or {}).get("result") == "own"
@@ -761,9 +825,10 @@ def log_files(path):
 def next_messages(offers):
     """For each offer with a settled prompt, the person's message after the
     agent answered it: turn + 1 in the same conversation. Local transcripts
-    are read once each; another machine's go through its helper."""
+    are read once each; another machine's go through its helper in parallel."""
     prompts = {}
     found = {}
+    remote = []
     for key, o in offers.items():
         if not (o.get("outcome") and o.get("conversation")):
             continue
@@ -773,20 +838,17 @@ def next_messages(offers):
             o.get("machine", ""),
         )
         turn = int(o.get("turn") or 0) + 1
+        arguments = [
+            "actual",
+            "--cli",
+            cli,
+            "--conversation",
+            conversation,
+            "--turn",
+            str(turn),
+        ]
         if machine:
-            answer = on_machine(
-                machine,
-                [
-                    "actual",
-                    "--cli",
-                    cli,
-                    "--conversation",
-                    conversation,
-                    "--turn",
-                    str(turn),
-                ],
-            )
-            found[key] = answer.get("text") if not answer.get("error") else None
+            remote.append((key, machine, arguments))
             continue
         if (cli, conversation) not in prompts:
             path = next_prompt.find_transcript(cli, conversation, "")
@@ -804,6 +866,24 @@ def next_messages(offers):
             found[key] = None
         else:
             found[key] = said[turn] if turn < len(said) else ""
+    if remote:
+
+        def remote_actual(request):
+            return on_machine(request[1], request[2])
+
+        with ThreadPoolExecutor(min(6, len(remote))) as pool:
+            answers = list(pool.map(remote_actual, remote))
+    else:
+        answers = []
+    for (key, _machine, _arguments), answer in zip(remote, answers):
+        if answer.get("error"):
+            found[key] = None
+        elif answer.get("pending"):
+            found[key] = ""
+        elif isinstance(answer.get("text"), str):
+            found[key] = answer["text"]
+        else:
+            found[key] = None
     return found
 
 

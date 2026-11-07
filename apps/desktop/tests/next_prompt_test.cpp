@@ -106,11 +106,11 @@ void settingsReadFromTheConfig() {
                 set.effort == QLatin1String("low") && set.minConfidence == 1.0 &&
                 set.maxPerHour == 0,
             "each field, clamped");
-    require(defaults.contextArms == QStringList({QStringLiteral("wide"), QStringLiteral("base")}) &&
+    require(defaults.contextArms == QStringList{QStringLiteral("base")} &&
                 defaults.experimentShare == 0.0 && defaults.holdoutShare == 0.0 &&
                 defaults.experimentMinConfidence == 0.0 && defaults.returnMinutes == 30 &&
                 defaults.returnShare == 1.0,
-            "wide against base only: no model arm, holdout or floor arm, every return guessed");
+            "the base context by default: no model arm, holdout, floor arm or wide-candidate cost");
     const auto arms = lapis::desktop::parse_next_prompt(
         QJsonDocument::fromJson(R"({"contextArms": ["thread", "bogus", "thread"],
                                     "experimentMinConfidence": 2, "returnMinutes": 0,
@@ -123,6 +123,10 @@ void settingsReadFromTheConfig() {
     const auto none = lapis::desktop::parse_next_prompt(
         QJsonDocument::fromJson(R"({"contextArms": []})").object());
     require(none.contextArms == QStringList{QStringLiteral("base")}, "no arms: the base one");
+    const auto offline_only = lapis::desktop::parse_next_prompt(
+        QJsonDocument::fromJson(R"({"contextArms": ["legacy"]})").object());
+    require(offline_only.contextArms == QStringList{QStringLiteral("base")},
+            "legacy is an offline replay arm, not a live arm");
     require(defaults.promptArms == QStringList({QStringLiteral("base"), QStringLiteral("checks")}),
             "the prompt checks are compared half and half by default");
     const auto prompts = lapis::desktop::parse_next_prompt(
@@ -131,8 +135,9 @@ void settingsReadFromTheConfig() {
             "known prompt arms once each");
     const auto no_prompts = lapis::desktop::parse_next_prompt(
         QJsonDocument::fromJson(R"({"promptArms": []})").object());
-    require(no_prompts.promptArms == QStringList{QStringLiteral("base")},
-            "no prompt arms: the prompt as it is");
+    require(no_prompts.promptArms ==
+                QStringList({QStringLiteral("base"), QStringLiteral("checks")}),
+            "no prompt arms: the documented default comparison");
     const auto chain = lapis::desktop::parse_next_prompt(QJsonDocument::fromJson(R"({"providers": [
             {"url": "https://one.test/v1", "model": "deepseek", "name": "one",
              "apiKeyEnv": "KEY", "timeoutSeconds": 0, "maxTokens": 1,
@@ -164,14 +169,6 @@ void settingsReadFromTheConfig() {
             chain.providers.at(4).toObject().value(QStringLiteral("allowInsecureHttp")).toBool() ==
                 true,
         "providers are validated, clamped and named after their model");
-}
-
-// Tab types and sends a guess for every CLI that gets one (OMP lacked it).
-void tabWorksWhereverGuessesAre() {
-    for (const auto* cli : {"claude", "codex", "omp"})
-        require(NextPrompt::guessable(QLatin1String(cli)), "a guessed CLI takes Tab");
-    for (const auto* cli : {"kimi", "opencode", "grok", ""})
-        require(!NextPrompt::guessable(QLatin1String(cli)), "no guess, no Tab flow");
 }
 
 void screensReadAsText() {
@@ -354,7 +351,10 @@ void predictsAndOffers() {
             "the model, the CLI and the effort");
     const auto bundle =
         QJsonDocument::fromJson(read(root.filePath(QStringLiteral("predict.stdin")))).object();
+    const auto target =
+        QDateTime::fromString(bundle.value(QStringLiteral("target")).toString(), Qt::ISODateWithMs);
     require(bundle.value(QStringLiteral("screen")).toString() == QLatin1String("> |") &&
+                target.isValid() && target.timeSpec() == Qt::UTC &&
                 bundle.value(QStringLiteral("agent")).toObject().value(QStringLiteral("title")) ==
                     QLatin1String("paste fix") &&
                 bundle.value(QStringLiteral("agents")).toArray().size() == 1 &&
@@ -1275,11 +1275,60 @@ void restoredStateIsChecked() {
     unscreened();
 }
 
+void ompOffersRestoreBySessionId() {
+    QTemporaryDir directory;
+    const QDir root(directory.path());
+    require(root.mkpath(QStringLiteral("bin")), "fixture bin");
+    standIns(root);
+    write(root.filePath(QStringLiteral("context.reply")),
+          R"({"conversation":"2026-09-28T10-00-00-000Z_omp1",
+              "conversation_id":"omp1","turn":3})");
+    write(root.filePath(QStringLiteral("predict.reply")),
+          R"({"candidates":[{"text":"check the disk","p":0.8}]})");
+    const auto lookup = [](const QString& id) -> std::optional<NextPrompt::Agent> {
+        if (id != QLatin1String("a"))
+            return std::nullopt;
+        NextPrompt::Agent agent;
+        agent.cli = QStringLiteral("omp");
+        agent.folder = QStringLiteral("~/x");
+        agent.conversation = QStringLiteral("omp1");
+        agent.screen = QStringLiteral("> |");
+        return agent;
+    };
+    const auto make = [&] {
+        auto next = std::make_unique<NextPrompt>(
+            lookup, [] { return QJsonArray{}; },
+            [&root](const QString& name) { return root.filePath(QStringLiteral("bin/") + name); },
+            NextPrompt::Files{root.path(), root.path() + QStringLiteral("/next.jsonl")});
+        next->setSettings(on(60));
+        return next;
+    };
+    QJsonObject saved;
+    {
+        auto first = make();
+        first->turnFinished(QStringLiteral("a"));
+        require(waitFor([&] { return !first->suggestion(QStringLiteral("a")).isEmpty(); }),
+                "an OMP guess is offered");
+        saved = first->saveState();
+    }
+    const auto offer =
+        saved.value(QStringLiteral("offers")).toObject().value(QStringLiteral("a")).toObject();
+    require(offer.value(QStringLiteral("conversation")).toString() ==
+                    QLatin1String("2026-09-28T10-00-00-000Z_omp1") &&
+                offer.value(QStringLiteral("conversationId")).toString() == QLatin1String("omp1"),
+            "both OMP identities are saved");
+    auto restored = make();
+    restored->restoreState(saved);
+    require(waitFor([&] {
+                return restored->suggestion(QStringLiteral("a")) == QLatin1String("check the disk");
+            }),
+            "an OMP offer restores by the CLI session id");
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
         settingsReadFromTheConfig();
-        tabWorksWhereverGuessesAre();
         screensReadAsText();
         concurrentContextsRespectCap();
         missingProbabilityIsNotOffered();
@@ -1289,6 +1338,7 @@ int main(int argc, char** argv) {
         outcomesCompareWhatWasSent();
         savedEntriesRespectRestoreBounds();
         restoredStateIsChecked();
+        ompOffersRestoreBySessionId();
     } catch (const std::exception& error) {
         std::cerr << "next_prompt_test: " << error.what() << '\n';
         return 1;

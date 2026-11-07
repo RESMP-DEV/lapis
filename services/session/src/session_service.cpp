@@ -377,6 +377,8 @@ class SessionService final : public QObject {
         attention_clock_.start();
         timer_.setSingleShot(true);
         connect(&timer_, &QTimer::timeout, this, [this] { publish_paced_output(); });
+        settle_timer_.setSingleShot(true);
+        connect(&settle_timer_, &QTimer::timeout, this, [this] { publish_paced_output(); });
         ack_timer_.setSingleShot(true);
         ack_timer_.setInterval(launch.agent == AgentMode::codex ? codex_sync_timeout_ms
                                                                 : terminal_sync_timeout_ms);
@@ -1173,6 +1175,10 @@ class SessionService final : public QObject {
         if (!pending_output_.isEmpty()) {
             if (timer_.isActive())
                 return; // a paced whole-frame publication owns the retained screen
+            if (settle_timer_.isActive()) {
+                QTimer::singleShot(0, this, [this] { process_output(); });
+                return;
+            }
             if (output_publication_blocked()) {
                 schedule();
                 return;
@@ -1436,7 +1442,7 @@ class SessionService final : public QObject {
     // so a typed key echoes without waiting; changes within a frame of the
     // last screen share the next one.
     void schedule() {
-        if (!process_started_ || stopping_ || timer_.isActive())
+        if (!process_started_ || stopping_ || timer_.isActive() || settle_timer_.isActive())
             return;
         if ((client_ && (!snapshot_in_flight_ || ready_) && dirty_) || views_due())
             timer_.start(static_cast<int>(snapshot_pace_.wait_ms(snapshot_clock_.elapsed())));
@@ -1465,6 +1471,8 @@ class SessionService final : public QObject {
             return false;
         }
         sync_since_.invalidate();
+        // A program that marks its frames finished needs no startup settling.
+        settle_ = Settle::settled;
         // Replace any hold timer. A completed frame is retained until the next
         // paced publication; a later update must not overwrite it first.
         timer_.stop();
@@ -1486,7 +1494,51 @@ class SessionService final : public QObject {
             return view->socket && view->dirty && view->socket->bytesToWrite() != 0;
         });
     }
+    // A program's first text settles before it is shown. Claude Code's classic
+    // renderer prints a resumed conversation in one burst (200 KB in about
+    // 0.4 s); shown frame by frame, the tab opened with the transcript
+    // running down the screen instead of at its end. Blank screens before the
+    // first text go out as usual; from the first text, the screen waits until
+    // output has been quiet for settle_quiet_ms, at most settle_limit_ms.
+    // Returns how long to keep waiting.
+    qint64 settle_wait_ms() {
+        if (settle_ == Settle::settled)
+            return 0;
+        if (settle_ == Settle::blank) {
+            if (!shows_text(terminal_.snapshot()))
+                return 0;
+            settle_ = Settle::settling;
+            settle_since_.start();
+        }
+        const qint64 quiet = last_output_.isValid() ? last_output_.elapsed() : settle_quiet_ms;
+        const qint64 settling = settle_since_.elapsed();
+        if (quiet >= settle_quiet_ms || settling >= settle_limit_ms) {
+            settle_ = Settle::settled;
+            return 0;
+        }
+        return std::min(settle_quiet_ms - quiet, settle_limit_ms - settling);
+    }
+    static bool shows_text(const lapis::session::TerminalSnapshot& screen) {
+        for (std::size_t index = 0; index < screen.cells.size(); ++index)
+            for (const char32_t c : screen.text(index))
+                if (c != U' ' && c != U' ')
+                    return true;
+        return false;
+    }
     void publish() {
+        qint64 wait = 0;
+        try {
+            wait = settle_wait_ms();
+        } catch (const std::exception& error) {
+            stop(QString::fromUtf8(error.what()));
+            return;
+        }
+        if (wait > 0) {
+            // Not timer_: that timer means a frame is ready to show, and
+            // resume_output() would stop feeding the startup burst until it fired.
+            settle_timer_.start(static_cast<int>(wait));
+            return;
+        }
         // Mid-update: hold the screen until the update ends (which publishes
         // at once) or until sync_hold_ms, so a program that never ends one
         // cannot freeze its views.
@@ -1923,6 +1975,7 @@ class SessionService final : public QObject {
         return found == views_.end() ? nullptr : found->get();
     }
     void mark_dirty() {
+        last_output_.start();
         dirty_ = true;
         for (const auto& view : views_)
             view->dirty = true;
@@ -2171,6 +2224,7 @@ class SessionService final : public QObject {
     wire::Attachment attachment_;
     QByteArray buffer_;
     QTimer timer_;
+    QTimer settle_timer_;
     QTimer output_admission_timer_;
     static constexpr qint64 frame_ms = 16;
     QElapsedTimer attention_clock_;
@@ -2180,6 +2234,12 @@ class SessionService final : public QObject {
     QElapsedTimer sync_since_; // when the current synchronized update began
     bool in_sync_{};
     static constexpr qint64 sync_hold_ms = 250;
+    enum class Settle : std::uint8_t { blank, settling, settled };
+    Settle settle_{Settle::blank};
+    QElapsedTimer settle_since_; // when the program first showed text
+    QElapsedTimer last_output_;  // when the screen last changed
+    static constexpr qint64 settle_quiet_ms = 150;
+    static constexpr qint64 settle_limit_ms = 2000;
     QTimer ack_timer_;
     quint64 generation_{};
     quint64 snapshot_sequence_{};

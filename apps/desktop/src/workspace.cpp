@@ -13,6 +13,7 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDebug>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
@@ -48,22 +49,40 @@ bool write_private_file(const QString& path, const QByteArray& content) {
     if (existing.open(QIODevice::ReadOnly)) {
         const bool same = existing.readAll() == content;
         existing.close();
-        if (same)
+        if (same) {
+            if (!QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
+                qWarning() << "lapis cannot restrict" << path;
+                return false;
+            }
             return true;
+        }
     }
     QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly))
+    if (!file.open(QIODevice::WriteOnly)) {
+        qWarning() << "lapis cannot open" << path << file.errorString();
         return false;
-    file.write(content);
+    }
+    if (file.write(content) != content.size()) {
+        qWarning() << "lapis cannot write" << path << file.errorString();
+        file.cancelWriting();
+        return false;
+    }
     file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    return file.commit();
+    if (!file.commit()) {
+        qWarning() << "lapis cannot commit" << path << file.errorString();
+        return false;
+    }
+    return true;
 }
 // OMP has no hook socket or observer, so its turns are reported by an
 // extension the overlay below loads. It prints the terminal sequences of the
 // session service's terminal_hooks.hpp with the nonce lapis puts in OMP's
 // environment, from the top-level agent only (OMP rebinds extensions to every
-// subagent). Without the nonce, as in an OMP lapis did not start, it prints
-// nothing. Frames carry the event name and OMP's session id, never text.
+// subagent). OMP does not expose an agent identity in ExtensionContext, but
+// its top-level TUI runner is mode "tui" while rebound subagent runners stay
+// in the default print mode. Without the nonce, as in an OMP lapis did not
+// start, it prints nothing. Frames carry the event name and OMP's session id,
+// never text.
 constexpr char kOmpTurnsExtension[] =
     R"ts(// Written by lapis: report this OMP agent's turns to lapis.
 const nonce = process.env.LAPIS_HOOK_NONCE ?? "";
@@ -74,7 +93,7 @@ function send(event: Record<string, string>) {
 }
 export default function lapisTurns(api: any) {
   if (!/^[0-9a-f]{32}$/.test(nonce)) return;
-  const main = (ctx: any) => (ctx?.agent?.kind ?? "main") === "main";
+  const main = (ctx: any) => ctx?.mode === "tui";
   const report = (type: string) => (_event: unknown, ctx: any) => {
     if (!main(ctx)) return;
     if (!bound) {
@@ -549,11 +568,11 @@ QString remoteLaunch(const AgentRequest& request, const QString& command, QStrin
     QStringList words{shellWord(request.program.isEmpty() ? command : request.program)};
     for (const auto& argument : arguments)
         words << shellWord(argument);
-    // Its full-screen renderer, as for an agent here (see main), unless that
+    // Its classic renderer, as for an agent here (see main), unless that
     // machine's login shell chose otherwise.
     if (claude)
         words.prepend(
-            QStringLiteral(R"(export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}";)"));
+            QStringLiteral(R"(export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-0}";)"));
     const auto folder = remoteFolder(request.directory);
     const auto line =
         conversation.isEmpty()

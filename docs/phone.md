@@ -38,6 +38,67 @@ uv run --no-project python scripts/install_ios_app.py
 To work on it in Xcode, run `xcodegen` in `apps/ios`; `Config/Local.xcconfig`
 (not committed) holds your team and default host.
 
+For ZeroTier, install with the Mac's address on the network the phone joins:
+
+```sh
+uv run --no-project python scripts/install_ios_app.py --host <mac-zerotier-address>
+```
+
+## When the phone cannot connect
+
+"The Mac did not answer" covers a refused connection, a timeout and a failed
+name lookup alike. Most accepted requests are logged, but silence is not proof
+that traffic never arrived: when all 16 gateway connections are held, the
+accept thread can return a busy reply without the normal request log, and an
+abandoned `list_agents` or `deck` long-poll can also end without a log line.
+Check those two cases before following the routing checks below, which are in
+the order they mattered on 2026-10-27:
+
+- **The gateway does not listen on ZeroTier.** The startup line says `via
+  Tailscale` only, and the LaunchAgent's arguments lack `--zerotier`.
+  `launch_agent.py install` records only the CLIs that are on PATH when it
+  runs; launchd's own PATH never includes `/usr/local/bin`. Rerun the install
+  from a shell where `zerotier-cli` resolves. If `launchctl bootstrap` exits 5
+  the old job was still unloading: bootstrap the plist again. If Tailscale was
+  ready but the Mac had not yet joined a private ZeroTier network when the
+  gateway started, that running process still has no ZeroTier admission: join
+  the network, then restart the gateway.
+- **The tailnet's access policy drops the phone.** Tailscale ping (UDP)
+  succeeding proves nothing about TCP. Test from another node with
+  `curl http://<mac-tailscale-ip>:7349/api/agents`, and read the Mac's
+  allowed sources from `tailscale debug netmap` (`PacketFilter[].Srcs`), but a
+  successful request from another node proves only that node is allowed. Check
+  the phone's tailnet address against the source ranges that may reach the
+  Mac on port 7349. A work tailnet can admit only colleagues' machines;
+  ZeroTier avoids it.
+- **The phone and Mac are on different ZeroTier networks.** `zerotier-cli
+  listnetworks` on the Mac must show the network the phone joined. The iOS
+  app runs one network at a time: the switch that is on is the one in use.
+- **The phone has no ZeroTier address.** The phone's log shows `ZeroTierPTP:
+  Missing IPv4 address` and `addresses = ()` until the member, the node ID at
+  the bottom of the ZeroTier app, is authorized on the controller.
+- **The app still uses an old host.** The saved host outranks the bundled
+  default, so reinstalling over the app keeps it. Writing the app's
+  preferences plist with `devicectl device copy to` does not take effect:
+  iOS serves the cached value. Uninstall, then install with `--host`.
+- **iCloud Private Relay carries the request.** It proxies plain HTTP to a
+  name that is not local; the phone's log shows `mask.icloud.com` and
+  `Received response code 502 ... unreachable through proxy`. A raw ZeroTier
+  address connected with Private Relay off; whether it is relayed when on is
+  untested.
+
+Opening `http://<mac-address>:7349/` in Safari on the phone separates the path
+from the app: the gateway logs that request and answers 403, because browsers
+are refused.
+
+From the Mac, with the phone on a cable, `xcrun devicectl` installs, launches,
+copies app data and reports the lock state (a locked phone refuses launches).
+For the screen and logs, run `sudo "$(command -v uvx)" pymobiledevice3 remote
+tunneld` in the background, then `uvx pymobiledevice3 developer dvt screenshot
+--tunnel "" out.png` and `uvx pymobiledevice3 syslog live`. Neither taps the
+screen, and an XCUITest runner built to drive other apps failed to install on
+a retail iPhone with Xcode 26.6 ("Root install style is not supported").
+
 ## Using it
 
 Categories appear in the Mac's order, numbered as the Mac numbers them, and
