@@ -2733,6 +2733,53 @@ void agentsStartAtTheStageSize() {
     qputenv("PATH", path);
 }
 
+// An agent restarted as the window opens waits for the stage's grid, so a
+// resumed conversation is drawn at the width it is shown in, not the
+// service's default that the window then widens.
+void restoredAgentsStartAtTheStageSize() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-rsize-XXXXXX"));
+    require(directory.isValid(), "restore size directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const auto script = QDir(canonical).filePath(QStringLiteral("agent.sh"));
+    writeExecutable(script, "#!/bin/sh\necho \"size $(stty size)\"\nexec sleep 600\n");
+    const QString id = uuid();
+    auto record = agentRecord(canonical, id, "general");
+    record.insert(QStringLiteral("program"), script);
+    WorkspaceOptions options;
+    options.restoreAgents = true;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{
+                                       {"id", "general"}, {"name", "General"}, {"selected", id}}}},
+                    {"agents", QJsonArray{record}}});
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        auto* item = workspace.focusedSession();
+        require(item != nullptr, "the restored agent is shown");
+        QElapsedTimer waited;
+        waited.start();
+        while (waited.elapsed() < 500)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        require(!screenText(item->snapshot()).contains(QStringLiteral("size")),
+                "it waits for the stage's grid");
+        workspace.setLaunchSize(QSize(91, 27));
+        require(waitFor(
+                    [item] {
+                        return screenText(item->snapshot()).contains(QStringLiteral("size 27 91"));
+                    },
+                    10000),
+                "it starts at the stage's grid");
+        require(waitFor([item] { return item->inputReady(); }, 10000),
+                "its terminate handshake is ready");
+        require(workspace.closeSession(item->sessionId(), true), "close it");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "it closes");
+    }
+}
+
 // Claude Code plans: a session takes its machine's own sign-in, a new one
 // takes a plan with room when that is full, a remote session moves once its
 // plan fills and its output is quiet, reading the kept token on that machine,
@@ -7018,6 +7065,7 @@ int main(int argc, char** argv) {
         incompleteCodexHomeNeverStartsAnAgent();
         plansFollowTheirLoad();
         agentsStartAtTheStageSize();
+        restoredAgentsStartAtTheStageSize();
         reloadFailuresRemainRetryable();
         batchReloadRetainsEarlierFailures();
         updateReloadsAgentsAfterTheirCli();

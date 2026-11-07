@@ -8,6 +8,7 @@
 #include "platform/posix/local_endpoint.hpp"
 #include "platform/posix/process_group_guard.hpp"
 #include "platform/posix/pty_process.hpp"
+#include "rewidth.hpp"
 #include "terminal_hooks.hpp"
 #include "transport/attention_protocol.hpp"
 #include "transport/local_protocol.hpp"
@@ -356,6 +357,7 @@ class SessionService final : public QObject {
             static_cast<void>(log.resize(0));
         if (launch.agent != AgentMode::terminal)
             open_attention_journal(endpoint);
+        claude_ = launch.agent == AgentMode::claude;
         if (QFileInfo::exists(endpoint)) {
             QLocalSocket existing;
             existing.connectToServer(endpoint);
@@ -1017,6 +1019,9 @@ class SessionService final : public QObject {
         return page;
     }
     bool archive_history(bool force) {
+        // A width change's redraw is sorted out by finish_rewidth.
+        if (rewidth_)
+            return true;
         if (history_failed_) {
             if (harvest_offset_) {
                 terminal_.clear_history();
@@ -1073,7 +1078,7 @@ class SessionService final : public QObject {
                 processing_output_ = false;
                 return;
             }
-            if (pending_resize_) {
+            if (pending_resize_ && !rewidth_) {
                 const auto size = *pending_resize_;
                 pending_resize_.reset();
                 apply_resize(size);
@@ -1491,6 +1496,117 @@ class SessionService final : public QObject {
         }
         return std::min(settle_quiet_ms - quiet, settle_limit_ms - settling);
     }
+    // Claude Code's classic renderer answers a width change by erasing the
+    // screen and drawing the end of its conversation again at the new width,
+    // more than a screen of it; it never reprints what had scrolled away.
+    // Left alone, the terminal reflows the old screen into history first, so
+    // the conversation showed twice, and lines narrowed earlier stayed broken
+    // mid-word. Instead the old screen is set aside and blanked, the screen is
+    // held until the redraw has been quiet for rewidth_quiet_ms (at most
+    // rewidth_limit_ms), and finish_rewidth keeps each part once. Narrowing
+    // archives the kept rows first, at the width they were drawn. Returns
+    // false when the resize must wait for that archive.
+    bool begin_rewidth(TerminalSize size) {
+        if (!claude_ || rewidth_ || history_failed_ || size.columns == current_size_.columns)
+            return true;
+        auto old_screen = terminal_.snapshot();
+        if (old_screen.alternate_screen || !shows_text(old_screen))
+            return true;
+        const bool widening = size.columns > current_size_.columns;
+        if (!widening && !archive_history(true)) {
+            pending_resize_ = size;
+            return false;
+        }
+        // CAN ends any escape sequence the last output left open.
+        terminal_.feed("\x18\x1b[H\x1b[J");
+        rewidth_ = Rewidth{.old_screen = std::move(old_screen),
+                           .widening = widening,
+                           .history_rows = 0,
+                           .since = {}};
+        return true;
+    }
+    // How long the screen still waits for a width change's redraw.
+    qint64 rewidth_wait_ms() {
+        if (!rewidth_)
+            return 0;
+        const qint64 quiet = last_output_.isValid() ? last_output_.elapsed() : rewidth_quiet_ms;
+        const qint64 held = rewidth_->since.elapsed();
+        if (quiet < rewidth_quiet_ms && held < rewidth_limit_ms)
+            return std::min(rewidth_quiet_ms - quiet, rewidth_limit_ms - held);
+        finish_rewidth();
+        return 0;
+    }
+    void finish_rewidth() {
+        namespace rw = rewidth;
+        const auto state = std::move(*rewidth_);
+        rewidth_.reset();
+        try {
+            const auto screen = terminal_.snapshot();
+            const auto metadata = terminal_.history_metadata();
+            const std::size_t rows = metadata.viewport_rows;
+            const std::size_t kept = metadata.total_rows > rows ? metadata.total_rows - rows : 0;
+            const std::size_t before = std::min(state.history_rows, kept);
+            const std::size_t scrolled = kept - before;
+            rw::Text history, redraw;
+            for (std::size_t first = 0; first < kept; first += rows) {
+                const auto page = terminal_.history_snapshot(first);
+                for (std::size_t row = 0; row < rows && first + row < kept; ++row)
+                    rw::append_rows(first + row < before ? history : redraw, page, row, 1);
+            }
+            rw::append_rows(redraw, screen, 0, screen.size.rows);
+            std::vector<TerminalSnapshot> pages;
+            const auto keep = [&](std::size_t first, std::size_t last) {
+                for (std::size_t offset = first; offset < last; offset += rows)
+                    pages.push_back(archive_page(terminal_.history_snapshot(offset),
+                                                 std::min(rows, last - offset)));
+            };
+            std::size_t drop_screen_rows = 0;
+            const auto kept_history =
+                state.widening && redraw.first_words && !screen.alternate_screen
+                    ? rw::history_kept(history, redraw)
+                    : std::nullopt;
+            const auto plan = redraw.first_words && !screen.alternate_screen
+                                  ? rw::plan(rw::screen_text(state.old_screen), redraw)
+                                  : std::nullopt;
+            if (kept_history) {
+                // Wider, with the older copy still in reach: keep the wider redraw.
+                keep(0, std::min(*kept_history, before));
+                keep(before, kept);
+            } else if (plan) {
+                keep(0, before);
+                if (plan->keep_old_rows)
+                    pages.push_back(archive_page(state.old_screen, plan->keep_old_rows));
+                keep(before + std::min(plan->drop_new_rows, scrolled), kept);
+                drop_screen_rows =
+                    plan->drop_new_rows > scrolled ? plan->drop_new_rows - scrolled : 0;
+            } else {
+                // No redraw to line up with: keep the old conversation, not lose it.
+                keep(0, before);
+                if (const auto old_rows = rw::conversation_rows(state.old_screen))
+                    pages.push_back(archive_page(state.old_screen, old_rows));
+                keep(before, kept);
+            }
+            if (!pages.empty() && !history_.append(std::move(pages)))
+                qWarning().noquote() << "History after a width change could not be archived";
+            terminal_.clear_history();
+            if (drop_screen_rows > 0) {
+                // Delete the repeated rows from the top; the cursor moves with
+                // the rows below them, so the program's relative moves still land.
+                const auto row = screen.cursor.row >= drop_screen_rows
+                                     ? screen.cursor.row - drop_screen_rows
+                                     : 0;
+                terminal_.feed("\x18\x1b[1;1H\x1b[" + std::to_string(drop_screen_rows) + "M\x1b[" +
+                               std::to_string(row + 1) + ";" +
+                               std::to_string(screen.cursor.column + 1) + "H");
+            }
+        } catch (const std::exception& error) {
+            qWarning().noquote() << "Width change history:" << error.what();
+        }
+        mark_dirty();
+        // A resize that arrived meanwhile.
+        if (pending_resize_)
+            QTimer::singleShot(0, this, [this] { process_output(); });
+    }
     static bool shows_text(const lapis::session::TerminalSnapshot& screen) {
         for (std::size_t index = 0; index < screen.cells.size(); ++index)
             for (const char32_t c : screen.text(index))
@@ -1501,14 +1617,15 @@ class SessionService final : public QObject {
     void publish() {
         qint64 wait = 0;
         try {
-            wait = settle_wait_ms();
+            wait = std::max(rewidth_wait_ms(), settle_wait_ms());
         } catch (const std::exception& error) {
             stop(QString::fromUtf8(error.what()));
             return;
         }
         if (wait > 0) {
             // Not timer_: that timer means a frame is ready to show, and
-            // resume_output() would stop feeding the startup burst until it fired.
+            // resume_output() would stop feeding the startup burst (or a width
+            // change's redraw) until it fired.
             settle_timer_.start(static_cast<int>(wait));
             return;
         }
@@ -1849,7 +1966,7 @@ class SessionService final : public QObject {
         return {columns, rows};
     }
     void request_resize(TerminalSize size) {
-        if (harvest_offset_)
+        if (harvest_offset_ || rewidth_)
             pending_resize_ = size;
         else
             apply_resize(size);
@@ -1876,6 +1993,8 @@ class SessionService final : public QObject {
     void apply_resize(TerminalSize size) {
         if (pty_.terminalClosed())
             return;
+        if (!begin_rewidth(size))
+            return; // after the kept rows are archived
         if (!pty_.resize(size))
             throw std::runtime_error("PTY resize failed");
         try {
@@ -1884,6 +2003,13 @@ class SessionService final : public QObject {
         } catch (const std::exception& error) {
             stop(QString::fromUtf8(error.what()));
             return; // A failed engine resize cannot be presented as synchronized.
+        }
+        if (rewidth_) {
+            const auto metadata = terminal_.history_metadata();
+            rewidth_->history_rows = metadata.total_rows > metadata.viewport_rows
+                                         ? metadata.total_rows - metadata.viewport_rows
+                                         : 0;
+            rewidth_->since.start();
         }
         const auto replies = terminal_.take_replies();
         if (!replies.empty() &&
@@ -2243,6 +2369,18 @@ class SessionService final : public QObject {
     std::optional<std::size_t> harvest_offset_;
     std::optional<TerminalSize> pending_resize_;
     TerminalSize current_size_;
+    // Claude Code's classic renderer redraws the end of its conversation on a
+    // width change; see begin_rewidth.
+    bool claude_{};
+    struct Rewidth {
+        TerminalSnapshot old_screen;
+        bool widening{};
+        std::size_t history_rows{}; // kept rows from before the resize
+        QElapsedTimer since;
+    };
+    std::optional<Rewidth> rewidth_;
+    static constexpr qint64 rewidth_quiet_ms = 120;
+    static constexpr qint64 rewidth_limit_ms = 1000;
     wire::SnapshotTiming timing_;
     std::unique_ptr<attention::State> claude_state_;
     std::unique_ptr<lapis::claude::Observer> claude_observer_;

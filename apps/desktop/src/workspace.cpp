@@ -2162,6 +2162,16 @@ void Workspace::setLaunchSize(QSize size) {
         return;
     launch_size_ = session::TerminalSize{static_cast<std::uint16_t>(size.width()),
                                          static_cast<std::uint16_t>(size.height())};
+    if (!unsized_starts_.empty())
+        startUnsized();
+}
+void Workspace::startUnsized() {
+    unsized_timer_.stop();
+    auto starts = std::exchange(unsized_starts_, {});
+    for (const auto& start : starts)
+        if (start.document)
+            start.document->startLive(start.endpoint, sized(start.launch),
+                                      session::wire::AttachMode::create);
 }
 session::LaunchSpec Workspace::sized(session::LaunchSpec launch) const {
     if (launch_size_)
@@ -2922,8 +2932,19 @@ void Workspace::connectRestoredAgents() {
         throw std::runtime_error(error_.toStdString());
     if (!restart_failures.isEmpty())
         fail(restart_failures.join(QLatin1Char('\n')));
-    for (const auto& plan : restarting)
-        plan.document->startLive(plan.endpoint, plan.launch, session::wire::AttachMode::create);
+    for (const auto& plan : restarting) {
+        if (!headless_ && !launch_size_)
+            unsized_starts_.push_back({plan.document, plan.endpoint, plan.launch});
+        else
+            plan.document->startLive(plan.endpoint, sized(plan.launch),
+                                     session::wire::AttachMode::create);
+    }
+    if (!unsized_starts_.empty()) {
+        unsized_timer_.setSingleShot(true);
+        connect(&unsized_timer_, &QTimer::timeout, this, &Workspace::startUnsized,
+                Qt::UniqueConnection);
+        unsized_timer_.start(unsized_wait_ms);
+    }
     if (restore_agents_ && !headless_) {
         conversation_timer_.setInterval(60000);
         connect(&conversation_timer_, &QTimer::timeout, this, &Workspace::recordConversations);
