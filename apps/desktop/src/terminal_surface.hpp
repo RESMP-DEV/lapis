@@ -61,10 +61,17 @@ terminal_link_at(const session::TerminalSnapshot& snapshot, int column, int row)
                                                          const QString& needle, QPoint from,
                                                          bool backwards);
 
+// Whether the cursor's row holds text from the cursor up to its last two cells,
+// as when the cursor moved back into typed text. Blanks and faint text (a CLI's
+// placeholder, such as Codex's) do not count; a hidden cursor's lone OMP
+// software-cursor glyph also does not.
+[[nodiscard]] bool text_after_cursor(const session::TerminalSnapshot& snapshot);
+
 // How an offered next prompt lays out after the cursor: the one line shown
 // (elided to the room left before the row's last two cells), whether that is
 // the whole suggestion (else it ends in an ellipsis), the keys hint, the first column
-// and the width drawn. Empty `shown` when there is no room.
+// and the width drawn. Empty `shown` when there is no room or text follows the
+// cursor, which the suggestion would cover.
 struct SuggestionLayout {
     QString shown;
     QString keys;
@@ -252,6 +259,9 @@ class TerminalSurface : public QQuickItem {
         qreal scale{};
     };
     [[nodiscard]] std::optional<CellGrid> cellGrid() const;
+    // Item pixels the history page is drawn below its rows: the part of a row
+    // a trackpad scrolled back past it. 0 when live or at the oldest row.
+    [[nodiscard]] qreal historySlide() const;
     [[nodiscard]] QPoint cellAt(QPointF position) const;
     [[nodiscard]] QString textBetween(QPoint start, QPoint end) const;
     void setSelection(QPoint anchor, QPoint head);

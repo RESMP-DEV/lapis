@@ -64,8 +64,12 @@ suggestions as a local agent's do; that needs `python3` there.
 
 Codex and Claude Code report their turns: Codex through its observer, Claude
 Code through the session service's hook adapter, which also reports permission
-prompts and questions. Other CLIs show an estimate from their output, **Output
-active** or **Quiet**, rather than guessing at turns. **Turn finished** means a
+prompts and questions. OMP on this Mac reports finished turns through an
+extension lapis's OMP overlay loads; between turns its status is estimated.
+That extension names the main conversation once it reports its session id;
+before that, a printed checkpoint can still become the saved resume identity.
+Other CLIs show an estimate from their output, **Output active** or **Quiet**,
+rather than guessing at turns. **Turn finished** means a
 turn ended, not that the task or the process did. A new Codex agent reads **No
 prompt yet** until its first turn. Claude Code's idle reminder after a turn is
 not a request.
@@ -100,15 +104,20 @@ another machine keeps the lapis hook, so the variable has no effect there.
 
 ## Full-screen CLIs
 
-lapis runs Claude Code and Grok full screen (Claude Code through
-`CLAUDE_CODE_NO_FLICKER=1`, also over ssh, and Grok with `--fullscreen`); Codex
-and OpenCode are full screen already. A full-screen program repaints when its
-terminal is resized, where a classic renderer can leave a torn prompt. Set
-`CLAUDE_CODE_NO_FLICKER=0` in your login shell to keep Claude Code's classic
-renderer. Every CLI starts at the stage's size.
+lapis runs Claude Code with its classic renderer (`CLAUDE_CODE_NO_FLICKER=0`,
+also over ssh, which overrides Claude Code's own `"tui"` setting), so its
+conversation is kept in lapis's history and the wheel scrolls it there. On a
+resize Claude Code redraws only its live area at the bottom; the history above
+it is not replayed. A resumed conversation is printed in one burst; lapis
+shows a CLI's first text only once its output has been quiet for 150 ms (at
+most 2 seconds), so a tab opens at the end of its conversation rather than
+showing it run past. Set `CLAUDE_CODE_NO_FLICKER=1` in your login shell for
+Claude Code's full-screen renderer. Grok runs full screen with `--fullscreen`;
+Codex and OpenCode are full screen already. Every CLI starts at the stage's
+size.
 
 A full-screen program repaints its whole screen for every scroll step and
-streamed line. Claude Code brackets each repaint in a synchronized update (DEC
+streamed line. Claude Code's full-screen renderer brackets each repaint in a synchronized update (DEC
 mode 2026); lapis shows only the finished frame, as iTerm2 and Ghostty do, so
 scrolling never shows a screen half painted. An update that never ends is
 shown after 250 ms.

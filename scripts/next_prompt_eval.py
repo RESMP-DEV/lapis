@@ -15,21 +15,49 @@ prompts, which never belong in the repository.
 
 import argparse
 import json
+import math
+import os
+import re
 import subprocess
 import sys
+import tempfile
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# Fixed samples: every replay that samples saves its items here (private
+# transcript text, owner-only, ignored by git), so a comparison can be rerun on
+# the identical prompts with `--manifest NAME`.
+MANIFESTS = ROOT / "build" / "reports" / "next-prompt" / "manifests"
+
+
+def manifest_path(name):
+    """A manifest by path, or by name in MANIFESTS."""
+    path = Path(name).expanduser()
+    if path.exists() or path.is_absolute() or len(path.parts) > 1:
+        return path
+    return MANIFESTS / (name if name.endswith(".json") else name + ".json")
+
+
+def save_manifest(items):
+    MANIFESTS.mkdir(parents=True, exist_ok=True)
+    prefix = "sample-{}-".format(datetime.now().strftime("%Y%m%dT%H%M%S"))
+    fd, name = tempfile.mkstemp(prefix=prefix, suffix=".json", dir=MANIFESTS)
+    path = Path(name)
+    with os.fdopen(fd, "w") as out:
+        json.dump({"items": items}, out)
+    return path
+
+
 HELPER = ROOT / "apps" / "desktop" / "src" / "next_prompt.py"
 sys.path.insert(0, str(HELPER.parent))
 import next_prompt  # noqa: E402
 
 JUDGE = """You grade next-message predictions for a person supervising coding agents.
 For each item you get the end of the agent's latest reply, the message the person
-actually sent, and up to three predicted messages. Grade each prediction:
+actually sent, and up to five predicted messages. Grade each prediction:
 2 = they could have sent it instead, with the same effect on the agent (wording
     and minor details may differ);
 1 = right intent or action, but key specifics are missing or different, so they
@@ -40,8 +68,54 @@ status (asks how it is going or to check), ship (install, merge, release, send a
 drafted thing), fix (reports a bug or asks for a fix), new (new task or
 feature), question (asks why/how/explain), correct (pushback or redirecting the
 agent), other. Return only JSON:
-{"grades": [{"id": 0, "scores": [2, 0, 1], "category": "approve"}]}"""
+{"grades": [{"id": 0, "scores": [2, 0, 1, 0, 2], "category": "approve"}]}"""
 THRESHOLDS = (0.0, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+# A redo: the person's message after the agent answered the guessed prompt
+# pushes back, asks what it meant, tells it to continue, or asks for status.
+# Each pattern reads only the message's start, as the history analysis that
+# chose the prompt checks did (Oct 2026: 28% of tasks needed a redo, each
+# round a median 47 minutes).
+REDO = (
+    (
+        "pushback",
+        220,
+        r"^(no|nope|wrong|nah|stop)\b|that'?s not (it|what|right|true)|not what i|"
+        r"\bi (said|asked|told you)\b|you didn'?t|why did you|why would you|"
+        r"why are you|you'?re wrong|incorrect|doesn'?t make sense|makes no sense|"
+        r"nonsense|\blie\b|\blying\b|\bfake\b|made (that|this|it) up|did you (even|actually)|"
+        r"the whole point|i already (told|said|asked|did)|"
+        r"still (not|doesn'?t|isn'?t|broken|wrong)|wtf|what the (fuck|hell)|"
+        r"bullshit|stupid|useless|that'?s wrong",
+    ),
+    (
+        "confused",
+        300,
+        r"what do you mean|what does .{1,40} mean\b|plain english|plain language|"
+        r"i don'?t (understand|get it|follow)|confus|explain (this|that|it|again|like)|"
+        r"eli5|in simpler terms|i'?m lost|unclear|too (dense|technical)|jargon",
+    ),
+    (
+        "continue",
+        80,
+        r"^(keep going|continue|go on|carry on|keep at it|resume|keep pushing|"
+        r"don'?t stop|and\?|so\?|finish (it|the rest)|you stopped|why did you stop)",
+    ),
+    (
+        "status",
+        60,
+        r"^(status|eta|update|progress|how'?s it going|where are we|any update|how far)\b",
+    ),
+)
+REDO_PATTERNS = tuple((kind, n, re.compile(rx, re.I)) for kind, n, rx in REDO)
+
+
+def redo_kind(text):
+    """The kind of redo a person's message is, or None."""
+    text = (text or "").strip()
+    for kind, n, pattern in REDO_PATTERNS:
+        if pattern.search(text[:n]):
+            return kind
+    return None
 
 
 def on_machine(machine, arguments):
@@ -159,12 +233,24 @@ def summarize(rows):
         ),
         "top1_sendable": rate(rows, lambda r: r["scores"][:1] == [2]),
         "top1_intent": rate(rows, lambda r: (r["scores"] or [0])[0] >= 1),
-        "top3_sendable": rate(rows, lambda r: 2 in r["scores"]),
-        "top3_intent": rate(rows, lambda r: max(r["scores"] or [0]) >= 1),
+        "top3_sendable": rate(rows, lambda r: 2 in r["scores"][:3]),
+        "top3_intent": rate(rows, lambda r: max(r["scores"][:3] or [0]) >= 1),
+        "top5_sendable": rate(rows, lambda r: 2 in r["scores"][:5]),
+        "top5_intent": rate(rows, lambda r: max(r["scores"][:5] or [0]) >= 1),
         "by_length": {},
         "by_category": {},
         "by_confidence": [],
     }
+    guess_words = sorted(r["guess_words"] for r in rows if "guess_words" in r)
+    if guess_words:
+        report["top_guess_words_median"] = guess_words[len(guess_words) // 2]
+        report["top_guess_five_words_or_fewer"] = rate(
+            [r for r in rows if "guess_words" in r], lambda r: r["guess_words"] <= 5
+        )
+        report["guessed_corrections"] = rate(
+            [r for r in rows if "guess_category" in r],
+            lambda r: r["guess_category"] == "correct",
+        )
     for label, test in (
         ("up to 4 words", lambda w: w <= 4),
         ("longer", lambda w: w > 4),
@@ -172,7 +258,7 @@ def summarize(rows):
         part = [r for r in rows if test(r["words"])]
         report["by_length"][label] = {
             "count": len(part),
-            "top3_sendable": rate(part, lambda r: 2 in r["scores"]),
+            "top3_sendable": rate(part, lambda r: 2 in r["scores"][:3]),
         }
     groups = defaultdict(list)
     for r in rows:
@@ -180,8 +266,8 @@ def summarize(rows):
     for category, part in sorted(groups.items(), key=lambda kv: -len(kv[1])):
         report["by_category"][category] = {
             "count": len(part),
-            "top3_sendable": rate(part, lambda r: 2 in r["scores"]),
-            "top3_intent": rate(part, lambda r: max(r["scores"] or [0]) >= 1),
+            "top3_sendable": rate(part, lambda r: 2 in r["scores"][:3]),
+            "top3_intent": rate(part, lambda r: max(r["scores"][:3] or [0]) >= 1),
         }
     # Offered only at or above a threshold: how often, and how often right.
     for threshold in THRESHOLDS:
@@ -219,29 +305,111 @@ def grading_coverage(requested: int, graded: int) -> dict[str, object]:
 
 def replay(arguments):
     items = []
-    for machine in [""] + (arguments.machine or []):
-        sample = on_machine(
-            machine,
-            [
-                "sample",
-                "--count",
-                str(arguments.count),
-                "--seed",
-                str(arguments.seed),
-                *(["--since", arguments.since] if arguments.since else []),
-                *(["--exclude", *arguments.exclude] if arguments.exclude else []),
-            ],
-        )
-        if "error" in sample:
-            print(
-                "{}: {}".format(machine or "this Mac", sample["error"]), file=sys.stderr
+    if arguments.manifest:
+        try:
+            loaded = json.loads(manifest_path(arguments.manifest).read_text())
+        except (OSError, ValueError) as error:
+            print("manifest: {}".format(error), file=sys.stderr)
+            items = None
+        else:
+            items = loaded.get("items", loaded) if isinstance(loaded, dict) else loaded
+    else:
+        for machine in [""] + (arguments.machine or []):
+            sample = on_machine(
+                machine,
+                [
+                    "sample",
+                    "--count",
+                    str(arguments.count),
+                    "--seed",
+                    str(arguments.seed),
+                    *(["--since", arguments.since] if arguments.since else []),
+                    *(["--exclude", *arguments.exclude] if arguments.exclude else []),
+                ],
             )
-            continue
-        for item in sample["items"]:
-            item["machine"] = machine
-            items.append(item)
+            if "error" in sample:
+                print(
+                    "{}: {}".format(machine or "this Mac", sample["error"]),
+                    file=sys.stderr,
+                )
+                continue
+            items.extend(sample["items"])
+
+    def stopped(message):
+        report = {
+            "error": message,
+            "sampled": len(items or []),
+            "predicted": 0,
+            "prediction_failures": 0,
+            "model": arguments.model,
+            "context": arguments.context,
+            "context_arm": arguments.context_arm,
+            "prompt_arm": getattr(arguments, "prompt_arm", "base"),
+            "grading": grading_coverage(0, 0),
+        }
+        return report, []
+
+    if items is None:
+        return stopped("manifest unavailable")
+    if not isinstance(items, list):
+        print(
+            "manifest: expected an item list or an object containing one",
+            file=sys.stderr,
+        )
+        return stopped("manifest is not an item list")
+    for item in items:
+        if not isinstance(item, dict):
+            print("manifest: every item must be an object", file=sys.stderr)
+            return stopped("manifest item is not an object")
+        item.setdefault("machine", "")
+        missing = [key for key in ("cli", "time", "actual") if key not in item]
+        if missing:
+            print(
+                "manifest item is missing: {}".format(", ".join(missing)),
+                file=sys.stderr,
+            )
+            return stopped("manifest item is incomplete")
+        for key in ("turns", "legacy_turns"):
+            if key in item and not isinstance(item[key], list):
+                print(
+                    "manifest item field is not a list: {}".format(key), file=sys.stderr
+                )
+                return stopped("manifest item is malformed")
+    if arguments.context_arm == "thread" and any(
+        "earlier" not in item for item in items
+    ):
+        print(
+            "thread context requires sampled items to carry earlier messages",
+            file=sys.stderr,
+        )
+        return stopped("thread context data is unavailable")
+
+    if items and not arguments.manifest:
+        saved = save_manifest(items)
+        print("manifest:", saved.relative_to(ROOT), file=sys.stderr)
     for number, item in enumerate(items):
         item["id"] = number
+
+    oracle = {}
+    if arguments.oracle:
+        try:
+            loaded_oracle = json.loads(Path(arguments.oracle).read_text())
+        except (OSError, ValueError) as error:
+            print("oracle file: {}".format(error), file=sys.stderr)
+        else:
+            if not isinstance(loaded_oracle, dict):
+                print("oracle file: expected a JSON object", file=sys.stderr)
+                return stopped("oracle is not an object")
+            oracle = loaded_oracle
+
+    if arguments.providers is None:
+        providers = next_prompt.config_providers()
+    else:
+        try:
+            providers = next_prompt.clean_providers(json.loads(arguments.providers))
+        except (TypeError, ValueError) as error:
+            print("providers JSON: {}".format(error), file=sys.stderr)
+            return stopped("providers JSON is invalid")
 
     def guess(item):
         when = item["time"]
@@ -250,25 +418,50 @@ def replay(arguments):
             when = when.strftime("%a %-I:%M %p")
         except ValueError:
             pass
-        turns = item["turns"]
+        item_turns = item.get("turns", [])
+        turns = (
+            item.get("legacy_turns", item_turns)
+            if arguments.context_arm == "legacy"
+            else item_turns
+        )
         if arguments.context == "last":
             # Only what the agent last said: whether the rest of the context
             # earns its cost.
             said = [t for t in turns if t["role"] == "agent"]
             turns = said[-1:]
+        conversation = item.get("conversation", "")
         bundle = {
             "agent": {"cli": item["cli"], "machine": item["machine"]},
-            "context": {"turns": turns},
+            "context": {
+                "turns": turns,
+                "recent": item.get("recent", []),
+                "snippets": item.get("snippets", []),
+                "earlier": item.get("earlier", []),
+                "conversation": conversation,
+            },
             "time": when,
+            "target": item["time"],
         }
-        return next_prompt.predict(bundle, arguments.model, arguments.effort)
+        if type(item.get("returned_minutes")) is int:
+            bundle["returned_minutes"] = item["returned_minutes"]
+        topic = oracle.get(conversation)
+        if topic:
+            bundle["oracle"] = topic
+        return next_prompt.predict(
+            bundle,
+            arguments.model,
+            arguments.effort,
+            arm=arguments.context_arm,
+            providers=providers,
+            prompt_arm=getattr(arguments, "prompt_arm", "base"),
+        )
 
     with ThreadPoolExecutor(arguments.parallel) as pool:
         guesses = list(pool.map(guess, items))
     graded = []
     for item, answer in zip(items, guesses):
         if answer.get("candidates"):
-            agent_turns = [t for t in item["turns"] if t["role"] == "agent"]
+            agent_turns = [t for t in item.get("turns", []) if t["role"] == "agent"]
             graded.append(
                 {
                     "id": item["id"],
@@ -276,6 +469,7 @@ def replay(arguments):
                     "actual": item["actual"],
                     "candidates": answer["candidates"],
                     "ms": answer.get("ms", 0),
+                    "guess_category": answer.get("category", "other"),
                 }
             )
     grades = judge(graded, arguments.judge_model)
@@ -297,6 +491,8 @@ def replay(arguments):
             ),
             "scores": grade.get("scores", [])[: len(g["candidates"])],
             "ms": g["ms"],
+            "guess_words": len(str(g["candidates"][0].get("text", "")).split()),
+            "guess_category": g["guess_category"],
         }
         if arguments.keep_text:
             row.update(actual=g["actual"], candidates=g["candidates"])
@@ -308,7 +504,17 @@ def replay(arguments):
     report["judge_missing_grades"] = sum(g["id"] not in grades for g in graded)
     report["grading"] = grading_coverage(len(graded), len(rows))
     report["model"] = arguments.model
+    # The provider chain answers when one is configured, so `model` alone
+    # does not say which model wrote the guesses.
+    answered = defaultdict(int)
+    for answer in guesses:
+        if answer.get("candidates"):
+            answered[answer.get("model") or arguments.model] += 1
+    report["answered_by"] = dict(answered)
     report["context"] = arguments.context
+    report["context_arm"] = arguments.context_arm
+    report["prompt_arm"] = getattr(arguments, "prompt_arm", "base")
+    report["oracle"] = bool(oracle)
     if graded:
         report["median_ms"] = sorted(g["ms"] for g in graded)[len(graded) // 2]
     return report, rows
@@ -366,6 +572,7 @@ def acceptance(events):
                 hidden=bool(e.get("hidden")),
                 arm=str(e.get("arm") or "control"),
                 context_arm=str(e.get("context_arm") or "none"),
+                prompt_arm=str(e.get("prompt_arm") or "none"),
                 floor=e.get("min_confidence"),
                 returned=e.get("returned_minutes"),
                 agent=e.get("agent", ""),
@@ -494,12 +701,45 @@ def acceptance(events):
     report["by_context_arm"] = {}
     for arm, part in sorted(contexts.items()):
         arm_seen = [o for o in part if o["shown"] and o["seen"]]
+        arm_used = [o for o in arm_seen if o["used"]]
+        arm_waits = sorted(
+            o["used"].get("ms_after_seen", -1)
+            for o in arm_used
+            if o["used"].get("ms_after_seen", -1) >= 0
+        )
         report["by_context_arm"][arm] = {
             "predicted": len(part),
             "seen": len(arm_seen),
-            "acceptance": rate([o for o in arm_seen if o["used"]], arm_seen),
+            "used": len(arm_used),
+            "acceptance": rate(arm_used, arm_seen),
+            "p95_ms_to_use": (
+                arm_waits[math.ceil(len(arm_waits) * 0.95) - 1] if arm_waits else None
+            ),
             "outcome_own": sum(
                 1 for o in part if (o["outcome"] or {}).get("result") == "own"
+            ),
+        }
+    # The prompt arm is drawn apart from the context arm, so each compares
+    # on every guess. A guess's length is what the checks aim to shorten.
+    prompts = defaultdict(list)
+    for o in offers.values():
+        if "shown" in o:
+            prompts[o["prompt_arm"]].append(o)
+    report["by_prompt_arm"] = {}
+    for arm, part in sorted(prompts.items()):
+        arm_seen = [o for o in part if o["shown"] and o["seen"]]
+        arm_used = [o for o in arm_seen if o["used"]]
+        words = sorted(
+            len(str((o["candidates"] or [{}])[0].get("text", "")).split()) for o in part
+        )
+        report["by_prompt_arm"][arm] = {
+            "predicted": len(part),
+            "seen": len(arm_seen),
+            "used": len(arm_used),
+            "acceptance": rate(arm_used, arm_seen),
+            "top_guess_words_median": words[len(words) // 2] if words else None,
+            "guessed_corrections": rate(
+                [o for o in part if o["category"] == "correct"], part
             ),
         }
     report["by_floor"] = {}
@@ -582,6 +822,122 @@ def log_files(path):
     return [p for p in archives + [Path(str(path) + ".1"), path] if p.is_file()]
 
 
+def next_messages(offers):
+    """For each offer with a settled prompt, the person's message after the
+    agent answered it: turn + 1 in the same conversation. Local transcripts
+    are read once each; another machine's go through its helper in parallel."""
+    prompts = {}
+    found = {}
+    remote = []
+    for key, o in offers.items():
+        if not (o.get("outcome") and o.get("conversation")):
+            continue
+        conversation, cli, machine = (
+            o["conversation"],
+            o.get("cli", "claude"),
+            o.get("machine", ""),
+        )
+        turn = int(o.get("turn") or 0) + 1
+        arguments = [
+            "actual",
+            "--cli",
+            cli,
+            "--conversation",
+            conversation,
+            "--turn",
+            str(turn),
+        ]
+        if machine:
+            remote.append((key, machine, arguments))
+            continue
+        if (cli, conversation) not in prompts:
+            path = next_prompt.find_transcript(cli, conversation, "")
+            prompts[(cli, conversation)] = (
+                [
+                    t["text"]
+                    for t in next_prompt.turns_of(cli, path)
+                    if t["role"] == "person"
+                ]
+                if path
+                else None
+            )
+        said = prompts[(cli, conversation)]
+        if said is None:
+            found[key] = None
+        else:
+            found[key] = said[turn] if turn < len(said) else ""
+    if remote:
+
+        def remote_actual(request):
+            return on_machine(request[1], request[2])
+
+        with ThreadPoolExecutor(min(6, len(remote))) as pool:
+            answers = list(pool.map(remote_actual, remote))
+    else:
+        answers = []
+    for (key, _machine, _arguments), answer in zip(remote, answers):
+        if answer.get("error"):
+            found[key] = None
+        elif answer.get("pending"):
+            found[key] = ""
+        elif isinstance(answer.get("text"), str):
+            found[key] = answer["text"]
+        else:
+            found[key] = None
+    return found
+
+
+def redo_after(offers, found=None):
+    """Of prompts settled after a guess (sent as offered, edited, or the
+    person's own), how often the person's next message was a redo, by how
+    the prompt was made and by prompt arm. Pending: no next message yet."""
+    found = next_messages(offers) if found is None else found
+    groups = defaultdict(
+        lambda: {
+            "settled": 0,
+            "pending": 0,
+            "missing": 0,
+            "redo": 0,
+            "kinds": defaultdict(int),
+        }
+    )
+
+    def add(group, text):
+        if text is None:
+            group["missing"] += 1
+            return
+        group["settled"] += 1
+        if not text:
+            group["pending"] += 1
+            return
+        kind = redo_kind(text)
+        if kind:
+            group["redo"] += 1
+            group["kinds"][kind] += 1
+
+    for key, o in offers.items():
+        if key not in found:
+            continue
+        result = (o.get("outcome") or {}).get("result", "other")
+        text = found[key]
+        add(groups["by_result:" + result], text)
+        if result in ("as_offered", "edited"):
+            add(groups["taken_by_prompt_arm:" + o.get("prompt_arm", "none")], text)
+    report = {}
+    for name, g in sorted(groups.items()):
+        answered = g["settled"] - g["pending"]
+        report[name] = {
+            "settled": g["settled"],
+            "answered": answered,
+            "pending": g["pending"],
+            "missing": g["missing"],
+            "redo": g["redo"],
+            "redo_rate": round(g["redo"] / answered, 3) if answered else None,
+            "kinds": dict(g["kinds"]),
+        }
+    return report
+
+
 def log(arguments):
     events = []
     path = Path(arguments.log).expanduser()
@@ -592,6 +948,8 @@ def log(arguments):
             except ValueError:
                 continue
     offers, report = acceptance(events)
+    if getattr(arguments, "redo", False):
+        report["redo"] = redo_after(offers)
     if not arguments.judge:
         # Both report shapes carry the coverage field; without judging there
         # is nothing graded, which is the honest zero, not a missing key.
@@ -682,6 +1040,13 @@ def main(argv=None):
     )
     replay_mode.add_argument("--seed", type=int, default=0)
     replay_mode.add_argument(
+        "--manifest",
+        default="",
+        help="JSON sample (or item list) to replay instead of sampling again: a "
+        "path, or a name in build/reports/next-prompt/manifests (every sampled "
+        "replay saves one there)",
+    )
+    replay_mode.add_argument(
         "--machine", action="append", help="an ssh host to sample too"
     )
     replay_mode.add_argument(
@@ -694,6 +1059,28 @@ def main(argv=None):
         default="full",
         help="the conversation, or only the agent's last message",
     )
+    replay_mode.add_argument(
+        "--context-arm",
+        choices=next_prompt.CONTEXT_ARMS,
+        default="base",
+        help="base is the final-block view; legacy is the old merged clip",
+    )
+    replay_mode.add_argument(
+        "--oracle",
+        default="",
+        help="JSON file mapping conversation id to a topic hint",
+    )
+    replay_mode.add_argument(
+        "--providers",
+        default=None,
+        help="JSON provider array; absent uses nextPrompt.providers from lapis.json",
+    )
+    replay_mode.add_argument(
+        "--prompt-arm",
+        choices=next_prompt.PROMPT_ARMS,
+        default="base",
+        help="checks adds the helper's CHECKS to the system prompt",
+    )
     replay_mode.add_argument("--effort", default="")
     replay_mode.add_argument("--parallel", type=int, default=6)
     log_mode = modes.add_parser(
@@ -702,6 +1089,12 @@ def main(argv=None):
     log_mode.add_argument("--log", default="~/.lapis/runtime/next_prompt.jsonl")
     log_mode.add_argument(
         "--judge", action="store_true", help="grade offers seen but not used"
+    )
+    log_mode.add_argument(
+        "--redo",
+        action="store_true",
+        help="read each settled prompt's next message and report how often it "
+        "was a redo (pushback, confusion, continue, status)",
     )
     arguments = parser.parse_args(argv)
     report, rows = (replay if arguments.mode == "replay" else log)(arguments)

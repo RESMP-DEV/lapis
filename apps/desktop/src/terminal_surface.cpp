@@ -443,6 +443,31 @@ QColor blend(const QColor& from, const QColor& to, qreal share) {
 
 } // namespace
 
+bool text_after_cursor(const session::TerminalSnapshot& snapshot) {
+    if (!snapshot.cursor.in_viewport || snapshot.cursor.row >= snapshot.size.rows ||
+        snapshot.cursor.column >= snapshot.size.columns)
+        return false;
+    const std::size_t columns = snapshot.size.columns;
+    const std::size_t row = static_cast<std::size_t>(snapshot.cursor.row) * columns;
+    const std::size_t cursor_index = row + snapshot.cursor.column;
+    const auto cursor_text = snapshot.text(cursor_index);
+    const bool software_cursor =
+        !snapshot.cursor.visible && cursor_text.size() == 1 && cursor_text[0] == U'\u258f';
+    const std::size_t first_column = snapshot.cursor.column + (software_cursor ? 1 : 0);
+    for (std::size_t column = first_column; column + 2 < columns; ++column) {
+        const auto index = row + column;
+        if (index >= snapshot.cells.size())
+            break;
+        const auto& style = snapshot.cells[index].style;
+        if (style.faint || style.invisible)
+            continue;
+        for (const char32_t c : snapshot.text(index))
+            if (c != U' ' && c != U' ')
+                return true;
+    }
+    return false;
+}
+
 SuggestionLayout lay_out_suggestion(const session::TerminalSnapshot& snapshot,
                                     const QFontMetricsF& metrics, const QString& suggestion) {
     SuggestionLayout layout;
@@ -450,7 +475,7 @@ SuggestionLayout lay_out_suggestion(const session::TerminalSnapshot& snapshot,
     const int first = snapshot.cursor.column + 1;
     const int last = static_cast<int>(snapshot.size.columns) - 2;
     if (!snapshot.cursor.in_viewport || snapshot.cursor.row >= snapshot.size.rows ||
-        last - first < 4)
+        last - first < 4 || text_after_cursor(snapshot))
         return layout;
     const qreal room = (last - first) * cell_width;
     const QString text = suggestion.trimmed();
@@ -628,8 +653,12 @@ void add_selection(QSGNode& overlays, const session::TerminalSnapshot& snapshot,
 class TerminalNode final : public QSGTransformNode {
   public:
     std::shared_ptr<const session::TerminalSnapshot> snapshot;
+    // The history row above the screen, drawn one row up while a trackpad
+    // has scrolled part of a row.
+    std::shared_ptr<const session::TerminalSnapshot> above_snapshot;
     // Scene graph ownership stays with each parent; these are observers only.
     QSGSimpleRectNode* background{};
+    QSGTransformNode* above{};
     QSGNode* rows{};
     QSGNode* overlays{};
     // Rows are laid out for one font; a different font rebuilds every row.
@@ -641,12 +670,53 @@ class TerminalNode final : public QSGTransformNode {
         auto background_node = std::make_unique<QSGSimpleRectNode>();
         background = background_node.get();
         appendChildNode(background_node.release());
+        auto above_node = std::make_unique<QSGTransformNode>();
+        above = above_node.get();
+        appendChildNode(above_node.release());
         auto row_nodes = std::make_unique<QSGNode>();
         rows = row_nodes.get();
         appendChildNode(row_nodes.release());
         auto overlay_nodes = std::make_unique<QSGNode>();
         overlays = overlay_nodes.get();
         appendChildNode(overlay_nodes.release());
+    }
+    std::unique_ptr<QSGNode> rowNode(QQuickWindow& window, const session::TerminalSnapshot& next,
+                                     std::size_t row, const QFont& font, qreal cell_width,
+                                     qreal row_height) {
+        auto row_node = std::make_unique<QSGNode>();
+        auto backgrounds = std::make_unique<QSGNode>();
+        auto decorations = std::make_unique<QSGNode>();
+        auto text = std::unique_ptr<QSGTextNode>(window.createTextNode());
+        text->setColor(color(next.foreground_rgb));
+        text->setRenderType(QSGTextNode::QtRendering);
+        if (!ascii)
+            ascii.emplace(font);
+        add_row(*backgrounds, *text, next, row, font, *ascii, RowGeometry{cell_width, row_height},
+                window.effectiveDevicePixelRatio());
+        add_decorations(*decorations, next, row, font, RowGeometry{cell_width, row_height});
+        row_node->appendChildNode(backgrounds.release());
+        row_node->appendChildNode(text.release());
+        row_node->appendChildNode(decorations.release());
+        return row_node;
+    }
+    void updateAbove(QQuickWindow& window, std::shared_ptr<const session::TerminalSnapshot> next,
+                     const QFont& font, qreal cell_width, qreal row_height) {
+        if (next && above_snapshot && above->firstChild() && same_row(*above_snapshot, *next, 0)) {
+            above_snapshot = std::move(next);
+            return;
+        }
+        while (auto* child = above->firstChild()) {
+            above->removeChildNode(child);
+            delete child;
+        }
+        above_snapshot = std::move(next);
+        if (!above_snapshot)
+            return;
+        above->appendChildNode(
+            rowNode(window, *above_snapshot, 0, font, cell_width, row_height).release());
+        QMatrix4x4 up;
+        up.translate(0, static_cast<float>(-row_height));
+        above->setMatrix(up);
     }
     void updateRows(QQuickWindow& window, const session::TerminalSnapshot& next, const QFont& font,
                     qreal cell_width, qreal row_height) {
@@ -660,20 +730,7 @@ class TerminalNode final : public QSGTransformNode {
         for (std::size_t row = 0; row < next.size.rows; ++row) {
             auto* following = previous ? previous->nextSibling() : nullptr;
             if (!previous || !same_row(*snapshot, next, row)) {
-                auto row_node = std::make_unique<QSGNode>();
-                auto backgrounds = std::make_unique<QSGNode>();
-                auto decorations = std::make_unique<QSGNode>();
-                auto text = std::unique_ptr<QSGTextNode>(window.createTextNode());
-                text->setColor(color(next.foreground_rgb));
-                text->setRenderType(QSGTextNode::QtRendering);
-                if (!ascii)
-                    ascii.emplace(font);
-                add_row(*backgrounds, *text, next, row, font, *ascii,
-                        RowGeometry{cell_width, row_height}, window.effectiveDevicePixelRatio());
-                add_decorations(*decorations, next, row, font, RowGeometry{cell_width, row_height});
-                row_node->appendChildNode(backgrounds.release());
-                row_node->appendChildNode(text.release());
-                row_node->appendChildNode(decorations.release());
+                auto row_node = rowNode(window, next, row, font, cell_width, row_height);
                 if (previous) {
                     rows->insertChildNodeBefore(row_node.release(), previous);
                     rows->removeChildNode(previous);
@@ -706,6 +763,10 @@ QString data_size(qsizetype bytes) {
 
 struct TerminalSurface::RenderState {
     std::shared_ptr<const session::TerminalSnapshot> snapshot;
+    // History scrolled part of a row: the screen drawn this many item pixels
+    // lower, with the row above it filling the top.
+    std::shared_ptr<const session::TerminalSnapshot> above;
+    qreal slide{};
     QString preedit;
     QSizeF viewport;
     // Plain values: the render thread builds its own QFont from them.
@@ -757,6 +818,12 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
     }
     if (snapshot_changed && document_)
         frame->snapshot = std::make_shared<const session::TerminalSnapshot>(document_->snapshot());
+    if (const qreal slide = historySlide(); slide > 0) {
+        if (auto above = document_->historyRowAbove()) {
+            frame->above = std::make_shared<const session::TerminalSnapshot>(std::move(*above));
+            frame->slide = slide;
+        }
+    }
     {
         const std::lock_guard lock(handoff_->mutex);
         handoff_->pending = std::move(frame);
@@ -1036,13 +1103,17 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
         root->font_family = frame->font_family;
         root->font_pixel_size = frame->font_pixel_size;
         root->snapshot.reset(); // Forces updateRows to discard every cached row.
+        root->above_snapshot.reset();
         root->ascii.reset();
     }
-    root->background->setRect(
-        QRectF(0, 0, snapshot.size.columns * cell_width, snapshot.size.rows * row_height));
+    const qreal above_height = frame->above ? row_height : 0;
+    root->background->setRect(QRectF(0, -above_height, snapshot.size.columns * cell_width,
+                                     snapshot.size.rows * row_height + above_height));
     root->background->setColor(color(snapshot.background_rgb));
     if (root->snapshot != frame->snapshot)
         root->updateRows(*window(), snapshot, font, cell_width, row_height);
+    if (root->above_snapshot != frame->above)
+        root->updateAbove(*window(), frame->above, font, cell_width, row_height);
     root->snapshot = frame->snapshot;
     while (auto* child = root->overlays->firstChild()) {
         root->overlays->removeChildNode(child);
@@ -1074,7 +1145,8 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
     const auto layout = surface_layout(snapshot, frame->viewport, frame->minimum_scale,
                                        QSizeF(cell_width, row_height));
     QMatrix4x4 matrix;
-    matrix.translate(0, static_cast<float>(-layout.first_row * row_height * layout.scale));
+    matrix.translate(
+        0, static_cast<float>(-layout.first_row * row_height * layout.scale + frame->slide));
     matrix.scale(static_cast<float>(layout.scale));
     root->setMatrix(matrix);
     {
@@ -1408,22 +1480,38 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
         pixel_remainder_ = 0;
         wheel_program_ = program;
     }
+    const auto grid = cellGrid();
+    // macOS also synthesizes pixel deltas for a coarse mouse wheel, so the
+    // device type—not pixelDelta alone—distinguishes a per-pixel trackpad.
+    const bool sliding = event->deviceType() == QInputDevice::DeviceType::TouchPad &&
+                         !event->pixelDelta().isNull() && grid && grid->height > 0;
     if (program) {
-        wheel_remainder_ += event->angleDelta().y();
-        const int steps = wheel_remainder_ / 120;
-        wheel_remainder_ -= steps * 120;
+        // A program reading the mouse gets a wheel event per row a trackpad
+        // moved, as in other terminals: agents such as Claude Code move one
+        // row per event, so a step per 120 of angle lagged far behind the
+        // fingers. A wheel's notch, or arrow-key scrolling, stays one step.
+        int steps = 0;
+        if (sliding && document_->snapshot().accepts_wheel) {
+            pixel_remainder_ += event->pixelDelta().y();
+            steps = static_cast<int>(pixel_remainder_ / grid->height);
+            pixel_remainder_ -= steps * grid->height;
+        } else {
+            wheel_remainder_ += event->angleDelta().y();
+            steps = wheel_remainder_ / 120;
+            wheel_remainder_ -= steps * 120;
+        }
         interaction::wheel_outcome(QStringLiteral("program"), steps);
         if (steps != 0)
             scrollProgram(steps, cellAt(event->position()));
         return;
     }
-    // Kept history scrolls by rows, as in other terminals: a trackpad's
-    // pixels a row at a time, a wheel's notch three rows. Positive is back.
+    // Kept history scrolls a wheel's notch three rows. A trackpad moves it by
+    // pixels: whole rows move the page and the rest of a row slides it, so
+    // the text follows the fingers. Positive is back.
     int rows = 0;
-    const auto grid = cellGrid();
-    if (!event->pixelDelta().isNull() && grid && grid->height > 0) {
+    if (sliding) {
         pixel_remainder_ += event->pixelDelta().y();
-        rows = static_cast<int>(pixel_remainder_ / grid->height);
+        rows = static_cast<int>(std::floor(pixel_remainder_ / grid->height));
         pixel_remainder_ -= rows * grid->height;
     } else {
         wheel_remainder_ += event->angleDelta().y();
@@ -1433,6 +1521,12 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
     interaction::wheel_outcome(QStringLiteral("history"), rows);
     if (rows != 0)
         document_->scrollHistory(rows);
+    // A forward sub-row at the live screen borrows a row the viewport never
+    // takes. Drop that borrowed fraction instead of charging the next gesture.
+    if (rows < 0 && !document_->historyActive())
+        pixel_remainder_ = 0;
+    if (sliding && document_->historyActive())
+        publishFrame(false);
 }
 // Typing returns a scrolled-back program to its bottom before the key, first
 // on the same ordered connection. The setting only governs typing; the wheel
@@ -1466,8 +1560,21 @@ std::optional<TerminalSurface::CellGrid> TerminalSurface::cellGrid() const {
     const qreal row_height = metrics.height() + 3;
     const auto layout = surface_layout(snapshot, QSizeF(width(), height()), minimum_scale_,
                                        QSizeF(cell_width, row_height));
-    return CellGrid{cell_width * layout.scale, row_height * layout.scale, snapshot.size.columns,
-                    snapshot.size.rows,        layout.first_row,          layout.scale};
+    // A screen slid down part of a row starts that much above its first row.
+    const qreal first_row = layout.first_row - historySlide() / (row_height * layout.scale);
+    return CellGrid{cell_width * layout.scale,
+                    row_height * layout.scale,
+                    snapshot.size.columns,
+                    snapshot.size.rows,
+                    first_row,
+                    layout.scale};
+}
+qreal TerminalSurface::historySlide() const {
+    if (!document_ || wheel_program_ || pixel_remainder_ <= 0 || !document_->historyActive())
+        return 0;
+    if (!document_->historyRowAbove())
+        return 0;
+    return document_->snapshot().history.viewport_offset > 0 ? pixel_remainder_ : 0;
 }
 QPoint TerminalSurface::cellAt(QPointF position) const {
     const auto grid = cellGrid();
@@ -1538,6 +1645,7 @@ void TerminalSurface::resumeLiveForTyping(const QKeyEvent& event) {
         return;
     if ((event.modifiers() & Qt::MetaModifier) == 0 || event.matches(QKeySequence::Paste)) {
         interaction::key_outcome({}, {{QStringLiteral("returnedLive"), true}});
+        pixel_remainder_ = 0;
         document_->returnToLive();
     }
 }
@@ -1804,7 +1912,10 @@ bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
     if ((tab || fill) && takeFilled(tab))
         return true;
     if (tab || fill) {
-        if (!suggestion_.isEmpty() && !document_->attentionPending()) {
+        // With the cursor moved back into typed text, Tab belongs to the agent:
+        // the suggestion is not drawn there and would land mid-line.
+        if (!suggestion_.isEmpty() && !document_->attentionPending() &&
+            !text_after_cursor(document_->snapshot())) {
             if (!fillSuggestion())
                 return false; // Nothing was typed; let Tab keep its old meaning.
             interaction::key_outcome(QStringLiteral("suggestion-fill"));
@@ -1911,8 +2022,10 @@ quint64 TerminalSurface::pasteTextRequest(const QString& text, std::optional<boo
                 .arg(data_size(bytes.size()), data_size(session::wire::max_paste_bytes)));
         return false;
     }
-    if (document_->historyActive())
+    if (document_->historyActive()) {
+        pixel_remainder_ = 0;
         document_->returnToLive();
+    }
     if (!acceptsTerminalInput())
         return false;
     const auto owner = document_;
