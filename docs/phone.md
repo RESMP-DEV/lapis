@@ -47,10 +47,12 @@ uv run --no-project python scripts/install_ios_app.py --host <mac-zerotier-addre
 ## When the phone cannot connect
 
 "The Mac did not answer" covers a refused connection, a timeout and a failed
-name lookup alike. A request that reaches the gateway is always logged, even
-when refused, so no new line in `~/Library/Logs/lapis-remote.log` means the
-phone's traffic never arrived. Checks, in the order they mattered on
-2026-10-27:
+name lookup alike. Most accepted requests are logged, but silence is not proof
+that traffic never arrived: when all 16 gateway connections are held, the
+accept thread can return a busy reply without the normal request log, and an
+abandoned `list_agents` or `deck` long-poll can also end without a log line.
+Check those two cases before following the routing checks below, which are in
+the order they mattered on 2026-10-27:
 
 - **The gateway does not listen on ZeroTier.** The startup line says `via
   Tailscale` only, and the LaunchAgent's arguments lack `--zerotier`.
