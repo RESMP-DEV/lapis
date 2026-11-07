@@ -6,6 +6,7 @@
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QThread>
 #include <functional>
@@ -59,6 +60,19 @@ class AttentionServiceTestAccess final {
     static void receive_filtered_only(SessionService& service, const QByteArray& output) {
         service.terminal_hooks_.emplace();
         service.receive_output(output);
+    }
+
+    static void receive(SessionService& service, const QByteArray& output) {
+        service.receive_output(output);
+    }
+
+    [[nodiscard]] static bool notify_turn_completed(const SessionService& service) {
+        return service.notify_state_ &&
+               service.notify_state_->activity() == attention::Activity::turn_completed;
+    }
+
+    [[nodiscard]] static const ResumeRecord& resume(const SessionService& service) {
+        return service.resume_;
     }
 
     static void write_text(SessionService& service, QLocalSocket* source, const QByteArray& bytes) {
@@ -256,6 +270,49 @@ void filtered_output_still_records_pty_timing() {
     lapis::session::AttentionServiceTestAccess::receive_filtered_only(
         service, "\x1b]7717;lapis-init;codex;not-bound\x07");
     require(lapis::session::AttentionServiceTestAccess::pty_read_ns(service) != 0);
+}
+
+// A local OMP agent's extension reports a finished turn and its session id
+// through the terminal; submitted input starts the next turn.
+void omp_turns_arrive_through_the_terminal() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-omp-XXXXXX")};
+    require(directory.isValid());
+    require(QFile::setPermissions(directory.path(),
+                                  QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    const auto program = directory.filePath(QStringLiteral("omp"));
+    require(QFile::link(QStringLiteral("/bin/cat"), program));
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = program,
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+
+    const QByteArray nonce("0123456789abcdef0123456789abcdef");
+    const auto frame = [&nonce](const char* type) {
+        const QJsonObject source{{"type", type},
+                                 {"session_id", "01a00000-0000-7000-8000-000000000001"}};
+        return "\x1b]7717;lapis-event;" + nonce + ";" +
+               QJsonDocument(source).toJson(QJsonDocument::Compact).toBase64() + "\x07";
+    };
+    Access::receive(service, "\x1b]7717;lapis-init;omp;" + nonce + "\x07" + frame("session_start"));
+    require(!Access::notify_turn_completed(service));
+    require(Access::resume(service).agent == QStringLiteral("omp") &&
+            Access::resume(service).session_id ==
+                QStringLiteral("01a00000-0000-7000-8000-000000000001"));
+    // A subagent's printed checkpoint names a session `omp --resume` cannot find.
+    const QJsonObject subagent{
+        {"version", 1}, {"agent", "omp"}, {"session_id", "01a00000-0000-7000-8000-000000000002"}};
+    Access::receive(service, "\x1b]1337;SetUserVar=agent_checkpoint=" +
+                                 QJsonDocument(subagent).toJson(QJsonDocument::Compact).toBase64() +
+                                 "\x07");
+    require(Access::resume(service).session_id ==
+            QStringLiteral("01a00000-0000-7000-8000-000000000001"));
+    Access::receive(service, frame("agent_end"));
+    require(Access::notify_turn_completed(service));
 }
 
 void parser_carries_a_split_synchronized_marker() {
@@ -533,6 +590,7 @@ int main(int argc, char** argv) {
         failed_journal_refuses_decision();
         notify_only_rejection_names_codex();
         filtered_output_still_records_pty_timing();
+        omp_turns_arrive_through_the_terminal();
         parser_carries_a_split_synchronized_marker();
         adjacent_updates_do_not_hide_a_finished_frame();
         a_first_burst_of_text_settles_before_it_is_shown();

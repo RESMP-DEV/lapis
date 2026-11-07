@@ -153,7 +153,8 @@ void TerminalHookChannel::accept(QByteArrayView body, std::vector<TerminalHookEv
     const auto value = body.sliced(second + 1);
     if (kind == QByteArrayView("init")) {
         if (!nonce_.isEmpty() || !valid_nonce(value) ||
-            (subject != QByteArrayView("claude") && subject != QByteArrayView("codex")))
+            (subject != QByteArrayView("claude") && subject != QByteArrayView("codex") &&
+             subject != QByteArrayView("omp")))
             return;
         nonce_ = value.toByteArray();
         cli_ = QString::fromLatin1(subject);
@@ -228,8 +229,9 @@ bool NotifyTurns::submitted() {
 }
 
 QString NotifyTurns::diagnostic() const {
-    return QStringLiteral("Codex notify turns: synchronized=%1 epoch=%2 sequence=%3; "
+    return QStringLiteral("%1 turns: synchronized=%2 epoch=%3 sequence=%4; "
                           "between turns status is estimated from output")
+        .arg(label_)
         .arg(state_.ready() ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(state_.epoch())
         .arg(sequence_);
