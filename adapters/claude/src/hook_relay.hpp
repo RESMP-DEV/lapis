@@ -36,7 +36,8 @@ inline constexpr std::array<QStringView, 9> hook_event_names{
 // Claude Code settings (for --settings) that run `command` for every event
 // above, or every event but PermissionRequest. The command must never print a
 // decision or exit 2.
-[[nodiscard]] QByteArray hook_settings(const QString& command, bool permission_requests = true);
+[[nodiscard]] QByteArray hook_settings(const QString& command,
+                                       bool omit_permission_request = false);
 
 // Whether this environment sets CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS,
 // which lets dangerous rm commands run without a prompt in bypass permissions

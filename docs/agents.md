@@ -89,11 +89,14 @@ your Claude Code settings choose; lapis does not override them.
 
 One hook is left out when your login shell sets
 `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS` (to `1`, `true`, `yes` or
-`on`), which lets dangerous `rm` commands run without a prompt in Full access.
+`on`, trimmed and in any case), which lets dangerous `rm` commands run without
+a prompt in Full access.
 Claude Code ignores that variable while any PermissionRequest hook is
 configured, so an agent on this Mac then gets no lapis PermissionRequest hook,
-and Claude Code's permission notice still reports each prompt. An agent on
-another machine keeps the hook, so the variable has no effect there.
+and Claude Code's permission notice still reports the prompt; lapis carries the
+observed tool name from the preceding PreToolUse event. A PermissionRequest
+hook configured outside lapis can still suppress the waiver. An agent on
+another machine keeps the lapis hook, so the variable has no effect there.
 
 ## Full-screen CLIs
 

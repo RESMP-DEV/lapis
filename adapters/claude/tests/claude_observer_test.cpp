@@ -606,18 +606,22 @@ void terminal_transport() {
 // permission_prompt notification alone still reports a prompt.
 void dangerous_rm_waiver() {
     constexpr const char* waiver = "CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS";
+    qunsetenv(waiver);
     const auto hooks = [](const QByteArray& settings) {
         return QJsonDocument::fromJson(settings).object()["hooks"].toObject();
     };
     require(hooks(lapis::claude::hook_settings(QStringLiteral("true"))).size() == 9);
-    const auto reduced = hooks(lapis::claude::hook_settings(QStringLiteral("true"), false));
+    const auto reduced = hooks(lapis::claude::hook_settings(QStringLiteral("true"), true));
     require(reduced.size() == 8 && !reduced.contains(QStringLiteral("PermissionRequest")) &&
             reduced.contains(QStringLiteral("Notification")));
-    for (const auto* value : {"1", "true", " YES ", "on"}) {
+    constexpr const char* const accepted[] = {"1", "true", " YES ", "on"};
+    // The adapter trims and case-folds the environment value before matching.
+    for (const auto* value : accepted) {
         qputenv(waiver, value);
         require(lapis::claude::skips_dangerous_rm_prompts());
     }
-    for (const auto* value : {"", "0", "false", "off", "2"}) {
+    constexpr const char* const rejected[] = {"", "0", "false", "off", "2"};
+    for (const auto* value : rejected) {
         qputenv(waiver, value);
         require(!lapis::claude::skips_dangerous_rm_prompts());
     }
@@ -637,10 +641,15 @@ void dangerous_rm_waiver() {
     qunsetenv(waiver);
     Fixture f;
     f.begin();
+    f.send(event("PreToolUse", "Bash", "tool-1"));
     auto prompt = event("Notification");
     prompt.insert("notification_type", "permission_prompt");
     f.send(prompt);
     require(f.state.pending().size() == 1);
+    const auto request_id = f.state.pending().begin()->first;
+    const auto details = f.observer.details(request_id);
+    require(details.value("toolName") == QStringLiteral("Bash") &&
+            details.value("hookEvent") == QStringLiteral("Notification"));
     f.send(event("UserPromptSubmit", {}, {}, "turn-2"));
     require(f.state.pending().empty());
 }

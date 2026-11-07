@@ -128,7 +128,7 @@ class Observer::Impl {
                              quote(socket_) + QLatin1Char(' ') + quote(nonce_) + QLatin1Char(' ') +
                              relay_contract.toString();
         QFile settings(temporary_->filePath(QStringLiteral("settings.json")));
-        const auto data = hook_settings(command, !skips_dangerous_rm_prompts());
+        const auto data = hook_settings(command, skips_dangerous_rm_prompts());
         if (!settings.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
             !settings.setPermissions(QFile::ReadOwner | QFile::WriteOwner) ||
             settings.write(data) != data.size() || !settings.flush())
@@ -367,6 +367,7 @@ class Observer::Impl {
             loss(QStringLiteral("Claude prompt boundary has no identity"));
             return;
         }
+        permission_notification_tool_.clear();
         if (prompts_.contains(prompt))
             return;
         if (prompts_.size() >= prompt_limit) {
@@ -476,14 +477,20 @@ class Observer::Impl {
                 const bool pending = std::any_of(
                     state_.pending().begin(), state_.pending().end(),
                     [](const auto& item) { return item.second.request.reason == "approval"; });
-                if (!pending)
-                    request(event, false, false);
-            } else if (name == QLatin1String("PreToolUse") && !tool.isEmpty() &&
-                       event.value("tool_name") == QLatin1String("AskUserQuestion"))
-                request(event, true, true);
-            else if ((name == QLatin1String("PostToolUse") ||
-                      name == QLatin1String("PostToolUseFailure")) &&
-                     !tool.isEmpty()) {
+                if (!pending) {
+                    QJsonObject reported = event;
+                    if (!permission_notification_tool_.isEmpty())
+                        reported.insert("tool_name", permission_notification_tool_);
+                    request(reported, false, false);
+                }
+            } else if (name == QLatin1String("PreToolUse")) {
+                permission_notification_tool_ = event.value("tool_name").toString();
+                if (!tool.isEmpty() &&
+                    permission_notification_tool_ == QLatin1String("AskUserQuestion"))
+                    request(event, true, true);
+            } else if ((name == QLatin1String("PostToolUse") ||
+                        name == QLatin1String("PostToolUseFailure")) &&
+                       !tool.isEmpty()) {
                 complete_tool(tool);
             }
         }
@@ -497,6 +504,7 @@ class Observer::Impl {
     QString nonce_;
     QString pinned_;
     QString prompt_;
+    QString permission_notification_tool_;
     QSet<QString> prompts_;
     QSet<QString> retired_sources_;
     QSet<QString> completed_tools_;
