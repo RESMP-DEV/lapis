@@ -1,7 +1,6 @@
 #include "workspace.hpp"
 #include "agent_checkpoint.hpp"
 #include "app_paths.hpp"
-#include "attention_order.hpp"
 #include "conversation_index.hpp"
 #include "harness_catalog.hpp"
 #include "hook_relay.hpp"

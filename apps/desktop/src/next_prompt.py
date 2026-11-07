@@ -133,7 +133,7 @@ RETRIEVED = 6
 INDEX_DAYS = 60
 INDEX_SECONDS = 3.0
 INDEX_NAME = "next_prompt_pairs.json"
-INDEX_VERSION = 2
+INDEX_VERSION = 3
 SNIPPET_CHARS = 600
 # Ordered OpenAI-compatible providers (`nextPrompt.providers`), tried in
 # order: a local or private endpoint first, then a hosted fallback. The chain
@@ -214,6 +214,25 @@ def blocks_text(content, kind):
     )
 
 
+_TRANSCRIPT = {}
+
+
+def transcript(path):
+    """Every record of a transcript, parsed once per path and mtime.
+
+    Only the transcript most recently read is kept (a transcript can be
+    large), so consecutive readers of one unchanged file share its parse;
+    reading any other transcript replaces it. The parsed value is bound locally
+    so a concurrent replacement cannot make this caller's return disappear."""
+    key = (path, os.path.getmtime(path))
+    if key not in _TRANSCRIPT:
+        parsed = list(records(path))
+        _TRANSCRIPT.clear()
+        _TRANSCRIPT[key] = parsed
+        return parsed
+    return _TRANSCRIPT[key]
+
+
 def narration(parts):
     """One line per distinct pre-tool step, repeats counted, bounded."""
     order = []
@@ -277,7 +296,7 @@ def add(turns, role, text, stamp):
 def claude_turns(path):
     """The person's prompts and the agent's visible replies, in order."""
     turns = []
-    for entry in records(path):
+    for entry in transcript(path):
         if entry.get("isSidechain") or entry.get("isMeta"):
             continue
         content = (
@@ -315,7 +334,7 @@ def codex_interactive(meta):
 
 def codex_turns(path):
     turns = []
-    for entry in records(path):
+    for entry in transcript(path):
         payload = entry.get("payload", {})
         if entry.get("type") != "response_item" or payload.get("type") != "message":
             continue
@@ -353,7 +372,7 @@ def omp_turns(path):
     """oh-my-pi's own JSONL: user/assistant message entries; toolResult
     entries are outputs, not visible turns."""
     turns = []
-    for entry in records(path):
+    for entry in transcript(path):
         if entry.get("type") != "message":
             continue
         message = entry.get("message")
@@ -375,7 +394,7 @@ def omp_turns(path):
 
 def omp_snippets(path):
     found = []
-    for entry in records(path):
+    for entry in transcript(path):
         if entry.get("type") != "message":
             continue
         message = entry.get("message")
@@ -411,7 +430,7 @@ def claude_snippets(path):
     """Bounded tool and subagent outputs the visible-turn parser drops. Each
     keeps its timestamp and an excerpt for the pack arm."""
     found = []
-    for entry in records(path):
+    for entry in transcript(path):
         if entry.get("isSidechain") or entry.get("isMeta"):
             continue
         content = (
@@ -437,7 +456,7 @@ def claude_snippets(path):
 
 def codex_snippets(path):
     found = []
-    for entry in records(path):
+    for entry in transcript(path):
         payload = entry.get("payload", {})
         if entry.get("type") != "response_item" or payload.get("type") not in (
             "function_call_output",
@@ -697,6 +716,9 @@ def command_context(arguments):
     path = find_transcript(arguments.cli, arguments.conversation, arguments.folder)
     if not path:
         return {"error": "no transcript"}
+    # Stamped before the parse: a write during the read leaves the recorded
+    # mtime older than the file, so the next index scan reads it again.
+    stamp = os.path.getmtime(path)
     turns = turns_of(arguments.cli, path)
     prompts = [t for t in turns if t["role"] == "person"]
     shown = history(turns)
@@ -705,11 +727,10 @@ def command_context(arguments):
     files = None
     if folder is not None:
         try:
-            files = pair_index(folder)
+            files = pair_index(folder, parsed={path: (stamp, turns)})
         except OSError:
             files = None
-    entry = files.get(path) if files is not None else None
-    snippets = entry.get("snippets", []) if entry else snippets_of(arguments.cli, path)
+    snippets = snippets_of(arguments.cli, path)
     result = {
         "conversation": os.path.basename(path)[: -len(".jsonl")],
         "conversation_id": transcript_conversation_id(arguments.cli, path),
@@ -883,9 +904,8 @@ def command_sample(arguments):
 WORD = re.compile(r"[a-z0-9]{3,}")
 
 
-def transcript_pairs(cli, path):
+def transcript_pairs(turns):
     """(time, reply tail, the person's answer) for each answered agent turn."""
-    turns = turns_of(cli, path)
     return [
         [
             turn.get("time") or "",
@@ -895,12 +915,12 @@ def transcript_pairs(cli, path):
         for i, turn in enumerate(turns)
         if i
         and turn["role"] == "person"
-        and turns[i - 1]["role"] != "person"
+        and turns[i - 1]["role"] == "agent"
         and not turn["text"].lstrip().startswith("/")
     ]
 
 
-def transcript_prompts(cli, path):
+def transcript_prompts(cli, path, turns):
     """Every person prompt in a transcript, for the cross-session window."""
     if cli == "claude":
         folder = os.path.basename(os.path.dirname(path))
@@ -910,14 +930,19 @@ def transcript_prompts(cli, path):
         folder = ""
     return [
         [turn.get("time") or "", folder, clip(turn["text"], 400)]
-        for turn in turns_of(cli, path)
+        for turn in turns
         if turn["role"] == "person" and turn.get("time")
     ]
 
 
-def pair_index(folder, now=None, budget=INDEX_SECONDS):
+def pair_index(folder, now=None, budget=INDEX_SECONDS, parsed=None):
     """Past exchanges on this Mac, cached in `folder` and brought up to date
-    within `budget` seconds a call, newest transcripts first."""
+    within `budget` seconds a call, newest transcripts first.
+
+    `parsed` maps a transcript path to the (mtime, turns) its caller already
+    read; an entry whose mtime still matches uses that parse, so the scan
+    order costs no second read of the conversation. Tool output stays in the
+    transcripts; the index holds only pairs and prompts."""
     now = now or time.time()
     path = os.path.join(folder, INDEX_NAME)
     try:
@@ -947,11 +972,12 @@ def pair_index(folder, now=None, budget=INDEX_SECONDS):
     files = {k: v for k, v in index["files"].items() if k in found}
     started = time.time()
     changed = False
+    for entry in files.values():
+        if isinstance(entry, dict) and entry.pop("snippets", None) is not None:
+            changed = True
     for name, (cli, stamp) in sorted(found.items(), key=lambda f: -f[1][1]):
-        if (
-            files.get(name, {}).get("mtime") == stamp
-            and "prompts" in files.get(name, {})
-            and "snippets" in files.get(name, {})
+        if files.get(name, {}).get("mtime") == stamp and "prompts" in files.get(
+            name, {}
         ):
             continue
         if time.time() - started > budget:
@@ -962,14 +988,17 @@ def pair_index(folder, now=None, budget=INDEX_SECONDS):
             interactive = codex_interactive(codex_meta(name))
         else:
             interactive = omp_interactive(omp_meta(name))
-        pairs = transcript_pairs(cli, name) if interactive else []
-        prompts = transcript_prompts(cli, name) if interactive else []
-        snippets = snippets_of(cli, name) if interactive else []
+        ready = parsed.get(name) if parsed else None
+        if not interactive:
+            turns = []
+        elif ready and ready[0] == stamp:
+            turns = ready[1]
+        else:
+            turns = turns_of(cli, name)
         files[name] = {
             "mtime": stamp,
-            "pairs": pairs,
-            "prompts": prompts,
-            "snippets": snippets,
+            "pairs": transcript_pairs(turns),
+            "prompts": transcript_prompts(cli, name, turns),
         }
         changed = True
     if changed or len(files) != len(index["files"]):
