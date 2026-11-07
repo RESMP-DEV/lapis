@@ -500,6 +500,92 @@ class TranscriptTests(Homes):
         self.assertEqual(again, files)
         self.assertNotIn("snippets", index.read_text())
 
+    def test_a_transcript_is_parsed_once_while_it_stays_cached(self):
+        parses = []
+        real = next_prompt.records
+
+        def counting(path):
+            parses.append(path)
+            return real(path)
+
+        with patch.object(next_prompt, "records", counting):
+            first = next_prompt.transcript(str(self.claude_path))
+            again = next_prompt.transcript(str(self.claude_path))
+            next_prompt.transcript(str(self.codex_path))
+            next_prompt.transcript(str(self.claude_path))
+        self.assertIs(first, again)
+        self.assertEqual(
+            parses,
+            [str(self.claude_path), str(self.codex_path), str(self.claude_path)],
+        )
+        stamp = self.claude_path.stat().st_mtime
+        os.utime(self.claude_path, (stamp + 2, stamp + 2))
+        with patch.object(next_prompt, "records", counting):
+            next_prompt.transcript(str(self.claude_path))
+        self.assertEqual(parses[-1], str(self.claude_path))
+        self.assertEqual(len(parses), 4)
+
+    def test_context_parses_its_conversation_once_whatever_the_index_order(self):
+        # A newer transcript is scanned first, replacing the live
+        # conversation's cache before the scan reaches it.
+        stamp = self.claude_path.stat().st_mtime
+        os.utime(self.codex_path, (stamp + 10, stamp + 10))
+        reads = []
+        real = next_prompt.turns_of
+
+        def counting(cli, path):
+            reads.append(path)
+            return real(cli, path)
+
+        arguments = next_prompt.argparse.Namespace(
+            cli="claude", conversation="c1", folder=""
+        )
+        with patch.object(next_prompt, "turns_of", counting):
+            context = next_prompt.command_context(arguments)
+        self.assertEqual(reads.count(str(self.claude_path)), 1)
+        self.assertEqual(context["conversation"], "c1")
+
+    def test_the_index_reuses_a_matching_parse_and_not_a_stale_one(self):
+        folder = self.root / "runtime"
+        folder.mkdir()
+        path = str(self.claude_path)
+        stamp = self.claude_path.stat().st_mtime
+        turns = next_prompt.turns_of("claude", path)
+        reads = []
+        real = next_prompt.turns_of
+
+        def counting(cli, name):
+            reads.append(name)
+            return real(cli, name)
+
+        with patch.object(next_prompt, "turns_of", counting):
+            files = next_prompt.pair_index(
+                folder=str(folder), parsed={path: (stamp, turns)}
+            )
+        self.assertNotIn(path, reads)
+        self.assertEqual([p[2] for p in files[path]["pairs"]], ["go"])
+
+        os.utime(self.claude_path, (stamp + 5, stamp + 5))
+        with patch.object(next_prompt, "turns_of", counting):
+            files = next_prompt.pair_index(
+                folder=str(folder), parsed={path: (stamp, turns)}
+            )
+        self.assertIn(path, reads, "a newer transcript is read again")
+        self.assertEqual([p[2] for p in files[path]["pairs"]], ["go"])
+
+    def test_pairs_join_an_answer_to_the_agent_turn_it_follows(self):
+        pairs = next_prompt.transcript_pairs(
+            [
+                {"role": "person", "text": "no reply yet", "time": "t0"},
+                {"role": "agent", "text": "the reply", "time": "t1"},
+                {"role": "person", "text": "go", "time": "t2"},
+                {"role": "person", "text": "also go", "time": "t3"},
+                {"role": "agent", "text": "done", "time": "t4"},
+                {"role": "person", "text": "/compact", "time": "t5"},
+            ]
+        )
+        self.assertEqual(pairs, [["t2", "the reply", "go"]])
+
     def test_context_brings_what_was_sent_for_an_earlier_offer(self):
         ask = next_prompt.argparse.Namespace
         context = next_prompt.command_context(

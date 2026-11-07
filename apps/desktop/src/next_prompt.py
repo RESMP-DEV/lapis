@@ -202,8 +202,11 @@ _TRANSCRIPT = {}
 
 
 def transcript(path):
-    """Every record of a transcript. The last one read is kept, so the live
-    conversation's turns, snippets and index entry share one parse."""
+    """Every record of a transcript, parsed once per path and mtime.
+
+    Only the transcript most recently read is kept (a transcript can be
+    large), so consecutive readers of one unchanged file share its parse;
+    reading any other transcript replaces it."""
     key = (path, os.path.getmtime(path))
     if key not in _TRANSCRIPT:
         _TRANSCRIPT.clear()
@@ -639,14 +642,20 @@ def command_context(arguments):
     path = find_transcript(arguments.cli, arguments.conversation, arguments.folder)
     if not path:
         return {"error": "no transcript"}
+    # Stamped before the parse: a write during the read leaves the recorded
+    # mtime older than the file, so the next index scan reads it again.
+    stamp = os.path.getmtime(path)
     turns = turns_of(arguments.cli, path)
     prompts = [t for t in turns if t["role"] == "person"]
     shown = history(turns)
     now = time.time()
-    # Before pair_index, which reads other transcripts after this one.
+    # Consecutive with turns_of, sharing its cached parse.
     snippets = snippet_pack(shown, snippets_of(arguments.cli, path), target=now)
     try:
-        files = pair_index(os.path.dirname(os.path.abspath(__file__)))
+        files = pair_index(
+            os.path.dirname(os.path.abspath(__file__)),
+            parsed={path: (stamp, turns)},
+        )
     except OSError:
         files = {}
     result = {
@@ -813,7 +822,8 @@ WORD = re.compile(r"[a-z0-9]{3,}")
 
 
 def transcript_pairs(turns):
-    """(time, reply tail, the person's answer) for each answered agent turn."""
+    """(answer time, reply tail, the person's answer) for each person turn
+    directly following a rendered agent turn, as turns_of returns them."""
     return [
         [
             turn.get("time") or "",
@@ -823,7 +833,7 @@ def transcript_pairs(turns):
         for i, turn in enumerate(turns)
         if i
         and turn["role"] == "person"
-        and turns[i - 1]["role"] != "person"
+        and turns[i - 1]["role"] == "agent"
         and not turn["text"].lstrip().startswith("/")
     ]
 
@@ -843,9 +853,13 @@ def transcript_prompts(cli, path, turns):
     ]
 
 
-def pair_index(folder, now=None, budget=INDEX_SECONDS):
+def pair_index(folder, now=None, budget=INDEX_SECONDS, parsed=None):
     """Past exchanges on this Mac, cached in `folder` and brought up to date
-    within `budget` seconds a call, newest transcripts first."""
+    within `budget` seconds a call, newest transcripts first.
+
+    `parsed` maps a transcript path to the (mtime, turns) its caller already
+    read; an entry whose mtime still matches uses that parse, so the scan
+    order costs no second read of the conversation."""
     now = now or time.time()
     path = os.path.join(folder, INDEX_NAME)
     try:
@@ -891,7 +905,13 @@ def pair_index(folder, now=None, budget=INDEX_SECONDS):
             interactive = codex_interactive(codex_meta(name))
         else:
             interactive = omp_interactive(omp_meta(name))
-        turns = turns_of(cli, name) if interactive else []
+        ready = parsed.get(name) if parsed else None
+        if not interactive:
+            turns = []
+        elif ready and ready[0] == stamp:
+            turns = ready[1]
+        else:
+            turns = turns_of(cli, name)
         pairs = transcript_pairs(turns)
         prompts = transcript_prompts(cli, name, turns)
         files[name] = {"mtime": stamp, "pairs": pairs, "prompts": prompts}
