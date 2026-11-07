@@ -1959,7 +1959,9 @@ class MachineTests(unittest.TestCase):
                 command, 0, f"proxyjump {jumps[machine]}\n", ""
             )
 
-        machines = remote.MachineList(self.root / "none.json", config)
+        machines = remote.MachineList(
+            self.root / "none.json", config, [self.root / "no-history"]
+        )
         with patch.object(remote.subprocess, "run", side_effect=resolve):
             machines.build()
         self.assertEqual(

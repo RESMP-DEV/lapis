@@ -27,6 +27,7 @@
 #include <QLockFile>
 #include <QPointer>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSet>
 #include <QTimer>
 
@@ -2137,8 +2138,21 @@ class SessionService final : public QObject {
         if (!payload.isEmpty())
             throw std::runtime_error("Terminate message must be empty");
         // Reaped children may still be draining output/history before `ended`.
-        if (pty_.processId() != 0 && !pty_.hangup())
-            throw std::runtime_error("Agent process could not be ended");
+        if (pty_.processId() != 0) {
+            if (!pty_.hangup())
+                throw std::runtime_error("Agent process could not be ended");
+            write_close_marker();
+        }
+    }
+    void write_close_marker() const {
+        QSaveFile marker(resume_endpoint_ + QStringLiteral(".supervisor-close"));
+        if (!marker.open(QIODevice::WriteOnly))
+            throw std::runtime_error("Requested close could not be recorded");
+        marker.write("LAPIS-SUP-CLOSE-1\n");
+        marker.write(QByteArray::number(QCoreApplication::applicationPid()) + '\n');
+        marker.write(identity_.epoch.toHex() + '\n');
+        if (!marker.commit())
+            throw std::runtime_error("Requested close could not be committed");
     }
     void apply_resize(TerminalSize size) {
         if (pty_.terminalClosed())

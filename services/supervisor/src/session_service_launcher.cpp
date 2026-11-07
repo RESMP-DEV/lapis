@@ -51,6 +51,23 @@ bool hex(const std::string& value, std::size_t length) { return valid_hex(value,
 
 std::string owner_path(const std::string& endpoint) { return endpoint + ".supervisor-owner"; }
 
+QString close_marker_path(const ChildProcess& child) {
+    return QString::fromStdString(child.endpoint) + QStringLiteral(".supervisor-close");
+}
+
+bool close_was_requested(const ChildProcess& child) {
+    QFile marker(close_marker_path(child));
+    if (!marker.open(QIODevice::ReadOnly))
+        return false;
+    const QList<QByteArray> fields = marker.readAll().split('\n');
+    if (fields.size() != 4 || fields[0] != QByteArrayLiteral("LAPIS-SUP-CLOSE-1"))
+        return false;
+    bool valid_pid = false;
+    const qlonglong pid = fields[1].toLongLong(&valid_pid);
+    return valid_pid && pid == child.pid &&
+           fields[2] == QByteArray::fromStdString(child.session_epoch);
+}
+
 void remove_quietly(const std::string& path) { static_cast<void>(::unlink(path.c_str())); }
 
 bool process_alive(pid_t pid) {
@@ -637,10 +654,10 @@ bool SessionServiceLauncher::alive(const ChildProcess& child) {
         int status = 0;
         const auto waited = ::waitpid(child.pid, &status, WNOHANG);
         if (waited == child.pid) {
-            constexpr int requested_hangup_exit = 128 + SIGHUP;
             const int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 0;
             const bool clean_exit =
-                WIFEXITED(status) && (exit_code == 0 || exit_code == requested_hangup_exit);
+                WIFEXITED(status) &&
+                (exit_code == 0 || (exit_code == 128 + SIGHUP && close_was_requested(child)));
             last_termination_ = TerminationRecord{child.pid, child.spawn_token,
                                                   clean_exit ? ChildTermination::exited
                                                              : ChildTermination::signaled};
@@ -724,6 +741,7 @@ void SessionServiceLauncher::release(const ChildProcess& child) {
         if (record.has_value() && record->pid == child.pid &&
             record->spawn_token == child.spawn_token)
             remove_quietly(owner_path(child.endpoint));
+        remove_quietly(close_marker_path(child).toStdString());
     } catch (...) {
         // A malformed or foreign ownership record is not ours to delete.
     }

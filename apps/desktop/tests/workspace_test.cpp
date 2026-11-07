@@ -3689,8 +3689,12 @@ void ompGetsItsResizeOverlay() {
                 "an OMP stand-in on another machine");
         auto* remote = workspace.focusedSession();
         require(remote != nullptr && remote != agent, "the remote OMP stand-in is shown");
-        require(waitFor([&] { return remote->inputReady() && QFileInfo::exists(remoteCapture); },
-                        10000),
+        require(waitFor(
+                    [&] {
+                        return remote->inputReady() && QFileInfo::exists(remoteCapture) &&
+                               screenText(remote->snapshot()).contains(QStringLiteral("omp ready"));
+                    },
+                    10000),
                 "the remote OMP stand-in starts");
         QFile remoteCaptured(remoteCapture);
         require(remoteCaptured.open(QIODevice::ReadOnly),
