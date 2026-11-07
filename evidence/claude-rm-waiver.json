@@ -1,18 +1,19 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-07T01:54:25Z",
+  "recorded_at": "2026-11-07T02:31:24Z",
   "passed": true,
   "scope": "Claude Code ignores CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS while any PermissionRequest hook is configured. A local launch that sets an accepted waiver value omits only that hook, and the permission_prompt notification remains observable with the tool name from the preceding PreToolUse event.",
   "platform": "macOS 26.7.1 arm64",
   "source": {
     "baseline": "30306f6fea0aedf0488075ec3a82ed6ce0ad83ff",
+    "integrated_revision": "691c1f66a2c4e0aae3dc3de48b91a50046702ef3",
     "tested_worktree_dirty": true,
     "source_sha256": {
       "adapters/claude/src/hook_relay.hpp": "061b042ca76a28c608199c25d4c464da0495051b488e7b4044e1b4ed674b4a42",
       "adapters/claude/src/hook_relay.cpp": "627b44e81399ff712e0820a5947b8956d7f88b0a5f3e9604971a4ec11b57b8bd",
       "adapters/claude/src/claude_observer.cpp": "60da2b4ff21df395aab082c0f8ce2672f238012d5fea52bee76aca428db9c25f",
       "adapters/claude/tests/claude_observer_test.cpp": "f79c0d151c2e86ae951951e25017f0918ef493d17116517ab32feaaa348c1207",
-      "docs/agents.md": "7acdc4d2985ffc2f27e78a012e9a697ce04675d26a84212a90bd0c271811268c"
+      "docs/agents.md": "b17ed7869ce19c09e38bdaab6e8e0e37bf892d6d970c5e1b3ccd3cd89aa3e06d"
     }
   },
   "claude_code": {
@@ -31,11 +32,11 @@
     {
       "case": "waiver, repaired lapis_session_service --claude, installed Claude Code",
       "waiver_value": "1",
-      "service_sha256": "bb70ab905febb0ee119a393559430e25672214bc3c5bdae9aa002aaac77463f6",
+      "service_sha256": "ac6d0394eb8373f272b25089b4d0d5cf0bb3b9a02f53eb4188a30bc1c75b446a",
       "hooks": 8,
       "hooks_omitted": ["PermissionRequest"],
       "model": "lapis-fake loopback",
-      "elapsed_seconds": 18.133,
+      "elapsed_seconds": 18.398,
       "permission_notice": {
         "hookEvent": "Notification",
         "toolName": "Bash",
@@ -77,10 +78,10 @@
     },
     {
       "name": "installed Claude Code through real session service",
-      "command": "CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 PYTHONPATH=scripts python3 -c 'import check_claude_hooks as check; check.SUPPORTED_VERSION = \"2.1.309\"; raise SystemExit(check.main([\"--fake-model\", \"--build-dir\", \"build/desktop\", \"--output\", \"build/claude-hooks-waiver-repro/final-live.json\"]))'",
+      "command": "CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 PYTHONPATH=scripts python3 -c 'import check_claude_hooks as check; check.SUPPORTED_VERSION = \"2.1.309\"; raise SystemExit(check.main([\"--fake-model\", \"--build-dir\", \"build/desktop\", \"--output\", \"build/claude-hooks-waiver-repro/final-live-integrated.json\"]))'",
       "result": "pass",
-      "completed_at": "2026-11-07T01:47:55Z",
-      "receipt": "build/claude-hooks-waiver-repro/final-live.json",
+      "completed_at": "2026-11-07T02:31:24Z",
+      "receipt": "build/claude-hooks-waiver-repro/final-live-integrated.json",
       "note": "The in-memory override only accepts the installed 2.1.309 version; the service, hooks and Claude Code binary are unmodified."
     },
     {
@@ -88,7 +89,7 @@
       "setup": "cmake --preset asan -B build/desktop-asan -DLAPIS_BUILD_DESKTOP=ON -DCMAKE_CXX_COMPILER=\"$LAPIS_LLVM_BIN/clang++\" -DCMAKE_OSX_SYSROOT=\"$(xcrun --show-sdk-path)\" -DLAPIS_GHOSTTY_PREFIX=\"$LAPIS_GHOSTTY_PREFIX\" -DCMAKE_PREFIX_PATH=\"$LAPIS_QT_PREFIX\" && cmake --build build/desktop-asan --target lapis_claude_observer_tests --parallel 8",
       "command": "ASAN_OPTIONS=detect_leaks=0 QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-asan -R '^claude-observer$' --no-tests=error --output-on-failure",
       "result": "pass",
-      "elapsed_seconds": 7.71,
+      "elapsed_seconds": 7.33,
       "completed_at": "2026-11-07T01:47:31Z"
     },
     {
@@ -96,7 +97,7 @@
       "setup": "cmake --preset tsan -B build/desktop-tsan -DLAPIS_BUILD_DESKTOP=ON -DCMAKE_CXX_COMPILER=\"$LAPIS_LLVM_BIN/clang++\" -DCMAKE_OSX_SYSROOT=\"$(xcrun --show-sdk-path)\" -DLAPIS_GHOSTTY_PREFIX=\"$LAPIS_GHOSTTY_PREFIX\" -DCMAKE_PREFIX_PATH=\"$LAPIS_QT_PREFIX\" && cmake --build build/desktop-tsan --target lapis_claude_observer_tests --parallel 8",
       "command": "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-tsan -R '^claude-observer$' --no-tests=error --output-on-failure",
       "result": "pass",
-      "elapsed_seconds": 126.02,
+      "elapsed_seconds": 124.31,
       "completed_at": "2026-11-07T01:50:05Z"
     }
   ],
