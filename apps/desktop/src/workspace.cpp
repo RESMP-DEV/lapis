@@ -496,11 +496,11 @@ QString remoteLaunch(const AgentRequest& request, const QString& command, QStrin
     QStringList words{shellWord(request.program.isEmpty() ? command : request.program)};
     for (const auto& argument : arguments)
         words << shellWord(argument);
-    // Its full-screen renderer, as for an agent here (see main), unless that
+    // Its classic renderer, as for an agent here (see main), unless that
     // machine's login shell chose otherwise.
     if (claude)
         words.prepend(
-            QStringLiteral(R"(export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}";)"));
+            QStringLiteral(R"(export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-0}";)"));
     const auto folder = remoteFolder(request.directory);
     const auto line =
         conversation.isEmpty()

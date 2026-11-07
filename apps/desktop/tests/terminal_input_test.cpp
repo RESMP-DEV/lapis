@@ -1461,6 +1461,46 @@ void selection_and_scroll() {
     QCoreApplication::sendEvent(&surface, &resume);
     require(!f.document.historyActive(), "Typing did not return to the live screen");
     require(text_frames(peer, 1) == QByteArray("y"), "Typing on a history page was dropped");
+    // A trackpad moves history by pixels: a row and a half back moves the
+    // page a row and slides it the other half down, cells and all; scrolling
+    // that half forward again lines the rows up with the top.
+    const qreal row = surface.cellRect(0, 0).height();
+    QPointingDevice touchpad(QStringLiteral("test trackpad"), 1, QInputDevice::DeviceType::TouchPad,
+                             QPointingDevice::PointerType::Finger,
+                             QInputDevice::Capabilities{QInputDevice::Capability::PixelScroll}, 1,
+                             0);
+    const auto trackpad = [&](int pixels) {
+        QWheelEvent event(middle, surface.mapToGlobal(middle), QPoint(0, pixels),
+                          QPoint(0, pixels * 2), Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate,
+                          false, Qt::MouseEventNotSynthesized, &touchpad);
+        QCoreApplication::sendEvent(&surface, &event);
+    };
+    const int travel = qCeil(row * 1.5);
+    trackpad(travel);
+    const auto kept = f.historyRequest(peer);
+    lapis::session::Terminal archive({f.terminal.snapshot().size.columns, 10});
+    archive.feed("old0\r\nold1\r\nold2\r\nold3\r\nold4\r\nold5\r\nold6\r\nold7\r\nold8\r\nold9");
+    auto page = archive.snapshot();
+    page.history = {10, 0, 10, true};
+    f.historyReply(peer, kept.request_id, 1, page);
+    until([&] { return f.document.historyActive() && !f.document.historyRequestPending(); });
+    require(f.document.snapshot().history.viewport_offset == 9,
+            "A trackpad's whole row did not move the history page");
+    require(std::abs(surface.cellRect(0, 0).top() - (travel - row)) < 0.01,
+            "The rest of the row did not slide the history page");
+    trackpad(-qRound(travel - row));
+    require(std::abs(surface.cellRect(0, 0).top()) < 1 &&
+                f.document.snapshot().history.viewport_offset == 9,
+            "Scrolling the slide back did not line the rows up again");
+    QKeyEvent live(QEvent::KeyPress, Qt::Key_V, Qt::NoModifier, QStringLiteral("v"));
+    QCoreApplication::sendEvent(&surface, &live);
+    require(!f.document.historyActive() && std::abs(surface.cellRect(0, 0).top()) < 0.01,
+            "The live screen kept a history slide");
+    require(text_frames(peer, 1) == QByteArray("v"), "Typing on a slid history page was dropped");
+    trackpad(-1);
+    trackpad(qRound(row) - 1);
+    require(!f.document.historyActive() && !f.document.historyRequestPending(),
+            "A forward pixel at the live screen borrowed a history row");
     // Partial trackpad/wheel angles must not cross the primary/alternate
     // boundary: history uses 40 units per row, programs use 120 per notch.
     quint64 sequence = 4;
