@@ -5,8 +5,34 @@
   "agent": "Codex parent with Qoder-first review workers and bounded native Codex repair workers",
   "source": {
     "base_revision": "b83a9d859ddcce090521d0bea25c9d511422cdc8",
+    "tested_revisions": {
+      "initial_combined_checks": "635b4807924e168ecf78e1471d43fd745290f734",
+      "supervisor_followup_checks": "461194dce2019e7dbce0ea5bda0347f5d760f808",
+      "review_quickfix_checks": "745974f27dafb3dc839879779f5d1de5f7e46ce8"
+    },
+    "changed_source_manifest": {
+      "algorithm": "sha256(git diff --binary base..review_quickfix_checks -- ':(exclude)evidence/*')",
+      "digest": "f43e5c86e49dd1bc266c66b8cd8289b3ee74aaf6bea3f50a5296f4f4721c5b2a",
+      "changed_paths": 20
+    },
+    "artifact_identities": {
+      "qt": {
+        "version": "6.11.2",
+        "prefix": "$HOME/lapis/build/release/qt"
+      },
+      "ghostty_initial": {
+        "source_revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+        "archive_sha256": "41f9d0d1e48718e9a2c827c9fececffd3a3448b7bd01d60fa4fa6e5b5b0d7bfc",
+        "prefix": "$HOME/lapis/build/terminal-probe/reproduce/ghostty/runs/059c2552dd9a4a7681b11e5c52a5c059/prefix"
+      },
+      "ghostty_followup": {
+        "source_revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+        "archive_sha256": "41f9d0d1e48718e9a2c827c9fececffd3a3448b7bd01d60fa4fa6e5b5b0d7bfc",
+        "prefix": "$HOME/lapis/.worktrees/pr-185-integration/build/terminal-probe/reproduce/ghostty/runs/7d22d68dd37944759521ab5e3d6f8f24/prefix"
+      }
+    },
     "worktree": ".worktrees/quality-sweep-20261107",
-    "dirty": true,
+    "dirty": false,
     "platform": "macOS 26.7.1 arm64",
     "toolchain": {
       "clang-format": "Apple clang-format 21.0.0",
@@ -67,11 +93,25 @@
         "supervisor-runtime: failed nonzero exit rotates into a replacement",
         "supervisor-daemon: persisted stopped slot reconstructs and authenticated reset succeeds"
       ]
+    },
+    {
+      "recorded_at": "2026-11-07T03:55:00Z",
+      "source": "CodeRabbit inline review",
+      "revision": "745974f27dafb3dc839879779f5d1de5f7e46ce8",
+      "changes": [
+        "Raise workspace-omp-overlay timeout above its wait budget",
+        "Use turn-specific Claude stand-in completion markers",
+        "Back off failed machine-list builds and test the timestamp",
+        "Correct the local OMP overlay-order documentation",
+        "Poll ownership release and silence two test-only swappable-parameter warnings",
+        "Document why clean-exit persistence failure intentionally exits for registry reload"
+      ]
     }
   ],
   "checks": [
     {
       "name": "repository-quality",
+      "source_revision": "635b4807924e168ecf78e1471d43fd745290f734",
       "command": "python3 scripts/lapis.py quality",
       "exit_code": 0,
       "passed": true,
@@ -79,6 +119,7 @@
     },
     {
       "name": "supervisor-runtime",
+      "source_revision": "461194dce2019e7dbce0ea5bda0347f5d760f808",
       "command": "just supervisor-runtime",
       "exit_code": 0,
       "passed": true,
@@ -86,25 +127,29 @@
     },
     {
       "name": "supervisor-asan",
-      "command": "CMAKE_PREFIX_PATH=<pinned-qt> LAPIS_GHOSTTY_PREFIX=<pinned-ghostty> python3 scripts/check_supervisor_runtime.py --preset supervisor-asan --jobs 8",
+      "source_revision": "461194dce2019e7dbce0ea5bda0347f5d760f808",
+      "command": "CMAKE_PREFIX_PATH=$HOME/lapis/build/release/qt LAPIS_GHOSTTY_PREFIX=$HOME/lapis/.worktrees/pr-185-integration/build/terminal-probe/reproduce/ghostty/runs/7d22d68dd37944759521ab5e3d6f8f24/prefix python3 scripts/check_supervisor_runtime.py --preset supervisor-asan --jobs 8",
       "exit_code": 0,
       "passed": true,
       "evidence": "build/reports/supervisor-asan-runtime/receipt.json"
     },
     {
       "name": "supervisor-review-followup",
+      "source_revision": "745974f27dafb3dc839879779f5d1de5f7e46ce8",
       "command": "ctest --preset supervisor -R '^(supervisor-runtime|supervisor-daemon)$' --output-on-failure",
       "exit_code": 0,
       "passed": true
     },
     {
       "name": "remote-relay-and-claude",
+      "source_revision": "635b4807924e168ecf78e1471d43fd745290f734",
       "command": "python3 -m unittest scripts.tests.test_remote_hook_relay && ctest --test-dir build/desktop -R '^(claude-observer|workspace-omp-overlay)$' --no-tests=error --output-on-failure && QT_QPA_PLATFORM=offscreen build/desktop/apps/desktop/lapis_workspace_tests --case remote-hooks",
       "exit_code": 0,
       "passed": true
     },
     {
       "name": "ui-review-background",
+      "source_revision": "635b4807924e168ecf78e1471d43fd745290f734",
       "command": "python3 scripts/lapis.py ui-review --json",
       "exit_code": 0,
       "passed": true,
@@ -113,10 +158,18 @@
     },
     {
       "name": "desktop-build-and-enabled-ctest",
-      "command": "CMAKE_PREFIX_PATH=<pinned-qt> LAPIS_GHOSTTY_PREFIX=<pinned-ghostty> cmake --build build/desktop -j 8 && ctest --test-dir build/desktop --no-tests=error --output-on-failure",
+      "source_revision": "635b4807924e168ecf78e1471d43fd745290f734",
+      "command": "CMAKE_PREFIX_PATH=$HOME/lapis/build/release/qt LAPIS_GHOSTTY_PREFIX=$HOME/lapis/build/terminal-probe/reproduce/ghostty/runs/059c2552dd9a4a7681b11e5c52a5c059/prefix cmake --build build/desktop -j 8 && ctest --test-dir build/desktop --no-tests=error --output-on-failure",
       "exit_code": 0,
       "passed": true,
       "observed": "43 enabled tests passed; nine native/screen-gated tests were disabled by repository policy."
+    },
+    {
+      "name": "review-quickfixes",
+      "source_revision": "745974f27dafb3dc839879779f5d1de5f7e46ce8",
+      "command": "python3 -m unittest scripts.tests.test_lapis_remote && ctest --preset supervisor -R '^(supervisor-runtime|supervisor-daemon)$' --output-on-failure && ctest --test-dir build/desktop -R '^workspace-omp-overlay$' --no-tests=error --output-on-failure",
+      "exit_code": 0,
+      "passed": true
     }
   ],
   "non_claims": [
