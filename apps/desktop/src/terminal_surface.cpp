@@ -1409,7 +1409,10 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
         wheel_program_ = program;
     }
     const auto grid = cellGrid();
-    const bool pixels = !event->pixelDelta().isNull() && grid && grid->height > 0;
+    // macOS also synthesizes pixel deltas for a coarse mouse wheel, so the
+    // device type—not pixelDelta alone—distinguishes a per-pixel trackpad.
+    const bool pixels = event->deviceType() == QInputDevice::DeviceType::TouchPad &&
+                        !event->pixelDelta().isNull() && grid && grid->height > 0;
     if (program) {
         // A program reading the mouse gets a wheel event per row a trackpad
         // moved, as in other terminals: agents such as Claude Code move one
