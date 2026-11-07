@@ -59,12 +59,18 @@ the order they mattered on 2026-10-27:
   `launch_agent.py install` records only the CLIs that are on PATH when it
   runs; launchd's own PATH never includes `/usr/local/bin`. Rerun the install
   from a shell where `zerotier-cli` resolves. If `launchctl bootstrap` exits 5
-  the old job was still unloading: bootstrap the plist again.
+  the old job was still unloading: bootstrap the plist again. If Tailscale was
+  ready but the Mac had not yet joined a private ZeroTier network when the
+  gateway started, that running process still has no ZeroTier admission: join
+  the network, then restart the gateway.
 - **The tailnet's access policy drops the phone.** Tailscale ping (UDP)
   succeeding proves nothing about TCP. Test from another node with
   `curl http://<mac-tailscale-ip>:7349/api/agents`, and read the Mac's
-  allowed sources from `tailscale debug netmap` (`PacketFilter[].Srcs`). A
-  work tailnet can admit only colleagues' machines; ZeroTier avoids it.
+  allowed sources from `tailscale debug netmap` (`PacketFilter[].Srcs`), but a
+  successful request from another node proves only that node is allowed. Check
+  the phone's tailnet address against the source ranges that may reach the
+  Mac on port 7349. A work tailnet can admit only colleagues' machines;
+  ZeroTier avoids it.
 - **The phone and Mac are on different ZeroTier networks.** `zerotier-cli
   listnetworks` on the Mac must show the network the phone joined. The iOS
   app runs one network at a time: the switch that is on is the one in use.
@@ -87,11 +93,11 @@ are refused.
 
 From the Mac, with the phone on a cable, `xcrun devicectl` installs, launches,
 copies app data and reports the lock state (a locked phone refuses launches).
-For the screen and logs, run `sudo uvx pymobiledevice3 remote tunneld` in the
-background, then `uvx pymobiledevice3 developer dvt screenshot --tunnel ""
-out.png` and `uvx pymobiledevice3 syslog live`. Neither taps the screen, and
-an XCUITest runner built to drive other apps failed to install on a retail
-iPhone with Xcode 26.6 ("Root install style is not supported").
+For the screen and logs, run `sudo "$(command -v uvx)" pymobiledevice3 remote
+tunneld` in the background, then `uvx pymobiledevice3 developer dvt screenshot
+--tunnel "" out.png` and `uvx pymobiledevice3 syslog live`. Neither taps the
+screen, and an XCUITest runner built to drive other apps failed to install on
+a retail iPhone with Xcode 26.6 ("Root install style is not supported").
 
 ## Using it
 
