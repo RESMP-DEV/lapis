@@ -1469,7 +1469,10 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
     // the text follows the fingers. Positive is back.
     int rows = 0;
     const auto grid = cellGrid();
-    const bool sliding = !event->pixelDelta().isNull() && grid && grid->height > 0;
+    // A coarse wheel can also carry synthesized pixels; only a trackpad slides
+    // by fractions of a row.
+    const bool sliding = event->deviceType() == QInputDevice::DeviceType::TouchPad &&
+                         !event->pixelDelta().isNull() && grid && grid->height > 0;
     if (sliding) {
         pixel_remainder_ += event->pixelDelta().y();
         rows = static_cast<int>(std::floor(pixel_remainder_ / grid->height));
@@ -1482,6 +1485,10 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
     interaction::wheel_outcome(QStringLiteral("history"), rows);
     if (rows != 0)
         document_->scrollHistory(rows);
+    // A forward sub-row at the live screen borrows a row the viewport never
+    // takes. Drop that borrowed fraction instead of charging the next gesture.
+    if (rows < 0 && !document_->historyActive())
+        pixel_remainder_ = 0;
     if (sliding && document_->historyActive())
         publishFrame(false);
 }
@@ -1528,6 +1535,8 @@ std::optional<TerminalSurface::CellGrid> TerminalSurface::cellGrid() const {
 }
 qreal TerminalSurface::historySlide() const {
     if (!document_ || wheel_program_ || pixel_remainder_ <= 0 || !document_->historyActive())
+        return 0;
+    if (!document_->historyRowAbove())
         return 0;
     return document_->snapshot().history.viewport_offset > 0 ? pixel_remainder_ : 0;
 }
@@ -1600,6 +1609,7 @@ void TerminalSurface::resumeLiveForTyping(const QKeyEvent& event) {
         return;
     if ((event.modifiers() & Qt::MetaModifier) == 0 || event.matches(QKeySequence::Paste)) {
         interaction::key_outcome({}, {{QStringLiteral("returnedLive"), true}});
+        pixel_remainder_ = 0;
         document_->returnToLive();
     }
 }
@@ -1973,8 +1983,10 @@ quint64 TerminalSurface::pasteTextRequest(const QString& text, std::optional<boo
                 .arg(data_size(bytes.size()), data_size(session::wire::max_paste_bytes)));
         return false;
     }
-    if (document_->historyActive())
+    if (document_->historyActive()) {
+        pixel_remainder_ = 0;
         document_->returnToLive();
+    }
     if (!acceptsTerminalInput())
         return false;
     const auto owner = document_;

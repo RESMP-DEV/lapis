@@ -377,6 +377,8 @@ class SessionService final : public QObject {
         attention_clock_.start();
         timer_.setSingleShot(true);
         connect(&timer_, &QTimer::timeout, this, [this] { publish_paced_output(); });
+        settle_timer_.setSingleShot(true);
+        connect(&settle_timer_, &QTimer::timeout, this, [this] { publish_paced_output(); });
         ack_timer_.setSingleShot(true);
         ack_timer_.setInterval(launch.agent == AgentMode::codex ? codex_sync_timeout_ms
                                                                 : terminal_sync_timeout_ms);
@@ -1146,6 +1148,10 @@ class SessionService final : public QObject {
         if (!pending_output_.isEmpty()) {
             if (timer_.isActive())
                 return; // a paced whole-frame publication owns the retained screen
+            if (settle_timer_.isActive()) {
+                QTimer::singleShot(0, this, [this] { process_output(); });
+                return;
+            }
             if (output_publication_blocked()) {
                 schedule();
                 return;
@@ -1409,7 +1415,7 @@ class SessionService final : public QObject {
     // so a typed key echoes without waiting; changes within a frame of the
     // last screen share the next one.
     void schedule() {
-        if (!process_started_ || stopping_ || timer_.isActive())
+        if (!process_started_ || stopping_ || timer_.isActive() || settle_timer_.isActive())
             return;
         if ((client_ && (!snapshot_in_flight_ || ready_) && dirty_) || views_due())
             timer_.start(static_cast<int>(snapshot_pace_.wait_ms(snapshot_clock_.elapsed())));
@@ -1493,8 +1499,17 @@ class SessionService final : public QObject {
         return false;
     }
     void publish() {
-        if (const qint64 wait = settle_wait_ms(); wait > 0) {
-            timer_.start(static_cast<int>(wait));
+        qint64 wait = 0;
+        try {
+            wait = settle_wait_ms();
+        } catch (const std::exception& error) {
+            stop(QString::fromUtf8(error.what()));
+            return;
+        }
+        if (wait > 0) {
+            // Not timer_: that timer means a frame is ready to show, and
+            // resume_output() would stop feeding the startup burst until it fired.
+            settle_timer_.start(static_cast<int>(wait));
             return;
         }
         // Mid-update: hold the screen until the update ends (which publishes
@@ -2182,6 +2197,7 @@ class SessionService final : public QObject {
     wire::Attachment attachment_;
     QByteArray buffer_;
     QTimer timer_;
+    QTimer settle_timer_;
     QTimer output_admission_timer_;
     static constexpr qint64 frame_ms = 16;
     QElapsedTimer attention_clock_;

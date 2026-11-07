@@ -25,6 +25,7 @@
 #include <QLocalSocket>
 #include <QMouseEvent>
 #include <QObject>
+#include <QPointingDevice>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QTemporaryDir>
@@ -1430,10 +1431,14 @@ void selection_and_scroll() {
     // page a row and slides it the other half down, cells and all; scrolling
     // that half forward again lines the rows up with the top.
     const qreal row = surface.cellRect(0, 0).height();
+    QPointingDevice touchpad(QStringLiteral("test trackpad"), 1, QInputDevice::DeviceType::TouchPad,
+                             QPointingDevice::PointerType::Finger,
+                             QInputDevice::Capabilities{QInputDevice::Capability::PixelScroll}, 1,
+                             0);
     const auto trackpad = [&](int pixels) {
         QWheelEvent event(middle, surface.mapToGlobal(middle), QPoint(0, pixels),
                           QPoint(0, pixels * 2), Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate,
-                          false);
+                          false, Qt::MouseEventNotSynthesized, &touchpad);
         QCoreApplication::sendEvent(&surface, &event);
     };
     const int travel = qCeil(row * 1.5);
@@ -1458,6 +1463,10 @@ void selection_and_scroll() {
     require(!f.document.historyActive() && std::abs(surface.cellRect(0, 0).top()) < 0.01,
             "The live screen kept a history slide");
     require(text_frames(peer, 1) == QByteArray("v"), "Typing on a slid history page was dropped");
+    trackpad(-1);
+    trackpad(qRound(row) - 1);
+    require(!f.document.historyActive() && !f.document.historyRequestPending(),
+            "A forward pixel at the live screen borrowed a history row");
     // Partial trackpad/wheel angles must not cross the primary/alternate
     // boundary: history uses 40 units per row, programs use 120 per notch.
     quint64 sequence = 4;
