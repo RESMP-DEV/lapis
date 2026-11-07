@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-07T02:31:24Z",
+  "passed": true,
+  "scope": "Claude Code ignores CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS while any PermissionRequest hook is configured. A local launch that sets an accepted waiver value omits only that hook, and the permission_prompt notification remains observable with the tool name from the preceding PreToolUse event.",
+  "platform": "macOS 26.7.1 arm64",
+  "source": {
+    "baseline": "30306f6fea0aedf0488075ec3a82ed6ce0ad83ff",
+    "integrated_revision": "691c1f66a2c4e0aae3dc3de48b91a50046702ef3",
+    "tested_worktree_dirty": true,
+    "source_sha256": {
+      "adapters/claude/src/hook_relay.hpp": "061b042ca76a28c608199c25d4c464da0495051b488e7b4044e1b4ed674b4a42",
+      "adapters/claude/src/hook_relay.cpp": "627b44e81399ff712e0820a5947b8956d7f88b0a5f3e9604971a4ec11b57b8bd",
+      "adapters/claude/src/claude_observer.cpp": "60da2b4ff21df395aab082c0f8ce2672f238012d5fea52bee76aca428db9c25f",
+      "adapters/claude/tests/claude_observer_test.cpp": "f79c0d151c2e86ae951951e25017f0918ef493d17116517ab32feaaa348c1207",
+      "docs/agents.md": "b17ed7869ce19c09e38bdaab6e8e0e37bf892d6d970c5e1b3ccd3cd89aa3e06d"
+    }
+  },
+  "claude_code": {
+    "version": "2.1.309",
+    "binary_sha256": "5eadc0009cdcdbc0d06e58110d7b2baf88ced6088b1c33a60a21217fe410619c",
+    "observed_hook_sequence": [
+      "SessionStart",
+      "UserPromptSubmit",
+      "PreToolUse with tool_name=Bash",
+      "Notification with notification_type=permission_prompt and a generic message",
+      "SessionEnd"
+    ],
+    "notification_payload_note": "The observed Notification has no tool_name; lapis derives the notice tool name from the immediately preceding PreToolUse event for the same prompt."
+  },
+  "runs": [
+    {
+      "case": "waiver, repaired lapis_session_service --claude, installed Claude Code",
+      "waiver_value": "1",
+      "service_sha256": "ac6d0394eb8373f272b25089b4d0d5cf0bb3b9a02f53eb4188a30bc1c75b446a",
+      "hooks": 8,
+      "hooks_omitted": ["PermissionRequest"],
+      "model": "lapis-fake loopback",
+      "elapsed_seconds": 18.398,
+      "permission_notice": {
+        "hookEvent": "Notification",
+        "toolName": "Bash",
+        "reason": "approval",
+        "observation_only": true,
+        "response_location": "terminal"
+      },
+      "post_clear_notice": {
+        "hookEvent": "Notification",
+        "toolName": "Bash",
+        "reason": "approval",
+        "observation_only": true,
+        "response_location": "terminal"
+      },
+      "service_reaped": true,
+      "owned_process_groups_cleaned": true,
+      "global_settings_unchanged": true
+    }
+  ],
+  "checks": [
+    {
+      "name": "desktop-enabled focused adapter test",
+      "command": "ctest --test-dir build/desktop -R '^claude-observer$' --no-tests=error --output-on-failure",
+      "result": "pass",
+      "started_at": "2026-11-07T01:52:10.324378Z",
+      "finished_at": "2026-11-07T01:52:13.149240Z"
+    },
+    {
+      "name": "padded waiver environment isolation",
+      "command": "CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=' YES ' build/desktop/adapters/claude/lapis_claude_observer_tests",
+      "result": "pass",
+      "completed_at": "2026-11-07T01:52:13Z"
+    },
+    {
+      "name": "focused clang-tidy on changed C++ files",
+      "command": "/opt/homebrew/opt/llvm/bin/clang-tidy -p build/desktop --warnings-as-errors='*' adapters/claude/src/hook_relay.cpp adapters/claude/src/claude_observer.cpp adapters/claude/tests/claude_observer_test.cpp",
+      "result": "pass",
+      "completed_at": "2026-11-07T01:54:25Z"
+    },
+    {
+      "name": "installed Claude Code through real session service",
+      "command": "CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 PYTHONPATH=scripts python3 -c 'import check_claude_hooks as check; check.SUPPORTED_VERSION = \"2.1.309\"; raise SystemExit(check.main([\"--fake-model\", \"--build-dir\", \"build/desktop\", \"--output\", \"build/claude-hooks-waiver-repro/final-live-integrated.json\"]))'",
+      "result": "pass",
+      "completed_at": "2026-11-07T02:31:24Z",
+      "receipt": "build/claude-hooks-waiver-repro/final-live-integrated.json",
+      "note": "The in-memory override only accepts the installed 2.1.309 version; the service, hooks and Claude Code binary are unmodified."
+    },
+    {
+      "name": "desktop-enabled ASan/UBSan focused adapter test",
+      "setup": "cmake --preset asan -B build/desktop-asan -DLAPIS_BUILD_DESKTOP=ON -DCMAKE_CXX_COMPILER=\"$LAPIS_LLVM_BIN/clang++\" -DCMAKE_OSX_SYSROOT=\"$(xcrun --show-sdk-path)\" -DLAPIS_GHOSTTY_PREFIX=\"$LAPIS_GHOSTTY_PREFIX\" -DCMAKE_PREFIX_PATH=\"$LAPIS_QT_PREFIX\" && cmake --build build/desktop-asan --target lapis_claude_observer_tests --parallel 8",
+      "command": "ASAN_OPTIONS=detect_leaks=0 QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-asan -R '^claude-observer$' --no-tests=error --output-on-failure",
+      "result": "pass",
+      "elapsed_seconds": 7.33,
+      "completed_at": "2026-11-07T01:47:31Z"
+    },
+    {
+      "name": "desktop-enabled TSan focused adapter test",
+      "setup": "cmake --preset tsan -B build/desktop-tsan -DLAPIS_BUILD_DESKTOP=ON -DCMAKE_CXX_COMPILER=\"$LAPIS_LLVM_BIN/clang++\" -DCMAKE_OSX_SYSROOT=\"$(xcrun --show-sdk-path)\" -DLAPIS_GHOSTTY_PREFIX=\"$LAPIS_GHOSTTY_PREFIX\" -DCMAKE_PREFIX_PATH=\"$LAPIS_QT_PREFIX\" && cmake --build build/desktop-tsan --target lapis_claude_observer_tests --parallel 8",
+      "command": "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-tsan -R '^claude-observer$' --no-tests=error --output-on-failure",
+      "result": "pass",
+      "elapsed_seconds": 124.31,
+      "completed_at": "2026-11-07T01:50:05Z"
+    }
+  ],
+  "superseded_historical_observation": {
+    "recorded_at": "2026-10-28T19:06:14Z",
+    "claude_code_version": "2.1.312",
+    "claude_code_sha256": "6b5ec691195e551b02c41df9f7d723f4ea61eaa03c2df90acefe3736f1aeb620",
+    "dangerous_rm_results": [
+      {"case": "no waiver, user PermissionRequest hook", "waiver_value": null, "denials": 1, "canary": "kept"},
+      {"case": "waiver, user PermissionRequest hook", "waiver_value": "not recorded", "denials": 1, "canary": "kept"},
+      {"case": "waiver, no PermissionRequest hook", "waiver_value": "not recorded", "denials": 0, "canary": "deleted"},
+      {"case": "waiver, installed lapis 0.5.0 service", "waiver_value": "not recorded", "hooks": 9, "denials": 1, "canary": "kept"},
+      {"case": "waiver, pre-review service", "waiver_value": "not recorded", "hooks": 8, "denials": 0, "canary": "deleted"}
+    ],
+    "reuse": "Not reused for current accepted-value or tool-name claims because its original launcher did not record each waiver value or the repaired service digest."
+  },
+  "limitations": [
+    "This receipt covers hook selection, Bash permission attention and focused adapter sanitizers; it does not rerun every desktop CTest or the full CLI/UI harness.",
+    "A full just desktop run at the pinned baseline failed in unrelated pre-existing static-analysis findings under apps/desktop; focused build and claude-observer CTest passed.",
+    "A PermissionRequest hook configured outside lapis (user settings, plugin or policy) still suppresses the waiver locally.",
+    "lapis treats 1, true, yes and on (any case, surrounding whitespace ignored) as set; another value keeps the hook, which keeps Claude Code's prompt.",
+    "The live tool-name correlation is qualified for Claude Code 2.1.309 Bash prompts; a future Claude payload change requires requalification.",
+    "Not exercised in the desktop app with a native window."
+  ]
+}
