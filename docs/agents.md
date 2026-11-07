@@ -64,8 +64,12 @@ suggestions as a local agent's do; that needs `python3` there.
 
 Codex and Claude Code report their turns: Codex through its observer, Claude
 Code through the session service's hook adapter, which also reports permission
-prompts and questions. Other CLIs show an estimate from their output, **Output
-active** or **Quiet**, rather than guessing at turns. **Turn finished** means a
+prompts and questions. OMP on this Mac reports finished turns through an
+extension lapis's OMP overlay loads; between turns its status is estimated.
+That extension names the main conversation once it reports its session id;
+before that, a printed checkpoint can still become the saved resume identity.
+Other CLIs show an estimate from their output, **Output active** or **Quiet**,
+rather than guessing at turns. **Turn finished** means a
 turn ended, not that the task or the process did. A new Codex agent reads **No
 prompt yet** until its first turn. Claude Code's idle reminder after a turn is
 not a request.
@@ -86,6 +90,17 @@ service is down or restarting. Claude Code raises one permission prompt at a
 time, so a batch of parallel tool calls shows as one request, then the next.
 Idle compaction, mods, fork subagents and other Claude Code behaviors stay as
 your Claude Code settings choose; lapis does not override them.
+
+One hook is left out when your login shell sets
+`CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS` (to `1`, `true`, `yes` or
+`on`, trimmed and in any case), which lets dangerous `rm` commands run without
+a prompt in Full access.
+Claude Code ignores that variable while any PermissionRequest hook is
+configured, so an agent on this Mac then gets no lapis PermissionRequest hook,
+and Claude Code's permission notice still reports the prompt; lapis carries the
+observed tool name from the preceding PreToolUse event. A PermissionRequest
+hook configured outside lapis can still suppress the waiver. An agent on
+another machine keeps the lapis hook, so the variable has no effect there.
 
 ## Full-screen CLIs
 
