@@ -440,6 +440,9 @@ class Workspace final : public QObject {
     Q_PROPERTY(QVariantList stageDividers READ stageDividers NOTIFY tilesChanged)
     // An agent closed since lapis opened can come back with its conversation.
     Q_PROPERTY(bool canReopenAgent READ canReopenAgent NOTIFY closedChanged)
+    // The visual view's conversation: the stage sets its path to an agent's
+    // conversationFile() while that agent shows as a thread.
+    Q_PROPERTY(QObject* transcript READ transcript CONSTANT)
   public:
     explicit Workspace(WorkspaceMode mode = WorkspaceMode::live, WorkspaceOptions options = {});
     ~Workspace() override;
@@ -563,6 +566,12 @@ class Workspace final : public QObject {
     [[nodiscard]] QHash<QString, QString> agentConversations() const;
     // One agent's current conversation, or empty.
     [[nodiscard]] QString agentConversation(const QString& id) const;
+    // The file an agent's CLI saves its current conversation in, on this Mac,
+    // for the visual view. Empty for an agent on another machine, a CLI the
+    // view cannot read yet (only Claude Code so far), or before the CLI has
+    // saved anything.
+    Q_INVOKABLE [[nodiscard]] QString conversationFile(const QString& id) const;
+    [[nodiscard]] QObject* transcript() const { return transcript_; }
     Q_INVOKABLE bool moveSessionBy(const QString& id, int delta);
     // Puts agents, in their strip order, at `index` of a category's strip (at
     // its end when `index` is past it), moving them there from any category.
@@ -872,6 +881,7 @@ class Workspace final : public QObject {
     };
     QHash<QString, Reconnect> reconnects_;
     AccountPool accounts_;
+    QObject* transcript_{}; // a TranscriptModel this workspace owns
     QString accounts_root_;
     // Agents whose plan filled, moving at their next pause.
     QSet<QString> switching_;

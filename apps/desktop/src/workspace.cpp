@@ -3,6 +3,7 @@
 #include "app_paths.hpp"
 #include "conversation_index.hpp"
 #include "harness_catalog.hpp"
+#include "transcript.hpp"
 #include "hook_relay.hpp"
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
@@ -735,6 +736,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
     : restore_agents_(options.restoreAgents), update_harnesses_(options.updateHarnesses),
       headless_(options.headless), update_timeout_ms_(std::max(qint64{1}, options.updateTimeoutMs)),
       preview_mode_(mode == WorkspaceMode::preview) {
+    transcript_ = new TranscriptModel(this);
     accounts_.setConfig(options.accounts);
     // Before selecting clears the arriving agent's unseen mark, so a choice
     // is recorded with the state the person chose from.
@@ -2149,18 +2151,25 @@ bool resumable(const session::ResumeRecord& record, const QString& harness) {
     return !session::observer_backed_agent(harness);
 }
 
+// Where Claude Code saved a conversation on this Mac: one folder per project
+// under its projects directory. Empty when it has not saved one.
+QString claudeTranscript(const QString& conversation) {
+    const QDir projects(qEnvironmentVariable("CLAUDE_CONFIG_DIR",
+                                             QDir::homePath() + QStringLiteral("/.claude")) +
+                        QStringLiteral("/projects"));
+    const auto transcript = conversation + QStringLiteral(".jsonl");
+    for (const auto& folder : projects.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const auto path = projects.filePath(folder + QLatin1Char('/') + transcript);
+        if (QFileInfo::exists(path))
+            return path;
+    }
+    return {};
+}
+
 bool conversationSaved(const session::ResumeRecord& record) {
     const auto& conversation = record.session_id;
-    if (record.agent == QLatin1String("claude")) {
-        const QDir projects(qEnvironmentVariable("CLAUDE_CONFIG_DIR",
-                                                 QDir::homePath() + QStringLiteral("/.claude")) +
-                            QStringLiteral("/projects"));
-        const auto transcript = conversation + QStringLiteral(".jsonl");
-        const auto folders = projects.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-        return std::any_of(folders.begin(), folders.end(), [&](const QString& folder) {
-            return QFileInfo::exists(projects.filePath(folder + QLatin1Char('/') + transcript));
-        });
-    }
+    if (record.agent == QLatin1String("claude"))
+        return !claudeTranscript(conversation).isEmpty();
     if (record.agent == QLatin1String("codex")) {
         const QDir sessions(
             qEnvironmentVariable("CODEX_HOME", QDir::homePath() + QStringLiteral("/.codex")) +
@@ -2170,6 +2179,17 @@ bool conversationSaved(const session::ResumeRecord& record) {
     return true;
 }
 } // namespace
+QString Workspace::conversationFile(const QString& id) const {
+    const auto entry = agents_.constFind(id);
+    if (entry == agents_.cend() || entry->harness != QLatin1String("claude") ||
+        !agentMachine(*entry).isEmpty())
+        return {};
+    const auto conversation = agentConversation(id);
+    // A conversation id is a UUID; anything else never names a file.
+    if (QUuid::fromString(conversation).isNull())
+        return {};
+    return claudeTranscript(conversation);
+}
 void Workspace::recordConversations() {
     QStringList endpoints;
     for (const auto& agent : std::as_const(agents_)) {

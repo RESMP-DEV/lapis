@@ -54,6 +54,18 @@ the card actions: show an agent's folder in Finder, open it in your editor
 (`editor` in [config](config.md), else the first of Cursor, VS Code, Zed,
 Windsurf and Sublime Text installed), or copy its path.
 
+## Visual view
+
+**Show visual view** in Commands shows the selected Claude Code agent as a
+readable thread instead of its terminal: your prompts as bubbles, its replies as
+prose, and its work as one-line steps ("Ran", "Read", "Edited +4 −10", "Thought
+for 6s") that open on click, with each edit's diff shown under it. It reads the
+conversation Claude Code saves on this Mac and follows it as the agent works;
+anything it does not recognize shows as a plain block. The terminal keeps
+running underneath but takes no input while covered; Escape, or **Show
+terminal**, brings it back. Each agent remembers its choice until lapis
+restarts. Agents on other machines and other CLIs are not supported yet.
+
 ## Finding
 
 Command-K finds an agent as you type: by the letters of its name, folder,

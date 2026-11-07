@@ -116,10 +116,20 @@ if(APPLE)
 endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
 qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml qml/Tools.qml qml/Transcript.qml)
+# A development bundle has its own identity, so macOS never mistakes it for
+# the installed app: `open` would otherwise bring the installed lapis forward,
+# and the two would share notification and preference state.
+if(LAPIS_PACKAGE)
+    set(lapis_bundle_name "lapis")
+    set(lapis_bundle_identifier "dev.lapis.desktop")
+else()
+    set(lapis_bundle_name "lapis dev")
+    set(lapis_bundle_identifier "dev.lapis.desktop.dev")
+endif()
 set_target_properties(lapis_desktop PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/macos/Info.plist.in"
-    MACOSX_BUNDLE_BUNDLE_NAME "lapis"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "dev.lapis.desktop"
+    MACOSX_BUNDLE_BUNDLE_NAME "${lapis_bundle_name}"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "${lapis_bundle_identifier}"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_ICON_FILE "lapis"

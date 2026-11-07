@@ -22,8 +22,7 @@ Rectangle {
     property color removedColor: "#914c54"
     property color faultColor: "#f7768e"
     property color activityColor: "#7aa2f7"
-    // Empty uses the platform's interface font.
-    property string sansFamily: ""
+    property string sansFamily: Qt.application.font.family
     property string monoFamily: "Menlo"
     property int fontSize: 15     // prose
     property int stepSize: 14     // step rows and labels
@@ -34,7 +33,11 @@ Rectangle {
     // Follow new items while the reader sits at the end, as a terminal does.
     property bool following: true
 
+    // Escape asks to go back to the terminal; the view itself never types.
+    signal dismissed()
+
     color: backgroundColor
+    Keys.onEscapePressed: dismissed()
 
     function tint(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
 
@@ -392,6 +395,26 @@ Rectangle {
                 textColor: root.mutedTextColor
             }
         }
+    }
+
+    Text {
+        visible: root.activeFocus
+        anchors.left: parent.left
+        anchors.bottom: parent.bottom
+        anchors.margins: 12
+        text: qsTr("Esc for the terminal")
+        color: root.mutedTextColor
+        font.family: root.sansFamily
+        font.pixelSize: root.codeSize
+    }
+
+    Text {
+        visible: root.model !== null && root.model.count === 0 && !root.model.loading
+        anchors.centerIn: parent
+        text: qsTr("Nothing saved in this conversation yet")
+        color: root.mutedTextColor
+        font.family: root.sansFamily
+        font.pixelSize: root.stepSize
     }
 
     // Back to the newest item; the view follows from there.
