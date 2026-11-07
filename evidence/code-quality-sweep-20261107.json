@@ -6,13 +6,13 @@
   "source": {
     "base_revision": "b83a9d859ddcce090521d0bea25c9d511422cdc8",
     "tested_revisions": {
-      "initial_combined_checks": "635b4807924e168ecf78e1471d43fd745290f734",
-      "supervisor_followup_checks": "461194dce2019e7dbce0ea5bda0347f5d760f808",
-      "review_quickfix_checks": "745974f27dafb3dc839879779f5d1de5f7e46ce8"
+      "initial_combined_checks": "39e3b3aa1849678fb88fbaa0c1b1317aff716d62",
+      "supervisor_followup_checks": "0f849b41a476da4defeed09f85e9a9b3147fdfb1",
+      "review_quickfix_checks": "b341200cb7084b3988c80b820e064106787bbf71"
     },
     "changed_source_manifest": {
       "algorithm": "sha256(git diff --binary base..review_quickfix_checks -- ':(exclude)evidence/*')",
-      "digest": "f43e5c86e49dd1bc266c66b8cd8289b3ee74aaf6bea3f50a5296f4f4721c5b2a",
+      "digest": "e62d2c43f2cd6bda599f99eec97adc24011a8eaffcfd1e3a2ee43e1b2d31c4a4",
       "changed_paths": 20
     },
     "artifact_identities": {
@@ -97,7 +97,7 @@
     {
       "recorded_at": "2026-11-07T03:55:00Z",
       "source": "CodeRabbit inline review",
-      "revision": "745974f27dafb3dc839879779f5d1de5f7e46ce8",
+      "revision": "b341200cb7084b3988c80b820e064106787bbf71",
       "changes": [
         "Raise workspace-omp-overlay timeout above its wait budget",
         "Use turn-specific Claude stand-in completion markers",
@@ -111,7 +111,7 @@
   "checks": [
     {
       "name": "repository-quality",
-      "source_revision": "635b4807924e168ecf78e1471d43fd745290f734",
+      "source_revision": "39e3b3aa1849678fb88fbaa0c1b1317aff716d62",
       "command": "python3 scripts/lapis.py quality",
       "exit_code": 0,
       "passed": true,
@@ -119,7 +119,7 @@
     },
     {
       "name": "supervisor-runtime",
-      "source_revision": "461194dce2019e7dbce0ea5bda0347f5d760f808",
+      "source_revision": "0f849b41a476da4defeed09f85e9a9b3147fdfb1",
       "command": "just supervisor-runtime",
       "exit_code": 0,
       "passed": true,
@@ -127,7 +127,7 @@
     },
     {
       "name": "supervisor-asan",
-      "source_revision": "461194dce2019e7dbce0ea5bda0347f5d760f808",
+      "source_revision": "0f849b41a476da4defeed09f85e9a9b3147fdfb1",
       "command": "CMAKE_PREFIX_PATH=$HOME/lapis/build/release/qt LAPIS_GHOSTTY_PREFIX=$HOME/lapis/.worktrees/pr-185-integration/build/terminal-probe/reproduce/ghostty/runs/7d22d68dd37944759521ab5e3d6f8f24/prefix python3 scripts/check_supervisor_runtime.py --preset supervisor-asan --jobs 8",
       "exit_code": 0,
       "passed": true,
@@ -135,21 +135,21 @@
     },
     {
       "name": "supervisor-review-followup",
-      "source_revision": "745974f27dafb3dc839879779f5d1de5f7e46ce8",
+      "source_revision": "b341200cb7084b3988c80b820e064106787bbf71",
       "command": "ctest --preset supervisor -R '^(supervisor-runtime|supervisor-daemon)$' --output-on-failure",
       "exit_code": 0,
       "passed": true
     },
     {
       "name": "remote-relay-and-claude",
-      "source_revision": "635b4807924e168ecf78e1471d43fd745290f734",
+      "source_revision": "39e3b3aa1849678fb88fbaa0c1b1317aff716d62",
       "command": "python3 -m unittest scripts.tests.test_remote_hook_relay && ctest --test-dir build/desktop -R '^(claude-observer|workspace-omp-overlay)$' --no-tests=error --output-on-failure && QT_QPA_PLATFORM=offscreen build/desktop/apps/desktop/lapis_workspace_tests --case remote-hooks",
       "exit_code": 0,
       "passed": true
     },
     {
       "name": "ui-review-background",
-      "source_revision": "635b4807924e168ecf78e1471d43fd745290f734",
+      "source_revision": "39e3b3aa1849678fb88fbaa0c1b1317aff716d62",
       "command": "python3 scripts/lapis.py ui-review --json",
       "exit_code": 0,
       "passed": true,
@@ -158,7 +158,7 @@
     },
     {
       "name": "desktop-build-and-enabled-ctest",
-      "source_revision": "635b4807924e168ecf78e1471d43fd745290f734",
+      "source_revision": "39e3b3aa1849678fb88fbaa0c1b1317aff716d62",
       "command": "CMAKE_PREFIX_PATH=$HOME/lapis/build/release/qt LAPIS_GHOSTTY_PREFIX=$HOME/lapis/build/terminal-probe/reproduce/ghostty/runs/059c2552dd9a4a7681b11e5c52a5c059/prefix cmake --build build/desktop -j 8 && ctest --test-dir build/desktop --no-tests=error --output-on-failure",
       "exit_code": 0,
       "passed": true,
@@ -166,7 +166,7 @@
     },
     {
       "name": "review-quickfixes",
-      "source_revision": "745974f27dafb3dc839879779f5d1de5f7e46ce8",
+      "source_revision": "b341200cb7084b3988c80b820e064106787bbf71",
       "command": "python3 -m unittest scripts.tests.test_lapis_remote && ctest --preset supervisor -R '^(supervisor-runtime|supervisor-daemon)$' --output-on-failure && ctest --test-dir build/desktop -R '^workspace-omp-overlay$' --no-tests=error --output-on-failure",
       "exit_code": 0,
       "passed": true
