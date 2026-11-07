@@ -106,12 +106,15 @@ another machine keeps the lapis hook, so the variable has no effect there.
 
 lapis runs Claude Code with its classic renderer (`CLAUDE_CODE_NO_FLICKER=0`,
 also over ssh, which overrides Claude Code's own `"tui"` setting), so its
-conversation is kept in lapis's history and the wheel scrolls it there. When
-its width changes (a tile, the phone, the window) Claude Code draws the end of
-its conversation again at the new width but never reprints older lines, so
-lapis holds the screen until that redraw is done and keeps each part of the
-conversation once: older rows keep the width they were drawn at, and a
-repeated passage is dropped. After widening, the prompt can sit above some
+conversation is kept in lapis's history and the wheel scrolls it there. For a
+locally launched Claude agent, when its width changes (a tile, the phone, the
+window) Claude Code draws the end of its conversation again at the new width
+but never reprints older lines, so lapis holds the screen until that redraw is
+done and keeps each part of the conversation once: older rows keep the width
+they were drawn at, and a repeated passage is dropped. Remote SSH agents still
+reflow and redraw as their terminal does; their initial launch size is
+coordinated, but width-change deduplication is not yet applied to them. After
+widening, the prompt can sit above some
 blank rows until more output fills them. Agents restarted as lapis opens start
 at the stage's width. A resumed conversation is printed in one burst; lapis
 shows a CLI's first text only once its output has been quiet for 150 ms (at

@@ -982,6 +982,8 @@ class SessionService final : public QObject {
             if (stopping_)
                 return;
             try {
+                if (!try_rewidth_archive())
+                    return;
                 try_pending_history();
                 if (output_waiting_) {
                     output_waiting_ = false;
@@ -1045,10 +1047,59 @@ class SessionService final : public QObject {
         page.history = {rows, 0, rows, true};
         return page;
     }
+    static TerminalSnapshot archive_window(TerminalSnapshot page, std::size_t first,
+                                           std::size_t rows) {
+        if (first >= page.size.rows)
+            throw std::invalid_argument("Archive window starts outside the screen");
+        rows = std::min(rows, static_cast<std::size_t>(page.size.rows) - first);
+        const auto columns = static_cast<std::size_t>(page.size.columns);
+        const std::size_t cell_first = first * columns;
+        const std::size_t old_cells = page.cells.size();
+        if (cell_first > old_cells)
+            throw std::invalid_argument("Archive snapshot has too few cells");
+        const std::size_t cell_last = std::min(old_cells, cell_first + rows * columns);
+
+        std::vector<TerminalCell> cells(
+            page.cells.begin() + static_cast<std::ptrdiff_t>(cell_first),
+            page.cells.begin() + static_cast<std::ptrdiff_t>(cell_last));
+        std::vector<TerminalHyperlink> links;
+        links.reserve(page.hyperlinks.size());
+        for (auto& link : page.hyperlinks) {
+            const std::size_t link_first = link.first_cell;
+            const std::size_t link_last =
+                std::min(old_cells, link_first + static_cast<std::size_t>(link.cell_count));
+            const std::size_t kept_first = std::max(link_first, cell_first);
+            const std::size_t kept_last = std::min(link_last, cell_last);
+            if (kept_first < kept_last)
+                links.push_back({static_cast<std::uint32_t>(kept_first - cell_first),
+                                 static_cast<std::uint32_t>(kept_last - kept_first),
+                                 std::move(link.uri)});
+        }
+
+        const std::u32string old_graphemes = std::move(page.graphemes);
+        std::u32string graphemes;
+        graphemes.reserve(cells.size());
+        for (auto& cell : cells) {
+            const auto text =
+                std::u32string_view(old_graphemes).substr(cell.text_offset, cell.text_length);
+            cell.text_offset = static_cast<std::uint32_t>(graphemes.size());
+            graphemes.append(text.begin(), text.end());
+        }
+
+        page.size.rows = static_cast<std::uint16_t>(rows);
+        page.cells = std::move(cells);
+        page.graphemes = std::move(graphemes);
+        page.hyperlinks = std::move(links);
+        page.cursor = {};
+        page.history = {rows, 0, rows, true};
+        return page;
+    }
     bool archive_history(bool force) {
         // A width change's redraw is sorted out by finish_rewidth.
         if (rewidth_)
             return true;
+        if (pending_rewidth_archive_)
+            return try_rewidth_archive();
         if (history_failed_) {
             if (harvest_offset_) {
                 terminal_.clear_history();
@@ -1130,6 +1181,8 @@ class SessionService final : public QObject {
                         terminal_.feed(std::string_view(pending_output_.constData(),
                                                         static_cast<std::size_t>(safe)));
                         pending_output_.remove(0, safe);
+                        if (rewidth_)
+                            rewidth_->saw_output = true;
                         mark_dirty();
                         timing_.parse_end_ns = monotonic_ns();
                         continue;
@@ -1145,6 +1198,8 @@ class SessionService final : public QObject {
                 terminal_.feed(
                     std::string_view(pending_output_.constData(), static_cast<std::size_t>(size)));
                 pending_output_.remove(0, size);
+                if (rewidth_)
+                    rewidth_->saw_output = true;
                 mark_dirty();
                 timing_.parse_end_ns = monotonic_ns();
                 if (follow_synchronized_update())
@@ -1534,10 +1589,15 @@ class SessionService final : public QObject {
     // archives the kept rows first, at the width they were drawn. Returns
     // false when the resize must wait for that archive.
     bool begin_rewidth(TerminalSize size) {
-        if (!claude_ || rewidth_ || history_failed_ || size.columns == current_size_.columns)
+        if (!claude_ || rewidth_ || size.columns == current_size_.columns)
+            return true;
+        // A failed archive cannot preserve the old rows that narrowing would
+        // set aside. Keep the terminal's reflow copy instead of optimizing the
+        // width change until history recording has recovered.
+        if (history_failed_)
             return true;
         auto old_screen = terminal_.snapshot();
-        if (old_screen.alternate_screen || !shows_text(old_screen))
+        if (old_screen.alternate_screen || terminal_.synchronizing() || !shows_text(old_screen))
             return true;
         const bool widening = size.columns > current_size_.columns;
         if (!widening && !archive_history(true)) {
@@ -1549,22 +1609,88 @@ class SessionService final : public QObject {
         rewidth_ = Rewidth{.old_screen = std::move(old_screen),
                            .widening = widening,
                            .history_rows = 0,
-                           .since = {}};
+                           .since = {},
+                           .saw_output = false};
         return true;
     }
     // How long the screen still waits for a width change's redraw.
     qint64 rewidth_wait_ms() {
         if (!rewidth_)
             return 0;
-        const qint64 quiet = last_output_.isValid() ? last_output_.elapsed() : rewidth_quiet_ms;
         const qint64 held = rewidth_->since.elapsed();
+        if (!rewidth_->saw_output || terminal_.synchronizing()) {
+            // The resize's local erase and mark_dirty are not redraw activity.
+            // Wait for a PTY-fed byte (or a complete frame), while bounding a
+            // renderer that never answers.
+            if (held < rewidth_limit_ms)
+                return std::min(qint64{50}, rewidth_limit_ms - held);
+            finish_rewidth();
+            return 0;
+        }
+        const qint64 quiet = last_output_.isValid() ? last_output_.elapsed() : rewidth_quiet_ms;
         if (quiet < rewidth_quiet_ms && held < rewidth_limit_ms)
             return std::min(rewidth_quiet_ms - quiet, rewidth_limit_ms - held);
         finish_rewidth();
         return 0;
     }
+    // Keep terminal scrollback as the failure copy until every page from the
+    // width change has been accepted by the bounded history queue. One page at
+    // a time prevents a rejected vector append from destroying the only copies.
+    bool try_rewidth_archive() {
+        if (!pending_rewidth_archive_)
+            return true;
+        if (history_failed_) {
+            pty_.pauseOutput(true);
+            output_waiting_ = true;
+            return false;
+        }
+        auto& pages = *pending_rewidth_archive_;
+        while (!pages.empty()) {
+            std::vector<TerminalSnapshot> batch;
+            batch.reserve(1);
+            batch.push_back(pages.front());
+            if (!history_.append(std::move(batch))) {
+                pty_.pauseOutput(true);
+                output_waiting_ = true;
+                return false;
+            }
+            pages.erase(pages.begin());
+        }
+        if (!history_.idle()) {
+            pty_.pauseOutput(true);
+            output_waiting_ = true;
+            return false;
+        }
+        terminal_.clear_history();
+        pending_rewidth_archive_.reset();
+        return true;
+    }
+    void delete_repeated_rows(const TerminalSnapshot& screen, std::size_t scrolled,
+                              const std::optional<rewidth::Plan>& plan,
+                              std::size_t drop_screen_rows) {
+        if (!plan || drop_screen_rows == 0 || screen.alternate_screen || terminal_.synchronizing())
+            return;
+        const std::size_t screen_drop_at = plan->drop_at > scrolled ? plan->drop_at - scrolled : 0;
+        const std::size_t max_screen_drop =
+            static_cast<std::size_t>(screen.size.rows) - screen_drop_at;
+        drop_screen_rows = std::min(drop_screen_rows, max_screen_drop);
+        if (drop_screen_rows == 0)
+            return;
+        // Delete this repeated redraw interval from the screen; the cursor
+        // moves with the rows below it, so relative moves land.
+        const auto cursor = screen.cursor.row;
+        const auto row = cursor >= screen_drop_at + drop_screen_rows
+                             ? cursor - drop_screen_rows
+                             : std::min(cursor, static_cast<std::uint16_t>(screen_drop_at));
+        terminal_.feed("\x18\x1b[" + std::to_string(screen_drop_at + 1) + ";1H\x1b[" +
+                       std::to_string(drop_screen_rows) + "M\x1b[" + std::to_string(row + 1) + ";" +
+                       std::to_string(screen.cursor.column + 1) + "H");
+    }
+    // NOLINTNEXTLINE(readability-function-cognitive-complexity)
     void finish_rewidth() {
         namespace rw = rewidth;
+        if (!rewidth_)
+            return;
         const auto state = std::move(*rewidth_);
         rewidth_.reset();
         try {
@@ -1602,10 +1728,13 @@ class SessionService final : public QObject {
             } else if (plan) {
                 keep(0, before);
                 if (plan->keep_old_rows)
-                    pages.push_back(archive_page(state.old_screen, plan->keep_old_rows));
-                keep(before + std::min(plan->drop_new_rows, scrolled), kept);
-                drop_screen_rows =
-                    plan->drop_new_rows > scrolled ? plan->drop_new_rows - scrolled : 0;
+                    pages.push_back(
+                        archive_window(state.old_screen, plan->keep_at, plan->keep_old_rows));
+                const std::size_t dropped_from_history = std::min(
+                    plan->drop_new_rows, scrolled > plan->drop_at ? scrolled - plan->drop_at : 0);
+                keep(before, before + std::min(plan->drop_at, scrolled));
+                keep(before + plan->drop_at + dropped_from_history, kept);
+                drop_screen_rows = plan->drop_new_rows - dropped_from_history;
             } else {
                 // No redraw to line up with: keep the old conversation, not lose it.
                 keep(0, before);
@@ -1613,21 +1742,15 @@ class SessionService final : public QObject {
                     pages.push_back(archive_page(state.old_screen, old_rows));
                 keep(before, kept);
             }
-            if (!pages.empty() && !history_.append(std::move(pages)))
-                qWarning().noquote() << "History after a width change could not be archived";
-            terminal_.clear_history();
-            if (drop_screen_rows > 0) {
-                // Delete the repeated rows from the top; the cursor moves with
-                // the rows below them, so the program's relative moves still land.
-                const auto row = screen.cursor.row >= drop_screen_rows
-                                     ? screen.cursor.row - drop_screen_rows
-                                     : 0;
-                terminal_.feed("\x18\x1b[1;1H\x1b[" + std::to_string(drop_screen_rows) + "M\x1b[" +
-                               std::to_string(row + 1) + ";" +
-                               std::to_string(screen.cursor.column + 1) + "H");
-            }
+            pending_rewidth_archive_ = std::move(pages);
+            if (!try_rewidth_archive())
+                qWarning().noquote()
+                    << "History after a width change is waiting for archive capacity";
+            delete_repeated_rows(screen, scrolled, plan, drop_screen_rows);
         } catch (const std::exception& error) {
             qWarning().noquote() << "Width change history:" << error.what();
+        } catch (...) {
+            qWarning().noquote() << "Width change history: unknown exception";
         }
         mark_dirty();
         // A resize that arrived meanwhile.
@@ -2404,8 +2527,10 @@ class SessionService final : public QObject {
         bool widening{};
         std::size_t history_rows{}; // kept rows from before the resize
         QElapsedTimer since;
+        bool saw_output{}; // only bytes fed from the PTY, not the local erase
     };
     std::optional<Rewidth> rewidth_;
+    std::optional<std::vector<TerminalSnapshot>> pending_rewidth_archive_;
     static constexpr qint64 rewidth_quiet_ms = 120;
     static constexpr qint64 rewidth_limit_ms = 1000;
     wire::SnapshotTiming timing_;
