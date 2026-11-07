@@ -81,6 +81,47 @@ class AttentionServiceTestAccess final {
 
     static void resize(SessionService& service, TerminalSize size) { service.apply_resize(size); }
 
+    static void enable_claude_rewidth(SessionService& service) { service.claude_ = true; }
+
+    static void set_history_failed(SessionService& service, bool failed) {
+        service.history_failed_ = failed;
+    }
+
+    static void reject_history_appends(SessionService& service) {
+        service.history_.drain([] {});
+    }
+
+    static void finish_rewidth(SessionService& service) { service.finish_rewidth(); }
+
+    [[nodiscard]] static qint64 rewidth_wait(SessionService& service) {
+        return service.rewidth_wait_ms();
+    }
+
+    [[nodiscard]] static bool rewidth_active(const SessionService& service) {
+        return service.rewidth_.has_value();
+    }
+
+    [[nodiscard]] static bool rewidth_saw_output(const SessionService& service) {
+        return service.rewidth_ && service.rewidth_->saw_output;
+    }
+
+    [[nodiscard]] static bool pending_rewidth_archive(const SessionService& service) {
+        return service.pending_rewidth_archive_ && !service.pending_rewidth_archive_->empty();
+    }
+
+    [[nodiscard]] static std::vector<TerminalSnapshot>
+    pending_rewidth_pages(const SessionService& service) {
+        return service.pending_rewidth_archive_.value_or({});
+    }
+
+    [[nodiscard]] static TerminalSnapshot terminal_snapshot(SessionService& service) {
+        return service.terminal_.snapshot();
+    }
+
+    [[nodiscard]] static TerminalHistory history_metadata(SessionService& service) {
+        return service.terminal_.history_metadata();
+    }
+
     static void retire(SessionService& service, QLocalSocket* socket) { service.retire(socket); }
 
     [[nodiscard]] static bool process_started(const SessionService& service) {
@@ -169,6 +210,36 @@ bool wait_for(const std::function<bool()>& condition) {
         QThread::msleep(1);
     }
     return true;
+}
+
+void drain_output(SessionService& service) {
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (!AttentionServiceTestAccess::pending_output(service).isEmpty()) {
+        require(elapsed.elapsed() < 5000);
+        QCoreApplication::processEvents(QEventLoop::AllEvents | QEventLoop::WaitForMoreEvents, 1);
+    }
+}
+
+QString row_text(const TerminalSnapshot& snapshot, std::size_t row) {
+    std::u32string text;
+    const std::size_t columns = snapshot.size.columns;
+    for (std::size_t column = 0; column < columns; ++column)
+        text += snapshot.text(row * columns + column);
+    return QString::fromStdU32String(text).trimmed();
+}
+
+QByteArray conversation_line(int item) {
+    return QStringLiteral("  conversation item %1 with enough text to wrap at eighty columns but "
+                          "fit at one hundred")
+        .arg(item)
+        .toUtf8();
+}
+
+QByteArray alignment_line(int item) {
+    return QStringLiteral("  conversation item %1 has unique text for alignment")
+        .arg(item)
+        .toUtf8();
 }
 
 attention::Request request() {
@@ -541,6 +612,215 @@ void input_backpressure_preserves_attachment() {
     require(Access::client_attached(service));
 }
 
+void width_hold_waits_for_pty_redraw_bytes() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-rewidth-wait-XXXXXX")};
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    Access::use_client(service, &client);
+    Access::enable_claude_rewidth(service);
+    Access::feed_output(service, QByteArrayLiteral("conversation before resize"));
+
+    Access::resize(service, {100, 24});
+    require(Access::rewidth_active(service));
+    QThread::msleep(125);
+    require(Access::rewidth_wait(service) > 0);
+    require(!Access::rewidth_saw_output(service));
+
+    Access::feed_output(service, QByteArrayLiteral("conversation redraw"));
+    require(Access::rewidth_saw_output(service));
+    require(Access::rewidth_wait(service) > 0);
+    Access::finish_rewidth(service);
+    require(!Access::rewidth_active(service));
+}
+
+void width_hold_does_not_start_inside_a_synchronized_frame() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-rewidth-sync-XXXXXX")};
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    Access::use_client(service, &client);
+    Access::enable_claude_rewidth(service);
+    Access::feed_output(service, QByteArrayLiteral("\x1b[?2026hopen frame"));
+    require(Access::in_sync(service));
+
+    Access::resize(service, {100, 24});
+    require(!Access::rewidth_active(service));
+    Access::feed_output(service, QByteArrayLiteral("\x1b[?2026l"));
+    require(!Access::in_sync(service));
+}
+
+void widening_leading_chrome_stays_above_the_cut() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-rewidth-chrome-wide-XXXXXX")};
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 20},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    Access::use_client(service, &client);
+    Access::enable_claude_rewidth(service);
+
+    QByteArray old_output(QByteArray(80, '-'));
+    old_output += "\r\n\r\n";
+    for (int item = 22; item <= 30; ++item) {
+        old_output += conversation_line(item);
+        if (item != 30)
+            old_output += "\r\n";
+    }
+    Access::feed_output(service, old_output);
+
+    Access::resize(service, {100, 20});
+    require(Access::rewidth_active(service));
+    QByteArray redraw(QByteArray(100, '-'));
+    redraw += "\r\n\r\n";
+    for (int item = 13; item <= 30; ++item) {
+        redraw += conversation_line(item);
+        if (item != 30)
+            redraw += "\r\n";
+    }
+    Access::feed_output(service, redraw);
+    drain_output(service);
+    Access::finish_rewidth(service);
+
+    const auto screen = Access::terminal_snapshot(service);
+    require(row_text(screen, 0).startsWith(QString(20, QLatin1Char('-'))));
+    require(row_text(screen, 1).isEmpty());
+    require(row_text(screen, 2).startsWith(QStringLiteral("conversation item 22")));
+    require(row_text(screen, 10).startsWith(QStringLiteral("conversation item 30")));
+    require(row_text(screen, 11).isEmpty());
+}
+
+void narrowing_leading_chrome_shifts_the_archive_window() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-rewidth-chrome-narrow-XXXXXX")};
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {100, 20},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    Access::use_client(service, &client);
+    Access::enable_claude_rewidth(service);
+
+    QByteArray old_output(QByteArray(100, '-'));
+    old_output += "\r\n\r\n";
+    for (int item = 13; item <= 30; ++item) {
+        old_output += alignment_line(item);
+        if (item != 30)
+            old_output += "\r\n";
+    }
+    Access::feed_output(service, old_output);
+
+    Access::resize(service, {60, 20});
+    require(Access::rewidth_active(service));
+    QByteArray redraw(QByteArray(60, '-'));
+    redraw += "\r\n\r\n";
+    for (int item = 22; item <= 30; ++item) {
+        redraw += alignment_line(item);
+        if (item != 30)
+            redraw += "\r\n";
+    }
+    Access::feed_output(service, redraw);
+    drain_output(service);
+    Access::reject_history_appends(service);
+    Access::finish_rewidth(service);
+
+    const auto pages = Access::pending_rewidth_pages(service);
+    require(pages.size() == 1);
+    require(pages[0].size.columns == 100);
+    require(pages[0].size.rows == 9);
+    for (int item = 13; item <= 21; ++item) {
+        const auto row = static_cast<std::size_t>(item - 13);
+        require(
+            row_text(pages[0], row).startsWith(QStringLiteral("conversation item %1").arg(item)));
+    }
+}
+
+void width_archive_backpressure_keeps_the_terminal_copy() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-rewidth-backpressure-XXXXXX")};
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    Access::use_client(service, &client);
+    Access::enable_claude_rewidth(service);
+    Access::feed_output(service, QByteArrayLiteral("conversation before resize"));
+    Access::resize(service, {100, 24});
+    require(Access::rewidth_active(service));
+
+    QByteArray redraw;
+    for (int row = 0; row < 40; ++row)
+        redraw += QStringLiteral("redraw row %1\r\n").arg(row).toUtf8();
+    Access::feed_output(service, redraw);
+    Access::reject_history_appends(service);
+    Access::finish_rewidth(service);
+
+    require(Access::pending_rewidth_archive(service));
+    const auto history = Access::history_metadata(service);
+    require(history.primary_available && history.total_rows > history.viewport_rows);
+}
+
+void failed_history_preserves_the_terminal_reflow_path() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-rewidth-failed-XXXXXX")};
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    Access::use_client(service, &client);
+    Access::enable_claude_rewidth(service);
+    Access::feed_output(service, QByteArrayLiteral("conversation before failure"));
+    Access::set_history_failed(service, true);
+
+    Access::resize(service, {60, 24});
+    require(!Access::rewidth_active(service));
+}
+
 void resize_after_terminal_close_is_ignored_during_final_drain() {
     using Access = lapis::session::AttentionServiceTestAccess;
     QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-drain-resize-XXXXXX")};
@@ -600,6 +880,12 @@ int main(int argc, char** argv) {
         a_completed_frame_waits_for_an_in_flight_snapshot();
         a_split_marker_waits_when_the_client_snapshot_is_in_flight();
         input_backpressure_preserves_attachment();
+        width_hold_waits_for_pty_redraw_bytes();
+        width_hold_does_not_start_inside_a_synchronized_frame();
+        widening_leading_chrome_stays_above_the_cut();
+        narrowing_leading_chrome_shifts_the_archive_window();
+        width_archive_backpressure_keeps_the_terminal_copy();
+        failed_history_preserves_the_terminal_reflow_path();
         resize_after_terminal_close_is_ignored_during_final_drain();
         retired_sockets_evict_in_arrival_order();
         std::cout << "attention-service: ok\n";

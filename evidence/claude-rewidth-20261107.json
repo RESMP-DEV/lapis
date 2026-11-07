@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-07T03:35:35Z",
+  "agent": "Codex parent with two read-only subagent reviews",
+  "base_revision": "47af49eec2508e6ad740df6d3f309d7dffe41f05",
+  "scope": "Integrate non-prefix Claude rewidth windows and validate the combined PR 185 repairs.",
+  "changes": [
+    "Consume drop_at and keep_at as row-window offsets rather than prefix counts.",
+    "Preserve arbitrary old-screen archive windows, including cells, hyperlinks, and grapheme offsets.",
+    "Delete only the repeated redraw interval that remains on screen and remap its cursor.",
+    "Add service regressions for widening shared chrome and narrowing skipped rows 13 through 21.",
+    "Keep the compact Unicode classifier behavior while representing ranges as data for maintainability."
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/probe_terminal.py --engine ghostty",
+      "result": "passed",
+      "evidence": "build/terminal-probe/reproduce/ghostty/runs/7d22d68dd37944759521ab5e3d6f8f24/reports/receipt.json"
+    },
+    {
+      "command": "cmake --build build/dev --target lapis_rewidth_tests lapis_attention_service_tests lapis_session_service --parallel 8",
+      "result": "passed with five existing duplicate-library linker warnings"
+    },
+    {
+      "command": "ctest --test-dir build/dev -R '^claude-rewidth$' --no-tests=error --output-on-failure",
+      "result": "passed 1/1"
+    },
+    {
+      "command": "./build/dev/services/session/lapis_attention_service_tests",
+      "result": "all cases except the documented pre-existing startup parser-drain assertion passed; the excluded-case validation run exited 0"
+    },
+    {
+      "command": "git diff --check && just quality",
+      "result": "passed"
+    },
+    {
+      "command": "cmake --build --preset desktop --parallel 8 && ctest --preset desktop --output-on-failure",
+      "result": "passed all 43 enabled tests; 9 documented tests were disabled and did not run"
+    },
+    {
+      "command": "/opt/homebrew/opt/llvm/bin/clang-tidy -p build/desktop services/session/src/rewidth.hpp services/session/tests/rewidth_test.cpp",
+      "result": "passed"
+    }
+  ],
+  "non_claims": [
+    "No live Claude Code process, remote SSH session, native GUI input, GPU latency, or disk-full recovery was exercised.",
+    "The direct attention-service binary still fails the startup parser-drain assertion that was reproduced at the pre-change base; the desktop CTest attention-service case passes.",
+    "The full desktop static-analysis recipe also reports unrelated existing findings in desktop files and pre-existing session constructor/parser complexity; build and CTest passed."
+  ]
+}

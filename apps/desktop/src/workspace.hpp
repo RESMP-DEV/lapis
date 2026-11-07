@@ -907,6 +907,18 @@ class Workspace final : public QObject {
     std::optional<session::TerminalSize> launch_size_;
     // `launch` at the stage's size, when the window has told it.
     [[nodiscard]] session::LaunchSpec sized(session::LaunchSpec launch) const;
+    // Agents restarted as the window opens wait for the stage's size (at most
+    // unsized_wait), so a resumed conversation is drawn at the width it is
+    // shown in. Claude Code's classic renderer never redraws what it printed.
+    struct UnsizedStart {
+        QPointer<SessionPreview> document;
+        QString endpoint;
+        session::LaunchSpec launch;
+    };
+    std::vector<UnsizedStart> unsized_starts_;
+    QTimer unsized_timer_;
+    static constexpr int unsized_wait_ms = 3000;
+    void startUnsized();
     std::chrono::milliseconds reconnect_first_hold_{std::chrono::seconds(20)};
     std::optional<std::chrono::milliseconds> reconnect_wait_;
     void reconnectIfDropped(const QString& id);

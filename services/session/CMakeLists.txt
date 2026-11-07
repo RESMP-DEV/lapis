@@ -58,6 +58,12 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_terminal_tests PRIVATE lapis_project_options lapis_terminal)
     add_test(NAME terminal-behavior COMMAND lapis_terminal_tests)
     set_tests_properties(terminal-behavior PROPERTIES TIMEOUT 30)
+
+    add_executable(lapis_rewidth_tests tests/rewidth_test.cpp)
+    target_include_directories(lapis_rewidth_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(lapis_rewidth_tests PRIVATE lapis_project_options lapis_terminal)
+    add_test(NAME claude-rewidth COMMAND lapis_rewidth_tests)
+    set_tests_properties(claude-rewidth PROPERTIES TIMEOUT 30)
 endif()
 
 if(LAPIS_BUILD_SESSION)
