@@ -1222,6 +1222,40 @@ void typing_returns_to_bottom() {
             "Typing did not return the wheel-scrolled program to its bottom");
     require(text_frames(peer, 1) == QByteArray("z"), "The key after the return was lost");
 
+    // A trackpad sends a wheel step per row its pixels cover, not per 120 of
+    // angle: 3.5 rows of travel with the angle of a single notch is 3 steps.
+    const int row = qRound(surface.cellRect(0, 0).height());
+    QPointingDevice touchpad(QStringLiteral("test touchpad"), 1, QInputDevice::DeviceType::TouchPad,
+                             QPointingDevice::PointerType::Finger,
+                             QInputDevice::Capabilities{QInputDevice::Capability::PixelScroll}, 1,
+                             0);
+    QWheelEvent trackpad(middle, surface.mapToGlobal(middle), QPoint(0, row * 7 / 2),
+                         QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false,
+                         Qt::MouseEventNotSynthesized, &touchpad);
+    QCoreApplication::sendEvent(&surface, &trackpad);
+    const auto rows = peer.read();
+    require(rows.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(rows.payload).payload).steps == 3,
+            "A trackpad did not scroll the program a step per row");
+    typed(QStringLiteral("y"));
+    require(wire::decode_wheel(wire::decode_control(peer.read().payload).payload).steps == -3,
+            "Typing did not return the trackpad-scrolled program to its bottom");
+    require(text_frames(peer, 1) == QByteArray("y"), "The key after the trackpad return was lost");
+
+    // macOS gives a coarse wheel a synthesized pixel delta too. Its notch is
+    // still one 120-unit step, independent of the terminal's row height.
+    QPointingDevice mouse(QStringLiteral("test mouse"), 2, QInputDevice::DeviceType::Mouse,
+                          QPointingDevice::PointerType::Generic,
+                          QInputDevice::Capabilities{QInputDevice::Capability::Position}, 1, 3);
+    QWheelEvent coarse(middle, surface.mapToGlobal(middle), QPoint(0, 20), QPoint(0, 120),
+                       Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false,
+                       Qt::MouseEventNotSynthesized, &mouse);
+    QCoreApplication::sendEvent(&surface, &coarse);
+    const auto notch = peer.read();
+    require(notch.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(notch.payload).payload).steps == 1,
+            "A coarse wheel's synthesized pixels changed the size of a notch");
+
     surface.setScrollToBottomOnTyping(false);
     scroll(120);
     const auto left = peer.read();
