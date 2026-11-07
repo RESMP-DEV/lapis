@@ -104,9 +104,18 @@ void views_are_whole_screens_across_pages() {
     require(view.history.viewport_offset == 2 && view.history.total_rows == 10 &&
                 view.history.viewport_rows == 4,
             "the view says where it sits in the strip");
+    // A trackpad scrolled part of a row back shows the row above the view.
+    const auto above = strip.rowAbove();
+    require(above && above->size.rows == 1 && above->size.columns == 10 &&
+                row_text(*above, 0) == "h1",
+            "the row above the view is the one row before it");
+    strip.moveTo(6);
+    require(strip.rowAbove() && row_text(*strip.rowAbove(), 0) == "h5",
+            "above the screen is the newest kept row");
     strip.moveTo(-5);
     require(strip.top() == 0 && view_rows(strip) == Rows({"h0", "h1", "h2", "h3"}),
             "the view stops at the oldest kept row");
+    require(!strip.rowAbove(), "nothing is above the oldest kept row");
     strip.moveTo(100);
     require(strip.top() == 6, "and at the screen");
     strip.addPage(rows_of(10, {"late"}, 6));

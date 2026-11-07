@@ -194,6 +194,11 @@ void SessionPreview::showStrip() {
     emit historyChanged();
     emit snapshotChanged();
 }
+std::optional<session::TerminalSnapshot> SessionPreview::historyRowAbove() const {
+    if (!history_active_ || !strip_ || snapshot_.history.viewport_offset != strip_->top())
+        return std::nullopt;
+    return strip_->rowAbove();
+}
 void SessionPreview::extendStrip() {
     if (history_request_pending_ || !live_)
         return;

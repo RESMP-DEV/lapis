@@ -2370,7 +2370,7 @@ exec sleep 600
                 !conversation(first).isEmpty() &&
                 first.contains(QStringLiteral(R"(-lic 'export LAPIS_HOOK_NONCE=)")) &&
                 first.contains(QStringLiteral(
-                    R"(export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}"; claude --permission-mode bypassPermissions --settings )")) &&
+                    R"(export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-0}"; claude --permission-mode bypassPermissions --settings )")) &&
                 first.contains(QStringLiteral(R"(}'\'' '"$o $s")")),
             "ssh has its own connection, kept alive, and names the conversation; with no mode "
             "asked for, Claude Code starts in Full access, as the forms default, not auto mode");
