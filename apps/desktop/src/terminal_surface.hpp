@@ -63,7 +63,8 @@ terminal_link_at(const session::TerminalSnapshot& snapshot, int column, int row)
 
 // Whether the cursor's row holds text from the cursor up to its last two cells,
 // as when the cursor moved back into typed text. Blanks and faint text (a CLI's
-// placeholder, such as Codex's) do not count.
+// placeholder, such as Codex's) do not count; a hidden cursor's lone OMP
+// software-cursor glyph also does not.
 [[nodiscard]] bool text_after_cursor(const session::TerminalSnapshot& snapshot);
 
 // How an offered next prompt lays out after the cursor: the one line shown

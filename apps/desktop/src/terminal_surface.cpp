@@ -448,22 +448,22 @@ bool text_after_cursor(const session::TerminalSnapshot& snapshot) {
         snapshot.cursor.column >= snapshot.size.columns)
         return false;
     const std::size_t columns = snapshot.size.columns;
-    const std::size_t first_row = snapshot.cursor.row;
-    for (std::size_t row = first_row; row < snapshot.size.rows; ++row) {
-        const std::size_t first_column =
-            row == first_row ? snapshot.cursor.column + (snapshot.cursor.visible ? 0 : 1) : 0;
-        const std::size_t base = row * columns;
-        for (std::size_t column = first_column; column + 2 < columns; ++column) {
-            const auto index = base + column;
-            if (index >= snapshot.cells.size())
-                break;
-            const auto& style = snapshot.cells[index].style;
-            if (style.faint || style.invisible)
-                continue;
-            for (const char32_t c : snapshot.text(index))
-                if (c != U' ' && c != U' ')
-                    return true;
-        }
+    const std::size_t row = static_cast<std::size_t>(snapshot.cursor.row) * columns;
+    const std::size_t cursor_index = row + snapshot.cursor.column;
+    const auto cursor_text = snapshot.text(cursor_index);
+    const bool software_cursor =
+        !snapshot.cursor.visible && cursor_text.size() == 1 && cursor_text[0] == U'\u258f';
+    const std::size_t first_column = snapshot.cursor.column + (software_cursor ? 1 : 0);
+    for (std::size_t column = first_column; column + 2 < columns; ++column) {
+        const auto index = row + column;
+        if (index >= snapshot.cells.size())
+            break;
+        const auto& style = snapshot.cells[index].style;
+        if (style.faint || style.invisible)
+            continue;
+        for (const char32_t c : snapshot.text(index))
+            if (c != U' ' && c != U' ')
+                return true;
     }
     return false;
 }

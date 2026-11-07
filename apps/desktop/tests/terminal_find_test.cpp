@@ -61,12 +61,19 @@ void suggestion_never_covers_typed_text() {
     terminal.feed("\x1b[5C");
     require(shown(terminal.snapshot()), "back at the end it shows again");
 
-    // Wrapped and multi-line drafts keep their later rows in the same screen.
+    // The strip is row-local: a later status or border row cannot hide it.
     lapis::session::Terminal wrapped({40, 3});
-    wrapped.feed("> first line\r\nsecond line\x1b[A");
+    wrapped.feed("> first line\r\n[status]\x1b[A\x1b[5C");
     const auto wrapped_screen = wrapped.snapshot();
-    require(text_after_cursor(wrapped_screen) && !shown(wrapped_screen),
-            "typed text on a later wrapped row hides");
+    require(!text_after_cursor(wrapped_screen) && shown(wrapped_screen),
+            "a later status row did not hide the suggestion");
+
+    // A hidden cursor still means a real character underneath is typed text.
+    lapis::session::Terminal hidden_text({40, 3});
+    hidden_text.feed("\x1b[?25lhello\x1b[D");
+    const auto hidden_screen = hidden_text.snapshot();
+    require(text_after_cursor(hidden_screen) && !shown(hidden_screen),
+            "a hidden cursor skipped typed text");
 
     // A CLI that hides the hardware cursor and draws its own glyph at that
     // cell is not typed text. The offered text starts beside the glyph.
