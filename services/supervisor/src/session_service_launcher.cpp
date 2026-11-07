@@ -637,9 +637,13 @@ bool SessionServiceLauncher::alive(const ChildProcess& child) {
         int status = 0;
         const auto waited = ::waitpid(child.pid, &status, WNOHANG);
         if (waited == child.pid) {
+            constexpr int requested_hangup_exit = 128 + SIGHUP;
+            const int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 0;
+            const bool clean_exit =
+                WIFEXITED(status) && (exit_code == 0 || exit_code == requested_hangup_exit);
             last_termination_ = TerminationRecord{child.pid, child.spawn_token,
-                                                  WIFEXITED(status) ? ChildTermination::exited
-                                                                    : ChildTermination::signaled};
+                                                  clean_exit ? ChildTermination::exited
+                                                             : ChildTermination::signaled};
             return false;
         }
         if (waited == 0)

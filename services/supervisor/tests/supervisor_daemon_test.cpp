@@ -768,6 +768,30 @@ void daemon_clean_service_exit_stops_slot() {
                     WEXITSTATUS(daemon_status) == 0,
                 "the clean-exit daemon exits cleanly");
         daemon = -1;
+
+        daemon = start_daemon(directory.path().toStdString(), control);
+        const auto reconstructed =
+            cli_json(run_supervisor_cli({QStringLiteral("--control-endpoint"),
+                                         QString::fromStdString(control), QStringLiteral("status"),
+                                         QStringLiteral("--json")}),
+                     "the stopped-slot daemon reconstructs and answers status");
+        require(reconstructed.value(QStringLiteral("slot")).toString() ==
+                        QLatin1String("stopped") &&
+                    reconstructed.value(QStringLiteral("blocked_reason")).toString() ==
+                        QLatin1String("supervisor service exited cleanly"),
+                "a persisted stopped slot survives daemon reconstruction");
+        const auto reset = run_supervisor_cli(
+            {QStringLiteral("--control-endpoint"), QString::fromStdString(control),
+             QStringLiteral("--state-directory"), QFileInfo(directory.path()).canonicalFilePath(),
+             QStringLiteral("reset")});
+        require(reset.exit_code == 0 && reset.standard_output.contains(QStringLiteral("applied")),
+                "explicit reset remains reachable after stopped-slot reconstruction");
+
+        require(::kill(daemon, SIGTERM) == 0, "stop the reconstructed clean-exit daemon");
+        require(::waitpid(daemon, &daemon_status, 0) == daemon && WIFEXITED(daemon_status) &&
+                    WEXITSTATUS(daemon_status) == 0,
+                "the reconstructed clean-exit daemon exits cleanly");
+        daemon = -1;
         wait_gone(static_cast<pid_t>(terminal_child));
     } catch (...) {
         if (daemon > 0) {

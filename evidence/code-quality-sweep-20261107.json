@@ -55,6 +55,20 @@
     "Route the main Grok review subprocess through the existing bounded-output helper",
     "Make malformed-config watcher timing deterministic in ui-shortcuts"
   ],
+  "review_followups": [
+    {
+      "recorded_at": "2026-11-07T03:45:43Z",
+      "source": "CodeRabbit final review summary",
+      "changes": [
+        "Allow a persisted stopped v2 slot to reconstruct so explicit reset remains reachable",
+        "Classify only exit zero and the service's requested-hangup encoding as a controlled exit; other normal exits remain restart-eligible"
+      ],
+      "tests": [
+        "supervisor-runtime: failed nonzero exit rotates into a replacement",
+        "supervisor-daemon: persisted stopped slot reconstructs and authenticated reset succeeds"
+      ]
+    }
+  ],
   "checks": [
     {
       "name": "repository-quality",
@@ -76,6 +90,12 @@
       "exit_code": 0,
       "passed": true,
       "evidence": "build/reports/supervisor-asan-runtime/receipt.json"
+    },
+    {
+      "name": "supervisor-review-followup",
+      "command": "ctest --preset supervisor -R '^(supervisor-runtime|supervisor-daemon)$' --output-on-failure",
+      "exit_code": 0,
+      "passed": true
     },
     {
       "name": "remote-relay-and-claude",
