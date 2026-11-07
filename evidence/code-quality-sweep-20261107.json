@@ -8,12 +8,13 @@
     "tested_revisions": {
       "initial_combined_checks": "39e3b3aa1849678fb88fbaa0c1b1317aff716d62",
       "supervisor_followup_checks": "0f849b41a476da4defeed09f85e9a9b3147fdfb1",
-      "review_quickfix_checks": "b341200cb7084b3988c80b820e064106787bbf71"
+      "review_quickfix_checks": "b341200cb7084b3988c80b820e064106787bbf71",
+      "post_rebase_review_checks": "72d7cb355ca2f306d3308474d0773107fcad30ba"
     },
     "changed_source_manifest": {
       "algorithm": "sha256(git diff --binary base..review_quickfix_checks -- ':(exclude)evidence/*')",
-      "digest": "e62d2c43f2cd6bda599f99eec97adc24011a8eaffcfd1e3a2ee43e1b2d31c4a4",
-      "changed_paths": 20
+      "digest": "05b78f7bcd0de145664c1f2791f4a0bc980e7c846df4ba1932d7d77693d52417",
+      "changed_paths": 22
     },
     "artifact_identities": {
       "qt": {
@@ -106,6 +107,22 @@
         "Poll ownership release and silence two test-only swappable-parameter warnings",
         "Document why clean-exit persistence failure intentionally exits for registry reload"
       ]
+    },
+    {
+      "recorded_at": "2026-11-07T04:13:53Z",
+      "source": "CodeRabbit post-rebase review",
+      "revision": "72d7cb355ca2f306d3308474d0773107fcad30ba",
+      "changes": [
+        "Wait for the remote OMP stand-in's completion output before reading its capture",
+        "Isolate cyclic ProxyJump discovery from inherited shell history",
+        "Bind requested agent closure to a service PID and session-epoch marker; unrequested SIGHUP remains restart-eligible"
+      ],
+      "tests": [
+        "remote Python suite: 65/65 passed",
+        "supervisor runtime/session-service/daemon: 3/3 passed",
+        "workspace-omp-overlay: passed",
+        "supervisor ASan/UBSan: passed"
+      ]
     }
   ],
   "checks": [
@@ -168,6 +185,13 @@
       "name": "review-quickfixes",
       "source_revision": "b341200cb7084b3988c80b820e064106787bbf71",
       "command": "python3 -m unittest scripts.tests.test_lapis_remote && ctest --preset supervisor -R '^(supervisor-runtime|supervisor-daemon)$' --output-on-failure && ctest --test-dir build/desktop -R '^workspace-omp-overlay$' --no-tests=error --output-on-failure",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "post-rebase-review-fixes",
+      "source_revision": "72d7cb355ca2f306d3308474d0773107fcad30ba",
+      "command": "python3 -m unittest scripts.tests.test_lapis_remote && ctest --preset supervisor -R '^(supervisor-runtime|supervisor-session-service|supervisor-daemon)$' --output-on-failure && ctest --test-dir build/desktop -R '^workspace-omp-overlay$' --no-tests=error --output-on-failure",
       "exit_code": 0,
       "passed": true
     }
