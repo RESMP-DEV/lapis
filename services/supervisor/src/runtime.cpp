@@ -418,10 +418,11 @@ SupervisorRuntime::SupervisorRuntime(
                               !persisted.session->spawn_token.empty();
     try {
         static_cast<void>(converge());
-    } catch (const std::exception&) {
-        // A failed launch is persisted as a blocked stopped state. Constructing
-        // the control surface must still expose that explicit state.
-        startup_convergence_failed_ = true;
+    } catch (const ConvergenceRefused&) {
+        startup_convergence_refused_ = true;
+    } catch (const std::exception&) { // NOLINT(bugprone-empty-catch)
+        // A failed launch is persisted as a blocked stopped state. The daemon
+        // rejects that state before exposing its control surface.
     }
 }
 
@@ -497,6 +498,12 @@ std::string SupervisorRuntime::control(
 
 Convergence SupervisorRuntime::converge() {
     if (child_ && !launcher_->alive(*child_)) {
+        const auto termination = launcher_->termination(*child_);
+        if (termination == ChildTermination::exited) {
+            if (!stop_desired("supervisor service exited cleanly"))
+                failed("Supervisor service clean exit could not be persisted");
+            return Convergence::stopped;
+        }
         launcher_->release(*child_);
         child_.reset();
     }
@@ -563,6 +570,10 @@ Convergence SupervisorRuntime::converge() {
 const SupervisorState& SupervisorRuntime::state() const noexcept { return registry_->state(); }
 
 pid_t SupervisorRuntime::child_pid() const noexcept { return child_ ? child_->pid : -1; }
+
+bool SupervisorRuntime::startup_convergence_refused() const noexcept {
+    return startup_convergence_refused_;
+}
 
 void SupervisorRuntime::retire_child() {
     if (!child_)

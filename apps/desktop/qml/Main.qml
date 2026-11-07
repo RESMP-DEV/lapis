@@ -48,7 +48,8 @@ ApplicationWindow {
     readonly property string monoFamily: liveTerminal.resolvedFontFamily
     readonly property int terminalFontSize: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSize : 14
     // Composition and paste own the keyboard until they finish.
-    readonly property bool terminalBusy: liveTerminal.composing || liveTerminal.pasting
+    readonly property bool terminalBusy: liveTerminal.composing || liveTerminal.pasting ||
+                                        sideSurface.composing || sideSurface.pasting
 
     readonly property int uiFont: {
         // Use the window font so a larger system size still fits. Do not assign
@@ -4514,7 +4515,10 @@ ApplicationWindow {
                 fontPixelSize: window.terminalFontSize
                 visible: sidePanel.visible && document !== null
                 enabled: visible
-                interactive: visible && window.visible && !window.inputBlocked && document !== null && document.inputReady
+                // A history page stays interactive for selection and typing
+                // back to live, even after the side panel is hidden and shown.
+                interactive: visible && window.visible && !window.inputBlocked && document !== null &&
+                             (document.inputReady || document.historyActive)
                 focus: visible && window.visible && !window.inputBlocked
             }
             PlainLabel {

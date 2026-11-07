@@ -520,6 +520,28 @@ class GrokRunTests(unittest.TestCase):
         self.assertIn("HOME=", environment)
         self.assertIn("GH_CONFIG_DIR=", environment)
 
+    def test_grok_output_is_bounded(self):
+        script = self.root / "bin" / "grok"
+        script.write_text(f"#!{sys.executable}\nprint('x' * 2048)\n")
+        script.chmod(0o755)
+        with patch.object(grok_review, "MAX_GROK_OUTPUT", 1024):
+            with self.assertRaisesRegex(
+                grok_review.ReviewError, "stdout exceeds 1024 bytes"
+            ):
+                grok_review.ask_grok(self.worktree, "brief")
+
+    def test_grok_timeout_and_output_bounds_reach_the_helper(self):
+        timeout = grok_review.ReviewError("grok exceeded its helper timeout")
+        with patch.object(grok_review, "run_process", side_effect=timeout) as helper:
+            with self.assertRaisesRegex(
+                grok_review.ReviewError, "Grok did not finish within 30 minutes"
+            ):
+                grok_review.ask_grok(self.worktree, "brief")
+        self.assertEqual(helper.call_args.kwargs["timeout"], grok_review.TIMEOUT)
+        self.assertEqual(
+            helper.call_args.kwargs["max_output"], grok_review.MAX_GROK_OUTPUT
+        )
+
     def test_failures_and_unfinished_runs_are_errors(self):
         self.grok(
             {"type": "error", "message": "API error (status 429): usage limit"}, 1

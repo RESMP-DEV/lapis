@@ -636,8 +636,12 @@ bool SessionServiceLauncher::alive(const ChildProcess& child) {
     for (;;) {
         int status = 0;
         const auto waited = ::waitpid(child.pid, &status, WNOHANG);
-        if (waited == child.pid)
+        if (waited == child.pid) {
+            last_termination_ = TerminationRecord{child.pid, child.spawn_token,
+                                                  WIFEXITED(status) ? ChildTermination::exited
+                                                                    : ChildTermination::signaled};
             return false;
+        }
         if (waited == 0)
             break;
         if (waited < 0 && errno == EINTR)
@@ -653,6 +657,14 @@ bool SessionServiceLauncher::alive(const ChildProcess& child) {
     } catch (...) {
         return false;
     }
+}
+
+ChildTermination SessionServiceLauncher::termination(const ChildProcess& child) {
+    if (!last_termination_ || last_termination_->pid != child.pid ||
+        last_termination_->spawn_token != child.spawn_token) {
+        return ChildTermination::unknown;
+    }
+    return last_termination_->termination;
 }
 
 bool SessionServiceLauncher::terminate(const ChildProcess& child) {

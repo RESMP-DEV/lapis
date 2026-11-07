@@ -98,6 +98,7 @@ SCHEMA = {
 READ_TOOLS = "read_file,grep,list_dir"
 ENVIRONMENT_KEYS = {"PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TERM"}
 MAX_DIFF_BYTES = 256 * 1024
+MAX_GROK_OUTPUT = 8 * 1024 * 1024
 
 PROMPT = """<context>
 You are a repository reviewer. The checkout is the PR head, commit {head}.
@@ -553,23 +554,23 @@ def ask_grok(worktree, prompt):
             str(MAX_TURNS),
         ]
         command += ["--prompt-file", str(brief)]  # the prompt flag goes last
-        process = subprocess.Popen(
-            command,
-            cwd=worktree,
-            env=environment,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
         try:
-            out, err = process.communicate(timeout=TIMEOUT)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.communicate()
-            raise ReviewError(
-                f"Grok did not finish within {TIMEOUT // 60} minutes"
-            ) from None
+            result = run_process(
+                command,
+                cwd=worktree,
+                env=environment,
+                timeout=TIMEOUT,
+                max_output=MAX_GROK_OUTPUT,
+            )
+        except ReviewError as error:
+            if str(error) == "grok exceeded its helper timeout":
+                raise ReviewError(
+                    f"Grok did not finish within {TIMEOUT // 60} minutes"
+                ) from None
+            raise
+        out = result.stdout
+        err = result.stderr
+        returncode = result.returncode
     try:
         envelope = json.loads(out)
     except ValueError:
@@ -577,7 +578,7 @@ def ask_grok(worktree, prompt):
     if not isinstance(envelope, dict):
         raise ReviewError("Grok returned an invalid run envelope")
     message = str(envelope.get("message", "")) or err.strip()[-400:]
-    if process.returncode != 0 or envelope.get("type") == "error":
+    if returncode != 0 or envelope.get("type") == "error":
         quota = bool(
             re.search(
                 r"\b(?:quota|credits?|usage limit|rate limit)\b|\b429\b", message, re.I

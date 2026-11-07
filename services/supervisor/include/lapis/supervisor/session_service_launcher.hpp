@@ -7,6 +7,7 @@
 #include <QStringList>
 
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace lapis::session {
@@ -40,6 +41,7 @@ class SessionServiceLauncher final : public ChildLauncher {
     [[nodiscard]] ChildProcess launch(const DesiredSession& session,
                                       const std::string& spawn_token) override;
     [[nodiscard]] bool alive(const ChildProcess& child) override;
+    [[nodiscard]] ChildTermination termination(const ChildProcess& child) override;
     [[nodiscard]] bool terminate(const ChildProcess& child) override;
     void release(const ChildProcess& child) override;
 
@@ -49,6 +51,13 @@ class SessionServiceLauncher final : public ChildLauncher {
 
     SessionServiceLaunch launch_;
     std::string fingerprint_;
+
+    struct TerminationRecord {
+        pid_t pid{};
+        std::string spawn_token;
+        ChildTermination termination{ChildTermination::unknown};
+    };
+    std::optional<TerminationRecord> last_termination_;
 };
 
 } // namespace lapis::supervisor

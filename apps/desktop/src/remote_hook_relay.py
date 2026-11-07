@@ -21,7 +21,10 @@ K = {
 
 def work(key, value):
     if not isinstance(value, list) or len(value) > 64:
-        return []
+        # The local relay treats a present non-array as schema drift. Keep that
+        # conservative meaning across the terminal boundary; an empty list
+        # would claim that no background work is running.
+        return {}
     if key == "session_crons":
         # The remote consumer derives a count. Do not put cron identities,
         # schedules or other private configuration on the terminal.

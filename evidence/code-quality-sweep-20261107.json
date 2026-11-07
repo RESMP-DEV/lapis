@@ -1,0 +1,109 @@
+{
+  "schema": "lapis.code-quality-sweep/1",
+  "recorded_at": "2026-11-07T02:54:14Z",
+  "passed": true,
+  "agent": "Codex parent with Qoder-first review workers and bounded native Codex repair workers",
+  "source": {
+    "base_revision": "b83a9d859ddcce090521d0bea25c9d511422cdc8",
+    "worktree": ".worktrees/quality-sweep-20261107",
+    "dirty": true,
+    "platform": "macOS 26.7.1 arm64",
+    "toolchain": {
+      "clang-format": "Apple clang-format 21.0.0",
+      "cmake": "4.4.5",
+      "ruff": "0.17.4",
+      "qt": "6.11.2"
+    }
+  },
+  "scope": {
+    "included": [
+      "Read-only session/supervisor, desktop, adapter/OMP, Python, and build/docs quality reviews at current main",
+      "Supervisor preserved-peer startup control and clean-exit lifecycle repairs",
+      "Side-terminal history input recovery and composition shortcut ownership",
+      "Remote Claude background-schema conservatism and local-only OMP overlay scope",
+      "Cyclic SSH ProxyJump recovery and bounded Grok reviewer output",
+      "A deterministic ui-shortcuts malformed-config watcher fixture"
+    ],
+    "excluded": [
+      "Native macOS IME, physical-keyboard, GPU, reboot, load, and latency qualification",
+      "Live SSH ProxyJump or live Grok requests",
+      "Real remote OMP or remote Claude hosts",
+      "Package/release publication"
+    ]
+  },
+  "decomposition": {
+    "review_reports": "build/quality-sweep/workers/*.txt plus matching status receipts",
+    "dispatch_incident": {
+      "description": "The first ten briefs received the literal launcher name because ccr-worker-lease prepends the worker binary and the parent also supplied it after --.",
+      "recovery": "The no-change receipts were retained, the wrapper contract was inspected, and corrected briefs omitted the duplicate binary name. Completed Qoder reviews: session, desktop, docs/build, and PR #179. Provider-exhausted lanes were completed by bounded native Codex child tasks.",
+      "misdispatched_worktrees_changed": false
+    },
+    "parent_owned": [
+      "Finding adjudication and cross-domain integration",
+      "Current-main reconciliation",
+      "All acceptance gates, commits, pushes, and PR review state"
+    ]
+  },
+  "changes": [
+    "Keep a live but unverified supervisor peer retryable under daemon control",
+    "Classify a clean service child exit as stopped instead of restarting it as a crash",
+    "Keep the side terminal interactive in history and let typing return it live after reopen",
+    "Treat side-terminal composition or paste as window-level keyboard ownership",
+    "Serialize malformed or oversized remote Claude background lists as conservative schema drift",
+    "Document and test the OMP resize overlay as local-only",
+    "Bound cyclic SSH ProxyJump discovery and always release MachineList.building after failure",
+    "Route the main Grok review subprocess through the existing bounded-output helper",
+    "Make malformed-config watcher timing deterministic in ui-shortcuts"
+  ],
+  "checks": [
+    {
+      "name": "repository-quality",
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "passed": true,
+      "evidence": "build/reports/quality/receipt.json"
+    },
+    {
+      "name": "supervisor-runtime",
+      "command": "just supervisor-runtime",
+      "exit_code": 0,
+      "passed": true,
+      "evidence": "build/reports/supervisor-runtime/receipt.json"
+    },
+    {
+      "name": "supervisor-asan",
+      "command": "CMAKE_PREFIX_PATH=<pinned-qt> LAPIS_GHOSTTY_PREFIX=<pinned-ghostty> python3 scripts/check_supervisor_runtime.py --preset supervisor-asan --jobs 8",
+      "exit_code": 0,
+      "passed": true,
+      "evidence": "build/reports/supervisor-asan-runtime/receipt.json"
+    },
+    {
+      "name": "remote-relay-and-claude",
+      "command": "python3 -m unittest scripts.tests.test_remote_hook_relay && ctest --test-dir build/desktop -R '^(claude-observer|workspace-omp-overlay)$' --no-tests=error --output-on-failure && QT_QPA_PLATFORM=offscreen build/desktop/apps/desktop/lapis_workspace_tests --case remote-hooks",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "ui-review-background",
+      "command": "python3 scripts/lapis.py ui-review --json",
+      "exit_code": 0,
+      "passed": true,
+      "evidence": "build/reports/ui-review/20261107T025140Z-uiwm2zt6/receipt.json",
+      "observed": "ui-full-background, ui-shortcuts-background, and terminal-input-background all passed offscreen/software."
+    },
+    {
+      "name": "desktop-build-and-enabled-ctest",
+      "command": "CMAKE_PREFIX_PATH=<pinned-qt> LAPIS_GHOSTTY_PREFIX=<pinned-ghostty> cmake --build build/desktop -j 8 && ctest --test-dir build/desktop --no-tests=error --output-on-failure",
+      "exit_code": 0,
+      "passed": true,
+      "observed": "43 enabled tests passed; nine native/screen-gated tests were disabled by repository policy."
+    }
+  ],
+  "non_claims": [
+    "The offscreen UI review does not qualify native macOS IME, physical keyboard routing, native GPU presentation, or system pasteboard behavior.",
+    "The supervisor receipt does not qualify reboot recovery, launchd replacement, package replacement, load, or latency.",
+    "No live SSH ProxyJump, Grok request, remote OMP host, or remote Claude host was exercised.",
+    "The first failed supervisor-asan configure attempt selected Homebrew Qt 6.12; the recorded passing rerun explicitly selected the repository-pinned Qt 6.11.2 and Ghostty prefix.",
+    "Full static analysis was not rerun on this combined quality branch; prior current-main runs retain unrelated pre-existing findings."
+  ]
+}

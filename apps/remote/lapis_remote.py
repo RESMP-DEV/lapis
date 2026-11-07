@@ -1193,9 +1193,13 @@ def history_hosts(paths=None):
     return counts
 
 
-def reachable(machine, timeout=1.5):
+def reachable(machine, timeout=1.5, visited=frozenset()):
     """Whether the host (or its first jump host) accepts TCP: no login, no key
     use, so a hardware key never asks for a touch."""
+    host = machine.rsplit("@", 1)[-1].split(":", 1)[0]
+    if host in visited:
+        return False
+    visited |= {host}
     try:
         resolved = subprocess.run(
             ["ssh", "-G", "--", machine], capture_output=True, text=True, timeout=5
@@ -1205,7 +1209,11 @@ def reachable(machine, timeout=1.5):
     settings = dict(line.split(" ", 1) for line in resolved.splitlines() if " " in line)
     jump = settings.get("proxyjump", "none")
     if jump != "none":
-        return reachable(jump.split(",")[0].rsplit("@", 1)[-1].split(":")[0], timeout)
+        return reachable(
+            jump.split(",")[0].rsplit("@", 1)[-1].split(":", 1)[0],
+            timeout,
+            visited,
+        )
     if settings.get("proxycommand", "none") != "none":
         return True  # cannot tell without running it
     try:
@@ -1233,27 +1241,36 @@ class MachineList:
         self.building = False
 
     def build(self):
-        counts = history_hosts(self.histories)
         try:
-            for agent in load_workspace(self.registry)["agents"]:
-                host = remote_machine(agent)
-                if host:
-                    counts[host] += 5  # an agent kept in the workspace counts more
-        except (OSError, ValueError, GatewayError):
-            pass
-        configured = ssh_config_hosts(self.config)
-        seen = [h for h, n in counts.most_common(24) if n >= 3 and h not in configured]
-        names = list(dict.fromkeys(configured + seen))
-        with concurrent.futures.ThreadPoolExecutor(8) as pool:
-            online = dict(zip(names, pool.map(reachable, names)))
-        # Hosts known only from history (often gone cloud machines) are shown
-        # while they answer; reachable ones come first, most used first.
-        names = [n for n in names if n in configured or online[n]]
-        names.sort(key=lambda name: (not online[name], -counts[name], name))
-        machines = [
-            {"name": name, "uses": counts[name], "available": online[name]}
-            for name in names
-        ]
+            counts = history_hosts(self.histories)
+            try:
+                for agent in load_workspace(self.registry)["agents"]:
+                    host = remote_machine(agent)
+                    if host:
+                        counts[host] += 5  # an agent kept in the workspace counts more
+            except (OSError, ValueError, GatewayError):
+                pass
+            configured = ssh_config_hosts(self.config)
+            seen = [
+                host
+                for host, uses in counts.most_common(24)
+                if uses >= 3 and host not in configured
+            ]
+            names = list(dict.fromkeys(configured + seen))
+            with concurrent.futures.ThreadPoolExecutor(8) as pool:
+                online = dict(zip(names, pool.map(reachable, names)))
+            # Hosts known only from history (often gone cloud machines) are shown
+            # while they answer; reachable ones come first, most used first.
+            names = [name for name in names if name in configured or online[name]]
+            names.sort(key=lambda name: (not online[name], -counts[name], name))
+            machines = [
+                {"name": name, "uses": counts[name], "available": online[name]}
+                for name in names
+            ]
+        except BaseException:
+            with self.lock:
+                self.building = False
+            raise
         with self.lock:
             self.machines, self.built, self.building = machines, time.monotonic(), False
 

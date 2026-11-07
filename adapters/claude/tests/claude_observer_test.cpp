@@ -585,6 +585,13 @@ void terminal_transport() {
     observer.receiveRelayed(event("SessionStart"));
     observer.receiveRelayed(event("UserPromptSubmit"));
     require(state.ready() && state.activity() == attention::Activity::working);
+    auto drift = event("Stop");
+    drift.insert("background_tasks", QJsonObject{});
+    drift.insert("session_crons", QJsonArray{});
+    observer.receiveRelayed(drift);
+    require(state.activity() == attention::Activity::working);
+    require(observer.diagnostic().contains(
+        QLatin1String("Claude background-work schema is unavailable")));
     auto stop = event("Stop");
     stop.insert("in_flight", "0");
     stop.insert("background_tasks", QJsonArray{QJsonObject{{"status", "running"}}});

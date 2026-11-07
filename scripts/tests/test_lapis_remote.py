@@ -1946,6 +1946,45 @@ class MachineTests(unittest.TestCase):
             [("devbox", True), ("live", True), ("gpubox", True), ("oldbox", False)],
         )
 
+    def test_proxy_jump_cycle_finishes_machine_build(self):
+        config = self.root / "config"
+        config.write_text("Host cycle-a cycle-b\n")
+        jumps = {"cycle-a": "cycle-b", "cycle-b": "cycle-a"}
+        calls = []
+
+        def resolve(command, **_):
+            machine = command[-1]
+            calls.append(machine)
+            return subprocess.CompletedProcess(
+                command, 0, f"proxyjump {jumps[machine]}\n", ""
+            )
+
+        machines = remote.MachineList(self.root / "none.json", config)
+        with patch.object(remote.subprocess, "run", side_effect=resolve):
+            machines.build()
+        self.assertEqual(
+            [(machine["name"], machine["available"]) for machine in machines.machines],
+            [("cycle-a", False), ("cycle-b", False)],
+        )
+        self.assertFalse(machines.building)
+        self.assertEqual(sorted(calls), ["cycle-a", "cycle-a", "cycle-b", "cycle-b"])
+
+    def test_failed_machine_build_becomes_retryable(self):
+        config = self.root / "config"
+        config.write_text("Host broken\n")
+        original = remote.reachable
+
+        def fail(*_):
+            raise RuntimeError("probe")
+
+        remote.reachable = fail
+        self.addCleanup(setattr, remote, "reachable", original)
+        machines = remote.MachineList(self.root / "none.json", config)
+        machines.building = True
+        with self.assertRaises(RuntimeError):
+            machines.build()
+        self.assertFalse(machines.building)
+
 
 @unittest.skipUnless(shutil.which("caffeinate"), "macOS only")
 class KeepAwakeTests(unittest.TestCase):
