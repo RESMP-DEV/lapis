@@ -55,7 +55,8 @@ add_library(lapis_desktop_view STATIC
     src/desktop_actions.cpp src/desktop_actions.hpp src/platform_desktop.hpp
     src/shell_environment.cpp src/shell_environment.hpp
     src/tool_status.cpp src/tool_status.hpp
-    src/ui_preview.cpp src/ui_preview.hpp)
+    src/ui_preview.cpp src/ui_preview.hpp
+    src/transcript.cpp src/transcript.hpp)
 target_include_directories(lapis_desktop_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 if(APPLE)
     # Notifications, input idle time, the login item, Command-` and (in the
@@ -114,7 +115,7 @@ if(APPLE)
     target_link_libraries(lapis_desktop PRIVATE "-framework AppKit")
 endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
-qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml qml/Tools.qml)
+qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml qml/Tools.qml qml/Transcript.qml)
 set_target_properties(lapis_desktop PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/macos/Info.plist.in"
     MACOSX_BUNDLE_BUNDLE_NAME "lapis"
@@ -198,6 +199,16 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_tile_layout_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME tile-layout COMMAND lapis_tile_layout_tests)
     set_tests_properties(tile-layout PROPERTIES TIMEOUT 20)
+    add_executable(lapis_transcript_tests tests/transcript_test.cpp)
+    target_link_libraries(lapis_transcript_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME transcript COMMAND lapis_transcript_tests)
+    set_tests_properties(transcript PROPERTIES TIMEOUT 20)
+    # Offscreen contact sheet and scroll timing of the visual view; a review
+    # tool, not a CTest entry.
+    add_executable(lapis_transcript_capture tests/transcript_capture.cpp)
+    target_link_libraries(lapis_transcript_capture PRIVATE lapis_project_options lapis_desktop_view)
+    target_compile_definitions(lapis_transcript_capture PRIVATE
+        LAPIS_TRANSCRIPT_QML="${CMAKE_CURRENT_SOURCE_DIR}/qml/Transcript.qml")
     add_executable(lapis_cell_shapes_tests tests/cell_shapes_test.cpp)
     target_link_libraries(lapis_cell_shapes_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME cell-shapes COMMAND lapis_cell_shapes_tests)
@@ -392,4 +403,4 @@ target_link_libraries(lapis_attention_ui_probe PRIVATE lapis_project_options lap
     Qt6::QuickControls2)
 target_compile_definitions(lapis_attention_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
 qt_add_resources(lapis_attention_ui_probe attention_qml PREFIX "/" FILES
-    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml qml/Tools.qml)
+    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml qml/Tools.qml qml/Transcript.qml)
