@@ -248,6 +248,10 @@ class SessionPreview final : public QObject {
         decodeWaiting();
         return snapshot_;
     }
+    // While browsing history, the row just above the history page shown, for
+    // a view scrolled part of a row; none when live, at the oldest row, or
+    // while the page shown waits for the strip to catch up.
+    [[nodiscard]] std::optional<session::TerminalSnapshot> historyRowAbove() const;
 
   signals:
     void identityChanged();

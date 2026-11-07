@@ -103,9 +103,6 @@ void authenticates_events() {
     }
 }
 
-// An oversized incomplete hook never erases terminal output that arrived
-// before it, a bare backslash does not end quarantine, and quarantine itself
-// cannot suppress later output indefinitely.
 // lapis's OMP extension binds as "omp", and its events carry that name.
 void binds_omp() {
     TerminalHookChannel channel;
@@ -116,6 +113,9 @@ void binds_omp() {
             events.front().source == end);
 }
 
+// An oversized incomplete hook never erases terminal output that arrived
+// before it, a bare backslash does not end quarantine, and quarantine itself
+// cannot suppress later output indefinitely.
 void bounds_oversized_quarantine() {
     const QByteArray prefix = "login\r\n";
     const QByteArray marker = "\x1b]7717;lapis-event;" + QByteArray(nonce) + ";";

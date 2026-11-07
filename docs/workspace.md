@@ -97,12 +97,13 @@ until it restarts.
 ## History
 
 Everything an agent prints is kept, compressed, back to its first line. The
-mouse wheel scrolls back through it a row at a time, and a bar appears down the
+mouse wheel scrolls back through it three rows a notch; a trackpad moves it by
+pixels, so the text follows your fingers. A bar appears down the
 terminal's right edge: drag it to jump anywhere, the top being the first line.
 Scrolling past the newest row, typing, or **Live** returns to the live screen,
 and a key you type reaches the agent. Over a full-screen program on the
-alternate screen, the wheel scrolls the program itself, as in other terminals;
-typing first sends the program back to its bottom, by wheel or arrow keys,
+alternate screen, the wheel scrolls the program itself, as in other terminals,
+with a trackpad sending one wheel step per row it moves; typing first sends the program back to its bottom, by wheel or arrow keys,
 before the key arrives. Reading lapis's own history still returns to live on
 the first key, since that is where input is delivered. Set
 `scrollToBottomOnTyping` to `false` in `lapis.json`

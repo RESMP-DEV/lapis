@@ -6,6 +6,7 @@
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QThread>
 #include <functional>
@@ -113,12 +114,22 @@ class AttentionServiceTestAccess final {
 
     [[nodiscard]] static bool in_sync(const SessionService& service) { return service.in_sync_; }
 
+    [[nodiscard]] static qint64 settle_wait(SessionService& service) {
+        return service.settle_wait_ms();
+    }
+
     static void defer_next_snapshot(SessionService& service) {
         service.snapshot_pace_.published(service.snapshot_clock_.elapsed());
     }
 
+    static void mark_process_started(SessionService& service) { service.process_started_ = true; }
+
     [[nodiscard]] static bool publish_timer_active(const SessionService& service) {
         return service.timer_.isActive();
+    }
+
+    [[nodiscard]] static bool settle_timer_active(const SessionService& service) {
+        return service.settle_timer_.isActive();
     }
 
     [[nodiscard]] static const QByteArray& pending_output(const SessionService& service) {
@@ -343,6 +354,70 @@ void adjacent_updates_do_not_hide_a_finished_frame() {
     require(Access::in_sync(service));
 }
 
+// A program's first text waits for its output to go quiet, so a resumed
+// conversation printed in one burst opens at its end; a blank screen does not
+// wait, and once settled the screen is never held again.
+void a_first_burst_of_text_settles_before_it_is_shown() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-settle-XXXXXX")};
+    require(directory.isValid());
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    Access::feed_output(service, QByteArrayLiteral("\x1b[?25l\x1b]0;title\x07"));
+    require(Access::settle_wait(service) == 0);
+    Access::feed_output(service, QByteArrayLiteral("first line of a long transcript\r\n"));
+    require(Access::settle_wait(service) > 0);
+    QThread::msleep(80);
+    Access::feed_output(service, QByteArrayLiteral("more of it\r\n"));
+    const auto still = Access::settle_wait(service);
+    require(still > 100 && still <= 150);
+    QThread::msleep(170);
+    require(Access::settle_wait(service) == 0);
+    Access::feed_output(service, QByteArrayLiteral("a later line\r\n"));
+    require(Access::settle_wait(service) == 0);
+}
+
+// Settling is a hold on publication, never a hold on parsing: a large resume
+// burst must drain while the first visible frame waits for quiet.
+void startup_settling_does_not_block_the_parser() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-settle-parse-XXXXXX")};
+    require(directory.isValid());
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    Access::use_client(service, &client);
+    Access::defer_next_snapshot(service);
+    Access::mark_process_started(service);
+
+    Access::feed_output(service, QByteArray(32 * 1024LL, 'x'));
+    require(!Access::pending_output(service).isEmpty());
+    require(Access::publish_timer_active(service));
+    Access::publish_paced_output(service);
+    require(Access::settle_timer_active(service));
+    require(!Access::publish_timer_active(service));
+    QElapsedTimer drain;
+    drain.start();
+    while (!Access::pending_output(service).isEmpty() && drain.elapsed() < 140)
+        QCoreApplication::processEvents(QEventLoop::AllEvents | QEventLoop::WaitForMoreEvents, 5);
+    require(Access::pending_output(service).isEmpty());
+    require(Access::settle_timer_active(service));
+}
+
 void a_marker_crossing_the_chunk_boundary_feeds_as_one_unit() {
     using Access = lapis::session::AttentionServiceTestAccess;
     QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-sync-XXXXXX")};
@@ -518,6 +593,8 @@ int main(int argc, char** argv) {
         omp_turns_arrive_through_the_terminal();
         parser_carries_a_split_synchronized_marker();
         adjacent_updates_do_not_hide_a_finished_frame();
+        a_first_burst_of_text_settles_before_it_is_shown();
+        startup_settling_does_not_block_the_parser();
         a_marker_crossing_the_chunk_boundary_feeds_as_one_unit();
         a_completed_frame_waits_for_the_paced_publication();
         a_completed_frame_waits_for_an_in_flight_snapshot();

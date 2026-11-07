@@ -25,6 +25,7 @@
 #include <QLocalSocket>
 #include <QMouseEvent>
 #include <QObject>
+#include <QPointingDevice>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QTemporaryDir>
@@ -1221,6 +1222,40 @@ void typing_returns_to_bottom() {
             "Typing did not return the wheel-scrolled program to its bottom");
     require(text_frames(peer, 1) == QByteArray("z"), "The key after the return was lost");
 
+    // A trackpad sends a wheel step per row its pixels cover, not per 120 of
+    // angle: 3.5 rows of travel with the angle of a single notch is 3 steps.
+    const int row = qRound(surface.cellRect(0, 0).height());
+    QPointingDevice touchpad(QStringLiteral("test touchpad"), 1, QInputDevice::DeviceType::TouchPad,
+                             QPointingDevice::PointerType::Finger,
+                             QInputDevice::Capabilities{QInputDevice::Capability::PixelScroll}, 1,
+                             0);
+    QWheelEvent trackpad(middle, surface.mapToGlobal(middle), QPoint(0, row * 7 / 2),
+                         QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false,
+                         Qt::MouseEventNotSynthesized, &touchpad);
+    QCoreApplication::sendEvent(&surface, &trackpad);
+    const auto rows = peer.read();
+    require(rows.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(rows.payload).payload).steps == 3,
+            "A trackpad did not scroll the program a step per row");
+    typed(QStringLiteral("y"));
+    require(wire::decode_wheel(wire::decode_control(peer.read().payload).payload).steps == -3,
+            "Typing did not return the trackpad-scrolled program to its bottom");
+    require(text_frames(peer, 1) == QByteArray("y"), "The key after the trackpad return was lost");
+
+    // macOS gives a coarse wheel a synthesized pixel delta too. Its notch is
+    // still one 120-unit step, independent of the terminal's row height.
+    QPointingDevice mouse(QStringLiteral("test mouse"), 2, QInputDevice::DeviceType::Mouse,
+                          QPointingDevice::PointerType::Generic,
+                          QInputDevice::Capabilities{QInputDevice::Capability::Position}, 1, 3);
+    QWheelEvent coarse(middle, surface.mapToGlobal(middle), QPoint(0, 20), QPoint(0, 120),
+                       Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false,
+                       Qt::MouseEventNotSynthesized, &mouse);
+    QCoreApplication::sendEvent(&surface, &coarse);
+    const auto notch = peer.read();
+    require(notch.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(notch.payload).payload).steps == 1,
+            "A coarse wheel's synthesized pixels changed the size of a notch");
+
     surface.setScrollToBottomOnTyping(false);
     scroll(120);
     const auto left = peer.read();
@@ -1426,6 +1461,46 @@ void selection_and_scroll() {
     QCoreApplication::sendEvent(&surface, &resume);
     require(!f.document.historyActive(), "Typing did not return to the live screen");
     require(text_frames(peer, 1) == QByteArray("y"), "Typing on a history page was dropped");
+    // A trackpad moves history by pixels: a row and a half back moves the
+    // page a row and slides it the other half down, cells and all; scrolling
+    // that half forward again lines the rows up with the top.
+    const qreal row = surface.cellRect(0, 0).height();
+    QPointingDevice touchpad(QStringLiteral("test trackpad"), 1, QInputDevice::DeviceType::TouchPad,
+                             QPointingDevice::PointerType::Finger,
+                             QInputDevice::Capabilities{QInputDevice::Capability::PixelScroll}, 1,
+                             0);
+    const auto trackpad = [&](int pixels) {
+        QWheelEvent event(middle, surface.mapToGlobal(middle), QPoint(0, pixels),
+                          QPoint(0, pixels * 2), Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate,
+                          false, Qt::MouseEventNotSynthesized, &touchpad);
+        QCoreApplication::sendEvent(&surface, &event);
+    };
+    const int travel = qCeil(row * 1.5);
+    trackpad(travel);
+    const auto kept = f.historyRequest(peer);
+    lapis::session::Terminal archive({f.terminal.snapshot().size.columns, 10});
+    archive.feed("old0\r\nold1\r\nold2\r\nold3\r\nold4\r\nold5\r\nold6\r\nold7\r\nold8\r\nold9");
+    auto page = archive.snapshot();
+    page.history = {10, 0, 10, true};
+    f.historyReply(peer, kept.request_id, 1, page);
+    until([&] { return f.document.historyActive() && !f.document.historyRequestPending(); });
+    require(f.document.snapshot().history.viewport_offset == 9,
+            "A trackpad's whole row did not move the history page");
+    require(std::abs(surface.cellRect(0, 0).top() - (travel - row)) < 0.01,
+            "The rest of the row did not slide the history page");
+    trackpad(-qRound(travel - row));
+    require(std::abs(surface.cellRect(0, 0).top()) < 1 &&
+                f.document.snapshot().history.viewport_offset == 9,
+            "Scrolling the slide back did not line the rows up again");
+    QKeyEvent live(QEvent::KeyPress, Qt::Key_V, Qt::NoModifier, QStringLiteral("v"));
+    QCoreApplication::sendEvent(&surface, &live);
+    require(!f.document.historyActive() && std::abs(surface.cellRect(0, 0).top()) < 0.01,
+            "The live screen kept a history slide");
+    require(text_frames(peer, 1) == QByteArray("v"), "Typing on a slid history page was dropped");
+    trackpad(-1);
+    trackpad(qRound(row) - 1);
+    require(!f.document.historyActive() && !f.document.historyRequestPending(),
+            "A forward pixel at the live screen borrowed a history row");
     // Partial trackpad/wheel angles must not cross the primary/alternate
     // boundary: history uses 40 units per row, programs use 120 per notch.
     quint64 sequence = 4;

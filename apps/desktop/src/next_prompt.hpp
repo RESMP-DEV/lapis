@@ -55,9 +55,9 @@ struct NextPromptSettings {
     // from acceptance (a shown guess shapes what is sent). Off by default.
     double holdoutShare{0.0};
     // The live comparison: the context the helper adds (`contextArms`; see
-    // next_prompt.py), picked at random and recorded on the guess. wide is
-    // five generated candidates, three shown.
-    QStringList contextArms{QStringLiteral("wide"), QStringLiteral("base")};
+    // next_prompt.py), picked at random and recorded on the guess. wide is an
+    // opt-in five-candidate arm: the first is shown and all are logged.
+    QStringList contextArms{QStringLiteral("base")};
     // The second live comparison, drawn apart from the context arm: the
     // system prompt as it is, or with the helper's three checks (`promptArms`;
     // see next_prompt.py's CHECKS), picked at random and recorded on the guess.
@@ -145,10 +145,6 @@ class NextPrompt final : public QObject {
     // separated taken guesses (65%) from the rest (25 to 34%), Oct 3 to 9.
     static constexpr double confident = 0.45;
     [[nodiscard]] double confidentThreshold() const { return confident; }
-    // The CLIs whose transcripts the helper reads, so their agents get guesses
-    // and Tab types and sends them.
-    [[nodiscard]] static bool guessable(const QString& cli);
-    Q_INVOKABLE [[nodiscard]] bool guesses(const QString& cli) const { return guessable(cli); }
     // The suggestion offered for the agent, or empty.
     Q_INVOKABLE [[nodiscard]] QString suggestion(const QString& id) const;
     // The agents with a suggestion offered, each true once it was seen.
@@ -212,7 +208,8 @@ class NextPrompt final : public QObject {
     struct Offer {
         QString key; // "<agent>:<launch>.<n>", on each of its log records
         QString text;
-        QString conversation;
+        QString conversation;    // transcript name, used by offline evaluation
+        QString conversation_id; // the CLI's own id, used for live identity
         int turn{};
         qint64 seen_ms{}; // when first on screen; 0 while unseen
         QString said;     // the agent's last reply, clipped to said_limit
@@ -249,6 +246,8 @@ class NextPrompt final : public QObject {
         bool tab_sent{}; // and a second Tab sent it
     };
     [[nodiscard]] static QJsonObject about(const Offer& offer, const QString& id);
+    [[nodiscard]] static QString contextConversation(const QJsonObject& context);
+    [[nodiscard]] static QString offerConversation(const Offer& offer);
     // Records what the person sent after the agent's last offer, once the
     // conversation (`context`) holds it.
     void settle(const QString& id, const QJsonObject& context);
