@@ -1270,6 +1270,7 @@ class MachineList:
         except BaseException:
             with self.lock:
                 self.building = False
+                self.built = time.monotonic()
             raise
         with self.lock:
             self.machines, self.built, self.building = machines, time.monotonic(), False

@@ -501,6 +501,9 @@ Convergence SupervisorRuntime::converge() {
         const auto termination = launcher_->termination(*child_);
         if (termination == ChildTermination::exited) {
             if (!stop_desired("supervisor service exited cleanly"))
+                // A failed state commit poisons this registry. Exit the daemon
+                // so its lock is released and a replacement can reload whatever
+                // storage actually retained; serving poisoned state is unsafe.
                 failed("Supervisor service clean exit could not be persisted");
             return Convergence::stopped;
         }

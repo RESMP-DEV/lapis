@@ -1984,6 +1984,7 @@ class MachineTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             machines.build()
         self.assertFalse(machines.building)
+        self.assertGreater(machines.built, 0.0)
 
 
 @unittest.skipUnless(shutil.which("caffeinate"), "macOS only")

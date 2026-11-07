@@ -301,9 +301,10 @@ An inline agent renderer can rebuild its scrollback on a PTY resize by erasing
 every kept row and replaying the transcript (OMP's default
 `tui.resizeScrollback: rebuild`, and Kimi). Local OMP agents receive a
 lapis-owned `PI_CONFIG_FILES` overlay that sets `tui.resizeScrollback:
-preserve`, so a resize repaints only the viewport; a user's overlays are kept
-and appended. Remote OMP agents keep the remote machine's own configuration;
-lapis does not copy its local overlay over ssh.
+preserve`, so a resize repaints only the viewport. A user's existing overlays
+are kept, and the lapis overlay is appended after them. Remote OMP agents keep
+the remote machine's own configuration; lapis does not copy its local overlay
+over ssh.
 
 Typing while scrolled back returns the live screen, or sends a full-screen
 program to its bottom on the same ordered connection before the key. That

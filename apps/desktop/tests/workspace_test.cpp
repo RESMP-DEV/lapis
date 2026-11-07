@@ -2525,7 +2525,7 @@ for n, line in enumerate(sys.stdin, 1):
     elif session != "restored" and n == 2:
         tasks = [{"status": "running"}] * 65
     fire("Stop", prompt_id=f"p{n}", background_tasks=tasks, session_crons=[])
-    print("turn done", flush=True)
+    print(f"turn done {n}", flush=True)
 )");
     writeExecutable(root.filePath(QStringLiteral("bin/codex")), R"(#!/usr/bin/env python3
 import json, subprocess, sys, time
@@ -2602,7 +2602,8 @@ for n, line in enumerate(sys.stdin, 1):
                 "the remote Claude Code stand-in starts");
         for (int turn = 1; turn <= 3; ++turn) {
             require(claude->sendText("next prompt\r"), "type a prompt");
-            require(waitFor([&] { return shows(claude, QStringLiteral("turn done")); }, 15000),
+            const auto done = QStringLiteral("turn done %1").arg(turn);
+            require(waitFor([&] { return shows(claude, done); }, 15000),
                     "the remote Claude Code stand-in finishes its output");
             if (turn <= 2) {
                 waitFor([&] { return false; }, 300);

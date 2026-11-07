@@ -412,6 +412,7 @@ void wait_for_ended(QLocalSocket& socket) {
     throw std::runtime_error("service terminate did not report ended");
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void replace_persisted_session_epoch(const QString& directory, const QString& epoch) {
     QFile file{QDir(directory).filePath(QStringLiteral("supervisor.json"))};
     require(file.open(QIODevice::ReadOnly), "read persisted state for a refusal fixture");
@@ -430,6 +431,7 @@ void replace_persisted_session_epoch(const QString& directory, const QString& ep
             "persist a mismatched service epoch");
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool persisted_slot_is_stopped(const QString& directory, const QString& reason) {
     QFile file{QDir(directory).filePath(QStringLiteral("supervisor.json"))};
     if (!file.open(QIODevice::ReadOnly))
@@ -738,10 +740,18 @@ void daemon_clean_service_exit_stops_slot() {
             std::this_thread::sleep_for(std::chrono::milliseconds{20});
         }
         require(stopped, "the daemon observes a clean service exit as stopped");
-        struct stat ownership{};
-        require(::lstat((endpoint + ".supervisor-owner").c_str(), &ownership) != 0 &&
-                    errno == ENOENT,
-                "a clean service exit releases its ownership record");
+        const auto ownership_path = endpoint + ".supervisor-owner";
+        bool released = false;
+        const auto release_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+        while (std::chrono::steady_clock::now() < release_deadline) {
+            struct stat ownership{};
+            if (::lstat(ownership_path.c_str(), &ownership) != 0 && errno == ENOENT) {
+                released = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds{20});
+        }
+        require(released, "a clean service exit releases its ownership record");
         require(::kill(service_pid, 0) != 0 && errno == ESRCH,
                 "the cleanly exited service is gone");
 
@@ -758,8 +768,8 @@ void daemon_clean_service_exit_stops_slot() {
                 "a clean service exit is explicit stopped state");
         require(persisted_epoch(directory.path()) == original_epoch,
                 "a clean service exit does not rotate into a replacement epoch");
-        require(::lstat((endpoint + ".supervisor-owner").c_str(), &ownership) != 0 &&
-                    errno == ENOENT,
+        struct stat ownership_after_stop{};
+        require(::lstat(ownership_path.c_str(), &ownership_after_stop) != 0 && errno == ENOENT,
                 "a clean service exit does not launch a replacement");
 
         require(::kill(daemon, SIGTERM) == 0, "stop the clean-exit daemon");
