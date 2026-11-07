@@ -2,6 +2,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -25,9 +26,19 @@ QString kind_name(Kind kind) {
     case Kind::command: return QStringLiteral("command");
     case Kind::notice: return QStringLiteral("notice");
     case Kind::divider: return QStringLiteral("divider");
+    case Kind::turn: return QStringLiteral("turn");
     case Kind::other: break;
     }
     return QStringLiteral("other");
+}
+
+QString duration_text(qint64 ms) {
+    const auto seconds = std::max<qint64>(0, (ms + 500) / 1000);
+    if (seconds < 60)
+        return QStringLiteral("%1s").arg(seconds);
+    if (seconds < 3600)
+        return QStringLiteral("%1m %2s").arg(seconds / 60).arg(seconds % 60);
+    return QStringLiteral("%1h %2m").arg(seconds / 3600).arg((seconds % 3600) / 60);
 }
 
 namespace {
@@ -72,12 +83,25 @@ QString compact_json(const QJsonValue& value, qsizetype limit) {
     return clip(QString::fromUtf8(bytes), limit);
 }
 
-void add_lines(std::vector<DiffLine>& diff, QChar sign, const QString& text) {
+Item make(Kind kind, QString title, QString body = {}, QString detail = {}) {
+    Item item;
+    item.kind = kind;
+    item.title = std::move(title);
+    item.body = std::move(body);
+    item.detail = std::move(detail);
+    return item;
+}
+
+// Adds `text`'s lines to the diff preview and counts all of them.
+void add_lines(Item& item, QChar sign, const QString& text) {
+    if (text.isEmpty())
+        return;
     const auto lines = text.split(QLatin1Char('\n'));
+    (sign == QLatin1Char('+') ? item.added : item.removed) += static_cast<int>(lines.size());
     for (const auto& line : lines) {
-        if (std::cmp_greater_equal(diff.size(), diff_preview_lines))
+        if (std::cmp_greater_equal(item.diff.size(), diff_preview_lines))
             return;
-        diff.push_back({sign, clip(line, 400)});
+        item.diff.push_back({sign, clip(line, 400)});
     }
 }
 
@@ -98,7 +122,13 @@ QString result_text(const QJsonValue& content) {
     return parts.join(QLatin1Char('\n'));
 }
 
-// A tool call's card: what it was asked to do, in the words that matter.
+QString first_line(const QString& text) {
+    const auto end = text.indexOf(QLatin1Char('\n'));
+    return end < 0 ? text : text.left(end) + QStringLiteral(" …");
+}
+
+// A tool call as one step: a past-tense verb and its target, in the words
+// that matter, the way a person would summarize it.
 Item tool_item(const QJsonObject& block) {
     Item item;
     item.kind = Kind::tool;
@@ -106,43 +136,55 @@ Item tool_item(const QJsonObject& block) {
     const auto name = block.value(QLatin1String("name")).toString();
     const auto input = block.value(QLatin1String("input")).toObject();
     const auto text = [&input](const char* key) { return input.value(QLatin1String(key)).toString(); };
-    item.title = name;
-    if (name.startsWith(QLatin1String("mcp__"))) {
-        const auto parts = name.mid(5).split(QStringLiteral("__"));
-        if (parts.size() == 2)
-            item.title = QStringLiteral("%1 · %2").arg(parts[1], parts[0]);
-    }
+    const auto step = [&item](const char* verb, QString target, QString detail = {}) {
+        item.title = QString::fromUtf8(verb);
+        item.body = std::move(target);
+        item.detail = std::move(detail);
+    };
     if (name == QLatin1String("Bash")) {
-        item.body = clip(text("command"), 2000);
-        item.detail = text("description");
+        step("Ran", clip(text("command"), 2000), text("description"));
     } else if (name == QLatin1String("Read")) {
-        item.body = homeless(text("file_path"));
-        if (input.contains(QLatin1String("offset")))
-            item.detail = QStringLiteral("from line %1").arg(input.value(QLatin1String("offset")).toInt());
+        step("Read", homeless(text("file_path")));
     } else if (name == QLatin1String("Write")) {
-        item.body = homeless(text("file_path"));
-        add_lines(item.diff, QLatin1Char('+'), text("content"));
+        step("Wrote", homeless(text("file_path")));
+        add_lines(item, QLatin1Char('+'), text("content"));
     } else if (name == QLatin1String("Edit")) {
-        item.body = homeless(text("file_path"));
-        add_lines(item.diff, QLatin1Char('-'), text("old_string"));
-        add_lines(item.diff, QLatin1Char('+'), text("new_string"));
+        step("Edited", homeless(text("file_path")));
+        add_lines(item, QLatin1Char('-'), text("old_string"));
+        add_lines(item, QLatin1Char('+'), text("new_string"));
     } else if (name == QLatin1String("MultiEdit")) {
-        item.body = homeless(text("file_path"));
+        step("Edited", homeless(text("file_path")));
         for (const auto& edit : input.value(QLatin1String("edits")).toArray()) {
-            add_lines(item.diff, QLatin1Char('-'), edit.toObject().value(QLatin1String("old_string")).toString());
-            add_lines(item.diff, QLatin1Char('+'), edit.toObject().value(QLatin1String("new_string")).toString());
+            add_lines(item, QLatin1Char('-'), edit.toObject().value(QLatin1String("old_string")).toString());
+            add_lines(item, QLatin1Char('+'), edit.toObject().value(QLatin1String("new_string")).toString());
         }
-    } else if (name == QLatin1String("Grep") || name == QLatin1String("Glob")) {
-        item.body = text("pattern");
-        if (!text("path").isEmpty())
-            item.detail = homeless(text("path"));
+    } else if (name == QLatin1String("Grep")) {
+        step("Searched for", text("pattern"), homeless(text("path")));
+    } else if (name == QLatin1String("Glob")) {
+        step("Listed", text("pattern"), homeless(text("path")));
     } else if (name == QLatin1String("Agent") || name == QLatin1String("Task")) {
-        item.detail = text("description");
-        item.body = clip(text("prompt"), 600);
+        step("Started agent", text("description"), clip(text("prompt"), 600));
     } else if (name == QLatin1String("WebFetch")) {
-        item.body = text("url");
+        step("Fetched", text("url"));
     } else if (name == QLatin1String("WebSearch")) {
-        item.body = text("query");
+        step("Searched the web for", text("query"));
+    } else if (name == QLatin1String("Monitor")) {
+        step("Watched", text("description").isEmpty() ? first_line(text("command")) : text("description"));
+    } else if (name == QLatin1String("SendMessage")) {
+        step("Messaged", text("to"), text("summary"));
+    } else if (name == QLatin1String("ScheduleWakeup")) {
+        step("Scheduled a wakeup", text("reason"));
+    } else if (name == QLatin1String("Skill")) {
+        step("Used skill", text("skill"));
+    } else if (name == QLatin1String("TaskStop")) {
+        step("Stopped task", text("task_id"));
+    } else if (name == QLatin1String("ToolSearch")) {
+        step("Loaded tools", text("query"));
+    } else if (name == QLatin1String("AskUserQuestion")) {
+        QStringList questions;
+        for (const auto& question : input.value(QLatin1String("questions")).toArray())
+            questions << question.toObject().value(QLatin1String("question")).toString();
+        step("Asked", questions.join(QLatin1Char('\n')));
     } else if (name == QLatin1String("TodoWrite")) {
         QStringList todos;
         for (const auto& todo : input.value(QLatin1String("todos")).toArray()) {
@@ -153,34 +195,40 @@ Item tool_item(const QJsonObject& block) {
                                                                        : QStringLiteral("·");
             todos << QStringLiteral("%1 %2").arg(mark, entry.value(QLatin1String("content")).toString());
         }
-        item.body = todos.join(QLatin1Char('\n'));
+        step("Updated the plan", {}, todos.join(QLatin1Char('\n')));
+    } else if (name.startsWith(QLatin1String("mcp__"))) {
+        // mcp__server__tool: "Called tool" with the server as its detail.
+        const auto parts = name.mid(5).split(QStringLiteral("__"));
+        if (parts.size() == 2)
+            step("Called", QString(parts[1]).replace(QLatin1Char('_'), QLatin1Char(' ')),
+                 QString(parts[0]).replace(QLatin1Char('-'), QLatin1Char(' ')));
+        else
+            step("Called", name);
     } else {
-        item.body = input.isEmpty() ? QString{} : compact_json(input, 600);
+        step("Called", name, input.isEmpty() ? QString{} : compact_json(input, 600));
     }
     return item;
 }
 
 void attach_result(Item& item, const QJsonObject& block) {
-    const auto text = without_escapes(result_text(block.value(QLatin1String("content")))).trimmed();
     item.answered = true;
     item.failed = block.value(QLatin1String("is_error")).toBool();
     // A file change that worked says so in a sentence the diff already shows.
     if (!item.failed && !item.diff.empty())
         return;
+    const auto text = without_escapes(result_text(block.value(QLatin1String("content")))).trimmed();
     const auto lines = text.isEmpty() ? QStringList{} : text.split(QLatin1Char('\n'));
     item.result_lines = static_cast<int>(lines.size());
     item.result = clip(lines.mid(0, result_preview_lines).join(QLatin1Char('\n')), result_preview_chars);
 }
 
-Item make(Kind kind, QString title, QString body = {}, QString detail = {}) {
-    Item item;
-    item.kind = kind;
-    item.title = std::move(title);
-    item.body = std::move(body);
-    item.detail = std::move(detail);
-    return item;
-}
+bool is_step(Kind kind) { return kind == Kind::tool || kind == Kind::thinking; }
 } // namespace
+
+void ClaudeReader::push(Item item) {
+    item.after_step = is_step(item.kind) && !items_.empty() && is_step(items_.back().kind);
+    items_.push_back(std::move(item));
+}
 
 int ClaudeReader::add(const QByteArray& line) {
     QJsonParseError error{};
@@ -193,11 +241,24 @@ int ClaudeReader::add(const QByteArray& line) {
     const auto type = record.value(QLatin1String("type")).toString();
     const auto first = static_cast<int>(items_.size());
     int changed = -1;
-    const auto push = [this](Item item) { items_.push_back(std::move(item)); };
 
     if (type == QLatin1String("system")) {
-        if (record.value(QLatin1String("subtype")).toString() == QLatin1String("compact_boundary"))
+        const auto subtype = record.value(QLatin1String("subtype")).toString();
+        const auto content = record.value(QLatin1String("content")).toString();
+        if (subtype == QLatin1String("compact_boundary")) {
             push(make(Kind::divider, QStringLiteral("Conversation compacted")));
+        } else if (subtype == QLatin1String("turn_duration")) {
+            const auto ms = static_cast<qint64>(record.value(QLatin1String("durationMs")).toDouble());
+            if (ms > 0)
+                push(make(Kind::turn, QStringLiteral("Worked for %1").arg(duration_text(ms))));
+        } else if (subtype == QLatin1String("api_error") ||
+                   subtype.startsWith(QLatin1String("model_refusal"))) {
+            auto item = make(Kind::notice, content.isEmpty() ? subtype : clip(content, 300));
+            item.failed = true;
+            push(std::move(item));
+        } else if (subtype == QLatin1String("away_summary") && !content.isEmpty()) {
+            push(make(Kind::notice, clip(content, 600)));
+        }
         return static_cast<int>(items_.size()) > first ? first : -1;
     }
     // Records without a message (titles, modes, file snapshots, attachments)
@@ -207,6 +268,7 @@ int ClaudeReader::add(const QByteArray& line) {
         return -1;
     const bool meta = record.value(QLatin1String("isMeta")).toBool();
     const auto content = message.value(QLatin1String("content"));
+    const auto thought_ms = static_cast<qint64>(record.value(QLatin1String("thinkingDurationMs")).toDouble());
 
     const auto user_text = [&](const QString& raw) {
         if (meta || raw.startsWith(QLatin1String("<local-command-")))
@@ -244,7 +306,9 @@ int ClaudeReader::add(const QByteArray& line) {
             else if (!text.trimmed().isEmpty())
                 push(make(Kind::reply, {}, clip(text.trimmed(), body_chars)));
         } else if (kind == QLatin1String("thinking") || kind == QLatin1String("redacted_thinking")) {
-            push(make(Kind::thinking, {},
+            push(make(Kind::thinking,
+                      thought_ms > 0 ? QStringLiteral("Thought for %1").arg(duration_text(thought_ms))
+                                     : QStringLiteral("Thought"),
                       clip(block.value(QLatin1String("thinking")).toString().trimmed(), body_chars)));
         } else if (kind == QLatin1String("tool_use")) {
             auto item = tool_item(block);
@@ -331,17 +395,29 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
     case DetailRole: return item.detail;
     case ResultRole: return item.result;
     case DiffRole: return diff_rows(item.diff);
+    case AddedRole: return item.added;
+    case RemovedRole: return item.removed;
     case ResultLinesRole: return item.result_lines;
     case FailedRole: return item.failed;
     case AnsweredRole: return item.answered;
+    case AfterStepRole: return item.after_step;
     default: return {};
     }
 }
 
 QHash<int, QByteArray> TranscriptModel::roleNames() const {
-    return {{KindRole, "kind"},       {TitleRole, "title"},   {BodyRole, "body"},
-            {DetailRole, "detail"},   {ResultRole, "result"}, {DiffRole, "diff"},
-            {ResultLinesRole, "resultLines"}, {FailedRole, "failed"}, {AnsweredRole, "answered"}};
+    return {{KindRole, "kind"},
+            {TitleRole, "title"},
+            {BodyRole, "body"},
+            {DetailRole, "detail"},
+            {ResultRole, "result"},
+            {DiffRole, "diff"},
+            {AddedRole, "added"},
+            {RemovedRole, "removed"},
+            {ResultLinesRole, "resultLines"},
+            {FailedRole, "failed"},
+            {AnsweredRole, "answered"},
+            {AfterStepRole, "afterStep"}};
 }
 
 void TranscriptModel::setPath(const QString& path) {

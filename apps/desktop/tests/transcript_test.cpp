@@ -26,7 +26,7 @@ const char* const kConversation[] = {
     R"({"type":"permission-mode","permissionMode":"default"})",
     R"({"type":"user","message":{"role":"user","content":"Fix the build"}})",
     R"({"type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>x</local-command-caveat>"}})",
-    R"({"type":"assistant","message":{"content":[{"type":"thinking","thinking":"Look at CMake first.\nThen fix."}]}})",
+    R"({"type":"assistant","thinkingDurationMs":12000,"message":{"content":[{"type":"thinking","thinking":"Look at CMake first.\nThen fix."}]}})",
     R"({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"cmake --build build","description":"Build"}}]}})",
     R"({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"/x/a.cpp","old_string":"int a;","new_string":"int a{};\nint b{};"}}]}})",
     R"({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"\u001b[31merror\u001b[0m: one\ntwo"}]}})",
@@ -36,6 +36,7 @@ const char* const kConversation[] = {
     R"({"type":"user","message":{"content":"<command-name>/compact</command-name><command-args></command-args>"}})",
     R"({"type":"user","message":{"content":"<task-notification><summary>Build finished</summary></task-notification>"}})",
     R"({"type":"assistant","message":{"content":[{"type":"text","text":"Done: **fixed**."}]}})",
+    R"({"type":"system","subtype":"turn_duration","durationMs":192000})",
 };
 
 void reader_folds_records() {
@@ -43,25 +44,30 @@ void reader_folds_records() {
     for (const char* line : kConversation)
         (void)reader.add(line);
     const auto& items = reader.items();
-    require(items.size() == 9, "nine items");
-    if (items.size() != 9)
+    require(items.size() == 10, "ten items");
+    if (items.size() != 10)
         return;
     require(items[0].kind == Kind::prompt && items[0].body == "Fix the build", "prompt");
-    require(items[1].kind == Kind::thinking && items[1].body.startsWith("Look"), "thinking");
-    require(items[2].kind == Kind::tool && items[2].title == "Bash" && items[2].detail == "Build",
-            "bash card");
+    require(items[1].kind == Kind::thinking && items[1].body.startsWith("Look") &&
+                items[1].title == "Thought for 12s",
+            "thinking with its duration");
+    require(items[2].kind == Kind::tool && items[2].title == "Ran" &&
+                items[2].body == "cmake --build build" && items[2].detail == "Build",
+            "bash step");
+    require(items[2].after_step && !items[1].after_step, "steps after steps draw tight");
     require(items[2].answered && items[2].failed && items[2].result == "error: one\ntwo" &&
                 items[2].result_lines == 2,
             "result attached, escapes stripped");
-    require(items[3].title == "Edit" && items[3].diff.size() == 3 && items[3].diff[0].sign == '-' &&
-                items[3].diff[2].text == "int b{};",
-            "edit diff");
+    require(items[3].title == "Edited" && items[3].diff.size() == 3 && items[3].diff[0].sign == '-' &&
+                items[3].diff[2].text == "int b{};" && items[3].added == 2 && items[3].removed == 1,
+            "edit diff and counts");
     require(!items[3].answered, "edit still waiting");
     require(items[4].kind == Kind::other && items[4].title == "server_tool_use", "unknown block kept");
     require(items[5].kind == Kind::divider, "compaction divider");
     require(items[6].kind == Kind::command && items[6].title == "/compact", "slash command");
     require(items[7].kind == Kind::notice && items[7].title == "Build finished", "notification");
     require(items[8].kind == Kind::reply && items[8].body == "Done: **fixed**.", "reply");
+    require(items[9].kind == Kind::turn && items[9].title == "Worked for 3m 12s", "turn length");
 }
 
 void result_reports_changed_card() {

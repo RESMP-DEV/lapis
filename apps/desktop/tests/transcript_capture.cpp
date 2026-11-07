@@ -10,6 +10,7 @@
 #include <QCommandLineParser>
 #include <QElapsedTimer>
 #include <QFont>
+#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QImage>
 #include <QPainter>
@@ -92,6 +93,23 @@ int main(int argc, char** argv) {
     }
     auto* root = view.rootObject();
     root->setProperty("fontSize", parser.value("font-size").toInt());
+    // The offscreen platform reports generic names ("Sans Serif") whose
+    // fallback spaces digits apart; name the Mac's interface fonts instead,
+    // as the real window's platform resolves them.
+    const auto first_of = [](QStringList wanted, QFontDatabase::SystemFont fallback) {
+        const auto families = QFontDatabase::families();
+        for (const auto& family : wanted)
+            if (families.contains(family))
+                return family;
+        return QFontDatabase::systemFont(fallback).family();
+    };
+    const auto sans = first_of({QStringLiteral("SF Pro Text"), QStringLiteral("SF Pro"),
+                                QStringLiteral(".AppleSystemUIFont"), QStringLiteral("Helvetica Neue")},
+                               QFontDatabase::GeneralFont);
+    const auto mono = first_of({QStringLiteral("SF Mono"), QStringLiteral("Menlo")}, QFontDatabase::FixedFont);
+    root->setProperty("sansFamily", sans);
+    root->setProperty("monoFamily", mono);
+    std::printf("fonts: sans %s, mono %s\n", qPrintable(sans), qPrintable(mono));
     root->setProperty("model", QVariant::fromValue(static_cast<QObject*>(&model)));
     auto* list = root->property("list").value<QObject*>();
     view.show(); // offscreen: nothing reaches the screen
@@ -105,7 +123,7 @@ int main(int argc, char** argv) {
         if (kind != QLatin1String("tool"))
             continue;
         const auto title = model.data(index, TranscriptModel::TitleRole).toString();
-        if (edit < 0 && title == QLatin1String("Edit"))
+        if (edit < 0 && title == QLatin1String("Edited"))
             edit = row;
         if (failure < 0 && model.data(index, TranscriptModel::FailedRole).toBool())
             failure = row;

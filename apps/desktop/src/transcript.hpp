@@ -10,11 +10,11 @@
 namespace lapis::desktop {
 // A visual, read-only reading of an agent CLI's saved conversation. The
 // terminal stays the source of truth and the only place input goes; this
-// shows the same work as messages and tool cards. Kinds it does not know
+// shows the same work as messages and one-line steps. Kinds it does not know
 // become `other` blocks, so a CLI feature lapis has not learned yet still
 // shows up instead of vanishing.
 namespace transcript {
-enum class Kind { prompt, reply, thinking, tool, command, notice, divider, other };
+enum class Kind { prompt, reply, thinking, tool, command, notice, divider, turn, other };
 [[nodiscard]] QString kind_name(Kind kind);
 
 // One line of a tool's diff: '+' added, '-' removed, ' ' context.
@@ -25,14 +25,21 @@ struct DiffLine {
 
 struct Item {
     Kind kind{Kind::other};
-    QString title;  // tool: its name; command: the command; other: the record type
-    QString body;   // prompt/reply/thinking text, or a tool's main argument
-    QString detail; // a tool's description, or an other block's raw JSON
+    // A step's past-tense verb ("Ran", "Edited"), a divider's or notice's
+    // text, a command's name, an other block's record type.
+    QString title;
+    // A step's target (the command, the file), or a message's text.
+    QString body;
+    // A step's description, or an other block's raw JSON.
+    QString detail;
     QString result; // a tool's output, shortened
     std::vector<DiffLine> diff;
-    int result_lines{};   // lines in the full output
-    bool failed{};        // the tool reported an error
-    bool answered{};      // a tool result arrived
+    int added{};   // diff lines added and removed, counted in full
+    int removed{};
+    int result_lines{}; // lines in the full output
+    bool failed{};      // the tool or the API reported an error
+    bool answered{};    // a tool result arrived
+    bool after_step{};  // follows another step: drawn tight against it
     QString tool_id;
 };
 
@@ -41,6 +48,9 @@ inline constexpr int result_preview_lines = 14;
 inline constexpr qsizetype result_preview_chars = 4000;
 inline constexpr int diff_preview_lines = 40;
 inline constexpr qsizetype body_chars = 24000;
+
+// "12s", "3m 12s", "1h 4m".
+[[nodiscard]] QString duration_text(qint64 ms);
 
 // Folds Claude Code session JSONL records, in file order, into items. Tool
 // results attach to the tool call that asked for them; a subagent's records
@@ -53,6 +63,7 @@ class ClaudeReader {
     [[nodiscard]] const std::vector<Item>& items() const { return items_; }
 
   private:
+    void push(Item item);
     std::vector<Item> items_;
     QHash<QString, int> tools_; // tool_use id -> item index
 };
@@ -73,9 +84,12 @@ class TranscriptModel final : public QAbstractListModel {
         DetailRole,
         ResultRole,
         DiffRole,
+        AddedRole,
+        RemovedRole,
         ResultLinesRole,
         FailedRole,
         AnsweredRole,
+        AfterStepRole,
     };
     explicit TranscriptModel(QObject* parent = nullptr);
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
