@@ -687,11 +687,12 @@ void supervised_service_clients_adopt_and_stop() {
             "explicit stop removes service ownership");
 }
 
-// A crashed service becomes a zombie child of this test process, so a bare
+// An unrequested agent hangup makes the service a zombie child of this test
+// process, so a bare
 // kill(pid, 0) probe keeps reporting it alive and convergence would never take
 // the restart path. The launcher must reap its own children, and the admitted
 // replacement must rotate the epoch and spawn token.
-void crashed_service_restarts_with_rotated_identity() {
+void unrequested_agent_hangup_restarts_with_rotated_identity() {
     QTemporaryDir directory = owned_test_directory();
     require(directory.isValid(), "create an owned private test directory");
     require_bindable_endpoint(directory.filePath(QStringLiteral("bind.sock")));
@@ -713,23 +714,21 @@ void crashed_service_restarts_with_rotated_identity() {
     const auto original_epoch = started.session->identity.epoch;
     const auto original_token = started.session->spawn_token;
 
-    require(::kill(first_pid, SIGKILL) == 0, "crash the first real service");
-    bool crashed = false;
-    for (int attempt = 0; attempt < 300 && !crashed; ++attempt) {
-        // This process forked the service, so waitid is the only probe that
-        // distinguishes an unreaped zombie from a process that still runs.
-        siginfo_t info{};
-        info.si_pid = 0;
-        crashed = ::waitid(P_PID, static_cast<id_t>(first_pid), &info,
-                           WNOHANG | WEXITED | WNOWAIT) == 0 &&
-                  info.si_pid == first_pid;
-        if (!crashed)
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    quint64 terminal_child = 0;
+    {
+        QLocalSocket client;
+        client.connectToServer(QString::fromStdString(endpoint), QLocalSocket::ReadWrite);
+        require(client.waitForConnected(5000), "the first real service accepts a client");
+        terminal_child = attach(client, *started.session, true).pid;
+        static_cast<void>(synchronize(client));
+        detach(client);
     }
-    require(crashed, "the crashed service is visible before convergence");
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    require(::kill(static_cast<pid_t>(terminal_child), SIGHUP) == 0,
+            "hang up the agent without a close request");
+    wait_zombie(first_pid);
 
-    require(runtime.converge() == Convergence::restarted, "a crashed real service restarts");
+    require(runtime.converge() == Convergence::restarted,
+            "an unrequested agent hangup restarts the real service");
     const auto second_pid = runtime.child_pid();
     require(second_pid > 0 && second_pid != first_pid, "the replacement is a new service process");
     const auto& rotated = owner_registry->state().session;
@@ -852,7 +851,7 @@ int main(int argc, char** argv) {
     try {
         terminate_revalidates_protocol_before_group_signal();
         supervised_service_clients_adopt_and_stop();
-        crashed_service_restarts_with_rotated_identity();
+        unrequested_agent_hangup_restarts_with_rotated_identity();
         reconstruction_after_unattended_crash_rotates_identity();
         final_overload_recovers_retained_ownership();
         retained_mismatch_never_signals_unverified_peer();

@@ -394,6 +394,56 @@ void send_text(QLocalSocket& socket, const wire::Attachment& attachment, char32_
                                                                           .payload = bytes})));
 }
 
+void terminate_agent(QLocalSocket& socket, const wire::Attachment& attachment) {
+    write_all(socket, wire::frame(wire::Kind::terminate,
+                                  wire::encode_control({.attachment = attachment, .payload = {}})));
+}
+
+void wait_for_ended(QLocalSocket& socket) {
+    QByteArray buffer;
+    wire::Frame frame;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    while (read_frame(socket, buffer, frame, deadline)) {
+        if (frame.kind == wire::Kind::status &&
+            wire::decode_status(frame.payload).code == wire::StatusCode::ended) {
+            return;
+        }
+    }
+    throw std::runtime_error("service terminate did not report ended");
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+void replace_persisted_session_epoch(const QString& directory, const QString& epoch) {
+    QFile file{QDir(directory).filePath(QStringLiteral("supervisor.json"))};
+    require(file.open(QIODevice::ReadOnly), "read persisted state for a refusal fixture");
+    const auto document = QJsonDocument::fromJson(file.readAll());
+    file.close();
+    require(document.isObject(), "decode persisted state for a refusal fixture");
+    auto root = document.object();
+    auto session = root.value(QStringLiteral("session")).toObject();
+    auto identity = session.value(QStringLiteral("identity")).toObject();
+    identity.insert(QStringLiteral("epoch"), epoch);
+    session.insert(QStringLiteral("identity"), identity);
+    root.insert(QStringLiteral("session"), session);
+    require(file.open(QIODevice::WriteOnly | QIODevice::Truncate),
+            "write persisted state for a refusal fixture");
+    require(file.write(QJsonDocument{root}.toJson(QJsonDocument::Compact)) >= 0,
+            "persist a mismatched service epoch");
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+bool persisted_slot_is_stopped(const QString& directory, const QString& reason) {
+    QFile file{QDir(directory).filePath(QStringLiteral("supervisor.json"))};
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    const auto document = QJsonDocument::fromJson(file.readAll());
+    file.close();
+    const auto session = document.object().value(QStringLiteral("session")).toObject();
+    return document.isObject() &&
+           session.value(QStringLiteral("desired_state")).toString() == QLatin1String("stopped") &&
+           session.value(QStringLiteral("blocked_reason")).toString() == reason;
+}
+
 void detach(QLocalSocket& socket) {
     socket.disconnectFromServer();
     if (socket.state() != QLocalSocket::UnconnectedState)
@@ -504,17 +554,17 @@ void failed_service_birth_never_reports_born() {
     const QString fingerprint = QString::fromLatin1(
         lapis::session::launch_fingerprint(lapis::session::validate_launch(launch)).toHex());
     const pid_t daemon = start_daemon(directory.path().toStdString(), control);
-    const QJsonObject service{{QStringLiteral("environment"), QJsonObject{}}};
+    const QJsonObject service_request{{QStringLiteral("environment"), QJsonObject{}}};
     {
         ControlClient client{control};
-        send_frame(client, birth_json_at(fingerprint, service, impossible_endpoint));
+        send_frame(client, birth_json_at(fingerprint, service_request, impossible_endpoint));
         require(reply_object(receive_reply(client)).value(QStringLiteral("status")).toString() ==
                     QLatin1String("rejected"),
                 "a service launch failure is not reported as born");
     }
     {
         ControlClient client{control};
-        send_frame(client, birth_json_at(fingerprint, service, normal_endpoint));
+        send_frame(client, birth_json_at(fingerprint, service_request, normal_endpoint));
         require(reply_object(receive_reply(client)).value(QStringLiteral("status")).toString() ==
                     QLatin1String("rejected"),
                 "a failed birth consumes the one-session slot");
@@ -524,6 +574,253 @@ void failed_service_birth_never_reports_born() {
     require(::waitpid(daemon, &status, 0) == daemon && WIFEXITED(status) &&
                 WEXITSTATUS(status) == 0,
             "the failed-birth daemon exits cleanly");
+    QDir::setCurrent(previous);
+}
+
+void daemon_replacement_keeps_control_for_refused_peer() {
+    const QString previous = QDir::currentPath();
+    QTemporaryDir directory =
+        owned_test_directory(QStringLiteral("lapis-r1-daemon-refused-XXXXXX"));
+    require(directory.isValid(), "create the refused-peer daemon test directory");
+    QDir::setCurrent(directory.path());
+    const std::string control = directory.filePath(QStringLiteral("control.sock")).toStdString();
+    const std::string endpoint = directory.filePath(QStringLiteral("session.sock")).toStdString();
+    require_bindable(directory.filePath(QStringLiteral("bind.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = lapis::session::AgentMode::terminal};
+    const QString fingerprint = QString::fromLatin1(
+        lapis::session::launch_fingerprint(lapis::session::validate_launch(launch)).toHex());
+    const QJsonObject service_request{{QStringLiteral("environment"), QJsonObject{}}};
+    pid_t first_daemon = -1;
+    pid_t replacement_daemon = -1;
+    pid_t service = -1;
+    try {
+        first_daemon = start_daemon(directory.path().toStdString(), control);
+        {
+            ControlClient client{control};
+            send_frame(client, birth_json(fingerprint, service_request));
+            require(
+                reply_object(receive_reply(client)).value(QStringLiteral("status")).toString() ==
+                    QLatin1String("born"),
+                "the refused-peer fixture births a service");
+        }
+        service = service_pid_from_ownership(endpoint);
+        require(::kill(first_daemon, SIGTERM) == 0, "detach the first refused-peer daemon");
+        int status = 0;
+        require(::waitpid(first_daemon, &status, 0) == first_daemon && WIFEXITED(status) &&
+                    WEXITSTATUS(status) == 0,
+                "the first refused-peer daemon detaches cleanly");
+        first_daemon = -1;
+
+        replace_persisted_session_epoch(directory.path(),
+                                        QString{identity_hex_bytes, QLatin1Char{'6'}});
+        replacement_daemon = start_daemon(directory.path().toStdString(), control);
+        const auto refused = [&](const char* context) {
+            return cli_json(
+                run_supervisor_cli({QStringLiteral("--control-endpoint"),
+                                    QString::fromStdString(control), QStringLiteral("status"),
+                                    QStringLiteral("--json")}),
+                context);
+        };
+        auto status_reply = refused("a refused peer daemon answers status");
+        require(status_reply.value(QStringLiteral("slot")).toString() == QLatin1String("started") &&
+                    !status_reply.value(QStringLiteral("service_live")).toBool() &&
+                    status_reply.value(QStringLiteral("endpoint")).isNull() &&
+                    status_reply.value(QStringLiteral("blocked_reason")).toString() ==
+                        QLatin1String("Supervisor service peer is alive but did not verify"),
+                "replacement startup reports the retained peer as retryable");
+        require(service_pid_from_ownership(endpoint) == service,
+                "replacement startup does not replace the unverified peer");
+
+        std::this_thread::sleep_for(std::chrono::milliseconds{5100});
+        status_reply = refused("a refused peer daemon remains responsive after retry convergence");
+        require(status_reply.value(QStringLiteral("slot")).toString() == QLatin1String("started") &&
+                    status_reply.value(QStringLiteral("blocked_reason")).toString() ==
+                        QLatin1String("Supervisor service peer is alive but did not verify"),
+                "refused-peer retry neither stops nor replaces the retained service");
+
+        const auto stopped = run_supervisor_cli(
+            {QStringLiteral("--control-endpoint"), QString::fromStdString(control),
+             QStringLiteral("--state-directory"), QFileInfo(directory.path()).canonicalFilePath(),
+             QStringLiteral("stop")});
+        require(stopped.exit_code == 0 &&
+                    stopped.standard_output.contains(QStringLiteral("applied")),
+                "control can explicitly disposition a refused peer");
+        require(::kill(service, 0) == 0,
+                "the unverified peer is not signalled by the stop transition itself");
+        static_cast<void>(::killpg(service, SIGKILL));
+        wait_gone(service);
+        require(::kill(replacement_daemon, SIGTERM) == 0, "stop the refused-peer daemon");
+        int replacement_status = 0;
+        require(::waitpid(replacement_daemon, &replacement_status, 0) == replacement_daemon &&
+                    WIFEXITED(replacement_status) && WEXITSTATUS(replacement_status) == 0,
+                "the refused-peer daemon exits cleanly");
+        replacement_daemon = -1;
+    } catch (...) {
+        if (first_daemon > 0) {
+            static_cast<void>(::kill(first_daemon, SIGTERM));
+            int status = 0;
+            static_cast<void>(::waitpid(first_daemon, &status, 0));
+        }
+        if (replacement_daemon > 0) {
+            static_cast<void>(::kill(replacement_daemon, SIGTERM));
+            int status = 0;
+            static_cast<void>(::waitpid(replacement_daemon, &status, 0));
+        }
+        if (service > 0) {
+            static_cast<void>(::killpg(service, SIGKILL));
+            wait_gone(service);
+        }
+        QFile::remove(QString::fromStdString(endpoint));
+        QFile::remove(QString::fromStdString(endpoint + ".supervisor-owner"));
+        QDir::setCurrent(previous);
+        throw;
+    }
+    QFile::remove(QString::fromStdString(endpoint));
+    QFile::remove(QString::fromStdString(endpoint + ".supervisor-owner"));
+    QDir::setCurrent(previous);
+}
+
+void daemon_clean_service_exit_stops_slot() {
+    const QString previous = QDir::currentPath();
+    QTemporaryDir directory =
+        owned_test_directory(QStringLiteral("lapis-r1-daemon-clean-exit-XXXXXX"));
+    require(directory.isValid(), "create the clean-exit daemon test directory");
+    QDir::setCurrent(directory.path());
+    const std::string control = directory.filePath(QStringLiteral("control.sock")).toStdString();
+    const std::string endpoint = directory.filePath(QStringLiteral("session.sock")).toStdString();
+    require_bindable(directory.filePath(QStringLiteral("bind.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = lapis::session::AgentMode::terminal};
+    const QString fingerprint = QString::fromLatin1(
+        lapis::session::launch_fingerprint(lapis::session::validate_launch(launch)).toHex());
+    const QJsonObject service{{QStringLiteral("environment"), QJsonObject{}}};
+    pid_t daemon = -1;
+    pid_t service_pid = -1;
+    quint64 terminal_child = 0;
+    try {
+        daemon = start_daemon(directory.path().toStdString(), control);
+        std::string session_id;
+        std::string epoch;
+        {
+            ControlClient client{control};
+            send_frame(client, birth_json(fingerprint, service));
+            const auto reply = reply_object(receive_reply(client));
+            require(reply.value(QStringLiteral("status")).toString() == QLatin1String("born"),
+                    "the clean-exit fixture births a service");
+            session_id = reply.value(QStringLiteral("session_id")).toString().toStdString();
+            epoch = reply.value(QStringLiteral("epoch")).toString().toStdString();
+        }
+        service_pid = service_pid_from_ownership(endpoint);
+        const QString original_epoch = persisted_epoch(directory.path());
+
+        QLocalSocket client;
+        client.connectToServer(QString::fromStdString(endpoint), QLocalSocket::ReadWrite);
+        require(client.waitForConnected(5000), "the clean-exit fixture attaches");
+        const auto hello = attach(client, fingerprint.toStdString(), session_id, epoch, false);
+        terminal_child = hello.pid;
+        const auto screen = synchronize(client);
+        terminate_agent(client, screen.attachment);
+        wait_for_ended(client);
+        detach(client);
+
+        bool stopped = false;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+        while (std::chrono::steady_clock::now() < deadline) {
+            stopped = persisted_slot_is_stopped(
+                directory.path(), QStringLiteral("supervisor service exited cleanly"));
+            if (stopped)
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds{20});
+        }
+        require(stopped, "the daemon observes a clean service exit as stopped");
+        const auto ownership_path = endpoint + ".supervisor-owner";
+        bool released = false;
+        const auto release_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+        while (std::chrono::steady_clock::now() < release_deadline) {
+            struct stat ownership{};
+            if (::lstat(ownership_path.c_str(), &ownership) != 0 && errno == ENOENT) {
+                released = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds{20});
+        }
+        require(released, "a clean service exit releases its ownership record");
+        require(::kill(service_pid, 0) != 0 && errno == ESRCH,
+                "the cleanly exited service is gone");
+
+        std::this_thread::sleep_for(std::chrono::milliseconds{250});
+        const auto status =
+            cli_json(run_supervisor_cli({QStringLiteral("--control-endpoint"),
+                                         QString::fromStdString(control), QStringLiteral("status"),
+                                         QStringLiteral("--json")}),
+                     "the clean-exit status CLI succeeds");
+        require(status.value(QStringLiteral("slot")).toString() == QLatin1String("stopped") &&
+                    !status.value(QStringLiteral("service_live")).toBool() &&
+                    status.value(QStringLiteral("blocked_reason")).toString() ==
+                        QLatin1String("supervisor service exited cleanly"),
+                "a clean service exit is explicit stopped state");
+        require(persisted_epoch(directory.path()) == original_epoch,
+                "a clean service exit does not rotate into a replacement epoch");
+        struct stat ownership_after_stop{};
+        require(::lstat(ownership_path.c_str(), &ownership_after_stop) != 0 && errno == ENOENT,
+                "a clean service exit does not launch a replacement");
+
+        require(::kill(daemon, SIGTERM) == 0, "stop the clean-exit daemon");
+        int daemon_status = 0;
+        require(::waitpid(daemon, &daemon_status, 0) == daemon && WIFEXITED(daemon_status) &&
+                    WEXITSTATUS(daemon_status) == 0,
+                "the clean-exit daemon exits cleanly");
+        daemon = -1;
+
+        daemon = start_daemon(directory.path().toStdString(), control);
+        const auto reconstructed =
+            cli_json(run_supervisor_cli({QStringLiteral("--control-endpoint"),
+                                         QString::fromStdString(control), QStringLiteral("status"),
+                                         QStringLiteral("--json")}),
+                     "the stopped-slot daemon reconstructs and answers status");
+        require(reconstructed.value(QStringLiteral("slot")).toString() ==
+                        QLatin1String("stopped") &&
+                    reconstructed.value(QStringLiteral("blocked_reason")).toString() ==
+                        QLatin1String("supervisor service exited cleanly"),
+                "a persisted stopped slot survives daemon reconstruction");
+        const auto reset = run_supervisor_cli(
+            {QStringLiteral("--control-endpoint"), QString::fromStdString(control),
+             QStringLiteral("--state-directory"), QFileInfo(directory.path()).canonicalFilePath(),
+             QStringLiteral("reset")});
+        require(reset.exit_code == 0 && reset.standard_output.contains(QStringLiteral("applied")),
+                "explicit reset remains reachable after stopped-slot reconstruction");
+
+        require(::kill(daemon, SIGTERM) == 0, "stop the reconstructed clean-exit daemon");
+        require(::waitpid(daemon, &daemon_status, 0) == daemon && WIFEXITED(daemon_status) &&
+                    WEXITSTATUS(daemon_status) == 0,
+                "the reconstructed clean-exit daemon exits cleanly");
+        daemon = -1;
+        wait_gone(static_cast<pid_t>(terminal_child));
+    } catch (...) {
+        if (daemon > 0) {
+            static_cast<void>(::kill(daemon, SIGTERM));
+            int status = 0;
+            static_cast<void>(::waitpid(daemon, &status, 0));
+        }
+        if (service_pid > 0) {
+            static_cast<void>(::killpg(service_pid, SIGKILL));
+            wait_gone(service_pid);
+        }
+        if (terminal_child != 0)
+            wait_gone(static_cast<pid_t>(terminal_child));
+        QFile::remove(QString::fromStdString(endpoint));
+        QFile::remove(QString::fromStdString(endpoint + ".supervisor-owner"));
+        QDir::setCurrent(previous);
+        throw;
+    }
+    QFile::remove(QString::fromStdString(endpoint));
     QDir::setCurrent(previous);
 }
 
@@ -1141,6 +1438,8 @@ int main(int argc, char** argv) {
     QCoreApplication application{argc, argv};
     try {
         failed_service_birth_never_reports_born();
+        daemon_replacement_keeps_control_for_refused_peer();
+        daemon_clean_service_exit_stops_slot();
         daemon_birth_and_real_service_clients();
         daemon_replaces_a_dead_service();
         daemon_sigkill_reconstructs_the_live_service();

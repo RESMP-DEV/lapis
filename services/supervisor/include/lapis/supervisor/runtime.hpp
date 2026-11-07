@@ -57,6 +57,12 @@ struct ChildProcess {
     std::string fingerprint;
 };
 
+enum class ChildTermination : std::uint8_t {
+    unknown = 0,
+    exited = 1,
+    signaled = 2,
+};
+
 // The runtime owns lifecycle policy only. A production adapter still leaves
 // PTY, terminal and protocol ownership in the existing session-service child.
 class ChildLauncher {
@@ -80,6 +86,12 @@ class ChildLauncher {
     [[nodiscard]] virtual ChildProcess launch(const DesiredSession& session,
                                               const std::string& spawn_token) = 0;
     [[nodiscard]] virtual bool alive(const ChildProcess& child) = 0;
+    // Termination is observable only for a child this launcher can reap. Call
+    // after alive() reports false; unknown deaths remain restart candidates.
+    [[nodiscard]] virtual ChildTermination termination(const ChildProcess& child) {
+        static_cast<void>(child);
+        return ChildTermination::unknown;
+    }
     [[nodiscard]] virtual bool terminate(const ChildProcess& child) = 0;
     virtual void release(const ChildProcess& child) = 0;
 
@@ -134,6 +146,7 @@ class SupervisorRuntime final {
     [[nodiscard]] Convergence converge();
     [[nodiscard]] const SupervisorState& state() const noexcept;
     [[nodiscard]] pid_t child_pid() const noexcept;
+    [[nodiscard]] bool startup_convergence_refused() const noexcept;
 
   private:
     [[nodiscard]] Convergence launch_desired();
@@ -145,7 +158,7 @@ class SupervisorRuntime final {
     std::shared_ptr<MonotonicClock> clock_;
     std::optional<ChildProcess> child_;
     bool initial_admission_used_{false};
-    bool startup_convergence_failed_{false};
+    bool startup_convergence_refused_{false};
     std::vector<std::uint64_t> restart_admissions_;
 };
 

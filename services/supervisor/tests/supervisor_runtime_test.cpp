@@ -136,6 +136,8 @@ class FakeLauncherWorld {
     unsigned launches{0};
     unsigned terminations{0};
     bool decline_adoption{false};
+    bool normal_termination{false};
+    bool successful_termination{true};
     pid_t next_pid{1000};
     std::vector<std::string> launch_order;
     std::vector<std::string> children_keys() const {
@@ -169,6 +171,12 @@ class FakeLauncher final : public ChildLauncher {
         return world_->launch(session, token);
     }
     [[nodiscard]] bool alive(const ChildProcess& child) override { return world_->alive(child); }
+    [[nodiscard]] ChildTermination termination(const ChildProcess& child) override {
+        if (world_->normal_termination && !world_->alive(child))
+            return world_->successful_termination ? ChildTermination::exited
+                                                  : ChildTermination::signaled;
+        return ChildTermination::unknown;
+    }
     [[nodiscard]] bool terminate(const ChildProcess& child) override {
         return world_->terminate(child);
     }
@@ -379,6 +387,41 @@ void preserved_peer_failure_retains_identity_for_retry() {
             "the preserved peer can be adopted once verification recovers");
 }
 
+void clean_child_exit_is_stopped_not_restarted() {
+    auto world = std::make_shared<FakeLauncherWorld>();
+    auto owner = registry(std::make_shared<MemoryStateStorage>());
+    SupervisorRuntime runtime{owner, std::make_shared<FakeLauncher>(world)};
+    const auto started = runtime.bootstrap(record());
+
+    world->normal_termination = true;
+    world->kill_all();
+    require(runtime.converge() == Convergence::stopped && world->launches == 1,
+            "a normal child exit becomes explicit stopped state");
+    const auto& stopped = *owner->state().session;
+    require(stopped.desired_state == DesiredState::stopped &&
+                stopped.blocked_reason == "supervisor service exited cleanly" &&
+                stopped.identity.epoch == started.session->identity.epoch,
+            "a normal child exit does not rotate into a restart identity");
+    require(runtime.converge() == Convergence::stopped && world->launches == 1,
+            "a normal child exit is not retried as a crash");
+}
+
+void failed_child_exit_is_restart_admitted() {
+    auto world = std::make_shared<FakeLauncherWorld>();
+    auto owner = registry(std::make_shared<MemoryStateStorage>());
+    SupervisorRuntime runtime{owner, std::make_shared<FakeLauncher>(world)};
+    const auto started = runtime.bootstrap(record());
+
+    world->normal_termination = true;
+    world->successful_termination = false;
+    world->kill_all();
+    require(runtime.converge() == Convergence::restarted && world->launches == 2,
+            "a nonzero child exit remains restart-eligible");
+    require(owner->state().session->desired_state == DesiredState::started &&
+                owner->state().session->identity.epoch != started.session->identity.epoch,
+            "a failed child exit rotates into a replacement identity");
+}
+
 void bounded_restart_admission() {
     auto world = std::make_shared<FakeLauncherWorld>();
     auto clock = std::make_shared<FakeClock>();
@@ -561,6 +604,8 @@ int main() {
         restarted_runtime_adopts_without_duplicate();
         explicit_reset_refuses_live_and_clears_stopped_slot();
         preserved_peer_failure_retains_identity_for_retry();
+        clean_child_exit_is_stopped_not_restarted();
+        failed_child_exit_is_restart_admitted();
         bounded_restart_admission();
         explicit_disable();
         harmless_child_ownership_fixture();

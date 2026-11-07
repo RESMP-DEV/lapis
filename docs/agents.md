@@ -134,10 +134,12 @@ OMP and Kimi keep their main transcript on the primary screen, so a resize
 makes them rebuild their scrollback: the renderer erases every kept row
 (`ESC [3J`) and replays the whole conversation, which reads as the transcript
 scrolling past. OMP does this by default (`tui.resizeScrollback: rebuild`).
-New OMP agents get a lapis-owned overlay through `PI_CONFIG_FILES`
+New OMP agents on this Mac get a lapis-owned overlay through `PI_CONFIG_FILES`
 (`runtime/omp-lapis.yml`) that sets `tui.resizeScrollback: preserve`, so a
 resize repaints only the viewport. A user's own `PI_CONFIG_FILES` is kept and
-the lapis overlay is appended. Kimi has no equivalent setting; its
+the lapis overlay is appended. OMP agents on another machine keep that
+machine's own configuration; lapis does not copy its local overlay over ssh.
+Kimi has no equivalent setting; its
 experimental full-screen mode avoids the rebuild if you set
 `KIMI_CODE_TUI_FULL_SCREEN=1` (or `tui_mode = "fullscreen"` in its config),
 and its transcript then repaints like the other full-screen programs.

@@ -244,6 +244,8 @@ if(BUILD_TESTING)
     set_tests_properties(workspace-remote-account-reset PROPERTIES TIMEOUT 20)
     add_test(NAME workspace-updates-off COMMAND lapis_workspace_tests --case updates-off)
     set_tests_properties(workspace-updates-off PROPERTIES TIMEOUT 60)
+    add_test(NAME workspace-omp-overlay COMMAND lapis_workspace_tests --case omp-overlay)
+    set_tests_properties(workspace-omp-overlay PROPERTIES TIMEOUT 60)
     # These launch the real desktop host or QML windows. On a Mac someone is
     # using they would show windows, so they run only on request.
     set_tests_properties(workspace workspace-remote-accounts workspace-remote-hooks

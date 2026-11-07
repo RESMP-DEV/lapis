@@ -601,6 +601,9 @@ void check_terminal_font_controls(QQuickWindow& window, lapis::desktop::KeyMap& 
     terminal.forceActiveFocus();
     pump(30);
     CHECK(keymap.terminalFontSize() == kTerminalFontSizeDefault);
+    for (int attempt = 0; attempt < 100 && terminal.gridSize() != base_grid; ++attempt)
+        pump(10);
+    CHECK(terminal.gridSize() == base_grid);
 
     // A missing family falls back to the system fixed-width face and says so.
     CHECK(keymap.setTerminalFontFamily(QStringLiteral("lapis missing mono")));
@@ -622,14 +625,23 @@ void check_terminal_font_controls(QQuickWindow& window, lapis::desktop::KeyMap& 
     const QString config = directory.filePath(QStringLiteral("lapis.json"));
     const QString saved = read_text(config);
     write_config(directory, QStringLiteral("{unfinished"));
+    for (int attempt = 0;
+         attempt < 100 && !keymap.diagnostic().contains(QStringLiteral("not a valid JSON object"));
+         ++attempt)
+        pump(10);
+    CHECK(keymap.diagnostic().contains(QStringLiteral("not a valid JSON object")));
+    pump(100); // Let duplicate file-watcher deliveries settle before counting grids.
+    const QSize failed_save_grid = terminal.gridSize();
     const int changes_before_failure = grid_changes;
     click_setting(window, QStringLiteral("fontLarger"));
     CHECK(grid_changes == changes_before_failure); // No tentative resize on a failed save.
     CHECK(keymap.terminalFontSize() == kTerminalFontSizeDefault);
     CHECK(terminal.fontPixelSize() == kTerminalFontSizeDefault);
-    CHECK(terminal.gridSize() == base_grid);
+    CHECK(terminal.gridSize() == failed_save_grid);
     CHECK(keymap.diagnostic().contains(QStringLiteral("Could not save")));
     write_config(directory, saved);
+    CHECK(keymap.reload());
+    CHECK(keymap.diagnostic().isEmpty());
 }
 
 // Closed Commands and Settings expose empty models and do not recompute for
@@ -2278,6 +2290,8 @@ void check_side_terminal(QQuickWindow& window, lapis::desktop::Terminals& termin
     CHECK(ready);
     pump(60);
     auto* surface = required_visual(window, QStringLiteral("sideTerminalSurface"));
+    auto* side_input = qobject_cast<lapis::desktop::TerminalSurface*>(surface);
+    CHECK(side_input != nullptr);
     CHECK(surface->hasActiveFocus());
     const auto original_interactive = surface->property("interactive").toBool();
     surface->setProperty("interactive", false);
@@ -2294,6 +2308,55 @@ void check_side_terminal(QQuickWindow& window, lapis::desktop::Terminals& termin
                                                          .contains(QStringLiteral("ran hello"));
         },
         10000));
+
+    // Scrolling a side shell into history must not make its surface inert when
+    // the panel is hidden and shown again: the first typed key returns live.
+    type_text(window, QStringLiteral("history:2000"));
+    send_binding(window, QStringLiteral("Return"));
+    CHECK(pump_until(
+        [&terminals] {
+            return terminals.current() != nullptr && screen_text(terminals.current()->snapshot())
+                                                         .contains(QStringLiteral("history done"));
+        },
+        10000));
+    terminals.current()->olderHistory();
+    CHECK(pump_until(
+        [&terminals] {
+            return terminals.current()->historyActive() &&
+                   !terminals.current()->historyRequestPending();
+        },
+        10000));
+    press_action(window, keymap, "toggleTerminal");
+    CHECK(wait_for([&] { return !panel->isVisible() && stage.hasActiveFocus(); }, 5000));
+    press_action(window, keymap, "toggleTerminal");
+    CHECK(wait_for([&] { return panel->isVisible() && surface->hasActiveFocus(); }, 5000));
+    CHECK(surface->property("interactive").toBool());
+    type_text(window, QStringLiteral("after-history"));
+    send_binding(window, QStringLiteral("Return"));
+    CHECK(pump_until(
+        [&terminals] {
+            return terminals.current() != nullptr && !terminals.current()->historyActive() &&
+                   screen_text(terminals.current()->snapshot())
+                       .contains(QStringLiteral("ran after-history"));
+        },
+        10000));
+
+    // Composition owns window shortcuts even in the side shell. In particular,
+    // the key that hides this panel must not steal and discard the preedit.
+    QInputMethodEvent composition(QStringLiteral("side-composition"), {});
+    QCoreApplication::sendEvent(side_input, &composition);
+    CHECK(side_input->composing() && side_input->hasActiveFocus());
+    CHECK(window.property("terminalBusy").toBool() &&
+          !window.property("interactionArmed").toBool() &&
+          !window.property("shortcutsArmed").toBool());
+    press_action(window, keymap, "toggleTerminal");
+    pump(40);
+    CHECK(panel->isVisible() && side_input->composing() && side_input->hasActiveFocus());
+    QInputMethodEvent cancel;
+    QCoreApplication::sendEvent(side_input, &cancel);
+    pump(40);
+    CHECK(!side_input->composing() && !window.property("terminalBusy").toBool() &&
+          window.property("shortcutsArmed").toBool());
     capture_step(window, "side-terminal");
     // Command-W closes what is in front: the panel, not the agent behind it.
     const auto* agent = stage.document();
@@ -2461,7 +2524,20 @@ void write_history_and_shell(const QTemporaryDir& config) {
          R"({"id":"0a1b2c3d-0000-4000-8000-000000000002","thread_name":"Add retries"})"
          "\n");
     save(QStringLiteral("shell"), "#!/bin/sh\necho \"shell ready\"\nwhile read line; do\n"
-                                  "  [ \"$line\" = exit ] && exit 0\n  echo \"ran $line\"\ndone\n");
+                                  "  [ \"$line\" = exit ] && exit 0\n"
+                                  "  case \"$line\" in\n"
+                                  "    history:*)\n"
+                                  "      echo \"ran $line\"\n"
+                                  "      count=${line#history:}\n"
+                                  "      index=0\n"
+                                  "      while [ \"$index\" -lt \"$count\" ]; do\n"
+                                  "        printf 'history %04d\\n' \"$index\"\n"
+                                  "        index=$((index + 1))\n"
+                                  "      done\n"
+                                  "      echo \"history done\"\n"
+                                  "      ;;\n"
+                                  "    *) echo \"ran $line\" ;;\n"
+                                  "  esac\ndone\n");
     CHECK(QFile::setPermissions(config.filePath(QStringLiteral("shell")),
                                 QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
     save(QStringLiteral("ssh_config"), "Host devbox\nHost *\n");

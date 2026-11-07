@@ -2519,8 +2519,13 @@ print("claude ready", flush=True)
 for n, line in enumerate(sys.stdin, 1):
     fire("UserPromptSubmit", prompt_id=f"p{n}", prompt=line.strip())
     print("thinking", flush=True)
-    fire("Stop", prompt_id=f"p{n}", background_tasks=[], session_crons=[])
-    print("turn done", flush=True)
+    tasks = []
+    if session != "restored" and n == 1:
+        tasks = 0
+    elif session != "restored" and n == 2:
+        tasks = [{"status": "running"}] * 65
+    fire("Stop", prompt_id=f"p{n}", background_tasks=tasks, session_crons=[])
+    print(f"turn done {n}", flush=True)
 )");
     writeExecutable(root.filePath(QStringLiteral("bin/codex")), R"(#!/usr/bin/env python3
 import json, subprocess, sys, time
@@ -2595,11 +2600,21 @@ for n, line in enumerate(sys.stdin, 1):
                     },
                     15000),
                 "the remote Claude Code stand-in starts");
-        for (int turn = 1; turn <= 2; ++turn) {
+        for (int turn = 1; turn <= 3; ++turn) {
             require(claude->sendText("next prompt\r"), "type a prompt");
-            require(waitFor([&] { return pings.value(claude->sessionId()) == turn; }, 15000) &&
-                        claude->statusKind() == QStringLiteral("finished"),
-                    "each Stop hook from the other machine finishes its turn and pings once");
+            const auto done = QStringLiteral("turn done %1").arg(turn);
+            require(waitFor([&] { return shows(claude, done); }, 15000),
+                    "the remote Claude Code stand-in finishes its output");
+            if (turn <= 2) {
+                waitFor([&] { return false; }, 300);
+                require(pings.value(claude->sessionId()) == 0 &&
+                            claude->statusKind() == QStringLiteral("working"),
+                        "malformed or oversized background work cannot finish a remote turn");
+            } else {
+                require(waitFor([&] { return pings.value(claude->sessionId()) == 1; }, 15000) &&
+                            claude->statusKind() == QStringLiteral("finished"),
+                        "a valid empty Stop hook finishes the remote turn and pings once");
+            }
         }
         require(clean(claude) && shows(claude, QStringLiteral("turn done")),
                 "hook sequences never reach the screen");
@@ -3580,8 +3595,8 @@ void skippedClaudeUpdateReportsTheCurrentOperation() {
 }
 
 // OMP's inline UI rebuilds its scrollback on resize unless its config overlay
-// says preserve. New agents get that overlay through their service
-// environment, appended to any overlays the user already set.
+// says preserve. New local agents get that overlay through their service
+// environment; a remote machine does not receive lapis's local file.
 void ompGetsItsResizeOverlay() {
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-omp-overlay-XXXXXX"));
     require(directory.isValid(), "OMP overlay directory");
@@ -3589,15 +3604,35 @@ void ompGetsItsResizeOverlay() {
     require(root.mkpath(QStringLiteral("bin")) && root.mkpath(QStringLiteral("project")),
             "fixture folders");
     const auto capture = root.filePath(QStringLiteral("bin/env"));
+    const auto remoteCapture = root.filePath(QStringLiteral("bin/remote-env"));
     QFile script(root.filePath(QStringLiteral("bin/omp")));
     require(script.open(QIODevice::WriteOnly), "write the stand-in OMP");
     script.write(QByteArray("#!/bin/sh\n"
                             "if [ \"$1\" = update ]; then echo updated; exit 0; fi\n"
-                            "printf '%s' \"$PI_CONFIG_FILES\" > '") +
-                 capture.toUtf8() + "'\necho omp ready\nexec sleep 600\n");
+                            "if [ \"${LAPIS_REMOTE_TEST:-0}\" = 1 ]; then\n"
+                            "  printf '%s' \"$PI_CONFIG_FILES\" > '") +
+                 remoteCapture.toUtf8() +
+                 QByteArray("'\nelse\n"
+                            "  printf '%s' \"$PI_CONFIG_FILES\" > '") +
+                 capture.toUtf8() +
+                 QByteArray("'\nfi\n"
+                            "echo omp ready\nexec sleep 600\n"));
     script.close();
     require(script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
             "make the stand-in executable");
+    QFile ssh(root.filePath(QStringLiteral("bin/ssh")));
+    require(ssh.open(QIODevice::WriteOnly), "write the stand-in ssh");
+    ssh.write(QByteArray("#!/bin/sh\n"
+                         "last=\n"
+                         "for argument in \"$@\"; do last=$argument; done\n"
+                         "exec env -u PI_CONFIG_FILES LAPIS_REMOTE_TEST=1 /bin/sh -c \"$last\"\n"));
+    ssh.close();
+    require(ssh.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make the stand-in ssh executable");
+    QFile config(root.filePath(QStringLiteral("ssh_config")));
+    require(config.open(QIODevice::WriteOnly), "write an ssh config");
+    config.write("Host devbox\n");
+    config.close();
     const auto path = qgetenv("PATH");
     qputenv("PATH", QFile::encodeName(root.filePath(QStringLiteral("bin"))) + ':' + path);
     // A user's shell may already export PI_CONFIG_FILES. Pin it here so this
@@ -3611,6 +3646,7 @@ void ompGetsItsResizeOverlay() {
     options.storagePath = root.filePath(QStringLiteral("workspace.json"));
     {
         Workspace workspace(WorkspaceMode::live, options);
+        workspace.setSshConfigForTesting(config.fileName());
         require(workspace.createAgent(root.filePath(QStringLiteral("project")),
                                       QStringLiteral("overlay"), QStringLiteral("omp")),
                 "an OMP stand-in");
@@ -3648,9 +3684,27 @@ void ompGetsItsResizeOverlay() {
         require(captured.open(QIODevice::ReadOnly), "the stand-in recorded its environment");
         require(QString::fromUtf8(captured.readAll()) == expected_config,
                 "the OMP service keeps the user's overlays and appends lapis");
-        require(workspace.closeSession(agent->sessionId()), "close the OMP stand-in");
+        require(workspace.createAgent(QStringLiteral("~"), QStringLiteral("remote overlay"),
+                                      QStringLiteral("omp"), {}, {}, QStringLiteral("devbox")),
+                "an OMP stand-in on another machine");
+        auto* remote = workspace.focusedSession();
+        require(remote != nullptr && remote != agent, "the remote OMP stand-in is shown");
+        require(waitFor(
+                    [&] {
+                        return remote->inputReady() && QFileInfo::exists(remoteCapture) &&
+                               screenText(remote->snapshot()).contains(QStringLiteral("omp ready"));
+                    },
+                    10000),
+                "the remote OMP stand-in starts");
+        QFile remoteCaptured(remoteCapture);
+        require(remoteCaptured.open(QIODevice::ReadOnly),
+                "the remote stand-in recorded its environment");
+        require(remoteCaptured.readAll().isEmpty(),
+                "the local OMP overlay does not cross the ssh boundary");
+        require(workspace.closeSession(agent->sessionId()), "close the local OMP stand-in");
+        require(workspace.closeSession(remote->sessionId()), "close the remote OMP stand-in");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
-                "the OMP stand-in closes");
+                "the OMP stand-ins close");
     }
     if (hadConfig)
         qputenv("PI_CONFIG_FILES", previousConfig);
@@ -6959,10 +7013,11 @@ int main(int argc, char** argv) {
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("updates-off") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("omp-overlay") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes")),
                 "Usage: lapis_workspace_tests [--case "
                 "remote-options|remote-hooks|accounts|remote-account-reset|reload|updater|"
-                "updates-off|startup-defaults|launch-policy|chimes]");
+                "updates-off|startup-defaults|launch-policy|omp-overlay|chimes]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("accounts")) {
                 incompleteCodexHomeNeverStartsAnAgent();
@@ -6993,6 +7048,8 @@ int main(int argc, char** argv) {
                 skippedClaudeUpdateReportsTheCurrentOperation();
             } else if (selected == QStringLiteral("updates-off")) {
                 pinnedCliIsNotUpdated();
+            } else if (selected == QStringLiteral("omp-overlay")) {
+                ompGetsItsResizeOverlay();
             } else if (selected == QStringLiteral("chimes")) {
                 alertsChimeWhileAnAgentWaits();
                 notificationsReachYouWhenAway();

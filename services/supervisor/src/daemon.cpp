@@ -197,11 +197,15 @@ int main(int argc, char** argv) {
             auto reconstructed_runtime =
                 std::make_unique<SupervisorRuntime>(registry, std::move(reconstructed_launcher));
             const auto& converged = *reconstructed_runtime->state().session;
-            // A stopped v2 slot still validates launcher construction above, but has
-            // no child to adopt. Birth stays refused until an explicit reset.
-            if (persisted.desired_state == DesiredState::started &&
-                (converged.desired_state != DesiredState::started ||
-                 reconstructed_runtime->child_pid() <= 0))
+            // A stopped v2 slot still validates launcher construction above, but
+            // has no child to adopt and must keep explicit reset reachable.
+            // Only persisted desired-start state requires an adopted child, or a
+            // retained live peer that refused verification.
+            const bool wanted_started = persisted.desired_state == DesiredState::started;
+            const bool reconstruction_failed =
+                wanted_started && (converged.desired_state != DesiredState::started ||
+                                   reconstructed_runtime->child_pid() <= 0);
+            if (reconstruction_failed && !reconstructed_runtime->startup_convergence_refused())
                 throw std::runtime_error("Supervisor daemon reconstruction failed");
             runtime = std::move(reconstructed_runtime);
         }

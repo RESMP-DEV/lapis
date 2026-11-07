@@ -1,3 +1,4 @@
+import base64
 import importlib.util
 import json
 import os
@@ -28,8 +29,36 @@ class RemoteHookRelayTests(unittest.TestCase):
             [{"status": "running"}, {}],
         )
         self.assertEqual(relay.work("session_crons", [{"id": "cron"}, 0]), [{}, {}])
-        self.assertEqual(relay.work("background_tasks", 0), [])
-        self.assertEqual(relay.work("session_crons", [0] * 65), [])
+        self.assertEqual(relay.work("background_tasks", 0), {})
+        self.assertEqual(relay.work("session_crons", [0] * 65), {})
+
+    def test_invalid_background_lists_remain_schema_drift(self):
+        source = {
+            "hook_event_name": "Stop",
+            "session_id": "session",
+            "background_tasks": 0,
+            "session_crons": [{}] * 65,
+        }
+        frames = []
+
+        def capture_write(descriptor, view):
+            frames.append(bytes(view))
+            return len(view)
+
+        with patch.object(os, "write", side_effect=capture_write):
+            with patch.dict(
+                os.environ,
+                {
+                    "LAPIS_HOOK_NONCE": "0123456789abcdef" * 2,
+                    "LAPIS_HOOK_TTY": "/dev/null",
+                },
+            ):
+                relay.relay("claude", json.dumps(source))
+
+        payload = frames[0].split(b";", 3)[3].rstrip(b"\x07")
+        event = json.loads(base64.b64decode(payload))
+        self.assertEqual(event["background_tasks"], {})
+        self.assertEqual(event["session_crons"], {})
 
     def test_largest_legitimate_frame_fits_the_terminal_hook_limit(self):
         source = {key: "x" * 256 for key in relay.K}
