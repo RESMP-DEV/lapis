@@ -444,20 +444,26 @@ QColor blend(const QColor& from, const QColor& to, qreal share) {
 } // namespace
 
 bool text_after_cursor(const session::TerminalSnapshot& snapshot) {
-    if (!snapshot.cursor.in_viewport || snapshot.cursor.row >= snapshot.size.rows)
+    if (!snapshot.cursor.in_viewport || snapshot.cursor.row >= snapshot.size.rows ||
+        snapshot.cursor.column >= snapshot.size.columns)
         return false;
     const std::size_t columns = snapshot.size.columns;
-    const std::size_t row = static_cast<std::size_t>(snapshot.cursor.row) * columns;
-    for (std::size_t column = snapshot.cursor.column; column + 2 < columns; ++column) {
-        const auto index = row + column;
-        if (index >= snapshot.cells.size())
-            break;
-        const auto& style = snapshot.cells[index].style;
-        if (style.faint || style.invisible)
-            continue;
-        for (const char32_t c : snapshot.text(index))
-            if (c != U' ' && c != U' ')
-                return true;
+    const std::size_t first_row = snapshot.cursor.row;
+    for (std::size_t row = first_row; row < snapshot.size.rows; ++row) {
+        const std::size_t first_column =
+            row == first_row ? snapshot.cursor.column + (snapshot.cursor.visible ? 0 : 1) : 0;
+        const std::size_t base = row * columns;
+        for (std::size_t column = first_column; column + 2 < columns; ++column) {
+            const auto index = base + column;
+            if (index >= snapshot.cells.size())
+                break;
+            const auto& style = snapshot.cells[index].style;
+            if (style.faint || style.invisible)
+                continue;
+            for (const char32_t c : snapshot.text(index))
+                if (c != U' ' && c != U' ')
+                    return true;
+        }
     }
     return false;
 }

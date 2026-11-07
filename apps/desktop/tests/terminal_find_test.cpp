@@ -61,6 +61,21 @@ void suggestion_never_covers_typed_text() {
     terminal.feed("\x1b[5C");
     require(shown(terminal.snapshot()), "back at the end it shows again");
 
+    // Wrapped and multi-line drafts keep their later rows in the same screen.
+    lapis::session::Terminal wrapped({40, 3});
+    wrapped.feed("> first line\r\nsecond line\x1b[A");
+    const auto wrapped_screen = wrapped.snapshot();
+    require(text_after_cursor(wrapped_screen) && !shown(wrapped_screen),
+            "typed text on a later wrapped row hides");
+
+    // A CLI that hides the hardware cursor and draws its own glyph at that
+    // cell is not typed text. The offered text starts beside the glyph.
+    lapis::session::Terminal software_cursor({40, 3});
+    software_cursor.feed("\x1b[?25l> ▏\x1b[D");
+    const auto software_screen = software_cursor.snapshot();
+    require(!text_after_cursor(software_screen) && shown(software_screen),
+            "a lone software-cursor glyph hid the suggestion");
+
     // A faint placeholder at the cursor (Codex draws one) does not count, nor
     // does a border in the row's last two cells (Claude Code's input box).
     lapis::session::Terminal codex({40, 3});
