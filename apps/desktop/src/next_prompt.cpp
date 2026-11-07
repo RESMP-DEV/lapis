@@ -170,8 +170,8 @@ void parse_context_arms(const QJsonObject& object, NextPromptSettings& settings)
         return;
     static const QStringList known{QStringLiteral("base"),      QStringLiteral("thread"),
                                    QStringLiteral("retrieval"), QStringLiteral("evidence"),
-                                   QStringLiteral("moves"),     QStringLiteral("legacy"),
-                                   QStringLiteral("pack"),      QStringLiteral("wide")};
+                                   QStringLiteral("moves"),     QStringLiteral("pack"),
+                                   QStringLiteral("wide")};
     settings.contextArms.clear();
     for (const auto& arm : arms.toArray())
         if (known.contains(arm.toString()) && !settings.contextArms.contains(arm.toString()))
@@ -190,7 +190,7 @@ void parse_prompt_arms(const QJsonObject& object, NextPromptSettings& settings) 
         if (known.contains(arm.toString()) && !settings.promptArms.contains(arm.toString()))
             settings.promptArms.append(arm.toString());
     if (settings.promptArms.isEmpty())
-        settings.promptArms.append(QStringLiteral("base"));
+        settings.promptArms = QStringList{QStringLiteral("base"), QStringLiteral("checks")};
 }
 } // namespace
 
@@ -382,9 +382,9 @@ void NextPrompt::run(const QString& id, bool force, int returned) {
                    // A repeat: the person has sent nothing since the last guess
                    // and never saw it. Guess again when they show this agent.
                    const auto last = previous_.value(id);
+                   const auto conversation = contextConversation(context);
                    if (!force && !last.seen && last.turn >= 0 &&
-                       last.conversation ==
-                           context.value(QStringLiteral("conversation")).toString() &&
+                       last.conversation == conversation &&
                        last.turn == context.value(QStringLiteral("turn")).toInt()) {
                        if (shown_during_run) {
                            predict(id, generation, context, returned);
@@ -587,13 +587,15 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
                       {QStringLiteral("cli"), agent.cli},
                       {QStringLiteral("machine"), agent.machine},
                       {QStringLiteral("category"), agent.category}};
-    QJsonObject bundle{{QStringLiteral("agent"), about},
-                       {QStringLiteral("screen"), agent.screen},
-                       {QStringLiteral("context"), context},
-                       {QStringLiteral("agents"), agents_()},
-                       {QStringLiteral("taken"), QJsonArray::fromStringList(taken_)},
-                       {QStringLiteral("time"),
-                        QDateTime::currentDateTime().toString(QStringLiteral("ddd h:mm ap"))}};
+    QJsonObject bundle{
+        {QStringLiteral("agent"), about},
+        {QStringLiteral("screen"), agent.screen},
+        {QStringLiteral("context"), context},
+        {QStringLiteral("agents"), agents_()},
+        {QStringLiteral("taken"), QJsonArray::fromStringList(taken_)},
+        {QStringLiteral("target"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+        {QStringLiteral("time"),
+         QDateTime::currentDateTime().toString(QStringLiteral("ddd h:mm ap"))}};
     if (returned >= 0)
         bundle.insert(QStringLiteral("returned_minutes"), returned);
     // Most guesses come from the chosen model; a share goes to an experiment
@@ -601,13 +603,12 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
     Arms arms_made;
     arms_made.returned = returned;
     auto* random = QRandomGenerator::global();
-    if (settings_.contextArms.isEmpty())
-        arms_made.context = QStringLiteral("base");
-    else if (settings_.contextArms == QStringList{QStringLiteral("wide")} &&
-             random->generateDouble() < 0.5)
-        arms_made.context = QStringLiteral("base");
-    else
-        arms_made.context = settings_.contextArms.at(random->bounded(settings_.contextArms.size()));
+    QStringList context_arms = settings_.contextArms;
+    if (context_arms.isEmpty())
+        context_arms = QStringList{QStringLiteral("base")};
+    if (context_arms == QStringList{QStringLiteral("wide")} && random->generateDouble() < 0.5)
+        context_arms = QStringList{QStringLiteral("base")};
+    arms_made.context = context_arms.at(random->bounded(context_arms.size()));
     arms_made.prompt = settings_.promptArms.isEmpty()
                            ? QStringLiteral("base")
                            : settings_.promptArms.at(random->bounded(settings_.promptArms.size()));
@@ -653,6 +654,7 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     const Offer made{QStringLiteral("%1:%2.%3").arg(id, run_).arg(++offers_made_),
                      text,
                      context.value(QStringLiteral("conversation")).toString(),
+                     contextConversation(context),
                      context.value(QStringLiteral("turn")).toInt(),
                      0,
                      last_reply(context),
@@ -698,7 +700,7 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     if (!shown)
         return;
     const auto judged_for = [this, &id](const QString& attention) { emit judged(id, attention); };
-    previous_.insert(id, {made.conversation, judged_for, made.turn, made.seen_ms != 0});
+    previous_.insert(id, {offerConversation(made), judged_for, made.turn, made.seen_ms != 0});
     offers_.insert(id, made);
     // A guess already typed in stays the one its prompt is compared with.
     if (!awaiting_.value(id).filled)
@@ -781,6 +783,15 @@ QJsonObject NextPrompt::about(const Offer& offer, const QString& id) {
             {QStringLiteral("agent"), id},
             {QStringLiteral("conversation"), offer.conversation},
             {QStringLiteral("turn"), offer.turn}};
+}
+
+QString NextPrompt::contextConversation(const QJsonObject& context) {
+    const auto id = context.value(QStringLiteral("conversation_id")).toString();
+    return id.isEmpty() ? context.value(QStringLiteral("conversation")).toString() : id;
+}
+
+QString NextPrompt::offerConversation(const Offer& offer) {
+    return offer.conversation_id.isEmpty() ? offer.conversation : offer.conversation_id;
 }
 
 void NextPrompt::seen(const QString& id) {
@@ -915,8 +926,9 @@ void NextPrompt::settle(const QString& id, const QJsonObject& context) {
     const auto waiting = awaiting_.constFind(id);
     if (waiting == awaiting_.cend())
         return;
-    const auto conversation = context.value(QStringLiteral("conversation")).toString();
-    if (!waiting->offer.conversation.isEmpty() && conversation != waiting->offer.conversation) {
+    const auto conversation = contextConversation(context);
+    const auto offer_conversation = offerConversation(waiting->offer);
+    if (!offer_conversation.isEmpty() && conversation != offer_conversation) {
         awaiting_.erase(waiting);
         emit stateChanged();
         return;
@@ -1017,13 +1029,15 @@ bool chats(const QString& cli) {
 } // namespace
 
 QJsonObject NextPrompt::encodeOffer(const Offer& offer, qsizetype& budget) const {
-    if (offer.key.size() > 400 || offer.conversation.size() > 200 || offer.text.isEmpty() ||
+    if (offer.key.size() > 400 || offer.conversation.size() > 200 ||
+        offer.conversation_id.size() > 200 || offer.text.isEmpty() ||
         offer.text.size() > kSavedText || offer.text.size() + offer.said.size() > budget)
         return {};
     budget -= offer.text.size() + offer.said.size();
     return {{QStringLiteral("key"), offer.key},
             {QStringLiteral("text"), offer.text},
             {QStringLiteral("conversation"), offer.conversation},
+            {QStringLiteral("conversationId"), offer.conversation_id},
             {QStringLiteral("turn"), offer.turn},
             {QStringLiteral("seenMs"), offer.seen_ms},
             {QStringLiteral("said"), offer.said}};
@@ -1092,12 +1106,14 @@ auto NextPrompt::savedOffer(const QString& id, const QJsonValue& value) -> std::
     offer.key = object.value(QStringLiteral("key")).toString();
     offer.text = object.value(QStringLiteral("text")).toString();
     offer.conversation = object.value(QStringLiteral("conversation")).toString();
+    offer.conversation_id = object.value(QStringLiteral("conversationId")).toString();
     offer.turn = object.value(QStringLiteral("turn")).toInt(-1);
     offer.seen_ms = static_cast<qint64>(object.value(QStringLiteral("seenMs")).toDouble(-1));
     offer.said = object.value(QStringLiteral("said")).toString().left(said_limit);
     if (id.isEmpty() || id.size() > 200 || !offer.key.startsWith(id + QLatin1Char(':')) ||
         offer.key.size() > 400 || offer.text.isEmpty() || offer.text.size() > kSavedText ||
-        offer.conversation.size() > 200 || offer.turn < 0 || offer.seen_ms < 0)
+        offer.conversation.size() > 200 || offer.conversation_id.size() > 200 || offer.turn < 0 ||
+        offer.seen_ms < 0)
         return std::nullopt;
     return offer;
 }
@@ -1121,7 +1137,7 @@ bool NextPrompt::restoreAwaiting(const QJsonObject& awaiting) {
     for (auto entry = awaiting.constBegin(); entry != awaiting.constEnd(); ++entry) {
         const auto offer = savedOffer(entry.key(), entry.value());
         if (!offer || awaiting_.contains(entry.key()) ||
-            !restorable(entry.key(), offer->conversation)) {
+            !restorable(entry.key(), offerConversation(*offer))) {
             changed = true; // the rejected entry must leave the saved state too
             continue;
         }
@@ -1152,8 +1168,8 @@ bool NextPrompt::restoreOffers(const QJsonObject& offers) {
         if (known != std::nullopt) {
             if (!chats(known->cli))
                 reason = "unsupported";
-            else if (!known->conversation.isEmpty() && !offer->conversation.isEmpty() &&
-                     known->conversation != offer->conversation)
+            else if (!known->conversation.isEmpty() && !offerConversation(*offer).isEmpty() &&
+                     known->conversation != offerConversation(*offer))
                 reason = "moved";
             else {
                 verify(id, *known, *offer);
@@ -1203,8 +1219,8 @@ void NextPrompt::confirm(const QString& id, const QJsonObject& context) {
     const auto offer = restoring_.value(id);
     if (offer.text.isEmpty())
         return;
-    const auto conversation = context.value(QStringLiteral("conversation")).toString();
-    if (conversation != offer.conversation) {
+    const auto conversation = contextConversation(context);
+    if (conversation != offerConversation(offer)) {
         dropRestored(id, "stale");
         return;
     }

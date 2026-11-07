@@ -109,7 +109,8 @@ RECENT_HOURS = 1
 # alone; with the person's earlier messages in it; with how they answered
 # similar replies before; with an instruction to find the reply's weakest
 # claim; or with three candidates split by conversational move. "legacy" keeps
-# the older merged-and-clipped agent turns, for the ablation baseline.
+# the older merged-and-clipped agent turns, for the offline ablation baseline;
+# the desktop does not draw it as a live arm.
 CONTEXT_ARMS = (
     "base",
     "thread",
@@ -132,6 +133,8 @@ RETRIEVED = 6
 INDEX_DAYS = 60
 INDEX_SECONDS = 3.0
 INDEX_NAME = "next_prompt_pairs.json"
+INDEX_VERSION = 2
+SNIPPET_CHARS = 600
 # Ordered OpenAI-compatible providers (`nextPrompt.providers`), tried in
 # order: a local or private endpoint first, then a hosted fallback. The chain
 # replaces the CLI for the guesses it is configured on; an unreachable host,
@@ -380,7 +383,9 @@ def omp_snippets(path):
             continue
         text = blocks_text(message.get("content"), ("text",)).strip()
         if text:
-            found.append({"time": entry.get("timestamp", ""), "text": text})
+            found.append(
+                {"time": entry.get("timestamp", ""), "text": clip(text, SNIPPET_CHARS)}
+            )
     return found
 
 
@@ -396,9 +401,15 @@ def tool_text(content):
     return ""
 
 
+def clip(text, limit):
+    if len(text) <= limit:
+        return text
+    return text[: limit // 3] + "\n[...]\n" + text[-(limit - limit // 3) :]
+
+
 def claude_snippets(path):
-    """Tool and subagent outputs the visible-turn parser drops. Each is a
-    timestamped exact result, which the pack arm may quote."""
+    """Bounded tool and subagent outputs the visible-turn parser drops. Each
+    keeps its timestamp and an excerpt for the pack arm."""
     found = []
     for entry in records(path):
         if entry.get("isSidechain") or entry.get("isMeta"):
@@ -415,7 +426,12 @@ def claude_snippets(path):
                 if isinstance(block, dict) and block.get("type") == "tool_result"
             ).strip()
             if text:
-                found.append({"time": entry.get("timestamp", ""), "text": text})
+                found.append(
+                    {
+                        "time": entry.get("timestamp", ""),
+                        "text": clip(text, SNIPPET_CHARS),
+                    }
+                )
     return found
 
 
@@ -430,7 +446,12 @@ def codex_snippets(path):
             continue
         text = payload.get("output")
         if isinstance(text, str) and text.strip():
-            found.append({"time": entry.get("timestamp", ""), "text": text.strip()})
+            found.append(
+                {
+                    "time": entry.get("timestamp", ""),
+                    "text": clip(text.strip(), SNIPPET_CHARS),
+                }
+            )
     return found
 
 
@@ -448,6 +469,29 @@ def claude_home():
 
 def codex_home():
     return os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+
+
+def transcript_conversation_id(cli, path):
+    """The CLI's own conversation id, which may differ from its file name."""
+    if cli == "codex":
+        meta = codex_meta(path)
+        return str(meta.get("id", "")) if isinstance(meta, dict) else ""
+    if cli == "omp":
+        meta = omp_meta(path)
+        return str(meta.get("id", "")) if isinstance(meta, dict) else ""
+    return os.path.basename(path)[: -len(".jsonl")]
+
+
+def index_folder():
+    """Where this installed helper may cache its index, or None on stdin.
+
+    Remote agents receive the helper through `python3 -`. A cache there would
+    leave lapis state on the other machine, so those runs read transcripts
+    directly instead."""
+    script = os.path.realpath(__file__)
+    if os.path.basename(script) == "<stdin>" or not os.path.isfile(script):
+        return None
+    return os.path.dirname(script)
 
 
 def claude_interactive(path):
@@ -527,12 +571,6 @@ def turns_of(cli, path):
     return omp_turns(path)
 
 
-def clip(text, limit):
-    if len(text) <= limit:
-        return text
-    return text[: limit // 3] + "\n[...]\n" + text[-(limit - limit // 3) :]
-
-
 def history(turns, limit=CONTEXT_CHARS, legacy=False):
     """The newest turns that fit in `limit` characters, oldest first.
 
@@ -573,16 +611,25 @@ def recent_prompts(skip, hours=RECENT_HOURS, limit=20, before=None, files=None):
         codex = glob.glob(
             os.path.join(codex_home(), "sessions", "*", "*", "*", "rollout-*.jsonl")
         )
-        for cli, paths in (("claude", claude), ("codex", codex)):
+        omp = glob.glob(os.path.join(omp_home(), "agent", "sessions", "*", "*.jsonl"))
+        for cli, paths in (("claude", claude), ("codex", codex), ("omp", omp)):
             for path in paths:
+                if path == skip:
+                    continue
                 if os.path.getmtime(path) < cutoff:
                     continue
                 if cli == "claude" and not claude_interactive(path):
                     continue
                 if cli == "codex" and not codex_interactive(codex_meta(path)):
                     continue
+                if cli == "omp" and not omp_interactive(omp_meta(path)):
+                    continue
                 folder = (
-                    os.path.basename(os.path.dirname(path)) if cli == "claude" else ""
+                    os.path.basename(os.path.dirname(path))
+                    if cli == "claude"
+                    else os.path.basename((omp_meta(path) or {}).get("cwd", ""))
+                    if cli == "omp"
+                    else ""
                 )
                 for turn in turns_of(cli, path):
                     if turn["role"] != "person":
@@ -605,7 +652,7 @@ def recent_prompts(skip, hours=RECENT_HOURS, limit=20, before=None, files=None):
 
 
 def snippet_pack(turns, snippets, target=None, limit=2, chars=600):
-    """One or two exact tool/subagent results matching the live topic.
+    """One or two bounded tool/subagent excerpts matching the live topic.
 
     The topic words come from the newest visible turns, so the pack follows
     what the person and agent are actually discussing. Results after the
@@ -654,18 +701,25 @@ def command_context(arguments):
     prompts = [t for t in turns if t["role"] == "person"]
     shown = history(turns)
     now = time.time()
-    try:
-        files = pair_index(os.path.dirname(os.path.abspath(__file__)))
-    except OSError:
-        files = {}
+    folder = index_folder()
+    files = None
+    if folder is not None:
+        try:
+            files = pair_index(folder)
+        except OSError:
+            files = None
+    snippets = (
+        files.get(path, {}).get("snippets", [])
+        if files is not None
+        else snippets_of(arguments.cli, path)
+    )
     result = {
         "conversation": os.path.basename(path)[: -len(".jsonl")],
+        "conversation_id": transcript_conversation_id(arguments.cli, path),
         "turn": len(prompts),
         "turns": shown,
         "recent": recent_prompts(path, before=now, files=files),
-        "snippets": snippet_pack(
-            shown, files.get(path, {}).get("snippets", []), target=now
-        ),
+        "snippets": snippet_pack(shown, snippets, target=now),
     }
     replies = [t for t in turns if t["role"] == "agent" and t.get("time")]
     if replies:
@@ -722,7 +776,13 @@ def age_minutes(stamp, target):
     if not stamp or not target:
         return None
     try:
-        return int((utc_timestamp(target) - utc_timestamp(stamp)) / 60)
+        end = utc_timestamp(target)
+    except (ValueError, TypeError):
+        # The desktop also sends a human-readable clock string. A live guess
+        # is made at the cursor, so now is the target when that cannot parse.
+        end = time.time()
+    try:
+        return int((end - utc_timestamp(stamp)) / 60)
     except (ValueError, TypeError):
         return None
 
@@ -865,7 +925,9 @@ def pair_index(folder, now=None, budget=INDEX_SECONDS):
     try:
         with open(path) as stream:
             index = json.load(stream)
-        if not isinstance(index.get("files"), dict):
+        if index.get("version") != INDEX_VERSION or not isinstance(
+            index.get("files"), dict
+        ):
             raise ValueError
     except (OSError, ValueError, AttributeError):
         index = {"files": {}}
@@ -916,7 +978,7 @@ def pair_index(folder, now=None, budget=INDEX_SECONDS):
         temporary = path + ".tmp"
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(descriptor, "w") as stream:
-            json.dump({"files": files}, stream)
+            json.dump({"version": INDEX_VERSION, "files": files}, stream)
         os.replace(temporary, path)
     return files
 
@@ -1000,10 +1062,9 @@ Three checks before you write:
 
 WIDE = """
 
-Write five candidates, not three. The first three are the ones you would
-show in the Tab list; the fourth and fifth are other plausible next messages
-whose mode or thread differs from those three. Keep them in likelihood order
-and give each a calibrated probability."""
+Write five candidates, not three. The first is the one lapis would show in its
+Tab list; the other four are plausible next messages whose mode or thread
+differs. Keep them in likelihood order and give each a calibrated probability."""
 
 
 def priors():
@@ -1127,10 +1188,11 @@ def render(bundle, fence=None, arm="base", retrieved=()):
         ]
     if bundle.get("screen"):
         lines += ["Its terminal now:", block("screen", bundle["screen"])]
-    if isinstance(bundle.get("returned_minutes"), int):
+    returned = bundle.get("returned_minutes", context.get("returned_minutes"))
+    if isinstance(returned, int):
         lines.append(
             "Its latest reply came {} minutes ago; the person has just come back"
-            " to it.".format(int(bundle["returned_minutes"]))
+            " to it.".format(int(returned))
         )
     if arm == "thread" and context.get("earlier"):
         lines += [

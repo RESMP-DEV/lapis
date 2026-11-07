@@ -205,7 +205,12 @@ class Homes(unittest.TestCase):
                     "timestamp": "2026-09-28T10:00:04Z",
                     "message": {
                         "role": "assistant",
-                        "content": [{"type": "text", "text": "host-a has 55 GB free."}],
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "model-x uses 203 GB; host-a has 55 GB free.",
+                            }
+                        ],
                     },
                 },
             ],
@@ -430,8 +435,17 @@ class TranscriptTests(Homes):
             cli="claude", conversation="", folder=str(self.work)
         )
         when = next_prompt.utc_timestamp("2026-09-28T10:05:00Z")
-        with patch.object(next_prompt.time, "time", return_value=when):
-            context = next_prompt.command_context(arguments)
+        runtime = self.root / "runtime"
+        runtime.mkdir()
+        installed = runtime / "next_prompt.py"
+        installed.write_text("")
+        with patch.object(next_prompt, "__file__", str(installed)):
+            with patch.object(next_prompt.time, "time", return_value=when):
+                context = next_prompt.command_context(arguments)
+                fallback = next_prompt.recent_prompts(
+                    str(self.claude_path), before=when, files=None
+                )
+        self.assertTrue((runtime / next_prompt.INDEX_NAME).exists())
         self.assertEqual((context["conversation"], context["turn"]), ("c1", 2))
         self.assertEqual(
             context["turns"][-1],
@@ -439,6 +453,10 @@ class TranscriptTests(Homes):
         )
         self.assertEqual(
             [r["text"] for r in context["recent"]],
+            ["check the disk", "run the suite"],
+        )
+        self.assertEqual(
+            [r["text"] for r in fallback],
             ["check the disk", "run the suite"],
         )
         self.assertNotIn("answered", context)
@@ -482,6 +500,52 @@ class TranscriptTests(Homes):
         stamp = index.stat().st_mtime_ns
         self.assertEqual(next_prompt.pair_index(str(folder)), files)
         self.assertEqual(index.stat().st_mtime_ns, stamp)
+
+    def test_the_snippet_index_is_versioned_and_bounded(self):
+        folder = self.root / "runtime"
+        folder.mkdir()
+        long_output = "model-x uses 203 GB; " + "x" * 1200
+        path = write_lines(
+            self.codex
+            / "sessions"
+            / "2026"
+            / "09"
+            / "28"
+            / "rollout-2026-09-28T11-00-00-long.jsonl",
+            [
+                {
+                    "type": "session_meta",
+                    "payload": {"id": "long", "cwd": str(self.work), "source": "cli"},
+                },
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-09-28T11:00:01Z",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": "call-long",
+                        "output": long_output,
+                    },
+                },
+            ],
+        )
+        next_prompt.pair_index(str(folder))
+        index = folder / next_prompt.INDEX_NAME
+        data = json.loads(index.read_text())
+        self.assertEqual(data["version"], next_prompt.INDEX_VERSION)
+        snippet = data["files"][str(path)]["snippets"][0]["text"]
+        self.assertLessEqual(len(snippet), next_prompt.SNIPPET_CHARS + len("\n[...]\n"))
+        self.assertIn("[...]", snippet)
+
+        del data["version"]
+        index.write_text(json.dumps(data))
+        rebuilt = next_prompt.pair_index(str(folder))
+        self.assertLessEqual(
+            len(rebuilt[str(path)]["snippets"][0]["text"]),
+            next_prompt.SNIPPET_CHARS + len("\n[...]\n"),
+        )
+        self.assertEqual(
+            json.loads(index.read_text())["version"], next_prompt.INDEX_VERSION
+        )
 
     def test_context_brings_what_was_sent_for_an_earlier_offer(self):
         ask = next_prompt.argparse.Namespace
@@ -616,6 +680,12 @@ class TranscriptTests(Homes):
         self.assertIn("[-108m] the blue jacket", prompt)
         self.assertIn("[-103m] the washer is free", prompt)
 
+    def test_a_display_clock_falls_back_to_the_live_target(self):
+        when = next_prompt.utc_timestamp("2026-09-28T11:48:00Z")
+        with patch.object(next_prompt.time, "time", return_value=when):
+            minutes = next_prompt.age_minutes("2026-09-28T11:40:00Z", "Sun 11:48 pm")
+        self.assertEqual(minutes, 8)
+
     def test_the_topic_hint_and_recent_prompts_reach_the_prompt(self):
         prompt = next_prompt.render(
             {
@@ -666,6 +736,28 @@ class TranscriptTests(Homes):
         found = next_prompt.find_transcript("omp", "omp1", str(self.work))
         self.assertEqual(found, str(self.omp_path))
 
+    def test_a_remote_helper_reads_directly_and_leaves_no_cache(self):
+        arguments = next_prompt.argparse.Namespace(
+            cli="omp", conversation="omp1", folder=""
+        )
+        when = next_prompt.utc_timestamp("2026-09-28T10:05:00Z")
+        with patch.object(next_prompt, "__file__", "<stdin>"):
+            with patch.object(next_prompt.time, "time", return_value=when):
+                context = next_prompt.command_context(arguments)
+        self.assertEqual(
+            (
+                context["conversation"],
+                context["conversation_id"],
+                [s["text"] for s in context["snippets"]],
+            ),
+            (
+                "2026-09-28T10-00-00-000Z_omp1",
+                "omp1",
+                ["model-x uses 203 GB"],
+            ),
+        )
+        self.assertEqual(list(self.root.rglob(next_prompt.INDEX_NAME)), [])
+
     def test_tool_and_codex_outputs_are_kept_as_exact_snippets(self):
         claude = next_prompt.claude_snippets(str(self.claude_path))
         self.assertEqual([s["text"] for s in claude], ["output"])
@@ -705,6 +797,7 @@ class TranscriptTests(Homes):
         with patch.object(next_prompt, "ask", return_value=(response, {})) as ask:
             answer = next_prompt.predict({"context": {"turns": []}}, "m", arm="wide")
         self.assertIn("five candidates", ask.call_args.args[0])
+        self.assertIn("first is the one lapis would show", ask.call_args.args[0])
         self.assertEqual(len(answer["candidates"]), 5)
 
     def test_the_checks_prompt_arm_adds_only_the_checks(self):
@@ -795,8 +888,8 @@ class ModelTests(unittest.TestCase):
     def test_each_context_arm_adds_only_its_own_material(self):
         bundle = {
             "time": "Sat 2:00 pm",
-            "returned_minutes": 45,
             "context": {
+                "returned_minutes": 45,
                 "turns": [{"role": "agent", "text": "Shall I merge?"}],
                 "earlier": ["ship it tonight"],
             },

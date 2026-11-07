@@ -3580,9 +3580,12 @@ void ompGetsItsResizeOverlay() {
         require(overlay_text.contains("extensions:\n  - \"" + QFile::encodeName(extension) + "\""),
                 "the overlay loads lapis's OMP turn extension");
         QFile turns(extension);
-        require(turns.open(QIODevice::ReadOnly) &&
-                    turns.readAll().contains("lapis-init;omp;${nonce}"),
-                "lapis writes its OMP turn extension");
+        require(turns.open(QIODevice::ReadOnly), "read lapis's OMP turn extension");
+        const auto turn_source = turns.readAll();
+        require(turn_source.contains("lapis-init;omp;${nonce}") &&
+                    turn_source.contains(
+                        QByteArrayLiteral("const main = (ctx: any) => ctx?.mode === \"tui\";")),
+                "the extension reports only OMP's top-level TUI runner");
         // The stand-in's shell truncates the capture before it writes, so an
         // existence check alone can read an empty file under load.
         const auto expected_config = userOverlay + QDir::listSeparator() + overlay;

@@ -6,6 +6,7 @@
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QThread>
 #include <functional>
