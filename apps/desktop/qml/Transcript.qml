@@ -13,9 +13,11 @@ Rectangle {
     property color raisedColor: "#24283b"
     property color codeColor: "#16161e"
     property color borderColor: "#292e42"
-    property color textColor: "#c0caf5"
+    // Defaults follow the Codex app's Tokyo Night chrome as configured here
+    // (surface, ink, accent, diff colors); lapis passes its own theme.
+    property color textColor: "#a9b1d6"
     property color mutedTextColor: "#737aa2"
-    property color accentColor: "#7aa2f7"
+    property color accentColor: "#3d59a1"
     property color addedColor: "#449dab"
     property color removedColor: "#914c54"
     property color faultColor: "#f7768e"
