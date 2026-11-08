@@ -5,7 +5,11 @@
 #include <QHash>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
+#include <QVariantMap>
 #include <vector>
+
+class QQuickTextDocument;
 
 namespace lapis::desktop {
 // A visual, read-only reading of an agent CLI's saved conversation. The
@@ -41,6 +45,8 @@ struct Item {
     bool answered{};    // a tool result arrived
     bool after_step{};  // follows another step: drawn tight against it
     QString tool_id;
+    // The saved record this item came from, so a fork can cut there.
+    QString record;
 };
 
 // Limits that keep one huge tool output or file write from costing the view.
@@ -51,6 +57,15 @@ inline constexpr qsizetype body_chars = 24000;
 
 // "12s", "3m 12s", "1h 4m".
 [[nodiscard]] QString duration_text(qint64 ms);
+
+// A reply split at its fenced code blocks: prose stays markdown, and each
+// block is its own piece so it can be copied whole.
+struct Piece {
+    bool code{};
+    QString language;
+    QString text;
+};
+[[nodiscard]] std::vector<Piece> pieces(const QString& markdown);
 
 // Folds Claude Code session JSONL records, in file order, into items. Tool
 // results attach to the tool call that asked for them; a subagent's records
@@ -65,6 +80,7 @@ class ClaudeReader {
   private:
     void push(Item item);
     std::vector<Item> items_;
+    QString record_; // uuid of the record being read
     QHash<QString, int> tools_; // tool_use id -> item index
 };
 } // namespace transcript
@@ -90,6 +106,7 @@ class TranscriptModel final : public QAbstractListModel {
         FailedRole,
         AnsweredRole,
         AfterStepRole,
+        RecordRole,
     };
     explicit TranscriptModel(QObject* parent = nullptr);
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
@@ -103,6 +120,18 @@ class TranscriptModel final : public QAbstractListModel {
     Q_INVOKABLE void readMore();
     // Reads the whole file on this thread; for tools that capture once.
     void loadNow();
+    // A reply's prose and code pieces: [{code, language, text}].
+    Q_INVOKABLE [[nodiscard]] QVariantList pieces(const QString& markdown) const;
+    // Lays markdown into a TextEdit's document with the view's fonts and
+    // sizes, so headings, lists and inline code keep one scale and the text
+    // stays selectable. `style` holds sans, mono, size, codeSize, codeColor
+    // and linkColor.
+    Q_INVOKABLE void style(QQuickTextDocument* target, const QString& markdown,
+                           const QVariantMap& style) const;
+    // Font families lapis loads from the system for reading: serif, mono.
+    Q_INVOKABLE [[nodiscard]] QVariantMap fonts() const;
+    // Copies text to the clipboard.
+    Q_INVOKABLE void copy(const QString& text) const;
 
   signals:
     void pathChanged();

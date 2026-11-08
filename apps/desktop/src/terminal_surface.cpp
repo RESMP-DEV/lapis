@@ -816,8 +816,13 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
         if (!snapshot_changed && handoff_->pending)
             frame->snapshot = handoff_->pending->snapshot;
     }
-    if (snapshot_changed && document_)
+    if (snapshot_changed && document_) {
         frame->snapshot = std::make_shared<const session::TerminalSnapshot>(document_->snapshot());
+        if (frame->snapshot->background_rgb != background_rgb_) {
+            background_rgb_ = frame->snapshot->background_rgb;
+            emit backgroundColorChanged();
+        }
+    }
     if (const qreal slide = historySlide(); slide > 0) {
         if (auto above = document_->historyRowAbove()) {
             frame->above = std::make_shared<const session::TerminalSnapshot>(std::move(*above));

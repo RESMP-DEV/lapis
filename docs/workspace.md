@@ -56,15 +56,32 @@ Windsurf and Sublime Text installed), or copy its path.
 
 ## Visual view
 
-**Show visual view** in Commands shows the selected Claude Code agent as a
-readable thread instead of its terminal: your prompts as bubbles, its replies as
-prose, and its work as one-line steps ("Ran", "Read", "Edited +4 −10", "Thought
-for 6s") that open on click, with each edit's diff shown under it. It reads the
-conversation Claude Code saves on this Mac and follows it as the agent works;
-anything it does not recognize shows as a plain block. The terminal keeps
-running underneath but takes no input while covered; Escape, or **Show
-terminal**, brings it back. Each agent remembers its choice until lapis
-restarts. Agents on other machines and other CLIs are not supported yet.
+The visual view shows a Claude Code agent as a readable thread instead of its
+terminal: your prompts as bubbles, its replies as prose, and its work as
+one-line steps ("Ran", "Read", "Edited +4 −10", "Thought for 6s") that open on
+click, with each edit's diff shown under it. It reads the conversation Claude
+Code saves on this Mac and follows it as the agent works; anything it does not
+recognize shows as a plain block.
+
+Above **Commands** in the sidebar, **This agent** switches the selected agent
+between its terminal and the thread, and **All agents** shows every Claude Code
+agent on this Mac as a thread (saved, so it survives a restart). A per-agent
+choice wins over **All agents** until lapis restarts or **All agents** is
+switched again. Both are also in Commands. The terminal keeps running underneath
+but takes no input while covered; Escape brings it back.
+
+Text in the thread selects with the mouse and copies with Command-C. Hovering a
+message shows the same buttons as the Codex app: **Copy** on prompts, replies
+and every code block or output, **Fork from here** on a reply (a new agent that
+continues the conversation up to that point), and **Edit** on a prompt (a new
+agent that continues from just before it, with the prompt waiting unsent in its
+input). The original conversation is never changed.
+
+Appearance has a **Visual view** section: a theme (Match terminal, Tokyo Night,
+Codex, Claude, Graphite, Black, Claude light, Codex light), a reading font
+(System, Serif, Avenir Next, Helvetica Neue), a code font and a text size, which
+follows the terminal font unless set. Agents on other machines and other CLIs
+are not supported yet.
 
 ## Finding
 

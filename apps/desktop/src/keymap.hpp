@@ -131,6 +131,10 @@ class KeyMap final : public QObject {
     Q_PROPERTY(bool showUsage READ showUsage NOTIFY changed)
     Q_PROPERTY(QStringList usageMeter READ usageMeter NOTIFY changed)
     Q_PROPERTY(QStringList usageMachines READ usageMachines NOTIFY changed)
+    // The visual view (a conversation as a thread instead of a terminal):
+    // its color theme and reading and code fonts by name, its text size in
+    // pixels (0 follows the terminal's), and whether every agent shows it.
+    Q_PROPERTY(QVariantMap visual READ visual NOTIFY changed)
   public:
     explicit KeyMap(QObject* parent = nullptr);
 
@@ -238,6 +242,10 @@ class KeyMap final : public QObject {
     [[nodiscard]] const QString& editor() const { return editor_; }
     [[nodiscard]] bool keepAwake() const { return keep_awake_; }
     [[nodiscard]] bool showUsage() const { return show_usage_; }
+    [[nodiscard]] QVariantMap visual() const;
+    // Sets one visual-view key (theme, font, codeFont, size or all) and
+    // saves; an invalid value is refused and nothing changes.
+    Q_INVOKABLE bool setVisual(const QString& key, const QVariant& value);
     // The meter's plans in order (empty: every signed-in plan), and the ssh
     // hosts with a usage dashboard beside this Mac.
     [[nodiscard]] const QStringList& usageMeter() const { return usage_meter_; }
@@ -285,6 +293,7 @@ class KeyMap final : public QObject {
     void load_harness_updates(const QJsonValue& value);
     void load_alerts(const QJsonObject& root);
     void load_usage(const QJsonObject& root);
+    void load_visual(const QJsonObject& root);
     void load_agent_defaults(const QJsonValue& value);
     // The file is watched, so an edit from anywhere (an agent included)
     // applies at once; the window's own saves are recognised and skipped.
@@ -319,6 +328,11 @@ class KeyMap final : public QObject {
     bool judge_pings_{true};
     QString editor_;
     bool show_usage_{true};
+    QString visual_theme_{QStringLiteral("terminal")};
+    QString visual_font_{QStringLiteral("system")};
+    QString visual_code_font_{QStringLiteral("system")};
+    int visual_size_{};
+    bool visual_all_{};
     QStringList usage_meter_;
     QStringList usage_machines_;
     AgentDefaults agent_defaults_;

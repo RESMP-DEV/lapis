@@ -1,7 +1,17 @@
 #include "transcript.hpp"
 
+#include <QClipboard>
 #include <QDir>
 #include <QFile>
+#include <QFont>
+#include <QFontDatabase>
+#include <QGuiApplication>
+#include <QQuickTextDocument>
+#include <QTextBlock>
+#include <QColor>
+#include <QTextCursor>
+#include <QTextDocument>
+#include <QTextList>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QJsonArray>
@@ -225,7 +235,48 @@ void attach_result(Item& item, const QJsonObject& block) {
 bool is_step(Kind kind) { return kind == Kind::tool || kind == Kind::thinking; }
 } // namespace
 
+std::vector<Piece> pieces(const QString& markdown) {
+    std::vector<Piece> out;
+    QStringList prose;
+    QStringList code;
+    QString fence;
+    QString language;
+    const auto flush_prose = [&] {
+        const auto text = prose.join(QLatin1Char('\n')).trimmed();
+        if (!text.isEmpty())
+            out.push_back({false, {}, text});
+        prose.clear();
+    };
+    for (const auto& line : markdown.split(QLatin1Char('\n'))) {
+        const auto trimmed = line.trimmed();
+        if (fence.isEmpty()) {
+            if (trimmed.startsWith(QLatin1String("```")) || trimmed.startsWith(QLatin1String("~~~"))) {
+                flush_prose();
+                // The fence is its run of ` or ~; a closing fence is at least as long.
+                qsizetype length = 0;
+                while (length < trimmed.size() && trimmed[length] == trimmed[0])
+                    ++length;
+                fence = trimmed.left(length);
+                language = trimmed.mid(length).trimmed().section(QLatin1Char(' '), 0, 0);
+                continue;
+            }
+            prose << line;
+        } else if (trimmed.startsWith(fence) && trimmed.mid(fence.size()).trimmed().isEmpty()) {
+            out.push_back({true, language, code.join(QLatin1Char('\n'))});
+            code.clear();
+            fence.clear();
+        } else {
+            code << line;
+        }
+    }
+    if (!fence.isEmpty()) // an unclosed block still reads as code
+        out.push_back({true, language, code.join(QLatin1Char('\n'))});
+    flush_prose();
+    return out;
+}
+
 void ClaudeReader::push(Item item) {
+    item.record = record_;
     item.after_step = is_step(item.kind) && !items_.empty() && is_step(items_.back().kind);
     items_.push_back(std::move(item));
 }
@@ -239,6 +290,7 @@ int ClaudeReader::add(const QByteArray& line) {
     if (record.value(QLatin1String("isSidechain")).toBool())
         return -1;
     const auto type = record.value(QLatin1String("type")).toString();
+    record_ = record.value(QLatin1String("uuid")).toString();
     const auto first = static_cast<int>(items_.size());
     int changed = -1;
 
@@ -401,6 +453,7 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
     case FailedRole: return item.failed;
     case AnsweredRole: return item.answered;
     case AfterStepRole: return item.after_step;
+    case RecordRole: return item.record;
     default: return {};
     }
 }
@@ -417,7 +470,126 @@ QHash<int, QByteArray> TranscriptModel::roleNames() const {
             {ResultLinesRole, "resultLines"},
             {FailedRole, "failed"},
             {AnsweredRole, "answered"},
-            {AfterStepRole, "afterStep"}};
+            {AfterStepRole, "afterStep"},
+            {RecordRole, "record"}};
+}
+
+QVariantList TranscriptModel::pieces(const QString& markdown) const {
+    QVariantList out;
+    for (const auto& piece : transcript::pieces(markdown))
+        out.append(QVariantMap{{QStringLiteral("code"), piece.code},
+                               {QStringLiteral("language"), piece.language},
+                               {QStringLiteral("text"), piece.text}});
+    return out;
+}
+
+void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
+                            const QVariantMap& style) const {
+    if (target == nullptr || target->textDocument() == nullptr)
+        return;
+    QTextDocument& document = *target->textDocument();
+    const auto size = std::max(8, style.value(QStringLiteral("size")).toInt());
+    const auto code_size = std::max(8, style.value(QStringLiteral("codeSize")).toInt());
+    const auto mono = style.value(QStringLiteral("mono")).toString();
+    const auto code_color = style.value(QStringLiteral("codeColor")).value<QColor>();
+    const auto link_color = style.value(QStringLiteral("linkColor")).value<QColor>();
+    QFont base(style.value(QStringLiteral("sans")).toString());
+    base.setPixelSize(size);
+    document.setDefaultFont(base);
+    document.setDocumentMargin(0);
+    document.setMarkdown(markdown, QTextDocument::MarkdownDialectGitHub);
+
+    // Qt's importer sizes headings and code on its own scale; put them on
+    // the view's, relative to the body text.
+    // Formats are gathered first and applied after: changing a fragment's
+    // format while walking the fragments can merge or split them.
+    const qreal heading_scale[] = {1.0, 1.4, 1.25, 1.12, 1.0, 1.0, 1.0};
+    struct BlockChange {
+        int position;
+        QTextBlockFormat format;
+    };
+    struct CharChange {
+        int position;
+        int length;
+        QTextCharFormat format;
+    };
+    std::vector<BlockChange> blocks;
+    std::vector<CharChange> chars;
+    bool first = true;
+    for (auto block = document.begin(); block.isValid(); block = block.next()) {
+        auto block_format = block.blockFormat();
+        const int level = std::clamp(block_format.headingLevel(), 0, 6);
+        block_format.setLineHeight(level > 0 ? 120 : 140, QTextBlockFormat::ProportionalHeight);
+        block_format.setTopMargin(first ? 0 : level > 0 ? size * 0.8 : 0);
+        block_format.setBottomMargin(level > 0       ? size * 0.3
+                                     : block.textList() != nullptr ? size * 0.2
+                                                                  : size * 0.6);
+        first = false;
+        blocks.push_back({block.position(), block_format});
+        for (auto fragment = block.begin(); !fragment.atEnd(); ++fragment) {
+            const auto part = fragment.fragment();
+            if (!part.isValid())
+                continue;
+            auto format = part.charFormat();
+            bool touched = false;
+            if (level > 0) {
+                QFont font = format.font();
+                font.setPixelSize(static_cast<int>(size * heading_scale[level]));
+                font.setWeight(QFont::DemiBold);
+                format.setFont(font, QTextCharFormat::FontPropertiesSpecifiedOnly);
+                touched = true;
+            }
+            if (format.fontFixedPitch()) {
+                QFont font = format.font();
+                font.setFamilies({mono});
+                font.setPixelSize(code_size);
+                format.setFont(font, QTextCharFormat::FontPropertiesSpecifiedOnly);
+                if (code_color.isValid())
+                    format.setBackground(code_color);
+                touched = true;
+            }
+            if (format.isAnchor() && link_color.isValid()) {
+                format.setForeground(link_color);
+                format.setFontUnderline(false);
+                touched = true;
+            }
+            if (touched)
+                chars.push_back({part.position(), part.length(), format});
+        }
+    }
+    QTextCursor cursor(&document);
+    cursor.beginEditBlock();
+    for (const auto& change : blocks) {
+        cursor.setPosition(change.position);
+        cursor.setBlockFormat(change.format);
+    }
+    for (const auto& change : chars) {
+        cursor.setPosition(change.position);
+        cursor.setPosition(change.position + change.length, QTextCursor::KeepAnchor);
+        cursor.setCharFormat(change.format);
+    }
+    cursor.endEditBlock();
+}
+
+QVariantMap TranscriptModel::fonts() const {
+    // New York and SF Mono ship with macOS but are hidden from the font list;
+    // loading the files gives them names the view can ask for.
+    static const QVariantMap loaded = [] {
+        const auto family = [](const char* file, const char* fallback) {
+            const auto id = QFontDatabase::addApplicationFont(QString::fromUtf8(file));
+            const auto families = id < 0 ? QStringList{} : QFontDatabase::applicationFontFamilies(id);
+            return families.isEmpty() ? QString::fromUtf8(fallback) : families.front();
+        };
+        return QVariantMap{
+            {QStringLiteral("serif"), family("/System/Library/Fonts/NewYork.ttf", "Georgia")},
+            {QStringLiteral("mono"), family("/System/Library/Fonts/SFNSMono.ttf", "Menlo")}};
+    }();
+    return loaded;
+}
+
+void TranscriptModel::copy(const QString& text) const {
+    if (auto* clipboard = QGuiApplication::clipboard())
+        clipboard->setText(text);
 }
 
 void TranscriptModel::setPath(const QString& path) {

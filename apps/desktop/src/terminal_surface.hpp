@@ -111,6 +111,9 @@ class TerminalSurface : public QQuickItem {
     Q_PROPERTY(QString fontFamily READ fontFamily WRITE setFontFamily NOTIFY fontChanged)
     Q_PROPERTY(int fontPixelSize READ fontPixelSize WRITE setFontPixelSize NOTIFY fontChanged)
     Q_PROPERTY(QString resolvedFontFamily READ resolvedFontFamily NOTIFY fontChanged)
+    // The shown terminal's default background, so views beside or over it
+    // can match the program's own colors.
+    Q_PROPERTY(QColor backgroundColor READ backgroundColor NOTIFY backgroundColorChanged)
     // Columns and rows this viewport requests from a live terminal.
     Q_PROPERTY(QSize gridSize READ gridSize NOTIFY gridSizeChanged)
     // Text chosen by dragging or double-clicking; copied with Command-C
@@ -179,6 +182,9 @@ class TerminalSurface : public QQuickItem {
     [[nodiscard]] int fontPixelSize() const { return font_pixel_size_; }
     void setFontPixelSize(int pixels);
     [[nodiscard]] const QString& resolvedFontFamily() const { return resolved_font_family_; }
+    [[nodiscard]] QColor backgroundColor() const {
+        return QColor::fromRgb(background_rgb_ | 0xff000000U);
+    }
     [[nodiscard]] QSize gridSize() const { return grid_size_; }
     [[nodiscard]] const QString& selectedText() const { return selection_text_; }
     // Item-coordinate bounds of a visible cell of the current screen.
@@ -195,6 +201,7 @@ class TerminalSurface : public QQuickItem {
     void scrollToBottomOnTypingChanged();
     void inputOwnershipChanged();
     void fontChanged();
+    void backgroundColorChanged();
     void gridSizeChanged();
     void selectionChanged();
     void hoveredLinkChanged();
@@ -302,6 +309,7 @@ class TerminalSurface : public QQuickItem {
     QPointF hover_position_;
     std::optional<TerminalLink> hovered_link_;
     QString hovered_target_;
+    std::uint32_t background_rgb_{};
 
     QString font_family_;
     QString resolved_font_family_;

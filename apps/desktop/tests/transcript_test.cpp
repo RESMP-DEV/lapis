@@ -112,6 +112,30 @@ void model_follows_file() {
     model.readMore();
     require(model.rowCount() == 1, "a rewritten file reloads");
 }
+// A reply splits at fenced code so each block can be copied whole; an
+// unclosed fence (a reply still streaming) still reads as code.
+void reply_splits_at_code() {
+    using lapis::desktop::transcript::pieces;
+    const auto parts = pieces(QStringLiteral("Intro **bold**\n\n```cpp\nint a;\n\nint b;\n```\nAfter\n~~~~\nx\n"));
+    require(parts.size() == 4, "prose, code, prose, code");
+    require(!parts[0].code && parts[0].text == QStringLiteral("Intro **bold**"), "prose kept as markdown");
+    require(parts[1].code && parts[1].language == QStringLiteral("cpp") &&
+                parts[1].text == QStringLiteral("int a;\n\nint b;"),
+            "code keeps its blank line and language");
+    require(!parts[2].code && parts[2].text == QStringLiteral("After"), "prose after code");
+    require(parts[3].code && parts[3].text == QStringLiteral("x\n"), "unclosed fence is code");
+    require(pieces(QStringLiteral("  \n")).empty(), "blank reply has no pieces");
+}
+
+// Each item names the record it came from, so a fork can cut there.
+void items_keep_their_record() {
+    ClaudeReader reader;
+    reader.add(R"({"type":"user","uuid":"u-1","message":{"content":"Hi"}})");
+    reader.add(R"({"type":"assistant","uuid":"a-1","message":{"content":[{"type":"text","text":"Hello"}]}})");
+    require(reader.items().size() == 2 && reader.items()[0].record == QStringLiteral("u-1") &&
+                reader.items()[1].record == QStringLiteral("a-1"),
+            "items carry their record uuid");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -119,6 +143,8 @@ int main(int argc, char** argv) {
     reader_folds_records();
     result_reports_changed_card();
     model_follows_file();
+    reply_splits_at_code();
+    items_keep_their_record();
     if (failures == 0)
         std::puts("transcript: all checks passed");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

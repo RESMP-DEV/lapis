@@ -7,6 +7,7 @@
 //   lapis_transcript_capture --jsonl FILE --out SHEET.png [--bench]
 #include "transcript.hpp"
 
+#include <QColor>
 #include <QCommandLineParser>
 #include <QElapsedTimer>
 #include <QFont>
@@ -59,6 +60,7 @@ double percentile(std::vector<double> values, double p) {
 
 int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
+    qputenv("QT_QUICK_CONTROLS_STYLE", "Basic"); // as the app sets it
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
     QGuiApplication app(argc, argv);
     QCommandLineParser parser;
@@ -68,6 +70,10 @@ int main(int argc, char** argv) {
     parser.addOption({"width", "Panel width", "px", "900"});
     parser.addOption({"height", "Panel height", "px", "1200"});
     parser.addOption({"font-size", "Text size", "px", "15"});
+    parser.addOption({"theme", "Visual theme name", "name", "terminal"});
+    parser.addOption({"font", "Reading font name", "name", "system"});
+    parser.addOption({"code-font", "Code font name", "name", "system"});
+    parser.addOption({"terminal-background", "Background the terminal theme matches", "color", "#0f131c"});
     parser.addOption({"bench", "Scroll the whole conversation and report frame times"});
     parser.process(app);
     if (!parser.isSet("jsonl") || !parser.isSet("out")) {
@@ -92,7 +98,11 @@ int main(int argc, char** argv) {
         return 1;
     }
     auto* root = view.rootObject();
-    root->setProperty("fontSize", parser.value("font-size").toInt());
+    root->setProperty("sizeSetting", parser.value("font-size").toInt());
+    root->setProperty("themeName", parser.value("theme"));
+    root->setProperty("fontName", parser.value("font"));
+    root->setProperty("codeFontName", parser.value("code-font"));
+    root->setProperty("terminalBackground", QColor(parser.value("terminal-background")));
     // The offscreen platform reports generic names ("Sans Serif") whose
     // fallback spaces digits apart; name the Mac's interface fonts instead,
     // as the real window's platform resolves them.
@@ -107,8 +117,8 @@ int main(int argc, char** argv) {
                                 QStringLiteral(".AppleSystemUIFont"), QStringLiteral("Helvetica Neue")},
                                QFontDatabase::GeneralFont);
     const auto mono = first_of({QStringLiteral("SF Mono"), QStringLiteral("Menlo")}, QFontDatabase::FixedFont);
-    root->setProperty("sansFamily", sans);
-    root->setProperty("monoFamily", mono);
+    root->setProperty("systemFamily", sans);
+    root->setProperty("terminalFamily", mono);
     std::printf("fonts: sans %s, mono %s\n", qPrintable(sans), qPrintable(mono));
     root->setProperty("model", QVariant::fromValue(static_cast<QObject*>(&model)));
     auto* list = root->property("list").value<QObject*>();
@@ -133,6 +143,8 @@ int main(int argc, char** argv) {
         QImage image;
     };
     std::vector<Panel> panels{{QStringLiteral("Latest"), shot(view, list, -1)}};
+    // Following would pull every later panel back to the end.
+    root->setProperty("following", false);
     if (edit >= 0)
         panels.push_back({QStringLiteral("Latest edit"), shot(view, list, edit)});
     if (failure >= 0)

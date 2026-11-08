@@ -1785,7 +1785,8 @@ QString Workspace::displayPath(const QString& directory) const {
 // QML positional API v1 requires QString arguments; role names and boundary validation are
 // explicit. NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool Workspace::resumeAgent(const QString& directory, const QString& title, const QString& harness,
-                            const QString& conversation, const QString& mode) {
+                            const QString& conversation, const QString& mode,
+                            const QString& prefill) {
     return !startAgent({.category = active_category_,
                         .directory = directory,
                         .title = title,
@@ -1795,7 +1796,8 @@ bool Workspace::resumeAgent(const QString& directory, const QString& title, cons
                         .model = {},
                         .mode = mode,
                         .select = true,
-                        .resume = conversation})
+                        .resume = conversation,
+                        .prefill = prefill})
                 .isEmpty();
 }
 QStringList Workspace::sshMachines() const { return ssh_config_hosts(ssh_config_); }
@@ -1812,7 +1814,8 @@ bool Workspace::createAgent(const QString& directory, const QString& title, cons
                         .mode = mode,
                         .named = named,
                         .select = true,
-                        .resume = {}})
+                        .resume = {},
+                        .prefill = {}})
                 .isEmpty();
 }
 QVariantMap Workspace::agentPlace(const QString& id) const {
@@ -1879,6 +1882,12 @@ std::optional<Workspace::ResumeLaunch> Workspace::agentLaunch(const AgentRequest
     auto generated = harness->modelArguments(request.model) +
                      effortArguments(request.harness, request.effort) +
                      modeArguments(request.harness, approval);
+    // Local agents get argv as is, so the text needs no quoting (Claude Code
+    // 2.1.319 ignored its --prefill-b64 form when tried). The resume pair
+    // must stay last.
+    if (!request.prefill.isEmpty() && request.harness == QLatin1String("claude") &&
+        request.machine.isEmpty())
+        generated += QStringList{QStringLiteral("--prefill"), request.prefill};
     if (!request.resume.isEmpty())
         generated += QStringList{harness->resumeOption, request.resume};
     const auto literal = arguments.indexOf(QStringLiteral("--"));
@@ -2190,6 +2199,50 @@ QString Workspace::conversationFile(const QString& id) const {
         return {};
     return claudeTranscript(conversation);
 }
+QString Workspace::forkConversation(const QString& id, const QString& record, bool before) const {
+    const auto source = conversationFile(id);
+    if (source.isEmpty() || QUuid::fromString(record).isNull())
+        return {};
+    QFile in(source);
+    if (!in.open(QIODevice::ReadOnly))
+        return {};
+    // A fork is a copy of the conversation up to the record, under a new id,
+    // beside the original: what Claude Code's own fork writes.
+    const auto fork = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const auto original = agentConversation(id);
+    const auto marker = QStringLiteral("\"uuid\":\"%1\"").arg(record).toUtf8();
+    QByteArray out;
+    bool found = false;
+    while (!in.atEnd()) {
+        auto line = in.readLine();
+        if (!line.endsWith('\n'))
+            break; // a record the CLI is still writing
+        const bool here = line.contains(marker);
+        if (here && before) {
+            found = true;
+            break;
+        }
+        line.replace(QStringLiteral("\"sessionId\":\"%1\"").arg(original).toUtf8(),
+                     QStringLiteral("\"sessionId\":\"%1\"").arg(fork).toUtf8());
+        out += line;
+        if (here) {
+            found = true;
+            break;
+        }
+    }
+    if (!found || out.isEmpty())
+        return {};
+    QSaveFile file(QFileInfo(source).dir().filePath(fork + QStringLiteral(".jsonl")));
+    if (!file.open(QIODevice::WriteOnly) || file.write(out) != out.size() || !file.commit())
+        return {};
+    return fork;
+}
+
+QString Workspace::agentFolder(const QString& id) const {
+    const auto entry = agents_.constFind(id);
+    return entry == agents_.cend() ? QString() : entry->launch.directory;
+}
+
 void Workspace::recordConversations() {
     QStringList endpoints;
     for (const auto& agent : std::as_const(agents_)) {
@@ -3585,7 +3638,8 @@ bool Workspace::reopenAgent() {
                                .model = {},
                                .mode = {},
                                .select = true,
-                               .resume = {}};
+                               .resume = {},
+                               .prefill = {}};
     const auto id = launchAgent(request, closed.plan.launch, closed.plan.managed_resume_index,
                                 closed.plan.managed_resume_identity);
     if (id.isEmpty()) {
@@ -3763,7 +3817,8 @@ QString Workspace::splitAgent(const QString& edge) {
                          .model = {},
                          .mode = {},
                          .select = false,
-                         .resume = {}};
+                         .resume = {},
+                         .prefill = {}};
     if (preview_mode_)
         return failed(QStringLiteral("Agent launch is disabled in the preview fixture."));
     const auto beside = item->sessionId();

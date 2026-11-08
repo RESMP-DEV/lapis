@@ -382,6 +382,8 @@ struct AgentRequest {
     bool select{};
     // A conversation to resume, as the CLI's resume option takes it.
     QString resume;
+    // Text left in a Claude Code agent's prompt, unsent (its --prefill).
+    QString prefill;
 };
 
 // The approval mode a new agent starts in. A modeless request uses fallback
@@ -493,9 +495,10 @@ class Workspace final : public QObject {
         reconnect_wait_ = timing.wait;
     }
     // Starts an agent in the active category that resumes `conversation`.
+    // `prefill` is typed into a Claude Code agent's prompt, unsent.
     Q_INVOKABLE bool resumeAgent(const QString& directory, const QString& title,
                                  const QString& harness, const QString& conversation,
-                                 const QString& mode = {});
+                                 const QString& mode = {}, const QString& prefill = {});
     // The config's new-agent defaults, for the forms: harness, folder, and
     // the folder on each ssh machine.
     Q_INVOKABLE [[nodiscard]] QVariantMap agentDefaults() const;
@@ -571,6 +574,13 @@ class Workspace final : public QObject {
     // view cannot read yet (only Claude Code so far), or before the CLI has
     // saved anything.
     Q_INVOKABLE [[nodiscard]] QString conversationFile(const QString& id) const;
+    // Copies an agent's conversation up to `record` (a saved record's uuid;
+    // `before` stops just ahead of it) into a new conversation beside it and
+    // returns the new id for resumeAgent, or empty.
+    Q_INVOKABLE [[nodiscard]] QString forkConversation(const QString& id, const QString& record,
+                                                       bool before) const;
+    // The folder an agent runs in, as launched.
+    Q_INVOKABLE [[nodiscard]] QString agentFolder(const QString& id) const;
     [[nodiscard]] QObject* transcript() const { return transcript_; }
     Q_INVOKABLE bool moveSessionBy(const QString& id, int delta);
     // Puts agents, in their strip order, at `index` of a category's strip (at

@@ -461,6 +461,9 @@ ApplicationWindow {
             window.visualActive || conversationFile.length > 0,
             hasAgent ? qsTr("Only for a Claude Code agent on this Mac, once its conversation is saved") : needAgent,
             () => window.toggleVisual())
+        add("toggleVisualAll", window.visualAll ? qsTr("Show terminals for all agents") : qsTr("Show visual view for all agents"), "",
+            typeof keymap !== "undefined" && keymap !== null, qsTr("Not available here"),
+            () => window.toggleVisualAll())
         add("textBigger", qsTr("Bigger text"), "textBigger", true, "", () => window.changeTextSize(1))
         add("textSmaller", qsTr("Smaller text"), "textSmaller", true, "", () => window.changeTextSize(-1))
         add("textReset", qsTr("Default text size"), "textReset", true, "", () => window.changeTextSize(0))
@@ -928,20 +931,64 @@ ApplicationWindow {
     // Agents shown as a readable thread (the visual view) instead of their
     // terminal, by id. The terminal keeps running under it, takes no input
     // while it is covered, and gets the keyboard back on Escape.
+    // "All agents" (saved in lapis.json) shows every Claude Code agent on
+    // this Mac as a thread; visualAgents holds this run's per-agent choices,
+    // which win over it until lapis restarts or "all" is switched again.
     property var visualAgents: ({})
-    readonly property bool visualActive: workspace.focusedSession !== null
-                                         && visualAgents[workspace.focusedSession.sessionId] === true
+    readonly property var visualSettings: (typeof keymap !== "undefined" && keymap !== null) ? keymap.visual : ({})
+    readonly property bool visualAll: visualSettings.all === true
+    readonly property bool visualWanted: {
+        const agent = workspace.focusedSession
+        if (agent === null)
+            return false
+        const choice = visualAgents[agent.sessionId]
+        return choice === undefined ? visualAll : choice
+    }
+    // The file appears once the CLI saves its first message; until then the
+    // check repeats while the thread is wanted.
+    property int visualProbe: 0
+    readonly property string visualFile: visualProbe >= 0 && visualWanted
+                                         ? workspace.conversationFile(workspace.focusedSession.sessionId) : ""
+    readonly property bool visualActive: visualWanted && visualFile.length > 0
+    Timer {
+        interval: 2000
+        repeat: true
+        running: window.visualWanted && window.visualFile.length === 0
+        onTriggered: window.visualProbe += 1
+    }
+    function visualFocus() {
+        Qt.callLater(() => visualActive ? visualView.forceActiveFocus() : liveTerminal.forceActiveFocus())
+    }
     function toggleVisual() {
         const agent = workspace.focusedSession
         if (!agent)
             return
         const next = Object.assign({}, visualAgents)
-        if (next[agent.sessionId])
-            delete next[agent.sessionId]
-        else
-            next[agent.sessionId] = true
+        next[agent.sessionId] = !visualActive
         visualAgents = next
-        Qt.callLater(() => visualActive ? visualView.forceActiveFocus() : liveTerminal.forceActiveFocus())
+        visualFocus()
+    }
+    function toggleVisualAll() {
+        if (typeof keymap === "undefined" || keymap === null)
+            return
+        visualAgents = ({})
+        keymap.setVisual("all", !visualAll)
+        visualFocus()
+    }
+    // A new agent from this conversation: up to a reply, or just before a
+    // prompt with that prompt waiting in its input.
+    function forkVisual(record, before, prefill) {
+        const agent = workspace.focusedSession
+        if (!agent)
+            return
+        const fork = workspace.forkConversation(agent.sessionId, record, before)
+        if (fork.length === 0)
+            return
+        const defaults = workspace.agentDefaults()
+        const mode = window.lastMode.length > 0 ? window.lastMode :
+                     defaults.mode && defaults.mode.length > 0 ? defaults.mode : "full"
+        const title = (agent.title.length > 0 ? agent.title : "claude").slice(0, 73) + " (fork)"
+        workspace.resumeAgent(workspace.agentFolder(agent.sessionId), title, "claude", fork, mode, prefill)
     }
 
     function stripIds() {
@@ -1807,6 +1854,15 @@ ApplicationWindow {
         updatesAvailable: window.desktopAvailable && desktop.updatesAvailable
         shortcutRows: visible ? window.commandEntries().filter(entry => entry.shortcut.length > 0)
                                          .map(entry => ({label: entry.label, keys: entry.shortcut})) : []
+        visualThemes: visualView.themes.map(theme => visualView.colorsOf(theme))
+        visualFonts: visualView.readingFonts
+        visualCodeFonts: visualView.codeFonts
+        visual: window.visualSettings
+        visualSize: visualView.fontSize
+        onVisualChosen: function(key, value) {
+            if (typeof keymap !== "undefined" && keymap !== null)
+                keymap.setVisual(key, value)
+        }
         onNotifyChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setNotify(on) }
         onLaunchAtLoginChosen: function(on) { if (window.desktopAvailable) desktop.setLaunchAtLogin(on) }
         onCheckUpdates: if (window.desktopAvailable) desktop.checkForUpdates()
@@ -3111,6 +3167,44 @@ ApplicationWindow {
                         }
                     }
                 }
+                // The visual view for the selected agent, or for every agent.
+                PlainText {
+                    text: qsTr("Visual view")
+                    color: window.mutedTextColor
+                    font.pixelSize: window.readoutFont
+                    Layout.topMargin: 4
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    CommandButton {
+                        objectName: "visualThisAgent"
+                        text: qsTr("This agent")
+                        selected: window.visualActive
+                        enabled: window.interactionArmed && workspace.focusedSession !== null
+                                 && (window.visualActive || window.visualProbe >= 0
+                                     && workspace.conversationFile(workspace.focusedSession.sessionId).length > 0)
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 1
+                        onClicked: window.toggleVisual()
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: enabled ? qsTr("Switch this agent between its terminal and the thread")
+                                              : qsTr("Only for a Claude Code agent on this Mac, once its conversation is saved")
+                    }
+                    CommandButton {
+                        objectName: "visualAllAgents"
+                        text: qsTr("All agents")
+                        selected: window.visualAll
+                        enabled: window.interactionArmed && typeof keymap !== "undefined" && keymap !== null
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 1
+                        onClicked: window.toggleVisualAll()
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: qsTr("Show every Claude Code agent on this Mac as a thread")
+                    }
+                }
                 CommandsButton {
                     objectName: categoryRail.visible ? "commandsButton" : "railCommands"
                     Layout.fillWidth: true
@@ -3501,29 +3595,23 @@ ApplicationWindow {
                     width: liveTerminal.width
                     height: liveTerminal.height
                     model: workspace.transcript
-                    backgroundColor: window.paneColor
-                    raisedColor: Qt.rgba(window.textColor.r, window.textColor.g, window.textColor.b, 0.08)
-                    codeColor: Qt.rgba(window.textColor.r, window.textColor.g, window.textColor.b, 0.045)
-                    borderColor: window.borderColor
-                    textColor: window.textColor
-                    mutedTextColor: window.mutedTextColor
-                    accentColor: window.focusedBorderColor
-                    addedColor: window.plentyColor
-                    removedColor: window.faultColor
-                    faultColor: window.faultColor
-                    activityColor: window.activityColor
-                    monoFamily: window.monoFamily
-                    fontSize: window.chromeFont + 2
-                    stepSize: window.chromeFont + 1
-                    codeSize: window.chromeFont - 1
-                    radius: Math.max(4, window.chromeRadius)
+                    themeName: window.visualSettings.theme || "terminal"
+                    fontName: window.visualSettings.font || "system"
+                    codeFontName: window.visualSettings.codeFont || "system"
+                    sizeSetting: window.visualSettings.size || 0
+                    terminalFontSize: window.terminalFontSize
+                    terminalFamily: window.monoFamily
+                    terminalBackground: liveTerminal.backgroundColor
+                    terminalAccent: window.focusedBorderColor
                     onDismissed: window.toggleVisual()
+                    onForkRequested: function(record) { window.forkVisual(record, false, "") }
+                    onEditRequested: function(record, text) { window.forkVisual(record, true, text) }
                 }
                 Binding {
                     target: workspace.transcript
                     property: "path"
                     // Nothing is read or watched while no agent shows as a thread.
-                    value: window.visualActive ? workspace.conversationFile(workspace.focusedSession.sessionId) : ""
+                    value: window.visualActive ? window.visualFile : ""
                 }
 
                 TerminalSurface {
