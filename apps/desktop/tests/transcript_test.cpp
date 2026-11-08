@@ -326,6 +326,10 @@ void media_is_found() {
                 found[1].path == clip && found[1].kind == QStringLiteral("video") && found[2].path == page &&
                 found[2].kind == QStringLiteral("html"),
             "Markdown targets (spaces inside <>) then bare paths, each once; missing files are skipped");
+    const auto webm = touch("talk.webm");
+    const auto other = lapis::desktop::transcript::find_media(webm);
+    require(other.size() == 1 && other[0].kind == QStringLiteral("file"),
+            "a video macOS cannot play is a card for its app");
 }
 
 // Claude Code's own commands plus the person's commands and skills.

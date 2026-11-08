@@ -23,6 +23,9 @@
 #include <QSGRendererInterface>
 #include <QTemporaryDir>
 #include <algorithm>
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
+#endif
 #include <cstdio>
 #include <vector>
 
@@ -170,6 +173,8 @@ int main(int argc, char** argv) {
     parser.addOption({"bench", "Scroll the whole conversation and report frame times"});
     parser.addOption({"step", "Pixels scrolled per benchmark step", "px", "240"});
     parser.addOption({"keys", "Check the bar's Mac line editing and send keys, then exit"});
+    parser.addOption({"play", "Press play on the audio and video shown (it plays aloud) and report progress"});
+    parser.addOption({"wait","Milliseconds to let the view settle (media to open) before shooting", "ms", "400"});
     parser.process(app);
     const bool keys = parser.isSet("keys");
     if (!keys && (!parser.isSet("jsonl") || !parser.isSet("out"))) {
@@ -228,13 +233,59 @@ int main(int argc, char** argv) {
     view.show(); // offscreen: nothing reaches the screen
     settle();
     // Long enough for the view's short timers (the chart style it writes).
-    for (QElapsedTimer waited; !waited.isValid() || waited.elapsed() < 400;) {
+    const int wait_ms = std::max(400, parser.value("wait").toInt());
+    for (QElapsedTimer waited; !waited.isValid() || waited.elapsed() < wait_ms;) {
         if (!waited.isValid())
             waited.start();
         QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+#ifdef __APPLE__
+        // The offscreen platform's event loop never drains the main dispatch
+        // queue, where macOS's player reports a file opened; the app's
+        // Cocoa loop does. Run it briefly so captures see what the app sees.
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, true);
+#endif
     }
     if (keys)
         return check_keys(view, root);
+    // What the system player found in each audio or video file shown.
+    // Delegates hang off the view's items, not its QObject children.
+    std::vector<QQuickItem*> players;
+    const auto find = [&players](auto&& self, QQuickItem* item) -> void {
+        if (item->objectName() == QLatin1String("playback"))
+            players.push_back(item);
+        for (auto* child : item->childItems())
+            self(self, child);
+    };
+    find(find, qobject_cast<QQuickItem*>(root));
+    for (auto* player : players) {
+        const auto media = player->property("media").toMap();
+        const auto frame = player->property("frame").toSizeF();
+        std::printf("playback %s: %d ms, frame %dx%d, %d frames decoded, status %d %s\n",
+                    qPrintable(media.value(QStringLiteral("name")).toString()), player->property("duration").toInt(),
+                    static_cast<int>(frame.width()), static_cast<int>(frame.height()),
+                    player->property("frames").toInt(), player->property("status").toInt(),
+                    qPrintable(player->property("problem").toString()));
+    }
+    if (!players.empty() && parser.isSet("play")) {
+        // Press play on each and see it advance. It plays aloud, as the app
+        // would (muting could hide a broken output), so only when asked.
+        for (auto* player : players)
+            QMetaObject::invokeMethod(player, "toggle");
+        for (QElapsedTimer played; !played.isValid() || played.elapsed() < 1500;) {
+            if (!played.isValid())
+                played.start();
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+#ifdef __APPLE__
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, true);
+#endif
+        }
+        for (auto* player : players) {
+            std::printf("after play %s: playing %d, %d frames decoded\n",
+                        qPrintable(player->property("media").toMap().value(QStringLiteral("name")).toString()),
+                        player->property("playing").toBool(), player->property("frames").toInt());
+            QMetaObject::invokeMethod(player, "toggle");
+        }
+    }
 
     // Panels: the latest items, the latest edit, the latest failed tool.
     int edit = -1, failure = -1;

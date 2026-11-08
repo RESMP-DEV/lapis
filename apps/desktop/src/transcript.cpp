@@ -353,10 +353,13 @@ std::vector<Media> find_media(const QString& text) {
         {QStringLiteral("svg"), QStringLiteral("svg")},    {QStringLiteral("mp3"), QStringLiteral("audio")},
         {QStringLiteral("wav"), QStringLiteral("audio")},  {QStringLiteral("m4a"), QStringLiteral("audio")},
         {QStringLiteral("aac"), QStringLiteral("audio")},  {QStringLiteral("flac"), QStringLiteral("audio")},
-        {QStringLiteral("ogg"), QStringLiteral("audio")},  {QStringLiteral("opus"), QStringLiteral("audio")},
+        {QStringLiteral("aiff"), QStringLiteral("audio")}, {QStringLiteral("caf"), QStringLiteral("audio")},
         {QStringLiteral("mp4"), QStringLiteral("video")},  {QStringLiteral("mov"), QStringLiteral("video")},
-        {QStringLiteral("m4v"), QStringLiteral("video")},  {QStringLiteral("webm"), QStringLiteral("video")},
-        {QStringLiteral("mkv"), QStringLiteral("video")},  {QStringLiteral("html"), QStringLiteral("html")},
+        {QStringLiteral("m4v"), QStringLiteral("video")},
+        // macOS's player cannot open these; they are cards for their app.
+        {QStringLiteral("ogg"), QStringLiteral("file")},   {QStringLiteral("opus"), QStringLiteral("file")},
+        {QStringLiteral("webm"), QStringLiteral("file")},  {QStringLiteral("mkv"), QStringLiteral("file")},
+        {QStringLiteral("html"), QStringLiteral("html")},
         {QStringLiteral("htm"), QStringLiteral("html")},   {QStringLiteral("pdf"), QStringLiteral("pdf")},
     };
     // Markdown targets first, then bare paths; quotes, brackets and
@@ -382,7 +385,8 @@ std::vector<Media> find_media(const QString& text) {
         // An image this build cannot decode (WebP without its plugin) is a
         // card that opens it, not an empty frame.
         static const auto readable = QImageReader::supportedImageFormats();
-        if (kind == QLatin1String("image") && !readable.contains(suffix.toLatin1()))
+        if ((kind == QLatin1String("image") || kind == QLatin1String("svg")) &&
+            !readable.contains(suffix.toLatin1()))
             kind = QStringLiteral("file");
         seen.insert(path);
         found.push_back({path, kind});
@@ -1089,10 +1093,19 @@ QVariantList TranscriptModel::media(const QString& text) const {
     QVariantList out;
     for (const auto& item : transcript::find_media(text)) {
         const QFileInfo info(item.path);
+        // A picture's own size, read from its header (an SVG's from its
+        // width and height), so the view can lay it out before decoding.
+        QSize pixels;
+        if (item.kind == QLatin1String("image") || item.kind == QLatin1String("svg") ||
+            item.kind == QLatin1String("animation"))
+            pixels = QImageReader(item.path).size();
         out.append(QVariantMap{{QStringLiteral("path"), item.path},
                                {QStringLiteral("url"), QUrl::fromLocalFile(item.path)},
                                {QStringLiteral("kind"), item.kind},
                                {QStringLiteral("name"), info.fileName()},
+                               {QStringLiteral("type"), info.suffix().toUpper()},
+                               {QStringLiteral("width"), pixels.width()},
+                               {QStringLiteral("height"), pixels.height()},
                                {QStringLiteral("size"), info.size()}});
     }
     return out;

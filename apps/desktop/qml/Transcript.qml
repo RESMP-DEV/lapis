@@ -661,9 +661,9 @@ FocusScope {
         Timer { id: doneTimer; interval: 1200; onTriggered: action.done = false }
     }
 
-    // Files a message names, shown in place: images and GIFs drawn at their
-    // size (up to the column), other media as a card that opens the file.
-    // Click an image to open it full size.
+    // Files a message names, shown in place: images, SVG and GIFs drawn at
+    // their size (up to the column), audio and video played in place, other
+    // files as a card that opens them. Click an image to open it full size.
     component MediaList: Column {
         id: mediaList
         property var items: []
@@ -676,8 +676,10 @@ FocusScope {
                 required property var modelData
                 readonly property var media: modelData
                 anchors.right: mediaList.alignRight ? parent.right : undefined
-                sourceComponent: modelData.kind === "image" ? imageMedia
-                               : modelData.kind === "animation" ? animationMedia : fileMedia
+                sourceComponent: modelData.kind === "image" || modelData.kind === "svg" ? imageMedia
+                               : modelData.kind === "animation" ? animationMedia
+                               : modelData.kind === "audio" || modelData.kind === "video" ? playbackMedia
+                               : fileMedia
                 property real room: mediaList.width
             }
         }
@@ -686,15 +688,20 @@ FocusScope {
         id: imageMedia
         Image {
             readonly property var media: parent ? parent.media : null
+            readonly property bool vector: media !== null && media.kind === "svg"
+            // Its own size from the file's header, before it is decoded.
+            readonly property real ownWidth: media && media.width > 0 ? media.width : implicitWidth
+            readonly property real ownHeight: media && media.height > 0 ? media.height : implicitHeight
             source: media ? media.url : ""
             asynchronous: true
             fillMode: Image.PreserveAspectFit
-            // Never decoded larger than it can be shown.
-            sourceSize.width: parent ? Math.round(parent.room * 2) : 0
+            // Never decoded larger than it can be shown; an SVG is drawn at
+            // twice its shown size so it stays sharp on Retina.
+            sourceSize.width: vector ? Math.round(width * 2) : parent ? Math.round(parent.room * 2) : 0
             // Large images are taken as Retina (2x), as screenshots and
-            // 200 dpi charts are; small ones show at their pixel size.
-            width: Math.min(parent ? parent.room : 0, implicitWidth >= 800 ? implicitWidth / 2 : implicitWidth)
-            height: implicitWidth > 0 ? width * implicitHeight / implicitWidth : 0
+            // 200 dpi charts are; small ones and SVGs show at their own size.
+            width: Math.min(parent ? parent.room : 0, !vector && ownWidth >= 800 ? ownWidth / 2 : ownWidth)
+            height: ownWidth > 0 ? width * ownHeight / ownWidth : 0
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
@@ -722,6 +729,25 @@ FocusScope {
                 cursorShape: Qt.PointingHandCursor
                 onClicked: if (parent.media) Qt.openUrlExternally(parent.media.url)
             }
+        }
+    }
+    // The player lives in its own file, so the thread still loads where Qt
+    // Multimedia is missing; the file then shows as a card.
+    Component {
+        id: playbackMedia
+        Loader {
+            id: playbackLoader
+            readonly property var media: parent ? parent.media : null
+            readonly property real room: parent ? parent.room : 0
+            source: Qt.resolvedUrl("MediaPlayback.qml")
+            onLoaded: {
+                if (typeof item.toggle !== "function")
+                    return // the card it fell back to
+                item.view = root
+                item.media = Qt.binding(() => playbackLoader.media)
+                item.room = Qt.binding(() => playbackLoader.room)
+            }
+            onStatusChanged: if (status === Loader.Error) sourceComponent = fileMedia
         }
     }
     Component {
@@ -755,7 +781,7 @@ FocusScope {
                     }
                     Text {
                         text: !fileRow.parent.media ? ""
-                              : qsTr("%1 · %2 · opens in its app").arg(fileRow.parent.media.kind.toUpperCase())
+                              : qsTr("%1 · %2 · opens in its app").arg(fileRow.parent.media.type)
                                 .arg(root.bytesLabel(fileRow.parent.media.size))
                         color: root.mutedTextColor
                         font.family: root.sansFamily

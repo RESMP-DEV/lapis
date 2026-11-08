@@ -742,9 +742,11 @@ uv run --no-project python scripts/package_macos.py verify --notarized
 ```
 
 The official Qt binaries have no Vulkan and Homebrew's need macOS 26 and a
-dozen more libraries, so `qt` builds qtbase, qtshadertools and qtdeclarative
-6.11.2 from their pinned archives with Vulkan on, bundled third-party code, and
-arm64 for macOS 14. The app build (`LAPIS_PACKAGE=ON`) compiles in no path from
+dozen more libraries, so `qt` builds qtbase, qtshadertools, qtdeclarative,
+qtsvg and qtmultimedia 6.11.2 from their pinned archives with Vulkan on, bundled
+third-party code, and arm64 for macOS 14. Qt Multimedia plays through macOS's
+AVFoundation backend only: its FFmpeg, GStreamer and spatial-audio features are
+off, so no FFmpeg build (Homebrew's is GPL) is linked or carried. The app build (`LAPIS_PACKAGE=ON`) compiles in no path from
 the build machine: it keeps its data in `~/.lapis`, runs the session service
 beside its executable, and loads the bundled MoltenVK directly. `app` signs with
 the keychain's one Developer ID Application identity (or `LAPIS_SIGN_IDENTITY`)
@@ -780,7 +782,7 @@ when either version changes. After the DMG is stapled, run
 (add `--draft` to review first) refuses a DMG without a stapled ticket, a
 pre-existing qualified appcast, complete candidate gates, or a commit not yet
 pushed, then creates the GitHub release with the DMG, `appcast.xml` and the
-three Qt source archives. The
+Qt source archives. The
 download page in `site/` is published to GitHub Pages by
 `.github/workflows/site.yml` when it changes on `main`.
 

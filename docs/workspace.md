@@ -107,11 +107,15 @@ Up and Down pick, Tab or Return fills it in, Escape closes the list.
 
 Code in replies is colored by its language with Tokyo Night's palette (its Day
 variant on light themes), as are the commands steps ran. Tables get a quiet
-grid and a bold header; quotes read quieter than the reply. Images, GIFs and
-charts a message names show inline at the column's width, under the reply (or
-under your prompt, for what you attached); click one to open it full size.
-Audio, video, SVG, HTML and PDF files show as a card that opens them in their
-app until lapis plays them in place. Charts an agent draws with matplotlib
+grid and a bold header; quotes read quieter than the reply. Images, SVGs, GIFs
+and charts a message names show inline at the column's width, under the reply
+(or under your prompt, for what you attached); click one to open it full size.
+Audio (MP3, WAV, M4A, AAC, FLAC, AIFF) and video (MP4, MOV, M4V) play in place
+through macOS's own player: a video shows its first frame with a play button,
+and its controls (time, a line to seek along, ↗ to open it in its app) appear
+under the pointer; audio is a card with a play button and the same line.
+Formats macOS cannot play (WebM, MKV, Ogg, Opus), HTML and PDF show as a card
+that opens them in their app. Charts an agent draws with matplotlib
 match the view's theme: lapis writes a style from it to `~/.lapis/visual` and
 points local agents' `MATPLOTLIBRC` there (unless you set your own), with the
 colors also in `palette.json` (`LAPIS_CHART_PALETTE`) for other plotting code.
