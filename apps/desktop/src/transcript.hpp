@@ -132,7 +132,7 @@ struct Piece {
 // extension. Only files that exist count.
 struct Media {
     QString path;
-    QString kind; // image, animation, svg, audio, video, html, pdf
+    QString kind; // image, animation, svg, audio, video, html, pdf, file
 };
 [[nodiscard]] std::vector<Media> find_media(const QString& text);
 

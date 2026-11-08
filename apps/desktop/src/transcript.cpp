@@ -27,6 +27,7 @@
 #include <QVariantMap>
 #include <QDateTime>
 #include <QImage>
+#include <QImageReader>
 #include <QMimeData>
 #include <QStandardPaths>
 #include <algorithm>
@@ -356,9 +357,15 @@ std::vector<Media> find_media(const QString& text) {
             path = QDir::home().filePath(path.mid(2));
         if (!path.startsWith(QLatin1Char('/')))
             return;
-        const auto kind = kinds.value(QFileInfo(path).suffix().toLower());
+        const auto suffix = QFileInfo(path).suffix().toLower();
+        auto kind = kinds.value(suffix);
         if (kind.isEmpty() || seen.contains(path) || !QFileInfo(path).isFile())
             return;
+        // An image this build cannot decode (WebP without its plugin) is a
+        // card that opens it, not an empty frame.
+        static const auto readable = QImageReader::supportedImageFormats();
+        if (kind == QLatin1String("image") && !readable.contains(suffix.toLatin1()))
+            kind = QStringLiteral("file");
         seen.insert(path);
         found.push_back({path, kind});
     };
