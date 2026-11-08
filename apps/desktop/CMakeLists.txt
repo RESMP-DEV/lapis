@@ -56,7 +56,9 @@ add_library(lapis_desktop_view STATIC
     src/shell_environment.cpp src/shell_environment.hpp
     src/tool_status.cpp src/tool_status.hpp
     src/ui_preview.cpp src/ui_preview.hpp
-    src/transcript.cpp src/transcript.hpp)
+    src/transcript.cpp src/transcript.hpp
+    src/code_highlight.cpp src/code_highlight.hpp
+    src/slash_commands.cpp src/slash_commands.hpp)
 target_include_directories(lapis_desktop_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 if(APPLE)
     # Notifications, input idle time, the login item, Command-` and (in the

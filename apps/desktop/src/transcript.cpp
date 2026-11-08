@@ -12,6 +12,9 @@
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextList>
+#include <QTextTable>
+#include "code_highlight.hpp"
+#include "slash_commands.hpp"
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QJsonArray>
@@ -319,6 +322,53 @@ qint64 context_window(const QString& model, qint64 used) {
                     [&name](const QString& prefix) { return name.startsWith(prefix); }))
         window = 1'000'000;
     return std::max(window, used);
+}
+
+QString chart_style_folder() { return QDir::home().filePath(QStringLiteral(".lapis/visual")); }
+
+std::vector<Media> find_media(const QString& text) {
+    static const QHash<QString, QString> kinds = {
+        {QStringLiteral("png"), QStringLiteral("image")},  {QStringLiteral("jpg"), QStringLiteral("image")},
+        {QStringLiteral("jpeg"), QStringLiteral("image")}, {QStringLiteral("bmp"), QStringLiteral("image")},
+        {QStringLiteral("webp"), QStringLiteral("image")}, {QStringLiteral("gif"), QStringLiteral("animation")},
+        {QStringLiteral("svg"), QStringLiteral("svg")},    {QStringLiteral("mp3"), QStringLiteral("audio")},
+        {QStringLiteral("wav"), QStringLiteral("audio")},  {QStringLiteral("m4a"), QStringLiteral("audio")},
+        {QStringLiteral("aac"), QStringLiteral("audio")},  {QStringLiteral("flac"), QStringLiteral("audio")},
+        {QStringLiteral("ogg"), QStringLiteral("audio")},  {QStringLiteral("opus"), QStringLiteral("audio")},
+        {QStringLiteral("mp4"), QStringLiteral("video")},  {QStringLiteral("mov"), QStringLiteral("video")},
+        {QStringLiteral("m4v"), QStringLiteral("video")},  {QStringLiteral("webm"), QStringLiteral("video")},
+        {QStringLiteral("mkv"), QStringLiteral("video")},  {QStringLiteral("html"), QStringLiteral("html")},
+        {QStringLiteral("htm"), QStringLiteral("html")},   {QStringLiteral("pdf"), QStringLiteral("pdf")},
+    };
+    // Markdown targets first, then bare paths; quotes, brackets and
+    // backticks end a path, as does trailing punctuation.
+    static const QRegularExpression markdown(QStringLiteral(R"(!?\[[^\]]*\]\((?:<([^>\n]+)>|([^)\s]+))\))"));
+    static const QRegularExpression bare(
+        QStringLiteral(R"((?:^|[\s`'"(\[@])((?:~|/)[^\s`'"()<>\[\]]+\.([A-Za-z0-9]{2,5}))(?=$|[\s`'".,;:!?)\]]))"));
+    std::vector<Media> found;
+    QSet<QString> seen;
+    const auto consider = [&](QString path) {
+        if (found.size() >= 8)
+            return;
+        if (path.startsWith(QLatin1String("file://")))
+            path = QUrl(path).toLocalFile();
+        if (path.startsWith(QLatin1String("~/")))
+            path = QDir::home().filePath(path.mid(2));
+        if (!path.startsWith(QLatin1Char('/')))
+            return;
+        const auto kind = kinds.value(QFileInfo(path).suffix().toLower());
+        if (kind.isEmpty() || seen.contains(path) || !QFileInfo(path).isFile())
+            return;
+        seen.insert(path);
+        found.push_back({path, kind});
+    };
+    for (auto it = markdown.globalMatch(text); it.hasNext();) {
+        const auto match = it.next();
+        consider(match.captured(1).isEmpty() ? match.captured(2) : match.captured(1));
+    }
+    for (auto it = bare.globalMatch(text); it.hasNext();)
+        consider(it.next().captured(1));
+    return found;
 }
 
 QString work_summary(const std::vector<Item>& items, int first, int last, int except) {
@@ -858,7 +908,11 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
     base.setPixelSize(size);
     document.setDefaultFont(base);
     document.setDocumentMargin(0);
-    document.setMarkdown(markdown, QTextDocument::MarkdownDialectGitHub);
+    // Images show under the reply at the column's width, not inside the
+    // text at their pixel size: an image becomes a link to itself here.
+    static const QRegularExpression image(QStringLiteral(R"(!(\[[^\]]*\]\())"));
+    document.setMarkdown(QString(markdown).replace(image, QStringLiteral("\\1")),
+                         QTextDocument::MarkdownDialectGitHub);
 
     // Qt's importer sizes headings and code on its own scale; put them on
     // the view's, relative to the body text.
@@ -931,7 +985,173 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
         cursor.setPosition(change.position + change.length, QTextCursor::KeepAnchor);
         cursor.setCharFormat(change.format);
     }
+
+    // Box drawing and block characters in the code font, where they are made
+    // to join: "┌─┐" and bar charts in prose read as lines, not dashes.
+    static const QRegularExpression boxes(QStringLiteral("[\\x{2500}-\\x{259F}]+"));
+    for (auto found = document.find(boxes); !found.isNull(); found = document.find(boxes, found)) {
+        QTextCharFormat format;
+        format.setFontFamilies({mono});
+        found.mergeCharFormat(format);
+    }
+
+    // Tables: a thin grid in the theme's quiet border color, roomy cells and
+    // a bolder header. (Qt Quick draws only a table's whole grid, not rules
+    // per cell or full cell backgrounds, so a rows-only look is not
+    // available here.)
+    const auto border = style.value(QStringLiteral("borderColor")).value<QColor>();
+    for (auto* frame : document.rootFrame()->childFrames()) {
+        auto* table = qobject_cast<QTextTable*>(frame);
+        if (table == nullptr)
+            continue;
+        auto format = table->format();
+        format.setBorderCollapse(true);
+        format.setBorder(1);
+        format.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+        if (border.isValid())
+            format.setBorderBrush(border);
+        format.setCellSpacing(0);
+        format.setCellPadding(size * 0.5);
+        format.setTopMargin(size * 0.3);
+        format.setBottomMargin(size * 0.3);
+        table->setFormat(format);
+        for (int column = 0; column < table->columns(); ++column) {
+            QTextCursor header_cell = table->cellAt(0, column).firstCursorPosition();
+            header_cell.setPosition(table->cellAt(0, column).lastPosition(), QTextCursor::KeepAnchor);
+            QTextCharFormat bold;
+            bold.setFontWeight(QFont::DemiBold);
+            header_cell.mergeCharFormat(bold);
+        }
+    }
+
+    // A quote reads quieter than the reply around it.
+    const auto quote = style.value(QStringLiteral("quoteColor")).value<QColor>();
+    if (quote.isValid())
+        for (auto block = document.begin(); block.isValid(); block = block.next())
+            if (block.blockFormat().hasProperty(QTextFormat::BlockQuoteLevel) &&
+                block.blockFormat().intProperty(QTextFormat::BlockQuoteLevel) > 0) {
+                QTextCursor quoted(block);
+                quoted.select(QTextCursor::BlockUnderCursor);
+                QTextCharFormat format;
+                format.setForeground(quote);
+                quoted.mergeCharFormat(format);
+            }
     cursor.endEditBlock();
+}
+
+QVariantList TranscriptModel::slashCommands(const QString& folder) const {
+    return claude_slash_commands(QDir::homePath(), folder);
+}
+
+QVariantList TranscriptModel::media(const QString& text) const {
+    QVariantList out;
+    for (const auto& item : transcript::find_media(text)) {
+        const QFileInfo info(item.path);
+        out.append(QVariantMap{{QStringLiteral("path"), item.path},
+                               {QStringLiteral("url"), QUrl::fromLocalFile(item.path)},
+                               {QStringLiteral("kind"), item.kind},
+                               {QStringLiteral("name"), info.fileName()},
+                               {QStringLiteral("size"), info.size()}});
+    }
+    return out;
+}
+
+void TranscriptModel::writeChartStyle(const QVariantMap& colors) const {
+    const auto hex = [&colors](const char* key) {
+        return colors.value(QLatin1String(key)).value<QColor>().name(QColor::HexRgb).mid(1);
+    };
+    const bool light = colors.value(QStringLiteral("light")).toBool();
+    // Tokyo Night's accents in the order a plot uses them.
+    const QStringList series = light ? QStringList{QStringLiteral("2e7de9"), QStringLiteral("587539"),
+                                                   QStringLiteral("b15c00"), QStringLiteral("9854f1"),
+                                                   QStringLiteral("007197"), QStringLiteral("f52a65"),
+                                                   QStringLiteral("8c6c3e"), QStringLiteral("387068")}
+                                     : QStringList{QStringLiteral("7aa2f7"), QStringLiteral("9ece6a"),
+                                                   QStringLiteral("ff9e64"), QStringLiteral("bb9af7"),
+                                                   QStringLiteral("7dcfff"), QStringLiteral("f7768e"),
+                                                   QStringLiteral("e0af68"), QStringLiteral("73daca")};
+    const auto background = hex("background");
+    const auto text = hex("text");
+    const auto muted = hex("muted");
+    const auto grid = hex("grid");
+    QStringList quoted;
+    for (const auto& color : series)
+        quoted << QStringLiteral("'%1'").arg(color);
+    const auto rc = QStringLiteral(
+                        "# Written by lapis from the visual view's theme; it is rewritten when the theme changes.\n"
+                        "figure.facecolor: %1\naxes.facecolor: %1\nsavefig.facecolor: %1\nsavefig.edgecolor: %1\n"
+                        "text.color: %2\naxes.labelcolor: %2\naxes.titlecolor: %2\nxtick.color: %3\n"
+                        "ytick.color: %3\nxtick.labelcolor: %2\nytick.labelcolor: %2\naxes.edgecolor: %4\n"
+                        "axes.grid: True\ngrid.color: %4\ngrid.linewidth: 0.6\naxes.spines.top: False\n"
+                        "axes.spines.right: False\naxes.prop_cycle: cycler('color', [%5])\n"
+                        "legend.facecolor: %1\nlegend.edgecolor: %4\nlegend.labelcolor: %2\n"
+                        "legend.frameon: False\nfont.family: sans-serif\n"
+                        "font.sans-serif: Helvetica Neue, Helvetica, Arial, DejaVu Sans\n"
+                        "savefig.dpi: 200\nsavefig.bbox: tight\nimage.cmap: viridis\n")
+                        .arg(background, text, muted, grid, quoted.join(QStringLiteral(", ")));
+    QJsonArray palette;
+    for (const auto& color : series)
+        palette.append(QLatin1Char('#') + color);
+    const auto json = QJsonDocument(QJsonObject{{QStringLiteral("background"), QLatin1Char('#') + background},
+                                                {QStringLiteral("text"), QLatin1Char('#') + text},
+                                                {QStringLiteral("muted"), QLatin1Char('#') + muted},
+                                                {QStringLiteral("grid"), QLatin1Char('#') + grid},
+                                                {QStringLiteral("light"), light},
+                                                {QStringLiteral("series"), palette}})
+                          .toJson();
+    const QDir folder(transcript::chart_style_folder());
+    if (!folder.exists() && !QDir().mkpath(folder.path()))
+        return;
+    const auto write = [](const QString& path, const QByteArray& bytes) {
+        QFile existing(path);
+        if (existing.open(QIODevice::ReadOnly) && existing.readAll() == bytes)
+            return;
+        existing.close();
+        QFile file(path);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            file.write(bytes);
+    };
+    write(folder.filePath(QStringLiteral("matplotlibrc")), rc.toUtf8());
+    write(folder.filePath(QStringLiteral("palette.json")), json);
+}
+
+void TranscriptModel::highlight(QQuickTextDocument* target, const QString& language, bool light) const {
+    if (target == nullptr || target->textDocument() == nullptr)
+        return;
+    auto* document = target->textDocument();
+    // One highlighter per document; a theme or language change replaces it.
+    for (auto* old : document->findChildren<code::Highlighter*>(Qt::FindDirectChildrenOnly))
+        delete old;
+    new code::Highlighter(document, language, light);
+}
+
+void TranscriptModel::hoverLink(QQuickTextDocument* target, const QString& link) const {
+    if (target == nullptr || target->textDocument() == nullptr)
+        return;
+    QTextDocument& document = *target->textDocument();
+    struct Change {
+        int position;
+        int length;
+        bool underline;
+    };
+    std::vector<Change> changes;
+    for (auto block = document.begin(); block.isValid(); block = block.next())
+        for (auto fragment = block.begin(); !fragment.atEnd(); ++fragment) {
+            const auto part = fragment.fragment();
+            if (!part.isValid() || !part.charFormat().isAnchor())
+                continue;
+            const bool want = !link.isEmpty() && part.charFormat().anchorHref() == link;
+            if (part.charFormat().fontUnderline() != want)
+                changes.push_back({part.position(), part.length(), want});
+        }
+    QTextCursor cursor(&document);
+    for (const auto& change : changes) {
+        cursor.setPosition(change.position);
+        cursor.setPosition(change.position + change.length, QTextCursor::KeepAnchor);
+        QTextCharFormat format;
+        format.setFontUnderline(change.underline);
+        cursor.mergeCharFormat(format);
+    }
 }
 
 QVariantMap TranscriptModel::fonts() const {

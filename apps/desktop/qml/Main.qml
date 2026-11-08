@@ -3643,6 +3643,9 @@ ApplicationWindow {
                     waitingReason: liveTerminal.document !== null ? liveTerminal.document.attentionReason : ""
                     canSend: liveTerminal.document !== null && liveTerminal.document.reachable
                     sendOnReturn: window.visualSettings.sendOnReturn === true
+                    folder: window.visualActive && liveTerminal.document
+                            ? workspace.agentFolder(liveTerminal.document.sessionId) : ""
+                    slashCommands: liveTerminal.document !== null && liveTerminal.document.harnessId === "claude"
                     onSuggestionFilled: {
                         if (typeof nextPrompt !== "undefined" && nextPrompt !== null && liveTerminal.document)
                             nextPrompt.used(liveTerminal.document.sessionId, false, 0, liveTerminal.suggestionKey)
@@ -3658,7 +3661,6 @@ ApplicationWindow {
                     onModelChosen: function(id) { window.visualCommand("model", id) }
                     onEffortChosen: function(level) { window.visualCommand("effort", level) }
                     onDismissed: window.toggleVisual()
-                    onForkRequested: function(record) { window.forkVisual(record, false, "") }
                     onEditRequested: function(record, text) { window.forkVisual(record, true, text) }
                 }
                 Binding {

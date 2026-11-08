@@ -2526,6 +2526,16 @@ QString Workspace::localAccountFailure(const AccountPool& accounts, const Agent&
 bool Workspace::applyAccount(Agent& agent, SessionPreview& item) {
     // A harness's own overlay is independent of which plan it signs in with.
     QHash<QString, QString> environment;
+    // Charts a local agent draws follow the visual view's theme: matplotlib
+    // reads the style lapis writes, and other plotting code can read the
+    // palette. Only once the view has written one, and never over a
+    // MATPLOTLIBRC the person set.
+    const auto charts = transcript::chart_style_folder();
+    if (!remoteCommand(agent.launch) && QFile::exists(charts + QStringLiteral("/matplotlibrc")) &&
+        qEnvironmentVariableIsEmpty("MATPLOTLIBRC")) {
+        environment.insert(QStringLiteral("MATPLOTLIBRC"), charts);
+        environment.insert(QStringLiteral("LAPIS_CHART_PALETTE"), charts + QStringLiteral("/palette.json"));
+    }
     if (agent.harness == QLatin1String("omp") && !remoteCommand(agent.launch)) {
         const auto overlay = omp_overlay(QFileInfo(storage_path_).absolutePath());
         if (!overlay.isEmpty()) {

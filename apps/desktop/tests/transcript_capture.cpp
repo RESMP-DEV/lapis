@@ -21,6 +21,7 @@
 #include <QQuickItem>
 #include <QQuickView>
 #include <QSGRendererInterface>
+#include <QTemporaryDir>
 #include <algorithm>
 #include <cstdio>
 #include <vector>
@@ -119,6 +120,18 @@ int check_keys(QQuickView& view, QQuickItem* root) {
     set(QStringLiteral("hi"));
     key(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
     expect("Return sends when chosen", QString(), -1);
+    // Typing a slash command lists the best matches; Return fills one in.
+    root->setProperty("slashCommands", true);
+    for (const auto letter : QStringLiteral("/comp"))
+        key(letter == QLatin1Char('/') ? Qt::Key_Slash : Qt::Key_A + (letter.unicode() - 'a'), Qt::NoModifier,
+            QString(letter));
+    const auto matches = root->property("slashMatches").toList();
+    if (matches.isEmpty() || matches.front().toMap().value(QStringLiteral("name")) != QStringLiteral("compact")) {
+        std::fputs("keys FAIL \"/comp\" lists compact first\n", stderr);
+        ++failures;
+    }
+    key(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+    expect("Return fills in the chosen command", QStringLiteral("/compact "), 9);
     std::puts(failures == 0 ? "keys: all checks passed" : "keys: failed");
     return failures == 0 ? 0 : 1;
 }
@@ -135,6 +148,11 @@ double percentile(std::vector<double> values, double p) {
 int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic"); // as the app sets it
+    // The view writes a chart style under ~/.lapis; a capture keeps it in a
+    // throwaway home (or LAPIS_CAPTURE_HOME, to look at what it wrote).
+    QTemporaryDir home;
+    const auto chosen_home = qgetenv("LAPIS_CAPTURE_HOME");
+    qputenv("HOME", chosen_home.isEmpty() ? home.path().toUtf8() : chosen_home);
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
     QGuiApplication app(argc, argv);
     QCommandLineParser parser;
@@ -209,6 +227,12 @@ int main(int argc, char** argv) {
     auto* list = root->property("list").value<QObject*>();
     view.show(); // offscreen: nothing reaches the screen
     settle();
+    // Long enough for the view's short timers (the chart style it writes).
+    for (QElapsedTimer waited; !waited.isValid() || waited.elapsed() < 400;) {
+        if (!waited.isValid())
+            waited.start();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    }
     if (keys)
         return check_keys(view, root);
 

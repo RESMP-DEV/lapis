@@ -123,6 +123,19 @@ struct Piece {
 // line, list items as "- " or "1. " lines, cleaned as above.
 [[nodiscard]] QString selection_text(const QTextDocument& document, int start, int end);
 
+// The folder agents' chart styles live in (~/.lapis/visual); lapis points
+// local agents' MATPLOTLIBRC there once a style is written.
+[[nodiscard]] QString chart_style_folder();
+
+// Paths in a message to local media the view can show, in order, at most 8:
+// Markdown image and link targets, then bare absolute or ~ paths with a media
+// extension. Only files that exist count.
+struct Media {
+    QString path;
+    QString kind; // image, animation, svg, audio, video, html, pdf
+};
+[[nodiscard]] std::vector<Media> find_media(const QString& text);
+
 // Folds Claude Code session JSONL records, in file order, into items. Tool
 // results attach to the tool call that asked for them; a subagent's records
 // (isSidechain) are skipped.
@@ -196,6 +209,24 @@ class TranscriptModel final : public QAbstractListModel {
     // and linkColor.
     Q_INVOKABLE void style(QQuickTextDocument* target, const QString& markdown,
                            const QVariantMap& style) const;
+    // Underlines the links to `link` in a styled document, and no others;
+    // an empty link clears them. Called as the pointer moves over links.
+    Q_INVOKABLE void hoverLink(QQuickTextDocument* target, const QString& link) const;
+    // Colors code in a TextEdit's document by its language, with the Tokyo
+    // Night palette (`light` for its Day variant). Replaces any earlier one.
+    Q_INVOKABLE void highlight(QQuickTextDocument* target, const QString& language, bool light) const;
+    // The slash commands for a Claude Code agent working in `folder`, as
+    // {name, description, source}.
+    Q_INVOKABLE [[nodiscard]] QVariantList slashCommands(const QString& folder) const;
+    // Local files a message names that the view can show inline: Markdown
+    // images and links, and absolute or ~ paths to images, audio, video,
+    // HTML and PDF that exist. Each {path, url, kind, name, size}; kind is
+    // image, animation (GIF), svg, audio, video, html or pdf.
+    Q_INVOKABLE [[nodiscard]] QVariantList media(const QString& text) const;
+    // Writes the chart style agents' plots follow (a matplotlibrc and a
+    // palette.json under ~/.lapis/visual) from the view's colors: background,
+    // text, muted, grid and light. Unchanged files are left alone.
+    Q_INVOKABLE void writeChartStyle(const QVariantMap& colors) const;
     // Font families lapis loads from the system for reading: serif, mono.
     Q_INVOKABLE [[nodiscard]] QVariantMap fonts() const;
     // Copies text to the clipboard as plain text only (no styled HTML to

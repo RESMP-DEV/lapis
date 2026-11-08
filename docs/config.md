@@ -69,7 +69,7 @@ Appearance writes the [visual view](workspace.md#visual-view)'s choices under
 `visual`: `theme` (`terminal`, `tokyo-night`, `codex`, `claude`, `graphite`,
 `black`, `claude-light`, `codex-light`), `font` (`system`, `serif`, `avenir`,
 `helvetica`), `codeFont` (`system`, `terminal`, `menlo`), `size` in pixels
-(10 to 40; 0 follows the terminal font) and `all`, which shows every Claude
+(10 to 40; 0 follows the terminal font), `all`, which shows every Claude
 Code agent as a thread, and `sendOnReturn`, which makes Return send from the
 bar (by default Command-Return sends and Return adds a line). An unknown name
 falls back to the first choice.

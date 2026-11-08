@@ -7116,10 +7116,11 @@ int main(int argc, char** argv) {
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("updates-off") ||
                      QString::fromLocal8Bit(argv[2]) == QStringLiteral("omp-overlay") ||
-                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes")),
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("stage-size")),
                 "Usage: lapis_workspace_tests [--case "
                 "remote-options|remote-hooks|accounts|remote-account-reset|reload|updater|"
-                "updates-off|startup-defaults|launch-policy|omp-overlay|chimes]");
+                "updates-off|startup-defaults|launch-policy|omp-overlay|chimes|stage-size]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("accounts")) {
                 incompleteCodexHomeNeverStartsAnAgent();
@@ -7137,6 +7138,9 @@ int main(int argc, char** argv) {
             } else if (selected == QStringLiteral("startup-defaults")) {
                 savedGrokDefaultsPreserveLaunchOwnership();
                 savedCodexDefaultsKeepTheScreenMode();
+            } else if (selected == QStringLiteral("stage-size")) {
+                // Windowless: a stand-in CLI under a real session service.
+                agentsStartAtTheStageSize();
             } else if (selected == QStringLiteral("launch-policy")) {
                 modelessAgentsGetTheDefaultMode();
                 resumingAConversationStartsItsCli();

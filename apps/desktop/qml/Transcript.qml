@@ -6,8 +6,8 @@ import QtQuick.Dialogs
 // The selected agent's conversation as a readable thread: the person's
 // prompts as bubbles, the agent's replies as prose, and its work as quiet
 // one-line steps ("Ran", "Edited", "Read") that open for detail. Text is
-// selectable and every message can be copied; a reply can be forked and a
-// prompt edited, each into a new agent. The terminal stays where input goes.
+// selectable and every message can be copied; a prompt can be edited into a
+// new agent. The terminal stays where input goes.
 // Kinds the reader does not know show as plain blocks so new CLI features
 // never vanish.
 FocusScope {
@@ -49,6 +49,61 @@ FocusScope {
     // Return sends; off by default, so Return adds a line and Command-Return
     // sends, and a stray Return never sends half a thought.
     property bool sendOnReturn: false
+    // The agent's folder, for its project's own slash commands, and whether
+    // its CLI takes the slash commands lapis knows (Claude Code's).
+    property string folder: ""
+    property bool slashCommands: false
+
+    // Slash commands: typing "/" and a few letters lists the three best
+    // matches above the bar. The list is read once per agent folder.
+    property var commandList: []
+    property string commandFolder: "\u0000"
+    property int slashIndex: 0
+    property bool slashDismissed: false
+    readonly property string slashQuery: {
+        const text = input.text
+        return slashCommands && text.startsWith("/") && !/\s/.test(text) ? text.slice(1).toLowerCase() : "\u0000"
+    }
+    onSlashQueryChanged: {
+        slashIndex = 0
+        if (slashQuery === "\u0000")
+            slashDismissed = false
+        else if (commandFolder !== folder && model) {
+            commandList = model.slashCommands(folder)
+            commandFolder = folder
+        }
+    }
+    readonly property var slashMatches: slashQuery === "\u0000" || slashDismissed ? [] : rankSlash(slashQuery)
+    function slashScore(name, description, q) {
+        if (q.length === 0)
+            return ["compact", "model", "effort", "context", "clear", "resume"].indexOf(name) >= 0
+                   ? 10 - ["compact", "model", "effort", "context", "clear", "resume"].indexOf(name) : -1
+        if (name === q) return 1000
+        if (name.startsWith(q)) return 800 - name.length
+        const at = name.indexOf(q)
+        if (at >= 0) return 600 - at * 4 - name.length
+        // Letters in order ("rp" finds reload-plugins), tighter is better.
+        let i = 0, gaps = 0, last = -1
+        for (let k = 0; k < name.length && i < q.length; ++k)
+            if (name[k] === q[i]) { gaps += last < 0 ? k : k - last - 1; last = k; ++i }
+        if (i === q.length) return 400 - gaps * 8 - name.length
+        return description.toLowerCase().indexOf(q) >= 0 ? 100 : -1
+    }
+    function rankSlash(q) {
+        const scored = []
+        for (const c of commandList) {
+            const score = slashScore(c.name, c.description || "", q)
+            if (score >= 0)
+                scored.push({ score: score, command: c })
+        }
+        scored.sort((a, b) => b.score - a.score)
+        return scored.slice(0, 3).map(s => s.command)
+    }
+    function completeSlash(name) {
+        input.text = "/" + name + " "
+        input.cursorPosition = input.text.length
+        input.forceActiveFocus()
+    }
 
     // The bar's line editing, as the terminal does it on a Mac: Command
     // moves or deletes to the line's start or end (Up/Down: the whole text),
@@ -153,8 +208,6 @@ FocusScope {
     // Tab put the suggestion in the bar, and a second Tab sent it unchanged.
     signal suggestionFilled()
     signal suggestionSent()
-    // Start a new agent from this conversation up to a reply's record.
-    signal forkRequested(string record)
     // Start a new agent from just before a prompt, with it in the input.
     signal editRequested(string record, string text)
 
@@ -237,9 +290,28 @@ FocusScope {
     // A message's row of buttons (Copy, Fork, Edit).
     readonly property int actionHeight: Math.round(codeSize * 1.3) + 8
     // Changes whenever prose has to be laid out again.
-    readonly property string styleKey: [sansFamily, monoFamily, fontSize, codeSize, codeColor, accentColor].join("|")
+    readonly property string styleKey: [sansFamily, monoFamily, fontSize, codeSize, codeColor, accentColor,
+                                        borderColor, raisedColor].join("|")
     readonly property var proseStyle: ({ sans: sansFamily, mono: monoFamily, size: fontSize, codeSize: codeSize,
-                                         codeColor: codeColor, linkColor: accentColor })
+                                         codeColor: codeColor, linkColor: accentColor,
+                                         borderColor: borderColor, quoteColor: mutedTextColor })
+    // Code takes Tokyo Night's colors, its Day variant on a light code card.
+    readonly property bool lightCode: codeColor.r * 0.299 + codeColor.g * 0.587 + codeColor.b * 0.114 > 0.5
+    readonly property color codeTextColor: lightCode ? "#3760bf" : "#c0caf5"
+
+    // Charts agents draw follow this theme: lapis keeps a matplotlib style
+    // and a palette written from it.
+    readonly property string chartKey: [backgroundColor, textColor, mutedTextColor, borderColor].join("|")
+    onChartKeyChanged: chartTimer.restart()
+    Timer {
+        id: chartTimer
+        interval: 300
+        onTriggered: if (root.model) root.model.writeChartStyle({
+            background: root.backgroundColor, text: root.textColor, muted: root.mutedTextColor,
+            grid: root.borderColor,
+            light: root.backgroundColor.r * 0.299 + root.backgroundColor.g * 0.587 + root.backgroundColor.b * 0.114 > 0.5 })
+    }
+    onModelChanged: chartTimer.restart()
 
     function tint(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
     function copy(text) { if (model) model.copy(text) }
@@ -397,6 +469,9 @@ FocusScope {
             }
         }
         onLinkActivated: link => Qt.openUrlExternally(link)
+        // A link underlines while the pointer is on it.
+        onHoveredLinkChanged: if (textFormat === TextEdit.RichText && root.model)
+                                  root.model.hoverLink(textDocument, hoveredLink)
         HoverHandler {
             cursorShape: parent.hoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
         }
@@ -436,7 +511,6 @@ FocusScope {
     component BarButton: Rectangle {
         id: barButton
         property string label
-        property string tip
         property int labelSize: root.codeSize
         // A menu button: a chevron after the label, pointing up while its
         // menu is open (menus here open upward).
@@ -474,9 +548,6 @@ FocusScope {
             cursorShape: Qt.PointingHandCursor
             onClicked: barButton.triggered()
         }
-        ToolTip.visible: barMouse.containsMouse && tip.length > 0
-        ToolTip.delay: 600
-        ToolTip.text: tip
     }
 
     // A menu of choices ({id, label}) with the current one marked.
@@ -485,8 +556,15 @@ FocusScope {
         property var choices: []
         property string current: ""
         signal chosen(string id)
+        // As wide as its longest label, so none is cut short.
+        TextMetrics {
+            id: widest
+            font.family: root.sansFamily
+            font.pixelSize: root.codeSize
+            text: choiceMenu.choices.reduce((a, c) => c.label.length > a.length ? c.label : a, "")
+        }
+        width: Math.max(140, Math.ceil(widest.advanceWidth) + Math.round(root.codeSize * 2.6) + 24)
         background: Rectangle {
-            implicitWidth: 200
             radius: 10
             color: root.raisedColor
             border.color: root.borderColor
@@ -497,13 +575,26 @@ FocusScope {
                 id: choiceItem
                 required property var modelData
                 text: modelData.label
+                indicator: null
+                arrow: null
                 onTriggered: choiceMenu.chosen(modelData.id)
-                contentItem: Text {
-                    text: (choiceItem.modelData.id === choiceMenu.current ? "✓  " : "    ") + choiceItem.text
-                    color: root.textColor
-                    font.family: root.sansFamily
-                    font.pixelSize: root.codeSize
-                    verticalAlignment: Text.AlignVCenter
+                contentItem: Row {
+                    spacing: Math.round(root.codeSize * 0.5)
+                    Text {
+                        width: Math.round(root.codeSize * 1.1)
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: choiceItem.modelData.id === choiceMenu.current ? "✓" : ""
+                        color: root.textColor
+                        font.family: root.sansFamily
+                        font.pixelSize: root.codeSize
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: choiceItem.text
+                        color: root.textColor
+                        font.family: root.sansFamily
+                        font.pixelSize: root.codeSize
+                    }
                 }
                 background: Rectangle {
                     radius: 6
@@ -515,6 +606,11 @@ FocusScope {
         }
     }
 
+    FolderDialog {
+        id: folderPicker
+        title: qsTr("Attach a folder")
+        onAccepted: root.attach(root.model ? root.model.localPath(selectedFolder) : "")
+    }
     FileDialog {
         id: filePicker
         title: qsTr("Attach files")
@@ -565,22 +661,152 @@ FocusScope {
         Timer { id: doneTimer; interval: 1200; onTriggered: action.done = false }
     }
 
+    // Files a message names, shown in place: images and GIFs drawn at their
+    // size (up to the column), other media as a card that opens the file.
+    // Click an image to open it full size.
+    component MediaList: Column {
+        id: mediaList
+        property var items: []
+        property bool alignRight: false
+        spacing: 8
+        visible: items.length > 0
+        Repeater {
+            model: mediaList.items
+            delegate: Loader {
+                required property var modelData
+                readonly property var media: modelData
+                anchors.right: mediaList.alignRight ? parent.right : undefined
+                sourceComponent: modelData.kind === "image" ? imageMedia
+                               : modelData.kind === "animation" ? animationMedia : fileMedia
+                property real room: mediaList.width
+            }
+        }
+    }
+    Component {
+        id: imageMedia
+        Image {
+            readonly property var media: parent ? parent.media : null
+            source: media ? media.url : ""
+            asynchronous: true
+            fillMode: Image.PreserveAspectFit
+            // Never decoded larger than it can be shown.
+            sourceSize.width: parent ? Math.round(parent.room * 2) : 0
+            // Large images are taken as Retina (2x), as screenshots and
+            // 200 dpi charts are; small ones show at their pixel size.
+            width: Math.min(parent ? parent.room : 0, implicitWidth >= 800 ? implicitWidth / 2 : implicitWidth)
+            height: implicitWidth > 0 ? width * implicitHeight / implicitWidth : 0
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: if (parent.media) Qt.openUrlExternally(parent.media.url)
+            }
+            Rectangle {
+                anchors.fill: parent
+                color: "transparent"
+                border.color: root.borderColor
+                radius: 4
+            }
+        }
+    }
+    Component {
+        id: animationMedia
+        AnimatedImage {
+            readonly property var media: parent ? parent.media : null
+            source: media ? media.url : ""
+            asynchronous: true
+            fillMode: Image.PreserveAspectFit
+            width: Math.min(parent ? parent.room : 0, implicitWidth)
+            height: implicitWidth > 0 ? width * implicitHeight / implicitWidth : 0
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: if (parent.media) Qt.openUrlExternally(parent.media.url)
+            }
+        }
+    }
+    Component {
+        id: fileMedia
+        Rectangle {
+            readonly property var media: parent ? parent.media : null
+            width: Math.min(parent ? parent.room : 0, fileRow.implicitWidth + 28)
+            height: fileRow.implicitHeight + 18
+            radius: root.radius - 2
+            color: fileMouse.containsMouse ? root.tint(root.textColor, 0.1) : root.raisedColor
+            Row {
+                id: fileRow
+                anchors.verticalCenter: parent.verticalCenter
+                x: 14
+                spacing: 10
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: !parent.parent.media ? "" : ({ audio: "♪", video: "▶", html: "◧", pdf: "▤", svg: "◇" })[parent.parent.media.kind] || "▢"
+                    color: root.accentColor
+                    font.pixelSize: root.stepSize + 2
+                }
+                Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    Text {
+                        text: fileRow.parent.media ? fileRow.parent.media.name : ""
+                        color: root.textColor
+                        font.family: root.sansFamily
+                        font.pixelSize: root.stepSize
+                        elide: Text.ElideMiddle
+                        width: Math.min(implicitWidth, root.columnWidth * 0.7)
+                    }
+                    Text {
+                        text: !fileRow.parent.media ? ""
+                              : qsTr("%1 · %2 · opens in its app").arg(fileRow.parent.media.kind.toUpperCase())
+                                .arg(root.bytesLabel(fileRow.parent.media.size))
+                        color: root.mutedTextColor
+                        font.family: root.sansFamily
+                        font.pixelSize: root.codeSize - 1
+                    }
+                }
+            }
+            MouseArea {
+                id: fileMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: if (parent.media) Qt.openUrlExternally(parent.media.url)
+            }
+        }
+    }
+    function bytesLabel(n) {
+        return n >= 1e9 ? (n / 1e9).toFixed(1) + " GB" : n >= 1e6 ? (n / 1e6).toFixed(1) + " MB"
+             : n >= 1e3 ? Math.round(n / 1e3) + " KB" : n + " B"
+    }
+
     // Code or output on a darker card that can be selected and copied.
     component Code: Rectangle {
         id: code
         property alias text: codeText.text
         property alias textColor: codeText.color
         property string language: ""
+        // The label over the code; its language unless set.
+        property string caption: language
+        // Colored by its language (a reply's fenced code, a command).
+        property bool highlighted: false
         readonly property bool hovered: codeHover.hovered
-        height: codeText.height + (language.length > 0 ? header.height : 0) + 20
+        function rehighlight() {
+            if (highlighted && root.model)
+                root.model.highlight(codeText.textDocument, language, root.lightCode)
+        }
+        onLanguageChanged: rehighlight()
+        Component.onCompleted: rehighlight()
+        Connections {
+            target: root
+            function onLightCodeChanged() { code.rehighlight() }
+        }
+        height: codeText.height + (caption.length > 0 ? header.height : 0) + 20
         color: root.codeColor
         radius: root.radius - 2
         HoverHandler { id: codeHover }
         Text {
             id: header
-            visible: code.language.length > 0
+            visible: code.caption.length > 0
             x: 12; y: 8
-            text: code.language
+            text: code.caption
             color: root.mutedTextColor
             font.family: root.sansFamily
             font.pixelSize: root.codeSize - 1
@@ -602,7 +828,7 @@ FocusScope {
         Selectable {
             id: codeText
             x: 12
-            y: 10 + (code.language.length > 0 ? header.height + 4 : 0)
+            y: 10 + (code.caption.length > 0 ? header.height + 4 : 0)
             width: parent.width - 24
             wrapMode: TextEdit.WrapAnywhere
             font.family: root.monoFamily
@@ -637,6 +863,12 @@ FocusScope {
                     width: parent.width - 36
                     text: prompt.entry ? prompt.entry.body : ""
                 }
+            }
+            // Images attached to the prompt, under its bubble.
+            MediaList {
+                anchors.right: parent.right
+                width: parent.width * 0.6
+                items: prompt.entry && root.model ? root.model.media(prompt.entry.body) : []
             }
             // The row's room is kept so hovering never moves the thread; its
             // buttons are made only while the pointer is over the message.
@@ -681,6 +913,10 @@ FocusScope {
                     property var piece: modelData
                 }
             }
+            MediaList {
+                width: parent.width
+                items: reply.entry && root.model ? root.model.media(reply.entry.body) : []
+            }
             Item {
                 width: parent.width
                 height: root.actionHeight
@@ -693,11 +929,6 @@ FocusScope {
                             Action {
                                 label: qsTr("Copy")
                                 onTriggered: { root.copy(reply.entry.body); flash() }
-                            }
-                            Action {
-                                visible: reply.entry && reply.entry.record.length > 0
-                                label: qsTr("Fork from here")
-                                onTriggered: root.forkRequested(reply.entry.record)
                             }
                         }
                     }
@@ -730,6 +961,8 @@ FocusScope {
         Code {
             text: parent && parent.piece ? parent.piece.text : ""
             language: parent && parent.piece ? parent.piece.language : ""
+            highlighted: true
+            textColor: root.codeTextColor
         }
     }
 
@@ -871,6 +1104,11 @@ FocusScope {
                                      && (step.command || step.entry.body.indexOf("\n") >= 0)
                             width: parent.width
                             text: step.entry ? step.entry.body : ""
+                            // A command reads as shell, without a label.
+                            language: step.command ? "bash" : ""
+                            caption: ""
+                            highlighted: step.command
+                            textColor: step.command ? root.codeTextColor : root.textColor
                         }
                         Code {
                             visible: step.entry && step.entry.result.length > 0
@@ -1071,6 +1309,65 @@ FocusScope {
         anchors.bottom: parent.bottom
         height: composerBox.height + Math.round(root.fontSize * 0.8) + hints.height + 6
 
+        // The slash commands that best match what is typed, three at most.
+        Rectangle {
+            id: slashList
+            objectName: "visualSlashList"
+            visible: root.slashMatches.length > 0
+            z: 2
+            width: composerBox.width
+            x: composerBox.x
+            anchors.bottom: composerBox.top
+            anchors.bottomMargin: 6
+            height: slashColumn.implicitHeight + 10
+            radius: 10
+            color: root.raisedColor
+            border.color: root.borderColor
+            Column {
+                id: slashColumn
+                x: 5; y: 5
+                width: parent.width - 10
+                Repeater {
+                    model: root.slashMatches
+                    delegate: Rectangle {
+                        id: slashRow
+                        required property var modelData
+                        required property int index
+                        width: slashColumn.width
+                        height: Math.round(root.stepSize * 2.1)
+                        radius: 6
+                        color: index === root.slashIndex ? root.tint(root.textColor, 0.1) : "transparent"
+                        Row {
+                            anchors.verticalCenter: parent.verticalCenter
+                            x: 10
+                            spacing: 12
+                            Text {
+                                text: "/" + slashRow.modelData.name
+                                color: root.textColor
+                                font.family: root.monoFamily
+                                font.pixelSize: root.codeSize
+                            }
+                            Text {
+                                width: slashColumn.width - x - 20
+                                text: slashRow.modelData.description
+                                elide: Text.ElideRight
+                                color: root.mutedTextColor
+                                font.family: root.sansFamily
+                                font.pixelSize: root.codeSize
+                            }
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onEntered: root.slashIndex = slashRow.index
+                            onClicked: root.completeSlash(slashRow.modelData.name)
+                        }
+                    }
+                }
+            }
+        }
+
         Rectangle {
             id: composerBox
             width: Math.min(root.columnWidth, parent.width - 56)
@@ -1178,6 +1475,25 @@ FocusScope {
                         const mods = event.modifiers & ~Qt.KeypadModifier
                         const plain = mods === Qt.NoModifier
                         const isReturn = event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                        // The slash list takes arrows, Tab, Return and Escape.
+                        if (root.slashMatches.length > 0 && plain) {
+                            const count = root.slashMatches.length
+                            if (event.key === Qt.Key_Down || event.key === Qt.Key_Up) {
+                                root.slashIndex = (root.slashIndex + (event.key === Qt.Key_Down ? 1 : count - 1)) % count
+                                event.accepted = true
+                                return
+                            }
+                            if (event.key === Qt.Key_Tab || isReturn) {
+                                root.completeSlash(root.slashMatches[Math.min(root.slashIndex, count - 1)].name)
+                                event.accepted = true
+                                return
+                            }
+                            if (event.key === Qt.Key_Escape) {
+                                root.slashDismissed = true
+                                event.accepted = true
+                                return
+                            }
+                        }
                         if (isReturn && (mods === Qt.MetaModifier || (plain && root.sendOnReturn))) {
                             root.send()
                             event.accepted = true
@@ -1240,8 +1556,8 @@ FocusScope {
                         objectName: "visualAttach"
                         label: "+"
                         labelSize: root.stepSize + 4
-                        tip: qsTr("Attach files or photos (or drop or paste them)")
-                        onTriggered: filePicker.open()
+                        menuOpen: attachMenu.opened
+                        onTriggered: attachMenu.popup(this, 0, -attachMenu.implicitHeight - 6)
                     }
                     BarButton {
                         objectName: "visualModel"
@@ -1249,7 +1565,6 @@ FocusScope {
                         label: root.modelLabel(root.model ? root.model.model : "")
                         menu: root.models.length > 0
                         menuOpen: modelMenu.opened
-                        tip: root.models.length > 0 ? qsTr("Switch the model") : qsTr("The model this agent answers with")
                         onTriggered: if (root.models.length > 0) modelMenu.popup(this, 0, -modelMenu.implicitHeight - 6)
                     }
                     BarButton {
@@ -1260,15 +1575,31 @@ FocusScope {
                                 : qsTr("Effort"))
                         menu: root.efforts.length > 0
                         menuOpen: effortMenu.opened
-                        tip: qsTr("How hard the model thinks")
                         onTriggered: if (root.efforts.length > 0) effortMenu.popup(this, 0, -effortMenu.implicitHeight - 6)
                     }
                 }
                 ChoiceMenu {
                     id: modelMenu
-                    choices: root.models.map(m => ({ id: m.id, label: m.name || m.id }))
-                    current: root.model ? root.model.model : ""
+                    // The CLI's own default entry carries a sentence for a
+                    // name; it is just "Default" here.
+                    choices: root.models.map(m => ({ id: m.id, label: m.id === "default" ? qsTr("Default")
+                                                                                         : (m.name || m.id) }))
+                    // The model the agent reports, matched to an entry by its
+                    // id or its family ("opus" in "claude-opus-5-5").
+                    current: {
+                        const running = root.model ? root.model.model : ""
+                        const exact = root.models.find(m => m.id === running)
+                        if (exact)
+                            return exact.id
+                        const family = root.models.find(m => m.id !== "default" && running.indexOf(m.id) >= 0)
+                        return family ? family.id : ""
+                    }
                     onChosen: id => root.modelChosen(id)
+                }
+                ChoiceMenu {
+                    id: attachMenu
+                    choices: [{ id: "files", label: qsTr("Files…") }, { id: "folder", label: qsTr("Folder…") }]
+                    onChosen: id => id === "folder" ? folderPicker.open() : filePicker.open()
                 }
                 ChoiceMenu {
                     id: effortMenu
@@ -1276,7 +1607,8 @@ FocusScope {
                     current: root.model ? root.model.effort : ""
                     onChosen: id => root.effortChosen(id)
                 }
-                // How full the context window is: a ring and a percentage.
+                // How full the context window is: a ring, the share used and
+                // the tokens against the window, always in view.
                 Item {
                     id: contextMeter
                     objectName: "visualContext"
@@ -1318,26 +1650,16 @@ FocusScope {
                         anchors.left: ring.right
                         anchors.leftMargin: 6
                         anchors.verticalCenter: parent.verticalCenter
-                        text: Math.round(contextMeter.used * 100) + "%"
+                        text: root.model
+                              ? qsTr("%1% · %2 / %3").arg(Math.round(contextMeter.used * 100))
+                                .arg(root.tokensLabel(root.model.contextTokens))
+                                .arg(root.tokensLabel(root.model.contextWindow))
+                              : ""
                         color: root.mutedTextColor
                         font.family: root.sansFamily
                         font.pixelSize: root.codeSize
+                        font.features: { "tnum": 1 }
                     }
-                    MouseArea {
-                        id: contextHover
-                        anchors.fill: parent
-                        hoverEnabled: true
-                    }
-                    ToolTip.visible: contextHover.containsMouse
-                    ToolTip.delay: 300
-                    ToolTip.text: root.model
-                                  // The Codex app's wording.
-                                  ? qsTr("Context window: %1% used (%2% left)\n%3 / %4 tokens used")
-                                    .arg(Math.round(contextMeter.used * 100))
-                                    .arg(100 - Math.round(contextMeter.used * 100))
-                                    .arg(root.tokensLabel(root.model.contextTokens))
-                                    .arg(root.tokensLabel(root.model.contextWindow))
-                                  : ""
                 }
                 Text {
                     anchors.left: controls.right

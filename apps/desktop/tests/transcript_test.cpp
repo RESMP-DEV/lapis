@@ -1,7 +1,12 @@
 // The Claude transcript reader and its model: conversation records become
 // items, tool results attach to their calls, bookkeeping is skipped, unknown
 // blocks stay visible, and the model follows a file the CLI is still writing.
+#include "code_highlight.hpp"
+#include "slash_commands.hpp"
 #include "transcript.hpp"
+
+#include <QColor>
+#include <QDir>
 
 #include <QFile>
 #include <QGuiApplication>
@@ -235,6 +240,116 @@ void turns_fold() {
                 lapis::desktop::transcript::context_window(QStringLiteral("claude-opus-4-5[1m]"), 0) == 1000000,
             "context windows follow the model");
 }
+// Code colors by its language: the role at a column of a line.
+void code_is_highlighted() {
+    namespace code = lapis::desktop::code;
+    const auto role_at = [](const QString& language, const QString& line, int column, int state = 0) {
+        for (const auto& span : code::tokenize(line, code::language(language), state))
+            if (column >= span.start && column < span.start + span.length)
+                return span.role;
+        return code::Role::plain;
+    };
+    const QString cpp = QStringLiteral("int count = run(\"x\", 42); // done");
+    require(role_at(QStringLiteral("cpp"), cpp, 0) == code::Role::type, "C++ type");
+    require(role_at(QStringLiteral("cpp"), cpp, 4) == code::Role::plain, "C++ variable stays plain");
+    require(role_at(QStringLiteral("cpp"), cpp, 12) == code::Role::function, "C++ call");
+    require(role_at(QStringLiteral("cpp"), cpp, 17) == code::Role::string, "C++ string");
+    require(role_at(QStringLiteral("cpp"), cpp, 21) == code::Role::number, "C++ number");
+    require(role_at(QStringLiteral("cpp"), cpp, 27) == code::Role::comment, "C++ comment");
+    require(role_at(QStringLiteral("cpp"), QStringLiteral("#include <vector>"), 1) == code::Role::meta,
+            "preprocessor line");
+    int state = 0;
+    (void)code::tokenize(QStringLiteral("x = \"\"\"start"), code::language(QStringLiteral("py")), state);
+    require(state != 0 && role_at(QStringLiteral("py"), QStringLiteral("still inside"), 2, state) == code::Role::string,
+            "a triple-quoted string carries to the next line");
+    require(role_at(QStringLiteral("py"), QStringLiteral("def wrap(text):"), 5) == code::Role::function &&
+                role_at(QStringLiteral("py"), QStringLiteral("def wrap(text):"), 0) == code::Role::keyword,
+            "Python def and its name");
+    const QString shell = QStringLiteral("cmake --build $DIR | rg error");
+    require(role_at(QStringLiteral("bash"), shell, 0) == code::Role::function &&
+                role_at(QStringLiteral("bash"), shell, 7) == code::Role::parameter &&
+                role_at(QStringLiteral("bash"), shell, 15) == code::Role::property &&
+                role_at(QStringLiteral("bash"), shell, 22) == code::Role::function,
+            "shell command, flag, variable and piped command");
+    require(role_at(QStringLiteral("json"), QStringLiteral("{\"size\": 0, \"all\": false}"), 2) == code::Role::property &&
+                role_at(QStringLiteral("json"), QStringLiteral("{\"size\": 0, \"all\": false}"), 20) == code::Role::constant,
+            "JSON key and constant");
+    require(role_at(QStringLiteral("diff"), QStringLiteral("+added"), 2) == code::Role::added &&
+                role_at(QStringLiteral("diff"), QStringLiteral("-gone"), 2) == code::Role::removed,
+            "diff lines");
+    require(role_at(QStringLiteral("unknown-lang"), QStringLiteral("x = \"s\" # note"), 5) == code::Role::string,
+            "an unknown language still gets strings");
+}
+
+// A message's local media: Markdown targets and bare paths that exist.
+void media_is_found() {
+    QTemporaryDir directory;
+    const auto touch = [&](const char* name) {
+        QFile file(directory.filePath(QString::fromLatin1(name)));
+        require(file.open(QIODevice::WriteOnly), "media fixture");
+        file.write("x");
+        return file.fileName();
+    };
+    const auto chart = touch("chart.png");
+    const auto clip = touch("clip one.mp4");
+    const auto page = touch("report.html");
+    const auto text = QStringLiteral("See ![chart](%1) and the report at %2.\nMissing: /nope/x.png\n"
+                                     "Clip: [clip](<%3>) and `%2` again.")
+                          .arg(chart, page, clip);
+    const auto found = lapis::desktop::transcript::find_media(text);
+    require(found.size() == 3 && found[0].path == chart && found[0].kind == QStringLiteral("image") &&
+                found[1].path == clip && found[1].kind == QStringLiteral("video") && found[2].path == page &&
+                found[2].kind == QStringLiteral("html"),
+            "Markdown targets (spaces inside <>) then bare paths, each once; missing files are skipped");
+}
+
+// Claude Code's own commands plus the person's commands and skills.
+void slash_commands_are_listed() {
+    QTemporaryDir home;
+    QDir(home.path()).mkpath(QStringLiteral(".claude/commands/team"));
+    QDir(home.path()).mkpath(QStringLiteral(".claude/skills/notes"));
+    QFile command(home.filePath(QStringLiteral(".claude/commands/team/ship.md")));
+    require(command.open(QIODevice::WriteOnly), "command fixture");
+    command.write("---\ndescription: \"Ship the release\"\n---\nDo it.\n");
+    command.close();
+    QFile skill(home.filePath(QStringLiteral(".claude/skills/notes/SKILL.md")));
+    require(skill.open(QIODevice::WriteOnly), "skill fixture");
+    skill.write("---\nname: notes\ndescription: Keep notes\n---\n");
+    skill.close();
+    const auto list = lapis::desktop::claude_slash_commands(home.path(), {});
+    const auto find = [&list](const QString& name) {
+        for (const auto& entry : list)
+            if (entry.toMap().value(QStringLiteral("name")) == name)
+                return entry.toMap();
+        return QVariantMap{};
+    };
+    require(!find(QStringLiteral("compact")).isEmpty() && !find(QStringLiteral("model")).isEmpty(),
+            "Claude Code's own commands are listed");
+    require(find(QStringLiteral("team:ship")).value(QStringLiteral("description")) == QStringLiteral("Ship the release") &&
+                find(QStringLiteral("notes")).value(QStringLiteral("description")) == QStringLiteral("Keep notes"),
+            "the person's commands and skills are listed with their descriptions");
+}
+
+// Charts follow the theme: the style lapis writes for matplotlib.
+void chart_style_is_written() {
+    QTemporaryDir home;
+    const auto saved = qgetenv("HOME");
+    qputenv("HOME", home.path().toUtf8());
+    TranscriptModel model;
+    model.writeChartStyle({{QStringLiteral("background"), QColor("#101010")},
+                           {QStringLiteral("text"), QColor("#eeeeee")},
+                           {QStringLiteral("muted"), QColor("#888888")},
+                           {QStringLiteral("grid"), QColor("#333333")},
+                           {QStringLiteral("light"), false}});
+    QFile rc(home.filePath(QStringLiteral(".lapis/visual/matplotlibrc")));
+    const bool opened = rc.open(QIODevice::ReadOnly);
+    const auto text = opened ? QString::fromUtf8(rc.readAll()) : QString();
+    require(text.contains(QStringLiteral("figure.facecolor: 101010")) &&
+                text.contains(QStringLiteral("text.color: eeeeee")) && text.contains(QStringLiteral("'7aa2f7'")) &&
+                QFile::exists(home.filePath(QStringLiteral(".lapis/visual/palette.json"))),
+            "matplotlib style and palette follow the colors");
+    qputenv("HOME", saved);
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -250,6 +365,10 @@ int main(int argc, char** argv) {
     copies_are_clean();
     switching_back_is_warm();
     turns_fold();
+    code_is_highlighted();
+    media_is_found();
+    slash_commands_are_listed();
+    chart_style_is_written();
     if (failures == 0)
         std::puts("transcript: all checks passed");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

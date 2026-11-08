@@ -89,26 +89,41 @@ moves to the next agent that needs you, as in the terminal. While the agent is
 waiting on a request, the bar says so and sends nothing; answer it in the
 terminal (Escape). Typing while reading goes to the bar.
 
-The bar's toolbar is the same for every CLI: **+** attaches files, then the
-model and the effort (Low, Medium, High, Extra High, Max) the agent last
-reported, each a menu that changes it by typing that CLI's own command
-(`/model`, `/effort` for Claude Code), and a ring with the share of the model's
-context window used; hovering it gives the tokens, as "Context window: 47% used
-(53% left)". Files attach by **+**, by dropping them on the thread, or by
-pasting (Finder files, or a screenshot saved as a PNG); each shows as a chip
-and is sent as an `@path` mention, so the CLI reads images as images and any
-other file or folder as it would from its own prompt. Backspace in an empty bar
-removes the last one.
+The bar's toolbar is the same for every CLI: **+** attaches files or a folder,
+then the model and the effort (Low, Medium, High, Extra High, Max) the agent
+last reported, each a menu that changes it by typing that CLI's own command
+(`/model`, `/effort` for Claude Code), and a ring with the context window's use
+written beside it ("21% · 206k / 1M"). Nothing in the view uses hover popups.
+Files attach by **+**, by dropping them on the thread, or by pasting (Finder
+files, or a screenshot saved as a PNG); each shows as a chip and is sent as an
+`@path` mention, so the CLI reads images as images and any other file or folder
+as it would from its own prompt. Backspace in an empty bar removes the last one.
+
+Typing `/` and a few letters in a Claude Code agent's bar lists the three
+closest slash commands (letters in order match, so `/rp` finds
+`/reload-plugins`): Claude Code's own, then your commands and skills from
+`~/.claude/commands`, `~/.claude/skills` and the agent folder's `.claude/`.
+Up and Down pick, Tab or Return fills it in, Escape closes the list.
+
+Code in replies is colored by its language with Tokyo Night's palette (its Day
+variant on light themes), as are the commands steps ran. Tables get a quiet
+grid and a bold header; quotes read quieter than the reply. Images, GIFs and
+charts a message names show inline at the column's width, under the reply (or
+under your prompt, for what you attached); click one to open it full size.
+Audio, video, SVG, HTML and PDF files show as a card that opens them in their
+app until lapis plays them in place. Charts an agent draws with matplotlib
+match the view's theme: lapis writes a style from it to `~/.lapis/visual` and
+points local agents' `MATPLOTLIBRC` there (unless you set your own), with the
+colors also in `palette.json` (`LAPIS_CHART_PALETTE`) for other plotting code.
+Agents launched before the first style was written pick it up when reloaded.
 
 Text in the thread selects with the mouse and copies with Command-C as plain
 text that pastes cleanly anywhere: paragraphs, bullets and numbers are kept,
-and no colors or hidden characters come along. **Copy** on a reply copies its
-markdown. Hovering a
-message shows the same buttons as the Codex app: **Copy** on prompts, replies
-and every code block or output, **Fork from here** on a reply (a new agent that
-continues the conversation up to that point), and **Edit** on a prompt (a new
-agent that continues from just before it, with the prompt waiting unsent in its
-input). The original conversation is never changed.
+and no colors or hidden characters come along. Links underline under the
+pointer. Hovering a message shows **Copy** (on prompts, replies and every code
+block or output) and, on a prompt, **Edit**: a new agent that continues from
+just before it, with the prompt waiting unsent in its input. The original
+conversation is never changed.
 
 Appearance has a **Visual view** section: a theme (Match terminal, Tokyo Night,
 Codex, Claude, Graphite, Black, Claude light, Codex light), a reading font
