@@ -152,6 +152,17 @@ int main(int argc, char** argv) {
         panels.push_back({QStringLiteral("Latest edit"), shot(view, list, edit)});
     if (failure >= 0)
         panels.push_back({QStringLiteral("Latest failed tool"), shot(view, list, failure)});
+    // The latest folded turn, closed and then opened.
+    int work = -1;
+    for (int row = model.rowCount() - 1; row >= 0 && work < 0; --row)
+        if (model.data(model.index(row), TranscriptModel::KindRole).toString() == QLatin1String("work"))
+            work = row;
+    if (work >= 0) {
+        panels.push_back({QStringLiteral("Latest turn, folded"), shot(view, list, work)});
+        model.toggleWork(work);
+        panels.push_back({QStringLiteral("Latest turn, opened"), shot(view, list, work + 2)});
+        model.toggleWork(work);
+    }
     root->setProperty("following", true);
 
     const int gap = 24, caption = 44;

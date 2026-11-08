@@ -63,6 +63,12 @@ click, with each edit's diff shown under it. It reads the conversation Claude
 Code saves on this Mac and follows it as the agent works; anything it does not
 recognize shows as a plain block.
 
+As in the Codex app, a finished turn folds to your prompt, one **Worked for
+3m 12s** line that sums up the work ("ran 4 commands, edited 2 files, read 3
+files"), and the final reply. Clicking that line opens the thinking and steps
+between, indented; each step then opens on its own to show its command output
+or diff. A turn still running shows every step as it happens.
+
 Above **Commands** in the sidebar, **This agent** switches the selected agent
 between its terminal and the thread, and **All agents** shows every Claude Code
 agent on this Mac as a thread (saved, so it survives a restart). A per-agent
@@ -77,6 +83,17 @@ in the bar to edit, and Tab again sends it. Tab with nothing typed or offered
 moves to the next agent that needs you, as in the terminal. While the agent is
 waiting on a request, the bar says so and sends nothing; answer it in the
 terminal (Escape). Typing while reading goes to the bar.
+
+The bar's toolbar is the same for every CLI: **+** attaches files, then the
+model and the effort (Low, Medium, High, Extra High, Max) the agent last
+reported, each a menu that changes it by typing that CLI's own command
+(`/model`, `/effort` for Claude Code), and a ring with the share of the model's
+context window used; hovering it gives the tokens, as "Context window: 47% used
+(53% left)". Files attach by **+**, by dropping them on the thread, or by
+pasting (Finder files, or a screenshot saved as a PNG); each shows as a chip
+and is sent as an `@path` mention, so the CLI reads images as images and any
+other file or folder as it would from its own prompt. Backspace in an empty bar
+removes the last one.
 
 Text in the thread selects with the mouse and copies with Command-C as plain
 text that pastes cleanly anywhere: paragraphs, bullets and numbers are kept,

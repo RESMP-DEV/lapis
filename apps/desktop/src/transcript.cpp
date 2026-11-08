@@ -22,7 +22,12 @@
 #include <QThreadPool>
 #include <QVariantList>
 #include <QVariantMap>
+#include <QDateTime>
+#include <QImage>
+#include <QMimeData>
+#include <QStandardPaths>
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace lapis::desktop {
@@ -299,8 +304,172 @@ QString clean_copy(QString text) {
     return lines.join(QLatin1Char('\n'));
 }
 
+qint64 context_window(const QString& model, qint64 used) {
+    // Claude Code 2.1.319's model table: these have a 1M window natively.
+    static const QStringList million{
+        QStringLiteral("claude-opus-5"),     QStringLiteral("claude-fable-5"),
+        QStringLiteral("claude-sonnet-5"),   QStringLiteral("claude-haiku-5"),
+        QStringLiteral("claude-opus-4-6"),   QStringLiteral("claude-opus-4-7"),
+        QStringLiteral("claude-opus-4-8"),   QStringLiteral("claude-sonnet-4-6"),
+        QStringLiteral("claude-haiku-4-5")};
+    const auto name = model.toLower();
+    qint64 window = 200'000;
+    if (name.contains(QLatin1String("[1m]")) ||
+        std::any_of(million.begin(), million.end(),
+                    [&name](const QString& prefix) { return name.startsWith(prefix); }))
+        window = 1'000'000;
+    return std::max(window, used);
+}
+
+QString work_summary(const std::vector<Item>& items, int first, int last, int except) {
+    int commands = 0, searches = 0, web = 0, agents = 0, tools = 0;
+    QSet<QString> edited, read;
+    for (int i = first; i <= last; ++i) {
+        if (i == except)
+            continue;
+        const auto& item = items[static_cast<size_t>(i)];
+        if (item.kind != Kind::tool)
+            continue;
+        const auto& verb = item.title;
+        if (verb == QLatin1String("Ran"))
+            ++commands;
+        else if (verb == QLatin1String("Edited") || verb == QLatin1String("Wrote"))
+            edited.insert(item.body);
+        else if (verb == QLatin1String("Read"))
+            read.insert(item.body);
+        else if (verb == QLatin1String("Searched for") || verb == QLatin1String("Listed"))
+            ++searches;
+        else if (verb.startsWith(QLatin1String("Searched the web")) || verb == QLatin1String("Fetched"))
+            ++web;
+        else if (verb == QLatin1String("Started agent"))
+            ++agents;
+        else
+            ++tools;
+    }
+    const auto counted = [](int n, const char* one, const char* many) {
+        return n == 1 ? QString::fromUtf8(one) : QString::fromUtf8(many).arg(n);
+    };
+    QStringList parts;
+    if (commands > 0)
+        parts << counted(commands, "ran a command", "ran %1 commands");
+    if (!edited.isEmpty())
+        parts << counted(static_cast<int>(edited.size()), "edited a file", "edited %1 files");
+    if (!read.isEmpty())
+        parts << counted(static_cast<int>(read.size()), "read a file", "read %1 files");
+    if (searches > 0)
+        parts << counted(searches, "searched once", "searched %1 times");
+    if (web > 0)
+        parts << QStringLiteral("used the web");
+    if (agents > 0)
+        parts << counted(agents, "started an agent", "started %1 agents");
+    if (tools > 0)
+        parts << counted(tools, "called a tool", "called %1 tools");
+    return parts.join(QStringLiteral(", "));
+}
+
+Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded) {
+    Layout out;
+    const int count = static_cast<int>(items.size());
+    std::vector<int> turn_of(items.size(), -1);
+    int open = -1;
+    for (int i = 0; i < count; ++i) {
+        const auto& item = items[static_cast<size_t>(i)];
+        if (item.kind == Kind::turn) {
+            // The CLI's own "turn took" record ends the turn and times it.
+            if (open >= 0) {
+                auto& turn = out.turns[static_cast<size_t>(open)];
+                turn.duration_ms = item.duration_ms;
+                turn.last = i;
+                turn.closed = true;
+                turn_of[static_cast<size_t>(i)] = open;
+                open = -1;
+            }
+            continue;
+        }
+        // Text and an image sent together are one prompt in two items.
+        const bool same_prompt = open >= 0 && item.kind == Kind::prompt && i > 0 &&
+                                 items[static_cast<size_t>(i - 1)].kind == Kind::prompt &&
+                                 items[static_cast<size_t>(i - 1)].record == item.record;
+        if (item.starts_turn && !same_prompt) {
+            if (open >= 0)
+                out.turns[static_cast<size_t>(open)].closed = true;
+            out.turns.push_back({.start = i,
+                                 .last = i,
+                                 .final_reply = -1,
+                                 .steps = 0,
+                                 .duration_ms = 0,
+                                 .closed = false,
+                                 .summary = {}});
+            open = static_cast<int>(out.turns.size()) - 1;
+        }
+        if (open >= 0) {
+            turn_of[static_cast<size_t>(i)] = open;
+            out.turns[static_cast<size_t>(open)].last = i;
+        }
+    }
+
+    // Each turn's prompt, its final reply, and how much folds between.
+    std::vector<int> header_end(out.turns.size());
+    for (size_t t = 0; t < out.turns.size(); ++t) {
+        auto& turn = out.turns[t];
+        int end = turn.start;
+        while (end + 1 <= turn.last && items[static_cast<size_t>(end + 1)].kind == Kind::prompt &&
+               items[static_cast<size_t>(end + 1)].record == items[static_cast<size_t>(turn.start)].record)
+            ++end;
+        header_end[t] = end;
+        for (int i = turn.last; i > end; --i)
+            if (items[static_cast<size_t>(i)].kind == Kind::reply) {
+                turn.final_reply = i;
+                break;
+            }
+        for (int i = end + 1; i <= turn.last; ++i) {
+            const auto kind = items[static_cast<size_t>(i)].kind;
+            if (i != turn.final_reply && kind != Kind::turn)
+                ++turn.steps;
+        }
+        if (turn.closed && turn.steps > 0)
+            turn.summary = work_summary(items, end + 1, turn.last, turn.final_reply);
+        if (turn.duration_ms <= 0) {
+            const auto first = items[static_cast<size_t>(turn.start)].at_ms;
+            const auto last = items[static_cast<size_t>(turn.last)].at_ms;
+            if (first > 0 && last > first)
+                turn.duration_ms = last - first;
+        }
+    }
+
+    out.rows.reserve(items.size());
+    for (int i = 0; i < count; ++i) {
+        const int t = turn_of[static_cast<size_t>(i)];
+        const auto kind = items[static_cast<size_t>(i)].kind;
+        if (t < 0) {
+            if (kind != Kind::turn)
+                out.rows.push_back({.item = i, .turn = -1, .in_work = false});
+            continue;
+        }
+        const auto& turn = out.turns[static_cast<size_t>(t)];
+        // A turn still running, or one with nothing to fold, shows as it is.
+        if (!turn.closed || turn.steps == 0) {
+            if (kind != Kind::turn)
+                out.rows.push_back({.item = i, .turn = t, .in_work = false});
+            continue;
+        }
+        if (i <= header_end[static_cast<size_t>(t)]) {
+            out.rows.push_back({.item = i, .turn = t, .in_work = false});
+            if (i == header_end[static_cast<size_t>(t)])
+                out.rows.push_back({.item = -1, .turn = t, .in_work = false});
+        } else if (i != turn.final_reply && kind != Kind::turn && expanded.contains(turn.start)) {
+            out.rows.push_back({.item = i, .turn = t, .in_work = true});
+        }
+        // The final reply closes the turn, after any work shown above it.
+        if (i == turn.last && turn.final_reply >= 0)
+            out.rows.push_back({.item = turn.final_reply, .turn = t, .in_work = false});
+    }
+    return out;
+}
+
 void ClaudeReader::push(Item item) {
     item.record = record_;
+    item.at_ms = at_ms_;
     item.after_step = is_step(item.kind) && !items_.empty() && is_step(items_.back().kind);
     items_.push_back(std::move(item));
 }
@@ -315,6 +484,8 @@ int ClaudeReader::add(const QByteArray& line) {
         return -1;
     const auto type = record.value(QLatin1String("type")).toString();
     record_ = record.value(QLatin1String("uuid")).toString();
+    const auto stamp = record.value(QLatin1String("timestamp")).toString();
+    at_ms_ = stamp.isEmpty() ? 0 : QDateTime::fromString(stamp, Qt::ISODateWithMs).toMSecsSinceEpoch();
     const auto first = static_cast<int>(items_.size());
     int changed = -1;
 
@@ -325,8 +496,11 @@ int ClaudeReader::add(const QByteArray& line) {
             push(make(Kind::divider, QStringLiteral("Conversation compacted")));
         } else if (subtype == QLatin1String("turn_duration")) {
             const auto ms = static_cast<qint64>(record.value(QLatin1String("durationMs")).toDouble());
-            if (ms > 0)
-                push(make(Kind::turn, QStringLiteral("Worked for %1").arg(duration_text(ms))));
+            if (ms > 0) {
+                auto item = make(Kind::turn, QStringLiteral("Worked for %1").arg(duration_text(ms)));
+                item.duration_ms = ms;
+                push(std::move(item));
+            }
         } else if (subtype == QLatin1String("api_error") ||
                    subtype.startsWith(QLatin1String("model_refusal"))) {
             auto item = make(Kind::notice, content.isEmpty() ? subtype : clip(content, 300));
@@ -350,9 +524,12 @@ int ClaudeReader::add(const QByteArray& line) {
         if (meta || raw.startsWith(QLatin1String("<local-command-")))
             return;
         if (raw.startsWith(QLatin1String("<task-notification>"))) {
+            // A background task waking the agent starts a turn of its own.
             auto summary = tagged(raw, u"summary");
-            push(make(Kind::notice, summary.isEmpty() ? QStringLiteral("Background task finished")
-                                                      : clip(summary, 300)));
+            auto item = make(Kind::notice, summary.isEmpty() ? QStringLiteral("Background task finished")
+                                                             : clip(summary, 300));
+            item.starts_turn = true;
+            push(std::move(item));
             return;
         }
         if (raw.startsWith(QLatin1String("This session is being continued"))) {
@@ -363,8 +540,27 @@ int ClaudeReader::add(const QByteArray& line) {
             push(make(Kind::command, tagged(raw, u"command-name"), tagged(raw, u"command-args")));
             return;
         }
-        push(make(Kind::prompt, {}, clip(raw.trimmed(), body_chars)));
+        auto item = make(Kind::prompt, {}, clip(raw.trimmed(), body_chars));
+        item.starts_turn = true;
+        push(std::move(item));
     };
+
+    // What the agent reports with each answer: model, effort, context use.
+    if (type == QLatin1String("assistant")) {
+        const auto model = message.value(QLatin1String("model")).toString();
+        if (!model.isEmpty() && !model.startsWith(QLatin1Char('<'))) // "<synthetic>" errors
+            status_.model = model;
+        if (const auto effort = record.value(QLatin1String("effort")).toString(); !effort.isEmpty())
+            status_.effort = effort;
+        const auto usage = message.value(QLatin1String("usage")).toObject();
+        const auto tokens = [&usage](const char* key) {
+            return static_cast<qint64>(usage.value(QLatin1String(key)).toDouble());
+        };
+        const auto used = tokens("input_tokens") + tokens("cache_read_input_tokens") +
+                          tokens("cache_creation_input_tokens") + tokens("output_tokens");
+        if (used > 0)
+            status_.context_tokens = used;
+    }
 
     if (content.isString()) {
         if (type == QLatin1String("user"))
@@ -397,8 +593,11 @@ int ClaudeReader::add(const QByteArray& line) {
                 changed = changed < 0 ? at : std::min(changed, at);
             }
         } else if (kind == QLatin1String("image")) {
-            if (!meta)
-                push(make(Kind::prompt, {}, QStringLiteral("[image]")));
+            if (!meta) {
+                auto item = make(Kind::prompt, {}, QStringLiteral("[image]"));
+                item.starts_turn = true;
+                push(std::move(item));
+            }
         } else {
             push(make(Kind::other, kind, {}, compact_json(block, 400)));
         }
@@ -457,14 +656,41 @@ QVariantList diff_rows(const std::vector<transcript::DiffLine>& diff) {
 TranscriptModel::TranscriptModel(QObject* parent) : QAbstractListModel(parent) {}
 
 int TranscriptModel::rowCount(const QModelIndex& parent) const {
-    return parent.isValid() ? 0 : shown_;
+    return parent.isValid() ? 0 : static_cast<int>(layout_.rows.size());
 }
 
 QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
-    if (!index.isValid() || index.row() >= shown_)
+    if (!index.isValid() || std::cmp_greater_equal(index.row(), layout_.rows.size()))
         return {};
-    const auto& item = reader_.items()[static_cast<size_t>(index.row())];
+    const auto& row = layout_.rows[static_cast<size_t>(index.row())];
+    if (row.item < 0) {
+        // A turn's "Worked for" row, standing for its folded work.
+        const auto& turn = layout_.turns[static_cast<size_t>(row.turn)];
+        switch (role) {
+        case KindRole: return QStringLiteral("work");
+        case TitleRole:
+            return turn.duration_ms > 0
+                       ? QStringLiteral("Worked for %1").arg(transcript::duration_text(turn.duration_ms))
+                       : QStringLiteral("Worked");
+        case StepsRole: return turn.steps;
+        case DetailRole: return turn.summary;
+        case ExpandedRole: return expanded_.contains(turn.start);
+        case DiffRole: return QVariantList{};
+        case AddedRole:
+        case RemovedRole:
+        case ResultLinesRole: return 0;
+        case FailedRole:
+        case AnsweredRole:
+        case AfterStepRole:
+        case InWorkRole: return false;
+        default: return QString();
+        }
+    }
+    const auto& item = reader_.items()[static_cast<size_t>(row.item)];
     switch (role) {
+    case InWorkRole: return row.in_work;
+    case ExpandedRole: return false;
+    case StepsRole: return 0;
     case KindRole: return transcript::kind_name(item.kind);
     case TitleRole: return item.title;
     case BodyRole: return item.body;
@@ -495,7 +721,118 @@ QHash<int, QByteArray> TranscriptModel::roleNames() const {
             {FailedRole, "failed"},
             {AnsweredRole, "answered"},
             {AfterStepRole, "afterStep"},
-            {RecordRole, "record"}};
+            {RecordRole, "record"},
+            {ExpandedRole, "expanded"},
+            {InWorkRole, "inWork"},
+            {StepsRole, "steps"}};
+}
+
+namespace {
+// A row's identity across layouts: its item, or minus (its turn's first item
+// + 1) for a turn's "Worked for" row.
+qint64 row_key(const transcript::Layout& layout, const transcript::Row& row) {
+    return row.item >= 0 ? row.item : -(layout.turns[static_cast<size_t>(row.turn)].start + 1);
+}
+// The last item a row's look depends on.
+int row_depends_on(const transcript::Layout& layout, const transcript::Row& row) {
+    return row.item >= 0 ? row.item : layout.turns[static_cast<size_t>(row.turn)].last;
+}
+} // namespace
+
+void TranscriptModel::relayout(int changed) {
+    auto next = transcript::lay_out(reader_.items(), expanded_);
+    const auto old_size = layout_.rows.size();
+    const auto new_size = next.rows.size();
+    size_t prefix = 0;
+    while (prefix < old_size && prefix < new_size &&
+           row_key(layout_, layout_.rows[prefix]) == row_key(next, next.rows[prefix]) &&
+           layout_.rows[prefix].in_work == next.rows[prefix].in_work)
+        ++prefix;
+    size_t suffix = 0;
+    while (suffix < old_size - prefix && suffix < new_size - prefix &&
+           row_key(layout_, layout_.rows[old_size - 1 - suffix]) ==
+               row_key(next, next.rows[new_size - 1 - suffix]) &&
+           layout_.rows[old_size - 1 - suffix].in_work == next.rows[new_size - 1 - suffix].in_work)
+        ++suffix;
+    // Rows that left go first (the old layout still answers for the rest),
+    // then rows that arrived, so the view keeps every row that stayed.
+    if (old_size - suffix > prefix) {
+        beginRemoveRows({}, static_cast<int>(prefix), static_cast<int>(old_size - suffix - 1));
+        layout_.rows.erase(layout_.rows.begin() + static_cast<qsizetype>(prefix),
+                           layout_.rows.begin() + static_cast<qsizetype>(old_size - suffix));
+        endRemoveRows();
+    }
+    if (new_size - suffix > prefix) {
+        beginInsertRows({}, static_cast<int>(prefix), static_cast<int>(new_size - suffix - 1));
+        layout_ = std::move(next);
+        endInsertRows();
+    } else {
+        layout_ = std::move(next);
+    }
+    // Rows kept whose item, or whose turn's timing, changed are redrawn.
+    int first = -1;
+    int last = -1;
+    for (size_t i = 0; i < layout_.rows.size(); ++i)
+        if (row_depends_on(layout_, layout_.rows[i]) >= changed) {
+            if (first < 0)
+                first = static_cast<int>(i);
+            last = static_cast<int>(i);
+        }
+    if (first >= 0)
+        emit dataChanged(index(first), index(last));
+    if (old_size != new_size)
+        emit countChanged();
+}
+
+void TranscriptModel::toggleWork(int row) {
+    if (row < 0 || std::cmp_greater_equal(row, layout_.rows.size()) || layout_.rows[static_cast<size_t>(row)].item >= 0)
+        return;
+    const int start = layout_.turns[static_cast<size_t>(layout_.rows[static_cast<size_t>(row)].turn)].start;
+    if (!expanded_.remove(start))
+        expanded_.insert(start);
+    relayout(std::numeric_limits<int>::max());
+    emit dataChanged(index(row), index(row), {ExpandedRole});
+}
+
+QStringList TranscriptModel::pastedFiles() const {
+    const auto* clipboard = QGuiApplication::clipboard();
+    const auto* mime = clipboard != nullptr ? clipboard->mimeData() : nullptr;
+    if (mime == nullptr)
+        return {};
+    if (mime->hasUrls()) {
+        QStringList files;
+        for (const auto& url : mime->urls())
+            if (url.isLocalFile())
+                files << url.toLocalFile();
+        if (!files.isEmpty())
+            return files;
+    }
+    if (!mime->hasImage())
+        return {};
+    const auto image = qvariant_cast<QImage>(mime->imageData());
+    if (image.isNull())
+        return {};
+    // Pasted images live with the system's temporary files, which macOS
+    // clears on its own; the agent reads them right after sending.
+    QDir folder(QStandardPaths::writableLocation(QStandardPaths::TempLocation));
+    if (!folder.mkpath(QStringLiteral("lapis-attachments")) || !folder.cd(QStringLiteral("lapis-attachments")))
+        return {};
+    const auto path = folder.filePath(
+        QStringLiteral("pasted-%1.png").arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss-zzz"))));
+    return image.save(path, "PNG") ? QStringList{path} : QStringList{};
+}
+
+bool TranscriptModel::isImage(const QString& path) const {
+    // What the Codex app sends as an image rather than a file.
+    static const QStringList images{QStringLiteral("png"),  QStringLiteral("jpg"), QStringLiteral("jpeg"),
+                                    QStringLiteral("gif"),  QStringLiteral("webp"), QStringLiteral("heic"),
+                                    QStringLiteral("heif"), QStringLiteral("avif"), QStringLiteral("bmp"),
+                                    QStringLiteral("tiff"), QStringLiteral("tif")};
+    return images.contains(QFileInfo(path).suffix().toLower());
+}
+
+QString TranscriptModel::localPath(const QUrl& url) const {
+    return url.isLocalFile() ? url.toLocalFile() : QString();
 }
 
 QVariantList TranscriptModel::pieces(const QString& markdown) const {
@@ -688,10 +1025,12 @@ void TranscriptModel::setPath(const QString& path) {
         offset_ = 0;
         pending_.clear();
     }
-    shown_ = static_cast<int>(reader_.items().size());
+    expanded_.clear();
+    layout_ = transcript::lay_out(reader_.items(), expanded_);
     endResetModel();
     emit countChanged();
-    const bool warm = shown_ > 0 || offset_ > 0;
+    noteStatus();
+    const bool warm = !reader_.items().empty() || offset_ > 0;
     auto* watcher = findChild<QFileSystemWatcher*>();
     if (watcher == nullptr) {
         watcher = new QFileSystemWatcher(this);
@@ -733,11 +1072,12 @@ void TranscriptModel::loadNow() {
 void TranscriptModel::apply(transcript::ClaudeReader reader, qint64 offset, QByteArray pending) {
     beginResetModel();
     reader_ = std::move(reader);
-    shown_ = static_cast<int>(reader_.items().size());
+    layout_ = transcript::lay_out(reader_.items(), expanded_);
     offset_ = offset;
     pending_ = std::move(pending);
     endResetModel();
     emit countChanged();
+    noteStatus();
     if (loading_) {
         loading_ = false;
         emit loadingChanged();
@@ -758,19 +1098,15 @@ void TranscriptModel::readMore() {
     const auto bytes = file.readAll();
     offset_ += bytes.size();
     const auto changed = feed(reader_, pending_, bytes);
-    if (changed < 0)
+    noteStatus();
+    if (changed >= 0)
+        relayout(changed);
+}
+
+void TranscriptModel::noteStatus() {
+    if (reader_.status() == shown_status_)
         return;
-    // Rows past shown_ already exist in the reader; the view learns of them
-    // only through the insert below.
-    const auto old_size = shown_;
-    if (changed < old_size)
-        emit dataChanged(index(changed), index(old_size - 1));
-    const auto new_size = static_cast<int>(reader_.items().size());
-    if (new_size > old_size) {
-        beginInsertRows({}, old_size, new_size - 1);
-        shown_ = new_size;
-        endInsertRows();
-        emit countChanged();
-    }
+    shown_status_ = reader_.status();
+    emit statusChanged();
 }
 } // namespace lapis::desktop

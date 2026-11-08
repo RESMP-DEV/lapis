@@ -3,8 +3,10 @@
 #include <QAbstractListModel>
 #include <QByteArray>
 #include <QHash>
+#include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
 #include <vector>
@@ -48,7 +50,51 @@ struct Item {
     QString tool_id;
     // The saved record this item came from, so a fork can cut there.
     QString record;
+    qint64 at_ms{};       // when it was written (ms since the epoch), or 0
+    bool starts_turn{};   // a prompt, or a background task waking the agent
+    qint64 duration_ms{}; // a turn item: how long the turn took
 };
+
+// The model, effort and context use the agent last reported, read the same
+// way for every CLI so the bar shows the same things for each.
+struct Status {
+    QString model;          // as the API names it ("claude-opus-5-5")
+    QString effort;         // "low" ... "max", or empty when not reported
+    qint64 context_tokens{}; // what the last request sent and got back
+    bool operator==(const Status&) const = default;
+};
+// The model's context window in tokens, from Claude Code's own table: 1M for
+// the current Opus, Fable, Sonnet 4.6+ and Haiku 4.5 (and any "[1m]" name),
+// else 200k; never less than what was already used.
+[[nodiscard]] qint64 context_window(const QString& model, qint64 used);
+
+// The thread as shown: each finished turn folds to its prompt, one "Worked
+// for" row standing for its work (thinking, steps, notes between), and its
+// final reply. A turn still running shows everything as it happens.
+struct Turn {
+    int start{};          // its first item (the prompt)
+    int last{};           // its last item
+    int final_reply{-1};  // the reply that ends it, or -1
+    int steps{};          // items folded under its "Worked for" row
+    qint64 duration_ms{}; // from the CLI, else from the items' times
+    bool closed{};        // finished: by its duration record or the next turn
+    // What the folded work did, as the Codex app sums it up: "ran 4
+    // commands, edited 2 files, read 3 files".
+    QString summary;
+};
+// The summary for the work items in [first, last], skipping `except`.
+[[nodiscard]] QString work_summary(const std::vector<Item>& items, int first, int last, int except);
+struct Row {
+    int item{-1}; // the item shown, or -1 for a turn's "Worked for" row
+    int turn{-1}; // the turn it belongs to, or -1
+    bool in_work{}; // folded work, shown because its turn is open
+};
+struct Layout {
+    std::vector<Turn> turns;
+    std::vector<Row> rows;
+};
+// `expanded` holds the first items of the turns whose work is shown.
+[[nodiscard]] Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded);
 
 // Limits that keep one huge tool output or file write from costing the view.
 inline constexpr int result_preview_lines = 14;
@@ -86,10 +132,13 @@ class ClaudeReader {
     // appended items follow it.
     int add(const QByteArray& line);
     [[nodiscard]] const std::vector<Item>& items() const { return items_; }
+    [[nodiscard]] const Status& status() const { return status_; }
 
   private:
     void push(Item item);
     std::vector<Item> items_;
+    Status status_;
+    qint64 at_ms_{}; // time of the record being read
     QString record_; // uuid of the record being read
     QHash<QString, int> tools_; // tool_use id -> item index
 };
@@ -102,6 +151,12 @@ class TranscriptModel final : public QAbstractListModel {
     Q_PROPERTY(QString path READ path WRITE setPath NOTIFY pathChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
+    // What the agent last reported, the same for every CLI: its model, its
+    // effort, and its context use against the model's window.
+    Q_PROPERTY(QString model READ model NOTIFY statusChanged)
+    Q_PROPERTY(QString effort READ effort NOTIFY statusChanged)
+    Q_PROPERTY(qint64 contextTokens READ contextTokens NOTIFY statusChanged)
+    Q_PROPERTY(qint64 contextWindow READ contextWindow NOTIFY statusChanged)
   public:
     enum Role {
         KindRole = Qt::UserRole + 1,
@@ -117,6 +172,9 @@ class TranscriptModel final : public QAbstractListModel {
         AnsweredRole,
         AfterStepRole,
         RecordRole,
+        ExpandedRole, // a "Worked for" row whose work is shown
+        InWorkRole,   // an item shown inside an opened "Worked for"
+        StepsRole,    // a "Worked for" row: how many items it folds
     };
     explicit TranscriptModel(QObject* parent = nullptr);
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
@@ -147,14 +205,39 @@ class TranscriptModel final : public QAbstractListModel {
     // Copies part of a styled reply: paragraphs separated by a blank line,
     // list items as "- " or "1. " lines, everything else plain.
     Q_INVOKABLE void copySelection(QQuickTextDocument* source, int start, int end) const;
+    // Opens or folds the work of the turn a "Worked for" row stands for.
+    Q_INVOKABLE void toggleWork(int row);
+    // What a paste attaches: files copied in the Finder as their paths, or
+    // an image (a screenshot) saved as a PNG; empty when the clipboard holds
+    // neither, so the paste stays text.
+    Q_INVOKABLE [[nodiscard]] QStringList pastedFiles() const;
+    // A file the CLI should see as an image rather than read as text.
+    Q_INVOKABLE [[nodiscard]] bool isImage(const QString& path) const;
+    // A local file path for a dropped or picked file URL, or empty.
+    Q_INVOKABLE [[nodiscard]] QString localPath(const QUrl& url) const;
+
+    [[nodiscard]] const QString& model() const { return reader_.status().model; }
+    [[nodiscard]] const QString& effort() const { return reader_.status().effort; }
+    [[nodiscard]] qint64 contextTokens() const { return reader_.status().context_tokens; }
+    [[nodiscard]] qint64 contextWindow() const {
+        return transcript::context_window(reader_.status().model, reader_.status().context_tokens);
+    }
 
   signals:
     void pathChanged();
     void loadingChanged();
     void countChanged();
+    void statusChanged();
 
   private:
     void apply(transcript::ClaudeReader reader, qint64 offset, QByteArray pending);
+    // Lays the thread out again and tells the view only what moved: rows
+    // that stayed are kept, `changed` (an item index) and later are redrawn.
+    void relayout(int changed);
+    // Emits statusChanged when the model, effort or context use moved.
+    void noteStatus();
+    QSet<int> expanded_; // first items of turns whose work is shown
+    transcript::Layout layout_;
     // Conversations read recently stay parsed, so switching back to an agent
     // shows its thread at once and reads only what it wrote since.
     struct Parsed {
@@ -167,7 +250,7 @@ class TranscriptModel final : public QAbstractListModel {
     std::vector<Parsed> kept_;
     QString path_;
     transcript::ClaudeReader reader_;
-    int shown_{}; // rows the view has been told about
+    transcript::Status shown_status_;
     qint64 offset_{};
     QByteArray pending_; // a line the CLI has not finished writing
     bool loading_{};

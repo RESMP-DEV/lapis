@@ -978,6 +978,31 @@ ApplicationWindow {
         keymap.setVisual("all", !visualAll)
         visualFocus()
     }
+    // Each CLI's commands for the visual view's model and effort pickers. A
+    // CLI without an entry shows what it reports but offers no choices.
+    readonly property var visualCommands: ({
+        claude: {
+            model: id => "/model " + id,
+            effort: level => "/effort " + level,
+            efforts: ["low", "medium", "high", "xhigh", "max"]
+        }
+    })
+    function visualModels(agent) {
+        if (!agent || !visualCommands[agent.harnessId])
+            return []
+        const harness = workspace.availableHarnesses().find(h => h.id === agent.harnessId)
+        return harness && harness.models ? harness.models.map(m => ({id: m.id, name: m.name})) : []
+    }
+    function visualEfforts(agent) {
+        const commands = agent ? visualCommands[agent.harnessId] : null
+        return commands ? commands.efforts : []
+    }
+    function visualCommand(kind, value) {
+        const agent = liveTerminal.document
+        const commands = agent ? visualCommands[agent.harnessId] : null
+        if (commands && commands[kind])
+            liveTerminal.submitText(commands[kind](value))
+    }
     // A new agent from this conversation: up to a reply, or just before a
     // prompt with that prompt waiting in its input.
     function forkVisual(record, before, prefill) {
@@ -3625,6 +3650,12 @@ ApplicationWindow {
                         if (typeof nextPrompt !== "undefined" && nextPrompt !== null && liveTerminal.document)
                             nextPrompt.used(liveTerminal.document.sessionId, true, 0, liveTerminal.suggestionKey)
                     }
+                    // The same picker for every CLI; each CLI's own command
+                    // makes the change, typed into its session.
+                    models: window.visualActive ? window.visualModels(liveTerminal.document) : []
+                    efforts: window.visualActive ? window.visualEfforts(liveTerminal.document) : []
+                    onModelChosen: function(id) { window.visualCommand("model", id) }
+                    onEffortChosen: function(level) { window.visualCommand("effort", level) }
                     onDismissed: window.toggleVisual()
                     onForkRequested: function(record) { window.forkVisual(record, false, "") }
                     onEditRequested: function(record, text) { window.forkVisual(record, true, text) }

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQml.Models
+import QtQuick.Dialogs
 
 // The selected agent's conversation as a readable thread: the person's
 // prompts as bubbles, the agent's replies as prose, and its work as quiet
@@ -46,6 +47,40 @@ FocusScope {
     property string waitingReason: ""
     property bool canSend: true
     readonly property alias composer: input
+    // The same controls for every CLI: the models its agent can switch to
+    // ({id, name}), its effort levels, and what it reported last (from the
+    // model). The window turns a choice into that CLI's own command.
+    property var models: []
+    property var efforts: []
+    signal modelChosen(string id)
+    signal effortChosen(string level)
+    // Files to send with the next message, as local paths.
+    property var attachments: []
+    function attach(path) {
+        if (path.length === 0 || attachments.indexOf(path) >= 0)
+            return
+        attachments = attachments.concat([path])
+    }
+    function detach(path) { attachments = attachments.filter(p => p !== path) }
+    // Short model names, as the apps show them: "Opus 5.5", "Fable 5.1".
+    function modelLabel(id) {
+        for (let i = 0; i < models.length; ++i)
+            if (models[i].id === id && models[i].name)
+                return models[i].name
+        const m = /^claude-([a-z]+)-(\d+)(?:-(\d+))?/.exec(id || "")
+        if (m)
+            return m[1].charAt(0).toUpperCase() + m[1].slice(1) + " " + m[2] + (m[3] ? "." + m[3] : "")
+        return id || qsTr("Model")
+    }
+    // An effort level as the Codex app names it: "xhigh" is "Extra High".
+    function effortLabel(level) {
+        return level === "xhigh" ? qsTr("Extra High")
+             : level.length > 0 ? level.charAt(0).toUpperCase() + level.slice(1) : ""
+    }
+    function tokensLabel(n) {
+        return n >= 1000000 ? (n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1) + "M"
+             : n >= 1000 ? Math.round(n / 1000) + "k" : String(n)
+    }
 
     // Escape asks to go back to the terminal.
     signal dismissed()
@@ -193,6 +228,7 @@ FocusScope {
             DelegateChoice { roleValue: "command"; delegate: Entry { block: commandBlock } }
             DelegateChoice { roleValue: "notice"; delegate: Entry { block: noticeBlock } }
             DelegateChoice { roleValue: "divider"; delegate: Entry { block: dividerBlock } }
+            DelegateChoice { roleValue: "work"; delegate: Entry { block: workBlock } }
             DelegateChoice { delegate: Entry { block: otherBlock } }
         }
     }
@@ -214,21 +250,36 @@ FocusScope {
         required property bool answered
         required property bool afterStep
         required property string record
+        required property bool expanded
+        required property bool inWork
+        required property int steps
         property Component block
 
         readonly property int gapAbove: index === 0 ? 0
                                       : afterStep ? 2
+                                      : inWork ? Math.round(root.fontSize * 0.4)
                                       : kind === "prompt" ? root.fontSize * 2
+                                      : kind === "work" ? Math.round(root.fontSize * 0.9)
                                       : kind === "turn" ? 10 : root.fontSize
+        // Opened work sits indented under its "Worked for" row, on a rule.
+        readonly property int indent: inWork ? Math.round(root.fontSize * 0.9) : 0
+        readonly property int column: Math.min(root.columnWidth, row.width - 56)
         width: ListView.view ? ListView.view.width : 0
         height: loader.height + gapAbove
         // A reused row starts closed, whatever the last item opened.
         ListView.onReused: if (loader.item && loader.item.open !== undefined) loader.item.open = false
+        Rectangle {
+            visible: row.inWork
+            x: (row.width - row.column) / 2 + 3
+            width: 1
+            height: row.height
+            color: root.borderColor
+        }
         Loader {
             id: loader
             y: row.gapAbove
-            width: Math.min(root.columnWidth, row.width - 56)
-            x: (row.width - width) / 2
+            width: row.column - row.indent
+            x: (row.width - row.column) / 2 + row.indent
             sourceComponent: row.block
             property var entry: row
         }
@@ -282,6 +333,94 @@ FocusScope {
         onLinkActivated: link => Qt.openUrlExternally(link)
         HoverHandler {
             cursorShape: parent.hoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
+        }
+    }
+
+    // A quiet button on the bar: text that lights on hover, with a tooltip.
+    component BarButton: Rectangle {
+        id: barButton
+        property string label
+        property string tip
+        property int labelSize: root.codeSize
+        signal triggered()
+        implicitWidth: barText.implicitWidth + 16
+        implicitHeight: Math.round(root.fontSize * 1.6)
+        radius: 8
+        color: barMouse.containsMouse ? root.tint(root.textColor, 0.08) : "transparent"
+        Text {
+            id: barText
+            anchors.centerIn: parent
+            text: barButton.label
+            color: barMouse.containsMouse ? root.textColor : root.mutedTextColor
+            font.family: root.sansFamily
+            font.pixelSize: barButton.labelSize
+        }
+        MouseArea {
+            id: barMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: barButton.triggered()
+        }
+        ToolTip.visible: barMouse.containsMouse && tip.length > 0
+        ToolTip.delay: 600
+        ToolTip.text: tip
+    }
+
+    // A menu of choices ({id, label}) with the current one marked.
+    component ChoiceMenu: Menu {
+        id: choiceMenu
+        property var choices: []
+        property string current: ""
+        signal chosen(string id)
+        background: Rectangle {
+            implicitWidth: 200
+            radius: 10
+            color: root.raisedColor
+            border.color: root.borderColor
+        }
+        Instantiator {
+            model: choiceMenu.choices
+            delegate: MenuItem {
+                id: choiceItem
+                required property var modelData
+                text: modelData.label
+                onTriggered: choiceMenu.chosen(modelData.id)
+                contentItem: Text {
+                    text: (choiceItem.modelData.id === choiceMenu.current ? "✓  " : "    ") + choiceItem.text
+                    color: root.textColor
+                    font.family: root.sansFamily
+                    font.pixelSize: root.codeSize
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    radius: 6
+                    color: choiceItem.highlighted ? root.tint(root.textColor, 0.1) : "transparent"
+                }
+            }
+            onObjectAdded: (index, object) => choiceMenu.insertItem(index, object)
+            onObjectRemoved: (index, object) => choiceMenu.removeItem(object)
+        }
+    }
+
+    FileDialog {
+        id: filePicker
+        title: qsTr("Attach files")
+        fileMode: FileDialog.OpenFiles
+        onAccepted: selectedFiles.forEach(url => root.attach(root.model ? root.model.localPath(url) : ""))
+    }
+
+    // Files dropped anywhere on the thread attach to the next message.
+    DropArea {
+        id: dropArea
+        anchors.fill: parent
+        keys: ["text/uri-list"]
+        onDropped: function(drop) {
+            if (!root.model)
+                return
+            drop.urls.forEach(url => root.attach(root.model.localPath(url)))
+            drop.acceptProposedAction()
+            input.forceActiveFocus()
         }
     }
 
@@ -642,6 +781,64 @@ FocusScope {
         }
     }
 
+    // A finished turn's work, folded: "Worked for 3m 12s · 14 steps". Click
+    // to show the thinking and steps between the prompt and the reply; each
+    // step then opens on its own.
+    Component {
+        id: workBlock
+        Item {
+            id: work
+            readonly property var entry: parent ? parent.entry : null
+            height: Math.max(workText.implicitHeight, root.stepSize + 10)
+            MouseArea {
+                id: workHover
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: if (work.entry && root.model) root.model.toggleWork(work.entry.index)
+            }
+            Row {
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 8
+                Text {
+                    id: workText
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: work.entry ? work.entry.title : ""
+                    color: workHover.containsMouse ? root.textColor : root.mutedTextColor
+                    font.family: root.sansFamily
+                    font.pixelSize: root.stepSize
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: work.entry && work.entry.steps > 0
+                    // What the work did, as the Codex app sums it up; a
+                    // turn of only thinking and notes counts its steps.
+                    text: !work.entry ? ""
+                          : work.entry.detail !== "" ? work.entry.detail
+                          : work.entry.steps === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(work.entry.steps)
+                    color: root.tint(root.mutedTextColor, 0.75)
+                    font.family: root.sansFamily
+                    font.pixelSize: root.stepSize - 1
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "›"
+                    rotation: work.entry && work.entry.expanded ? 90 : 0
+                    color: workHover.containsMouse ? root.textColor : root.mutedTextColor
+                    font.pixelSize: root.stepSize + 2
+                    Behavior on rotation { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                }
+            }
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                x: workText.parent.width + 14
+                width: parent.width - x
+                height: 1
+                color: root.borderColor
+            }
+        }
+    }
+
     Component {
         id: turnBlock
         Row {
@@ -730,14 +927,24 @@ FocusScope {
     // the agent, Shift-Return starts a new line, Tab takes lapis's guess.
     property bool filledFromSuggestion: false
     property string notice: ""
+    // Attached files go as @ mentions, which the CLI reads whatever their
+    // type (images are seen as images); quoted when the path has spaces.
+    function message() {
+        const mentions = attachments.map(p => /\s/.test(p) ? "@\"" + p + "\"" : "@" + p)
+        const text = input.text.trim()
+        return mentions.length === 0 ? input.text
+             : text.length === 0 ? mentions.join(" ")
+             : input.text.replace(/\s+$/, "") + "\n\n" + mentions.join(" ")
+    }
     function send() {
-        const text = input.text
+        const text = message()
         if (text.trim().length === 0 || !root.submit)
             return
         if (root.submit(text)) {
             if (root.filledFromSuggestion && text === root.suggestion)
                 root.suggestionSent()
             root.filledFromSuggestion = false
+            root.attachments = []
             input.clear()
             root.following = true
             list.positionViewAtEnd()
@@ -762,15 +969,77 @@ FocusScope {
             width: Math.min(root.columnWidth, parent.width - 56)
             x: (parent.width - width) / 2
             y: 0
-            height: inputScroll.height + toolbar.height + 18
+            height: chips.height + inputScroll.height + toolbar.height + 18
             radius: Math.round(root.fontSize * 0.9)
             color: root.raisedColor
             border.width: 1
-            border.color: input.activeFocus ? root.tint(root.accentColor, 0.55) : root.borderColor
+            border.color: dropArea.containsDrag ? root.accentColor
+                        : input.activeFocus ? root.tint(root.accentColor, 0.55) : root.borderColor
+
+            // Files waiting to be sent: name, a thumbnail for an image, ×.
+            Flow {
+                id: chips
+                x: 12; y: root.attachments.length > 0 ? 10 : 0
+                width: parent.width - 24
+                height: root.attachments.length > 0 ? implicitHeight + 6 : 0
+                spacing: 6
+                Repeater {
+                    model: root.attachments
+                    delegate: Rectangle {
+                        id: chip
+                        required property string modelData
+                        readonly property bool image: root.model ? root.model.isImage(modelData) : false
+                        height: Math.round(root.codeSize * 2.2)
+                        width: chipRow.implicitWidth + 16
+                        radius: 8
+                        color: root.tint(root.textColor, 0.07)
+                        border.color: root.borderColor
+                        Row {
+                            id: chipRow
+                            x: 6
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 6
+                            Image {
+                                visible: chip.image
+                                width: visible ? chip.height - 8 : 0
+                                height: chip.height - 8
+                                anchors.verticalCenter: parent.verticalCenter
+                                source: chip.image ? "file://" + chip.modelData : ""
+                                sourceSize.height: 64
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: chip.modelData.split("/").pop()
+                                width: Math.min(implicitWidth, 220)
+                                elide: Text.ElideMiddle
+                                color: root.textColor
+                                font.family: root.sansFamily
+                                font.pixelSize: root.codeSize
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "×"
+                                color: removeMouse.containsMouse ? root.textColor : root.mutedTextColor
+                                font.pixelSize: root.stepSize
+                                MouseArea {
+                                    id: removeMouse
+                                    anchors.fill: parent
+                                    anchors.margins: -4
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.detach(chip.modelData)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             ScrollView {
                 id: inputScroll
-                x: 14; y: 10
+                x: 14; y: 10 + chips.height
                 width: parent.width - 28
                 height: Math.min(Math.max(input.implicitHeight, root.fontSize * 1.6),
                                  root.fontSize * 1.45 * 8)
@@ -817,6 +1086,17 @@ FocusScope {
                         } else if (event.matches(StandardKey.Copy) && selectedText.length > 0) {
                             root.copy(selectedText)
                             event.accepted = true
+                        } else if (event.matches(StandardKey.Paste) && root.model) {
+                            // Copied files or an image attach; text pastes as text.
+                            const files = root.model.pastedFiles()
+                            if (files.length > 0) {
+                                files.forEach(p => root.attach(p))
+                                event.accepted = true
+                            }
+                        } else if (event.key === Qt.Key_Backspace && text.length === 0
+                                   && root.attachments.length > 0) {
+                            root.detach(root.attachments[root.attachments.length - 1])
+                            event.accepted = true
                         }
                     }
                 }
@@ -830,10 +1110,118 @@ FocusScope {
                 anchors.margins: 8
                 anchors.leftMargin: 14
                 height: sendButton.height
-                Text {
+                // Left: attach, model, effort. Right: context use, Stop, Send.
+                Row {
+                    id: controls
                     anchors.left: parent.left
+                    anchors.leftMargin: -6
                     anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - sendButton.width - stopButton.width - 24
+                    spacing: 2
+                    BarButton {
+                        objectName: "visualAttach"
+                        label: "+"
+                        labelSize: root.stepSize + 4
+                        tip: qsTr("Attach files or photos (or drop or paste them)")
+                        onTriggered: filePicker.open()
+                    }
+                    BarButton {
+                        objectName: "visualModel"
+                        visible: root.model !== null && root.model.model.length > 0
+                        label: root.modelLabel(root.model ? root.model.model : "") + (root.models.length > 0 ? "  ⌄" : "")
+                        tip: root.models.length > 0 ? qsTr("Switch the model") : qsTr("The model this agent answers with")
+                        onTriggered: if (root.models.length > 0) modelMenu.popup(this, 0, -modelMenu.implicitHeight - 6)
+                    }
+                    BarButton {
+                        objectName: "visualEffort"
+                        visible: root.efforts.length > 0 || (root.model !== null && root.model.effort.length > 0)
+                        label: (root.model && root.model.effort.length > 0
+                                ? root.effortLabel(root.model.effort)
+                                : qsTr("Effort")) + (root.efforts.length > 0 ? "  ⌄" : "")
+                        tip: qsTr("How hard the model thinks")
+                        onTriggered: if (root.efforts.length > 0) effortMenu.popup(this, 0, -effortMenu.implicitHeight - 6)
+                    }
+                }
+                ChoiceMenu {
+                    id: modelMenu
+                    choices: root.models.map(m => ({ id: m.id, label: m.name || m.id }))
+                    current: root.model ? root.model.model : ""
+                    onChosen: id => root.modelChosen(id)
+                }
+                ChoiceMenu {
+                    id: effortMenu
+                    choices: root.efforts.map(e => ({ id: e, label: root.effortLabel(e) }))
+                    current: root.model ? root.model.effort : ""
+                    onChosen: id => root.effortChosen(id)
+                }
+                // How full the context window is: a ring and a percentage.
+                Item {
+                    id: contextMeter
+                    objectName: "visualContext"
+                    readonly property real used: root.model && root.model.contextWindow > 0
+                                                 ? Math.min(1, root.model.contextTokens / root.model.contextWindow) : 0
+                    visible: root.model !== null && root.model.contextTokens > 0
+                    anchors.right: stopButton.left
+                    anchors.rightMargin: 10
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: visible ? ring.width + percent.implicitWidth + 6 : 0
+                    height: sendButton.height
+                    Canvas {
+                        id: ring
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.round(root.codeSize * 1.3)
+                        height: width
+                        readonly property real fraction: contextMeter.used
+                        readonly property color track: root.tint(root.textColor, 0.15)
+                        readonly property color fill: contextMeter.used > 0.9 ? root.faultColor
+                                                    : contextMeter.used > 0.75 ? Qt.tint(root.mutedTextColor, root.tint(root.faultColor, 0.5))
+                                                    : root.mutedTextColor
+                        onFractionChanged: requestPaint()
+                        onFillChanged: requestPaint()
+                        onPaint: {
+                            const g = getContext("2d")
+                            g.reset()
+                            const r = width / 2 - 2
+                            g.lineWidth = 2.5
+                            g.strokeStyle = track
+                            g.beginPath(); g.arc(width / 2, height / 2, r, 0, 2 * Math.PI); g.stroke()
+                            g.strokeStyle = fill
+                            g.beginPath()
+                            g.arc(width / 2, height / 2, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * fraction)
+                            g.stroke()
+                        }
+                    }
+                    Text {
+                        id: percent
+                        anchors.left: ring.right
+                        anchors.leftMargin: 6
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: Math.round(contextMeter.used * 100) + "%"
+                        color: root.mutedTextColor
+                        font.family: root.sansFamily
+                        font.pixelSize: root.codeSize
+                    }
+                    MouseArea {
+                        id: contextHover
+                        anchors.fill: parent
+                        hoverEnabled: true
+                    }
+                    ToolTip.visible: contextHover.containsMouse
+                    ToolTip.delay: 300
+                    ToolTip.text: root.model
+                                  // The Codex app's wording.
+                                  ? qsTr("Context window: %1% used (%2% left)\n%3 / %4 tokens used")
+                                    .arg(Math.round(contextMeter.used * 100))
+                                    .arg(100 - Math.round(contextMeter.used * 100))
+                                    .arg(root.tokensLabel(root.model.contextTokens))
+                                    .arg(root.tokensLabel(root.model.contextWindow))
+                                  : ""
+                }
+                Text {
+                    anchors.left: controls.right
+                    anchors.leftMargin: 8
+                    anchors.right: contextMeter.left
+                    anchors.rightMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
                     elide: Text.ElideRight
                     text: root.notice.length > 0 ? root.notice
                         : root.waiting ? (root.waitingReason.length > 0 ? root.waitingReason
@@ -873,7 +1261,8 @@ FocusScope {
                 }
                 Rectangle {
                     id: sendButton
-                    readonly property bool ready: input.text.trim().length > 0 && root.canSend && !root.waiting
+                    readonly property bool ready: (input.text.trim().length > 0 || root.attachments.length > 0)
+                                                  && root.canSend && !root.waiting
                     anchors.right: parent.right
                     width: Math.round(root.fontSize * 1.6)
                     height: width

@@ -180,6 +180,61 @@ void switching_back_is_warm() {
     model.setPath({});
     require(model.rowCount() == 0, "no conversation shows nothing");
 }
+// A finished turn folds to prompt, "Worked for", final reply; opening it
+// shows the work between; a turn still running shows everything.
+void turns_fold() {
+    QTemporaryDir directory;
+    const auto path = directory.filePath(QStringLiteral("t.jsonl"));
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly), "turn fixture opens");
+    file.write(R"({"type":"user","uuid":"p1","timestamp":"2026-11-07T10:00:00.000Z","message":{"content":"Fix it"}})" "\n"
+               R"({"type":"assistant","uuid":"a1","effort":"high","message":{"model":"claude-opus-5-5","usage":{"input_tokens":10,"cache_read_input_tokens":250000,"cache_creation_input_tokens":90,"output_tokens":20},"content":[{"type":"thinking","thinking":"Look"}]}})" "\n"
+               R"({"type":"assistant","uuid":"a2","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"make"}}]}})" "\n"
+               R"({"type":"user","uuid":"r1","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}})" "\n"
+               R"({"type":"assistant","uuid":"a3","message":{"content":[{"type":"text","text":"Fixed."}]}})" "\n"
+               R"({"type":"system","subtype":"turn_duration","durationMs":65000})" "\n"
+               R"({"type":"user","uuid":"p2","message":{"content":"Now test"}})" "\n"
+               R"({"type":"assistant","uuid":"a4","message":{"content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"ctest"}}]}})" "\n");
+    file.flush();
+    TranscriptModel model;
+    model.setPath(path);
+    model.loadNow();
+    const auto kind = [&model](int row) { return model.data(model.index(row), TranscriptModel::KindRole).toString(); };
+    require(model.rowCount() == 5 && kind(0) == QStringLiteral("prompt") && kind(1) == QStringLiteral("work") &&
+                kind(2) == QStringLiteral("reply") && kind(3) == QStringLiteral("prompt") &&
+                kind(4) == QStringLiteral("tool"),
+            "finished turn folds; running turn shows its step");
+    require(model.data(model.index(1), TranscriptModel::TitleRole).toString() == QStringLiteral("Worked for 1m 5s") &&
+                model.data(model.index(1), TranscriptModel::StepsRole).toInt() == 2 &&
+                model.data(model.index(1), TranscriptModel::DetailRole).toString() == QStringLiteral("ran a command"),
+            "work row says how long and what it did");
+    model.toggleWork(1);
+    require(model.rowCount() == 7 && kind(2) == QStringLiteral("thinking") && kind(3) == QStringLiteral("tool") &&
+                kind(4) == QStringLiteral("reply") &&
+                model.data(model.index(3), TranscriptModel::InWorkRole).toBool() &&
+                model.data(model.index(1), TranscriptModel::ExpandedRole).toBool(),
+            "opening shows thinking and steps above the reply");
+    model.toggleWork(1);
+    require(model.rowCount() == 5, "folding hides them again");
+    require(model.model() == QStringLiteral("claude-opus-5-5") && model.effort() == QStringLiteral("high") &&
+                model.contextTokens() == 250120 && model.contextWindow() == 1000000,
+            "status: model, effort, context use and window");
+    // The running turn finishes: it folds too, without a reload.
+    int removed = 0;
+    QObject::connect(&model, &QAbstractItemModel::modelReset, [] { require(false, "no reset on append"); });
+    QObject::connect(&model, &QAbstractItemModel::rowsRemoved, [&removed] { ++removed; });
+    file.write(R"({"type":"user","uuid":"r2","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"pass"}]}})" "\n"
+               R"({"type":"assistant","uuid":"a5","message":{"content":[{"type":"text","text":"All pass."}]}})" "\n"
+               R"({"type":"system","subtype":"turn_duration","durationMs":3000})" "\n");
+    file.flush();
+    model.readMore();
+    require(model.rowCount() == 6 && kind(4) == QStringLiteral("work") && kind(5) == QStringLiteral("reply") &&
+                removed == 1,
+            "a turn that finishes folds in place");
+    require(lapis::desktop::transcript::context_window(QStringLiteral("claude-opus-4-5"), 1000) == 200000 &&
+                lapis::desktop::transcript::context_window(QStringLiteral("claude-opus-4-5[1m]"), 0) == 1000000,
+            "context windows follow the model");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -194,6 +249,7 @@ int main(int argc, char** argv) {
     items_keep_their_record();
     copies_are_clean();
     switching_back_is_warm();
+    turns_fold();
     if (failures == 0)
         std::puts("transcript: all checks passed");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
