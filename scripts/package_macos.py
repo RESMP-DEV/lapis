@@ -121,8 +121,10 @@ NOTICES = {
 }
 # lapis never asks for camera, contacts and the like through Qt.
 UNUSED_PLUGINS = ("permissions",)
-# The headless host (login helper, phone host) draws nothing.
-EXTRA_PLUGINS = ("platforms/libqoffscreen.dylib",)
+# The headless host (login helper, phone host) draws nothing. The visual view
+# draws SVGs through Qt's image plugin, which macdeployqt only copies for apps
+# that link QtSvg themselves.
+EXTRA_PLUGINS = ("platforms/libqoffscreen.dylib", "imageformats/libqsvg.dylib")
 MACHO_MAGIC = {
     b"\xcf\xfa\xed\xfe",
     b"\xce\xfa\xed\xfe",
