@@ -4086,6 +4086,58 @@ void terminalsRunPlainShells() {
     }
 }
 
+// An effort asked for over the control socket reaches the CLI as its own
+// option, after the model; a CLI without one refuses it rather than ignoring it.
+void askedEffortReachesTheCli() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-effort-XXXXXX"));
+    require(directory.isValid(), "effort directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    const auto restore_path = qScopeGuard([&] { qputenv("PATH", path); });
+    QFile script(root.filePath(QStringLiteral("bin/claude")));
+    require(script.open(QIODevice::WriteOnly), "write the stand-in Claude Code");
+    script.write("#!/bin/sh\necho \"claude args: $*\"\nexec sleep 600\n");
+    script.close();
+    require(script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make it executable");
+    const auto project = root.filePath(QStringLiteral("project"));
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    Workspace workspace(WorkspaceMode::live, options);
+    const auto close_owned = qScopeGuard([&] {
+        for (const auto& value : workspace.sessions())
+            if (auto* item = value.value<lapis::desktop::SessionPreview*>())
+                static_cast<void>(workspace.closeSession(item->sessionId()));
+        static_cast<void>(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000));
+    });
+    lapis::desktop::WorkspaceControl control(workspace, false);
+    auto request = createRequest(workspace.activeCategoryId(), QStringLiteral("claude"), project);
+    request.insert(QStringLiteral("model"), QStringLiteral("opus"));
+    request.insert(QStringLiteral("effort"), QStringLiteral("medium"));
+    const auto started = askWorkspace(workspace.storagePath(), request);
+    auto* agent = workspace.session(started.value(QStringLiteral("id")).toString());
+    require(agent != nullptr &&
+                waitFor(
+                    [agent] {
+                        return screenText(agent->snapshot())
+                            .remove(QLatin1Char('\n'))
+                            .contains(QStringLiteral("--model opus --effort medium "
+                                                     "--permission-mode bypassPermissions"));
+                    },
+                    10000),
+            "Claude Code starts with the effort after its model");
+    for (const auto& [harness, effort] :
+         {std::pair{"grok", "medium"}, std::pair{"claude", "extreme"}}) {
+        auto refused =
+            createRequest(workspace.activeCategoryId(), QString::fromLatin1(harness), project);
+        refused.insert(QStringLiteral("effort"), QString::fromLatin1(effort));
+        require(
+            !askWorkspace(workspace.storagePath(), refused).value(QStringLiteral("ok")).toBool(),
+            "an effort the CLI cannot take is refused");
+    }
+    require(workspace.sessions().size() == 1, "a refused effort starts nothing");
+}
+
 // Resuming a past conversation starts its CLI with the resume option, from the
 // window or the phone, and the pair is lapis's to follow on a later restart.
 void resumingAConversationStartsItsCli() {
@@ -7038,6 +7090,7 @@ int main(int argc, char** argv) {
             } else if (selected == QStringLiteral("launch-policy")) {
                 modelessAgentsGetTheDefaultMode();
                 resumingAConversationStartsItsCli();
+                askedEffortReachesTheCli();
             } else if (selected == QStringLiteral("updater")) {
                 updaterLifecycle();
                 updaterOutputIsDrainedWithABoundedTail();
@@ -7140,6 +7193,7 @@ int main(int argc, char** argv) {
         startupAndManualUpdatesShareOneInstaller();
         skippedClaudeUpdateReportsTheCurrentOperation();
         resumingAConversationStartsItsCli();
+        askedEffortReachesTheCli();
         terminalsRunPlainShells();
         wheelReachesAFullScreenProgram();
         ompGetsItsResizeOverlay();

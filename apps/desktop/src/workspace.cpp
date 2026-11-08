@@ -269,6 +269,19 @@ QStringList modeArguments(const QString& harness, const QString& mode) {
         }
     return {};
 }
+// A reasoning effort as the CLI takes it; empty for one it cannot take.
+QStringList effortArguments(const QString& harness, const QString& effort) {
+    static const QStringList levels{QStringLiteral("low"), QStringLiteral("medium"),
+                                    QStringLiteral("high"), QStringLiteral("xhigh"),
+                                    QStringLiteral("max")};
+    if (!levels.contains(effort))
+        return {};
+    if (harness == QLatin1String("claude"))
+        return {QStringLiteral("--effort"), effort};
+    if (harness == QLatin1String("codex") && effort != QLatin1String("max"))
+        return {QStringLiteral("-c"), QStringLiteral("model_reasoning_effort=") + effort};
+    return {};
+}
 // Additional accepted spellings beyond the option tokens in mode_flags.
 constexpr std::array mode_aliases{
     std::pair{"claude", "--dangerously-skip-permissions"},
@@ -1853,16 +1866,19 @@ std::optional<Workspace::ResumeLaunch> Workspace::agentLaunch(const AgentRequest
         return refuse(QStringLiteral("This agent cannot take that model."));
     if (!request.mode.isEmpty() && modeArguments(request.harness, request.mode).isEmpty())
         return refuse(QStringLiteral("This agent has no such mode."));
+    if (!request.effort.isEmpty() && effortArguments(request.harness, request.effort).isEmpty())
+        return refuse(QStringLiteral("This agent cannot take that effort."));
     if (!request.resume.isEmpty() &&
         (!validConversation(request.resume) || harness->resumeOption.isEmpty()))
         return refuse(QStringLiteral("This agent cannot resume that conversation."));
-    // The user's configured arguments, this agent's model and mode, then the
-    // conversation to resume.
+    // The user's configured arguments, this agent's model, effort and mode,
+    // then the conversation to resume.
     const auto approval =
         launch_mode(request, harness_arguments_.value(request.harness), agent_defaults_.mode);
     auto arguments = harness->defaultArguments() + harness_arguments_.value(request.harness);
-    auto generated =
-        harness->modelArguments(request.model) + modeArguments(request.harness, approval);
+    auto generated = harness->modelArguments(request.model) +
+                     effortArguments(request.harness, request.effort) +
+                     modeArguments(request.harness, approval);
     if (!request.resume.isEmpty())
         generated += QStringList{harness->resumeOption, request.resume};
     const auto literal = arguments.indexOf(QStringLiteral("--"));

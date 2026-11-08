@@ -2732,7 +2732,7 @@ class Handler(BaseHTTPRequestHandler):
             require(title == "" or valid_name(title), "Invalid title")
             if title:
                 request["title"] = title
-            for field in ("model", "mode", "resume"):
+            for field in ("model", "mode", "effort", "resume"):
                 value = body.get(field, "")
                 require(
                     isinstance(value, str) and len(value) <= 128, f"Invalid {field}"

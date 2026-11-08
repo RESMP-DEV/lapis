@@ -986,12 +986,21 @@ class StartAgentTests(unittest.TestCase):
                     "machine": "devbox",
                     "model": "gpt-6-sol",
                     "mode": "full",
+                    "effort": "medium",
                 },
             )
             self.assertEqual(status, 200)
             self.assertEqual(
-                {k: desktop.requests[-1][k] for k in ("machine", "model", "mode")},
-                {"machine": "devbox", "model": "gpt-6-sol", "mode": "full"},
+                {
+                    k: desktop.requests[-1][k]
+                    for k in ("machine", "model", "mode", "effort")
+                },
+                {
+                    "machine": "devbox",
+                    "model": "gpt-6-sol",
+                    "mode": "full",
+                    "effort": "medium",
+                },
             )
 
     def test_categories_and_closing_go_through_the_mac(self):
