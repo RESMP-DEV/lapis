@@ -71,6 +71,19 @@ QT_MODULES = {
     "qtbase": "5b2e00eccaf5a4d8c14134ffa0ea8dfd0a35ae1ffc7f8d87fa4305a1ed23cf22",
     "qtshadertools": "805046b8b7757665586890b375940047e874ae3ab00adb6d3f2b38fc6b200b1c",
     "qtdeclarative": "215b7b70517e380123eabc6b92243f3c47b6f016a91d126057dbe53551c6b430",
+    # The visual view shows SVG and plays audio and video in the thread.
+    "qtsvg": "d594337feca84c26fb67fe87b85e6a5c12fda404b611d905f9d138210c311876",
+    "qtmultimedia": "967b5e02ec6b793cdb360622cd6e703132836af983208d678dae4b50f109cd9f",
+}
+# Shipped modules whose SBOM the notices read (qtshadertools is a build tool).
+QT_NOTICE_MODULES = ("qtbase", "qtdeclarative", "qtsvg", "qtmultimedia")
+QTMULTIMEDIA_FEATURES = {
+    # Playback goes through the system's AVFoundation, so no FFmpeg (and
+    # none of Homebrew's GPL build of it) is linked or carried.
+    "ffmpeg": "OFF",
+    "spatialaudio": "OFF",
+    "spatialaudio_quick3d": "OFF",
+    "gstreamer": "OFF",
 }
 VULKAN_HEADERS = Path("/opt/homebrew/opt/vulkan-headers/include")
 # The app carries this MoltenVK (Apache-2.0, system frameworks only) as its
@@ -387,6 +400,10 @@ def command_qt(_arguments):
         QTDECLARATIVE_FEATURES,
         after_base,
     )
+    build_module("qtsvg", sources["qtsvg"], extra=after_base)
+    build_module(
+        "qtmultimedia", sources["qtmultimedia"], QTMULTIMEDIA_FEATURES, after_base
+    )
     print(f"Qt {QT_VERSION} with Vulkan is in {QT_PREFIX}", flush=True)
 
 
@@ -682,7 +699,7 @@ def license_ids(expression):
 def qt_notices():
     """Qt's own license, then every component its SBOM says the build holds."""
     modules, components = [], {}
-    for module in ("qtbase", "qtdeclarative"):
+    for module in QT_NOTICE_MODULES:
         for package in spdx_packages(
             QT_PREFIX / "sbom" / f"{module}-{QT_VERSION}.spdx"
         ):
@@ -741,7 +758,7 @@ def qt_notices():
         text = next(
             (
                 path.read_text(errors="replace")
-                for module in ("qtbase", "qtdeclarative")
+                for module in QT_NOTICE_MODULES
                 if (
                     path := SOURCES
                     / f"{module}-everywhere-src-{QT_VERSION}"
