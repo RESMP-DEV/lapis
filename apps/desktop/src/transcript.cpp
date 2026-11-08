@@ -83,6 +83,24 @@ QString without_escapes(QString text) {
     return text.remove(escapes);
 }
 
+// The API name for a model as /model reports it: "Opus 5.5 (1M context)"
+// is "claude-opus-5-5[1m]"; an API name stays as it is.
+QString model_id(QString shown) {
+    shown = without_escapes(shown).remove(QLatin1Char('`')).trimmed();
+    if (shown.startsWith(QLatin1String("claude-")))
+        return shown.section(QLatin1Char(' '), 0, 0);
+    static const QRegularExpression name(QStringLiteral(R"(^([A-Za-z]+) (\d+)(?:\.(\d+))?)"));
+    const auto match = name.match(shown);
+    if (!match.hasMatch())
+        return {};
+    auto id = QStringLiteral("claude-%1-%2").arg(match.captured(1).toLower(), match.captured(2));
+    if (match.hasCaptured(3))
+        id += QLatin1Char('-') + match.captured(3);
+    if (shown.contains(QLatin1String("1M context")))
+        id += QLatin1String("[1m]");
+    return id;
+}
+
 // The text between <tag> and </tag>, or empty.
 QString tagged(const QString& text, QStringView tag) {
     const auto open = QStringLiteral("<%1>").arg(tag);
@@ -550,6 +568,9 @@ int ClaudeReader::add(const QByteArray& line) {
         const auto subtype = record.value(QLatin1String("subtype")).toString();
         const auto content = record.value(QLatin1String("content")).toString();
         if (subtype == QLatin1String("compact_boundary")) {
+            // The context is now the summary; the size before no longer applies.
+            status_.context_tokens = static_cast<qint64>(
+                record.value(QLatin1String("compactMetadata")).toObject().value(QLatin1String("postTokens")).toDouble());
             push(make(Kind::divider, QStringLiteral("Conversation compacted")));
         } else if (subtype == QLatin1String("turn_duration")) {
             const auto ms = static_cast<qint64>(record.value(QLatin1String("durationMs")).toDouble());
@@ -578,6 +599,20 @@ int ClaudeReader::add(const QByteArray& line) {
     const auto thought_ms = static_cast<qint64>(record.value(QLatin1String("thinkingDurationMs")).toDouble());
 
     const auto user_text = [&](const QString& raw) {
+        if (raw.startsWith(QLatin1String("<local-command-stdout>"))) {
+            // /model and /effort take effect now, before the next answer
+            // reports them.
+            const auto out = without_escapes(tagged(raw, u"local-command-stdout")).section(QLatin1Char('\n'), 0, 0);
+            static const QRegularExpression model(QStringLiteral(R"(^Set model to (.+?)(?: and saved| for this session|$))"));
+            static const QRegularExpression effort(QStringLiteral(R"(^Set effort level to ([a-z]+))"));
+            if (const auto set = model.match(out); set.hasMatch()) {
+                if (const auto id = model_id(set.captured(1)); !id.isEmpty())
+                    status_.model = id;
+            } else if (const auto level = effort.match(out); level.hasMatch()) {
+                status_.effort = level.captured(1);
+            }
+            return;
+        }
         if (meta || raw.startsWith(QLatin1String("<local-command-")))
             return;
         if (raw.startsWith(QLatin1String("<task-notification>"))) {

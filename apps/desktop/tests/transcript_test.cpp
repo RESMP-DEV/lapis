@@ -85,6 +85,31 @@ void result_reports_changed_card() {
     require(reader.add(kConversation[0]) == -1, "bookkeeping changes nothing");
 }
 
+// The bar's numbers follow what changed them, not just the next answer:
+// compaction resets the context to the summary, /model and /effort apply now.
+void status_follows_commands() {
+    ClaudeReader reader;
+    (void)reader.add(
+        R"({"type":"assistant","effort":"high","message":{"model":"claude-opus-5-5","usage":{"input_tokens":1,"cache_read_input_tokens":380000},"content":[{"type":"text","text":"hi"}]}})");
+    require(reader.status().context_tokens == 380001, "context from the answer");
+    (void)reader.add(
+        R"({"type":"system","subtype":"compact_boundary","compactMetadata":{"preTokens":381210,"postTokens":15513}})");
+    require(reader.status().context_tokens == 15513, "compaction leaves the summary's size");
+    (void)reader.add(
+        R"({"type":"user","message":{"content":"<local-command-stdout>Set model to \u001b[1mFable 5.1\u001b[22m and saved as your default for new sessions</local-command-stdout>"}})");
+    require(reader.status().model == "claude-fable-5-1", "a /model change applies at once");
+    (void)reader.add(
+        R"({"type":"user","message":{"content":"<local-command-stdout>Set model to `Opus 5.5 (1M context) (default)` and saved as your default</local-command-stdout>"}})");
+    require(reader.status().model == "claude-opus-5-5[1m]", "a display name with its window");
+    (void)reader.add(
+        R"({"type":"user","message":{"content":"<local-command-stdout>Kept model as `Opus 5.5`</local-command-stdout>"}})");
+    require(reader.status().model == "claude-opus-5-5[1m]", "a kept model changes nothing");
+    (void)reader.add(
+        R"({"type":"user","message":{"content":"<local-command-stdout>Set effort level to xhigh (this session only): Deeper</local-command-stdout>"}})");
+    require(reader.status().effort == "xhigh", "an /effort change applies at once");
+    require(reader.items().size() == 2, "command output adds no items");
+}
+
 void model_follows_file() {
     QTemporaryDir dir;
     const auto path = dir.filePath("s.jsonl");
@@ -359,6 +384,7 @@ int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
     reader_folds_records();
     result_reports_changed_card();
+    status_follows_commands();
     model_follows_file();
     reply_splits_at_code();
     items_keep_their_record();
