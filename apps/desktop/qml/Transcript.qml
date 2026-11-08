@@ -46,6 +46,72 @@ FocusScope {
     property bool waiting: false        // a request waits in the terminal
     property string waitingReason: ""
     property bool canSend: true
+    // Return sends; off by default, so Return adds a line and Command-Return
+    // sends, and a stray Return never sends half a thought.
+    property bool sendOnReturn: false
+
+    // The bar's line editing, as the terminal does it on a Mac: Command
+    // moves or deletes to the line's start or end (Up/Down: the whole text),
+    // Option by word, and Control-A/E/K/U/W as the shells' emacs keys. Shift
+    // extends the selection. Returns whether the key was handled.
+    function wordChar(c) { return /\w/.test(c) || c.charCodeAt(0) > 127 }
+    function wordBack(text, at) {
+        while (at > 0 && !wordChar(text[at - 1])) --at
+        while (at > 0 && wordChar(text[at - 1])) --at
+        return at
+    }
+    function wordForward(text, at) {
+        while (at < text.length && !wordChar(text[at])) ++at
+        while (at < text.length && wordChar(text[at])) ++at
+        return at
+    }
+    function lineStart(text, at) { return text.lastIndexOf("\n", at - 1) + 1 }
+    function lineEnd(text, at) { const end = text.indexOf("\n", at); return end < 0 ? text.length : end }
+    function editKey(field, key, mods) {
+        const text = field.text
+        const at = field.cursorPosition
+        const command = (mods & ~Qt.ShiftModifier) === Qt.MetaModifier
+        const option = (mods & ~Qt.ShiftModifier) === Qt.AltModifier
+        const control = mods === Qt.ControlModifier
+        const shift = (mods & Qt.ShiftModifier) !== 0
+        let target = -1
+        if (command && key === Qt.Key_Left) target = lineStart(text, at)
+        else if (command && key === Qt.Key_Right) target = lineEnd(text, at)
+        else if (command && key === Qt.Key_Up) target = 0
+        else if (command && key === Qt.Key_Down) target = text.length
+        else if (option && key === Qt.Key_Left) target = wordBack(text, at)
+        else if (option && key === Qt.Key_Right) target = wordForward(text, at)
+        else if (control && key === Qt.Key_A) target = lineStart(text, at)
+        else if (control && key === Qt.Key_E) target = lineEnd(text, at)
+        if (target >= 0) {
+            if (shift)
+                field.moveCursorSelection(target, TextEdit.SelectCharacters)
+            else
+                field.cursorPosition = target
+            return true
+        }
+        // Deleting: a selection goes whole; otherwise the span the key names.
+        let from = -1, to = -1
+        if (command && !shift && key === Qt.Key_Backspace) { from = lineStart(text, at); to = at }
+        else if (command && !shift && key === Qt.Key_Delete) { from = at; to = lineEnd(text, at) }
+        else if (option && !shift && key === Qt.Key_Backspace) { from = wordBack(text, at); to = at }
+        else if (option && !shift && key === Qt.Key_Delete) { from = at; to = wordForward(text, at) }
+        else if (control && key === Qt.Key_U) { from = lineStart(text, at); to = at }
+        else if (control && key === Qt.Key_K) { from = at; to = lineEnd(text, at) }
+        else if (control && key === Qt.Key_W) { from = wordBack(text, at); to = at }
+        else return false
+        if (field.selectedText.length > 0 && (command || option)) {
+            field.remove(field.selectionStart, field.selectionEnd)
+        } else if (to > from) {
+            field.remove(from, to)
+        } else if (to === from && from === at && (command || control)) {
+            // At a line's start (or end), Command-Backspace (or -Delete)
+            // joins it with the line before (or after), as on macOS.
+            if (key === Qt.Key_Backspace || key === Qt.Key_U) { if (at > 0) field.remove(at - 1, at) }
+            else if (at < text.length) field.remove(at, at + 1)
+        }
+        return true
+    }
     readonly property alias composer: input
     // The same controls for every CLI: the models its agent can switch to
     // ({id, name}), its effort levels, and what it reported last (from the
@@ -337,23 +403,69 @@ FocusScope {
     }
 
     // A quiet button on the bar: text that lights on hover, with a tooltip.
+    // A drawn chevron, centered on its box rather than on a font's baseline.
+    // It points right; `turned` rotates it a quarter turn clockwise (down)
+    // and `flipped` half a turn more, with a short motion between.
+    component Chevron: Canvas {
+        id: chevronShape
+        property color color: root.mutedTextColor
+        property bool turned: false
+        property bool flipped: false
+        implicitWidth: Math.round(root.codeSize * 0.75)
+        implicitHeight: implicitWidth
+        rotation: (turned ? 90 : 0) + (flipped ? 180 : 0)
+        Behavior on rotation { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+        onColorChanged: requestPaint()
+        onWidthChanged: requestPaint()
+        onPaint: {
+            const g = getContext("2d")
+            g.reset()
+            const s = Math.min(width, height)
+            g.strokeStyle = color
+            g.lineWidth = Math.max(1.4, s / 7)
+            g.lineCap = "round"
+            g.lineJoin = "round"
+            g.beginPath()
+            g.moveTo(width / 2 - s * 0.15, height / 2 - s * 0.3)
+            g.lineTo(width / 2 + s * 0.15, height / 2)
+            g.lineTo(width / 2 - s * 0.15, height / 2 + s * 0.3)
+            g.stroke()
+        }
+    }
+
     component BarButton: Rectangle {
         id: barButton
         property string label
         property string tip
         property int labelSize: root.codeSize
+        // A menu button: a chevron after the label, pointing up while its
+        // menu is open (menus here open upward).
+        property bool menu: false
+        property bool menuOpen: false
         signal triggered()
-        implicitWidth: barText.implicitWidth + 16
+        implicitWidth: barRow.implicitWidth + 16
         implicitHeight: Math.round(root.fontSize * 1.6)
         radius: 8
-        color: barMouse.containsMouse ? root.tint(root.textColor, 0.08) : "transparent"
-        Text {
-            id: barText
+        color: barMouse.containsMouse || menuOpen ? root.tint(root.textColor, 0.08) : "transparent"
+        Row {
+            id: barRow
             anchors.centerIn: parent
-            text: barButton.label
-            color: barMouse.containsMouse ? root.textColor : root.mutedTextColor
-            font.family: root.sansFamily
-            font.pixelSize: barButton.labelSize
+            spacing: Math.round(root.codeSize * 0.35)
+            Text {
+                id: barText
+                anchors.verticalCenter: parent.verticalCenter
+                text: barButton.label
+                color: barMouse.containsMouse || barButton.menuOpen ? root.textColor : root.mutedTextColor
+                font.family: root.sansFamily
+                font.pixelSize: barButton.labelSize
+            }
+            Chevron {
+                visible: barButton.menu
+                anchors.verticalCenter: parent.verticalCenter
+                color: barText.color
+                turned: true
+                flipped: barButton.menuOpen
+            }
         }
         MouseArea {
             id: barMouse
@@ -686,13 +798,11 @@ FocusScope {
                         Text { text: step.entry ? "+" + step.entry.added : ""; color: root.addedColor; font.pixelSize: root.codeSize; font.family: root.monoFamily; visible: step.entry && step.entry.added > 0 }
                         Text { text: step.entry ? "−" + step.entry.removed : ""; color: root.removedColor; font.pixelSize: root.codeSize; font.family: root.monoFamily; visible: step.entry && step.entry.removed > 0 }
                     }
-                    Text {
+                    Chevron {
                         id: chevron
                         visible: step.expandable && (hover.containsMouse || step.open)
                         anchors.verticalCenter: parent.verticalCenter
-                        text: step.open ? "⌄" : "›"
-                        color: root.mutedTextColor
-                        font.pixelSize: root.stepSize
+                        turned: step.open
                     }
                 }
             }
@@ -820,13 +930,10 @@ FocusScope {
                     font.family: root.sansFamily
                     font.pixelSize: root.stepSize - 1
                 }
-                Text {
+                Chevron {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "›"
-                    rotation: work.entry && work.entry.expanded ? 90 : 0
+                    turned: work.entry !== null && work.entry.expanded
                     color: workHover.containsMouse ? root.textColor : root.mutedTextColor
-                    font.pixelSize: root.stepSize + 2
-                    Behavior on rotation { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
                 }
             }
             Rectangle {
@@ -1066,10 +1173,22 @@ FocusScope {
                                           : root.mutedTextColor
                     onTextChanged: if (text.length === 0) root.filledFromSuggestion = false
                     Keys.onPressed: function(event) {
-                        const plain = !(event.modifiers & (Qt.ShiftModifier | Qt.ControlModifier
-                                                           | Qt.MetaModifier | Qt.AltModifier))
-                        if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && plain) {
+                        // AppKit marks arrows as keypad keys; lapis keeps
+                        // Command as Meta and Control as Control.
+                        const mods = event.modifiers & ~Qt.KeypadModifier
+                        const plain = mods === Qt.NoModifier
+                        const isReturn = event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                        if (isReturn && (mods === Qt.MetaModifier || (plain && root.sendOnReturn))) {
                             root.send()
+                            event.accepted = true
+                        } else if (isReturn && mods === Qt.ShiftModifier) {
+                            // A plain newline: Qt's own Shift-Return puts a
+                            // line separator (U+2028) that CLIs read oddly.
+                            if (selectedText.length > 0)
+                                remove(selectionStart, selectionEnd)
+                            insert(cursorPosition, "\n")
+                            event.accepted = true
+                        } else if (root.editKey(input, event.key, mods)) {
                             event.accepted = true
                         } else if (event.key === Qt.Key_Tab && plain) {
                             if (root.suggestion.length > 0 && text.length === 0) {
@@ -1127,7 +1246,9 @@ FocusScope {
                     BarButton {
                         objectName: "visualModel"
                         visible: root.model !== null && root.model.model.length > 0
-                        label: root.modelLabel(root.model ? root.model.model : "") + (root.models.length > 0 ? "  ⌄" : "")
+                        label: root.modelLabel(root.model ? root.model.model : "")
+                        menu: root.models.length > 0
+                        menuOpen: modelMenu.opened
                         tip: root.models.length > 0 ? qsTr("Switch the model") : qsTr("The model this agent answers with")
                         onTriggered: if (root.models.length > 0) modelMenu.popup(this, 0, -modelMenu.implicitHeight - 6)
                     }
@@ -1136,7 +1257,9 @@ FocusScope {
                         visible: root.efforts.length > 0 || (root.model !== null && root.model.effort.length > 0)
                         label: (root.model && root.model.effort.length > 0
                                 ? root.effortLabel(root.model.effort)
-                                : qsTr("Effort")) + (root.efforts.length > 0 ? "  ⌄" : "")
+                                : qsTr("Effort"))
+                        menu: root.efforts.length > 0
+                        menuOpen: effortMenu.opened
                         tip: qsTr("How hard the model thinks")
                         onTriggered: if (root.efforts.length > 0) effortMenu.popup(this, 0, -effortMenu.implicitHeight - 6)
                     }
@@ -1291,7 +1414,9 @@ FocusScope {
             anchors.top: composerBox.bottom
             anchors.topMargin: 6
             anchors.horizontalCenter: composerBox.horizontalCenter
-            text: qsTr("Return to send · Shift-Return for a new line · Esc for the terminal")
+            text: root.sendOnReturn
+                  ? qsTr("Return to send · Shift-Return for a new line · Esc for the terminal")
+                  : qsTr("⌘Return to send · Return for a new line · Esc for the terminal")
             color: root.tint(root.mutedTextColor, 0.8)
             font.family: root.sansFamily
             font.pixelSize: Math.max(11, root.codeSize - 3)

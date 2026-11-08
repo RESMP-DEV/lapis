@@ -76,8 +76,13 @@ choice wins over **All agents** until lapis restarts or **All agents** is
 switched again. Both are also in Commands. The terminal keeps running underneath
 but takes no input while covered; Escape brings it back.
 
-The bar at the bottom types to the agent: Return sends, Shift-Return starts a
-new line, and **Stop** (while it works) interrupts it, as Escape does in the
+The bar at the bottom types to the agent: Command-Return sends and Return starts
+a new line, so a stray Return never sends half a thought (**Return sends** in
+Appearance swaps them). It edits as the terminal does on a Mac: Command-Left and
+-Right go to the line's start and end, Option-Left and -Right move by word,
+Command-Backspace and Option-Backspace delete to the line start and the word
+start, Control-A, E, K, U and W work as in the shell, and Shift extends the
+selection. **Stop** (while it works) interrupts it, as Escape does in the
 terminal. lapis's guess at your next prompt shows in the empty bar; Tab puts it
 in the bar to edit, and Tab again sends it. Tab with nothing typed or offered
 moves to the next agent that needs you, as in the terminal. While the agent is

@@ -333,6 +333,9 @@ class KeyMap final : public QObject {
     QString visual_code_font_{QStringLiteral("system")};
     int visual_size_{};
     bool visual_all_{};
+    // Return sends from the visual view's bar; off by default, so a stray
+    // Return adds a line and Command-Return sends.
+    bool visual_send_on_return_{};
     QStringList usage_meter_;
     QStringList usage_machines_;
     AgentDefaults agent_defaults_;

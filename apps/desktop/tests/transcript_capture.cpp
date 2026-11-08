@@ -14,6 +14,8 @@
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QImage>
+#include <QJSValue>
+#include <QKeyEvent>
 #include <QPainter>
 #include <QQmlEngine>
 #include <QQuickItem>
@@ -49,6 +51,78 @@ QImage shot(QQuickView& view, QObject* list, int index) {
     return view.grabWindow();
 }
 
+// The bar edits as the terminal does on a Mac (lapis keeps Command as Meta),
+// Return adds a line by default and Command-Return sends. Arrows carry the
+// keypad flag, as AppKit sends them.
+int check_keys(QQuickView& view, QQuickItem* root) {
+    auto* input = root->findChild<QQuickItem*>(QStringLiteral("visualComposer"));
+    if (input == nullptr) {
+        std::fputs("keys: no composer\n", stderr);
+        return 1;
+    }
+    QJSValue sent = view.engine()->evaluate(QStringLiteral("(function(t) { return true })"));
+    root->setProperty("submit", QVariant::fromValue(sent));
+    input->forceActiveFocus();
+    settle();
+    int failures = 0;
+    const auto key = [&view](int code, Qt::KeyboardModifiers mods, const QString& text = {}) {
+        const bool arrow = code >= Qt::Key_Left && code <= Qt::Key_Down;
+        if (arrow)
+            mods |= Qt::KeypadModifier;
+        QKeyEvent press(QEvent::KeyPress, code, mods, text);
+        QKeyEvent release(QEvent::KeyRelease, code, mods, text);
+        QCoreApplication::sendEvent(&view, &press);
+        QCoreApplication::sendEvent(&view, &release);
+        settle();
+    };
+    const auto expect = [&](const char* what, const QString& text, int cursor) {
+        const auto got = input->property("text").toString();
+        const int at = input->property("cursorPosition").toInt();
+        if (got != text || (cursor >= 0 && at != cursor)) {
+            std::fprintf(stderr, "keys FAIL %s: got \"%s\" at %d\n", what,
+                         qPrintable(QString(got).replace(QLatin1Char('\n'), QStringLiteral("\\n"))), at);
+            ++failures;
+        }
+    };
+    const auto set = [&](const QString& text) {
+        input->setProperty("text", text);
+        input->setProperty("cursorPosition", static_cast<int>(text.size()));
+    };
+    set(QStringLiteral("alpha beta.gamma\nsecond line"));
+    key(Qt::Key_Left, Qt::MetaModifier);
+    expect("Command-Left goes to the line start", QStringLiteral("alpha beta.gamma\nsecond line"), 17);
+    key(Qt::Key_Right, Qt::AltModifier);
+    expect("Option-Right ends the word", QStringLiteral("alpha beta.gamma\nsecond line"), 23);
+    key(Qt::Key_Backspace, Qt::AltModifier);
+    expect("Option-Backspace deletes the word", QStringLiteral("alpha beta.gamma\n line"), 17);
+    key(Qt::Key_Backspace, Qt::MetaModifier);
+    expect("Command-Backspace at a line start joins it", QStringLiteral("alpha beta.gamma line"), 16);
+    key(Qt::Key_Left, Qt::AltModifier);
+    expect("Option-Left stops at the word start", QStringLiteral("alpha beta.gamma line"), 11);
+    key(Qt::Key_Delete, Qt::MetaModifier);
+    expect("Command-Delete deletes to the line end", QStringLiteral("alpha beta."), 11);
+    key(Qt::Key_Left, Qt::MetaModifier | Qt::ShiftModifier);
+    if (input->property("selectedText").toString() != QStringLiteral("alpha beta.")) {
+        std::fputs("keys FAIL Shift-Command-Left selects to the line start\n", stderr);
+        ++failures;
+    }
+    key(Qt::Key_Right, Qt::MetaModifier);
+    key(Qt::Key_W, Qt::ControlModifier);
+    expect("Control-W deletes the word", QStringLiteral("alpha "), 6);
+    key(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+    expect("Return adds a line by default", QStringLiteral("alpha \n"), 7);
+    key(Qt::Key_Return, Qt::ShiftModifier, QStringLiteral("\r"));
+    expect("Shift-Return adds a plain newline", QStringLiteral("alpha \n\n"), 8);
+    key(Qt::Key_Return, Qt::MetaModifier, QStringLiteral("\r"));
+    expect("Command-Return sends", QString(), -1);
+    root->setProperty("sendOnReturn", true);
+    set(QStringLiteral("hi"));
+    key(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+    expect("Return sends when chosen", QString(), -1);
+    std::puts(failures == 0 ? "keys: all checks passed" : "keys: failed");
+    return failures == 0 ? 0 : 1;
+}
+
 double percentile(std::vector<double> values, double p) {
     if (values.empty())
         return 0;
@@ -77,8 +151,10 @@ int main(int argc, char** argv) {
     parser.addOption({"suggestion", "A Tab suggestion shown in the empty bar", "text", ""});
     parser.addOption({"bench", "Scroll the whole conversation and report frame times"});
     parser.addOption({"step", "Pixels scrolled per benchmark step", "px", "240"});
+    parser.addOption({"keys", "Check the bar's Mac line editing and send keys, then exit"});
     parser.process(app);
-    if (!parser.isSet("jsonl") || !parser.isSet("out")) {
+    const bool keys = parser.isSet("keys");
+    if (!keys && (!parser.isSet("jsonl") || !parser.isSet("out"))) {
         std::fputs("--jsonl and --out are required\n", stderr);
         return 2;
     }
@@ -106,6 +182,12 @@ int main(int argc, char** argv) {
     root->setProperty("codeFontName", parser.value("code-font"));
     root->setProperty("terminalBackground", QColor(parser.value("terminal-background")));
     root->setProperty("suggestion", parser.value("suggestion"));
+    // The choices the app passes for a Claude Code agent, so the menus'
+    // chevrons draw.
+    root->setProperty("models", QVariantList{QVariantMap{{QStringLiteral("id"), QStringLiteral("claude-opus-5-5")},
+                                                         {QStringLiteral("name"), QStringLiteral("Opus 5.5")}}});
+    root->setProperty("efforts", QStringList{QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high"),
+                                             QStringLiteral("xhigh"), QStringLiteral("max")});
     // The offscreen platform reports generic names ("Sans Serif") whose
     // fallback spaces digits apart; name the Mac's interface fonts instead,
     // as the real window's platform resolves them.
@@ -127,6 +209,8 @@ int main(int argc, char** argv) {
     auto* list = root->property("list").value<QObject*>();
     view.show(); // offscreen: nothing reaches the screen
     settle();
+    if (keys)
+        return check_keys(view, root);
 
     // Panels: the latest items, the latest edit, the latest failed tool.
     int edit = -1, failure = -1;

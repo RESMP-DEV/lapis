@@ -2017,7 +2017,9 @@ bool TerminalSurface::pasteText(const QString& text) {
     return request != 0;
 }
 bool TerminalSurface::submitText(const QString& text) {
-    if (!document_ || text.trimmed().isEmpty() || !document_->live() || !document_->inputReady() ||
+    // Reachable, not inputReady: a history page showing under the visual view
+    // is left for live below rather than refusing the message.
+    if (!document_ || text.trimmed().isEmpty() || !document_->live() || !document_->reachable() ||
         document_->attentionPending() || pasting_ || window() == nullptr || !window()->isActive())
         return false;
     const QByteArray bytes = text.toUtf8();

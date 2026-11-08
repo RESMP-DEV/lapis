@@ -622,6 +622,15 @@ Dialog {
                     }
                 }
 
+                SwitchRow {
+                    label: qsTr("Return sends")
+                    detail: settings.visual.sendOnReturn === true
+                            ? qsTr("Return sends from the visual view's bar; Shift-Return adds a line.")
+                            : qsTr("Return adds a line and ⌘Return sends, so a stray Return never sends.")
+                    on: settings.visual.sendOnReturn === true
+                    onToggled: function(on) { settings.visualChosen("sendOnReturn", on) }
+                }
+
                 Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: 1

@@ -3641,7 +3641,8 @@ ApplicationWindow {
                     working: liveTerminal.document !== null && liveTerminal.document.statusKind === "working"
                     waiting: liveTerminal.document !== null && liveTerminal.document.attentionPending
                     waitingReason: liveTerminal.document !== null ? liveTerminal.document.attentionReason : ""
-                    canSend: liveTerminal.document !== null && liveTerminal.document.inputReady
+                    canSend: liveTerminal.document !== null && liveTerminal.document.reachable
+                    sendOnReturn: window.visualSettings.sendOnReturn === true
                     onSuggestionFilled: {
                         if (typeof nextPrompt !== "undefined" && nextPrompt !== null && liveTerminal.document)
                             nextPrompt.used(liveTerminal.document.sessionId, false, 0, liveTerminal.suggestionKey)

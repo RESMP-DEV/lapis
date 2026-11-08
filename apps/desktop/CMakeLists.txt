@@ -213,12 +213,14 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_transcript_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME transcript COMMAND lapis_transcript_tests)
     set_tests_properties(transcript PROPERTIES TIMEOUT 20)
-    # Offscreen contact sheet and scroll timing of the visual view; a review
-    # tool, not a CTest entry.
+    # Offscreen contact sheet and scroll timing of the visual view (a review
+    # tool); its --keys check of the bar's editing keys is a CTest entry.
     add_executable(lapis_transcript_capture tests/transcript_capture.cpp)
     target_link_libraries(lapis_transcript_capture PRIVATE lapis_project_options lapis_desktop_view)
     target_compile_definitions(lapis_transcript_capture PRIVATE
         LAPIS_TRANSCRIPT_QML="${CMAKE_CURRENT_SOURCE_DIR}/qml/Transcript.qml")
+    add_test(NAME transcript-keys COMMAND lapis_transcript_capture --keys)
+    set_tests_properties(transcript-keys PROPERTIES TIMEOUT 30)
     add_executable(lapis_cell_shapes_tests tests/cell_shapes_test.cpp)
     target_link_libraries(lapis_cell_shapes_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME cell-shapes COMMAND lapis_cell_shapes_tests)

@@ -726,8 +726,13 @@ void visual_settings_persist() {
     keymap.setSourcePathForTesting(path);
     require(keymap.load() && keymap.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal") &&
                 keymap.visual().value(QStringLiteral("size")).toInt() == 0 &&
-                !keymap.visual().value(QStringLiteral("all")).toBool(),
-            "visual defaults follow the terminal");
+                !keymap.visual().value(QStringLiteral("all")).toBool() &&
+                !keymap.visual().value(QStringLiteral("sendOnReturn")).toBool(),
+            "visual defaults follow the terminal; Command-Return sends");
+    require(keymap.setVisual(QStringLiteral("sendOnReturn"), true) &&
+                read_config(path).value(QStringLiteral("visual")).toObject().value(QStringLiteral("sendOnReturn")).toBool() &&
+                keymap.setVisual(QStringLiteral("sendOnReturn"), false),
+            "Return-sends choice saves");
     require(keymap.setVisual(QStringLiteral("theme"), QStringLiteral("claude")) &&
                 keymap.setVisual(QStringLiteral("font"), QStringLiteral("serif")) &&
                 keymap.setVisual(QStringLiteral("size"), 18) &&
