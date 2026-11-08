@@ -10,10 +10,11 @@
 #include <vector>
 
 class QQuickTextDocument;
+class QTextDocument;
 
 namespace lapis::desktop {
 // A visual, read-only reading of an agent CLI's saved conversation. The
-// terminal stays the source of truth and the only place input goes; this
+// terminal stays the source of truth, and what the view sends goes through it; this
 // shows the same work as messages and one-line steps. Kinds it does not know
 // become `other` blocks, so a CLI feature lapis has not learned yet still
 // shows up instead of vanishing.
@@ -66,6 +67,15 @@ struct Piece {
     QString text;
 };
 [[nodiscard]] std::vector<Piece> pieces(const QString& markdown);
+
+// Text fit to paste anywhere: Qt's paragraph and line separators become
+// newlines, no-break spaces plain spaces, invisible characters go, and
+// trailing spaces and blank lines are trimmed.
+[[nodiscard]] QString clean_copy(QString text);
+
+// Part of a laid-out reply as text to paste: paragraphs separated by a blank
+// line, list items as "- " or "1. " lines, cleaned as above.
+[[nodiscard]] QString selection_text(const QTextDocument& document, int start, int end);
 
 // Folds Claude Code session JSONL records, in file order, into items. Tool
 // results attach to the tool call that asked for them; a subagent's records
@@ -130,8 +140,13 @@ class TranscriptModel final : public QAbstractListModel {
                            const QVariantMap& style) const;
     // Font families lapis loads from the system for reading: serif, mono.
     Q_INVOKABLE [[nodiscard]] QVariantMap fonts() const;
-    // Copies text to the clipboard.
+    // Copies text to the clipboard as plain text only (no styled HTML to
+    // carry the theme's colors elsewhere), cleaned of the separators and
+    // invisible characters Qt's text selection produces.
     Q_INVOKABLE void copy(const QString& text) const;
+    // Copies part of a styled reply: paragraphs separated by a blank line,
+    // list items as "- " or "1. " lines, everything else plain.
+    Q_INVOKABLE void copySelection(QQuickTextDocument* source, int start, int end) const;
 
   signals:
     void pathChanged();
@@ -140,6 +155,16 @@ class TranscriptModel final : public QAbstractListModel {
 
   private:
     void apply(transcript::ClaudeReader reader, qint64 offset, QByteArray pending);
+    // Conversations read recently stay parsed, so switching back to an agent
+    // shows its thread at once and reads only what it wrote since.
+    struct Parsed {
+        QString path;
+        transcript::ClaudeReader reader;
+        qint64 offset{};
+        QByteArray pending;
+    };
+    static constexpr std::size_t kept_conversations = 6;
+    std::vector<Parsed> kept_;
     QString path_;
     transcript::ClaudeReader reader_;
     int shown_{}; // rows the view has been told about

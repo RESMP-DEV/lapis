@@ -956,8 +956,11 @@ ApplicationWindow {
         running: window.visualWanted && window.visualFile.length === 0
         onTriggered: window.visualProbe += 1
     }
+    // Selecting another agent can show or hide the thread on its own (All
+    // agents); the keyboard follows whichever is shown.
+    onVisualActiveChanged: if (!inputBlocked && !dialogsVisible()) visualFocus()
     function visualFocus() {
-        Qt.callLater(() => visualActive ? visualView.forceActiveFocus() : liveTerminal.forceActiveFocus())
+        Qt.callLater(() => visualActive ? visualView.composer.forceActiveFocus() : liveTerminal.forceActiveFocus())
     }
     function toggleVisual() {
         const agent = workspace.focusedSession
@@ -3603,6 +3606,25 @@ ApplicationWindow {
                     terminalFamily: window.monoFamily
                     terminalBackground: liveTerminal.backgroundColor
                     terminalAccent: window.focusedBorderColor
+                    // The bar types into the terminal underneath, which keeps
+                    // the session, history and Tab's guesses it always had.
+                    submit: text => liveTerminal.submitText(text)
+                    interrupt: () => liveTerminal.interrupt()
+                    tabAway: () => liveTerminal.tabFlow && liveTerminal.tabAway()
+                    suggestion: liveTerminal.suggestion
+                    suggestionConfident: liveTerminal.suggestionConfident
+                    working: liveTerminal.document !== null && liveTerminal.document.statusKind === "working"
+                    waiting: liveTerminal.document !== null && liveTerminal.document.attentionPending
+                    waitingReason: liveTerminal.document !== null ? liveTerminal.document.attentionReason : ""
+                    canSend: liveTerminal.document !== null && liveTerminal.document.inputReady
+                    onSuggestionFilled: {
+                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null && liveTerminal.document)
+                            nextPrompt.used(liveTerminal.document.sessionId, false, 0, liveTerminal.suggestionKey)
+                    }
+                    onSuggestionSent: {
+                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null && liveTerminal.document)
+                            nextPrompt.used(liveTerminal.document.sessionId, true, 0, liveTerminal.suggestionKey)
+                    }
                     onDismissed: window.toggleVisual()
                     onForkRequested: function(record) { window.forkVisual(record, false, "") }
                     onEditRequested: function(record, text) { window.forkVisual(record, true, text) }

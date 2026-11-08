@@ -3,9 +3,10 @@
 // blocks stay visible, and the model follows a file the CLI is still writing.
 #include "transcript.hpp"
 
-#include <QCoreApplication>
 #include <QFile>
+#include <QGuiApplication>
 #include <QTemporaryDir>
+#include <QTextDocument>
 #include <cstdio>
 #include <cstdlib>
 
@@ -136,15 +137,63 @@ void items_keep_their_record() {
                 reader.items()[1].record == QStringLiteral("a-1"),
             "items carry their record uuid");
 }
+// Copied text pastes cleanly: Qt's separators become newlines, invisible
+// characters go, trailing spaces and blank edges are trimmed.
+void copies_are_clean() {
+    using lapis::desktop::transcript::clean_copy;
+    const QString raw = QStringLiteral("\n  One two   Three​ - four\t\r\nfive￼\n\n");
+    require(clean_copy(raw) == QStringLiteral("  One two\nThree\n- four\nfive"), "copy text is clean");
+
+    // A selection across a laid-out reply keeps its shape as plain text.
+    QTextDocument document;
+    document.setMarkdown(QStringLiteral("## Plan\n\nRun `make` first.\n\n- one\n- two\n\n1. first\n2. second\n\nDone."));
+    const auto all = lapis::desktop::transcript::selection_text(document, 0, document.characterCount() - 1);
+    const bool shaped = all == QStringLiteral("Plan\n\nRun make first.\n\n- one\n- two\n\n1. first\n2. second\n\nDone.");
+    if (!shaped)
+        std::fprintf(stderr, "got: %s\n", qPrintable(QString(all).replace(QLatin1Char('\n'), QStringLiteral("\\n"))));
+    require(shaped, "selection keeps paragraphs, bullets and numbers");
+    const int middle = static_cast<int>(document.toPlainText().indexOf(QStringLiteral("make")));
+    require(lapis::desktop::transcript::selection_text(document, middle, middle + 4) == QStringLiteral("make"),
+            "part of a line copies as just that part");
+}
+
+// Switching back to a conversation shows it at once, without a reload.
+void switching_back_is_warm() {
+    QTemporaryDir directory;
+    const auto write = [&](const char* name, int replies) {
+        QFile file(directory.filePath(QString::fromLatin1(name)));
+        require(file.open(QIODevice::WriteOnly), "fixture opens");
+        for (int i = 0; i < replies; ++i)
+            file.write(QByteArray(kConversation[12]) + '\n');
+        return file.fileName();
+    };
+    const auto a = write("a.jsonl", 3);
+    const auto b = write("b.jsonl", 1);
+    TranscriptModel model;
+    model.setPath(a);
+    model.loadNow();
+    model.setPath(b);
+    model.loadNow();
+    require(model.rowCount() == 1, "second conversation shown");
+    model.setPath(a);
+    require(model.rowCount() == 3 && !model.loading(), "first conversation is back at once");
+    model.setPath({});
+    require(model.rowCount() == 0, "no conversation shows nothing");
+}
 } // namespace
 
 int main(int argc, char** argv) {
-    QCoreApplication app(argc, argv);
+    // Text layout needs a GUI application; offscreen keeps it off the screen
+    // and the Dock.
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+    QGuiApplication app(argc, argv);
     reader_folds_records();
     result_reports_changed_card();
     model_follows_file();
     reply_splits_at_code();
     items_keep_their_record();
+    copies_are_clean();
+    switching_back_is_warm();
     if (failures == 0)
         std::puts("transcript: all checks passed");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

@@ -2016,6 +2016,40 @@ bool TerminalSurface::pasteText(const QString& text) {
         noteTyped(); // A dropped file or other paste is no longer just the guess.
     return request != 0;
 }
+bool TerminalSurface::submitText(const QString& text) {
+    if (!document_ || text.trimmed().isEmpty() || !document_->live() || !document_->inputReady() ||
+        document_->attentionPending() || pasting_ || window() == nullptr || !window()->isActive())
+        return false;
+    const QByteArray bytes = text.toUtf8();
+    if (bytes.size() > session::wire::max_paste_bytes) {
+        emit pasteRefused(tr("This message is %1; lapis sends up to %2 at a time.")
+                              .arg(data_size(bytes.size()), data_size(session::wire::max_paste_bytes)));
+        return false;
+    }
+    if (document_->historyActive()) {
+        pixel_remainder_ = 0;
+        document_->returnToLive();
+    }
+    clearSelection();
+    returnProgramToBottom();
+    const auto request = document_->requestPaste(bytes, true);
+    interaction::paste(this, text, request != 0, "composer");
+    if (request == 0) {
+        emit pasteRefused(document_->activity());
+        return false;
+    }
+    typed_since_arrival_ = false;
+    filled_.reset();
+    return true;
+}
+
+bool TerminalSurface::interrupt() {
+    if (!document_ || !document_->live() || !document_->inputReady() || window() == nullptr ||
+        !window()->isActive())
+        return false;
+    return document_->sendKey(session::TerminalKey::escape, {});
+}
+
 quint64 TerminalSurface::pasteTextRequest(const QString& text, std::optional<bool> submit) {
     if (!document_ || text.isEmpty() || !interactive_ || !document_->live() || pasting_)
         return false;

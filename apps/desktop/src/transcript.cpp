@@ -275,6 +275,30 @@ std::vector<Piece> pieces(const QString& markdown) {
     return out;
 }
 
+QString clean_copy(QString text) {
+    text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    text.replace(QChar(0x2029), QLatin1Char('\n')); // paragraph separator
+    text.replace(QChar(0x2028), QLatin1Char('\n')); // line separator
+    text.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+    text.replace(QChar(0x00a0), QLatin1Char(' '));
+    text.replace(QChar(0x202f), QLatin1Char(' '));
+    for (const QChar invisible : {QChar(0xfffc), QChar(0x200b), QChar(0x200c), QChar(0x200d),
+                                  QChar(0xfeff), QChar(0x2060)})
+        text.remove(invisible);
+    auto lines = text.split(QLatin1Char('\n'));
+    for (auto& line : lines) {
+        qsizetype end = line.size();
+        while (end > 0 && (line[end - 1] == QLatin1Char(' ') || line[end - 1] == QLatin1Char('\t')))
+            --end;
+        line.truncate(end);
+    }
+    while (!lines.isEmpty() && lines.back().isEmpty())
+        lines.removeLast();
+    while (!lines.isEmpty() && lines.front().isEmpty())
+        lines.removeFirst();
+    return lines.join(QLatin1Char('\n'));
+}
+
 void ClaudeReader::push(Item item) {
     item.record = record_;
     item.after_step = is_step(item.kind) && !items_.empty() && is_step(items_.back().kind);
@@ -521,9 +545,11 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
         const int level = std::clamp(block_format.headingLevel(), 0, 6);
         block_format.setLineHeight(level > 0 ? 120 : 140, QTextBlockFormat::ProportionalHeight);
         block_format.setTopMargin(first ? 0 : level > 0 ? size * 0.8 : 0);
-        block_format.setBottomMargin(level > 0       ? size * 0.3
-                                     : block.textList() != nullptr ? size * 0.2
-                                                                  : size * 0.6);
+        // The last block adds nothing: the view spaces pieces itself.
+        block_format.setBottomMargin(!block.next().isValid()        ? 0
+                                     : level > 0                   ? size * 0.3
+                                     : block.textList() != nullptr ? size * 0.25
+                                                                   : size * 0.65);
         first = false;
         blocks.push_back({block.position(), block_format});
         for (auto fragment = block.begin(); !fragment.atEnd(); ++fragment) {
@@ -588,23 +614,84 @@ QVariantMap TranscriptModel::fonts() const {
 }
 
 void TranscriptModel::copy(const QString& text) const {
-    if (auto* clipboard = QGuiApplication::clipboard())
-        clipboard->setText(text);
+    const auto clean = transcript::clean_copy(text);
+    if (auto* clipboard = QGuiApplication::clipboard(); clipboard != nullptr && !clean.isEmpty())
+        clipboard->setText(clean);
+}
+
+void TranscriptModel::copySelection(QQuickTextDocument* source, int start, int end) const {
+    if (source == nullptr || source->textDocument() == nullptr || end <= start)
+        return;
+    copy(transcript::selection_text(*source->textDocument(), start, end));
+}
+
+QString transcript::selection_text(const QTextDocument& document, int start, int end) {
+    QString out;
+    const QTextList* previous_list = nullptr;
+    for (auto block = document.findBlock(start); block.isValid() && block.position() < end;
+         block = block.next()) {
+        const int from = std::max(start, block.position());
+        const int to = std::min(end, block.position() + block.length() - 1);
+        const auto text = block.text().mid(from - block.position(), std::max(0, to - from));
+        const auto* list = block.textList();
+        QString marker;
+        // A list item keeps its bullet or number when it is copied from its start.
+        if (list != nullptr && from == block.position()) {
+            const auto format = list->format();
+            marker = QString(std::max(0, format.indent() - 1) * 2, QLatin1Char(' '));
+            const bool numbered = format.style() == QTextListFormat::ListDecimal ||
+                                  format.style() == QTextListFormat::ListLowerAlpha ||
+                                  format.style() == QTextListFormat::ListUpperAlpha;
+            marker += numbered ? QStringLiteral("%1. ").arg(list->itemNumber(block) + 1)
+                               : QStringLiteral("- ");
+        }
+        // Items of one list, or of a list nested in it, stay on adjacent
+        // lines; anything else starts a new paragraph.
+        const bool same_list = list != nullptr && previous_list != nullptr &&
+                               (list == previous_list || list->format().indent() > 1 ||
+                                previous_list->format().indent() > 1);
+        if (!out.isEmpty())
+            out += same_list ? QStringLiteral("\n") : QStringLiteral("\n\n");
+        out += marker + text;
+        previous_list = list;
+    }
+    return clean_copy(out);
 }
 
 void TranscriptModel::setPath(const QString& path) {
     if (path == path_)
         return;
+    // Keep what was read (a load still running has nothing whole to keep).
+    if (!path_.isEmpty() && !loading_) {
+        std::erase_if(kept_, [this](const Parsed& kept) { return kept.path == path_; });
+        kept_.insert(kept_.begin(), Parsed{path_, std::move(reader_), offset_, std::move(pending_)});
+        if (kept_.size() > kept_conversations)
+            kept_.pop_back();
+    }
     path_ = path;
     emit pathChanged();
     const auto generation = ++generation_;
+    if (loading_) {
+        loading_ = false;
+        emit loadingChanged();
+    }
+    const auto hit = std::find_if(kept_.begin(), kept_.end(),
+                                  [&path](const Parsed& kept) { return kept.path == path; });
     beginResetModel();
-    reader_ = {};
-    shown_ = 0;
-    offset_ = 0;
-    pending_.clear();
+    if (hit != kept_.end() && !path.isEmpty()) {
+        reader_ = std::move(hit->reader);
+        offset_ = hit->offset;
+        pending_ = std::move(hit->pending);
+        kept_.erase(hit);
+    } else {
+        reader_ = {};
+        offset_ = 0;
+        pending_.clear();
+    }
+    shown_ = static_cast<int>(reader_.items().size());
     endResetModel();
     emit countChanged();
+    const bool warm = shown_ > 0 || offset_ > 0;
     auto* watcher = findChild<QFileSystemWatcher*>();
     if (watcher == nullptr) {
         watcher = new QFileSystemWatcher(this);
@@ -618,6 +705,10 @@ void TranscriptModel::setPath(const QString& path) {
     if (path.isEmpty())
         return;
     watcher->addPath(path);
+    if (warm) {
+        readMore(); // only what the CLI wrote since it was last shown
+        return;
+    }
     loading_ = true;
     emit loadingChanged();
     QThreadPool::globalInstance()->start([guard = QPointer<TranscriptModel>(this), path, generation] {

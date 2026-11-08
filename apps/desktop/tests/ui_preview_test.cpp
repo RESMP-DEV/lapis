@@ -1879,6 +1879,14 @@ int run_attention_ui_tests() {
         auto* settings = window->findChild<QObject*>(QStringLiteral("settingsDialog"));
         wait_popup(*settings, true);
         CHECK(window->grabWindow().save(path + QStringLiteral("appearance.png")));
+        // The visual view's themes, fonts and size, scrolled into view.
+        auto* scroll = find_visual(window->contentItem(), QStringLiteral("settingsScroll"));
+        auto* themes = find_visual(window->contentItem(), QStringLiteral("visualThemes"));
+        CHECK(scroll != nullptr && themes != nullptr);
+        scroll->setProperty("contentY", themes->mapToItem(scroll, QPointF()).y() - 60);
+        pump(40);
+        CHECK(window->grabWindow().save(path + QStringLiteral("appearance-visual.png")));
+        scroll->setProperty("contentY", 0);
         CHECK(QMetaObject::invokeMethod(settings, "close"));
         wait_popup(*settings, false);
     }

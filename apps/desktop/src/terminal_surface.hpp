@@ -141,6 +141,12 @@ class TerminalSurface : public QQuickItem {
     // Text as if pasted (bracketed when the agent asked for it): what files
     // dropped on the terminal become.
     Q_INVOKABLE bool pasteText(const QString& text);
+    // Sends text and Return to the agent from a composer that holds the
+    // keyboard instead of this surface (the visual view's bar). Refused while
+    // the agent waits on a request, so typed text never answers a dialog.
+    Q_INVOKABLE bool submitText(const QString& text);
+    // Escape for the agent: how Claude Code and Codex stop a turn.
+    Q_INVOKABLE bool interrupt();
     // A valid file URL as QUrl's local or UNC path; empty for other schemes,
     // malformed URLs and NUL bytes. Callers still quote the result for a shell.
     Q_INVOKABLE QString localFilePath(const QString& url) const;

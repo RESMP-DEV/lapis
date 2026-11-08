@@ -74,7 +74,9 @@ int main(int argc, char** argv) {
     parser.addOption({"font", "Reading font name", "name", "system"});
     parser.addOption({"code-font", "Code font name", "name", "system"});
     parser.addOption({"terminal-background", "Background the terminal theme matches", "color", "#0f131c"});
+    parser.addOption({"suggestion", "A Tab suggestion shown in the empty bar", "text", ""});
     parser.addOption({"bench", "Scroll the whole conversation and report frame times"});
+    parser.addOption({"step", "Pixels scrolled per benchmark step", "px", "240"});
     parser.process(app);
     if (!parser.isSet("jsonl") || !parser.isSet("out")) {
         std::fputs("--jsonl and --out are required\n", stderr);
@@ -103,6 +105,7 @@ int main(int argc, char** argv) {
     root->setProperty("fontName", parser.value("font"));
     root->setProperty("codeFontName", parser.value("code-font"));
     root->setProperty("terminalBackground", QColor(parser.value("terminal-background")));
+    root->setProperty("suggestion", parser.value("suggestion"));
     // The offscreen platform reports generic names ("Sans Serif") whose
     // fallback spaces digits apart; name the Mac's interface fonts instead,
     // as the real window's platform resolves them.
@@ -180,26 +183,57 @@ int main(int argc, char** argv) {
     if (parser.isSet("bench")) {
         // Scroll top to bottom a step at a time; each step polishes, renders
         // and reads the frame back, so times are upper bounds for software.
+        const qreal step_px = parser.value("step").toDouble();
+        root->setProperty("following", false);
         QMetaObject::invokeMethod(list, "positionViewAtBeginning");
         settle();
-        std::vector<double> frames;
+        // Each step is timed in parts: the scroll itself (where the list makes
+        // the items coming into view), pending events, and the software render
+        // with its readback, which a GPU window does not pay.
+        std::vector<double> frames, scrolls, renders;
         QElapsedTimer total;
         total.start();
+        const auto ms = [](const QElapsedTimer& timer) { return static_cast<double>(timer.nsecsElapsed()) / 1e6; };
         for (int step = 0; step < 4000; ++step) {
             const bool at_end = list->property("atYEnd").toBool();
             if (at_end)
                 break;
-            list->setProperty("contentY", list->property("contentY").toReal() + 240.0);
             QElapsedTimer frame;
             frame.start();
+            list->setProperty("contentY", list->property("contentY").toReal() + step_px);
             QCoreApplication::processEvents();
+            scrolls.push_back(ms(frame));
+            if (scrolls.back() > 80 && parser.isSet("bench")) {
+                // Name the items that just came into view, to see what is slow.
+                const qreal bottom = list->property("contentY").toReal() + list->property("height").toReal();
+                int at = -1;
+                QMetaObject::invokeMethod(list, "indexAt", Q_RETURN_ARG(int, at), Q_ARG(qreal, 10.0),
+                                          Q_ARG(qreal, bottom - 10));
+                if (at >= 0) {
+                    const auto index = model.index(at);
+                    std::printf("  slow step %.0f ms at item %d: %s %s, body %lld chars, result %lld chars\n",
+                                scrolls.back(), at,
+                                qPrintable(model.data(index, TranscriptModel::KindRole).toString()),
+                                qPrintable(model.data(index, TranscriptModel::TitleRole).toString()),
+                                static_cast<long long>(model.data(index, TranscriptModel::BodyRole).toString().size()),
+                                static_cast<long long>(model.data(index, TranscriptModel::ResultRole).toString().size()));
+                }
+            }
+            QElapsedTimer render;
+            render.start();
             (void)view.grabWindow();
-            frames.push_back(static_cast<double>(frame.nsecsElapsed()) / 1e6);
+            renders.push_back(ms(render));
+            frames.push_back(ms(frame));
         }
-        std::printf("bench (offscreen software scene graph, includes readback): %zu frames in %lld ms\n"
-                    "  p50 %.2f ms  p95 %.2f ms  p99 %.2f ms  max %.2f ms\n",
-                    frames.size(), static_cast<long long>(total.elapsed()), percentile(frames, 0.50),
-                    percentile(frames, 0.95), percentile(frames, 0.99), percentile(frames, 1.0));
+        const auto line = [](const char* name, const std::vector<double>& values) {
+            std::printf("  %-22s p50 %6.2f  p95 %6.2f  p99 %6.2f  max %7.2f ms\n", name, percentile(values, 0.50),
+                        percentile(values, 0.95), percentile(values, 0.99), percentile(values, 1.0));
+        };
+        std::printf("bench: %zu steps of %.0f px in %lld ms (offscreen, software scene graph)\n", frames.size(), step_px,
+                    static_cast<long long>(total.elapsed()));
+        line("scroll + item creation", scrolls);
+        line("render + readback", renders);
+        line("whole step", frames);
     }
     return 0;
 }

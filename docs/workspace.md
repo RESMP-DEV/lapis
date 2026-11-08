@@ -70,7 +70,18 @@ choice wins over **All agents** until lapis restarts or **All agents** is
 switched again. Both are also in Commands. The terminal keeps running underneath
 but takes no input while covered; Escape brings it back.
 
-Text in the thread selects with the mouse and copies with Command-C. Hovering a
+The bar at the bottom types to the agent: Return sends, Shift-Return starts a
+new line, and **Stop** (while it works) interrupts it, as Escape does in the
+terminal. lapis's guess at your next prompt shows in the empty bar; Tab puts it
+in the bar to edit, and Tab again sends it. Tab with nothing typed or offered
+moves to the next agent that needs you, as in the terminal. While the agent is
+waiting on a request, the bar says so and sends nothing; answer it in the
+terminal (Escape). Typing while reading goes to the bar.
+
+Text in the thread selects with the mouse and copies with Command-C as plain
+text that pastes cleanly anywhere: paragraphs, bullets and numbers are kept,
+and no colors or hidden characters come along. **Copy** on a reply copies its
+markdown. Hovering a
 message shows the same buttons as the Codex app: **Copy** on prompts, replies
 and every code block or output, **Fork from here** on a reply (a new agent that
 continues the conversation up to that point), and **Edit** on a prompt (a new

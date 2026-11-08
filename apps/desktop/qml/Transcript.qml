@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQml.Models
 
 // The selected agent's conversation as a readable thread: the person's
 // prompts as bubbles, the agent's replies as prose, and its work as quiet
@@ -30,8 +31,27 @@ FocusScope {
     // Follow new items while the reader sits at the end, as a terminal does.
     property bool following: true
 
-    // Escape asks to go back to the terminal; the view itself never types.
+    // The bar at the bottom types into the agent through these, which the
+    // window wires to the terminal underneath: submit(text) returns whether
+    // it was sent, interrupt() stops a turn, tabAway() moves to the next
+    // agent that needs you (Tab with nothing typed or offered).
+    property var submit: null
+    property var interrupt: null
+    property var tabAway: null
+    // lapis's predicted next prompt (Tab), shown in the empty bar.
+    property string suggestion: ""
+    property bool suggestionConfident: false
+    property bool working: false        // a turn is running: Stop is offered
+    property bool waiting: false        // a request waits in the terminal
+    property string waitingReason: ""
+    property bool canSend: true
+    readonly property alias composer: input
+
+    // Escape asks to go back to the terminal.
     signal dismissed()
+    // Tab put the suggestion in the bar, and a second Tab sent it unchanged.
+    signal suggestionFilled()
+    signal suggestionSent()
     // Start a new agent from this conversation up to a reply's record.
     signal forkRequested(string record)
     // Start a new agent from just before a prompt, with it in the input.
@@ -113,6 +133,8 @@ FocusScope {
     readonly property int stepSize: Math.round(fontSize * 0.93)
     readonly property int codeSize: Math.round(fontSize * 0.86)
     readonly property int columnWidth: Math.round(fontSize * 48)
+    // A message's row of buttons (Copy, Fork, Edit).
+    readonly property int actionHeight: Math.round(codeSize * 1.3) + 8
     // Changes whenever prose has to be laid out again.
     readonly property string styleKey: [sansFamily, monoFamily, fontSize, codeSize, codeColor, accentColor].join("|")
     readonly property var proseStyle: ({ sans: sansFamily, mono: monoFamily, size: fontSize, codeSize: codeSize,
@@ -128,9 +150,21 @@ FocusScope {
         color: root.backgroundColor
     }
 
+    // Another conversation opens at its newest message.
+    Connections {
+        target: root.model
+        function onPathChanged() {
+            root.following = true
+            Qt.callLater(list.positionViewAtEnd)
+        }
+    }
+
     ListView {
         id: list
-        anchors.fill: parent
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: composerArea.top
         model: root.model
         clip: true
         // Dragging selects text; the wheel, trackpad and scroll bar scroll.
@@ -143,47 +177,60 @@ FocusScope {
         onContentHeightChanged: if (root.following) Qt.callLater(positionViewAtEnd)
         ScrollBar.vertical: ScrollBar {
             policy: ScrollBar.AsNeeded
-            onPressedChanged: if (!pressed) root.following = list.atYEnd
+            // Following would pull the view back to the end mid-drag.
+            onPressedChanged: root.following = !pressed && list.atYEnd
         }
 
-        delegate: Item {
-            id: row
-            required property int index
-            required property string kind
-            required property string title
-            required property string body
-            required property string detail
-            required property string result
-            required property var diff
-            required property int added
-            required property int removed
-            required property int resultLines
-            required property bool failed
-            required property bool answered
-            required property bool afterStep
-            required property string record
+        // One delegate per kind, so a row scrolled out is reused by the next
+        // row of the same kind with its parts already made.
+        delegate: DelegateChooser {
+            role: "kind"
+            DelegateChoice { roleValue: "prompt"; delegate: Entry { block: promptBlock } }
+            DelegateChoice { roleValue: "reply"; delegate: Entry { block: replyBlock } }
+            DelegateChoice { roleValue: "tool"; delegate: Entry { block: stepBlock } }
+            DelegateChoice { roleValue: "thinking"; delegate: Entry { block: stepBlock } }
+            DelegateChoice { roleValue: "turn"; delegate: Entry { block: turnBlock } }
+            DelegateChoice { roleValue: "command"; delegate: Entry { block: commandBlock } }
+            DelegateChoice { roleValue: "notice"; delegate: Entry { block: noticeBlock } }
+            DelegateChoice { roleValue: "divider"; delegate: Entry { block: dividerBlock } }
+            DelegateChoice { delegate: Entry { block: otherBlock } }
+        }
+    }
 
-            readonly property int gapAbove: index === 0 ? 0
-                                          : afterStep ? 2
-                                          : kind === "prompt" ? root.fontSize * 2
-                                          : kind === "turn" ? 10 : root.fontSize
-            width: ListView.view.width
-            height: loader.height + gapAbove
-            Loader {
-                id: loader
-                y: row.gapAbove
-                width: Math.min(root.columnWidth, row.width - 56)
-                x: (row.width - width) / 2
-                sourceComponent: row.kind === "prompt" ? promptBlock
-                               : row.kind === "reply" ? replyBlock
-                               : row.kind === "thinking" || row.kind === "tool" ? stepBlock
-                               : row.kind === "turn" ? turnBlock
-                               : row.kind === "command" ? commandBlock
-                               : row.kind === "notice" ? noticeBlock
-                               : row.kind === "divider" ? dividerBlock
-                               : otherBlock
-                property var entry: row
-            }
+    // One row of the thread: the item's roles, its gap above, and its block.
+    component Entry: Item {
+        id: row
+        required property int index
+        required property string kind
+        required property string title
+        required property string body
+        required property string detail
+        required property string result
+        required property var diff
+        required property int added
+        required property int removed
+        required property int resultLines
+        required property bool failed
+        required property bool answered
+        required property bool afterStep
+        required property string record
+        property Component block
+
+        readonly property int gapAbove: index === 0 ? 0
+                                      : afterStep ? 2
+                                      : kind === "prompt" ? root.fontSize * 2
+                                      : kind === "turn" ? 10 : root.fontSize
+        width: ListView.view ? ListView.view.width : 0
+        height: loader.height + gapAbove
+        // A reused row starts closed, whatever the last item opened.
+        ListView.onReused: if (loader.item && loader.item.open !== undefined) loader.item.open = false
+        Loader {
+            id: loader
+            y: row.gapAbove
+            width: Math.min(root.columnWidth, row.width - 56)
+            x: (row.width - width) / 2
+            sourceComponent: row.block
+            property var entry: row
         }
     }
 
@@ -213,8 +260,22 @@ FocusScope {
         font.family: root.sansFamily
         font.pixelSize: root.fontSize
         Keys.onPressed: function(event) {
-            if (event.matches(StandardKey.Copy) && selectedText.length > 0) {
-                copy()
+            if (event.matches(StandardKey.Copy)) {
+                if (selectedText.length > 0) {
+                    if (textFormat === TextEdit.RichText)
+                        root.model.copySelection(textDocument, selectionStart, selectionEnd)
+                    else
+                        root.copy(selectedText)
+                }
+                event.accepted = true
+            } else if (event.matches(StandardKey.SelectAll)) {
+                selectAll()
+                event.accepted = true
+            } else if (event.text.length > 0 && event.text.charCodeAt(0) >= 32
+                       && !(event.modifiers & (Qt.ControlModifier | Qt.MetaModifier))) {
+                // Typing while reading goes to the bar, as in the Codex app.
+                input.forceActiveFocus()
+                input.insert(input.cursorPosition, event.text)
                 event.accepted = true
             }
         }
@@ -273,14 +334,19 @@ FocusScope {
             font.family: root.sansFamily
             font.pixelSize: root.codeSize - 1
         }
-        Action {
+        // Made on hover only: scrolling past code builds no buttons.
+        Loader {
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.margins: 4
             z: 1
-            visible: code.hovered || done
-            label: qsTr("Copy")
-            onTriggered: { root.copy(code.text); flash() }
+            active: code.hovered
+            sourceComponent: Component {
+                Action {
+                    label: qsTr("Copy")
+                    onTriggered: { root.copy(code.text); flash() }
+                }
+            }
         }
         Selectable {
             id: codeText
@@ -321,19 +387,28 @@ FocusScope {
                     text: prompt.entry ? prompt.entry.body : ""
                 }
             }
-            Row {
-                anchors.right: parent.right
-                spacing: 2
-                opacity: promptHover.hovered || copyPrompt.done ? 1 : 0
-                Action {
-                    id: copyPrompt
-                    label: qsTr("Copy")
-                    onTriggered: { root.copy(prompt.entry.body); flash() }
-                }
-                Action {
-                    visible: prompt.entry && prompt.entry.record.length > 0
-                    label: qsTr("Edit")
-                    onTriggered: root.editRequested(prompt.entry.record, prompt.entry.body)
+            // The row's room is kept so hovering never moves the thread; its
+            // buttons are made only while the pointer is over the message.
+            Item {
+                width: parent.width
+                height: root.actionHeight
+                Loader {
+                    anchors.right: parent.right
+                    active: promptHover.hovered
+                    sourceComponent: Component {
+                        Row {
+                            spacing: 2
+                            Action {
+                                label: qsTr("Copy")
+                                onTriggered: { root.copy(prompt.entry.body); flash() }
+                            }
+                            Action {
+                                visible: prompt.entry && prompt.entry.record.length > 0
+                                label: qsTr("Edit")
+                                onTriggered: root.editRequested(prompt.entry.record, prompt.entry.body)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -355,19 +430,26 @@ FocusScope {
                     property var piece: modelData
                 }
             }
-            Row {
-                spacing: 2
-                x: -8
-                opacity: replyHover.hovered || copyReply.done ? 1 : 0
-                Action {
-                    id: copyReply
-                    label: qsTr("Copy")
-                    onTriggered: { root.copy(reply.entry.body); flash() }
-                }
-                Action {
-                    visible: reply.entry && reply.entry.record.length > 0
-                    label: qsTr("Fork from here")
-                    onTriggered: root.forkRequested(reply.entry.record)
+            Item {
+                width: parent.width
+                height: root.actionHeight
+                Loader {
+                    x: -8
+                    active: replyHover.hovered
+                    sourceComponent: Component {
+                        Row {
+                            spacing: 2
+                            Action {
+                                label: qsTr("Copy")
+                                onTriggered: { root.copy(reply.entry.body); flash() }
+                            }
+                            Action {
+                                visible: reply.entry && reply.entry.record.length > 0
+                                label: qsTr("Fork from here")
+                                onTriggered: root.forkRequested(reply.entry.record)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -476,69 +558,86 @@ FocusScope {
                 }
             }
 
-            // A file change shows its diff without asking, as a short card.
-            Rectangle {
-                visible: step.edit
+            // A file change shows its diff without asking, as a short card;
+            // other steps make no card at all.
+            Loader {
                 width: parent.width
-                height: visible ? diffColumn.height + 12 : 0
-                radius: root.radius
-                color: root.codeColor
-                clip: true
-                Column {
-                    id: diffColumn
-                    y: 6
-                    width: parent.width
-                    Repeater {
-                        model: step.entry && step.edit ? step.entry.diff.slice(0, step.open ? step.entry.diff.length : 8) : []
-                        Rectangle {
-                            required property var modelData
-                            width: diffColumn.width
-                            height: diffLine.implicitHeight + 2
-                            color: modelData.sign === "+" ? root.tint(root.addedColor, 0.16)
-                                 : modelData.sign === "-" ? root.tint(root.removedColor, 0.22)
-                                 : "transparent"
-                            Text {
-                                id: diffLine
-                                x: 12
-                                width: parent.width - 24
-                                text: modelData.text.length > 0 ? modelData.text : " "
-                                textFormat: Text.PlainText
-                                elide: Text.ElideRight
-                                color: root.tint(root.textColor, 0.9)
-                                font.family: root.monoFamily
-                                font.pixelSize: root.codeSize
-                                lineHeight: 1.2
+                active: step.edit
+                visible: active
+                sourceComponent: Component {
+                    Rectangle {
+                        height: diffColumn.height + 12
+                        radius: root.radius
+                        color: root.codeColor
+                        clip: true
+                        Column {
+                            id: diffColumn
+                            y: 6
+                            width: parent.width
+                            Repeater {
+                                model: step.entry ? step.entry.diff.slice(0, step.open ? step.entry.diff.length : 8) : []
+                                Rectangle {
+                                    required property var modelData
+                                    width: diffColumn.width
+                                    height: diffLine.implicitHeight + 2
+                                    color: modelData.sign === "+" ? root.tint(root.addedColor, 0.16)
+                                         : modelData.sign === "-" ? root.tint(root.removedColor, 0.22)
+                                         : "transparent"
+                                    Text {
+                                        id: diffLine
+                                        x: 12
+                                        width: parent.width - 24
+                                        text: modelData.text.length > 0 ? modelData.text : " "
+                                        textFormat: Text.PlainText
+                                        elide: Text.ElideRight
+                                        color: root.tint(root.textColor, 0.9)
+                                        font.family: root.monoFamily
+                                        font.pixelSize: root.codeSize
+                                        lineHeight: 1.2
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
 
-            Selectable {
-                visible: step.open && step.entry && step.entry.detail.length > 0
+            // What opens on click is made on click: a collapsed step is one line.
+            Loader {
                 width: parent.width
-                text: step.entry ? step.entry.detail : ""
-                color: root.mutedTextColor
-                font.pixelSize: root.stepSize - 1
-            }
-            Code {
-                visible: step.open && step.entry && !step.thinking && !step.edit
-                         && (step.command || step.entry.body.indexOf("\n") >= 0)
-                width: parent.width
-                text: step.entry ? step.entry.body : ""
-            }
-            Code {
-                visible: step.open && step.entry && step.entry.result.length > 0
-                width: parent.width
-                text: step.entry ? step.entry.result : ""
-                textColor: step.entry && step.entry.failed ? root.faultColor : root.tint(root.textColor, 0.75)
-            }
-            Selectable {
-                visible: step.open && step.thinking
-                width: parent.width
-                text: step.entry ? step.entry.body : ""
-                color: root.mutedTextColor
-                font.pixelSize: root.stepSize
+                active: step.open
+                visible: active
+                sourceComponent: Component {
+                    Column {
+                        spacing: 6
+                        Selectable {
+                            visible: step.entry && step.entry.detail.length > 0
+                            width: parent.width
+                            text: step.entry ? step.entry.detail : ""
+                            color: root.mutedTextColor
+                            font.pixelSize: root.stepSize - 1
+                        }
+                        Code {
+                            visible: step.entry && !step.thinking && !step.edit
+                                     && (step.command || step.entry.body.indexOf("\n") >= 0)
+                            width: parent.width
+                            text: step.entry ? step.entry.body : ""
+                        }
+                        Code {
+                            visible: step.entry && step.entry.result.length > 0
+                            width: parent.width
+                            text: step.entry ? step.entry.result : ""
+                            textColor: step.entry && step.entry.failed ? root.faultColor : root.tint(root.textColor, 0.75)
+                        }
+                        Selectable {
+                            visible: step.thinking
+                            width: parent.width
+                            text: step.entry ? step.entry.body : ""
+                            color: root.mutedTextColor
+                            font.pixelSize: root.stepSize
+                        }
+                    }
+                }
             }
         }
     }
@@ -627,15 +726,187 @@ FocusScope {
         }
     }
 
-    Text {
-        visible: root.activeFocus
+    // The bar to type in, as in the Codex and Claude apps: Return sends to
+    // the agent, Shift-Return starts a new line, Tab takes lapis's guess.
+    property bool filledFromSuggestion: false
+    property string notice: ""
+    function send() {
+        const text = input.text
+        if (text.trim().length === 0 || !root.submit)
+            return
+        if (root.submit(text)) {
+            if (root.filledFromSuggestion && text === root.suggestion)
+                root.suggestionSent()
+            root.filledFromSuggestion = false
+            input.clear()
+            root.following = true
+            list.positionViewAtEnd()
+            root.notice = ""
+        } else {
+            root.notice = root.waiting ? qsTr("Answer the request in the terminal first (Esc)")
+                                       : qsTr("Not sent: the agent is not ready for input")
+            noticeTimer.restart()
+        }
+    }
+    Timer { id: noticeTimer; interval: 4000; onTriggered: root.notice = "" }
+
+    Item {
+        id: composerArea
         anchors.left: parent.left
+        anchors.right: parent.right
         anchors.bottom: parent.bottom
-        anchors.margins: 12
-        text: qsTr("Esc for the terminal")
-        color: root.mutedTextColor
-        font.family: root.sansFamily
-        font.pixelSize: Math.max(11, root.codeSize - 2)
+        height: composerBox.height + Math.round(root.fontSize * 0.8) + hints.height + 6
+
+        Rectangle {
+            id: composerBox
+            width: Math.min(root.columnWidth, parent.width - 56)
+            x: (parent.width - width) / 2
+            y: 0
+            height: inputScroll.height + toolbar.height + 18
+            radius: Math.round(root.fontSize * 0.9)
+            color: root.raisedColor
+            border.width: 1
+            border.color: input.activeFocus ? root.tint(root.accentColor, 0.55) : root.borderColor
+
+            ScrollView {
+                id: inputScroll
+                x: 14; y: 10
+                width: parent.width - 28
+                height: Math.min(Math.max(input.implicitHeight, root.fontSize * 1.6),
+                                 root.fontSize * 1.45 * 8)
+                TextArea {
+                    id: input
+                    objectName: "visualComposer"
+                    focus: true
+                    wrapMode: TextArea.Wrap
+                    textFormat: TextEdit.PlainText
+                    padding: 0
+                    leftPadding: 0
+                    rightPadding: 0
+                    background: null
+                    color: root.textColor
+                    selectionColor: root.tint(root.accentColor, 0.4)
+                    selectedTextColor: root.textColor
+                    font.family: root.sansFamily
+                    font.pixelSize: root.fontSize
+                    placeholderText: root.waiting ? qsTr("Waiting for your answer in the terminal")
+                                   : root.suggestion.length > 0 ? root.suggestion
+                                   : qsTr("Message the agent")
+                    placeholderTextColor: root.suggestion.length > 0 && !root.waiting
+                                          ? root.tint(root.textColor, root.suggestionConfident ? 0.62 : 0.42)
+                                          : root.mutedTextColor
+                    onTextChanged: if (text.length === 0) root.filledFromSuggestion = false
+                    Keys.onPressed: function(event) {
+                        const plain = !(event.modifiers & (Qt.ShiftModifier | Qt.ControlModifier
+                                                           | Qt.MetaModifier | Qt.AltModifier))
+                        if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && plain) {
+                            root.send()
+                            event.accepted = true
+                        } else if (event.key === Qt.Key_Tab && plain) {
+                            if (root.suggestion.length > 0 && text.length === 0) {
+                                text = root.suggestion
+                                cursorPosition = text.length
+                                root.filledFromSuggestion = true
+                                root.suggestionFilled()
+                            } else if (root.filledFromSuggestion && text === root.suggestion) {
+                                root.send()
+                            } else if (text.length === 0 && root.tabAway) {
+                                root.tabAway()
+                            }
+                            event.accepted = true
+                        } else if (event.matches(StandardKey.Copy) && selectedText.length > 0) {
+                            root.copy(selectedText)
+                            event.accepted = true
+                        }
+                    }
+                }
+            }
+
+            Item {
+                id: toolbar
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.margins: 8
+                anchors.leftMargin: 14
+                height: sendButton.height
+                Text {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - sendButton.width - stopButton.width - 24
+                    elide: Text.ElideRight
+                    text: root.notice.length > 0 ? root.notice
+                        : root.waiting ? (root.waitingReason.length > 0 ? root.waitingReason
+                                                                         : qsTr("The agent is waiting on a request"))
+                        : root.suggestion.length > 0 && input.text.length === 0 ? qsTr("Tab to use the suggestion")
+                        : root.filledFromSuggestion ? qsTr("Tab or Return to send")
+                        : ""
+                    color: root.notice.length > 0 || root.waiting ? root.faultColor : root.mutedTextColor
+                    font.family: root.sansFamily
+                    font.pixelSize: Math.max(11, root.codeSize - 1)
+                }
+                Rectangle {
+                    id: stopButton
+                    visible: root.working && root.interrupt !== null
+                    width: visible ? stopText.implicitWidth + 20 : 0
+                    height: sendButton.height
+                    anchors.right: sendButton.left
+                    anchors.rightMargin: 8
+                    radius: height / 2
+                    color: stopMouse.containsMouse ? root.tint(root.textColor, 0.12) : "transparent"
+                    border.color: root.borderColor
+                    Text {
+                        id: stopText
+                        anchors.centerIn: parent
+                        text: qsTr("Stop")
+                        color: root.textColor
+                        font.family: root.sansFamily
+                        font.pixelSize: root.codeSize
+                    }
+                    MouseArea {
+                        id: stopMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.interrupt()
+                    }
+                }
+                Rectangle {
+                    id: sendButton
+                    readonly property bool ready: input.text.trim().length > 0 && root.canSend && !root.waiting
+                    anchors.right: parent.right
+                    width: Math.round(root.fontSize * 1.6)
+                    height: width
+                    radius: width / 2
+                    color: ready ? root.textColor : root.tint(root.textColor, 0.18)
+                    Text {
+                        anchors.centerIn: parent
+                        text: "↑"
+                        color: root.backgroundColor
+                        font.family: root.sansFamily
+                        font.pixelSize: root.stepSize
+                        font.bold: true
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: sendButton.ready
+                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: root.send()
+                    }
+                }
+            }
+        }
+
+        Text {
+            id: hints
+            anchors.top: composerBox.bottom
+            anchors.topMargin: 6
+            anchors.horizontalCenter: composerBox.horizontalCenter
+            text: qsTr("Return to send · Shift-Return for a new line · Esc for the terminal")
+            color: root.tint(root.mutedTextColor, 0.8)
+            font.family: root.sansFamily
+            font.pixelSize: Math.max(11, root.codeSize - 3)
+        }
     }
 
     Text {
@@ -651,8 +922,8 @@ FocusScope {
     Rectangle {
         visible: !root.following && list.count > 0
         anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 20
+        anchors.bottom: composerArea.top
+        anchors.bottomMargin: 12
         width: root.fontSize * 2.2; height: width; radius: width / 2
         color: root.raisedColor
         border.color: root.borderColor
