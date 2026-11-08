@@ -278,7 +278,7 @@ QStringList effortArguments(const QString& harness, const QString& effort) {
         return {};
     if (harness == QLatin1String("claude"))
         return {QStringLiteral("--effort"), effort};
-    if (harness == QLatin1String("codex") && effort != QLatin1String("max"))
+    if (harness == QLatin1String("codex"))
         return {QStringLiteral("-c"), QStringLiteral("model_reasoning_effort=") + effort};
     return {};
 }
