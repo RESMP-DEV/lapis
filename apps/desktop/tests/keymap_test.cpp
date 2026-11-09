@@ -355,12 +355,18 @@ void retired_actions_load_silently() {
     QJsonObject bindings;
     for (const auto* removed : kRetiredActions)
         bindings.insert(QString::fromLatin1(removed), QJsonArray{QStringLiteral("Ctrl+Alt+F12")});
+    // The top-level "editor" opened an agent's folder, a retired command.
     const QString path = write_config(
-        dir, QJsonDocument(QJsonObject{{QStringLiteral("keybindings"), bindings}}).toJson());
+        dir, QJsonDocument(QJsonObject{{QStringLiteral("keybindings"), bindings},
+                                       {QStringLiteral("editor"), QStringLiteral("Zed")}})
+                 .toJson());
     KeyMap keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "a config binding retired actions loads");
-    require(keymap.diagnostic().isEmpty(), "retired action names load without complaint");
+    require(keymap.diagnostic().isEmpty(), "retired names load without complaint");
+    require(keymap.setTheme(QStringLiteral("graphite")), "an appearance change saves");
+    require(read_config(path).value(QStringLiteral("editor")).toString() == QStringLiteral("Zed"),
+            "saving leaves a retired setting as written");
     require(keymap.sequences(QStringLiteral("quit")) == KeyMap().sequences(QStringLiteral("quit")),
             "the other defaults are unchanged");
 }

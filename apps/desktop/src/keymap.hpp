@@ -116,9 +116,6 @@ class KeyMap final : public QObject {
     // A system notification for the same moments while lapis is in the
     // background; clicking it shows the agent.
     Q_PROPERTY(bool notify READ notify NOTIFY changed)
-    // The app that opens an agent's folder ("Cursor", a .app path or a
-    // command); empty picks the first installed of a few common editors.
-    Q_PROPERTY(QString editor READ editor NOTIFY changed)
     // Keep this Mac from sleeping on power, so the phone can reach it.
     Q_PROPERTY(bool keepAwake READ keepAwake NOTIFY changed)
     // Typing over a scrolled-back full-screen program returns it to its
@@ -229,7 +226,6 @@ class KeyMap final : public QObject {
     // A finished turn chimes or notifies only when the next-prompt model
     // judged that the agent needs the person (alerts.judge, on by default).
     [[nodiscard]] bool judgePings() const { return judge_pings_; }
-    [[nodiscard]] const QString& editor() const { return editor_; }
     [[nodiscard]] bool keepAwake() const { return keep_awake_; }
     [[nodiscard]] QVariantMap visual() const;
     // Sets one visual-view key (theme, font, codeFont, size or all) and
@@ -293,7 +289,6 @@ class KeyMap final : public QObject {
     int away_after_s_{kAwayAfterDefault};
     int remind_after_min_{kRemindAfterDefault};
     bool judge_pings_{true};
-    QString editor_;
     QString visual_theme_{QStringLiteral("terminal")};
     QString visual_font_{QStringLiteral("system")};
     QString visual_code_font_{QStringLiteral("system")};

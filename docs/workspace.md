@@ -50,9 +50,7 @@ it.
 
 **Commands** (Command-Shift-P) searches every action with its shortcut. It holds
 **New category**, the reload and update actions from [agents](agents.md), and
-the card actions: show an agent's folder in Finder, open it in your editor
-(`editor` in [config](config.md), else the first of Cursor, VS Code, Zed,
-Windsurf and Sublime Text installed), or copy its path.
+the card actions.
 
 ## Visual view
 

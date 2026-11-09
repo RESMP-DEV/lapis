@@ -75,7 +75,7 @@ uv run --no-project python scripts/lapis.py run
 | [agents](docs/agents.md) | Starting agents, CLIs and modes, requests, restarts, reboots |
 | [workspace](docs/workspace.md) | Categories, the strip, tiles, finding, links, history |
 | [keys](docs/keys.md) | Every keyboard shortcut |
-| [config](docs/config.md) | `lapis.json`: defaults, alerts, editor, CLI flags |
+| [config](docs/config.md) | `lapis.json`: defaults, alerts, CLI flags |
 | [phone](docs/phone.md) | The prototype iPhone app and its separately installed gateway |
 | [suggestions](docs/suggestions.md) | Optional next-prompt guesses, Tab, and their acceptance log |
 | [ultratab](https://github.com/RESMP-DEV/ultratab) | Ultra Tab, an overlay that deals waiting agents as cards, now its own repository |

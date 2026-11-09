@@ -428,12 +428,6 @@ ApplicationWindow {
         add("textBigger", qsTr("Bigger text"), "textBigger", true, "", () => window.changeTextSize(1))
         add("textSmaller", qsTr("Smaller text"), "textSmaller", true, "", () => window.changeTextSize(-1))
         add("textReset", qsTr("Default text size"), "textReset", true, "", () => window.changeTextSize(0))
-        const folder = window.focusedFolder()
-        const noFolder = qsTr("Select an agent on this Mac first")
-        add("revealFolder", Qt.platform.os === "osx" ? qsTr("Show folder in Finder") : qsTr("Show folder"), "", folder.length > 0 && desktopAvailable, noFolder, () => desktop.revealFolder(folder))
-        const editor = desktopAvailable ? desktop.editorName : ""
-        add("openEditor", editor.length > 0 ? qsTr("Open folder in %1").arg(editor) : qsTr("Open folder in editor"), "", folder.length > 0 && editor.length > 0, editor.length > 0 ? noFolder : qsTr("Set \"editor\" in lapis.json, or install Cursor, VS Code or Zed"), () => desktop.openInEditor(folder))
-        add("copyPath", qsTr("Copy folder path"), "", folder.length > 0 && desktopAvailable, noFolder, () => desktop.copyText(folder))
         const tiled = workspace.stageTiles.length > 1
         add("untile", qsTr("Take agent off the stage"), "", tiled, qsTr("No tiles on the stage"), () => window.untileFocused())
         add("zoomTile", window.tileZoomed ? qsTr("Show all tiles") : qsTr("Fill the stage with this tile"), "zoomTile", tiled, qsTr("No tiles on the stage"), () => { window.tileZoomed = !window.tileZoomed })
@@ -1166,14 +1160,6 @@ ApplicationWindow {
     function reopenAgent() {
         if (interactionArmed && workspace.reopenAgent())
             preview.deferTerminalFocus()
-    }
-    // The selected agent's folder on this Mac, or "" for one over ssh.
-    function focusedFolder() {
-        const session = workspace.focusedSession
-        if (!session || workspace.previewMode)
-            return ""
-        const place = workspace.agentPlace(session.sessionId)
-        return place.machine && place.machine.length > 0 ? "" : session.directory
     }
     // Dropped files become their paths, quoted for a shell, as in Terminal.
     function quoteDroppedPaths(urls) {
@@ -2554,24 +2540,6 @@ ApplicationWindow {
                     }
                 }
             }
-        }
-        ActionItem {
-            objectName: "revealFolderAction"
-            text: Qt.platform.os === "osx" ? qsTr("Show in Finder") : qsTr("Show folder")
-            visible: window.desktopAvailable && window.focusedFolder().length > 0
-            onTriggered: desktop.revealFolder(window.focusedFolder())
-        }
-        ActionItem {
-            objectName: "openEditorAction"
-            text: window.desktopAvailable ? qsTr("Open in %1").arg(desktop.editorName) : ""
-            visible: window.desktopAvailable && desktop.editorName.length > 0 && window.focusedFolder().length > 0
-            onTriggered: desktop.openInEditor(window.focusedFolder())
-        }
-        ActionItem {
-            objectName: "copyPathAction"
-            text: qsTr("Copy path")
-            visible: window.desktopAvailable && window.focusedFolder().length > 0
-            onTriggered: desktop.copyText(window.focusedFolder())
         }
         ActionItem {
             objectName: "untileAgentAction"

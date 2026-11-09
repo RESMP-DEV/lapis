@@ -935,7 +935,7 @@ int main(int argc, char** argv) {
         std::optional<Notifier> notifier;
         if (!isolated)
             alert_for_agents(alerts, notifier, seen, workspace, keymap, shown);
-        DesktopActions desktop(keymap);
+        DesktopActions desktop;
         const bool hide_on_close = closes_to_dock(isolated, parser);
         // The canonical harness catalog's read-only status answers. It exists
         // in the isolated fixture too, so the pane is testable without config.

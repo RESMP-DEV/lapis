@@ -16,7 +16,6 @@ key bindings and appearance it holds these:
   },
   "harnessArguments": {"claude": ["--dangerously-skip-permissions"]},
   "alerts": {"finished": true, "notify": true},
-  "editor": "Cursor",
   "keepAwake": true
 }
 ```
@@ -235,8 +234,6 @@ both owner-only.
 
 ## The rest
 
-- `editor` is the app that opens an agent's folder (else the first of Cursor, VS
-  Code, Zed, Windsurf and Sublime Text installed).
 - `keepAwake` keeps the Mac from sleeping while it is plugged in, so the phone
   can reach it.
 - `usage` (and the older top-level `showUsage`), `accounts` and `limitResets`

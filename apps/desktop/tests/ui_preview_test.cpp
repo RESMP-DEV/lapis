@@ -2727,9 +2727,6 @@ int run_history_ui_tests() {
         return agent->inputReady() &&
                screen_text(agent->snapshot()).contains(QStringLiteral("all printed"));
     }));
-    QVariant folder;
-    CHECK(QMetaObject::invokeMethod(window, "focusedFolder", Q_RETURN_ARG(QVariant, folder)));
-    CHECK(folder.toString() == root.filePath(QStringLiteral("project")));
     // Exercise QML-to-C++ URL conversion and shell quoting together. No file
     // access or OS drop is needed to preserve the network authority.
     const QVariant dropUrls = QVariantList{

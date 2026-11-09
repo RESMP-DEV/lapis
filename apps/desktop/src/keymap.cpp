@@ -518,7 +518,6 @@ void KeyMap::apply_defaults() {
     remind_after_min_ = kRemindAfterDefault;
     judge_pings_ = true;
     keep_awake_ = true;
-    editor_.clear();
     load_visual({});
     // Each CLI lists its own models (HarnessModels) unless the config names some.
     agent_defaults_ = {};
@@ -741,7 +740,8 @@ void KeyMap::load_alerts(const QJsonObject& root) {
     alert_sound_file_ = sound_file(QStringLiteral("soundFile"));
     finish_sound_file_ = sound_file(QStringLiteral("finishedFile"));
     keep_awake_ = root.value(QStringLiteral("keepAwake")).toBool(true);
-    editor_ = root.value(QStringLiteral("editor")).toString().left(1024);
+    // A top-level "editor" opened an agent's folder, a retired command; a
+    // file that still has it loads, and saving leaves it as written.
 }
 
 namespace {
