@@ -108,8 +108,6 @@ class TabRanker final : public QObject {
     // Tests: whether a refit is running or queued, and the decision bound.
     [[nodiscard]] bool refitting() const;
     static constexpr int kMaxDecisions = 1000;
-  signals:
-    void modelChanged();
 
   private:
     struct Shared;

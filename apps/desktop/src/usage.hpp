@@ -147,8 +147,6 @@ class Usage final : public QObject {
     // account_home_name for the machine) and OMP's accounts, by
     // account_load_key; where two sources name one account, the fuller.
     [[nodiscard]] QHash<QString, AccountLoad> accountLoads() const;
-    // Tests: the clock that decides today and this month.
-    void setTodayForTesting(QDate today) { today_ = today; }
 
   signals:
     void changed();
@@ -197,7 +195,6 @@ class Usage final : public QObject {
     QStringList meter_order_;
     std::vector<Check> queue_;
     std::vector<Running> running_;
-    QDate today_;
 };
 } // namespace lapis::desktop
 #endif

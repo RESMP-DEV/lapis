@@ -1395,7 +1395,7 @@ void TerminalSurface::mousePressEvent(QMouseEvent* event) {
                 const bool runs = info.isBundle() || (info.isFile() && info.isExecutable());
                 url = QUrl::fromLocalFile(runs ? info.absolutePath() : target);
             }
-            if (!opens_links_ || QDesktopServices::openUrl(url))
+            if (QDesktopServices::openUrl(url))
                 emit linkOpened(target);
             else
                 qWarning() << "Could not open terminal link:" << url;
