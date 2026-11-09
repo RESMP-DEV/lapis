@@ -1027,6 +1027,8 @@ bool chats(const QString& cli) {
 }
 } // namespace
 
+bool NextPrompt::guesses(const QString& cli) const { return chats(cli); }
+
 QJsonObject NextPrompt::encodeOffer(const Offer& offer, qsizetype& budget) const {
     if (offer.key.size() > 400 || offer.conversation.size() > 200 ||
         offer.conversation_id.size() > 200 || offer.text.isEmpty() ||

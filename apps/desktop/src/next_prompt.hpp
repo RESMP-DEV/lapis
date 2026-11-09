@@ -145,6 +145,9 @@ class NextPrompt final : public QObject {
     // separated taken guesses (65%) from the rest (25 to 34%), Oct 3 to 9.
     static constexpr double confident = 0.45;
     [[nodiscard]] double confidentThreshold() const { return confident; }
+    // Whether agents of this CLI get guesses, so Tab types and sends them
+    // there (the window asks before turning on a terminal's Tab flow).
+    Q_INVOKABLE [[nodiscard]] bool guesses(const QString& cli) const;
     // The suggestion offered for the agent, or empty.
     Q_INVOKABLE [[nodiscard]] QString suggestion(const QString& id) const;
     // The agents with a suggestion offered, each true once it was seen.
