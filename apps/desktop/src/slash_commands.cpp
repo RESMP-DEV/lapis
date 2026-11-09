@@ -89,7 +89,8 @@ QString front_matter(const QString& text, const QString& key) {
         const auto trimmed = line.trimmed();
         if (trimmed.startsWith(key + QLatin1Char(':'))) {
             auto value = trimmed.mid(key.size() + 1).trimmed();
-            if (value.size() >= 2 && (value.front() == QLatin1Char('"') || value.front() == QLatin1Char('\'')) &&
+            if (value.size() >= 2 &&
+                (value.front() == QLatin1Char('"') || value.front() == QLatin1Char('\'')) &&
                 value.back() == value.front())
                 value = value.mid(1, value.size() - 2);
             return value;
@@ -107,9 +108,10 @@ QString description_of(const QString& path) {
     const auto text = QString::fromUtf8(file.read(8192));
     auto description = front_matter(text, QStringLiteral("description"));
     if (description.isEmpty()) {
-        const auto body = text.startsWith(QLatin1String("---"))
-                              ? text.mid(std::max<qsizetype>(0, text.indexOf(QLatin1String("\n---"), 3) + 4))
-                              : text;
+        const auto body =
+            text.startsWith(QLatin1String("---"))
+                ? text.mid(std::max<qsizetype>(0, text.indexOf(QLatin1String("\n---"), 3) + 4))
+                : text;
         for (const auto& line : body.split(QLatin1Char('\n')))
             if (!line.trimmed().isEmpty() && !line.trimmed().startsWith(QLatin1Char('#'))) {
                 description = line.trimmed();
@@ -119,10 +121,12 @@ QString description_of(const QString& path) {
     return description.left(160);
 }
 
-void add_commands(QVariantList& out, QSet<QString>& seen, const QString& root, const QString& source) {
+void add_commands(QVariantList& out, QSet<QString>& seen, const QString& root,
+                  const QString& source) {
     const QDir base(root + QStringLiteral("/commands"));
     if (base.exists()) {
-        QDirIterator it(base.path(), {QStringLiteral("*.md")}, QDir::Files, QDirIterator::Subdirectories);
+        QDirIterator it(base.path(), {QStringLiteral("*.md")}, QDir::Files,
+                        QDirIterator::Subdirectories);
         int count = 0;
         while (it.hasNext() && count < 400) {
             const auto path = it.next();
@@ -146,7 +150,8 @@ void add_commands(QVariantList& out, QSet<QString>& seen, const QString& root, c
         QFile file(path);
         QString name = entry;
         if (file.open(QIODevice::ReadOnly)) {
-            const auto given = front_matter(QString::fromUtf8(file.read(4096)), QStringLiteral("name"));
+            const auto given =
+                front_matter(QString::fromUtf8(file.read(4096)), QStringLiteral("name"));
             if (!given.isEmpty())
                 name = given;
         }
@@ -166,16 +171,19 @@ QVariantList claude_slash_commands(const QString& home, const QString& folder) {
     for (const auto& builtin : claude_builtins) {
         const auto name = QString::fromLatin1(builtin.name);
         seen.insert(name);
-        out.append(QVariantMap{{QStringLiteral("name"), name},
-                               {QStringLiteral("description"), QString::fromUtf8(builtin.description)},
-                               {QStringLiteral("source"), QStringLiteral("claude")}});
+        out.append(
+            QVariantMap{{QStringLiteral("name"), name},
+                        {QStringLiteral("description"), QString::fromUtf8(builtin.description)},
+                        {QStringLiteral("source"), QStringLiteral("claude")}});
     }
     // The project's own commands win over the person's of the same name, as
     // Claude Code resolves them.
     if (!folder.isEmpty())
-        add_commands(out, seen, QDir(folder).filePath(QStringLiteral(".claude")), QStringLiteral("project"));
+        add_commands(out, seen, QDir(folder).filePath(QStringLiteral(".claude")),
+                     QStringLiteral("project"));
     if (!home.isEmpty())
-        add_commands(out, seen, QDir(home).filePath(QStringLiteral(".claude")), QStringLiteral("user"));
+        add_commands(out, seen, QDir(home).filePath(QStringLiteral(".claude")),
+                     QStringLiteral("user"));
     return out;
 }
 } // namespace lapis::desktop

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-09T21:43:38Z",
+  "agent": "Codex triage parent",
+  "base_revision": "113c9f69598b8e42ab7c5983d254106a6400eeb9",
+  "scope": "Canonicalize formatting of the C++ files introduced or modified by the visual-view merge.",
+  "validation": [
+    {
+      "command": "just format",
+      "result": "passed"
+    },
+    {
+      "command": "/opt/homebrew/opt/llvm/bin/clang-format --dry-run --Werror <nine changed C++ files>",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check && just quality",
+      "result": "passed"
+    }
+  ],
+  "non_claims": [
+    "Formatting-only change; no runtime behavior, GUI, compiler build, or sanitizer suite was rerun.",
+    "The pre-existing session-service clang-tidy complexity findings remain outside this formatting-only scope."
+  ]
+}

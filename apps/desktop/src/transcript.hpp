@@ -41,7 +41,7 @@ struct Item {
     QString detail;
     QString result; // a tool's or a command's output, shortened
     std::vector<DiffLine> diff;
-    int added{};   // diff lines added and removed, counted in full
+    int added{}; // diff lines added and removed, counted in full
     int removed{};
     int result_lines{}; // lines in the full output
     bool failed{};      // the tool or the API reported an error
@@ -50,8 +50,8 @@ struct Item {
     QString tool_id;
     // The saved record this item came from, so a fork can cut there.
     QString record;
-    qint64 at_ms{};       // when it was written (ms since the epoch), or 0
-    bool starts_turn{};   // a prompt, or a background task waking the agent
+    qint64 at_ms{};     // when it was written (ms since the epoch), or 0
+    bool starts_turn{}; // a prompt, or a background task waking the agent
     // A prompt sent while the agent worked, waiting for it to take it in.
     bool queued{};
     // Withdrawn from the queue, or sent on as a turn of its own: not shown.
@@ -63,8 +63,8 @@ struct Item {
 // The model, effort and context use the agent last reported, read the same
 // way for every CLI so the bar shows the same things for each.
 struct Status {
-    QString model;          // as the API names it ("claude-opus-5-5")
-    QString effort;         // "low" ... "max", or empty when not reported
+    QString model;           // as the API names it ("claude-opus-5-5")
+    QString effort;          // "low" ... "max", or empty when not reported
     qint64 context_tokens{}; // what the last request sent and got back
     bool operator==(const Status&) const = default;
 };
@@ -90,8 +90,8 @@ struct Turn {
 // The summary for the work items in [first, last], skipping `except`.
 [[nodiscard]] QString work_summary(const std::vector<Item>& items, int first, int last, int except);
 struct Row {
-    int item{-1}; // the item shown, or -1 for a turn's "Worked for" row
-    int turn{-1}; // the turn it belongs to, or -1
+    int item{-1};   // the item shown, or -1 for a turn's "Worked for" row
+    int turn{-1};   // the turn it belongs to, or -1
     bool in_work{}; // folded work, shown because its turn is open
 };
 struct Layout {
@@ -176,8 +176,8 @@ class ClaudeReader {
     int command_output(const QString& raw);
     std::vector<Item> items_;
     Status status_;
-    qint64 at_ms_{}; // time of the record being read
-    QString record_; // uuid of the record being read
+    qint64 at_ms_{};            // time of the record being read
+    QString record_;            // uuid of the record being read
     QHash<QString, int> tools_; // tool_use id -> item index
     // Claude Code's input queue in order: {text, item}, item -1 for entries
     // not shown (background task notices). A dequeue names no text and
@@ -246,7 +246,8 @@ class TranscriptModel final : public QAbstractListModel {
     Q_INVOKABLE void hoverLink(QQuickTextDocument* target, const QString& link) const;
     // Colors code in a TextEdit's document by its language, with the Tokyo
     // Night palette (`light` for its Day variant). Replaces any earlier one.
-    Q_INVOKABLE void highlight(QQuickTextDocument* target, const QString& language, bool light) const;
+    Q_INVOKABLE void highlight(QQuickTextDocument* target, const QString& language,
+                               bool light) const;
     // The slash commands for a Claude Code agent working in `folder`, as
     // {name, description, source}.
     Q_INVOKABLE [[nodiscard]] QVariantList slashCommands(const QString& folder) const;

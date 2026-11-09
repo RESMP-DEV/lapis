@@ -2024,8 +2024,9 @@ bool TerminalSurface::submitText(const QString& text) {
         return false;
     const QByteArray bytes = text.toUtf8();
     if (bytes.size() > session::wire::max_paste_bytes) {
-        emit pasteRefused(tr("This message is %1; lapis sends up to %2 at a time.")
-                              .arg(data_size(bytes.size()), data_size(session::wire::max_paste_bytes)));
+        emit pasteRefused(
+            tr("This message is %1; lapis sends up to %2 at a time.")
+                .arg(data_size(bytes.size()), data_size(session::wire::max_paste_bytes)));
         return false;
     }
     if (document_->historyActive()) {
