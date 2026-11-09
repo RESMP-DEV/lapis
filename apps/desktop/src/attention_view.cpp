@@ -1,10 +1,8 @@
 #include "live_connection.hpp"
 #include "workspace.hpp"
 
-#include <QDebug>
 #include <QJsonObject>
 #include <algorithm>
-#include <exception>
 
 namespace lapis::desktop {
 namespace {
@@ -228,34 +226,5 @@ void SessionPreview::retryAttention(const session::wire::AttentionDecision& deci
             return;
         }
     }
-}
-bool SessionPreview::respondAttention(const QString& key, const QVariantMap& response) {
-    const auto choice = response.value(QStringLiteral("choice")).toString();
-    const auto answers = response.value(QStringLiteral("answers")).toMap();
-    if (!live_ || !attention_ || !attentionReady() || submitted_attention_.contains(key))
-        return false;
-    const auto item = std::find_if(
-        attention_->requests.begin(), attention_->requests.end(), [&](const auto& value) {
-            return display_token(*attention_, value.pending, attention_token_aliases_) == key;
-        });
-    if (item == attention_->requests.end() || item->pending.submitted ||
-        item->pending.status != session::attention::RequestStatus::pending ||
-        std::find(item->pending.request.choices.begin(), item->pending.request.choices.end(),
-                  choice.toStdString()) == item->pending.request.choices.end())
-        return false;
-    const session::wire::AttentionDecision decision{
-        attention_->source_epoch, item->pending.request.id, item->pending.revision, choice,
-        QJsonObject::fromVariantMap(answers)};
-    try {
-        if (!live_->send(session::wire::Kind::attention_decision,
-                         session::wire::encode_attention_decision(decision)))
-            return false;
-    } catch (const std::exception& error) {
-        qWarning() << "Attention response rejected before queueing:" << error.what();
-        return false; // Encoding rejects invalid/bounded input before any bytes are queued.
-    }
-    submitted_attention_.insert(key);
-    emit attentionChanged();
-    return true;
 }
 } // namespace lapis::desktop

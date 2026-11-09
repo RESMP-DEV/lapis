@@ -112,7 +112,6 @@ class SessionPreview final : public QObject {
     Q_INVOKABLE void returnToLive();
     // Moves the view to `fraction` of everything kept (0 the oldest row).
     Q_INVOKABLE void historyAt(qreal fraction);
-    Q_INVOKABLE bool respondAttention(const QString& token, const QVariantMap& response);
     // Ask the session service to end this agent's process. Returns false when
     // the request could not be queued on a synchronized connection.
     bool terminate();

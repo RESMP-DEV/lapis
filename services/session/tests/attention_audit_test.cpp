@@ -30,20 +30,8 @@ attention::Request request() {
             .item_id = "item",
             .reason = "approval",
             .summary = "Run the command?",
-            .choices = {"allow", "reject"},
+            .choices = {},
             .priority = 2};
-}
-
-AttentionApproval approval(const std::string& choice = "allow") {
-    return {.epoch = 1, .id = std::int64_t{9}, .revision = 1, .choice = choice};
-}
-
-std::size_t count_kind(const std::vector<AttentionJournal::Entry>& entries,
-                       AttentionJournal::Kind kind) {
-    std::size_t result = 0;
-    for (const auto& entry : entries)
-        result += entry.kind == kind;
-    return result;
 }
 
 std::size_t count_kind(const std::vector<AttentionJournal::Entry>& entries,
@@ -79,95 +67,64 @@ class TemporaryDirectory {
     std::filesystem::path directory_;
 };
 
-void headless_ask_decision_refusal_and_restart() {
+// Asks are journaled from source changes without a GUI client; a request
+// that leaves the pending set is closed as resolved by the agent, and the
+// reopened journal has no open question.
+void headless_ask_resolution_and_restart() {
     const TemporaryDirectory directory{"audit"};
     const auto path = directory.path() / "service.attention";
     attention::State state{"session", "test"};
     state.connect(1, {true, true, true});
-    const auto outcome = state.reconcile({1, 1}, {request()}, 0);
-    require(outcome == attention::Outcome::applied);
+    require(state.reconcile({1, 1}, {request()}, 0) == attention::Outcome::applied);
     JournaledAsks journaled;
     {
         AttentionJournal journal(path);
-
-        // This hook runs from source changes and therefore does not need a GUI
-        // client; the fixture deliberately creates none.
         journal_attention(journal, state, journaled);
         require(journal.entries().size() == 1 &&
                 journal.entries().front().kind == AttentionJournal::Kind::asked);
         require(journaled.at(std::int64_t{9}) == JournaledAskPosition{1, 1});
-
-        // A stale desktop revision is refused before it becomes durable evidence.
-        auto stale = approval();
-        stale.revision = 0;
-        require(!record_intended_decision(journal, state, stale));
-        const auto unsupported = approval("maybe");
-        require(!record_intended_decision(journal, state, unsupported));
-
-        require(record_intended_decision(journal, state, approval()));
-        require(journal.entries().size() == 1 && !open_questions(journal.entries()).empty());
-
-        // A real Observer marks the request responding before send; send failure is
-        // the case whose false approval the compensation must erase.
-        require(state.respond(1, std::int64_t{9}, 1, "allow"));
-        record_refused_decision(journal, approval());
-        journaled.erase(std::int64_t{9});
+        // An unchanged request is not journaled twice.
         journal_attention(journal, state, journaled);
-        require(journal.entries().empty());
+        require(journal.entries().size() == 1);
+        require(state.reconcile({1, 2}, {}, 0) == attention::Outcome::applied);
+        journal_attention(journal, state, journaled);
+        require(journal.entries().empty() && journaled.empty());
     }
     AttentionJournal reopened(path);
     const auto& entries = reopened.entries();
-    require(count_kind(entries, AttentionJournal::Kind::asked) == 1);
-    require(count_kind(entries, AttentionJournal::Kind::decided, AttentionJournal::Origin::user) ==
+    require(count_kind(entries, AttentionJournal::Kind::asked, AttentionJournal::Origin::user) ==
             1);
     require(count_kind(entries, AttentionJournal::Kind::resolved,
                        AttentionJournal::Origin::agent) == 1);
     require(open_questions(entries).empty());
 }
 
-void delivered_decision_confirms_intent() {
-    const TemporaryDirectory directory{"delivered"};
-    const auto path = directory.path() / "delivered.attention";
-    attention::State state{"session", "test"};
-    state.connect(1, {true, true, true});
-    require(state.reconcile({1, 1}, {request()}, 0) == attention::Outcome::applied);
-    AttentionJournal journal(path);
-    JournaledAsks journaled;
-    journal_attention(journal, state, journaled);
-    require(record_intended_decision(journal, state, approval()));
-    require(!open_questions(journal.entries()).empty());
-    record_delivered_decision(journal, approval());
-    require(journal.entries().empty());
-}
-
 void unavailable_journal_fails_closed() {
     const TemporaryDirectory directory{"locked"};
     const auto path = directory.path() / "locked.attention";
     AttentionJournal leased(path);
-    {
-        std::unique_ptr<AttentionJournal> service_journal;
-        bool threw = false;
-        try {
-            service_journal = std::make_unique<AttentionJournal>(path);
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
-        require(threw && !service_journal);
+    std::unique_ptr<AttentionJournal> service_journal;
+    bool threw = false;
+    try {
+        service_journal = std::make_unique<AttentionJournal>(path);
+    } catch (const std::runtime_error&) {
+        threw = true;
     }
-    // The decision path checks this null owner before forwarding; the test pins
-    // the observable setup used by that fail-closed branch.
+    require(threw && !service_journal);
 }
 
-void append_failure_refuses_then_accepts_retry() {
+// A failed append leaves the file and the journaled set unchanged, so the
+// next publish records the ask exactly once.
+void append_failure_retries_the_ask() {
     const TemporaryDirectory directory{"failure"};
     const auto path = directory.path() / "failure.attention";
     attention::State state{"session", "test"};
     state.connect(1, {true, true, true});
-    require(state.reconcile({1, 1}, {request()}, 0) == attention::Outcome::applied);
     AttentionJournal journal(path);
     JournaledAsks journaled;
     journal_attention(journal, state, journaled);
     const auto boundary = std::filesystem::file_size(path);
+    require(state.reconcile({1, 1}, {request()}, 0) == attention::Outcome::applied);
     const auto previous_signal = ::signal(SIGXFSZ, SIG_IGN);
     struct FileSizeLimit {
         rlim_t saved;
@@ -190,33 +147,27 @@ void append_failure_refuses_then_accepts_retry() {
         }()};
         std::string diagnostic;
         try {
-            require(!record_intended_decision(journal, state, approval()));
+            journal_attention(journal, state, journaled);
         } catch (const std::runtime_error& error) {
             diagnostic = error.what();
         }
         require(diagnostic.find("write failed") != std::string::npos);
         require(std::filesystem::file_size(path) == boundary);
-        require(journal.entries().size() == 1 &&
-                journal.entries().front().kind == AttentionJournal::Kind::asked);
+        require(journal.entries().empty() && journaled.empty());
     }
     static_cast<void>(::signal(SIGXFSZ, previous_signal));
-
-    // The durable rollback succeeded, so the caller may safely retry and the
-    // retry is recorded only once it is actually durable.
-    require(record_intended_decision(journal, state, approval()));
-    require(!open_questions(journal.entries()).empty());
-    record_delivered_decision(journal, approval());
-    require(journal.entries().empty());
+    journal_attention(journal, state, journaled);
+    require(journal.entries().size() == 1 &&
+            journal.entries().front().kind == AttentionJournal::Kind::asked);
 }
 
 } // namespace
 
 int main() {
     try {
-        headless_ask_decision_refusal_and_restart();
-        delivered_decision_confirms_intent();
+        headless_ask_resolution_and_restart();
         unavailable_journal_fails_closed();
-        append_failure_refuses_then_accepts_retry();
+        append_failure_retries_the_ask();
         std::cout << "attention-audit: ok\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -12,8 +12,6 @@ Dialog {
     property var draft: null
     property var answers: ({})
     property var answerModes: ({})
-    property string feedback: ""
-    property bool responseQueued: false
     property string lastDraftSessionId: ""
     property string lastDraftToken: ""
     property var draftCache: ({})
@@ -37,15 +35,6 @@ Dialog {
     readonly property bool canRespond: current !== null && current.enabled
     readonly property bool terminalOnly: draft !== null &&
                                          draft.details.responseLocation === "terminal"
-    readonly property bool answersComplete: {
-        const questions = draft ? (draft.details.questions || []) : []
-        for (const question of questions) {
-            if (!answers[question.id] || !answers[question.id].answers[0].length ||
-                    answers[question.id].answers[0].length > maximumAnswerCharacters)
-                return false
-        }
-        return true
-    }
 
     function draftKey(sessionId, token) {
         return JSON.stringify([sessionId, token])
@@ -61,9 +50,7 @@ Dialog {
             token: draft.token,
             draft: draft,
             answers: answers,
-            answerModes: answerModes,
-            feedback: feedback,
-            responseQueued: responseQueued
+            answerModes: answerModes
         }
         for (const existingKey of Object.keys(draftCache)) {
             if (Object.keys(retained).length >= maximumDrafts)
@@ -83,8 +70,6 @@ Dialog {
         draft = cached.draft
         answers = cached.answers
         answerModes = cached.answerModes
-        feedback = cached.feedback
-        responseQueued = cached.responseQueued
         lastDraftSessionId = sessionId
         lastDraftToken = token
         return true
@@ -131,8 +116,6 @@ Dialog {
         draft = null
         answers = ({})
         answerModes = ({})
-        feedback = ""
-        responseQueued = false
         open()
         const targetToken = preferredToken ? preferredToken : restoreToken
         if (targetToken)
@@ -146,8 +129,6 @@ Dialog {
             draft = value
             answers = ({})
             answerModes = ({})
-            feedback = ""
-            responseQueued = false
         }
         rememberDraft()
     }
@@ -174,20 +155,6 @@ Dialog {
         answers = updated
         rememberDraft()
     }
-    function respond(choice) {
-        if (!canRespond || !answersComplete)
-            return
-        responseQueued = session.respondAttention(draft.token, {choice: choice, answers: answers})
-        feedback = responseQueued ? ""
-            : qsTr("Request changed or the connection is unavailable. Select the current request.")
-        rememberDraft()
-    }
-    function choiceLabel(choice) {
-        if (choice === "accept") return qsTr("Approve command")
-        if (choice === "decline") return qsTr("Decline command")
-        if (choice === "cancel") return qsTr("Cancel request")
-        return qsTr("Send answers")
-    }
 
     title: qsTr("Agent requests")
     modal: true
@@ -211,7 +178,6 @@ Dialog {
         draft = null
         answers = ({})
         answerModes = ({})
-        responseQueued = false
         session = null
     }
     onRequestsChanged: {
@@ -341,36 +307,15 @@ Dialog {
                         }
                     }
                 }
-                RowLayout {
-                    Repeater {
-                        model: dialog.draft ? dialog.draft.choices : []
-                        delegate: Button {
-                            required property string modelData
-                            objectName: "respond-" + modelData
-                            text: dialog.choiceLabel(modelData)
-                            enabled: dialog.canRespond && dialog.answersComplete
-                            onClicked: dialog.respond(modelData)
-                        }
-                    }
-                }
             }
+            // lapis surfaces requests; the agent takes every answer in its own
+            // terminal (an older service's request too).
             Label {
                 Layout.fillWidth: true
-                visible: dialog.draft !== null && !dialog.canRespond
+                visible: dialog.draft !== null && !dialog.terminalOnly
                 text: dialog.current === null ? qsTr("This request is no longer current.") :
                       dialog.current.responding ? qsTr("Waiting for the agent to resolve this request.") :
-                      dialog.current.choices.length === 0 ? qsTr("Respond in the originating terminal.") :
-                      qsTr("Reconnect agent from Commands and select the current request before responding.")
-                wrapMode: Text.Wrap
-            }
-            Label {
-                Layout.fillWidth: true
-                text: !dialog.responseQueued ? dialog.feedback :
-                      dialog.current === null ? qsTr("This request is no longer pending.") :
-                      dialog.current.responding ? qsTr("Response sent. Waiting for the agent.") :
-                      dialog.canRespond ? qsTr("Response rejected. Review your answers and try again.") :
-                      qsTr("Response status is uncertain. Reconnect agent from Commands before responding.")
-                visible: text.length > 0
+                      qsTr("Respond in the originating terminal.")
                 wrapMode: Text.Wrap
             }
         }

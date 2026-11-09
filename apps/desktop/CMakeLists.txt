@@ -349,14 +349,3 @@ if(APPLE)
         LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
     add_dependencies(lapis_native_input_probe lapis_session_service)
 endif()
-
-# Uses a private service fixture supplied by check_service_attention.py --desktop.
-add_executable(lapis_attention_ui_probe tests/attention_ui_probe.cpp)
-if(APPLE)
-    target_sources(lapis_attention_ui_probe PRIVATE tests/platform/window_activation.mm)
-endif()
-target_link_libraries(lapis_attention_ui_probe PRIVATE lapis_project_options lapis_desktop_view
-    Qt6::QuickControls2)
-target_compile_definitions(lapis_attention_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
-qt_add_resources(lapis_attention_ui_probe attention_qml PREFIX "/" FILES
-    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml)

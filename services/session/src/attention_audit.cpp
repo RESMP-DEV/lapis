@@ -1,6 +1,7 @@
 #include "attention_audit.hpp"
 
-#include <algorithm>
+#include <string>
+#include <utility>
 
 namespace lapis::session {
 namespace {
@@ -52,31 +53,5 @@ void journal_attention(AttentionJournal& journal, const attention::State& state,
                                     AttentionJournal::Origin::agent));
         entry = journaled.erase(entry);
     }
-}
-
-bool record_intended_decision(AttentionJournal& journal, const attention::State& state,
-                              const AttentionApproval& approval) {
-    const auto pending = state.pending().find(approval.id);
-    if (!state.ready() || state.epoch() != approval.epoch || pending == state.pending().end() ||
-        pending->second.revision != approval.revision ||
-        pending->second.status != attention::RequestStatus::pending || pending->second.submitted ||
-        std::find(pending->second.request.choices.begin(), pending->second.request.choices.end(),
-                  approval.choice) == pending->second.request.choices.end())
-        return false;
-    journal.append(closed_entry(AttentionJournal::Kind::decided, approval.epoch, approval.id,
-                                approval.revision, approval.choice,
-                                AttentionJournal::Origin::user));
-    return true;
-}
-
-void record_delivered_decision(AttentionJournal& journal, const AttentionApproval& approval) {
-    journal.append(closed_entry(AttentionJournal::Kind::delivered, approval.epoch, approval.id,
-                                approval.revision, approval.choice,
-                                AttentionJournal::Origin::user));
-}
-
-void record_refused_decision(AttentionJournal& journal, const AttentionApproval& approval) {
-    journal.append(closed_entry(AttentionJournal::Kind::resolved, approval.epoch, approval.id,
-                                approval.revision, {}, AttentionJournal::Origin::agent));
 }
 } // namespace lapis::session

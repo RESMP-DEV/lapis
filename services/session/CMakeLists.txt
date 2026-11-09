@@ -24,9 +24,9 @@ if(BUILD_TESTING)
     set_tests_properties(session-platform-ownership PROPERTIES TIMEOUT 10)
 endif()
 
-# Durable attention audit. The decision barrier lives here: a forwarded
-# decision is appended and fsynced first. POSIX file ownership only; no GUI,
-# protocol or terminal dependency.
+# Durable attention audit of asked and resolved requests; journals written by
+# older services, decisions included, stay readable. POSIX file ownership
+# only; no GUI, protocol or terminal dependency.
 add_library(lapis_attention_journal STATIC src/attention_journal.cpp src/attention_audit.cpp)
 target_link_libraries(lapis_attention_journal PRIVATE lapis_project_options
     lapis_session_platform

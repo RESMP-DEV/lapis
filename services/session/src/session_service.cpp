@@ -480,10 +480,10 @@ class SessionService final : public QObject {
                 static_cast<int>(attention_pace_.wait_ms(attention_clock_.elapsed())));
         }
     }
-    // The durable audit trail for attention requests. A decision is recorded
-    // before it is forwarded (durable-before-effect), so an approval the agent
-    // acted on is never missing from the journal. Surfacing needs no barrier
-    // because surfacing never approves; only the decision path gates.
+    // The durable audit trail for attention requests. Surfacing needs no
+    // barrier because surfacing never approves, and lapis forwards no
+    // decisions. A question left open by a previous run, including one an
+    // older service forwarded a decision for, ends with an unknown outcome.
     void open_attention_journal(const QString& endpoint) {
         try {
             attention_journal_ = std::make_unique<AttentionJournal>(std::filesystem::path(
