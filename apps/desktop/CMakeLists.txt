@@ -39,7 +39,6 @@ add_library(lapis_desktop_view STATIC
     src/platform/published_task.hpp
     src/terminal_surface.cpp src/terminal_surface.hpp
     src/cell_shapes.cpp src/cell_shapes.hpp
-    src/tile_layout.cpp src/tile_layout.hpp
     src/history_strip.cpp src/history_strip.hpp
     src/gui_state.cpp src/gui_state.hpp
     src/app_paths.cpp src/app_paths.hpp
@@ -168,10 +167,6 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_history_strip_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME history-strip COMMAND lapis_history_strip_tests)
     set_tests_properties(history-strip PROPERTIES TIMEOUT 20)
-    add_executable(lapis_tile_layout_tests tests/tile_layout_test.cpp)
-    target_link_libraries(lapis_tile_layout_tests PRIVATE lapis_project_options lapis_desktop_view)
-    add_test(NAME tile-layout COMMAND lapis_tile_layout_tests)
-    set_tests_properties(tile-layout PROPERTIES TIMEOUT 20)
     add_executable(lapis_transcript_tests tests/transcript_test.cpp)
     target_link_libraries(lapis_transcript_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME transcript COMMAND lapis_transcript_tests)

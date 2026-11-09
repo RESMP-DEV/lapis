@@ -111,8 +111,7 @@ another machine keeps the lapis hook, so the variable has no effect there.
 lapis runs Claude Code with its classic renderer (`CLAUDE_CODE_NO_FLICKER=0`,
 also over ssh, which overrides Claude Code's own `"tui"` setting), so its
 conversation is kept in lapis's history and the wheel scrolls it there. For a
-locally launched Claude agent, when its width changes (a tile, the phone, the
-window) Claude Code draws the end of its conversation again at the new width
+locally launched Claude agent, when its width changes (the phone, the window) Claude Code draws the end of its conversation again at the new width
 but never reprints older lines, so lapis holds the screen until that redraw is
 done and keeps each part of the conversation once: older rows keep the width
 they were drawn at, and a repeated passage is dropped. Remote SSH agents still

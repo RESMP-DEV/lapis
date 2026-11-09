@@ -346,7 +346,9 @@ void default_settings_chords_are_shared() {
 
 // Actions lapis no longer has. A lapis.json that still binds them loads as
 // before; the bindings reach nothing.
-constexpr std::array kRetiredActions{"nextAttention", "latestAttention", "searchAgents", "find"};
+constexpr std::array kRetiredActions{
+    "nextAttention", "latestAttention", "searchAgents", "find",     "splitRight", "splitDown",
+    "tileLeft",      "tileRight",       "tileUp",       "tileDown", "zoomTile"};
 
 void retired_actions_load_silently() {
     QTemporaryDir directory;
@@ -388,10 +390,6 @@ void navigation_defaults_preserve_terminal_editing() {
     for (const auto* removed : kRetiredActions)
         require(keymap.sequences(QString::fromLatin1(removed)).isEmpty(),
                 "retired actions have no default keys");
-    // Tiles split with a new agent and move between tiles, as in iTerm2.
-    for (const auto* tiling :
-         {"splitRight", "splitDown", "tileLeft", "tileRight", "tileUp", "tileDown", "zoomTile"})
-        require(!keymap.sequences(QString::fromLatin1(tiling)).isEmpty(), "tile actions have keys");
 #ifdef Q_OS_MACOS
     require(
         keymap.sequences(QStringLiteral("nextCategory")) ==

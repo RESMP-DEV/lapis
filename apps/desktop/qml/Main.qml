@@ -174,20 +174,6 @@ ApplicationWindow {
             return [mac ? "Meta+Shift+[" : "Ctrl+Shift+["]
         if (action === "newCategory")
             return [mod + "N"]
-        if (action === "splitRight")
-            return [mod + "D"]
-        if (action === "splitDown")
-            return [mac ? "Meta+Shift+D" : "Ctrl+Alt+Shift+D"]
-        if (action === "tileLeft")
-            return [mac ? "Meta+Ctrl+Left" : "Ctrl+Alt+Left"]
-        if (action === "tileRight")
-            return [mac ? "Meta+Ctrl+Right" : "Ctrl+Alt+Right"]
-        if (action === "tileUp")
-            return [mac ? "Meta+Ctrl+Up" : "Ctrl+Alt+Up"]
-        if (action === "tileDown")
-            return [mac ? "Meta+Ctrl+Down" : "Ctrl+Alt+Down"]
-        if (action === "zoomTile")
-            return [mac ? "Meta+Shift+Return" : "Ctrl+Shift+Return"]
         if (action === "textBigger")
             return [mod + "=", mod + "+"]
         if (action === "textSmaller")
@@ -410,9 +396,6 @@ ApplicationWindow {
         add("nextWindow", qsTr("Next agent in category"), "nextWindow", workspace.categorySessions.length > 1, qsTr("This category needs another agent"), () => workspace.nextSession())
         add("previousWindow", qsTr("Previous agent in category"), "previousWindow", workspace.categorySessions.length > 1, qsTr("This category needs another agent"), () => workspace.nextSession(-1))
         add("closeAgent", qsTr("Close agent"), "closeAgent", hasAgent, needAgent, () => window.closeFocusedAgent())
-        const liveAgent = hasAgent && !workspace.previewMode
-        add("splitRight", qsTr("New agent here, tiled to the right"), "splitRight", liveAgent, needAgent, () => window.splitAgent("right"))
-        add("splitDown", qsTr("New agent here, tiled below"), "splitDown", liveAgent, needAgent, () => window.splitAgent("bottom"))
         add("reopenAgent", qsTr("Reopen closed agent"), "reopenAgent", workspace.canReopenAgent, qsTr("No agent was closed since lapis opened"), () => window.reopenAgent())
         add("resumeConversation", qsTr("Resume a conversation"), "resumeConversation", conversationsAvailable, qsTr("Not available here"), () => window.openResumeDialog())
         add("toggleTerminal", sideTerminalOpen ? qsTr("Hide terminal") : qsTr("Terminal"), "toggleTerminal", terminalsAvailable, qsTr("Not available here"), () => window.toggleTerminal())
@@ -428,9 +411,6 @@ ApplicationWindow {
         add("textBigger", qsTr("Bigger text"), "textBigger", true, "", () => window.changeTextSize(1))
         add("textSmaller", qsTr("Smaller text"), "textSmaller", true, "", () => window.changeTextSize(-1))
         add("textReset", qsTr("Default text size"), "textReset", true, "", () => window.changeTextSize(0))
-        const tiled = workspace.stageTiles.length > 1
-        add("untile", qsTr("Take agent off the stage"), "", tiled, qsTr("No tiles on the stage"), () => window.untileFocused())
-        add("zoomTile", window.tileZoomed ? qsTr("Show all tiles") : qsTr("Fill the stage with this tile"), "zoomTile", tiled, qsTr("No tiles on the stage"), () => { window.tileZoomed = !window.tileZoomed })
         const stopped = hasAgent && agent.live && (agent.connectionState === "ended" || agent.connectionState === "disconnected")
         add("restartAgent", qsTr("Restart agent"), "", stopped, qsTr("Only an ended or unreachable agent restarts"), () => workspace.restartAgent(agent.sessionId))
         // A CLI rereads its settings only when it starts: these end it and
@@ -654,8 +634,7 @@ ApplicationWindow {
     property string lastMode: ""
     property var lastModels: ({})
     // The window's own choices outlive a restart of the window (guiState;
-    // absent in fixtures): the new-agent form's, the side terminal's and a
-    // zoomed tile.
+    // absent in fixtures): the new-agent form's and the side terminal's.
     readonly property var windowMemory: typeof guiState !== "undefined" ? guiState : null
     // QML initializes its properties after the state is loaded; remember only
     // after recall has read it, or those writes would erase loaded choices.
@@ -669,7 +648,6 @@ ApplicationWindow {
     onLastModeChanged: remember("lastMode", lastMode)
     onLastModelsChanged: remember("lastModels", lastModels)
     onLastTerminalMachineChanged: remember("lastTerminalMachine", lastTerminalMachine)
-    onTileZoomedChanged: remember("tileZoomed", tileZoomed)
     onSideTerminalOpenChanged: remember("sideTerminalOpen", sideTerminalOpen)
     function recallWindowMemory() {
         if (windowMemory === null)
@@ -695,7 +673,6 @@ ApplicationWindow {
                     validModels[candidate.id] = models[candidate.id]
             lastModels = validModels
         }
-        tileZoomed = windowMemory.value("tileZoomed") === true
         lastTerminalMachine = machines.includes(text("lastTerminalMachine"))
                                  ? text("lastTerminalMachine") : ""
         if (windowMemory.value("sideTerminalOpen") === true)
@@ -863,14 +840,12 @@ ApplicationWindow {
 
     // Several agents picked with Command-click or Shift-click, to drag together.
     property var selectedAgents: []
-    // What a drag carries: agent ids from the strip or a tile, or a category.
+    // What a drag carries: agent ids from the strip, or a category.
     property var draggedAgents: []
     property string dragSource: ""
     property string draggedCategory: ""
     // Agents waiting for the category being created from a drop on its +.
     property var pendingCategoryAgents: []
-    // The selected tile fills the stage until this is turned off again.
-    property bool tileZoomed: false
     readonly property int toggleModifier: Qt.platform.os === "osx" ? Qt.MetaModifier : Qt.ControlModifier
     // Agents shown as a readable thread (the visual view) instead of their
     // terminal, by id. The terminal keeps running under it, takes no input
@@ -1091,8 +1066,6 @@ ApplicationWindow {
         const ids = draggedAgents
         if (ids.length === 0)
             return
-        if (dragSource === "tile")
-            workspace.untileSession(ids[0])
         // Positions count the agents that stay where they are.
         const strip = stripIds()
         let index = 0
@@ -1119,31 +1092,6 @@ ApplicationWindow {
         if (from < 0)
             return
         workspace.placeCategory(draggedCategory, from < targetIndex ? targetIndex - 1 : targetIndex)
-    }
-    // Dropped on a tile's edge: the agents tile beside it, one after another;
-    // on its center, the first takes its place.
-    function dropOnStage(target, edge) {
-        let beside = target
-        for (const id of draggedAgents) {
-            if (id === beside)
-                continue
-            if (!workspace.tileSession(id, beside, edge) || edge === "center")
-                break
-            beside = id
-        }
-        clearAgentSelection()
-        preview.deferTerminalFocus()
-    }
-    function splitAgent(edge) {
-        if (!interactionArmed || workspace.focusedSession === null)
-            return
-        tileZoomed = false
-        if (workspace.splitAgent(edge).length > 0)
-            preview.deferTerminalFocus()
-    }
-    function focusTile(direction) {
-        if (interactionArmed && workspace.focusTile(direction))
-            preview.deferTerminalFocus()
     }
     readonly property bool desktopAvailable: typeof desktop !== "undefined" && desktop !== null
     // Command-plus, minus and zero: the terminal text size, saved to the config.
@@ -1178,11 +1126,6 @@ ApplicationWindow {
         if (destination.sessionId !== destinationId)
             return false
         return liveTerminal.pasteText(text)
-    }
-    function untileFocused() {
-        const session = workspace.focusedSession
-        if (session)
-            workspace.untileSession(session.sessionId)
     }
 
     function recoveryAvailable() {
@@ -1328,9 +1271,6 @@ ApplicationWindow {
         autoRepeat: false
         onActivated: window.closeInFront()
     }
-    // Tiles, as in iTerm2: Command-D splits right with a new agent like this
-    // one, Command-Shift-D below it; Command-Control-arrows move between tiles
-    // and Command-Shift-Return fills the stage with the selected tile.
     // A press that clicks, or once it moves a few pixels, drags. One mouse
     // area rather than a TapHandler and DragHandler pair, which inside the
     // strip's list lost clicks.
@@ -1385,19 +1325,8 @@ ApplicationWindow {
     ActionShortcut { action: "resumeConversation"; onActivated: window.openResumeDialog() }
     ActionShortcut { action: "toggleTerminal"; onActivated: window.toggleTerminal() }
     ActionShortcut { action: "chooseTerminal"; onActivated: window.chooseTerminal() }
-    ActionShortcut { action: "splitRight"; onActivated: window.splitAgent("right") }
-    ActionShortcut { action: "splitDown"; onActivated: window.splitAgent("bottom") }
-    ActionShortcut { action: "tileLeft"; onActivated: window.focusTile("left") }
-    ActionShortcut { action: "tileRight"; onActivated: window.focusTile("right") }
-    ActionShortcut { action: "tileUp"; onActivated: window.focusTile("top") }
-    ActionShortcut { action: "tileDown"; onActivated: window.focusTile("bottom") }
-    ActionShortcut {
-        action: "zoomTile"
-        onActivated: if (workspace.stageTiles.length > 1)
-                         window.tileZoomed = !window.tileZoomed
-    }
     // What a drag carries, under the pointer. Drop targets read its keys:
-    // agents for the strip, the rail and the stage; a category for the rail.
+    // agents for the strip and the rail; a category for the rail.
     Rectangle {
         id: dragGhost
         objectName: "dragGhost"
@@ -1428,11 +1357,6 @@ ApplicationWindow {
     }
     Connections {
         target: workspace
-        function onTilesChanged() {
-            const tiled = workspace.stageTiles.length > 1
-            if (!tiled && window.tileZoomed)
-                window.tileZoomed = false
-        }
         function onCategoryChanged() {
             window.clearAgentSelection()
         }
@@ -2538,12 +2462,6 @@ ApplicationWindow {
                 }
             }
         }
-        ActionItem {
-            objectName: "untileAgentAction"
-            text: qsTr("Take off the stage")
-            visible: workspace.focusedSession !== null && stage.tileIds.indexOf(workspace.focusedSession.sessionId) >= 0
-            onTriggered: window.untileFocused()
-        }
         MenuSeparator {}
         ActionItem {
             objectName: "closeAgentAction"
@@ -3087,197 +3005,17 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 Layout.minimumHeight: 120
                 color: window.paneColor
-                // The stage edge carries the focus accent only while it owns input;
-                // with tiles, the selected tile's edge does.
-                border.color: !tiled && liveTerminal.interactive ? window.focusedBorderColor : window.borderColor
+                // The stage edge carries the focus accent only while it owns input.
+                border.color: liveTerminal.interactive ? window.focusedBorderColor : window.borderColor
                 border.width: 1
                 radius: window.chromeRadius
                 clip: true
 
-                // Tiles: two or more agents side by side or stacked, as the
-                // category keeps them. Delegates are kept by place in the tile
-                // list and only move when a divider does, so a drag never
-                // rebuilds a terminal, and an agent the next/previous keys bring
-                // into a tile only changes what that tile's terminal shows.
-                readonly property var tiles: workspace.stageTiles
-                readonly property bool tiled: tiles.length > 1
-                readonly property bool zoomed: tiled && window.tileZoomed
-                readonly property string focusedId: workspace.focusedSession ? workspace.focusedSession.sessionId : ""
+                // One agent, the category's selected one, fills the stage.
                 readonly property int inset: 6
-                readonly property int gap: 6
-                readonly property int headerHeight: tiled ? Math.max(22, window.readoutFont + 10) : 0
-                // A divider is moving: agents keep their size until it stops.
-                property bool resizing: false
-                property var tileIds: []
-                property var dividerPaths: []
-                function syncTiles() {
-                    const ids = tiles.map(tile => tile.sessionId)
-                    if (JSON.stringify(ids) !== JSON.stringify(tileIds))
-                        tileIds = ids
-                    const paths = workspace.stageDividers.map(divider => divider.path)
-                    if (JSON.stringify(paths) !== JSON.stringify(dividerPaths))
-                        dividerPaths = paths
-                }
-                onTilesChanged: syncTiles()
-                Component.onCompleted: syncTiles()
-                function tileOf(id) {
-                    return tiles.find(tile => tile.sessionId === id) || null
-                }
-                function dividerOf(path) {
-                    return workspace.stageDividers.find(divider => divider.path === path) || null
-                }
-                readonly property rect whole: Qt.rect(inset, inset, width - 2 * inset, height - 2 * inset)
-                // A tile's frame in stage pixels, a gap between neighbors.
-                function frameOf(tile) {
-                    if (!tile || !tiled || zoomed)
-                        return whole
-                    const w = width - 2 * inset
-                    const h = height - 2 * inset
-                    const half = gap / 2
-                    const left = inset + tile.x * w + (tile.x > 0.0001 ? half : 0)
-                    const top = inset + tile.y * h + (tile.y > 0.0001 ? half : 0)
-                    const right = inset + (tile.x + tile.width) * w - (tile.x + tile.width < 0.9999 ? half : 0)
-                    const bottom = inset + (tile.y + tile.height) * h - (tile.y + tile.height < 0.9999 ? half : 0)
-                    return Qt.rect(left, top, Math.max(0, right - left), Math.max(0, bottom - top))
-                }
-                readonly property rect focusedFrame: tiled ? frameOf(tileOf(focusedId)) : whole
 
-                Repeater {
-                    model: stage.tiled ? stage.tileIds.length : 0
-                    delegate: Item {
-                        id: tileFrame
-                        required property int index
-                        readonly property string agentId: index < stage.tileIds.length ? stage.tileIds[index] : ""
-                        readonly property var tile: stage.tileOf(agentId)
-                        readonly property var session: tile ? tile.session : null
-                        readonly property bool selectedTile: agentId === stage.focusedId
-                        readonly property rect frame: stage.frameOf(tile)
-                        objectName: "tile_" + agentId
-                        x: frame.x
-                        y: frame.y
-                        width: frame.width
-                        height: frame.height
-                        visible: session !== null && (!stage.zoomed || selectedTile)
-
-                        Rectangle {
-                            anchors.fill: parent
-                            color: "transparent"
-                            radius: window.chromeRadius
-                            border.width: 1
-                            border.color: tileFrame.selectedTile && liveTerminal.interactive ?
-                                              window.focusedBorderColor : window.borderColor
-                        }
-                        // The tile's name bar: select it, drag it elsewhere on the
-                        // stage or back to the strip, or take it off the stage.
-                        Item {
-                            id: tileHeader
-                            objectName: "tileHeader_" + tileFrame.agentId
-                            x: 1
-                            y: 1
-                            width: parent.width - 2
-                            height: stage.headerHeight - 2
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 8
-                                anchors.rightMargin: 2
-                                spacing: 6
-                                AgentMark {
-                                    harnessId: tileFrame.session ? tileFrame.session.harnessId : ""
-                                    visible: !workspace.previewMode
-                                    ink: tileFrame.selectedTile ? window.textColor : window.mutedTextColor
-                                    Layout.preferredWidth: 12
-                                    Layout.preferredHeight: 12
-                                }
-                                StatusMark {
-                                    kind: tileFrame.session ? tileFrame.session.statusKind : ""
-                                    Layout.preferredWidth: 8
-                                    Layout.preferredHeight: 8
-                                    Layout.alignment: Qt.AlignVCenter
-                                }
-                                PlainText {
-                                    text: tileFrame.session ? window.agentTabTitle(tileFrame.session) : ""
-                                    color: tileFrame.selectedTile ? window.textColor : window.mutedTextColor
-                                    font.family: window.monoFamily
-                                    font.pixelSize: window.readoutFont
-                                    font.weight: tileFrame.selectedTile ? Font.DemiBold : Font.Normal
-                                    elide: Text.ElideMiddle
-                                    Layout.fillWidth: true
-                                    Layout.minimumWidth: 0
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-                                PlainText {
-                                    visible: tileFrame.width >= 260 && tileFrame.session !== null
-                                    text: tileFrame.session ? tileFrame.session.statusLabel : ""
-                                    color: window.statusColor(tileFrame.session ? tileFrame.session.statusKind : "")
-                                    font.family: window.monoFamily
-                                    font.pixelSize: window.readoutFont
-                                    Layout.maximumWidth: tileFrame.width * 0.35
-                                    elide: Text.ElideRight
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-                                Rectangle {
-                                    objectName: "untile_" + tileFrame.agentId
-                                    Layout.preferredWidth: stage.headerHeight - 6
-                                    Layout.preferredHeight: stage.headerHeight - 6
-                                    Layout.alignment: Qt.AlignVCenter
-                                    radius: window.chromeRadius
-                                    color: untileHover.hovered ? window.hoveredCardColor : "transparent"
-                                    Accessible.role: Accessible.Button
-                                    Accessible.name: qsTr("Take off the stage")
-                                    PlainText {
-                                        anchors.centerIn: parent
-                                        text: "×"
-                                        color: untileHover.hovered ? window.textColor : window.mutedTextColor
-                                        font.pixelSize: window.chromeFont
-                                    }
-                                    HoverHandler { id: untileHover }
-                                    TapHandler {
-                                        enabled: window.interactionArmed
-                                        onTapped: workspace.untileSession(tileFrame.agentId)
-                                    }
-                                    ToolTip.visible: untileHover.hovered
-                                    ToolTip.delay: 600
-                                    ToolTip.text: qsTr("Take off the stage; the agent keeps running")
-                                }
-                            }
-                            DragOrClick {
-                                objectName: "tilePress_" + tileFrame.agentId
-                                anchors.fill: parent
-                                anchors.rightMargin: stage.headerHeight
-                                enabled: window.interactionArmed
-                                cursorShape: dragging ? Qt.ClosedHandCursor : Qt.ArrowCursor
-                                onTapped: function(modifiers) { window.clickAgent(tileFrame.agentId, 0) }
-                                onDoubleClicked: window.tileZoomed = !window.tileZoomed
-                                onDragStarted: function(scene) { window.beginAgentDrag([tileFrame.agentId], "tile", scene) }
-                                onDragMoved: function(scene) { window.moveDragGhost(scene) }
-                                onDragEnded: window.endDrag()
-                            }
-                        }
-                        // The other tiles' terminals: sized and drawn live, and a
-                        // click selects the tile. The selected tile is liveTerminal.
-                        TerminalSurface {
-                            objectName: "tileTerminal_" + tileFrame.agentId
-                            x: 4
-                            y: stage.headerHeight
-                            width: parent.width - 8
-                            height: Math.max(0, parent.height - y - 4)
-                            document: tileFrame.session
-                            visible: !tileFrame.selectedTile
-                            enabled: false
-                            interactive: visible && tileFrame.visible && window.visible && document !== null
-                            holdResize: stage.resizing
-                            fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
-                            fontPixelSize: window.terminalFontSize
-                        }
-                        TapHandler {
-                            enabled: window.interactionArmed && !tileFrame.selectedTile
-                            onTapped: window.clickAgent(tileFrame.agentId, 0)
-                        }
-                    }
-                }
-
-                // The visual view covers the selected agent's terminal (or its
-                // tile) while that agent shows as a thread.
+                // The visual view covers the selected agent's terminal while
+                // that agent shows as a thread.
                 Transcript {
                     id: visualView
                     objectName: "visualView"
@@ -3374,15 +3112,15 @@ ApplicationWindow {
                     Accessible.name: qsTr("Terminal")
                     Accessible.editable: interactive
                     Accessible.focusable: true
-                    x: stage.tiled ? stage.focusedFrame.x + 4 : stage.inset
-                    y: stage.tiled ? stage.focusedFrame.y + stage.headerHeight : stage.inset
-                    width: stage.tiled ? stage.focusedFrame.width - 8 : stage.width - 2 * stage.inset
-                    height: stage.tiled ? Math.max(0, stage.focusedFrame.height - stage.headerHeight - 4)
-                                        : stage.height - 2 * stage.inset
+                    // The stage shows one agent: its terminal fills the stage
+                    // inside a fixed inset, and the visual view follows it.
+                    x: stage.inset
+                    y: stage.inset
+                    width: Math.max(0, stage.width - 2 * stage.inset)
+                    height: Math.max(0, stage.height - 2 * stage.inset)
                     document: workspace.focusedSession
                     fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
                     fontPixelSize: window.terminalFontSize
-                    holdResize: stage.resizing
                     scrollToBottomOnTyping: (typeof keymap !== "undefined" && keymap !== null) ? keymap.scrollToBottomOnTyping : true
                     visible: document !== null
                     enabled: visible
@@ -3636,59 +3374,6 @@ ApplicationWindow {
                     }
                 }
 
-                // Dividers between tiles: drag to share the space differently.
-                Repeater {
-                    model: stage.tiled && !stage.zoomed ? stage.dividerPaths : []
-                    delegate: Item {
-                        id: divider
-                        required property string modelData
-                        readonly property var line: stage.dividerOf(modelData)
-                        readonly property real spanX: stage.width - 2 * stage.inset
-                        readonly property real spanY: stage.height - 2 * stage.inset
-                        readonly property bool stacked: line !== null && line.stacked
-                        objectName: "tileDivider_" + (modelData.length > 0 ? modelData : "root")
-                        visible: line !== null
-                        x: line === null ? 0 : stacked ? stage.inset + line.x * spanX : stage.inset + line.x * spanX - 5
-                        y: line === null ? 0 : stacked ? stage.inset + line.y * spanY - 5 : stage.inset + line.y * spanY
-                        width: line === null ? 0 : stacked ? line.width * spanX : 10
-                        height: line === null ? 0 : stacked ? 10 : line.height * spanY
-                        Rectangle {
-                            anchors.centerIn: parent
-                            width: divider.stacked ? parent.width - 16 : 2
-                            height: divider.stacked ? 2 : parent.height - 16
-                            radius: 1
-                            color: window.focusedBorderColor
-                            opacity: dividerDrag.active ? 0.9 : dividerHover.hovered ? 0.5 : 0
-                        }
-                        HoverHandler {
-                            id: dividerHover
-                            cursorShape: divider.stacked ? Qt.SplitVCursor : Qt.SplitHCursor
-                        }
-                        DragHandler {
-                            id: dividerDrag
-                            target: null
-                            enabled: window.interactionArmed
-                            cursorShape: divider.stacked ? Qt.SplitVCursor : Qt.SplitHCursor
-                            property real ratio: 0.5
-                            onActiveChanged: {
-                                stage.resizing = active
-                                if (!active && divider.line !== null)
-                                    workspace.setTileRatio(divider.modelData, ratio, true)
-                            }
-                            onCentroidChanged: {
-                                if (!active || divider.line === null)
-                                    return
-                                const at = stage.mapFromItem(null, centroid.scenePosition.x, centroid.scenePosition.y)
-                                const area = divider.line
-                                ratio = divider.stacked ?
-                                    (at.y - stage.inset - area.areaY * divider.spanY) / (area.areaHeight * divider.spanY) :
-                                    (at.x - stage.inset - area.areaX * divider.spanX) / (area.areaWidth * divider.spanX)
-                                workspace.setTileRatio(divider.modelData, ratio, false)
-                            }
-                        }
-                    }
-                }
-
                 // An ended or unreachable agent keeps its last screen; say so on the
                 // stage instead of leaving a cursor that looks live.
                 Rectangle {
@@ -3842,65 +3527,8 @@ ApplicationWindow {
                     }
                 }
 
-                // Agents dragged over the stage: an edge of a tile splits it, its
-                // middle swaps the agent in.
-                DropArea {
-                    id: stageDrop
-                    objectName: "stageDrop"
-                    anchors.fill: parent
-                    keys: ["lapis-agents"]
-                    enabled: stage.focusedId.length > 0
-                    property string target: ""
-                    property string edge: ""
-                    property rect hint: Qt.rect(0, 0, 0, 0)
-                    function update(px, py) {
-                        let chosen = ""
-                        let frame = stage.whole
-                        if (stage.tiled && !stage.zoomed) {
-                            for (const tile of stage.tiles) {
-                                const candidate = stage.frameOf(tile)
-                                if (px >= candidate.x && px <= candidate.x + candidate.width
-                                        && py >= candidate.y && py <= candidate.y + candidate.height) {
-                                    chosen = tile.sessionId
-                                    frame = candidate
-                                }
-                            }
-                        } else {
-                            chosen = stage.focusedId
-                        }
-                        target = chosen
-                        if (chosen.length === 0)
-                            return
-                        const u = (px - frame.x) / Math.max(1, frame.width)
-                        const v = (py - frame.y) / Math.max(1, frame.height)
-                        const dx = Math.min(u, 1 - u)
-                        const dy = Math.min(v, 1 - v)
-                        if (dx > 0.3 && dy > 0.3)
-                            edge = "center"
-                        else if (dx < dy)
-                            edge = u < 0.5 ? "left" : "right"
-                        else
-                            edge = v < 0.5 ? "top" : "bottom"
-                        hint = edge === "left" ? Qt.rect(frame.x, frame.y, frame.width / 2, frame.height)
-                             : edge === "right" ? Qt.rect(frame.x + frame.width / 2, frame.y, frame.width / 2, frame.height)
-                             : edge === "top" ? Qt.rect(frame.x, frame.y, frame.width, frame.height / 2)
-                             : edge === "bottom" ? Qt.rect(frame.x, frame.y + frame.height / 2, frame.width, frame.height / 2)
-                             : frame
-                    }
-                    onEntered: function(drag) { update(drag.x, drag.y) }
-                    onPositionChanged: function(drag) { update(drag.x, drag.y) }
-                    onExited: target = ""
-                    onDropped: function(drop) {
-                        const chosen = target
-                        const side = edge
-                        target = ""
-                        if (chosen.length > 0)
-                            window.queueDrop(() => window.dropOnStage(chosen, side))
-                        drop.accept()
-                    }
-                }
                 // Files dragged in from Finder: their paths, quoted, are pasted into
-                // the terminal they land on.
+                // the selected agent's terminal.
                 DropArea {
                     id: fileDrop
                     objectName: "fileDrop"
@@ -3913,20 +3541,11 @@ ApplicationWindow {
                         const text = window.quoteDroppedPaths(drop.urls)
                         if (text.length === 0)
                             return
-                        let destinationId = workspace.focusedSession !== null ?
-                                                workspace.focusedSession.sessionId : ""
-                        if (stage.tiled && !stage.zoomed)
-                            for (const tile of stage.tiles) {
-                                const frame = stage.frameOf(tile)
-                                if (drop.x >= frame.x && drop.x <= frame.x + frame.width
-                                        && drop.y >= frame.y && drop.y <= frame.y + frame.height)
-                                    destinationId = tile.sessionId
-                            }
+                        const destinationId = workspace.focusedSession !== null ?
+                                                  workspace.focusedSession.sessionId : ""
                         if (destinationId.length === 0)
                             return
-                        if (workspace.selectSession(destinationId)) {
-                            Qt.callLater(() => window.pastePaths(text, destinationId))
-                        }
+                        Qt.callLater(() => window.pastePaths(text, destinationId))
                         drop.acceptProposedAction()
                     }
                 }
@@ -3937,19 +3556,6 @@ ApplicationWindow {
                     anchors.margins: 3
                     radius: window.chromeRadius
                     color: Qt.alpha(window.focusedBorderColor, 0.08)
-                    border.width: 2
-                    border.color: window.focusedBorderColor
-                }
-
-                Rectangle {
-                    objectName: "stageDropHint"
-                    visible: stageDrop.containsDrag && stageDrop.target.length > 0
-                    x: stageDrop.hint.x
-                    y: stageDrop.hint.y
-                    width: stageDrop.hint.width
-                    height: stageDrop.hint.height
-                    radius: window.chromeRadius
-                    color: Qt.alpha(window.focusedBorderColor, 0.16)
                     border.width: 2
                     border.color: window.focusedBorderColor
                 }
@@ -3991,7 +3597,7 @@ ApplicationWindow {
                     }
                 }
                 // Agents dragged along the strip land between the cards the
-                // marker shows; a tile dragged here leaves the stage.
+                // marker shows.
                 DropArea {
                     id: stripDrop
                     objectName: "stripDrop"
@@ -4078,8 +3684,6 @@ ApplicationWindow {
                     required property int index
                     readonly property bool marked: workspace.focusedSession !== null
                                                    && workspace.focusedSession.sessionId === modelData.sessionId
-                    // Tiled on the stage beside the selected agent.
-                    readonly property bool onStage: stage.tileIds.indexOf(modelData.sessionId) >= 0
                     readonly property bool picked: window.isAgentSelected(modelData.sessionId)
                     objectName: "agentTab_" + modelData.sessionId
                     opacity: window.dragSource === "strip" && window.draggedAgents.indexOf(modelData.sessionId) >= 0 ?
@@ -4100,7 +3704,7 @@ ApplicationWindow {
                         radius: window.chromeRadius
                         border.width: agentTab.marked || agentTab.picked ? 2 : 1
                         border.color: agentTab.marked || agentTab.picked ? window.focusedBorderColor :
-                                      agentHover.hovered || agentTab.onStage ? window.mutedTextColor : window.borderColor
+                                      agentHover.hovered ? window.mutedTextColor : window.borderColor
                         Behavior on border.color {
                             enabled: window.motionEnabled
                             ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }

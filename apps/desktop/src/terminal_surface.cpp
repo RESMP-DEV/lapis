@@ -1047,7 +1047,7 @@ void TerminalSurface::keepFramesComing() {
 }
 
 // Shown while this view and its window are visible: a hidden window, a
-// hidden strip or a closed tile decodes nothing for its agent.
+// hidden strip decodes nothing for its agent.
 void TerminalSurface::updateViewing() {
     armSuggestionObservation();
     SessionPreview* showing =

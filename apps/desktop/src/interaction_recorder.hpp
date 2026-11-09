@@ -117,7 +117,6 @@ class InteractionRecorder : public QObject {
     void followWorkspace();
     void agentFocused();
     void categorySelected();
-    void tilesChanged();
     void followHistory();
 
     Workspace& workspace_;
@@ -155,7 +154,6 @@ class InteractionRecorder : public QObject {
     QTimer history_timer_;
     QString focused_id_;
     QString category_id_;
-    QStringList tiles_;
 };
 
 // What lapis did with input, reported where it decides. Each is a no-op

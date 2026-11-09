@@ -134,6 +134,34 @@ void corruptOrOtherFilesAreIgnored() {
     require(!state.load(), "a symlink is not followed");
 }
 
+// A file from a lapis with stage tiles loads; its zoomed tile is not read and
+// is gone after the next save.
+void retiredTileZoomIsDropped() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "fixture directory");
+    const auto path = QDir(directory.path()).filePath(QStringLiteral("gui_state.json"));
+    writeFile(path, R"({"version": 1, "sections": {"window": )"
+                    R"({"tileZoomed": true, "lastHarness": "claude"}}})");
+    {
+        GuiState state(path);
+        require(state.load(), "a file with a zoomed tile loads");
+        require(!state.value(QStringLiteral("tileZoomed")).isValid() &&
+                    state.value(QStringLiteral("lastHarness")).toString() ==
+                        QLatin1String("claude"),
+                "the zoomed tile is not read; the other choices are");
+        state.setValue(QStringLiteral("lastMode"), QStringLiteral("full"));
+        state.flush();
+    }
+    const auto window = readFile(path)
+                            .value(QStringLiteral("sections"))
+                            .toObject()
+                            .value(QStringLiteral("window"))
+                            .toObject();
+    require(!window.contains(QStringLiteral("tileZoomed")) &&
+                window.value(QStringLiteral("lastHarness")).toString() == QLatin1String("claude"),
+            "the next save drops it and keeps the rest");
+}
+
 void reservedWindowSectionIsRejected() {
     QTemporaryDir directory;
     require(directory.isValid(), "fixture directory");
@@ -399,6 +427,7 @@ int main(int argc, char** argv) {
     try {
         savesAndRestoresSections();
         corruptOrOtherFilesAreIgnored();
+        retiredTileZoomIsDropped();
         reservedWindowSectionIsRejected();
         writesAreCoalesced();
         marksComeBack();

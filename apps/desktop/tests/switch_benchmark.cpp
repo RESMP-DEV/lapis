@@ -211,21 +211,6 @@ std::vector<std::vector<QString>> start_agents(Workspace& workspace, const Optio
     return agents;
 }
 
-// Every other category holds tiles: its first agent with two beside it.
-int tile_categories(Workspace& workspace, const std::vector<std::vector<QString>>& agents) {
-    int tiled = 0;
-    for (std::size_t category = 0; category < agents.size(); category += 2) {
-        const auto& ids = agents.at(category);
-        if (ids.size() < 3)
-            continue;
-        require(workspace.selectSession(ids[0]), "select tile owner");
-        require(workspace.tileSession(ids[1], ids[0], QStringLiteral("right")), "tile right");
-        require(workspace.tileSession(ids[2], ids[1], QStringLiteral("bottom")), "tile below");
-        ++tiled;
-    }
-    return tiled;
-}
-
 class Bench : public QObject {
   public:
     Bench(Workspace& workspace, const lapis::desktop::KeyMap& keymap, QQuickWindow& window,
@@ -241,8 +226,6 @@ class Bench : public QObject {
                 synced_at_.store(now_ms(), std::memory_order_relaxed);
             },
             Qt::DirectConnection);
-        QObject::connect(&workspace, &Workspace::tilesChanged, this,
-                         [this] { retiles_.fetch_add(1, std::memory_order_relaxed); });
     }
 
     void run() {
@@ -268,9 +251,9 @@ class Bench : public QObject {
     }
 
     [[nodiscard]] QJsonObject result() const {
-        return {{"agentKey", report(agent_keys_)},       {"agentKeyUntiled", report(untiled_)},
-                {"agentKeyTiled", report(tiled_)},       {"agentKeyRetiled", report(retiled_)},
-                {"categoryKey", report(category_keys_)}, {"agentClick", report(clicks_)},
+        return {{"agentKey", report(agent_keys_)},
+                {"categoryKey", report(category_keys_)},
+                {"agentClick", report(clicks_)},
                 {"pointerMove", report(pointer_)}};
     }
     [[nodiscard]] int unchangedKeys() const {
@@ -310,7 +293,6 @@ class Bench : public QObject {
 
     // Returns whether a frame completed. A timeout is counted and the run continues.
     bool measure(const std::function<void()>& act, Stats* into, bool may_draw_nothing = false) {
-        const int retiles = retiles_.load(std::memory_order_relaxed);
         const auto* was = workspace_.focusedSession();
         const int swaps = swaps_.load(std::memory_order_relaxed);
         const int syncs = syncs_.load(std::memory_order_relaxed);
@@ -327,7 +309,6 @@ class Bench : public QObject {
             return false;
         }
         const double framed = now_ms();
-        retiled_last_ = retiles_.load(std::memory_order_relaxed) > retiles;
         if (options_.trace)
             trace(was);
         if (into != nullptr)
@@ -341,24 +322,13 @@ class Bench : public QObject {
     }
     void trace(const SessionPreview* was) const {
         std::cerr << "switch " << title(was).toStdString() << " -> "
-                  << title(workspace_.focusedSession()).toStdString() << " tiles:";
-        for (const auto& value : workspace_.stageTiles())
-            std::cerr
-                << ' '
-                << title(value.toMap().value(QStringLiteral("session")).value<SessionPreview*>())
-                       .toStdString();
-        std::cerr << '\n';
+                  << title(workspace_.focusedSession()).toStdString() << '\n';
     }
 
     void agentKey(const std::function<void()>& next_agent) {
         const auto* before = workspace_.focusedSession();
-        const bool tiled = !workspace_.stageTiles().isEmpty();
-        const bool sampled = measure(next_agent, &agent_keys_);
+        measure(next_agent, &agent_keys_);
         agent_keys_.unchanged += workspace_.focusedSession() == before ? 1 : 0;
-        if (!sampled)
-            return;
-        auto& group = retiled_last_ ? retiled_ : tiled ? tiled_ : untiled_;
-        group.add(agent_keys_.dispatch.back(), agent_keys_.synced.back(), agent_keys_.frame.back());
     }
 
     [[nodiscard]] bool cardOnScreen(const SessionPreview* item) const {
@@ -428,14 +398,9 @@ class Bench : public QObject {
     Options options_;
     std::atomic<int> swaps_{0};
     std::atomic<int> syncs_{0};
-    std::atomic<int> retiles_{0};
     std::atomic<double> synced_at_{0.0};
-    bool retiled_last_{};
     ulong timestamp_{1};
     Stats agent_keys_;
-    Stats untiled_; // agent keys in a category without tiles
-    Stats tiled_;   // agent keys in a tiled category, tiles unchanged
-    Stats retiled_; // agent keys that changed the tiles
     Stats category_keys_;
     Stats clicks_;
     Stats pointer_;
@@ -454,7 +419,7 @@ Options parse(const QCoreApplication& app) {
         {"gap-ms", "Idle time between switches (default 60).", "ms", "60"},
         {"warmup", "Unmeasured switches first (default 40).", "n", "40"},
         {"interaction-log", "Record with the interaction log, as lapis.json can turn on."},
-        {"trace", "Print each switch and the stage's tiles to standard error."},
+        {"trace", "Print each switch to standard error."},
         {"output", "Write the JSON result here as well as to stdout.", "path"},
     });
     parser.process(app);
@@ -502,7 +467,7 @@ QJsonObject measure(const Options& options, const QTemporaryDir& home) {
     workspace.setLaunchSize(QSize(160, 48));
     const auto folder = home.filePath(QStringLiteral("work"));
     QDir().mkpath(folder);
-    const auto agents = start_agents(workspace, options, folder);
+    start_agents(workspace, options, folder);
     const auto close_agents = qScopeGuard([&workspace] {
         for (const auto& value : workspace.sessions())
             workspace.closeSession(value.value<SessionPreview*>()->sessionId(), true);
@@ -528,7 +493,6 @@ QJsonObject measure(const Options& options, const QTemporaryDir& home) {
     if (log)
         log->watchWindow(window);
 #endif
-    const int tiled_categories = tile_categories(workspace, agents);
     require(workspace.selectCategory(
                 workspace.categories().front().toMap().value(QStringLiteral("id")).toString()),
             "first category");
@@ -543,7 +507,6 @@ QJsonObject measure(const Options& options, const QTemporaryDir& home) {
     result.insert("frameTimeouts", bench.frameTimeouts());
     result.insert("agents", options.agents);
     result.insert("categories", options.categories);
-    result.insert("tiledCategories", tiled_categories);
     result.insert("interactionLog", options.log);
     result.insert("gapMs", options.gap);
     result.insert("unchangedKeys", bench.unchangedKeys());

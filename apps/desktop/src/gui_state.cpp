@@ -116,8 +116,10 @@ bool GuiState::load() {
         return ignored("has another version");
     loaded_ = root.value(QStringLiteral("sections")).toObject();
     const auto window = loaded_.value(QStringLiteral("window")).toObject();
+    // "tileZoomed" belonged to the retired stage tiles: it is not read and the
+    // next save drops it.
     for (auto entry = window.constBegin(); entry != window.constEnd(); ++entry)
-        if (window_.size() < kMaxWindowKeys)
+        if (entry.key() != QLatin1String("tileZoomed") && window_.size() < kMaxWindowKeys)
             setValue(entry.key(), entry.value().toVariant());
     dirty_ = false;
     return true;

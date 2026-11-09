@@ -26,18 +26,6 @@ teal accents, and the macOS title bar follows the theme while keeping the
 standard window controls. One configurable fixed-width font serves the terminal
 and machine readouts.
 
-## Tiles
-
-Drag a card onto an edge of the stage to tile that agent beside the one shown,
-as iTerm2 splits a tab, or onto a tile's middle to swap it in. Dividers drag to
-share the space; agents are resized once, when the drag ends. Command-D starts an
-agent like the selected one (folder, CLI, model and mode) tiled to the right,
-Command-Shift-D below it. Command-Control-arrows move between tiles,
-Command-Shift-Return fills the stage with one, and a tile's ✕ or a drag back to
-the strip takes it off the stage while it keeps running. A strip agent that is
-not tiled takes the selected tile when you click it. Each category keeps its
-tiles.
-
 ## Arranging
 
 Cards drag along the strip to reorder, onto a category in the rail to move

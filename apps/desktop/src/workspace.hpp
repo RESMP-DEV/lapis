@@ -6,7 +6,6 @@
 #include "history_strip.hpp"
 #include "keymap.hpp"
 #include "tab_ranker.hpp"
-#include "tile_layout.hpp"
 #include <lapis/session/terminal.hpp>
 
 #include "launch_spec.hpp"
@@ -431,13 +430,6 @@ class Workspace final : public QObject {
     Q_PROPERTY(int focusedIndex READ focusedIndex NOTIFY focusChanged)
     Q_PROPERTY(
         lapis::desktop::SessionPreview* focusedSession READ focusedSession NOTIFY focusChanged)
-    // The active category's tiles, in unit coordinates of the stage: each
-    // {sessionId, session, x, y, width, height}. Empty while the stage shows
-    // one agent.
-    Q_PROPERTY(QVariantList stageTiles READ stageTiles NOTIFY tilesChanged)
-    // Each split's divider line and the area it divides, in the same units:
-    // {path, stacked, x, y, width, height, areaX, areaY, areaWidth, areaHeight}.
-    Q_PROPERTY(QVariantList stageDividers READ stageDividers NOTIFY tilesChanged)
     // An agent closed since lapis opened can come back with its conversation.
     Q_PROPERTY(bool canReopenAgent READ canReopenAgent NOTIFY closedChanged)
     // The visual view's conversation: the stage sets its path to an agent's
@@ -595,21 +587,6 @@ class Workspace final : public QObject {
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;
     [[nodiscard]] int attentionAgents() const;
-    [[nodiscard]] QVariantList stageTiles() const;
-    [[nodiscard]] QVariantList stageDividers() const;
-    // Tiles `id` beside `target` on its category's stage (left, right, top,
-    // bottom), or in its place (center), and selects it. With no target, beside
-    // the selected agent.
-    Q_INVOKABLE bool tileSession(const QString& id, const QString& target, const QString& edge);
-    // Takes an agent off the stage; it keeps running in the strip.
-    Q_INVOKABLE bool untileSession(const QString& id);
-    // Moves a divider; `persist` saves it (once, when a drag ends).
-    Q_INVOKABLE bool setTileRatio(const QString& path, qreal ratio, bool persist);
-    // Selects the tile beside the selected one (left, right, top or bottom).
-    Q_INVOKABLE bool focusTile(const QString& direction);
-    // Starts an agent like the selected one (folder, CLI, model and mode) and
-    // tiles it beside it; returns its id.
-    Q_INVOKABLE QString splitAgent(const QString& edge);
     // Starts the most recently closed agent again, resuming its conversation
     // where its CLI can, in its category, and shows it.
     Q_INVOKABLE bool reopenAgent();
@@ -643,7 +620,6 @@ class Workspace final : public QObject {
     void categoriesChanged();
     void categoryChanged();
     void errorChanged();
-    void tilesChanged();
     void closedChanged();
     // What saveMarks() returns may have changed.
     void marksChanged();
@@ -694,8 +670,6 @@ class Workspace final : public QObject {
         QString id;
         QString name;
         QString selected;
-        // Two or more agents tiled on the stage, or empty for one agent.
-        TileLayout tiles;
     };
     struct Agent {
         QString category;
@@ -729,17 +703,6 @@ class Workspace final : public QObject {
     };
     // Build the launch and its managed resume provenance together.
     std::optional<ResumeLaunch> agentLaunch(const AgentRequest& request);
-    // The walk of the next and previous agent keys through a tiled category:
-    // the layout it started from, its order, the tile showing untiled agents,
-    // and the stage it left. Any other change to the stage starts a new walk.
-    struct TileWalk {
-        TileLayout home;
-        QStringList order;
-        QString slot;
-        QJsonObject shown;
-        QString selected;
-    };
-    QHash<QString, TileWalk> tile_walks_;
     QString insertCategory(const QString& name, bool select);
     // Starts an agent from a finished launch; the rest of startAgent. A
     // managed resume plan is committed in the same registry save as the
@@ -747,10 +710,6 @@ class Workspace final : public QObject {
     QString launchAgent(const AgentRequest& request, const session::LaunchSpec& launch,
                         int managed_resume_index = -1, const QString& managed_resume_identity = {});
     Category* category(const QString& id);
-    [[nodiscard]] const Category* activeCategory() const;
-    // After an agent leaves a category: off its stage, and one tile is no split.
-    void untile(Category& category, const QString& id);
-    void loadTiles(const QJsonArray& groups);
     // Where agents moving to `categoryId` go among those that stay: before its
     // index-th agent, or after its last.
     [[nodiscard]] std::size_t

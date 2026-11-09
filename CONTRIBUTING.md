@@ -453,8 +453,8 @@ separate from offscreen results.
 `lapis.json` stores appearance and optional keybinding overrides. Empty overrides
 use platform defaults. Command-R on macOS reloads it. The product has one terminal
 stage, category navigation and the category's agent strip under the stage; no
-tab row or preview layout picker; dragging an agent preview onto the stage
-creates a tile. `previewsVisible` hides the strip
+tab row, preview layout picker or tiling; the stage shows the category's
+selected agent. `previewsVisible` hides the strip
 (default on); the `togglePreviews` action has no default key.
 `harnessArguments` maps a harness id (`codex`, `claude`, `grok`, ...) to literal
 arguments added when lapis starts a new agent of that harness; each agent's
@@ -1047,7 +1047,6 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `window-state` | Desktop-enabled | Machine-local window geometry, off-screen restore, isolated modes, unsafe paths, legacy layout values and modal focus |
 | `app-environment` | Desktop-enabled | Application launch environment and executable discovery |
 | `terminal-suggestion` | Desktop-enabled | Where an offered next prompt shows after the cursor |
-| `tile-layout` | Desktop-enabled | Tile placement, navigation and layout bounds |
 | `cell-shapes` | Desktop-enabled | Block, box and quadrant geometry |
 | `harness-models` | Desktop-enabled | Model discovery, parsing, defaults and result bounds |
 | `ui-preview` | Desktop-enabled | Qt reload, screen selection, passive attention, modal response ownership, draft/IME preservation, input and render lifecycle |
@@ -1403,14 +1402,13 @@ build/desktop/apps/desktop/lapis_switch_benchmark --output build/switch.json
 
 It starts disposable agents (a stand-in CLI that draws a screen of text and
 waits) under the real session service in a private `LAPIS_HOME`, ends them
-afterwards, tiles three agents in every other category, loads `Main.qml` with
+afterwards, loads `Main.qml` with
 the software scene graph and switches through the keymap's own next-agent and
 next-category bindings, delivered as window-system key events, then clicks
 strip cards and moves the pointer. Each sample is GUI-thread time from the
 input to the end of its delivery (`dispatch`), to the end of the next frame's
 scene-graph sync (`synced`) and to its `frameSwapped` (`frame`), as
-p50/p95/p99; agent keys are also split by whether they changed the stage's
-tiles. Software rasterizing is included in `frame` only, and none of it is GPU
+p50/p95/p99. Software rasterizing is included in `frame` only, and none of it is GPU
 presentation: compare runs of this tool with each other, on one machine, and
 profile the same run with `sample` or `xctrace` for causes.
 Pointer-move samples measure event delivery only; they are not comparable with

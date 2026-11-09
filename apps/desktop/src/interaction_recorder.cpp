@@ -141,9 +141,9 @@ struct NamedArea {
     const char* area;
 };
 constexpr NamedArea kSessionAreas[] = {
-    {"agentTab_", "strip"},     {"cardPress_", "strip"}, {"previewTerminal_", "strip"},
-    {"tileTerminal_", "stage"}, {"tilePress_", "stage"}, {"tileHeader_", "stage"},
-    {"untile_", "stage"},       {"tile_", "stage"},      {"agentResult_", "search"},
+    {"agentTab_", "strip"},
+    {"cardPress_", "strip"},
+    {"previewTerminal_", "strip"},
 };
 
 // The part of the workspace a named item belongs to, and the agent its
@@ -748,7 +748,6 @@ void InteractionRecorder::followWorkspace() {
     followHistory();
     connect(&workspace_, &Workspace::focusChanged, this, &InteractionRecorder::agentFocused);
     connect(&workspace_, &Workspace::categoryChanged, this, &InteractionRecorder::categorySelected);
-    connect(&workspace_, &Workspace::tilesChanged, this, &InteractionRecorder::tilesChanged);
 }
 
 void InteractionRecorder::agentFocused() {
@@ -788,20 +787,6 @@ void InteractionRecorder::categorySelected() {
     note(QStringLiteral("category"), {{QStringLiteral("category"), category_id_},
                                       {QStringLiteral("name"), name},
                                       {QStringLiteral("via"), via()}});
-}
-
-void InteractionRecorder::tilesChanged() {
-    if (!recording())
-        return;
-    QStringList tiles;
-    for (const auto& value : workspace_.stageTiles())
-        tiles.append(value.toMap().value(QStringLiteral("sessionId")).toString());
-    if (tiles == tiles_)
-        return;
-    tiles_ = tiles;
-    note(QStringLiteral("tiles"), {{QStringLiteral("tiles"), QJsonArray::fromStringList(tiles)},
-                                   {QStringLiteral("category"), workspace_.activeCategoryId()},
-                                   {QStringLiteral("via"), via()}});
 }
 
 // The focused agent's history position: scrubbing, paging and returning live.

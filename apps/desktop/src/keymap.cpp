@@ -444,9 +444,6 @@ void KeyMap::apply_defaults() {
         {QStringLiteral("newAgent"), {modifier + QStringLiteral("T")}},
         {QStringLiteral("newCategory"), {modifier + QStringLiteral("N")}},
         {QStringLiteral("toggleSidebar"), {modifier + QStringLiteral("B")}},
-        // Tiles: split with a new agent like the selected one, as iTerm2's
-        // Command-D does, and move between tiles.
-        {QStringLiteral("splitRight"), {modifier + QStringLiteral("D")}},
         // Text size.
         {QStringLiteral("textBigger"),
          {modifier + QStringLiteral("="), modifier + QStringLiteral("+")}},
@@ -456,12 +453,6 @@ void KeyMap::apply_defaults() {
         {QStringLiteral("resumeConversation"), {modifier + QStringLiteral("O")}},
     };
 #ifdef Q_OS_MACOS
-    bindings_.insert(QStringLiteral("splitDown"), {QStringLiteral("Meta+Shift+D")});
-    bindings_.insert(QStringLiteral("tileLeft"), {QStringLiteral("Meta+Ctrl+Left")});
-    bindings_.insert(QStringLiteral("tileRight"), {QStringLiteral("Meta+Ctrl+Right")});
-    bindings_.insert(QStringLiteral("tileUp"), {QStringLiteral("Meta+Ctrl+Up")});
-    bindings_.insert(QStringLiteral("tileDown"), {QStringLiteral("Meta+Ctrl+Down")});
-    bindings_.insert(QStringLiteral("zoomTile"), {QStringLiteral("Meta+Shift+Return")});
     bindings_.insert(QStringLiteral("reopenAgent"), {QStringLiteral("Meta+Shift+T")});
     bindings_.insert(QStringLiteral("closeAgent"), {QStringLiteral("Meta+W")});
     bindings_.insert(QStringLiteral("closeWindow"), {QStringLiteral("Meta+Shift+W")});
@@ -473,12 +464,6 @@ void KeyMap::apply_defaults() {
     bindings_.insert(QStringLiteral("chooseTerminal"),
                      {QStringLiteral("Meta+Shift+`"), QStringLiteral("Meta+~")});
 #else
-    bindings_.insert(QStringLiteral("splitDown"), {QStringLiteral("Ctrl+Alt+Shift+D")});
-    bindings_.insert(QStringLiteral("tileLeft"), {QStringLiteral("Ctrl+Alt+Left")});
-    bindings_.insert(QStringLiteral("tileRight"), {QStringLiteral("Ctrl+Alt+Right")});
-    bindings_.insert(QStringLiteral("tileUp"), {QStringLiteral("Ctrl+Alt+Up")});
-    bindings_.insert(QStringLiteral("tileDown"), {QStringLiteral("Ctrl+Alt+Down")});
-    bindings_.insert(QStringLiteral("zoomTile"), {QStringLiteral("Ctrl+Shift+Return")});
     bindings_.insert(QStringLiteral("reopenAgent"), {QStringLiteral("Ctrl+Alt+Shift+T")});
     // Without a dock to bring a closed window back, closing it stays unbound.
     bindings_.insert(QStringLiteral("closeAgent"), {modifier + QStringLiteral("W")});
