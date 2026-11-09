@@ -1119,13 +1119,13 @@ class StartAgentTests(unittest.TestCase):
 
     def test_the_phone_reads_and_changes_the_macs_settings(self):
         # The Mac still answers with the retired alertSound, alertRepeat and
-        # showUsage, which older phone builds require.
+        # showUsage and notify, which older phone builds require.
         settings = {
             "keepAwake": True,
             "alertSound": False,
             "alertRepeat": 1,
             "finishSound": True,
-            "notify": True,
+            "notify": False,
             "showUsage": False,
         }
 
@@ -1152,12 +1152,14 @@ class StartAgentTests(unittest.TestCase):
                     "alertSound": True,
                     "alertRepeat": 11,
                     "showUsage": True,
+                    "notify": True,
                 },
             )
             self.assertEqual(status, 200)
             self.assertFalse(changed["settings"]["keepAwake"])
             self.assertEqual(changed["settings"]["alertRepeat"], 1)
             self.assertFalse(changed["settings"]["showUsage"])
+            self.assertFalse(changed["settings"]["notify"])
             self.assertEqual(
                 desktop.requests[-1],
                 {

@@ -144,7 +144,6 @@ struct FolderPayload: Codable {
 struct MacSettings: Codable, Equatable {
     var keepAwake: Bool
     var finishSound: Bool
-    var notify: Bool
 }
 
 struct StartedAgent: Decodable {

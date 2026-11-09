@@ -1,6 +1,5 @@
 #include "alerts.hpp"
 #include "keymap.hpp"
-#include "next_prompt.hpp"
 #include "workspace.hpp"
 #include <QDateTime>
 #include <QDir>
@@ -13,22 +12,6 @@
 #include <utility>
 
 namespace lapis::desktop {
-namespace {
-// One line per decision, chime or notification, in one shape: what was
-// decided and why, for the agent and CLI it was about.
-void record_decision(const AttentionLog& log, const SessionPreview* item, const char* kind,
-                     const char* event, const char* decision) {
-    if (!log || item == nullptr)
-        return;
-    log({{"at", QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
-         {"agent", item->title()},
-         {"cli", item->agentName()},
-         {"event", QLatin1String(event)},
-         {"kind", QLatin1String(kind)},
-         {"decision", QLatin1String(decision)}});
-}
-} // namespace
-
 SeenScreens::SeenScreens(Workspace& workspace, Looking looking, QObject* parent)
     : QObject(parent), workspace_(workspace), looking_(std::move(looking)) {
     timer_.setInterval(kSampleMs);
@@ -127,65 +110,7 @@ bool SeenScreens::unchanged(const SessionPreview* item) const {
 Alerts::Alerts(Workspace& workspace, const KeyMap& config, Player play, Looking looking,
                QObject* parent)
     : QObject(parent), config_(config), play_(std::move(play)), looking_(std::move(looking)) {
-    finished_ = connect(&workspace, &Workspace::turnFinished, this, &Alerts::finished);
-}
-
-void Alerts::judgeBy(PingJudge& judge) {
-    disconnect(finished_);
-    finished_ = connect(&judge, &PingJudge::turnJudged, this,
-                        [this](SessionPreview* item, const QString& attention) {
-                            if (attention == QLatin1String("steer"))
-                                return record(item, "finished", "quiet: judged steer");
-                            if (attention == QLatin1String("fyi"))
-                                return record(item, "finished", "quiet: judged fyi");
-                            finished(item);
-                        });
-}
-
-PingJudge::PingJudge(Workspace& workspace, const KeyMap& config, QObject* parent)
-    : QObject(parent), config_(config) {
-    connect(&workspace, &Workspace::turnFinished, this, &PingJudge::hold);
-}
-
-void PingJudge::hold(SessionPreview* item) {
-    if (item == nullptr)
-        return;
-    const auto id = item->sessionId();
-    const auto disarm = [this, id] {
-        const auto held = held_.take(id);
-        if (held.timer)
-            held.timer->deleteLater();
-    };
-    if (item->attentionCount() > 0) {
-        disarm(); // the older hold must not emit a second judgement later
-        emit turnJudged(item, QStringLiteral("needs"));
-        return;
-    }
-    if (!config_.judgePings() || (active_ && !active_())) {
-        disarm();
-        emit turnJudged(item, {});
-        return;
-    }
-    release(id, {}); // an older turn still held passes as unjudged
-    auto* timer = new QTimer(this);
-    timer->setSingleShot(true);
-    connect(timer, &QTimer::timeout, this, [this, id] { release(id, {}); });
-    held_.insert(id, {item, timer});
-    timer->start(wait_ms_);
-}
-
-void PingJudge::verdict(const QString& id, const QString& attention) {
-    if (held_.contains(id))
-        release(id, attention);
-}
-
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-void PingJudge::release(const QString& id, const QString& attention) {
-    const auto held = held_.take(id);
-    if (held.timer)
-        held.timer->deleteLater();
-    if (held.item)
-        emit turnJudged(held.item, attention);
+    connect(&workspace, &Workspace::turnFinished, this, &Alerts::finished);
 }
 
 void Alerts::preview(bool needsYou) {
@@ -215,146 +140,14 @@ void Alerts::finished(SessionPreview* item) {
 }
 
 void Alerts::record(const SessionPreview* item, const char* event, const char* decision) const {
-    record_decision(log_, item, "chime", event, decision);
-}
-
-Notifier::Notifier(Workspace& workspace, const KeyMap& config, Post post, Background background,
-                   QObject* parent)
-    : QObject(parent), config_(config), post_(std::move(post)), background_(std::move(background)) {
-    check_.setInterval(kCheckMs);
-    connect(&check_, &QTimer::timeout, this, &Notifier::check);
-    finished_ = connect(&workspace, &Workspace::turnFinished, this,
-                        [this](SessionPreview* item) { notify(item); });
-}
-
-void Notifier::judgeBy(PingJudge& judge) {
-    disconnect(finished_);
-    finished_ =
-        connect(&judge, &PingJudge::turnJudged, this,
-                [this](SessionPreview* item, const QString& attention) {
-                    if (attention == QLatin1String("steer") || attention == QLatin1String("fyi")) {
-                        record_decision(log_, item, "notification", "finished",
-                                        attention == QLatin1String("fyi") ? "none: judged fyi"
-                                                                          : "none: judged steer");
-                        return;
-                    }
-                    notify(item);
-                });
-}
-
-void Notifier::setPresence(Present present, Looking looking) {
-    present_ = std::move(present);
-    looking_ = std::move(looking);
-}
-
-void Notifier::setTimingForTesting(Timing timing) {
-    check_.setInterval(timing.checkMs);
-    remind_ms_ = timing.remindMs;
-}
-
-qint64 Notifier::remindMs() const {
-    return remind_ms_ ? *remind_ms_ : qint64{config_.remindAfterMinutes()} * 60 * 1000;
-}
-
-void Notifier::notify(SessionPreview* item) {
-    if (item == nullptr)
+    if (!log_ || item == nullptr)
         return;
-    const bool away = !present();
-    const bool background = background_();
-    const auto decide = [&]() -> const char* {
-        if (!config_.notify())
-            return "notifications off";
-        // In front counts as seen only with someone there to see it.
-        if (!background && !away)
-            return "none: lapis is in front";
-        if (seen_ != nullptr && seen_->unchanged(item))
-            return "none: nothing new since you looked";
-        return nullptr;
-    };
-    const char* skipped = decide();
-    record_decision(log_, item, "notification", "finished",
-                    skipped != nullptr ? skipped
-                    : background       ? "posted"
-                                       : "posted: you are away");
-    // A finished turn ending on what was already seen, or in front of the
-    // person watching it, leaves nothing to come back to. Seeing an open
-    // request is not answering it. Live requests arrive on turnFinished
-    // after their attention is applied, so the open count tells them apart.
-    const bool open = item->attentionCount() > 0;
-    const bool seen =
-        !open && ((seen_ != nullptr && seen_->unchanged(item)) || (looking_ && looking_(item)));
-    if (config_.notify() && !seen)
-        wait(item, open);
-    if (skipped != nullptr)
-        return;
-    // The CLI leads the body: a title is the conversation's, and one about
-    // Codex would otherwise read as a Codex agent.
-    const QString cli = item->agentName();
-    post(item, tr("%1 finished a turn").arg(cli));
-}
-
-void Notifier::post(const SessionPreview* item, const QString& body) {
-    post_(item->sessionId(), item->title(), body);
-}
-
-void Notifier::wait(SessionPreview* item, bool needsYou) {
-    if (remindMs() <= 0)
-        return;
-    const auto now = QDateTime::currentMSecsSinceEpoch();
-    const auto found =
-        std::find_if(waiting_.begin(), waiting_.end(),
-                     [item](const Waiting& waiting) { return waiting.item == item; });
-    if (found == waiting_.end())
-        waiting_.push_back({item, now, needsYou});
-    else
-        *found = {item, now, needsYou}; // a newer turn starts the wait again
-    if (!check_.isActive())
-        check_.start();
-}
-
-void Notifier::check() {
-    const auto remind = remindMs();
-    // Answered (a new turn, or the request resolved), looked at now or
-    // already seen, ended or closed: nothing is waiting any more. A look,
-    // one SeenScreens recorded while the agent was shown, answers a
-    // finished wait even after the person moves on. Seeing an open request
-    // is not answering it: it stays queued until it resolves or a new turn
-    // starts, however long the person keeps reading it.
-    std::erase_if(waiting_, [this](const Waiting& waiting) {
-        if (!waiting.item)
-            return true;
-        SessionPreview* item = waiting.item;
-        const auto kind = item->statusKind();
-        const bool open = waiting.needsYou || item->attentionCount() > 0;
-        return kind == QLatin1String("working") || kind == QLatin1String("ended") ||
-               (waiting.needsYou && item->attentionCount() == 0) ||
-               (!open && seen_ != nullptr && seen_->unchanged(item)) ||
-               (!open && looking_ && looking_(item));
-    });
-    if (remind <= 0 || !config_.notify())
-        waiting_.clear();
-    if (waiting_.empty()) {
-        check_.stop();
-        return;
-    }
-    // A reminder that falls due while the person is away waits for them.
-    if (!present())
-        return;
-    const auto now = QDateTime::currentMSecsSinceEpoch();
-    std::erase_if(waiting_, [this, now, remind](const Waiting& waiting) {
-        const auto waited = now - waiting.since;
-        if (waited < remind)
-            return false;
-        record_decision(log_, waiting.item, "notification", "still waiting", "posted: reminder");
-        const auto minutes = static_cast<int>(waited / 60000);
-        const QString cli = waiting.item->agentName();
-        post(waiting.item,
-             minutes >= 1 ? tr("%1 has been waiting for you for %n min", nullptr, minutes).arg(cli)
-                          : tr("%1 is still waiting for you").arg(cli));
-        return true; // one reminder per wait
-    });
-    if (waiting_.empty())
-        check_.stop();
+    log_({{"at", QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
+          {"agent", item->title()},
+          {"cli", item->agentName()},
+          {"event", QLatin1String(event)},
+          {"kind", QStringLiteral("chime")},
+          {"decision", QLatin1String(decision)}});
 }
 
 AttentionLog attention_log(const QString& path) {

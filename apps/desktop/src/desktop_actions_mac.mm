@@ -14,32 +14,10 @@
 #include <QMetaObject>
 #include <utility>
 
-namespace {
-std::function<void(const QString&)>& opened_handler() {
-    static std::function<void(const QString&)> handler;
-    return handler;
-}
-} // namespace
-
-// Clicking a notification shows its agent; notifications also show while
-// lapis is in front, though lapis only posts them from the background.
+// Notifications also show while lapis is in front.
 @interface LapisNotificationDelegate : NSObject <UNUserNotificationCenterDelegate>
 @end
 @implementation LapisNotificationDelegate
-- (void)userNotificationCenter:(UNUserNotificationCenter*)center
-    didReceiveNotificationResponse:(UNNotificationResponse*)response
-             withCompletionHandler:(void (^)(void))completionHandler {
-    NSString* agent = response.notification.request.content.userInfo[@"agent"];
-    const QString id = agent != nil ? QString::fromNSString(agent) : QString();
-    QMetaObject::invokeMethod(
-        qApp,
-        [id] {
-            if (const auto& handler = opened_handler())
-                handler(id);
-        },
-        Qt::QueuedConnection);
-    completionHandler();
-}
 - (void)userNotificationCenter:(UNUserNotificationCenter*)center
        willPresentNotification:(UNNotification*)notification
          withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
@@ -94,8 +72,6 @@ void post_notification(const QString& id, const QString& title, const QString& b
         [[[UNMutableNotificationContent alloc] init] autorelease];
     content.title = title.toNSString();
     content.body = body.toNSString();
-    content.userInfo = @{@"agent" : id.toNSString()};
-    // One notification per agent: a newer one replaces the older.
     UNNotificationRequest* request = [UNNotificationRequest requestWithIdentifier:id.toNSString()
                                                                           content:content
                                                                           trigger:nil];
@@ -106,11 +82,6 @@ void post_notification(const QString& id, const QString& title, const QString& b
                                 [center addNotificationRequest:request withCompletionHandler:nil];
                             [request release];
                           }];
-}
-
-void on_notification_opened(const std::function<void(const QString&)>& handler) {
-    opened_handler() = handler;
-    static_cast<void>(notification_center());
 }
 
 bool login_item_enabled() {

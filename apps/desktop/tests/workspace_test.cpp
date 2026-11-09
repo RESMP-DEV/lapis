@@ -3765,11 +3765,12 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
     require(shown.value(QStringLiteral("keepAwake")).toBool(),
             "the phone reads the Mac's settings");
     // Older phone builds decode the retired request chime's two settings and
-    // the retired usage meter's, and still send them: the answer carries them
-    // as off, and changes are ignored.
+    // the retired usage meter's and notifications' switches, and still send
+    // them: the answer carries them as off, and changes are ignored.
     require(shown.value(QStringLiteral("alertSound")) == QJsonValue(false) &&
                 shown.value(QStringLiteral("alertRepeat")) == QJsonValue(1) &&
-                shown.value(QStringLiteral("showUsage")) == QJsonValue(false),
+                shown.value(QStringLiteral("showUsage")) == QJsonValue(false) &&
+                shown.value(QStringLiteral("notify")) == QJsonValue(false),
             "the answer keeps the retired settings an older phone requires");
     const auto changed = askVersioned(
         workspace,
@@ -3777,18 +3778,14 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
          {QStringLiteral("settings"), QJsonObject{{QStringLiteral("keepAwake"), false},
                                                   {QStringLiteral("alertSound"), true},
                                                   {QStringLiteral("alertRepeat"), 11},
-                                                  {QStringLiteral("showUsage"), true}}}});
+                                                  {QStringLiteral("showUsage"), true},
+                                                  {QStringLiteral("notify"), true}}}});
+    const auto changed_settings = changed.value(QStringLiteral("settings")).toObject();
     require(answeredOk(changed) && !keymap.keepAwake() &&
-                !changed.value(QStringLiteral("settings"))
-                     .toObject()
-                     .value(QStringLiteral("keepAwake"))
-                     .toBool() &&
-                changed.value(QStringLiteral("settings"))
-                        .toObject()
-                        .value(QStringLiteral("alertSound")) == QJsonValue(false) &&
-                changed.value(QStringLiteral("settings"))
-                        .toObject()
-                        .value(QStringLiteral("showUsage")) == QJsonValue(false),
+                !changed_settings.value(QStringLiteral("keepAwake")).toBool() &&
+                changed_settings.value(QStringLiteral("alertSound")) == QJsonValue(false) &&
+                changed_settings.value(QStringLiteral("showUsage")) == QJsonValue(false) &&
+                changed_settings.value(QStringLiteral("notify")) == QJsonValue(false),
             "the phone changes them, and the retired settings are ignored");
     require(file.open(QIODevice::ReadOnly) && !QJsonDocument::fromJson(file.readAll())
                                                    .object()
@@ -3830,16 +3827,17 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
     }
     keymap.setSourcePathForTesting(malformed_path);
     const auto save_failed = askVersioned(
-        workspace, {{QStringLiteral("request"), QStringLiteral("changeSettings")},
-                    {QStringLiteral("settings"), QJsonObject{{QStringLiteral("keepAwake"), true},
-                                                             {QStringLiteral("notify"), false}}}});
+        workspace,
+        {{QStringLiteral("request"), QStringLiteral("changeSettings")},
+         {QStringLiteral("settings"), QJsonObject{{QStringLiteral("keepAwake"), true},
+                                                  {QStringLiteral("finishSound"), false}}}});
     require(!answeredOk(save_failed) &&
                 save_failed.value(QStringLiteral("settings")).toObject() ==
                     QJsonObject::fromVariantMap({{QStringLiteral("keepAwake"), false},
                                                  {QStringLiteral("alertSound"), false},
                                                  {QStringLiteral("finishSound"), true},
                                                  {QStringLiteral("alertRepeat"), 1},
-                                                 {QStringLiteral("notify"), true},
+                                                 {QStringLiteral("notify"), false},
                                                  {QStringLiteral("showUsage"), false}}) &&
                 keymap.remoteSettings() == before_failure,
             "a failed save echoes unchanged settings and preserves memory");
@@ -4110,8 +4108,11 @@ void alertsChimeWhileAnAgentWaits() {
     const QDir root(QFileInfo(directory.path()).canonicalFilePath());
     QFile config(root.filePath(QStringLiteral("lapis.json")));
     require(config.open(QIODevice::WriteOnly), "write the config");
-    // "sound" and "repeat" are the retired request chime's; older files keep them.
-    config.write(R"({"version": 1, "alerts": {"sound": true, "finished": true, "repeat": 3}})");
+    // "sound" and "repeat" are the retired request chime's, and "notify",
+    // "awayAfter", "remindAfter" and "judge" the retired notifications' and
+    // ping judge's; older files keep them.
+    config.write(R"({"version": 1, "alerts": {"sound": true, "finished": true, "repeat": 3,
+        "notify": true, "awayAfter": 5, "remindAfter": 9999, "judge": true}})");
     config.close();
     lapis::desktop::KeyMap keymap;
     keymap.setSourcePathForTesting(config.fileName());
@@ -4244,6 +4245,19 @@ void alertsChimeWhileAnAgentWaits() {
     }
 
     require(keymap.setFinishSound(false), "turn the sound off");
+    {
+        QFile written(config.fileName());
+        require(written.open(QIODevice::ReadOnly), "read the saved alerts config");
+        const auto saved =
+            QJsonDocument::fromJson(written.readAll()).object().value("alerts").toObject();
+        require(!saved.value(QStringLiteral("finished")).toBool(true) &&
+                    saved.value(QStringLiteral("judge")).toBool() &&
+                    saved.value(QStringLiteral("notify")).toBool() &&
+                    saved.value(QStringLiteral("awayAfter")).toInt() == 5 &&
+                    saved.value(QStringLiteral("remindAfter")).toInt() == 9999 &&
+                    saved.value(QStringLiteral("repeat")).toInt() == 3,
+                "saving the chime keeps the retired alert keys as written");
+    }
     played.clear();
     std::vector<QJsonObject> quiet_lines;
     alerts.setLog([&quiet_lines](const QJsonObject& entry) { quiet_lines.push_back(entry); });
@@ -4259,59 +4273,6 @@ void alertsChimeWhileAnAgentWaits() {
             "no chimes with the sound off, and that decision is logged");
     alerts.setLog({});
 
-    // Notifications: the same moments, only while lapis is in the background,
-    // and not with them turned off.
-    std::vector<QStringList> posted;
-    bool background = false;
-    lapis::desktop::Notifier notifier(
-        workspace, keymap,
-        [&posted](const QString& id, const QString& title, const QString& body) {
-            posted.push_back({id, title, body});
-        },
-        [&background] { return background; });
-    std::vector<QJsonObject> notes;
-    notifier.setLog([&notes](const QJsonObject& entry) { notes.push_back(entry); });
-    emit workspace.turnFinished(&agent);
-    require(posted.empty() && notes.back().value(QStringLiteral("decision")).toString() ==
-                                  QStringLiteral("none: lapis is in front"),
-            "no notification while lapis is in front, and that decision is logged");
-    background = true;
-    emit workspace.turnFinished(&agent);
-    require(
-        posted.size() == 1 && posted[0][1] == QStringLiteral("agent") &&
-            posted[0][2] == QStringLiteral("Codex finished a turn") &&
-            notes.back().value(QStringLiteral("kind")).toString() ==
-                QStringLiteral("notification") &&
-            notes.back().value(QStringLiteral("event")).toString() == QStringLiteral("finished") &&
-            notes.back().value(QStringLiteral("decision")).toString() == QStringLiteral("posted"),
-        "a turn in the background posts one notification naming the agent and its CLI");
-    // A finished turn on an unchanged screen posts nothing.
-    lapis::desktop::SeenScreens seen(workspace, [&looking](const auto*) { return looking; });
-    notifier.setSeen(&seen);
-    seen.see(&agent);
-    emit workspace.turnFinished(&agent);
-    require(posted.size() == 1 && notes.back().value(QStringLiteral("decision")).toString() ==
-                                      QStringLiteral("none: nothing new since you looked"),
-            "a finished turn on an unchanged screen posts nothing, and says why");
-    notifier.setSeen(nullptr);
-    notifier.setLog({});
-    // A Claude agent whose conversation is about Codex is still Claude's.
-    agent.setHarnessId(QStringLiteral("claude"));
-    agent.rename(QStringLiteral("Codex resume"));
-    emit workspace.turnFinished(&agent);
-    require(posted.size() == 2 && posted[1][1] == QStringLiteral("Codex resume") &&
-                posted[1][2] == QStringLiteral("Claude finished a turn"),
-            "the body names the agent's CLI, whatever its title says");
-    agent.setHarnessId({});
-    emit workspace.turnFinished(&agent);
-    require(posted.size() == 3 && posted[2][2] == QStringLiteral("Agent finished a turn"),
-            "terminal-mode notifications retain a readable subject");
-    agent.setHarnessId(QStringLiteral("codex"));
-    agent.rename(QStringLiteral("agent"));
-    require(keymap.setNotify(false), "turn notifications off");
-    emit workspace.turnFinished(&agent);
-    require(posted.size() == 3, "none with notifications off");
-
     const auto wav = lapis::desktop::chime_wav(lapis::desktop::Chime::needsYou);
     require(wav.startsWith("RIFF") && wav.mid(8, 8) == "WAVEfmt " && wav.size() == 44 + 27342 * 2,
             "a chime is a 0.62 second, 16-bit mono WAV");
@@ -4321,341 +4282,6 @@ void alertsChimeWhileAnAgentWaits() {
             peak, static_cast<qint16>(std::abs(qFromLittleEndian<qint16>(wav.constData() + i))));
     require(qFromLittleEndian<qint16>(wav.constData() + 44) == 0 && peak > 8000 && peak < 8500,
             "it starts from silence and peaks near -12 dBFS");
-}
-
-// A finished turn pings only when the guessing model judged that it needs the
-// person: "steer" and "fyi" stay quiet, "needs" pings, no judgement in time
-// pings as before, and a turn ending on an open request never waits.
-void pingsFollowTheJudgement() {
-    QTemporaryDir directory;
-    require(directory.isValid(), "judge directory");
-    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
-    QFile config(root.filePath(QStringLiteral("lapis.json")));
-    require(config.open(QIODevice::WriteOnly), "write the judge config");
-    config.write(R"({"version": 1, "alerts": {"notify": true}})");
-    config.close();
-    lapis::desktop::KeyMap keymap;
-    keymap.setSourcePathForTesting(config.fileName());
-    require(keymap.load() && keymap.judgePings(), "pings are judged by default");
-    WorkspaceOptions options;
-    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
-    Workspace workspace(WorkspaceMode::live, options);
-    lapis::desktop::SessionPreview agent(QStringLiteral("agent"), root.path(), {}, QColor(), "");
-    agent.setHarnessId(QStringLiteral("claude"));
-    std::vector<QStringList> posted;
-    lapis::desktop::Notifier notifier(
-        workspace, keymap,
-        [&posted](const QString& id, const QString& title, const QString& body) {
-            posted.push_back({id, title, body});
-        },
-        [] { return true; });
-    std::vector<QJsonObject> notes;
-    notifier.setLog([&notes](const QJsonObject& entry) { notes.push_back(entry); });
-    lapis::desktop::PingJudge judge(workspace, keymap);
-    judge.setWaitForTesting(150);
-    notifier.judgeBy(judge);
-    const auto id = agent.sessionId();
-    lapis::session::wire::AttentionSnapshot attention;
-    attention.available = attention.connected = attention.ready = true;
-    attention.requests.emplace_back();
-    agent.applyAttention(attention);
-    emit workspace.turnFinished(&agent);
-    require(posted.size() == 1, "a turn ending on an open request never waits");
-    attention.requests.clear();
-    agent.applyAttention(attention);
-    posted.clear();
-
-    emit workspace.turnFinished(&agent);
-    require(posted.empty(), "a finished turn waits for its judgement");
-    judge.verdict(id, QStringLiteral("fyi"));
-    require(posted.empty() && notes.back().value(QStringLiteral("decision")).toString() ==
-                                  QStringLiteral("none: judged fyi"),
-            "judged fyi, it stays quiet and says why");
-    emit workspace.turnFinished(&agent);
-    judge.verdict(id, QStringLiteral("steer"));
-    require(posted.empty(), "judged steer, it stays quiet");
-    emit workspace.turnFinished(&agent);
-    judge.verdict(id, QStringLiteral("needs"));
-    require(posted.size() == 1, "judged needs, it notifies");
-    emit workspace.turnFinished(&agent);
-    require(waitFor([&posted] { return posted.size() == 2; }, 1000),
-            "without a judgement in time it notifies as before");
-    // An inactive fast path replaces an older hold without leaving its timer
-    // to emit a second, empty judgement.
-    judge.setActive([] { return true; });
-    emit workspace.turnFinished(&agent);
-    judge.setActive([] { return false; });
-    emit workspace.turnFinished(&agent);
-    require(posted.size() == 3, "with guessing off nothing waits");
-    QThread::msleep(200);
-    require(posted.size() == 3, "the replaced hold does not notify again");
-    notifier.setLog({});
-}
-
-// Away from the Mac, lapis in front no longer stands for being seen: a
-// finished turn notifies, and an agent left waiting notifies once more after
-// alerts.remindAfter, held until the person is back. Looking at it, or its
-// next turn starting, ends the wait.
-void notificationsReachYouWhenAway() {
-    namespace wire = lapis::session::wire;
-    QTemporaryDir directory;
-    require(directory.isValid(), "away directory");
-    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
-    QFile config(root.filePath(QStringLiteral("lapis.json")));
-    require(config.open(QIODevice::WriteOnly), "write the away config");
-    config.write(
-        R"({"version": 1, "alerts": {"notify": true, "awayAfter": 5, "remindAfter": 9999}})");
-    config.close();
-    lapis::desktop::KeyMap keymap;
-    keymap.setSourcePathForTesting(config.fileName());
-    require(keymap.load() && keymap.awayAfterSeconds() == 15 && keymap.remindAfterMinutes() == 1440,
-            "awayAfter and remindAfter load within their bounds");
-    WorkspaceOptions options;
-    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
-    Workspace workspace(WorkspaceMode::live, options);
-    lapis::desktop::SessionPreview agent(QStringLiteral("agent"), root.path(), {}, QColor(), "");
-    agent.setHarnessId(QStringLiteral("claude"));
-    const auto activity = [&agent](lapis::session::attention::Activity now) {
-        wire::AttentionSnapshot state;
-        state.available = state.connected = state.ready = true;
-        state.source_epoch = 1;
-        state.activity = now;
-        agent.applyAttention(state);
-    };
-    activity(lapis::session::attention::Activity::turn_completed);
-    std::vector<QStringList> posted;
-    bool background = false;
-    bool present = true;
-    bool focused = false;
-    lapis::desktop::Notifier notifier(
-        workspace, keymap,
-        [&posted](const QString& id, const QString& title, const QString& body) {
-            posted.push_back({id, title, body});
-        },
-        [&background] { return background; });
-    notifier.setPresence([&present] { return present; },
-                         [&present, &focused](const auto*) { return present && focused; });
-    notifier.setTimingForTesting({.checkMs = 20, .remindMs = 150});
-    std::vector<QJsonObject> notes;
-    notifier.setLog([&notes](const QJsonObject& entry) { notes.push_back(entry); });
-    const auto decision = [&notes] {
-        return notes.back().value(QStringLiteral("decision")).toString();
-    };
-
-    // In front with someone there: no notification, as before, and watching
-    // the agent itself leaves nothing waiting.
-    focused = true;
-    emit workspace.turnFinished(&agent);
-    require(posted.empty() && decision() == QStringLiteral("none: lapis is in front"),
-            "in front and present, a finished turn posts nothing");
-    waitFor([] { return false; }, 300);
-    require(posted.empty(), "and the agent being watched is not reminded about");
-
-    // Nobody at the Mac: in front, even showing that agent, it posts.
-    present = false;
-    emit workspace.turnFinished(&agent);
-    require(posted.size() == 1 && posted[0][2] == QStringLiteral("Claude finished a turn") &&
-                decision() == QStringLiteral("posted: you are away"),
-            "away, a finished turn posts even with lapis in front on that agent");
-    // Still away when the reminder falls due: it waits for the person.
-    waitFor([] { return false; }, 300);
-    require(posted.size() == 1, "a reminder is held while the person is away");
-    present = true;
-    focused = false;
-    require(waitFor([&posted] { return posted.size() == 2; }, 1000) &&
-                posted[1][2].startsWith(QStringLiteral("Claude ")) &&
-                notes.back().value(QStringLiteral("event")).toString() ==
-                    QStringLiteral("still waiting") &&
-                decision() == QStringLiteral("posted: reminder"),
-            "back at the Mac, the agent still waiting reminds once");
-    waitFor([] { return false; }, 300);
-    require(posted.size() == 2, "one reminder per wait");
-
-    // Present but on another agent: the chime's moment, and a reminder later.
-    emit workspace.turnFinished(&agent);
-    require(posted.size() == 2 && decision() == QStringLiteral("none: lapis is in front"),
-            "present on another agent, no notification at the turn's end");
-    require(waitFor([&posted] { return posted.size() == 3; }, 1000) &&
-                decision() == QStringLiteral("posted: reminder"),
-            "but it reminds if left waiting");
-
-    // Looking at it, or its next turn starting, ends the wait.
-    emit workspace.turnFinished(&agent);
-    focused = true;
-    waitFor([] { return false; }, 300);
-    require(posted.size() == 3, "looking at the agent answers the wait");
-    focused = false;
-    emit workspace.turnFinished(&agent);
-    activity(lapis::session::attention::Activity::working);
-    waitFor([] { return false; }, 300);
-    require(posted.size() == 3, "a new turn answers the wait");
-    activity(lapis::session::attention::Activity::turn_completed);
-
-    // In the background nothing changes: it posts, present or not.
-    background = true;
-    emit workspace.turnFinished(&agent);
-    require(posted.size() == 4 && decision() == QStringLiteral("posted"),
-            "in the background a finished turn posts as before");
-
-    // A look SeenScreens already recorded answers a finished wait even after
-    // the person moves on: a glance of a few seconds hits the 1s sample and
-    // usually misses the 5s check. A recorded look is not an answer for an
-    // open request, which still reminds.
-    waitFor([] { return false; }, 300);
-    require(posted.size() == 5, "the background wait resolves before the seen coverage");
-    background = false;
-    bool watching = false;
-    lapis::desktop::SeenScreens seen(workspace, [&watching](const auto*) { return watching; });
-    notifier.setSeen(&seen);
-    emit workspace.turnFinished(&agent);
-    require(posted.size() == 5 && decision() == QStringLiteral("none: lapis is in front"),
-            "the finished wait queues before anything records the screen");
-    watching = true;
-    seen.see(&agent); // what the 1s sampler records while the agent is shown
-    watching = false;
-    waitFor([] { return false; }, 300);
-    require(posted.size() == 5, "a look SeenScreens recorded answers the wait once they leave");
-
-    wire::AttentionSnapshot pending;
-    pending.available = pending.connected = pending.ready = true;
-    pending.source_epoch = 1;
-    lapis::session::attention::Pending request_item;
-    request_item.request = {.id = std::int64_t{1},
-                            .thread_id = "t",
-                            .turn_id = "u",
-                            .item_id = "i",
-                            .reason = "Approval",
-                            .summary = "Run tests",
-                            .choices = {"accept"}};
-    request_item.source_epoch = request_item.revision = 1;
-    pending.requests.push_back({request_item, QJsonObject{}});
-    agent.applyAttention(pending);
-    emit workspace.turnFinished(&agent);
-    require(posted.size() == 5 && decision() == QStringLiteral("none: lapis is in front"),
-            "an open request queues its wait on the recorded screen too");
-    watching = true;
-    seen.see(&agent);
-    watching = false;
-    require(waitFor([&posted] { return posted.size() == 6; }, 1000) &&
-                notes.back().value(QStringLiteral("event")).toString() ==
-                    QStringLiteral("still waiting"),
-            "but a glance at an open request is not an answer: it still reminds");
-
-    // An immediate notification is not an answer either. Displaying an open
-    // request while it is visible still queues its reminder: once nobody is
-    // looking, an unresolved approval must come back. The screen is new to
-    // the notifier here, so the turn posts rather than reading as seen.
-    notifier.setSeen(nullptr);
-    focused = true;
-    background = true;
-    emit workspace.turnFinished(&agent);
-    require(posted.size() == 7 &&
-                notes.back().value(QStringLiteral("event")).toString() ==
-                    QStringLiteral("finished") &&
-                decision() == QStringLiteral("posted"),
-            "an open request shown in front posts immediately");
-    background = false;
-    focused = false;
-    require(waitFor([&posted] { return posted.size() == 8; }, 1000) &&
-                notes.back().value(QStringLiteral("event")).toString() ==
-                    QStringLiteral("still waiting"),
-            "and its immediate view does not answer the wait");
-    notifier.setLog({});
-}
-
-// A real permission request arrives on turnFinished after applyAttention
-// stored it. Arming and keeping its wait
-// is the contract, whatever the person is looking at while it stays open.
-void notificationsHoldLiveRequestsWhileViewed() {
-    namespace wire = lapis::session::wire;
-    QTemporaryDir directory;
-    require(directory.isValid(), "live request directory");
-    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
-    QFile config(root.filePath(QStringLiteral("lapis.json")));
-    require(config.open(QIODevice::WriteOnly), "write the live request config");
-    config.write(R"({"version": 1, "alerts": {"notify": true, "remindAfter": 9999}})");
-    config.close();
-    lapis::desktop::KeyMap keymap;
-    keymap.setSourcePathForTesting(config.fileName());
-    require(keymap.load() && keymap.remindAfterMinutes() == 1440, "live request config loads");
-    WorkspaceOptions options;
-    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
-    Workspace workspace(WorkspaceMode::live, options);
-    lapis::desktop::SessionPreview agent(QStringLiteral("agent"), root.path(), {}, QColor(), "");
-    agent.setHarnessId(QStringLiteral("claude"));
-    const auto request = [&agent](bool pending) {
-        wire::AttentionSnapshot state;
-        state.available = state.connected = state.ready = true;
-        state.source_epoch = 1;
-        if (pending) {
-            lapis::session::attention::Pending item;
-            item.request = {.id = std::int64_t{1},
-                            .thread_id = "t",
-                            .turn_id = "u",
-                            .item_id = "i",
-                            .reason = "Approval",
-                            .summary = "Run tests",
-                            .choices = {"accept"}};
-            item.source_epoch = item.revision = 1;
-            state.requests.push_back({item, QJsonObject{}});
-        }
-        agent.applyAttention(state);
-    };
-    std::vector<QStringList> posted;
-    std::vector<QJsonObject> notes;
-    bool background = false;
-    bool present = true;
-    bool focused = true;
-    lapis::desktop::Notifier notifier(
-        workspace, keymap,
-        [&posted](const QString& id, const QString& title, const QString& body) {
-            posted.push_back({id, title, body});
-        },
-        [&background] { return background; });
-    notifier.setPresence([&present] { return present; },
-                         [&present, &focused](const auto*) { return present && focused; });
-    notifier.setTimingForTesting({.checkMs = 20, .remindMs = 150});
-    notifier.setLog([&notes](const QJsonObject& entry) { notes.push_back(entry); });
-    const auto decision = [&notes] {
-        return notes.back().value(QStringLiteral("decision")).toString();
-    };
-
-    // A request that appears while the person is already reading that agent
-    // still arms its reminder: seeing an open request is not answering it.
-    request(true);
-    emit workspace.turnFinished(&agent);
-    require(posted.empty() && decision() == QStringLiteral("none: lapis is in front"),
-            "a live request viewed in front posts nothing now");
-    require(waitFor(
-                [&notes] {
-                    return !notes.empty() &&
-                           notes.back().value(QStringLiteral("event")).toString() ==
-                               QStringLiteral("finished");
-                },
-                100),
-            "the live request reaches the notifier");
-
-    // The wait survives check ticks held under the person's gaze, and the
-    // reminder still comes while they keep reading, whether the request
-    // arrived live.
-    waitFor([] { return false; }, 100);
-    require(posted.empty() && agent.attentionCount() > 0,
-            "looking at an open request keeps its reminder queued");
-    require(waitFor([&posted] { return posted.size() == 1; }, 1000) &&
-                notes.back().value(QStringLiteral("event")).toString() ==
-                    QStringLiteral("still waiting") &&
-                decision() == QStringLiteral("posted: reminder"),
-            "an open request viewed the whole time still reminds");
-    waitFor([] { return false; }, 300);
-    require(posted.size() == 1, "one reminder per open request");
-
-    // Answering the request, not the gaze, is what ends the wait. A fresh
-    // turn on the open request queues another wait, which the answer ends.
-    emit workspace.turnFinished(&agent);
-    request(false);
-    waitFor([] { return false; }, 300);
-    require(posted.size() == 1, "a resolved request stops waiting");
-    notifier.setLog({});
 }
 
 // The attention log's own behavior: owner-only however it starts, rotating
@@ -6381,9 +6007,6 @@ int main(int argc, char** argv) {
                 ompGetsItsResizeOverlay();
             } else if (selected == QStringLiteral("chimes")) {
                 alertsChimeWhileAnAgentWaits();
-                notificationsReachYouWhenAway();
-                pingsFollowTheJudgement();
-                notificationsHoldLiveRequestsWhileViewed();
                 chimesPlayChosenFiles();
                 attentionLogStaysPrivateAndRotates();
             } else {
@@ -6470,9 +6093,6 @@ int main(int argc, char** argv) {
         unseenAgentsDecodeNothing();
         windowTakesTheWorkspaceFromTheHost();
         alertsChimeWhileAnAgentWaits();
-        notificationsReachYouWhenAway();
-        pingsFollowTheJudgement();
-        notificationsHoldLiveRequestsWhileViewed();
         chimesPlayChosenFiles();
         attentionLogStaysPrivateAndRotates();
         phoneSizeYieldsToTheDesktop();

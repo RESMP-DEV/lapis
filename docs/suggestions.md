@@ -65,9 +65,7 @@ When a Claude Code, Codex or OMP agent finishes a turn, lapis reads its conversa
 where it runs (over ssh for another machine) and asks the model, on this Mac,
 with your `~/.claude/CLAUDE.md`, the agent's screen, every other agent's state
 and your latest prompts elsewhere. The model writes one guess, preferring a
-short reply when that would do, with its probability, and judges whether the
-agent needs you ("needs", "steer" or "fyi"; see alerts.judge in
-[config](config.md)). The guess shows after the agent's cursor whenever it
+short reply when that would do, with its probability. The guess shows after the agent's cursor whenever it
 passes `minConfidence`: dim, or nearly as bright as text when the probability
 is 0.45 or more (from Oct 3 to 9, guesses scored that high were taken 65% of
 the time, against 25 to 34% below). None shows while an agent waits on a

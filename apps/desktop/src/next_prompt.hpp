@@ -195,10 +195,6 @@ class NextPrompt final : public QObject {
     void stateChanged();
     // An offer was first seen; readyAgents() changed without a new revision.
     void seenChanged();
-    // The guessing model's judgement of whether the agent needs the person
-    // after a turn: "needs", "steer" or "fyi"; empty when there is none
-    // (no guess was made, or it failed). One per turnFinished.
-    void judged(const QString& id, const QString& attention);
     void failingChanged();
 
   private:
@@ -223,9 +219,6 @@ class NextPrompt final : public QObject {
     // The last guess made for an agent, to tell a repeat (see turnFinished).
     struct Previous {
         QString conversation;
-        // The verdict to report when this guess turns out to be an unseen
-        // repeat: the model's own answer, so a self-woken agent stays quiet.
-        std::function<void(const QString&)> attention;
         int turn{-1};
         bool seen{};
     };

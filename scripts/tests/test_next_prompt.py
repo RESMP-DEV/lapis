@@ -784,7 +784,6 @@ class TranscriptTests(Homes):
         response = json.dumps(
             {
                 "category": "other",
-                "attention": "steer",
                 "candidates": [{"text": "go", "p": 0.5}],
             }
         )
@@ -851,7 +850,6 @@ class TranscriptTests(Homes):
         response = json.dumps(
             {
                 "category": "other",
-                "attention": "steer",
                 "candidates": [
                     {"text": "a", "p": 0.3},
                     {"text": "b", "p": 0.25},
@@ -1010,14 +1008,6 @@ class ModelTests(unittest.TestCase):
         )
         self.assertEqual(
             next_prompt.parse('{"category": "vibes"}')["category"], "other"
-        )
-        self.assertEqual(
-            next_prompt.parse('{"attention": "needs", "candidates": []}')["attention"],
-            "needs",
-        )
-        self.assertEqual(
-            next_prompt.parse('{"attention": "URGENT", "candidates": []}')["attention"],
-            "",
         )
         non_numeric = next_prompt.parse(
             '{"candidates":[{"text":"quoted","p":"0.9"},{"text":"boolean","p":true},'

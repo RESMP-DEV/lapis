@@ -1710,7 +1710,6 @@ ApplicationWindow {
         motionEnabled: window.motionEnabled
         finishSound: (typeof keymap !== "undefined" && keymap !== null) ? keymap.finishSound : true
         keepAwake: (typeof keymap !== "undefined" && keymap !== null) ? keymap.keepAwake : true
-        notify: (typeof keymap !== "undefined" && keymap !== null) ? keymap.notify : true
         loginAvailable: window.desktopAvailable && desktop.launchAtLoginAvailable
         launchAtLogin: window.desktopAvailable && desktop.launchAtLogin
         updatesAvailable: window.desktopAvailable && desktop.updatesAvailable
@@ -1728,7 +1727,6 @@ ApplicationWindow {
             if (typeof keymap !== "undefined" && keymap !== null)
                 keymap.setVisual(key, value)
         }
-        onNotifyChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setNotify(on) }
         onLaunchAtLoginChosen: function(on) { if (window.desktopAvailable) desktop.setLaunchAtLogin(on) }
         onCheckUpdates: if (window.desktopAvailable) desktop.checkForUpdates()
         onFinishSoundChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setFinishSound(on) }

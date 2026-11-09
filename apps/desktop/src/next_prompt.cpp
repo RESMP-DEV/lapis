@@ -348,29 +348,20 @@ double NextPrompt::confidence(const QString& id) const { return offers_.value(id
 void NextPrompt::run(const QString& id, bool force, int returned) {
     if (!settings_.automatic)
         return;
-    // A repeat is judged by the model's own verdict for the last guess: a
-    // guessed-past turn stays quiet, and re-running this prediction replaces
-    // that verdict once the model answers.
-    const auto judged_for = [this, &id](const QString& attention) { emit judged(id, attention); };
     if (const auto shown = offers_.constFind(id); shown != offers_.cend())
-        previous_.insert(id,
-                         {offerConversation(*shown), judged_for, shown->turn, shown->seen_ms != 0});
+        previous_.insert(id, {offerConversation(*shown), shown->turn, shown->seen_ms != 0});
     deferred_.remove(id);
     owed_.remove(id);
     dropRestored(id, "new_turn");
     withdraw(id, returned >= 0 ? Withdrawal::returned : Withdrawal::next_turn);
     const auto agent = lookup_(id);
     if (!agent || (agent->cli != QLatin1String("claude") && agent->cli != QLatin1String("codex") &&
-                   agent->cli != QLatin1String("omp"))) {
-        emit judged(id, {});
+                   agent->cli != QLatin1String("omp")))
         return;
-    }
     if (auto old = running_.take(id); old.process)
         old.process->stopGroup();
-    if (!budgetAvailable(id)) {
-        emit judged(id, {});
+    if (!budgetAvailable(id))
         return;
-    }
     const auto generation = ++generation_;
     running_.insert(id, {generation, *agent, {}});
     emit stateChanged();
@@ -396,7 +387,6 @@ void NextPrompt::run(const QString& id, bool force, int returned) {
                        record({{QStringLiteral("event"), QStringLiteral("skipped")},
                                {QStringLiteral("agent"), id},
                                {QStringLiteral("reason"), QStringLiteral("unseen_repeat")}});
-                       last.attention(id);
                        return;
                    }
                    predict(id, generation, context, returned);
@@ -578,7 +568,6 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
     if (!budgetAvailable(id)) {
         running_.remove(id);
         emit stateChanged();
-        emit judged(id, {});
         return;
     }
     started_.push_back({clock_.elapsed(), generation});
@@ -679,7 +668,6 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     }
     if (arms.returned >= 0)
         event.insert(QStringLiteral("returned_minutes"), arms.returned);
-    event.insert(QStringLiteral("attention"), answer.value(QStringLiteral("attention")));
     event.insert(QStringLiteral("category"), answer.value(QStringLiteral("category")));
     event.insert(QStringLiteral("candidates"), candidates);
     event.insert(QStringLiteral("top_scored"), top.value(QStringLiteral("scored")).toBool());
@@ -689,7 +677,6 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     event.insert(QStringLiteral("min_confidence"), arms.floor);
     event.insert(QStringLiteral("ms"), answer.value(QStringLiteral("ms")));
     record(event);
-    emit judged(id, answer.value(QStringLiteral("attention")).toString());
     if (hidden) {
         // Compared with what the person sends, as an offer would be.
         if (!awaiting_.value(id).filled)
@@ -698,8 +685,7 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     }
     if (!shown)
         return;
-    const auto judged_for = [this, &id](const QString& attention) { emit judged(id, attention); };
-    previous_.insert(id, {offerConversation(made), judged_for, made.turn, made.seen_ms != 0});
+    previous_.insert(id, {offerConversation(made), made.turn, made.seen_ms != 0});
     offers_.insert(id, made);
     // A guess already typed in stays the one its prompt is compared with.
     if (!awaiting_.value(id).filled)
@@ -747,7 +733,6 @@ void NextPrompt::failed(const QString& id, const Agent& agent, Stage stage, cons
         last_failure_ = plain.value(kind, from_helper ? why.left(100) : reason);
         emit failingChanged();
     }
-    emit judged(id, {});
 }
 
 void NextPrompt::succeeded() {

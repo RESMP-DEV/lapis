@@ -70,9 +70,6 @@ struct Theme {
 inline constexpr int kTerminalFontSizeDefault = 14;
 inline constexpr int kTerminalFontSizeMinimum = 10;
 inline constexpr int kTerminalFontSizeMaximum = 32;
-// alerts.awayAfter (seconds of no input) and alerts.remindAfter (minutes).
-inline constexpr int kAwayAfterDefault = 120;
-inline constexpr int kRemindAfterDefault = 30;
 
 // Defaults for new agents, from the config's "newAgent" section: the CLI,
 // the folder to start in on this Mac and on each ssh machine, and the models
@@ -113,9 +110,6 @@ class KeyMap final : public QObject {
     // A chime when a Codex or Claude turn ends out of view, open requests
     // included.
     Q_PROPERTY(bool finishSound READ finishSound NOTIFY changed)
-    // A system notification for the same moments while lapis is in the
-    // background; clicking it shows the agent.
-    Q_PROPERTY(bool notify READ notify NOTIFY changed)
     // Keep this Mac from sleeping on power, so the phone can reach it.
     Q_PROPERTY(bool keepAwake READ keepAwake NOTIFY changed)
     // Typing over a scrolled-back full-screen program returns it to its
@@ -189,13 +183,11 @@ class KeyMap final : public QObject {
     Q_INVOKABLE bool setKeepAwake(bool on);
     Q_INVOKABLE bool setScrollToBottomOnTyping(bool on);
     [[nodiscard]] bool scrollToBottomOnTyping() const { return scroll_to_bottom_on_typing_; }
-    Q_INVOKABLE bool setNotify(bool on);
     // The values remote control may read. KeyMap owns their storage and their
     // relationship to lapis.json.
     struct RemoteSettings {
         bool keepAwake{};
         bool finishSound{};
-        bool notify{};
         [[nodiscard]] bool operator==(const RemoteSettings&) const = default;
     };
     // Absent fields leave their settings alone. Present fields are applied
@@ -204,7 +196,6 @@ class KeyMap final : public QObject {
     struct RemoteSettingsPatch {
         std::optional<bool> keepAwake;
         std::optional<bool> finishSound;
-        std::optional<bool> notify;
     };
     [[nodiscard]] RemoteSettings remoteSettings() const;
     [[nodiscard]] bool applyRemoteSettings(const RemoteSettingsPatch& changes,
@@ -215,17 +206,6 @@ class KeyMap final : public QObject {
     // finished turn without its own file plays soundFile at half volume.
     [[nodiscard]] const QString& alertSoundFile() const { return alert_sound_file_; }
     [[nodiscard]] const QString& finishSoundFile() const { return finish_sound_file_; }
-    [[nodiscard]] bool notify() const { return notify_; }
-    // With no keyboard or mouse input for this long (alerts.awayAfter, in
-    // seconds), the person is away: lapis being in front or showing an agent
-    // no longer counts as them seeing it.
-    [[nodiscard]] int awayAfterSeconds() const { return away_after_s_; }
-    // An agent still waiting this long after its finished turn
-    // (alerts.remindAfter, in minutes; 0 for never) notifies once more.
-    [[nodiscard]] int remindAfterMinutes() const { return remind_after_min_; }
-    // A finished turn chimes or notifies only when the next-prompt model
-    // judged that the agent needs the person (alerts.judge, on by default).
-    [[nodiscard]] bool judgePings() const { return judge_pings_; }
     [[nodiscard]] bool keepAwake() const { return keep_awake_; }
     [[nodiscard]] QVariantMap visual() const;
     // Sets one visual-view key (theme, font, codeFont, size or all) and
@@ -285,10 +265,6 @@ class KeyMap final : public QObject {
     QString finish_sound_file_;
     bool keep_awake_{true};
     bool scroll_to_bottom_on_typing_{true};
-    bool notify_{true};
-    int away_after_s_{kAwayAfterDefault};
-    int remind_after_min_{kRemindAfterDefault};
-    bool judge_pings_{true};
     QString visual_theme_{QStringLiteral("terminal")};
     QString visual_font_{QStringLiteral("system")};
     QString visual_code_font_{QStringLiteral("system")};

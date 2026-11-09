@@ -583,8 +583,8 @@ void predictsAndOffers() {
 // conversation holds it: typed in by Tab and changed, their own words, or the
 // guess unchanged. A turn the agent starts itself waits; /clear drops it.
 // A turn with no new prompt since an unseen guess is a repeat: nothing is
-// guessed until the agent is shown, and then once. The guess carries the
-// model's judgement and its probability; experiments pick another arm.
+// guessed until the agent is shown, and then once. The guess carries its
+// probability; experiments pick another arm.
 void repeatsWaitUntilShown() {
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-next-XXXXXX"));
     require(directory.isValid(), "fixture directory");
@@ -594,7 +594,7 @@ void repeatsWaitUntilShown() {
     write(root.filePath(QStringLiteral("context.reply")),
           R"({"conversation": "c1", "turn": 7, "turns": [{"role": "agent", "text": "Done."}]})");
     write(root.filePath(QStringLiteral("predict.reply")),
-          R"({"attention": "fyi", "candidates": [{"text": "go", "p": 0.6}]})");
+          R"({"candidates": [{"text": "go", "p": 0.6}]})");
     const auto log = root.filePath(QStringLiteral("logs/next_prompt.jsonl"));
     NextPrompt next(
         [](const QString&) -> std::optional<NextPrompt::Agent> {
@@ -609,14 +609,10 @@ void repeatsWaitUntilShown() {
         [] { return QJsonArray{}; },
         [&root](const QString& name) { return fixtureProgram(root, name); }, {root.path(), log});
     next.setSettings(on());
-    QStringList judged;
-    QObject::connect(&next, &NextPrompt::judged,
-                     [&judged](const QString&, const QString& attention) { judged << attention; });
     next.turnFinished(QStringLiteral("a"));
     require(waitFor([&] { return !next.suggestion(QStringLiteral("a")).isEmpty(); }) &&
-                judged == QStringList{QStringLiteral("fyi")} &&
                 next.confidence(QStringLiteral("a")) > 0.59,
-            "a guess, its judgement and its probability");
+            "a guess and its probability");
     next.turnFinished(QStringLiteral("a"));
     // This show races the context fetch: it arrives before the repeat callback
     // has recorded the deferral, and must still force the prediction.
@@ -767,7 +763,7 @@ void providerChainKeepsItsOwnRoute() {
     write(root.filePath(QStringLiteral("context.reply")),
           R"({"conversation": "c1", "turn": 7, "turns": [{"role": "agent", "text": "Done."}]})");
     write(root.filePath(QStringLiteral("predict.reply")),
-          R"({"attention": "fyi", "candidates": [{"text": "go", "p": 0.6}]})");
+          R"({"candidates": [{"text": "go", "p": 0.6}]})");
     const auto log = root.filePath(QStringLiteral("logs/next_prompt.jsonl"));
     NextPrompt next(
         [](const QString&) -> std::optional<NextPrompt::Agent> {
