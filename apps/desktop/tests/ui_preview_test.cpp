@@ -797,7 +797,7 @@ int run_shortcut_focus_tests() {
     CHECK(QMetaObject::invokeMethod(dialog, "open"));
     wait_popup(*dialog, true);
     const int focused_at_modal = workspace.focusedIndex();
-    const QString layout_at_modal = keymap.layoutName();
+    const QString theme_at_modal = keymap.themeName();
     const QString config_at_modal = read_text(directory.filePath(QStringLiteral("lapis.json")));
     int changes_during_modal = 0;
     const auto changed_connection = QObject::connect(
@@ -814,20 +814,20 @@ int run_shortcut_focus_tests() {
             QCoreApplication::sendEvent(window, &release);
             pump(10);
             CHECK(workspace.focusedIndex() == focused_at_modal);
-            CHECK(keymap.layoutName() == layout_at_modal);
+            CHECK(keymap.themeName() == theme_at_modal);
             CHECK(changes_during_modal == 0);
         }
     }
     QObject::disconnect(changed_connection);
     CHECK(workspace.focusedIndex() == focused_at_modal);
-    CHECK(keymap.layoutName() == layout_at_modal);
+    CHECK(keymap.themeName() == theme_at_modal);
     CHECK(read_text(directory.filePath(QStringLiteral("lapis.json"))) == config_at_modal);
     CHECK(dialog->property("opened").toBool());
     CHECK(window->activeFocusItem() != terminal);
     CHECK(QMetaObject::invokeMethod(dialog, "close"));
     wait_popup(*dialog, false);
     CHECK(workspace.focusedIndex() == focused_at_modal);
-    CHECK(keymap.layoutName() == layout_at_modal);
+    CHECK(keymap.themeName() == theme_at_modal);
 
     QKeyEvent old_shortcut(QEvent::KeyPress, Qt::Key_Comma, Qt::ControlModifier);
     QCoreApplication::sendEvent(window, &old_shortcut);
@@ -856,7 +856,7 @@ int run_shortcut_focus_tests() {
     CHECK(dialog->property("opened").toBool());
     CHECK(window->activeFocusItem() != terminal);
 
-    CHECK(keymap.setLayout(QStringLiteral("columns")));
+    CHECK(keymap.setDensity(QStringLiteral("compact")));
     pump(50);
     CHECK(dialog->property("opened").toBool());
     CHECK(window->activeFocusItem() != terminal);
@@ -884,7 +884,6 @@ int run_shortcut_focus_tests() {
     KeyMap persisted;
     persisted.setSourcePathForTesting(directory.filePath(QStringLiteral("lapis.json")));
     CHECK(persisted.load());
-    CHECK(persisted.layoutName() == keymap.layoutName());
     CHECK(persisted.themeName() == keymap.themeName());
     CHECK(persisted.densityName() == keymap.densityName());
     CHECK(persisted.terminalFontSize() == keymap.terminalFontSize());

@@ -23,7 +23,6 @@ class Terminals final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList machines READ machines NOTIFY machinesChanged)
     Q_PROPERTY(lapis::desktop::SessionPreview* current READ current NOTIFY currentChanged)
-    Q_PROPERTY(QString currentMachine READ currentMachine NOTIFY currentChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
   public:
     // `runtime` is the workspace's folder; `ssh_config` lists the machines.
@@ -32,7 +31,6 @@ class Terminals final : public QObject {
     // {id ("" for this Mac), name, open}: this Mac first, then ssh hosts.
     [[nodiscard]] QVariantList machines() const;
     [[nodiscard]] SessionPreview* current() const;
-    [[nodiscard]] const QString& currentMachine() const { return current_machine_; }
     [[nodiscard]] const QString& error() const { return error_; }
     // Shows the machine's terminal, starting a shell there when it has none
     // or its shell ended. False with `error` when it cannot start.

@@ -25,13 +25,7 @@
 #include <optional>
 
 namespace lapis::desktop {
-// Layout of the session area. "focus" keeps one large pane with a strip of
-// cards; "blocks" gives every session an equal tile; "columns" stacks the
-// previews in a left channel beside the pane; "stack" shows one session at a
-// time with the carousel hidden.
-enum class WorkspaceLayout : std::uint8_t { Focus, Blocks, Columns, Stack };
-
-// How much room the preview cards take in the focus and columns layouts.
+// How much room the preview cards take in the strip under the stage.
 enum class CardDensity : std::uint8_t { Comfortable, Compact, Minimal };
 
 // Colour scheme for the window chrome. Terminal cell colours come from the
@@ -95,19 +89,16 @@ struct AgentDefaults {
     QHash<QString, QStringList> models;
 };
 
-// User-editable keybindings, layout, theme, and card density, loaded from
+// User-editable keybindings, theme, and card density, loaded from
 // lapis.json at the project root. Missing or malformed input falls back to
 // built-in defaults, so a bad edit degrades rather than bricking the window.
 // Every action maps to a list of Qt key sequences, which QML binds through
 // Shortcut.
 class KeyMap final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QString layoutName READ layoutName NOTIFY changed)
-    Q_PROPERTY(bool blocks READ blocks NOTIFY changed)
     Q_PROPERTY(QString themeName READ themeName NOTIFY changed)
     Q_PROPERTY(QString densityName READ densityName NOTIFY changed)
     Q_PROPERTY(QVariantList themes READ themes NOTIFY changed)
-    Q_PROPERTY(QStringList layouts READ layouts NOTIFY changed)
     Q_PROPERTY(QStringList densities READ densities NOTIFY changed)
     Q_PROPERTY(bool sidebarVisible READ sidebarVisible NOTIFY changed)
     // The strip of live agent previews under the stage.
@@ -122,11 +113,9 @@ class KeyMap final : public QObject {
     Q_PROPERTY(int terminalFontSizeMinimum READ terminalFontSizeMinimum CONSTANT)
     Q_PROPERTY(int terminalFontSizeMaximum READ terminalFontSizeMaximum CONSTANT)
     Q_PROPERTY(int terminalFontSizeDefault READ terminalFontSizeDefault CONSTANT)
-    // A chime when an agent needs you, repeated while it waits unseen, and
-    // another when a Codex or Claude turn ends out of view.
-    Q_PROPERTY(bool alertSound READ alertSound NOTIFY changed)
+    // A chime when a Codex or Claude turn ends out of view, open requests
+    // included.
     Q_PROPERTY(bool finishSound READ finishSound NOTIFY changed)
-    Q_PROPERTY(int alertRepeat READ alertRepeat NOTIFY changed)
     // A system notification for the same moments while lapis is in the
     // background; clicking it shows the agent.
     Q_PROPERTY(bool notify READ notify NOTIFY changed)
@@ -171,23 +160,16 @@ class KeyMap final : public QObject {
         return sequences(action);
     }
 
-    [[nodiscard]] WorkspaceLayout layout() const { return layout_; }
-    [[nodiscard]] QString layoutName() const;
-    [[nodiscard]] bool blocks() const { return layout_ == WorkspaceLayout::Blocks; }
     [[nodiscard]] const QString& themeName() const { return theme_; }
     [[nodiscard]] QString densityName() const;
     [[nodiscard]] QVariantList themes() const;
-    [[nodiscard]] QStringList layouts() const;
     [[nodiscard]] QStringList densities() const;
 
-    // Cycle through layouts() in order and persist through setLayout().
-    Q_INVOKABLE void toggleLayout();
     Q_INVOKABLE bool reload();
 
     // Apply an appearance change from the settings dialog. Each writes the
     // config file so the choice survives a restart, then moves keyboard focus
     // back to the terminal. Invalid names are rejected without touching state.
-    Q_INVOKABLE bool setLayout(const QString& name);
     Q_INVOKABLE bool setTheme(const QString& name);
     Q_INVOKABLE bool setDensity(const QString& name);
     Q_INVOKABLE bool setSidebarVisible(bool visible);
@@ -209,9 +191,7 @@ class KeyMap final : public QObject {
     // CLIs whose automatic and explicit updates lapis skips, from
     // {"harnessUpdates": {"omp": false}}; every other CLI updates as before.
     [[nodiscard]] const QSet<QString>& harnessUpdatesOff() const { return harness_updates_off_; }
-    Q_INVOKABLE bool setAlertSound(bool on);
     Q_INVOKABLE bool setFinishSound(bool on);
-    Q_INVOKABLE bool setAlertRepeat(int times);
     Q_INVOKABLE bool setKeepAwake(bool on);
     Q_INVOKABLE bool setScrollToBottomOnTyping(bool on);
     [[nodiscard]] bool scrollToBottomOnTyping() const { return scroll_to_bottom_on_typing_; }
@@ -221,11 +201,9 @@ class KeyMap final : public QObject {
     // relationship to lapis.json.
     struct RemoteSettings {
         bool keepAwake{};
-        bool alertSound{};
         bool finishSound{};
         bool notify{};
         bool showUsage{};
-        int alertRepeat{};
         [[nodiscard]] bool operator==(const RemoteSettings&) const = default;
     };
     // Absent fields leave their settings alone. Present fields are applied
@@ -233,20 +211,17 @@ class KeyMap final : public QObject {
     // restores the changed fields without writing the file.
     struct RemoteSettingsPatch {
         std::optional<bool> keepAwake;
-        std::optional<bool> alertSound;
         std::optional<bool> finishSound;
         std::optional<bool> notify;
         std::optional<bool> showUsage;
-        std::optional<int> alertRepeat;
     };
     [[nodiscard]] RemoteSettings remoteSettings() const;
     [[nodiscard]] bool applyRemoteSettings(const RemoteSettingsPatch& changes,
                                            QString* diagnostic = nullptr);
-    [[nodiscard]] bool alertSound() const { return alert_sound_; }
     [[nodiscard]] bool finishSound() const { return finish_sound_; }
-    [[nodiscard]] int alertRepeat() const { return alert_repeat_; }
     // Sound files in place of the synthesized chimes (alerts.soundFile and
-    // alerts.finishedFile), as absolute paths; empty plays the taps.
+    // alerts.finishedFile), as absolute paths; empty plays the taps. A
+    // finished turn without its own file plays soundFile at half volume.
     [[nodiscard]] const QString& alertSoundFile() const { return alert_sound_file_; }
     [[nodiscard]] const QString& finishSoundFile() const { return finish_sound_file_; }
     [[nodiscard]] bool notify() const { return notify_; }
@@ -324,7 +299,6 @@ class KeyMap final : public QObject {
     QString source_path_;
     QString diagnostic_;
     QString chime_diagnostic_;
-    WorkspaceLayout layout_{WorkspaceLayout::Focus};
     CardDensity density_{CardDensity::Comfortable};
     QString theme_{QStringLiteral("lapis")};
     QString terminal_font_family_;
@@ -334,9 +308,7 @@ class KeyMap final : public QObject {
     bool loaded_{};
     bool sidebar_visible_{true};
     bool previews_visible_{true};
-    bool alert_sound_{true};
     bool finish_sound_{true};
-    int alert_repeat_{3};
     QString alert_sound_file_;
     QString finish_sound_file_;
     bool keep_awake_{true};

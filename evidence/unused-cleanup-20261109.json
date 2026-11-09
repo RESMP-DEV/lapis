@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-09T20:59:09Z",
+  "agent": "Codex triage parent",
+  "base_revision": "cf4ef36d0abfc62a83ceed13b66d8ed2939a5693",
+  "source_revision": "2453e227235c2110d0ab091ef9bb41be98c78d1d",
+  "scope": "Post-rebase validation of PR 188 after PR 187 merged.",
+  "changed_source_manifest": {
+    "algorithm": "sha256(git diff --binary base..source_revision -- ':(exclude)evidence/*')",
+    "digest": "12b2c52cd3af3e49731eab453d9d74560dc0c7aa0721ba1ba97c0a2c2419d6a6",
+    "changed_paths": 45
+  },
+  "validation": [
+    {
+      "command": "just quality",
+      "result": "passed"
+    },
+    {
+      "command": "python3 scripts/probe_terminal.py --engine ghostty",
+      "result": "passed; receipt at build/terminal-probe/reproduce/ghostty/runs/6cbb11c48f39415aae83d97ae31ea99c/reports/receipt.json"
+    },
+    {
+      "command": "cmake --build build/desktop --parallel 8 && ctest --test-dir build/desktop --no-tests=error --output-on-failure",
+      "result": "all 44 enabled desktop tests passed; nine policy-disabled tests did not run"
+    }
+  ],
+  "non_claims": [
+    "The post-rebase run does not repeat the author's pre-rebase iOS simulator typecheck or all eight CMake preset configurations.",
+    "No native macOS GUI, iOS UI test, or release packaging path was exercised."
+  ]
+}

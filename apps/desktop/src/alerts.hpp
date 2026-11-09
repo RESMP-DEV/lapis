@@ -96,16 +96,14 @@ class PingJudge final : public QObject {
     std::function<bool()> active_;
 };
 
-// Production requests and completed turns share one finished cue. The legacy
-// explicit needsYou signal retains its repeat behavior for existing callers;
-// it is not re-enabled by custom sound files.
+// Open requests and completed turns share one finished cue: a request arrives
+// on turnFinished once its attention has been applied, and chimes once.
 class Alerts final : public QObject {
     Q_OBJECT
   public:
     using Player = std::function<void(Chime)>;
     // Whether the person is looking at this agent right now.
     using Looking = std::function<bool(const SessionPreview*)>;
-    static constexpr int kRepeatMs = 4000;
     static constexpr int kQuietMs = 1500;
 
     Alerts(Workspace& workspace, const KeyMap& config, Player play, Looking looking,
@@ -120,32 +118,18 @@ class Alerts final : public QObject {
     void judgeBy(PingJudge& judge);
     // Plays a chime now, for the settings' Play buttons.
     Q_INVOKABLE void preview(bool needsYou);
-    struct Timing {
-        int repeatMs;
-        int quietMs;
-    };
-    void setTimingForTesting(Timing timing) {
-        repeat_.setInterval(timing.repeatMs);
-        quiet_ms_ = timing.quietMs;
-    }
+    // How long after one chime another stays quiet.
+    void setQuietForTesting(int ms) { quiet_ms_ = ms; }
 
   private:
-    void needsYou(SessionPreview* item);
     void finished(SessionPreview* item);
-    void tick();
     bool ring(Chime chime);
-    struct Waiting {
-        QPointer<SessionPreview> item;
-        int played{};
-    };
     void record(const SessionPreview* item, const char* event, const char* decision) const;
     const KeyMap& config_;
     Player play_;
     Looking looking_;
     SeenScreens* seen_{};
     AttentionLog log_;
-    std::vector<Waiting> waiting_;
-    QTimer repeat_;
     QElapsedTimer last_;
     int quiet_ms_{kQuietMs};
     QMetaObject::Connection finished_;
@@ -191,7 +175,7 @@ class Notifier final : public QObject {
         qint64 since{};
         bool needsYou{};
     };
-    void notify(SessionPreview* item, bool needsYou);
+    void notify(SessionPreview* item);
     void wait(SessionPreview* item, bool needsYou);
     void check();
     [[nodiscard]] bool present() const { return !present_ || present_(); }

@@ -575,7 +575,7 @@ void Usage::refresh() {
         countRemote(host);
 }
 
-QDate Usage::today() const { return today_.isValid() ? today_ : QDate::currentDate(); }
+QDate Usage::today() const { return QDate::currentDate(); }
 
 QDate Usage::since() const {
     const auto day = today();

@@ -483,28 +483,6 @@ QString KeyMap::default_source_path() {
     return QDir(data_directory()).filePath(QStringLiteral("lapis.json"));
 }
 
-// Parse a requested layout. Returns false for an unrecognised name so the
-// caller can report it rather than silently switching.
-[[nodiscard]] bool parse_layout(const QString& name, WorkspaceLayout* out) {
-    if (name == QStringLiteral("focus")) {
-        *out = WorkspaceLayout::Focus;
-        return true;
-    }
-    if (name == QStringLiteral("blocks")) {
-        *out = WorkspaceLayout::Blocks;
-        return true;
-    }
-    if (name == QStringLiteral("columns")) {
-        *out = WorkspaceLayout::Columns;
-        return true;
-    }
-    if (name == QStringLiteral("stack")) {
-        *out = WorkspaceLayout::Stack;
-        return true;
-    }
-    return false;
-}
-
 [[nodiscard]] bool parse_density(const QString& name, CardDensity* out) {
     if (name == QStringLiteral("comfortable")) {
         *out = CardDensity::Comfortable;
@@ -621,9 +599,7 @@ void KeyMap::apply_defaults() {
 #endif
     sidebar_visible_ = true;
     previews_visible_ = true;
-    alert_sound_ = true;
     finish_sound_ = true;
-    alert_repeat_ = 3;
     alert_sound_file_.clear();
     finish_sound_file_.clear();
     notify_ = true;
@@ -642,7 +618,6 @@ void KeyMap::apply_defaults() {
     harness_updates_off_.clear();
     terminal_font_size_ = kTerminalFontSizeDefault;
     scroll_to_bottom_on_typing_ = true;
-    layout_ = WorkspaceLayout::Focus;
     density_ = CardDensity::Comfortable;
     theme_ = QStringLiteral("lapis");
 }
@@ -701,10 +676,6 @@ bool KeyMap::load() {
         if (!sequences.isEmpty())
             bindings_.insert(it.key(), sequences);
     }
-    const QString requested_layout = root.value(QStringLiteral("layout")).toString();
-    if (!requested_layout.isEmpty() && !parse_layout(requested_layout, &layout_))
-        diagnostic_ = QStringLiteral("Unknown layout '%1'; keeping focus").arg(requested_layout);
-
     const QString requested_theme = root.value(QStringLiteral("theme")).toString();
     if (requested_theme.isEmpty()) {
         // Tolerate a theme object as well as a plain name, so a hand-written
@@ -822,9 +793,9 @@ void KeyMap::load_harness_updates(const QJsonValue& value) {
 
 void KeyMap::load_alerts(const QJsonObject& root) {
     const auto alerts = root.value(QStringLiteral("alerts")).toObject();
-    alert_sound_ = alerts.value(QStringLiteral("sound")).toBool(true);
+    // "sound" and "repeat" belonged to a retired repeating request chime; a
+    // file that still has them loads, and saving leaves them as written.
     finish_sound_ = alerts.value(QStringLiteral("finished")).toBool(true);
-    alert_repeat_ = std::clamp(alerts.value(QStringLiteral("repeat")).toInt(3), 1, 10);
     notify_ = alerts.value(QStringLiteral("notify")).toBool(true);
     away_after_s_ =
         std::clamp(alerts.value(QStringLiteral("awayAfter")).toInt(kAwayAfterDefault), 15, 3600);
@@ -948,20 +919,6 @@ void KeyMap::load_terminal_font(const QJsonValue& value) {
     }
 }
 
-QString KeyMap::layoutName() const {
-    switch (layout_) {
-    case WorkspaceLayout::Blocks:
-        return QStringLiteral("blocks");
-    case WorkspaceLayout::Columns:
-        return QStringLiteral("columns");
-    case WorkspaceLayout::Stack:
-        return QStringLiteral("stack");
-    case WorkspaceLayout::Focus:
-        break;
-    }
-    return QStringLiteral("focus");
-}
-
 QString KeyMap::densityName() const { return density_name(density_); }
 
 QVariantList KeyMap::themes() const {
@@ -994,11 +951,6 @@ QVariantList KeyMap::themes() const {
     return list;
 }
 
-QStringList KeyMap::layouts() const {
-    return {QStringLiteral("focus"), QStringLiteral("columns"), QStringLiteral("blocks"),
-            QStringLiteral("stack")};
-}
-
 QStringList KeyMap::densities() const {
     return {QStringLiteral("comfortable"), QStringLiteral("compact"), QStringLiteral("minimal")};
 }
@@ -1017,28 +969,6 @@ bool KeyMap::reload() {
     qInfo().noquote() << "lapis keymap reloaded:" << (ok ? "ok" : "failed")
                       << (diagnostic_.isEmpty() ? QString() : diagnostic_);
     return ok;
-}
-
-void KeyMap::toggleLayout() {
-    const QStringList available = layouts();
-    const qsizetype next = (available.indexOf(layoutName()) + 1) % available.size();
-    static_cast<void>(setLayout(available.at(next)));
-}
-
-bool KeyMap::setLayout(const QString& name) {
-    WorkspaceLayout requested = layout_;
-    if (!parse_layout(name, &requested)) {
-        diagnostic_ = QStringLiteral("Unknown layout '%1'").arg(name);
-        emit changed();
-        return false;
-    }
-    if (requested == layout_)
-        return true;
-    layout_ = requested;
-    diagnostic_.clear();
-    qInfo().noquote() << "lapis layout:" << layoutName();
-    emit changed();
-    return save();
 }
 
 bool KeyMap::setTheme(const QString& name) {
@@ -1217,7 +1147,6 @@ bool KeyMap::persist() {
     QString read_reason;
     if (!read_config_for_update(source_path_, root, &read_reason))
         return fail(read_reason);
-    root.insert(QStringLiteral("layout"), layoutName());
     root.insert(QStringLiteral("theme"), theme_);
     root.insert(QStringLiteral("density"), densityName());
     root.insert(QStringLiteral("sidebarVisible"), sidebar_visible_);
@@ -1236,9 +1165,7 @@ bool KeyMap::persist() {
         font.insert(QStringLiteral("family"), terminal_font_family_);
     root.insert(QStringLiteral("terminalFont"), font);
     QJsonObject alerts = root.value(QStringLiteral("alerts")).toObject();
-    alerts.insert(QStringLiteral("sound"), alert_sound_);
     alerts.insert(QStringLiteral("finished"), finish_sound_);
-    alerts.insert(QStringLiteral("repeat"), alert_repeat_);
     alerts.insert(QStringLiteral("notify"), notify_);
     root.insert(QStringLiteral("alerts"), alerts);
     root.insert(QStringLiteral("keepAwake"), keep_awake_);
@@ -1321,16 +1248,8 @@ QString KeyMap::addPlanMachine(const PlanCredential& credential, QString* reason
     return name;
 }
 
-bool KeyMap::setAlertSound(bool on) {
-    alert_sound_ = on;
-    return save();
-}
 bool KeyMap::setFinishSound(bool on) {
     finish_sound_ = on;
-    return save();
-}
-bool KeyMap::setAlertRepeat(int times) {
-    alert_repeat_ = std::clamp(times, 1, 10);
     return save();
 }
 bool KeyMap::setNotify(bool on) {
@@ -1348,39 +1267,26 @@ bool KeyMap::setShowUsage(bool on) {
 
 KeyMap::RemoteSettings KeyMap::remoteSettings() const {
     return {.keepAwake = keep_awake_,
-            .alertSound = alert_sound_,
             .finishSound = finish_sound_,
             .notify = notify_,
-            .showUsage = show_usage_,
-            .alertRepeat = alert_repeat_};
+            .showUsage = show_usage_};
 }
 
 bool KeyMap::applyRemoteSettings(const RemoteSettingsPatch& changes, QString* diagnostic) {
-    const bool has_change = changes.keepAwake || changes.alertSound || changes.finishSound ||
-                            changes.notify || changes.showUsage || changes.alertRepeat;
+    const bool has_change =
+        changes.keepAwake || changes.finishSound || changes.notify || changes.showUsage;
     if (!has_change)
         return true;
-    if (changes.alertRepeat && (*changes.alertRepeat < 1 || *changes.alertRepeat > 10)) {
-        diagnostic_ = QStringLiteral("Alert repeat must be between 1 and 10");
-        if (diagnostic)
-            *diagnostic = diagnostic_;
-        emit changed();
-        return false;
-    }
 
     const auto previous = remoteSettings();
     if (changes.keepAwake)
         keep_awake_ = *changes.keepAwake;
-    if (changes.alertSound)
-        alert_sound_ = *changes.alertSound;
     if (changes.finishSound)
         finish_sound_ = *changes.finishSound;
     if (changes.notify)
         notify_ = *changes.notify;
     if (changes.showUsage)
         show_usage_ = *changes.showUsage;
-    if (changes.alertRepeat)
-        alert_repeat_ = *changes.alertRepeat;
 
     // Observers must not see a batch that could still be rolled back. On
     // failure the file remains unchanged, so restore the fields and keep the
@@ -1392,11 +1298,9 @@ bool KeyMap::applyRemoteSettings(const RemoteSettingsPatch& changes, QString* di
     if (diagnostic)
         *diagnostic = diagnostic_;
     keep_awake_ = previous.keepAwake;
-    alert_sound_ = previous.alertSound;
     finish_sound_ = previous.finishSound;
     notify_ = previous.notify;
     show_usage_ = previous.showUsage;
-    alert_repeat_ = previous.alertRepeat;
     emit changed();
     return false;
 }

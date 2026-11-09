@@ -499,8 +499,6 @@ class Workspace final : public QObject {
     // Where an agent is: its category's name, its ssh machine (or ""), and
     // its folder as the card shows it ("~/x", or "host:~/x" over ssh).
     Q_INVOKABLE [[nodiscard]] QVariantMap agentPlace(const QString& id) const;
-    // The machines ("" for this Mac) where agents of these CLIs run.
-    [[nodiscard]] QStringList machinesRunning(const QStringList& harnesses) const;
     void setAgentDefaults(const AgentDefaults& defaults) { agent_defaults_ = defaults; }
     // Where the new-agent forms' model lists come from; lapis keeps it.
     void setHarnessModels(const HarnessModels* models) { harness_models_ = models; }
@@ -583,13 +581,14 @@ class Workspace final : public QObject {
     // request, or a finished turn (no background work in flight) that is
     // unseen or has a guessed next prompt. Agents at work, paused on their own
     // background work, or without a status never qualify. The TabRanker
-    // orders them: by default a prior (work, requests, unseen, newest) that
-    // learns from where you go; with "tabAway": {"rank": "fixed"} the earlier
-    // order (a guess not yet seen, an unseen turn or request, a guess already
-    // seen, longest waiting within each). `ready` maps agents with a guess to
-    // whether it was seen. Advances past the focused session; false (none
-    // waiting) leaves Tab with the program. Every move is logged with the
-    // candidates and their scores.
+    // orders them: by default the plain order (anything overdue first, then
+    // work, requests, unseen, newest), which does not learn; "tabAway":
+    // {"rank": "learned"} fits that prior to where you go, and "fixed" keeps
+    // the earlier order (a guess not yet seen, an unseen turn or request, a
+    // guess already seen, longest waiting within each). `ready` maps agents
+    // with a guess to whether it was seen. Advances past the focused session;
+    // false (none waiting) leaves Tab with the program. Every move is logged
+    // with the candidates and their scores.
     Q_INVOKABLE bool nextPriorityAttention(const QVariantMap& ready);
     // An agent is parked once the person has looked at its finished turn for
     // kParkAfterMs and moved on without a prompt: Tab, and Ultra Tab's cards,
@@ -651,10 +650,8 @@ class Workspace final : public QObject {
     }
   signals:
     void focusChanged();
-    // An agent has a new request for you. Requests ping as finished turns do
-    // (turnFinished); nothing emits this now.
-    void agentNeedsYou(lapis::desktop::SessionPreview* item);
     // A Codex or Claude turn ended; terminal agents' output pauses do not count.
+    // A new request for you arrives here too, once its attention is applied.
     void turnFinished(lapis::desktop::SessionPreview* item);
     void sessionsChanged();
     void categoriesChanged();

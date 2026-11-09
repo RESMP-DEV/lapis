@@ -540,8 +540,6 @@ final class LapisUITests: XCTestCase {
         XCTAssertEqual(usage.value as? String, "1")
         usage.switches.firstMatch.tap()
         eventually("usage turns off") { usage.value as? String == "0" }
-        app.buttons["alertRepeat-Increment"].tap()
-        XCTAssertTrue(app.staticTexts["Chime up to 4 times"].waitForExistence(timeout: 10))
         snap("18-mac-settings")
         app.buttons["Done"].tap()
         settings.tap()

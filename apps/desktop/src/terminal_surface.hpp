@@ -186,8 +186,6 @@ class TerminalSurface : public QQuickItem {
     // What Command-click would open under the pointer while Command is held:
     // a URL or an existing file or folder, else empty.
     [[nodiscard]] const QString& hoveredLink() const { return hovered_target_; }
-    // Tests see what would open without opening it.
-    void setOpensLinksForTesting(bool opens) { opens_links_ = opens; }
   signals:
     void documentChanged();
     void interactiveChanged();
@@ -304,7 +302,6 @@ class TerminalSurface : public QQuickItem {
     QPointF hover_position_;
     std::optional<TerminalLink> hovered_link_;
     QString hovered_target_;
-    bool opens_links_{true};
 
     QString font_family_;
     QString resolved_font_family_;

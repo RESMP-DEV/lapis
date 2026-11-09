@@ -868,11 +868,7 @@ class Observer::Impl final : public QObject {
             if (!transport_->send(json({{"method", "initialized"}})))
                 throw std::runtime_error("Codex initialization write failed");
             initialized_ = true;
-            QPointer<Impl> alive(this);
-            QPointer<UnixWebSocket> current = transport_;
-            emit owner_.initialized();
-            if (alive && current && transport_ == current)
-                rpc("hooks/list", QJsonObject{});
+            rpc("hooks/list", QJsonObject{});
         } else if (method == "hooks/list") {
             try {
                 hook_inventory_ = parse_hook_inventory(result);
@@ -941,7 +937,6 @@ QStringList Observer::qualifiedBinarySha256s() {
             // 2026-10-18 daily-merge build; request replay and hook boundary qualified.
             QStringLiteral("da306dac94448fa745dae78f42f049cb986fd7fb09aef34a54c10169f2e966fe")};
 }
-QString Observer::qualifiedBinarySha256() { return qualifiedBinarySha256s().front(); }
 void Observer::start(const QString& socket, const QString& hash) { impl_->start(socket, hash); }
 void Observer::reconnect() { impl_->reconnect(); }
 void Observer::stop() { impl_->stop(); }

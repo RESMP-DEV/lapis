@@ -1,4 +1,4 @@
-// Appearance configuration behavior: theme, layout, and density selection,
+// Appearance configuration behavior: theme and density selection,
 // validation of unknown names, and persistence back to the config file.
 //
 // The keymap reads a real file rather than a stub, so these cases exercise the
@@ -31,7 +31,6 @@ using lapis::desktop::CardDensity;
 using lapis::desktop::default_settings_shortcuts;
 using lapis::desktop::KeyMap;
 using lapis::desktop::theme_table;
-using lapis::desktop::WorkspaceLayout;
 
 void require(bool value, const char* message) {
     if (!value)
@@ -115,19 +114,17 @@ void selection_persists() {
     require(keymap.load(), "default config should load");
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "explicit config should load");
+    // "layout" is left from the retired session layouts; it loads silently.
+    require(keymap.diagnostic().isEmpty(), "a legacy layout key should load without complaint");
 
     require(keymap.setTheme(QStringLiteral("graphite")), "graphite theme should apply");
     require(keymap.themeName() == QStringLiteral("graphite"), "theme should be remembered");
-    require(keymap.setLayout(QStringLiteral("columns")), "columns layout should apply");
-    require(keymap.layoutName() == QStringLiteral("columns"), "layout should be remembered");
     require(keymap.setDensity(QStringLiteral("compact")), "compact density should apply");
     require(keymap.densityName() == QStringLiteral("compact"), "density should be remembered");
 
     const QJsonObject written = read_config(path);
     require(written.value(QStringLiteral("theme")).toString() == QStringLiteral("graphite"),
             "theme should be written to the file");
-    require(written.value(QStringLiteral("layout")).toString() == QStringLiteral("columns"),
-            "layout should be written to the file");
     require(written.value(QStringLiteral("density")).toString() == QStringLiteral("compact"),
             "density should be written to the file");
     // Rewriting appearance must not discard the rest of the user's config.
@@ -150,61 +147,7 @@ void selection_persists() {
     reloaded.setSourcePathForTesting(path);
     require(reloaded.load(), "written config should reload");
     require(reloaded.themeName() == QStringLiteral("graphite"), "theme should survive a reload");
-    require(reloaded.layoutName() == QStringLiteral("columns"), "layout should survive a reload");
     require(reloaded.densityName() == QStringLiteral("compact"), "density should survive a reload");
-}
-
-void layout_cycle_persists_from_every_layout() {
-    const QStringList expected{QStringLiteral("focus"), QStringLiteral("columns"),
-                               QStringLiteral("blocks"), QStringLiteral("stack")};
-    for (qsizetype start = 0; start < expected.size(); ++start) {
-        std::cout << "layout cycle from " << expected.at(start).toStdString() << '\n';
-        QTemporaryDir directory;
-        require(directory.isValid(), "layout-cycle temporary directory");
-        const QString path =
-            write_config(QDir(directory.path()),
-                         QJsonDocument(QJsonObject{{QStringLiteral("layout"), expected.at(start)},
-                                                   {QStringLiteral("retained"), true}})
-                             .toJson());
-        KeyMap keymap;
-        keymap.setSourcePathForTesting(path);
-        require(keymap.load(), "layout-cycle fixture loads");
-        require(keymap.layouts() == expected, "layout cycle follows the advertised order");
-        for (qsizetype step = 1; step <= expected.size(); ++step) {
-            const QString& next = expected.at((start + step) % expected.size());
-            keymap.toggleLayout();
-            require(keymap.layoutName() == next, "layout cycle must visit the next layout");
-            const QJsonObject saved = read_config(path);
-            require(saved.value(QStringLiteral("layout")).toString() == next,
-                    "every layout-cycle step must persist");
-            require(saved.value(QStringLiteral("retained")).toBool(),
-                    "layout cycling must preserve unrelated config");
-            KeyMap reloaded;
-            reloaded.setSourcePathForTesting(path);
-            require(reloaded.load(), "cycled layout reloads");
-            require(reloaded.layoutName() == next, "cycled layout survives a restart");
-        }
-    }
-}
-
-void layout_cycle_preserves_malformed_config() {
-    QTemporaryDir directory;
-    require(directory.isValid(), "failed layout-cycle temporary directory");
-    const QDir dir(directory.path());
-    const QString path = write_config(dir, R"({"layout":"stack"})");
-    KeyMap keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "failed layout-cycle fixture loads");
-    const QByteArray malformed = "{unfinished user edit";
-    static_cast<void>(write_config(dir, malformed));
-    keymap.toggleLayout();
-    require(keymap.layoutName() == QStringLiteral("focus"),
-            "failed cycling save keeps the selected layout active, like setLayout");
-    require(keymap.diagnostic().contains(QStringLiteral("Could not save")),
-            "failed cycling save reports its diagnostic");
-    QFile raw(path);
-    require(raw.open(QIODevice::ReadOnly), "read failed cycling config");
-    require(raw.readAll() == malformed, "failed cycling save preserves malformed bytes");
 }
 
 void symbolic_link_config_updates_target() {
@@ -564,14 +507,11 @@ void unknown_names_are_rejected() {
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "config should load");
     const QString theme = keymap.themeName();
-    const QString layout = keymap.layoutName();
     const QString density = keymap.densityName();
 
     require(!keymap.setTheme(QStringLiteral("chartreuse")), "unknown theme must be rejected");
-    require(!keymap.setLayout(QStringLiteral("spiral")), "unknown layout must be rejected");
     require(!keymap.setDensity(QStringLiteral("enormous")), "unknown density must be rejected");
     require(keymap.themeName() == theme, "a rejected theme must not change the selection");
-    require(keymap.layoutName() == layout, "a rejected layout must not change the selection");
     require(keymap.densityName() == density, "a rejected density must not change the selection");
     require(!keymap.diagnostic().isEmpty(), "a rejected name should explain itself");
 }
@@ -588,7 +528,6 @@ void malformed_values_fall_back() {
     KeyMap keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "a syntactically valid file should still load");
-    require(keymap.layoutName() == QStringLiteral("focus"), "unknown layout should fall back");
     require(keymap.themeName() == QStringLiteral("lapis"), "unknown theme should fall back");
     require(keymap.densityName() == QStringLiteral("comfortable"),
             "unknown density should fall back");
@@ -695,8 +634,6 @@ void advertised_names_are_accepted() {
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "config should load");
 
-    for (const QString& name : keymap.layouts())
-        require(keymap.setLayout(name), "every advertised layout must be accepted");
     for (const QString& name : keymap.densities())
         require(keymap.setDensity(name), "every advertised density must be accepted");
     const QVariantList themes = keymap.themes();
@@ -708,7 +645,6 @@ void advertised_names_are_accepted() {
     }
     // The final iteration leaves the last advertised name selected, and the
     // enumeration agrees with the string names written to the file.
-    require(keymap.layout() == WorkspaceLayout::Stack, "last advertised layout is stack");
     require(keymap.densityName() == QStringLiteral("minimal"),
             "last advertised density is minimal");
     require(static_cast<int>(CardDensity::Comfortable) == 0, "density order is part of the file");
@@ -870,7 +806,7 @@ void terminal_font_persists_and_rolls_back() {
             "each invalid font value is reported");
 }
 
-// Remote settings are one KeyMap-owned transaction, not six separately
+// Remote settings are one KeyMap-owned transaction, not four separately
 // persisted setters. A failed save leaves both memory and disk where they were.
 void remote_settings_are_transactional() {
     QTemporaryDir directory;
@@ -884,23 +820,20 @@ void remote_settings_are_transactional() {
     int changes = 0;
     QObject::connect(&keymap, &KeyMap::changed, [&changes] { ++changes; });
     const KeyMap::RemoteSettingsPatch batch{.keepAwake = std::optional(false),
-                                            .alertSound = std::optional(false),
                                             .finishSound = std::optional(false),
                                             .notify = std::optional(false),
-                                            .showUsage = std::optional(false),
-                                            .alertRepeat = std::optional(7)};
+                                            .showUsage = std::optional(false)};
     require(keymap.applyRemoteSettings(batch), "a valid settings batch applies");
     require(changes == 1, "one successful settings batch publishes once");
     const auto saved = keymap.remoteSettings();
-    require(!saved.keepAwake && !saved.alertSound && !saved.finishSound && !saved.notify &&
-                !saved.showUsage && saved.alertRepeat == 7,
+    require(!saved.keepAwake && !saved.finishSound && !saved.notify && !saved.showUsage,
             "every value in a valid settings batch is applied");
     const auto written = read_config(path);
     require(!written.value(QStringLiteral("keepAwake")).toBool(true) &&
-                written.value(QStringLiteral("alerts"))
-                        .toObject()
-                        .value(QStringLiteral("repeat"))
-                        .toInt() == 7,
+                !written.value(QStringLiteral("alerts"))
+                     .toObject()
+                     .value(QStringLiteral("notify"))
+                     .toBool(true),
             "the whole settings batch is written once");
     require(written.value(QStringLiteral("retained")).toBool(),
             "settings persistence preserves unrelated config");
@@ -912,12 +845,10 @@ void remote_settings_are_transactional() {
     QString diagnostic;
     KeyMap::RemoteSettingsPatch failed_batch;
     failed_batch.keepAwake = true;
-    failed_batch.alertRepeat = 3;
+    failed_batch.notify = true;
     require(!keymap.applyRemoteSettings(failed_batch, &diagnostic),
             "a failed settings save refuses the whole batch");
     require(keymap.remoteSettings().keepAwake == before_failure.keepAwake &&
-                keymap.remoteSettings().alertRepeat == before_failure.alertRepeat &&
-                keymap.remoteSettings().alertSound == before_failure.alertSound &&
                 keymap.remoteSettings().finishSound == before_failure.finishSound &&
                 keymap.remoteSettings().notify == before_failure.notify &&
                 keymap.remoteSettings().showUsage == before_failure.showUsage,
@@ -961,8 +892,9 @@ void config_reloads_when_edited_elsewhere() {
                     QStringList{QStringLiteral("grok-4.7")} &&
                 !defaults.models.contains(QStringLiteral("claude")),
             "configured models replace what a CLI lists; names that look like options are dropped");
-    require(!keymap.alertSound() && keymap.finishSound() && keymap.alertRepeat() == 5 &&
-                !keymap.keepAwake() && !keymap.showUsage(),
+    // "sound" and "repeat" are the retired request chime's: ignored, not reported.
+    require(keymap.finishSound() && !keymap.keepAwake() && !keymap.showUsage() &&
+                !keymap.diagnostic().contains(QStringLiteral("alerts")),
             "alerts, keeping awake and usage are read, with defaults for what is missing");
     require(keymap.usageMeter() == QStringList({QStringLiteral("grok"), QStringLiteral("codex")}) &&
                 keymap.usageMachines() == QStringList{QStringLiteral("devbox")},
@@ -986,19 +918,20 @@ void config_reloads_when_edited_elsewhere() {
     require(replacement.commit(), "commit the replacement");
     require(settle([&keymap] { return keymap.themeName() == QStringLiteral("amber"); }, 3000),
             "an edit elsewhere applies without a restart");
-    require(keymap.agentDefaults().harness.isEmpty() && keymap.alertSound() && keymap.showUsage(),
+    require(keymap.agentDefaults().harness.isEmpty() && keymap.keepAwake() && keymap.showUsage(),
             "settings removed from the file return to their defaults");
     settle([] { return false; }, 400); // let the replacement's events pass
     changes = 0;
-    require(keymap.setAlertSound(false) && keymap.setKeepAwake(false) && keymap.setShowUsage(false),
+    require(keymap.setFinishSound(false) && keymap.setKeepAwake(false) &&
+                keymap.setShowUsage(false),
             "save alert and usage choices");
     const int saved = changes;
     settle([] { return false; }, 600);
-    require(changes == saved && !keymap.alertSound(), "the window's own save is not read back");
+    require(changes == saved && !keymap.finishSound(), "the window's own save is not read back");
     const QJsonObject written = read_config(path);
     require(!written.value(QStringLiteral("alerts"))
                     .toObject()
-                    .value(QStringLiteral("sound"))
+                    .value(QStringLiteral("finished"))
                     .toBool(true) &&
                 !written.value(QStringLiteral("keepAwake")).toBool(true) &&
                 !written.contains(QStringLiteral("showUsage")) &&
@@ -1131,8 +1064,6 @@ int main(int argc, char** argv) {
         sidebar_preference_and_commands();
         typing_scroll_preference_persists();
         selection_persists();
-        layout_cycle_persists_from_every_layout();
-        layout_cycle_preserves_malformed_config();
         symbolic_link_config_updates_target();
         appearance_preserves_json_and_bad_files();
         deeply_nested_values_survive_persistence();

@@ -1805,17 +1805,6 @@ bool Workspace::createAgent(const QString& directory, const QString& title, cons
                         .resume = {}})
                 .isEmpty();
 }
-QStringList Workspace::machinesRunning(const QStringList& harnesses) const {
-    QStringList machines;
-    for (const auto& item : sessions_) {
-        const auto entry = agents_.constFind(item->sessionId());
-        if (entry == agents_.cend() || !harnesses.contains(entry->harness))
-            continue;
-        if (const auto machine = agentMachine(*entry); !machines.contains(machine))
-            machines << machine;
-    }
-    return machines;
-}
 QVariantMap Workspace::agentPlace(const QString& id) const {
     const auto entry = agents_.constFind(id);
     if (entry == agents_.cend())

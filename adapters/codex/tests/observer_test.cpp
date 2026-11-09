@@ -39,6 +39,9 @@ void require(bool condition, const char* message) {
         throw std::runtime_error(message);
 }
 
+// Any qualified digest admits the stand-in source.
+QString qualified_hash() { return Observer::qualifiedBinarySha256s().front(); }
+
 QByteArray json(const QJsonObject& object) {
     return QJsonDocument(object).toJson(QJsonDocument::Compact);
 }
@@ -387,24 +390,18 @@ bool wait_for(Predicate predicate, int milliseconds = maximum_test_wait_ms) {
     return true;
 }
 
-void reconnect_during_initialization_and_start_new_source() {
+void stop_and_start_new_source() {
     State state{"lifecycle", "codex"};
     Source first;
     first.start();
     Observer observer{state};
-    int initializations = 0;
-    QObject::connect(&observer, &Observer::initialized, [&] {
-        if (++initializations == 1)
-            observer.reconnect();
-    });
-    observer.start(first.path(), Observer::qualifiedBinarySha256());
-    require(wait_for([&] { return state.ready(); }), "reentrant initialization reconciles");
-    require(initializations == 2, "replacement transport initialized once");
+    observer.start(first.path(), qualified_hash());
+    require(wait_for([&] { return state.ready(); }), "first source reconciles");
     require(std::count_if(first.received.begin(), first.received.end(),
                           [](const auto& message) {
                               return message.value("method") == "thread/loaded/list";
                           }) == 1,
-            "old initialization must not discover on the replacement transport");
+            "one initialization discovers once");
     observer.stop();
     require(!state.connected() &&
                 !observer.details(std::numeric_limits<std::int64_t>::max()).isEmpty(),
@@ -412,7 +409,7 @@ void reconnect_during_initialization_and_start_new_source() {
     Source second;
     second.thread_name = "second-thread";
     second.start();
-    observer.start(second.path(), Observer::qualifiedBinarySha256());
+    observer.start(second.path(), qualified_hash());
     require(wait_for([&] { return state.ready(); }), "fresh source start reconciles");
     require(observer.threadId() == second.thread_name &&
                 state.pending().begin()->second.request.thread_id == "second-thread",
@@ -424,12 +421,9 @@ void unsupported_hash_survives_reconnect_until_qualified_restart() {
     Source source;
     source.start();
     Observer observer{state};
-    bool initialized_signal = false;
-    QObject::connect(&observer, &Observer::initialized, [&] { initialized_signal = true; });
 
     observer.start(source.path(), QStringLiteral("wrong"));
-    require(!initialized_signal && !state.connected() && !state.ready(),
-            "unsupported start leaves responses disabled");
+    require(!state.connected() && !state.ready(), "unsupported start leaves responses disabled");
     require(observer.diagnostic() == QStringLiteral("Unsupported Codex binary hash"),
             "unsupported start is explicit");
     require(observer.observationPhase() == ObservationPhase::unknown,
@@ -445,10 +439,13 @@ void unsupported_hash_survives_reconnect_until_qualified_restart() {
     require(observer.diagnostic() == QStringLiteral("Unsupported Codex binary hash"),
             "unsupported reconnect preserves the source failure reason");
 
-    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    observer.start(source.path(), qualified_hash());
     require(wait_for([&] { return state.ready(); }),
             "qualified restart recovers after unsupported reconnect");
-    require(initialized_signal, "qualified restart initializes the source");
+    require(
+        std::any_of(source.received.begin(), source.received.end(),
+                    [](const auto& message) { return message.value("method") == "initialized"; }),
+        "qualified restart initializes the source");
     observer.stop();
 }
 
@@ -477,7 +474,7 @@ void initial_binding_requires_persistent_metadata(bool temporary_first) {
             temporary_pending |= pending.request.thread_id != "thread";
         }
     });
-    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    observer.start(source.path(), qualified_hash());
     require(
         wait_for([&] { return observer.diagnostic() == "Waiting for a persistent Codex thread"; }),
         "empty discovery waits for classified metadata");
@@ -535,7 +532,7 @@ void unclassified_event_queue_is_bounded() {
     source.empty_discovery = true;
     source.start();
     Observer observer{state};
-    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    observer.start(source.path(), qualified_hash());
     require(
         wait_for([&] { return observer.diagnostic() == "Waiting for a persistent Codex thread"; }),
         "classification budget fixture ready");
@@ -554,7 +551,7 @@ void post_binding_classification() {
     Source source;
     source.start();
     Observer observer{state};
-    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    observer.start(source.path(), qualified_hash());
     require(wait_for([&] { return state.ready(); }), "post-binding fixture ready");
     const RequestId original{std::numeric_limits<std::int64_t>::max()};
     auto foreign = large_approval(std::numeric_limits<std::int64_t>::max());
@@ -623,7 +620,7 @@ void post_binding_unknown_budget(bool byte_limit) {
     Source source;
     source.start();
     Observer observer{state};
-    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    observer.start(source.path(), qualified_hash());
     require(wait_for([&] { return state.ready(); }), "post-binding budget fixture ready");
     QJsonObject event{{"method", "turn/started"}, {"params", QJsonObject{{"threadId", "unknown"}}}};
     if (byte_limit)
@@ -640,7 +637,7 @@ void pending_details_budget() {
     Source source;
     source.start();
     Observer observer{state};
-    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    observer.start(source.path(), qualified_hash());
     require(wait_for([&] { return state.ready(); }), "budget fixture ready");
     for (std::int64_t id = 0; id < 32; ++id)
         source.send(large_approval(id));
@@ -683,7 +680,7 @@ void implicit_retirement_survives_replay() {
     Source source;
     source.start();
     Observer observer{state};
-    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    observer.start(source.path(), qualified_hash());
     require(wait_for([&] { return state.ready(); }), "retirement fixture ready");
     const auto id = std::numeric_limits<std::int64_t>::max();
     source.send(large_approval(0));
@@ -720,7 +717,7 @@ void request_id_and_answer_boundaries() {
     Source source;
     source.start();
     Observer observer{state};
-    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    observer.start(source.path(), qualified_hash());
     require(wait_for([&] { return state.ready(); }), "boundary fixture ready");
     source.send(large_approval(std::numeric_limits<std::int64_t>::min()));
     for (const std::int64_t id : {9007199254740992LL, 9007199254740993LL})
@@ -781,7 +778,7 @@ void unsupported_approval_decisions_are_observed_only() {
     Source source;
     source.start();
     Observer observer{state};
-    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    observer.start(source.path(), qualified_hash());
     require(wait_for([&] { return state.ready(); }), "unanswerable fixture ready");
     auto request = large_approval(-101);
     auto params = request["params"].toObject();
@@ -810,7 +807,7 @@ void passive_hooks_are_advisory(bool hooks_supported) {
         source.hooks_error_code = -32602;
     source.start();
     Observer observer{state};
-    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    observer.start(source.path(), qualified_hash());
     require(wait_for([&] { return state.ready(); }), "hook fixture ready");
     const auto pending_before = state.pending().size();
     const auto inventory = observer.hookInventory();
@@ -865,7 +862,7 @@ void queued_hook_notifications_survive_reconciliation() {
     source.empty_discovery = true;
     source.start();
     Observer observer{state};
-    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    observer.start(source.path(), qualified_hash());
     require(
         wait_for([&] { return observer.diagnostic() == "Waiting for a persistent Codex thread"; }),
         "queued hook fixture waits for classification");
@@ -887,7 +884,7 @@ void malformed_hook_inventory_remains_advisory() {
     source.malformed_hooks = true;
     source.start();
     Observer observer{state};
-    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    observer.start(source.path(), qualified_hash());
     require(wait_for([&] { return state.ready(); }),
             "malformed advisory inventory cannot block discovery");
     const auto inventory = observer.hookInventory();
@@ -907,7 +904,7 @@ int run(int argc, char** argv) {
     post_binding_classification();
     post_binding_unknown_budget(false);
     post_binding_unknown_budget(true);
-    reconnect_during_initialization_and_start_new_source();
+    stop_and_start_new_source();
     unsupported_hash_survives_reconnect_until_qualified_restart();
     passive_hooks_are_advisory(true);
     passive_hooks_are_advisory(false);
@@ -922,8 +919,6 @@ int run(int argc, char** argv) {
     source.fail_first_resume = true;
     source.start();
     Observer observer{state};
-    bool initialized_signal = false;
-    QObject::connect(&observer, &Observer::initialized, [&]() { initialized_signal = true; });
     // Once the thread is known to have no rollout, retries keep that diagnostic.
     QStringList diagnostics;
     std::vector<ObservationPhase> phases;
@@ -934,12 +929,11 @@ int run(int argc, char** argv) {
     });
 
     observer.start(source.path(), QStringLiteral("wrong"));
-    require(!initialized_signal && !state.connected(), "wrong hash must fail closed");
+    require(source.received.empty() && !state.connected(), "wrong hash must fail closed");
     require(observer.diagnostic() == QStringLiteral("Unsupported Codex binary hash"),
             "wrong-hash diagnostic");
 
-    observer.start(source.path(), Observer::qualifiedBinarySha256());
-    require(wait_for([&] { return initialized_signal; }), "initialized signal");
+    observer.start(source.path(), qualified_hash());
     require(wait_for([&] { return source.received.size() >= 2; }), "initialization messages");
     require(source.received[0].value(QStringLiteral("method")) == QStringLiteral("initialize"),
             "initialize method");

@@ -307,9 +307,9 @@ flow; it must not blindly be mapped to definitive task completion.
 
 ## Requalifying a Codex binary
 
-`Observer::qualifiedBinarySha256()` pins the installed executable whose request
-replay and response behavior was exercised. Its `0.0.0` version string alone is
-insufficient. To update that pin, inspect the candidate's live protocol and run the
+`Observer::qualifiedBinarySha256s()` pins the installed executables whose request
+replay and response behavior was exercised. Their `0.0.0` version string alone is
+insufficient. To add a pin, inspect the candidate's live protocol and run the
 [attention qualification procedure](../../CONTRIBUTING.md#codex-attention-qualification)
 on disposable service-owned sessions, including desktop responses, cancellation,
 reconnect reconciliation, multi-request admission and post-compaction replay.

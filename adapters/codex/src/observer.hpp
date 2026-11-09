@@ -24,7 +24,6 @@ class Observer final : public QObject {
   public:
     explicit Observer(session::attention::State& state, QObject* parent = nullptr);
     ~Observer() override;
-    static QString qualifiedBinarySha256();
     // Every executable digest whose request behavior has been qualified live.
     static QStringList qualifiedBinarySha256s();
     void start(const QString& socket, const QString& binary_sha256);
@@ -50,7 +49,6 @@ class Observer final : public QObject {
                                          quint64 revision, const QString& choice,
                                          const QJsonObject& answers = {});
   signals:
-    void initialized(); // Source initialized; service may start its TUI now.
     void changed();
 
   private:

@@ -1141,10 +1141,12 @@ class StartAgentTests(unittest.TestCase):
             self.assertEqual(len(desktop.requests), asked, "bad requests reach nothing")
 
     def test_the_phone_reads_and_changes_the_macs_settings(self):
+        # The Mac still answers with the retired alertSound and alertRepeat,
+        # which older phone builds require.
         settings = {
             "keepAwake": True,
-            "alertSound": True,
-            "alertRepeat": 3,
+            "alertSound": False,
+            "alertRepeat": 1,
             "finishSound": True,
             "notify": True,
             "showUsage": True,
@@ -1163,18 +1165,22 @@ class StartAgentTests(unittest.TestCase):
             self.assertEqual(
                 desktop.requests[-1], {"version": 1, "request": "settings"}
             )
+            # An older phone still sends the retired settings: they are
+            # dropped, whatever their value, and the rest applies.
             status, changed = server.request(
-                "POST", "/api/settings", {"keepAwake": False, "alertRepeat": 5}
+                "POST",
+                "/api/settings",
+                {"keepAwake": False, "alertSound": True, "alertRepeat": 11},
             )
             self.assertEqual(status, 200)
             self.assertFalse(changed["settings"]["keepAwake"])
-            self.assertEqual(changed["settings"]["alertRepeat"], 5)
+            self.assertEqual(changed["settings"]["alertRepeat"], 1)
             self.assertEqual(
                 desktop.requests[-1],
                 {
                     "version": 1,
                     "request": "changeSettings",
-                    "settings": {"keepAwake": False, "alertRepeat": 5},
+                    "settings": {"keepAwake": False},
                 },
             )
             asked = len(desktop.requests)
@@ -1183,9 +1189,7 @@ class StartAgentTests(unittest.TestCase):
                 {"theme": "amber"},
                 {"keepAwake": "no"},
                 {"keepAwake": 0},
-                {"alertRepeat": 0},
-                {"alertRepeat": 11},
-                {"alertRepeat": True},
+                {"finishSound": 1},
                 ["keepAwake"],
             ):
                 status, _ = server.request("POST", "/api/settings", body)

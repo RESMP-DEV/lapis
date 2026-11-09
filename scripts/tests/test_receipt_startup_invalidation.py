@@ -15,7 +15,6 @@ from check_history import main as history_main
 from probe_codex_attention import main as codex_probe_main
 from probe_codex_external_import import main as codex_import_main
 from check_service_attention import main as attention_main
-from check_sync_output import main as sync_main
 
 
 class ReceiptInvalidationTests(unittest.TestCase):
@@ -23,20 +22,6 @@ class ReceiptInvalidationTests(unittest.TestCase):
         output = Path(directory) / "receipt.json"
         output.write_text(json.dumps({"passed": True, "stale": True}))
         return output
-
-    def test_interrupted_sync_check_removes_stale_receipt(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            output = self.prepare(temporary)
-            with (
-                patch("sys.argv", ["check_sync_output.py", "--output", str(output)]),
-                patch("check_sync_output.exercise", side_effect=KeyboardInterrupt),
-                patch("builtins.print"),
-                self.assertRaises(KeyboardInterrupt),
-            ):
-                sync_main()
-            receipt = json.loads(output.read_text())
-            self.assertFalse(receipt["passed"])
-            self.assertNotIn("stale", receipt)
 
     def test_interrupted_history_check_removes_stale_receipt(self):
         with tempfile.TemporaryDirectory() as temporary:

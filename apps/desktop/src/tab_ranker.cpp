@@ -496,9 +496,6 @@ void TabRanker::refit() {
         }));
 }
 
-void TabRanker::adopt(Model model) {
-    model_ = std::move(model);
-    QMetaObject::invokeMethod(this, [this] { emit modelChanged(); }, Qt::QueuedConnection);
-}
+void TabRanker::adopt(Model model) { model_ = std::move(model); }
 
 } // namespace lapis::desktop

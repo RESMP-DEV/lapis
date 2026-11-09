@@ -143,8 +143,6 @@ struct FolderPayload: Codable {
 // the Mac's window looks is set on the Mac.
 struct MacSettings: Codable, Equatable {
     var keepAwake: Bool
-    var alertSound: Bool
-    var alertRepeat: Int
     var finishSound: Bool
     var notify: Bool
     var showUsage: Bool
