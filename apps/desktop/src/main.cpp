@@ -607,15 +607,9 @@ QString usage_program(const QString& id) {
 // the order the config names.
 void follow_usage_setting(lapis::desktop::Usage& usage, const lapis::desktop::KeyMap& keymap) {
     const auto show = [&usage, &keymap] {
-        // Plans lapis hands out need their home machines' limits, even with
-        // the dashboard hidden.
-        auto machines = keymap.usageMachines();
-        for (const auto& account : keymap.accounts().accounts)
-            if (account.hasHome && !account.home.isEmpty() && !machines.contains(account.home))
-                machines << account.home;
-        usage.setMachines(machines);
+        usage.setMachines(keymap.usageMachines());
         usage.setMeterOrder(keymap.usageMeter());
-        usage.setActive(keymap.showUsage() || !keymap.accounts().accounts.empty());
+        usage.setActive(keymap.showUsage());
     };
     show();
     QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &usage, show);
@@ -946,19 +940,16 @@ int main(int argc, char** argv) {
         using namespace lapis::desktop;
         const bool isolated = parser.isSet(QStringLiteral("ui-preview"));
         // The config file applies live: a change from the window or an agent
-        // reaches new agents at once, with or without a window. Its plans are
-        // known before restored agents start.
+        // reaches new agents at once, with or without a window.
         KeyMap keymap;
         keymap.load();
         auto options = workspace_options(parser, isolated);
-        options.accounts = keymap.accounts();
         options.harnessUpdatesOff = keymap.harnessUpdatesOff();
         Workspace workspace(isolated ? WorkspaceMode::preview : WorkspaceMode::live, options);
         const auto configure = [&] {
             workspace.setHarnessArguments(keymap.harnessArguments());
             workspace.setHarnessUpdatesOff(keymap.harnessUpdatesOff());
             workspace.setAgentDefaults(keymap.agentDefaults());
-            workspace.setAccounts(keymap.accounts());
             workspace.setTabAway(keymap.tabAway());
         };
         configure();
@@ -998,13 +989,8 @@ int main(int argc, char** argv) {
         // in the real workspace. Each CLI keeps its transcripts where its own
         // home variable says.
         std::optional<Usage> usage;
-        if (!isolated) {
+        if (!isolated)
             follow_usage_setting(usage.emplace(&usage_program, transcript_roots()), keymap);
-            // Plan loads decide which plan each Claude Code and Codex session uses.
-            QObject::connect(&*usage, &Usage::changed, &workspace, [&workspace, &usage] {
-                workspace.setAccountLoads(usage->accountLoads());
-            });
-        }
         // The canonical harness catalog's read-only status answers. It exists
         // in the isolated fixture too, so the pane is testable without config.
         ToolStatus toolStatus;

@@ -10,7 +10,7 @@ components land, from code and tests, and keep receipts as dated observations.
 The next delivery target is a dependable macOS Apple Silicon early-access
 release. The [production delivery order](architecture.md#production-delivery-order)
 prioritizes a consolidated candidate, independent process ownership and verified
-upgrades, input/account integrity, then workload and support qualification before
+upgrades, input integrity, then workload and support qualification before
 more integrations. The first workload target is eight local sessions; it is not
 yet a measured capacity claim. Controlled 32-session qualification precedes wider
 workload claims and further feature expansion. Source checks, daily use and

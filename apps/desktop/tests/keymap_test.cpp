@@ -1002,7 +1002,11 @@ void retired_plan_settings_survive() {
     require(directory.isValid(), "temporary directory");
     const QString path =
         write_config(QDir(directory.path()),
-                     R"({"version": 1, "limitResets": {"auto": true, "minBlockedMinutes": 30}})");
+                     R"({"version": 1, "limitResets": {"auto": true, "minBlockedMinutes": 30},
+            "accounts": {"switchAt": 90,
+                         "claude": [{"name": "mine", "email": "me@example.com", "home": "local"},
+                                    {"name": "spare", "machines": ["local", "devbox"]}],
+                         "codex": [{"name": "work", "email": "work@example.com"}]}})");
     const auto before = read_config(path);
     KeyMap keymap;
     keymap.setSourcePathForTesting(path);
@@ -1010,7 +1014,7 @@ void retired_plan_settings_survive() {
             "retired settings load without a diagnostic");
     require(keymap.setFinishSound(false), "another setting saves");
     const auto after = read_config(path);
-    for (const auto* key : {"limitResets"})
+    for (const auto* key : {"limitResets", "accounts"})
         require(after.value(QLatin1String(key)) == before.value(QLatin1String(key)),
                 "saving leaves a retired setting as written");
 }

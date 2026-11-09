@@ -407,43 +407,15 @@ std::optional<std::pair<QString, QString>> remoteCommand(const session::LaunchSp
         return std::nullopt;
     return std::pair{launch.arguments.at(at + 1), launch.arguments.at(at + 2)};
 }
-// A remote session's plan: a preamble after the command's `cd <folder> && `
-// that reads the credential lapis keeps on that machine, so it is never on a
-// command line. If that credential is unavailable, the shell stops rather
-// than silently using the machine's own sign-in.
-const QRegularExpression& remoteAccountPreamble() {
+// Retired lapis-managed plans gave a remote command a preamble after its
+// `cd <folder> && ` that read a plan credential lapis kept on that machine
+// (`{ a=NAME; ...; true; } && `), stopping the shell when it was missing. A
+// saved command can still carry one; the next start drops it so the agent
+// uses the machine's own sign-in. A running session keeps its launch.
+const QRegularExpression& retiredPlanPreamble() {
     static const QRegularExpression preamble(
         QStringLiteral(R"(\{ a=[A-Za-z0-9._-]+; .*?; true; \} && )"));
     return preamble;
-}
-
-QString withRemoteAccount(QString command, const Account* account) {
-    command.remove(remoteAccountPreamble());
-    const auto folder_end = command.indexOf(QStringLiteral(" && "));
-    if (account == nullptr || !command.startsWith(QStringLiteral("cd ")) || folder_end < 0)
-        return command;
-    const auto preamble =
-        account->cli == QLatin1String("claude")
-            ? QStringLiteral(
-                  R"sh({ a=%1; t="$HOME/.lapis/accounts/claude/$a.token"; )sh"
-                  R"sh([ -f "$t" ] && [ -r "$t" ] && [ -s "$t" ] && )sh"
-                  R"sh([ "$(wc -l < "$t")" -le 1 ] && [ "$(wc -c < "$t")" -le 8192 ] || exit 65; )sh"
-                  R"sh(IFS= read -r CLAUDE_CODE_OAUTH_TOKEN < "$t" || )sh"
-                  R"sh([ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || exit 65; )sh"
-                  R"sh(export CLAUDE_CODE_OAUTH_TOKEN; true; } && )sh")
-            : QStringLiteral(
-                  R"sh({ a=%1; h="$HOME/.lapis/accounts/codex/$a"; if [ -r "$h/auth.json" ]; then )sh"
-                  R"sh(for n in $(ls -A "$HOME/.codex" 2>/dev/null); do [ "$n" = auth.json ] || )sh"
-                  R"sh([ -e "$h/$n" ] || [ -L "$h/$n" ] || ln -s "$HOME/.codex/$n" "$h/$n"; done; )sh"
-                  R"sh(export CODEX_HOME="$h"; else exit 65; fi; true; } && )sh");
-    command.insert(folder_end + 4, preamble.arg(account->name));
-    return command;
-}
-// A saved agent's plan name, or empty.
-QString savedAccount(const QJsonValue& value) {
-    static const QRegularExpression name(QStringLiteral(R"(^[A-Za-z0-9._-]{1,64}$)"));
-    const auto text = value.toString();
-    return name.match(text).hasMatch() ? text : QString();
 }
 // An agent on another machine reports its turns through its own terminal,
 // since lapis's hook socket and app-server are on this Mac (the session
@@ -737,7 +709,6 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
       headless_(options.headless), update_timeout_ms_(std::max(qint64{1}, options.updateTimeoutMs)),
       preview_mode_(mode == WorkspaceMode::preview) {
     transcript_ = new TranscriptModel(this);
-    accounts_.setConfig(options.accounts);
     // Before selecting clears the arriving agent's unseen mark, so a choice
     // is recorded with the state the person chose from.
     choice_settle_.setSingleShot(true);
@@ -1212,10 +1183,6 @@ void Workspace::watch(SessionPreview* item) {
             });
     connect(item, &SessionPreview::attentionArrived, this, [this, item] {
         waiting_since_.insert(item->sessionId(), QDateTime::currentMSecsSinceEpoch());
-    });
-    connect(item, &SessionPreview::statusChanged, this, [this, id = item->sessionId()] {
-        if (switching_.contains(id))
-            QTimer::singleShot(0, this, [this] { switchWhenIdle(); });
     });
     connect(item, &SessionPreview::unseenChanged, this, [this] {
         if (!batching_categories_)
@@ -1699,7 +1666,6 @@ bool Workspace::discardSession(const QString& id) {
     reattaches_.remove(id);
     worked_remotely_.remove(id);
     reloading_.remove(id);
-    switching_.remove(id);
     last_kind_.remove(item);
     waiting_since_.remove(id);
     parked_at_.remove(id);
@@ -1966,8 +1932,7 @@ QString Workspace::launchAgent(const AgentRequest& request, const session::Launc
         // Provenance came from construction, never a search through literal
         // prompt arguments that happen to repeat the resume option.
         item->setStatusSource(statusSource(agent));
-        if (!applyAccount(agent, *item))
-            return {};
+        prepareStart(agent, *item);
         const auto previous = checkpoint();
         agents_.insert(id, agent);
         sessions_.push_back(std::move(item));
@@ -2013,8 +1978,6 @@ QJsonObject Workspace::agentRecord(const Agent& agent, const QString& id, const 
                                   {"directory", agent.launch.directory}};
     if (agent.named)
         serialized.insert(QStringLiteral("named"), true);
-    if (!agent.account.isEmpty())
-        serialized.insert(QStringLiteral("account"), agent.account);
     if (agent.auto_title)
         serialized.insert(QStringLiteral("autoTitle"), true);
     const auto resume_option = resumeOption(agent.harness);
@@ -2304,10 +2267,7 @@ bool Workspace::restartAgent(const QString& id) {
     entry->launch = launch->launch;
     entry->managed_resume_index = launch->managed_resume_index;
     entry->managed_resume_identity = launch->managed_resume_identity;
-    if (!applyAccount(*entry, *item)) {
-        rollback(previous);
-        return false;
-    }
+    prepareStart(*entry, *item);
     if (!save()) {
         rollback(previous);
         emit errorChanged();
@@ -2374,17 +2334,6 @@ Workspace::ReloadResult Workspace::requestReload(const QString& id) {
     if (!serviceRunning(entry->endpoint))
         return restartAgent(id) ? ReloadResult{ReloadOutcome::requested, {}}
                                 : ReloadResult{ReloadOutcome::failed, error_};
-    // Validate the plan this reload will use before ending a healthy remote
-    // session. A later restart cannot put back the session this call would end.
-    if (remote) {
-        const auto diagnostic = remoteAccountFailure(accounts_, *entry, accountsRoot());
-        if (!diagnostic.isEmpty())
-            return {ReloadOutcome::failed, diagnostic};
-    } else {
-        const auto diagnostic = localAccountFailure(accounts_, *entry, accountsRoot());
-        if (!diagnostic.isEmpty())
-            return {ReloadOutcome::failed, diagnostic};
-    }
     if (!item->terminate())
         return {ReloadOutcome::failed,
                 QStringLiteral("Could not request a reload for %1. Reconnect its "
@@ -2478,55 +2427,11 @@ void Workspace::finishReload(const QString& id, int waits) {
     reloading_.remove(id);
     restartAgent(id);
 }
-QString Workspace::accountsRoot() const {
-    return accounts_root_.isEmpty() ? QDir::homePath() + QStringLiteral("/.lapis/accounts")
-                                    : accounts_root_;
-}
-QString Workspace::accountCli(const QString& harness) {
-    return harness == QLatin1String("claude") || harness == QLatin1String("codex") ? harness
-                                                                                   : QString();
-}
 QString Workspace::agentMachine(const Agent& agent) {
     const auto remote = remoteCommand(agent.launch);
     return remote ? remote->first : QString();
 }
-// Credentials for a remote machine are provisioned beside the same configured
-// account root, then spread to that machine. Refuse a selected plan before an
-// apply or reload when the copy lapis can inspect is not usable. The diagnostic
-// names the selected plan, never its credential contents or provider identity.
-QString Workspace::remoteAccountFailure(const AccountPool& accounts, const Agent& agent,
-                                        const QString& accountsRoot) {
-    const auto cli = accountCli(agent.harness);
-    if (cli.isEmpty() || !accounts.configured(cli))
-        return {};
-    const auto machine = agentMachine(agent);
-    const auto chosen = accounts.choose(cli, machine, agent.account);
-    if (!agent.account.isEmpty() && chosen.isEmpty())
-        return QStringLiteral("Selected plan %1 is no longer configured.").arg(agent.account);
-    const auto* account = accounts.find(cli, chosen);
-    if (account == nullptr || (account->hasHome && account->home == machine))
-        return {};
-    return account_credential_failure(cli, account->name, accountsRoot, false);
-}
-QString Workspace::localAccountFailure(const AccountPool& accounts, const Agent& agent,
-                                       const QString& accountsRoot) {
-    const auto cli = accountCli(agent.harness);
-    if (cli.isEmpty() || !accounts.configured(cli))
-        return {};
-    const auto machine = agentMachine(agent);
-    const auto chosen = accounts.choose(cli, machine, agent.account);
-    if (!agent.account.isEmpty() && chosen.isEmpty())
-        return QStringLiteral("Selected plan %1 is no longer configured.").arg(agent.account);
-    const auto* account = accounts.find(cli, chosen);
-    if (account == nullptr || (account->hasHome && account->home == machine))
-        return {};
-    if (!accounts.usable(*account, machine))
-        return QStringLiteral("Selected plan %1 is no longer usable for this reload.")
-            .arg(agent.account);
-    return account_credential_failure(cli, account->name, accountsRoot, true);
-}
-bool Workspace::applyAccount(Agent& agent, SessionPreview& item) {
-    // A harness's own overlay is independent of which plan it signs in with.
+void Workspace::prepareStart(Agent& agent, SessionPreview& item) {
     QHash<QString, QString> environment;
     // Charts a local agent draws follow the visual view's theme: matplotlib
     // reads the style lapis writes, and other plotting code can read the
@@ -2550,165 +2455,9 @@ bool Workspace::applyAccount(Agent& agent, SessionPreview& item) {
             environment.insert(QStringLiteral("LAPIS_HOOK_NONCE"), hook_nonce());
         }
     }
-    const auto cli = accountCli(agent.harness);
-    if (cli.isEmpty() || !accounts_.configured(cli)) {
-        if (remoteCommand(agent.launch))
-            agent.launch.arguments.last().remove(remoteAccountPreamble());
-        agent.account.clear();
-        item.setServiceEnvironment(std::move(environment));
-        return true;
-    }
-    const auto machine = agentMachine(agent);
-    const auto chosen = accounts_.choose(cli, machine, agent.account);
-    const auto* account = accounts_.find(cli, chosen);
-    // On its home machine a plan is the machine's own sign-in.
-    const bool kept = account != nullptr && !(account->hasHome && account->home == machine);
-    if (remoteCommand(agent.launch)) {
-        if (const auto diagnostic = remoteAccountFailure(accounts_, agent, accountsRoot());
-            !diagnostic.isEmpty())
-            return fail(diagnostic);
-        auto& command = agent.launch.arguments.last();
-        command = withRemoteAccount(command, kept ? account : nullptr);
-        agent.account = chosen;
-        item.setServiceEnvironment({});
-        return true;
-    }
-    if (kept) {
-        if (const auto diagnostic =
-                account_credential_failure(cli, account->name, accountsRoot(), true);
-            !diagnostic.isEmpty())
-            return fail(diagnostic);
-        if (cli == QLatin1String("claude")) {
-            QFile token(QDir(accountsRoot())
-                            .filePath(QStringLiteral("claude/%1.token").arg(account->name)));
-            const auto text =
-                token.open(QIODevice::ReadOnly)
-                    ? QString::fromUtf8(token.read(8192)).section(QLatin1Char('\n'), 0, 0)
-                    : QString();
-            if (text.isEmpty())
-                return fail(QStringLiteral("Claude Code plan %1 has no usable token on this Mac.")
-                                .arg(account->name));
-            environment.insert(QStringLiteral("CLAUDE_CODE_OAUTH_TOKEN"), text);
-        } else {
-            const auto home =
-                QDir(accountsRoot()).filePath(QStringLiteral("codex/") + account->name);
-            const auto diagnostic = link_codex_home(
-                qEnvironmentVariable("CODEX_HOME", QDir::homePath() + QStringLiteral("/.codex")),
-                home);
-            if (!diagnostic.isEmpty())
-                return fail(QStringLiteral("Cannot prepare Codex plan %1: %2")
-                                .arg(account->name, diagnostic));
-            environment.insert(QStringLiteral("CODEX_HOME"), home);
-        }
-    }
-    agent.account = chosen;
+    if (remoteCommand(agent.launch))
+        agent.launch.arguments.last().remove(retiredPlanPreamble());
     item.setServiceEnvironment(std::move(environment));
-    return true;
-}
-void Workspace::setAccounts(AccountsConfig accounts) {
-    accounts_.setConfig(std::move(accounts));
-    balanceAccounts();
-}
-void Workspace::setAccountLoads(QHash<QString, AccountLoad> loads) {
-    accounts_.setLoads(std::move(loads));
-    balanceAccounts();
-}
-QString Workspace::agentAccount(const QString& id) const {
-    const auto entry = agents_.constFind(id);
-    if (entry == agents_.cend())
-        return {};
-    const auto cli = accountCli(entry->harness);
-    if (!entry->account.isEmpty() || cli.isEmpty())
-        return entry->account;
-    const auto* own = accounts_.own(cli, agentMachine(*entry));
-    return own != nullptr ? own->name : QString();
-}
-QString Workspace::agentPlanCredential(const QString& id) const {
-    const auto entry = agents_.constFind(id);
-    if (entry == agents_.cend() || entry->account.isEmpty())
-        return {};
-    const auto cli = accountCli(entry->harness);
-    const auto* account = accounts_.find(cli, entry->account);
-    const auto machine = agentMachine(*entry);
-    if (account == nullptr || (account->hasHome && account->home == machine))
-        return {};
-    const auto kept = cli == QLatin1String("claude")
-                          ? QStringLiteral("claude/%1.token").arg(account->name)
-                          : QStringLiteral("codex/") + account->name;
-    return machine.isEmpty() ? QDir(accountsRoot()).filePath(kept)
-                             : QStringLiteral("~/.lapis/accounts/") + kept;
-}
-bool Workspace::canSwitchAccount(const QString& id) const {
-    const auto entry = agents_.constFind(id);
-    if (entry == agents_.cend())
-        return false;
-    const auto cli = accountCli(entry->harness);
-    return !cli.isEmpty() &&
-           accounts_.alternative(cli, agentMachine(*entry), agentAccount(id)) != agentAccount(id);
-}
-bool Workspace::switchAccount(const QString& id) {
-    const auto entry = agents_.find(id);
-    if (entry == agents_.end() || !canSwitchAccount(id))
-        return fail(QStringLiteral("No other Claude Code or Codex plan has room on this machine."));
-    auto previous = *entry;
-    entry->account =
-        accounts_.alternative(accountCli(entry->harness), agentMachine(*entry), agentAccount(id));
-    auto* item = session(id);
-    if (item != nullptr && applyAccount(*entry, *item) && reloadAgent(id) > 0)
-        return true;
-    *entry = std::move(previous);
-    return false;
-}
-// A session whose plan passed the switch point moves once there is a plan
-// with room, when it is between turns: a reload resumes its conversation, and
-// the restart chooses the plan. One on another machine that cannot resume its
-// conversation keeps its plan.
-void Workspace::balanceAccounts() {
-    for (const auto& item : sessions_) {
-        const auto id = item->sessionId();
-        const auto entry = agents_.constFind(id);
-        const auto cli = entry == agents_.cend() ? QString() : accountCli(entry->harness);
-        if (cli.isEmpty() || !accounts_.configured(cli)) {
-            switching_.remove(id);
-            continue;
-        }
-        const auto machine = agentMachine(*entry);
-        const auto remote = remoteCommand(entry->launch);
-        const auto current = agentAccount(id);
-        if (!accounts_.full(cli, machine, entry->account) ||
-            accounts_.choose(cli, machine, entry->account) == current ||
-            (remote && !remoteConversation().match(remote->second).hasMatch())) {
-            switching_.remove(id);
-            continue;
-        }
-        switching_.insert(id);
-    }
-    switchWhenIdle();
-}
-void Workspace::switchWhenIdle() {
-    const auto waiting = switching_;
-    for (const auto& id : waiting) {
-        auto* item = session(id);
-        if (item == nullptr) {
-            switching_.remove(id);
-            continue;
-        }
-        // Output silence cannot establish that a turn is safe to interrupt.
-        const auto kind = item->statusKind();
-        const bool paused = item->attentionReady() && item->hasAttentionSource() &&
-                            (kind == QLatin1String("idle") || kind == QLatin1String("finished"));
-        if (item->closing() || reloading_.contains(id) || !paused)
-            continue;
-        const auto entry = agents_.find(id);
-        if (entry == agents_.end())
-            continue;
-        auto prepared = *entry;
-        if (!applyAccount(prepared, *item))
-            continue;
-        switching_.remove(id);
-        qInfo().noquote() << "Plan" << agentAccount(id) << "is full; moving" << item->title();
-        reloadAgents({id});
-    }
 }
 void Workspace::reconnectIfDropped(const QString& id) {
     using namespace std::chrono_literals;
@@ -3064,7 +2813,9 @@ void Workspace::loadAgents(const QJsonArray& agents) {
                 loadManagedResume(object.value(QStringLiteral("managedResume")), agent);
             agent.named = object.value(QStringLiteral("named")).toBool();
             agent.auto_title = object.value(QStringLiteral("autoTitle")).toBool();
-            agent.account = savedAccount(object.value(QStringLiteral("account")));
+            // "account" named a retired lapis-managed plan; it is ignored and
+            // dropped on the next save, and the agent uses its machine's own
+            // sign-in from its next start (see prepareStart).
             // Claude agents saved before the service adapter ran as terminals; the
             // launch must match the one their running service was created with.
             if (harness == QStringLiteral("claude") &&
@@ -3198,15 +2949,10 @@ void Workspace::connectRestoredAgents() {
         if (restore_agents_ && !serviceRunning(agent.endpoint)) {
             QString diagnostic;
             if (const auto launch = restoredLaunch(agent, &diagnostic)) {
-                const auto previous = agent;
                 agent.launch = launch->launch;
                 agent.managed_resume_index = launch->managed_resume_index;
                 agent.managed_resume_identity = launch->managed_resume_identity;
-                if (!applyAccount(agent, *item)) {
-                    agent = previous;
-                    restart_failures << QStringLiteral("%1: %2").arg(item->title(), error_);
-                    continue;
-                }
+                prepareStart(agent, *item);
                 restarting.push_back({item.get(), agent.endpoint, agent.launch});
                 continue;
             }
@@ -3483,8 +3229,7 @@ void Workspace::startUpdatedAgents(const QStringList& ids) {
         item->setUpdating({});
         if (item->live() || item->closing())
             continue;
-        if (!applyAccount(*entry, *item))
-            continue;
+        prepareStart(*entry, *item);
         item->startLive(entry->endpoint, sized(entry->launch), session::wire::AttachMode::create);
     }
 }

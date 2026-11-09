@@ -1,7 +1,6 @@
 #ifndef LAPIS_DESKTOP_KEYMAP_HPP
 #define LAPIS_DESKTOP_KEYMAP_HPP
 
-#include "accounts.hpp"
 #include "interaction_log.hpp"
 #include "next_prompt.hpp"
 #include "tab_ranker.hpp"
@@ -250,8 +249,6 @@ class KeyMap final : public QObject {
     [[nodiscard]] const QStringList& usageMeter() const { return usage_meter_; }
     [[nodiscard]] const QStringList& usageMachines() const { return usage_machines_; }
     [[nodiscard]] const AgentDefaults& agentDefaults() const { return agent_defaults_; }
-    // The Claude Code and Codex plans lapis may give sessions ("accounts").
-    [[nodiscard]] const AccountsConfig& accounts() const { return accounts_; }
     // {"nextPrompt": {...}}: when and how lapis predicts the next prompt.
     [[nodiscard]] const NextPromptSettings& nextPrompt() const { return next_prompt_; }
     // {"interactionLog": {...}}: the local log of input in lapis's windows.
@@ -323,7 +320,6 @@ class KeyMap final : public QObject {
     QStringList usage_meter_;
     QStringList usage_machines_;
     AgentDefaults agent_defaults_;
-    AccountsConfig accounts_;
     NextPromptSettings next_prompt_;
     InteractionLogSettings interaction_log_;
     TabAwaySettings tab_away_;

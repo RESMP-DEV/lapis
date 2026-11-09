@@ -193,7 +193,7 @@ scopes the background limit to unattended sessions (`-p`, the Agent SDK, CI and
 cloud), so agents in lapis running 2.1.288 or newer have no background limit in
 their terminal. A job that must outlive the agent still belongs detached
 (`nohup`, `setsid` or `tmux`, writing to a log the agent reads), which also
-outlives restarts, reloads and plan switches.
+outlives restarts and reloads.
 
 ## Restart, reload, reopen
 

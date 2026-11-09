@@ -631,9 +631,9 @@ bool KeyMap::load() {
     load_usage(root);
     load_visual(root);
     load_agent_defaults(root.value(QStringLiteral("newAgent")));
-    accounts_ = parse_accounts(root.value(QStringLiteral("accounts")));
-    // "limitResets" configured the retired automatic limit resets; a file that
-    // still has it loads, and saving leaves it as written.
+    // "accounts" listed the retired lapis-managed plans and "limitResets" the
+    // retired automatic limit resets; a file that still has them loads, and
+    // saving leaves them as written.
     next_prompt_ = parse_next_prompt(root.value(QStringLiteral("nextPrompt")));
     interaction_log_ = parse_interaction_log(root.value(QStringLiteral("interactionLog")));
     tab_away_ = parse_tab_away(root.value(QStringLiteral("tabAway")));
@@ -1187,7 +1187,6 @@ bool KeyMap::persist() {
     if (file.write(contents) != contents.size() || !file.commit())
         return fail(file.errorString());
     known_contents_ = std::move(contents);
-    accounts_ = parse_accounts(root.value(QStringLiteral("accounts")));
     watch();
     diagnostic_.clear();
     emit changed();

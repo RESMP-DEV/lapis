@@ -1,7 +1,6 @@
 #ifndef LAPIS_DESKTOP_WORKSPACE_HPP
 #define LAPIS_DESKTOP_WORKSPACE_HPP
 
-#include "accounts.hpp"
 #include "harness_catalog.hpp"
 #include "harness_models.hpp"
 #include "history_strip.hpp"
@@ -93,8 +92,8 @@ class SessionPreview final : public QObject {
     ~SessionPreview() override;
     void startLive(const QString& endpoint, const session::LaunchSpec& launch,
                    session::wire::AttachMode mode = session::wire::AttachMode::reconnect);
-    // What a session service this card starts adds to its environment: the
-    // plan's credential, when lapis chose one. Kept in memory only.
+    // What a session service this card starts adds to its environment (OMP's
+    // overlay and hook nonce). Kept in memory only.
     void setServiceEnvironment(QHash<QString, QString> environment) {
         service_environment_ = std::move(environment);
     }
@@ -415,8 +414,6 @@ struct WorkspaceOptions {
     // workspace to a window that opens (the login helper and the windowless
     // host that serves the phone).
     bool headless{};
-    // The config's plans, known before restored agents start (see setAccounts).
-    AccountsConfig accounts{};
 };
 
 class Workspace final : public QObject {
@@ -523,23 +520,6 @@ class Workspace final : public QObject {
     // be running without one.
     Q_INVOKABLE bool closeSession(const QString& id, bool abandon = false);
     Q_INVOKABLE bool restartAgent(const QString& id);
-    // The plans lapis may give Claude Code and Codex sessions, and how full
-    // each is. A session whose plan passes the switch point starts again on
-    // the one with the most room once it is between turns, resuming its
-    // conversation (see AccountPool).
-    void setAccounts(AccountsConfig accounts);
-    void setAccountLoads(QHash<QString, AccountLoad> loads);
-    // The plan an agent runs on; empty for its machine's own sign-in.
-    Q_INVOKABLE [[nodiscard]] QString agentAccount(const QString& id) const;
-    // Where the credential lapis gave the agent's plan is kept on the agent's
-    // machine: a Claude Code token file or a Codex home ("~/" on another
-    // machine). Empty when the agent uses its machine's own sign-in.
-    [[nodiscard]] QString agentPlanCredential(const QString& id) const;
-    Q_INVOKABLE [[nodiscard]] bool canSwitchAccount(const QString& id) const;
-    // Starts the agent again on the plan with the most room besides its own.
-    Q_INVOKABLE bool switchAccount(const QString& id);
-    // Tests: where this Mac keeps the credentials lapis hands out.
-    void setAccountsRootForTesting(const QString& root) { accounts_root_ = root; }
     // Ends an agent's CLI and starts it again in its tab, resuming its
     // conversation as a restart does: a CLI rereads its settings (Claude
     // Code's permissions, say) only when it starts. An ended agent starts at
@@ -752,9 +732,6 @@ class Workspace final : public QObject {
         // user-authored launch. Existing unmarked records stay user-owned.
         int managed_resume_index{-1};
         QString managed_resume_identity{};
-        // The Claude Code or Codex plan it runs on (an AccountPool name);
-        // empty for its machine's own sign-in.
-        QString account{};
     };
     std::vector<Category> categories_;
     QMap<QString, Agent> agents_;
@@ -890,28 +867,13 @@ class Workspace final : public QObject {
         int generation{};
     };
     QHash<QString, Reconnect> reconnects_;
-    AccountPool accounts_;
     QObject* transcript_{}; // a TranscriptModel this workspace owns
-    QString accounts_root_;
-    // Agents whose plan filled, moving at their next pause.
-    QSet<QString> switching_;
-    [[nodiscard]] QString accountsRoot() const;
-    [[nodiscard]] static QString accountCli(const QString& harness);
+    // The ssh host a remote agent runs on; empty on this Mac.
     [[nodiscard]] static QString agentMachine(const Agent& agent);
-    // Rejects a selected remote plan whose managed credential cannot be used.
-    // The reason names the plan, never credential contents or provider identity.
-    [[nodiscard]] static QString remoteAccountFailure(const AccountPool& accounts,
-                                                      const Agent& agent,
-                                                      const QString& accountsRoot);
-    // Rejects a selected local plan before a healthy session is ended.
-    [[nodiscard]] static QString localAccountFailure(const AccountPool& accounts,
-                                                     const Agent& agent,
-                                                     const QString& accountsRoot);
-    // Chooses the agent's plan and writes it where its start reads it: a
-    // remote command's preamble, or the card's service environment.
-    [[nodiscard]] bool applyAccount(Agent& agent, SessionPreview& item);
-    void balanceAccounts();
-    void switchWhenIdle();
+    // Sets what the agent's next start needs beyond its saved launch: OMP's
+    // overlay in the card's service environment. A remote command saved with
+    // a retired plan preamble loses it, so the machine's own sign-in is used.
+    void prepareStart(Agent& agent, SessionPreview& item);
     // Agents asked to end so they can start again.
     QSet<QString> reloading_;
     enum class ReloadOutcome : std::uint8_t { requested, kept, failed };

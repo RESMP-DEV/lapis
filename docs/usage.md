@@ -17,34 +17,6 @@ minutes, without a prompt, a hook or a saved session. Another machine's CLIs are
 asked over ssh, and its transcripts are counted there by its own python3. There
 are no prices.
 
-## Shared plans
-
-Claude Code and Codex sessions can share several plans. List them under
-`accounts` in `~/.lapis/lapis.json`: each plan's name, its email, its `home`
-(the machine that signs in as it, `local` for this Mac) and the `machines`
-where lapis keeps a credential for it.
-
-A session takes its machine's own sign-in. When that plan reaches `switchAt`
-percent (95 by default), a new session takes the plan with the most room that
-its machine can use, as OMP ranks its accounts. A running session moves only
-when a ready observer reports it idle or finished with a turn, restarting on the
-other plan and resuming its conversation; output going quiet alone never
-switches it. **Switch plan** in Commands moves an agent by hand.
-
-`scripts/lapis_accounts.py` fills the section:
-
-- `homes` records each machine's own sign-ins.
-- `sign-in` offers Claude plans missing a local setup token. Each token goes to
-  that plan's destinations and the usage hosts. `--to HOST ...` overrides them;
-  `--to` alone keeps it local. Invalid plans are skipped before authentication.
-- `add-claude NAME --email E` runs `claude setup-token` and keeps the token
-  (owner-only) on this Mac and the usage machines.
-- `add-codex NAME --email E --on local devbox` signs Codex in to a home kept for
-  that plan, which shares its sessions and settings with `~/.codex`.
-
-Credentials never appear on a command line: a remote session reads its plan's
-credential on its own machine.
-
 [Architecture](architecture.md#storage-credentials-and-diagnostics)
 owns the general storage and credential contract; [status](status.md#components)
 records the remaining live qualification.

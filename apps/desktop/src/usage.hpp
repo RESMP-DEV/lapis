@@ -1,6 +1,5 @@
 #ifndef LAPIS_DESKTOP_USAGE_HPP
 #define LAPIS_DESKTOP_USAGE_HPP
-#include "accounts.hpp"
 #include "usage_limits.hpp"
 #include <QByteArray>
 #include <QDate>
@@ -143,10 +142,6 @@ class Usage final : public QObject {
     [[nodiscard]] QVariantList machines() const;
     [[nodiscard]] QVariantList meter() const;
     [[nodiscard]] bool counting() const;
-    // Each account's load, from every machine's sign-ins (by email, and by
-    // account_home_name for the machine) and OMP's accounts, by
-    // account_load_key; where two sources name one account, the fuller.
-    [[nodiscard]] QHash<QString, AccountLoad> accountLoads() const;
 
   signals:
     void changed();

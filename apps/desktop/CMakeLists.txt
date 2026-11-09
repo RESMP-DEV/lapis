@@ -27,7 +27,6 @@ add_library(lapis_desktop_view STATIC
     src/agent_search.cpp src/agent_search.hpp
     src/conversation_index.cpp src/conversation_index.hpp
     src/terminals.cpp src/terminals.hpp
-    src/accounts.cpp src/accounts.hpp
     src/usage.cpp src/usage.hpp
     src/usage_limits.cpp src/usage_limits.hpp
     src/next_prompt.cpp src/next_prompt.hpp
@@ -173,10 +172,6 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_terminal_find_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME terminal-find COMMAND lapis_terminal_find_tests)
     set_tests_properties(terminal-find PROPERTIES TIMEOUT 20)
-    add_executable(lapis_accounts_tests tests/accounts_test.cpp)
-    target_link_libraries(lapis_accounts_tests PRIVATE lapis_project_options lapis_desktop_view)
-    add_test(NAME accounts COMMAND lapis_accounts_tests)
-    set_tests_properties(accounts PROPERTIES TIMEOUT 20)
     add_executable(lapis_gui_state_tests tests/gui_state_test.cpp)
     target_link_libraries(lapis_gui_state_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME gui-state COMMAND lapis_gui_state_tests)
@@ -233,23 +228,18 @@ if(BUILD_TESTING)
     target_compile_definitions(lapis_workspace_tests PRIVATE
         LAPIS_DESKTOP_PATH="$<TARGET_FILE:lapis_desktop>")
     add_test(NAME workspace COMMAND lapis_workspace_tests)
-    add_test(NAME workspace-remote-accounts COMMAND lapis_workspace_tests
-                                                   --case remote-accounts)
-    set_tests_properties(workspace-remote-accounts PROPERTIES TIMEOUT 60)
     add_test(NAME workspace-remote-hooks COMMAND lapis_workspace_tests --case remote-hooks)
     set_tests_properties(workspace-remote-hooks PROPERTIES TIMEOUT 90)
-    add_test(NAME workspace-remote-account-reset COMMAND lapis_workspace_tests
-                                                        --case remote-account-reset)
-    set_tests_properties(workspace-remote-account-reset PROPERTIES TIMEOUT 20)
+    add_test(NAME workspace-retired-plans COMMAND lapis_workspace_tests --case retired-plans)
+    set_tests_properties(workspace-retired-plans PROPERTIES TIMEOUT 20)
     add_test(NAME workspace-updates-off COMMAND lapis_workspace_tests --case updates-off)
     set_tests_properties(workspace-updates-off PROPERTIES TIMEOUT 60)
     add_test(NAME workspace-omp-overlay COMMAND lapis_workspace_tests --case omp-overlay)
     set_tests_properties(workspace-omp-overlay PROPERTIES TIMEOUT 60)
     # These launch the real desktop host or QML windows. On a Mac someone is
     # using they would show windows, so they run only on request.
-    set_tests_properties(workspace workspace-remote-accounts workspace-remote-hooks
-                         workspace-remote-account-reset workspace-updates-off
-                         PROPERTIES LABELS "screen")
+    set_tests_properties(workspace workspace-remote-hooks workspace-retired-plans
+                         workspace-updates-off PROPERTIES LABELS "screen")
     if(APPLE)
         add_executable(lapis_sound_decode_tests tests/sound_decode_test.mm)
         target_link_libraries(lapis_sound_decode_tests PRIVATE lapis_project_options lapis_desktop_view)
@@ -334,8 +324,7 @@ if(BUILD_TESTING)
         # NSApplication activation). Tests labeled "screen" open windows, the
         # desktop host or an NSApplication, so a Mac runs them only on request.
         if(NOT LAPIS_NATIVE_GUI_TESTS)
-            set_tests_properties(workspace workspace-remote-accounts
-                                 workspace-remote-hooks workspace-remote-account-reset
+            set_tests_properties(workspace workspace-remote-hooks workspace-retired-plans
                                  workspace-updates-off tools-ui ui-preview appearance-input
                                  terminal-keys-mac PROPERTIES DISABLED TRUE)
         endif()

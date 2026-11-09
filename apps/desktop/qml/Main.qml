@@ -477,10 +477,6 @@ ApplicationWindow {
         add("reloadTab", qsTr("Reload tab"), "", hasAgent && agent.live, needAgent, () => workspace.reloadAgent(agent.sessionId))
         add("reloadCategory", qsTr("Reload category"), "", workspace.categorySessions.length > 0, qsTr("This category has no agents"), () => workspace.reloadCategory())
         add("reloadWindow", qsTr("Reload window"), "", workspace.sessions.length > 0, qsTr("No agents are open"), () => workspace.reloadAll())
-        // Claude Code and Codex plans (accounts in lapis.json): which one this
-        // agent runs on, and a move to the one with the most room.
-        const plan = hasAgent ? workspace.agentAccount(agent.sessionId) : ""
-        add("switchPlan", plan.length > 0 ? qsTr("Switch plan (on %1)").arg(plan) : qsTr("Switch plan"), "", hasAgent && workspace.canSwitchAccount(agent.sessionId), qsTr("No other Claude Code or Codex plan has room for this agent"), () => workspace.switchAccount(agent.sessionId))
         // A running CLI keeps the version it started with.
         add("updateTab", qsTr("Update this tab's CLI and reload it"), "", hasAgent && agent.live && workspace.canUpdateAgent(agent.sessionId), hasAgent ? qsTr("lapis cannot update this agent's CLI") : needAgent, () => workspace.updateAndReloadAgent(agent.sessionId))
         add("updateClaude", qsTr("Update Claude Code and reload its tabs"), "", workspace.sessions.some(session => session.harnessId === "claude"), qsTr("No Claude Code agent is open"), () => workspace.updateClaudeAndReload())
