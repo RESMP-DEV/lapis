@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-09T23:22:07Z",
+  "recorded_at": "2026-11-09T23:47:08Z",
   "agent": "Codex triage parent with read-only architecture review",
   "base_revision": "2f261586507a6af04f7f5191a8286b29da089125",
-  "source_revision": "de09408c650287e2c962b96ff172553141192c1e",
+  "source_revision": "e62f90933754f305b38c20f5e9ceaca9460fcebd",
   "scope": "Post-rebase validation and review follow-up for PR 190 after PRs 187, 188, 189, 192, 195, 197, and 200 merged.",
   "changed_source_manifest": {
-    "algorithm": "shasum -a 256 of: git diff --binary 2f261586507a6af04f7f5191a8286b29da089125..de09408c650287e2c962b96ff172553141192c1e -- ':(exclude)evidence/*'",
-    "digest": "68fa81c57182fa069b24c29635336915bdb7571da619be12901e0a82fe50dfab",
+    "algorithm": "shasum -a 256 of: git diff --binary 2f261586507a6af04f7f5191a8286b29da089125..e62f90933754f305b38c20f5e9ceaca9460fcebd -- ':(exclude)evidence/*'",
+    "digest": "97ccd3ee677f0162335305b5966db71a65e8ea3727fcb6873bab9cc2d3e3a3cb",
     "changed_paths": 42
   },
   "validation": [
@@ -39,7 +39,8 @@
   "review_followups": [
     "Log Qt errorString when a direct detached service launch fails",
     "Include launch_spec.hpp explicitly in live_connection.cpp",
-    "Remove the retired supervisor state/runtime rows from docs/status.md"
+    "Remove the retired supervisor state/runtime rows from docs/status.md",
+    "Surface the direct service program and Qt failure reason in the thrown launch error"
   ],
   "non_claims": [
     "The removed experimental supervisor suites are intentionally absent after deletion.",
