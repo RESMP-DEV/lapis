@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-09T20:39:04Z",
+  "agent": "Codex triage parent",
+  "base_revision": "5a7649fbeabc47920c501da2a3675789216c33dc",
+  "source_revision": "be20f0cfb9249b684776403888fac0a28c33b0d7",
+  "scope": "Validate PR 187 reasoning-effort launch plumbing and add Codex maximum-effort regression coverage.",
+  "changed_source_manifest": {
+    "algorithm": "sha256(git diff --binary base..source_revision -- ':(exclude)evidence/*')",
+    "digest": "235b0d758096292dd3ac863072e0a9c1059ed024e3933654d7ae29e5f056ceaa",
+    "changed_paths": 7
+  },
+  "validation": [
+    {
+      "command": "python3 -m unittest scripts.tests.test_lapis_remote",
+      "result": "65 tests passed; 8 repository-defined tests skipped"
+    },
+    {
+      "command": "ruff format --check apps/remote/lapis_remote.py scripts/tests/test_lapis_remote.py && ruff check apps/remote/lapis_remote.py scripts/tests/test_lapis_remote.py",
+      "result": "passed"
+    },
+    {
+      "command": "python3 scripts/probe_terminal.py --engine ghostty",
+      "result": "passed; receipt at build/terminal-probe/reproduce/ghostty/runs/1299a291b7f24c39b81cb88dfa3f2fe9/reports/receipt.json"
+    },
+    {
+      "command": "cmake --build build/desktop --target lapis_workspace_tests --parallel 8 && QT_QPA_PLATFORM=offscreen build/desktop/apps/desktop/lapis_workspace_tests --case launch-policy",
+      "result": "passed, including Claude medium effort and remote Codex maximum effort"
+    },
+    {
+      "command": "git diff --check && just quality",
+      "result": "passed"
+    }
+  ],
+  "non_claims": [
+    "The added Codex case uses an isolated fake SSH and CLI stand-in; it does not launch or qualify a real Codex backend.",
+    "No native macOS GUI, phone client hardware, remote network host, or long-running agent workload was exercised."
+  ]
+}
