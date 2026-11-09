@@ -576,8 +576,9 @@ class Workspace final : public QObject {
     // with the candidates and their scores.
     Q_INVOKABLE bool nextPriorityAttention(const QVariantMap& ready);
     // An agent is parked once the person has looked at its finished turn for
-    // kParkAfterMs and moved on without a prompt: Tab, and Ultra Tab's cards,
-    // skip it until it begins to wait again. A request is never parked.
+    // kParkAfterMs and moved on without a prompt: Tab skips it, and
+    // agent_state.json marks it, until it begins to wait again. A request is
+    // never parked.
     static constexpr qint64 kParkAfterMs = 2500;
     [[nodiscard]] qint64 parkedAtMs(const QString& id) const;
     [[nodiscard]] bool parked(const SessionPreview* item) const;

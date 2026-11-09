@@ -7,7 +7,6 @@
 #include "interaction_recorder.hpp"
 #include "keymap.hpp"
 #include "next_prompt.hpp"
-#include "open_request.hpp"
 #include "platform_desktop.hpp"
 #include "platform_preferences.hpp"
 #include "shell_environment.hpp"
@@ -702,8 +701,9 @@ keep_gui_state(lapis::desktop::Workspace& workspace,
     return state;
 }
 
-// What this window knows about each agent, for Ultra Tab (RESMP-DEV/ultratab),
-// beside the registry; only from the window that owns the workspace.
+// What this window knows about each agent, for other local readers such as
+// lapis-peers, beside the registry; only from the window that owns the
+// workspace.
 void keep_agent_state(std::optional<lapis::desktop::AgentStatePublisher>& kept,
                       lapis::desktop::Workspace& workspace,
                       std::optional<lapis::desktop::NextPrompt>& next, bool isolated) {
@@ -712,31 +712,6 @@ void keep_agent_state(std::optional<lapis::desktop::AgentStatePublisher>& kept,
     kept.emplace(workspace, next ? &*next : nullptr,
                  QDir(QFileInfo(workspace.storagePath()).absolutePath())
                      .filePath(QStringLiteral("agent_state.json")));
-}
-
-// Ultra Tab's "show it in lapis" (Command-L on a card): select that agent and
-// bring the window forward, as clicking its notification does.
-void follow_open_requests(std::optional<lapis::desktop::OpenRequests>& kept,
-                          lapis::desktop::Workspace& workspace, QPointer<QQuickWindow>& shown,
-                          bool isolated) {
-    if (isolated || !workspace.holdsRegistry())
-        return;
-    kept.emplace(QDir(QFileInfo(workspace.storagePath()).absolutePath())
-                     .filePath(QStringLiteral("ultratab_open.json")),
-                 [&workspace, &shown](const QString& id) {
-                     lapis::desktop::interaction::cause(QStringLiteral("ultratab"));
-                     // Select first: a request naming an agent this window does
-                     // not hold must not steal focus from the other app.
-                     if (!workspace.selectSession(id) || !shown)
-                         return;
-                     // Ultra Tab is a different application, so its request
-                     // arrives while lapis is inactive; show/raise alone would
-                     // order a window in an application macOS never foregrounds.
-                     lapis::desktop::platform::activate_application();
-                     shown->show();
-                     shown->raise();
-                     shown->requestActivate();
-                 });
 }
 
 // The quick-command terminals beside this workspace, with ssh hosts from the
@@ -958,8 +933,6 @@ int main(int argc, char** argv) {
         }
         std::optional<lapis::desktop::AgentStatePublisher> agentState;
         keep_agent_state(agentState, workspace, nextPrompt, isolated);
-        std::optional<lapis::desktop::OpenRequests> openRequests;
-        follow_open_requests(openRequests, workspace, shown, isolated);
         const auto conversations = conversation_index(workspace);
         if (!isolated) {
             follow_conversation_titles(workspace, *conversations);

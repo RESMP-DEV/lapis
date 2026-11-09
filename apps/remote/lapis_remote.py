@@ -1892,7 +1892,7 @@ def open_session(agent, columns=None, rows=None):
 
 def submit_paste(agent, text, timeout=5.0):
     """Join the agent's session as an extra view, admit `text` as one paste
-    followed by Return, and leave, as Ultra Tab on the Mac does: the desktop
+    followed by Return, and leave: the desktop
     keeps its attachment and the terminal keeps its size. Returns (queued,
     message); the service refuses the paste while a request is pending."""
     data = text.encode("utf-8")
@@ -1939,10 +1939,11 @@ def submit_paste(agent, text, timeout=5.0):
         session.close()
 
 
-# Ultra Tab's deck ------------------------------------------------------------
+# The deck ----------------------------------------------------------------------
 
-# What the desktop publishes beside its registry for Ultra Tab
-# (RESMP-DEV/ultratab), with the limits Ultra Tab reads them by.
+# What the desktop publishes beside its registry for local tools such as
+# lapis-peers, with the limits they are read by. The cards are what the
+# retired Ultra Tab composed; the deck still reports them when present.
 DECK_FILES = {
     "state": ("agent_state.json", 4 * 1024 * 1024),
     "cards": ("ultratab_cards.json", 8 * 1024 * 1024),
@@ -2058,11 +2059,10 @@ def process_running(pid):
 
 
 def read_deck(registry):
-    """Ultra Tab's inputs for the phone, read-only: the registry's categories
-    and agents (without launch details), and the desktop's agent_state.json
-    and ultratab_cards.json as published. The phone orders and validates them
-    as Ultra Tab on the Mac does; a file that cannot be read is reported and
-    left out."""
+    """The deck, read-only: the registry's categories and agents (without
+    launch details), and the desktop's agent_state.json and
+    ultratab_cards.json as published. The reader orders and validates them;
+    a file that cannot be read is reported and left out."""
     version = deck_version(registry)
     workspace = load_workspace(registry)
     deck = {
@@ -2523,8 +2523,6 @@ class Handler(BaseHTTPRequestHandler):
             self.input(parts[2])
         elif agent_route(parts, "submit"):
             self.submit(parts[2])
-        elif agent_route(parts, "skip"):
-            self.skip(parts[2])
         elif parts == ["api", "agents"]:
             self.start_agent()
         elif agent_route(parts, "close"):
@@ -3190,8 +3188,8 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(HTTPStatus.OK, {"ok": True})
 
     def deck(self):
-        """Ultra Tab's deck for the phone (read_deck). With `after` set to the
-        version the phone has, answers once something changes or after at
+        """The deck (read_deck). With `after` set to the version the reader
+        has, answers once something changes or after at
         most eight seconds."""
         after = parse_qs(urlsplit(self.path).query).get("after", [""])[0]
         wait_deadline = time.monotonic() + LISTING_WAIT
@@ -3216,9 +3214,9 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def submit(self, identifier):
-        """An Ultra Tab answer: one paste and Return through a join that never
+        """A submitted message: one paste and Return through a join that never
         replaces the desktop's attachment (submit_paste). A refusal carries
-        the service's reason, for the phone to bring the card back."""
+        the service's reason."""
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
@@ -3261,37 +3259,6 @@ class Handler(BaseHTTPRequestHandler):
         if not queued:
             self.fail(HTTPStatus.CONFLICT, message or "the agent's session refused it")
             return
-        self.reply(HTTPStatus.OK, {"ok": True})
-
-    def skip(self, identifier):
-        """An Ultra Tab skip: nothing reaches the agent; the card and what it
-        proposed are logged as skipped (log_answer)."""
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            length = -1
-        if not 0 < length <= MAX_INPUT * 2:
-            self.fail(HTTPStatus.BAD_REQUEST, "Invalid request size")
-            return
-        try:
-            body = json.loads(self.rfile.read(length))
-        except ValueError:
-            body = None
-        agent = None
-        if not identifier.startswith("terminal-"):
-            try:
-                agent = self.gateway.agent(identifier)
-            except (OSError, ValueError, GatewayError):
-                agent = None
-        if agent is None:
-            self.fail(HTTPStatus.NOT_FOUND, "No such agent")
-            return
-        label = answer_label(body)
-        if "key" not in label:
-            self.fail(HTTPStatus.BAD_REQUEST, "No card key")
-            return
-        label["how"] = "skipped"
-        log_answer(self.gateway.registry, {"agent": identifier, **label})
         self.reply(HTTPStatus.OK, {"ok": True})
 
 

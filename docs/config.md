@@ -226,7 +226,7 @@ count as work; the default matches a category called `work`.
 Only agents truly waiting on you qualify: a request, or a turn that finished
 with no background work in flight and that you have not parked. Looking at a
 finished turn for 2.5 seconds or more and moving on without a prompt parks the
-agent: Tab and Ultra Tab pass it over until it next begins to wait. A request
+agent: Tab passes it over until it next begins to wait. A request
 is never parked. Choices and Tab moves are kept in `runtime/tab_away.jsonl`
 under every rank, and the learned rank's model in `runtime/tab_away_model.json`,
 both owner-only.

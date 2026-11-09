@@ -15,8 +15,8 @@ class NextPrompt;
 class Workspace;
 
 // Publishes what the window knows about each agent and nothing else reads
-// from disk, for other local apps that show the same agents (Ultra Tab,
-// RESMP-DEV/ultratab): `runtime/agent_state.json` beside the workspace registry.
+// from disk, for other local tools that show the same agents (lapis-peers):
+// `runtime/agent_state.json` beside the workspace registry.
 // Read-only toward lapis: nothing in lapis reads the file back.
 //
 // Version 1: {"version": 1, "pid": <this window>, "publishedAtMs": ...,

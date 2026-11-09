@@ -78,7 +78,6 @@ uv run --no-project python scripts/lapis.py run
 | [config](docs/config.md) | `lapis.json`: defaults, alerts, CLI flags |
 | [phone](docs/phone.md) | The prototype iPhone app and its separately installed gateway |
 | [suggestions](docs/suggestions.md) | Optional next-prompt guesses, Tab, and their acceptance log |
-| [ultratab](https://github.com/RESMP-DEV/ultratab) | Ultra Tab, an overlay that deals waiting agents as cards, now its own repository |
 | [build](docs/build.md) | Building, checks, probes and fixtures |
 | [status](docs/status.md) | What is qualified, what remains, and the evidence |
 | [architecture](docs/architecture.md) | Design decisions and the plan |

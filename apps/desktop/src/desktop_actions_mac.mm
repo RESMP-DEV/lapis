@@ -78,13 +78,6 @@ SMAppService* login_item() API_AVAILABLE(macos(13.0)) {
 }
 } // namespace
 
-void activate_application() {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    [NSApp activateIgnoringOtherApps:YES];
-#pragma clang diagnostic pop
-}
-
 bool secure_input_enabled() { return IsSecureEventInputEnabled(); }
 
 double seconds_since_input() {
