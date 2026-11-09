@@ -72,12 +72,50 @@ def relay(cli, text):
         os.close(tty)
 
 
-def chain(payload):
-    import tomllib
+def top_level_notify(text):
+    # Without tomllib (python3 before 3.11, as macOS ships): the top-level
+    # `notify = [...]` array of plain strings, which may span lines, or None.
+    import re
 
+    word = re.compile(r'\s*(?:"((?:[^"\\\n]|\\.)*)"|\'([^\'\n]*)\')\s*(,|\])')
+    lines = iter(text.splitlines())
+    for line in lines:
+        if line.lstrip().startswith("["):
+            return None  # the first table ends the top level
+        found = re.match(r"\s*notify\s*=\s*\[(.*)$", line)
+        if not found:
+            continue
+        rest, words = found.group(1), []
+        while True:
+            rest = re.sub(r"^(\s*(#.*)?)?$", "", rest)
+            if not rest:
+                rest = next(lines, None)
+                if rest is None:
+                    return None
+                continue
+            if rest.lstrip().startswith("]"):
+                return words
+            item = word.match(rest)
+            if not item:
+                return None
+            basic, literal, end = item.groups()
+            words.append(json.loads('"' + basic + '"') if basic is not None else literal)
+            rest = rest[item.end() :]
+            if end == "]":
+                return words
+    return None
+
+
+def chain(payload):
     home = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
     with open(os.path.join(home, "config.toml"), "rb") as f:
-        notify = tomllib.load(f).get("notify")
+        text = f.read()
+    try:
+        import tomllib
+    except ImportError:
+        notify = top_level_notify(text.decode())
+    else:
+        notify = tomllib.loads(text.decode()).get("notify")
     if isinstance(notify, list) and notify and all(isinstance(w, str) for w in notify):
         os.execvp(notify[0], notify + [payload])
 

@@ -44,6 +44,11 @@ class TerminalHookChannel {
     // by the end of this read is held until the next one; it cannot draw
     // anything by itself. Authenticated events are appended to `events`.
     [[nodiscard]] QByteArray filter(QByteArrayView output, std::vector<TerminalHookEvent>& events);
+    // Binds a nonce lapis made itself, as the init sequence would: a local
+    // Codex agent's notify program is started with it in its environment, so
+    // nothing ever prints it. False when already bound or the values are not
+    // valid; later init sequences are then ignored.
+    bool bind(QByteArrayView cli, QByteArrayView nonce);
     [[nodiscard]] bool bound() const { return !nonce_.isEmpty(); }
     [[nodiscard]] const QString& cli() const { return cli_; }
 

@@ -7,7 +7,7 @@
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "platform/updater_process.hpp"
-#include "remote_hook_relay.hpp"
+#include "terminal_hook_relay.hpp"
 #include "terminals.hpp"
 #include "transcript.hpp"
 #include "workspace_control.hpp"
@@ -433,7 +433,7 @@ QString remoteHookPreamble(const QString& cli) {
                R"sh(export LAPIS_HOOK_NONCE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" )sh"
                R"sh(LAPIS_HOOK_TTY="$(tty)" )sh"
                R"sh(LAPIS_HOOK_RELAY=%1; printf '\033]7717;lapis-init;%2;%s\007' "$LAPIS_HOOK_NONCE";)sh")
-        .arg(shellWord(QString::fromUtf8(kRemoteHookRelay)), cli);
+        .arg(shellWord(QString::fromUtf8(session::kTerminalHookRelay)), cli);
 }
 // One past the shell word (plain, or single-quoted as shellWord writes it)
 // starting at `start`; the end of the text when it does not close.

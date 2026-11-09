@@ -10,9 +10,13 @@ from unittest.mock import patch
 
 def load_relay():
     path = (
-        Path(__file__).parents[2] / "apps" / "desktop" / "src" / "remote_hook_relay.py"
+        Path(__file__).parents[2]
+        / "services"
+        / "session"
+        / "src"
+        / "terminal_hook_relay.py"
     )
-    spec = importlib.util.spec_from_file_location("lapis_remote_hook_relay", path)
+    spec = importlib.util.spec_from_file_location("lapis_terminal_hook_relay", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -126,6 +130,77 @@ class RemoteHookRelayTests(unittest.TestCase):
         self.assertEqual(returned[0], sizes[0] - 1)
         self.assertEqual(sizes[1], sizes[0] - returned[0])
         self.assertLess(sizes[1], sizes[0])
+
+    def test_notify_thread_identity_crosses_the_terminal(self):
+        frames = []
+
+        def capture_write(descriptor, view):
+            frames.append(bytes(view))
+            return len(view)
+
+        source = {
+            "type": "agent-turn-complete",
+            "thread-id": "019a0000-0000-7000-8000-000000000001",
+            "turn-id": "t1",
+            "input-messages": ["private prompt"],
+            "last-assistant-message": "private reply",
+        }
+        with patch.object(os, "write", side_effect=capture_write):
+            with patch.dict(
+                os.environ,
+                {
+                    "LAPIS_HOOK_NONCE": "0123456789abcdef" * 2,
+                    "LAPIS_HOOK_TTY": "/dev/null",
+                },
+            ):
+                relay.relay("codex", json.dumps(source))
+        payload = frames[0].split(b";", 3)[3].rstrip(b"\x07")
+        self.assertEqual(
+            json.loads(base64.b64decode(payload)),
+            {
+                "type": "agent-turn-complete",
+                "thread-id": "019a0000-0000-7000-8000-000000000001",
+                "turn-id": "t1",
+            },
+        )
+
+    def test_top_level_notify_without_tomllib(self):
+        parse = relay.top_level_notify
+        self.assertEqual(
+            parse('model = "x"\nnotify = ["notify-send", "-a", \'lapis\']\n'),
+            ["notify-send", "-a", "lapis"],
+        )
+        self.assertEqual(
+            parse('notify = [\n  "sh", # the shell\n  "-c",\n  "echo \\"hi\\"",\n]\n'),
+            ["sh", "-c", 'echo "hi"'],
+        )
+        self.assertEqual(parse("notify = []\n"), [])
+        self.assertIsNone(parse('[profiles.x]\nnotify = ["inside-a-table"]\n'))
+        self.assertIsNone(parse('notify = "not-an-array"\n'))
+        self.assertIsNone(parse('notify = ["unterminated"\n'))
+        self.assertIsNone(parse('model = "x"\n'))
+
+    def test_chain_runs_the_users_notify_without_tomllib(self):
+        with tempfile.TemporaryDirectory() as home:
+            Path(home, "config.toml").write_text(
+                'notify = ["user-notify", "--flag"]\n[tui]\nnotify = ["no"]\n',
+                encoding="utf-8",
+            )
+            real_import = __import__
+
+            def no_tomllib(name, *args, **kwargs):
+                if name == "tomllib":
+                    raise ImportError(name)
+                return real_import(name, *args, **kwargs)
+
+            with patch.dict(os.environ, {"CODEX_HOME": home}):
+                with patch("builtins.__import__", side_effect=no_tomllib):
+                    with patch.object(os, "execvp") as execvp:
+                        relay.chain('{"type":"agent-turn-complete"}')
+        execvp.assert_called_once_with(
+            "user-notify",
+            ["user-notify", "--flag", '{"type":"agent-turn-complete"}'],
+        )
 
 
 if __name__ == "__main__":

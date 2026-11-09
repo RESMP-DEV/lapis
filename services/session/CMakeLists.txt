@@ -76,6 +76,15 @@ target_include_directories(lapis_local_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_D
 target_link_libraries(lapis_local_protocol
     PRIVATE lapis_project_options lapis_session_platform lapis_session_launch
     PUBLIC lapis_terminal lapis_attention Qt6::Core)
+# The hook relay python3 runs for a local Codex agent's notify program and
+# for agents on other machines (the desktop), compiled in as text.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/terminal_hook_relay.py)
+file(READ src/terminal_hook_relay.py LAPIS_TERMINAL_HOOK_RELAY)
+configure_file(src/terminal_hook_relay.hpp.in
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/terminal_hook_relay.hpp" @ONLY)
+add_library(lapis_terminal_hook_relay INTERFACE)
+target_include_directories(lapis_terminal_hook_relay INTERFACE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
 add_library(lapis_pty_process STATIC src/platform/posix/pty_process.cpp src/platform/posix/pty_process.hpp)
 target_link_libraries(lapis_pty_process PRIVATE lapis_project_options PUBLIC lapis_session_platform lapis_terminal lapis_session_launch Qt6::Core)
 add_library(lapis_history STATIC src/history_store.cpp src/history_worker.cpp)
