@@ -25,52 +25,32 @@ struct TerminalSnapshot;
 namespace lapis::desktop {
 
 // {"nextPrompt": {"auto": true, "model": "claude-opus-5-5", "effort": "",
-// "minConfidence": 0, "maxPerHour": 60}}. Off unless asked for: each
-// prediction is a model call on the Claude Code plan this Mac is signed in to.
+// "maxPerHour": 60}}. Off unless asked for: each prediction is a model call on
+// the Claude Code plan this Mac is signed in to. Retired keys (experiment,
+// experimentModels, localEndpoint, localModel, holdout, minConfidence,
+// experimentMinConfidence, returnShare) are ignored.
 struct NextPromptSettings {
     bool automatic{false};
     QString model{QStringLiteral("claude-opus-5-5")};
-    QString effort;            // empty: the CLI's own
-    double minConfidence{0.0}; // every probability-bearing guess is offered
+    QString effort; // empty: the CLI's own
     int maxPerHour{60};
-    // Experiments: this share of guesses goes to another arm, picked evenly
-    // from `experimentModels` (other Claude models, through the same CLI)
-    // and, when `localEndpoint` is set, a local model behind an
-    // OpenAI-compatible endpoint. Each guess records its arm, so arms can be
-    // compared on what the person then sent. Off by default: at a few dozen
-    // guesses a day, one live comparison (the context arm) is all that can
-    // reach a verdict.
-    double experimentShare{0.0};
-    QStringList experimentModels{QStringLiteral("claude-sonnet-5-5")};
-    QString localEndpoint; // e.g. http://host:8000/v1; empty: no local arm
-    QString localModel;
     // Ordered OpenAI-compatible endpoints (`providers`) that replace the CLI
-    // as one chain for the main guess: {url, model}, optionally name,
-    // apiKeyEnv, timeoutSeconds, maxTokens and temperature. A transport,
-    // auth or HTTP failure moves to the next; the chain is skipped for the
-    // experiment arms, which keep their own model or local endpoint.
+    // as one chain for the guess: {url, model}, optionally name, apiKeyEnv,
+    // timeoutSeconds, maxTokens and temperature. A transport, auth or HTTP
+    // failure moves to the next.
     QJsonArray providers;
-    // Held out: this share of guesses is made but never shown, and compared
-    // with what the person then typed, so prediction can be measured apart
-    // from acceptance (a shown guess shapes what is sent). Off by default.
-    double holdoutShare{0.0};
-    // The live comparison: the context the helper adds (`contextArms`; see
-    // next_prompt.py), picked at random and recorded on the guess. wide is an
-    // opt-in five-candidate arm: the first is shown and all are logged.
+    // The live comparison: the context the helper adds (`contextArms`, base
+    // or wide; see next_prompt.py), picked at random and recorded on the
+    // guess. wide is an opt-in five-candidate arm: the first is shown and all
+    // are logged.
     QStringList contextArms{QStringLiteral("base")};
     // The second live comparison, drawn apart from the context arm: the
     // system prompt as it is, or with the helper's three checks (`promptArms`;
     // see next_prompt.py's CHECKS), picked at random and recorded on the guess.
     QStringList promptArms{QStringLiteral("base"), QStringLiteral("checks")};
-    // A stricter floor for half the guesses, when above `minConfidence`. Off
-    // by default: a guess's probability is the model's own, and models do not
-    // share a scale (DeepSeek's top guess rarely passes 0.3 where Opus's
-    // often passed 0.4), so a fixed floor hides one model's every guess.
-    double experimentMinConfidence{0.0};
-    // When the person comes back to an agent whose guess is at least
-    // `returnMinutes` old, `returnShare` of those returns guess again.
+    // When the person comes back to an agent whose untyped guess is at least
+    // `returnMinutes` old, it is guessed again.
     int returnMinutes{30};
-    double returnShare{1.0};
     bool operator==(const NextPromptSettings&) const = default;
 };
 [[nodiscard]] NextPromptSettings parse_next_prompt(const QJsonValue& value);
@@ -83,9 +63,8 @@ struct NextPromptSettings {
 // (next_prompt.py) reads the conversation where the agent runs, then a model
 // on this Mac sees it with the person's standing instructions, the agent's
 // screen and every other agent's state. The top guess, when it has a usable
-// probability of at least `minConfidence`, is offered, dim at the agent's
-// cursor; Tab types it for the person to edit. A second Tab can send that
-// unchanged guess (see TerminalSurface).
+// probability, is offered, dim at the agent's cursor; Tab types it for the person to edit. A second
+// Tab can send that unchanged guess (see TerminalSurface).
 //
 // Every prediction and what became of it (seen, used, replaced, and the
 // prompt the person then sent, compared with the guess) goes to a
@@ -100,7 +79,7 @@ class NextPrompt final : public QObject {
     Q_PROPERTY(int revision READ revision NOTIFY changed)
     Q_PROPERTY(bool enabled READ enabled NOTIFY changed)
     Q_PROPERTY(double confidentThreshold READ confidentThreshold CONSTANT)
-    // Guesses that failed in a row (any arm), and what the last one hit, so a
+    // Guesses that failed in a row, and what the last one hit, so a
     // dead model call shows instead of Tab quietly offering nothing.
     Q_PROPERTY(int failureStreak READ failureStreak NOTIFY failingChanged)
     Q_PROPERTY(QString lastFailure READ lastFailure NOTIFY failingChanged)
@@ -213,7 +192,6 @@ class NextPrompt final : public QObject {
         qint64 seen_ms{}; // when first on screen; 0 while unseen
         QString said;     // the agent's last reply, clipped to said_limit
         double p{};       // the model's probability for it
-        bool hidden{};    // held out: made, never shown
         qint64 made_ms{}; // when it was made; 0 for a restored offer
     };
     // The last guess made for an agent, to tell a repeat (see turnFinished).
@@ -231,7 +209,7 @@ class NextPrompt final : public QObject {
     // `returned`: minutes since the stale guess this run replaces, when the
     // person came back to the agent (see focused); -1 otherwise.
     void run(const QString& id, bool force, int returned = -1);
-    // A return to an agent whose guess is old: the return arm, once per offer.
+    // A return to an agent whose guess is old: guessed again, once per offer.
     void returned(const QString& id);
     QSet<QString> returns_decided_;
     // The last offer shown to an agent, until the prompt the person sends
@@ -260,11 +238,9 @@ class NextPrompt final : public QObject {
     void succeeded();
     // The arms one guess was made under, recorded with it.
     struct Arms {
-        QString arm; // "control", "model" or "local"
         QString model;
         QString context;  // a contextArms entry
         QString prompt;   // a promptArms entry
-        double floor{};   // the minimum confidence it was offered at
         int returned{-1}; // see run()
     };
     void predict(const QString& id, quint64 generation, const QJsonObject& context,

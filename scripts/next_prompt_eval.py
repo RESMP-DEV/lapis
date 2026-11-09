@@ -369,20 +369,9 @@ def replay(arguments):
                 file=sys.stderr,
             )
             return stopped("manifest item is incomplete")
-        for key in ("turns", "legacy_turns"):
-            if key in item and not isinstance(item[key], list):
-                print(
-                    "manifest item field is not a list: {}".format(key), file=sys.stderr
-                )
-                return stopped("manifest item is malformed")
-    if arguments.context_arm == "thread" and any(
-        "earlier" not in item for item in items
-    ):
-        print(
-            "thread context requires sampled items to carry earlier messages",
-            file=sys.stderr,
-        )
-        return stopped("thread context data is unavailable")
+        if "turns" in item and not isinstance(item["turns"], list):
+            print("manifest item field is not a list: turns", file=sys.stderr)
+            return stopped("manifest item is malformed")
 
     if items and not arguments.manifest:
         saved = save_manifest(items)
@@ -418,12 +407,7 @@ def replay(arguments):
             when = when.strftime("%a %-I:%M %p")
         except ValueError:
             pass
-        item_turns = item.get("turns", [])
-        turns = (
-            item.get("legacy_turns", item_turns)
-            if arguments.context_arm == "legacy"
-            else item_turns
-        )
+        turns = item.get("turns", [])
         if arguments.context == "last":
             # Only what the agent last said: whether the rest of the context
             # earns its cost.
@@ -435,8 +419,6 @@ def replay(arguments):
             "context": {
                 "turns": turns,
                 "recent": item.get("recent", []),
-                "snippets": item.get("snippets", []),
-                "earlier": item.get("earlier", []),
                 "conversation": conversation,
             },
             "time": when,
@@ -520,36 +502,16 @@ def replay(arguments):
     return report, rows
 
 
-def held_out(offers, settled_shown):
-    """Prediction apart from acceptance: guesses made but never shown, against
-    what the person then typed, beside the same figures for shown guesses
-    (which the person could take, so they match more often)."""
-    hidden = [o for o in offers.values() if o.get("hidden")]
-    settled = [o for o in hidden if o["outcome"]]
-
-    def figures(part):
-        if not part:
-            return {"settled": 0, "exact": None, "mean_similarity": None}
-        exact = sum(1 for o in part if o["outcome"].get("result") == "as_offered")
-        similarity = [float(o["outcome"].get("similarity", 0) or 0) for o in part]
-        return {
-            "settled": len(part),
-            "exact": round(exact / len(part), 3),
-            "mean_similarity": round(sum(similarity) / len(similarity), 3),
-        }
-
-    return {
-        "made": len(hidden),
-        "hidden": figures(settled),
-        "shown": figures(settled_shown),
-    }
-
-
 def acceptance(events):
     """Offers by id from lapis's log, and the rates that matter: of the offers
     seen on screen, how many were used (sent with Tab, or typed with
     Option-Tab), how many after typing first, how fast, and what the settled
-    prompt turned out to be."""
+    prompt turned out to be.
+
+    Older records carry fields of finished experiments (a model or local
+    `arm`, `hidden` holdout guesses, a `min_confidence` floor, a `keep`
+    return); they are read without those comparisons. A held-out guess was
+    never shown, so it counts as predicted, not offered."""
     offers = {}
     for e in events:
         key = e.get("offer")
@@ -569,11 +531,8 @@ def acceptance(events):
             )
             offer.update(
                 shown=bool(e.get("shown")),
-                hidden=bool(e.get("hidden")),
-                arm=str(e.get("arm") or "control"),
                 context_arm=str(e.get("context_arm") or "none"),
                 prompt_arm=str(e.get("prompt_arm") or "none"),
-                floor=e.get("min_confidence"),
                 returned=e.get("returned_minutes"),
                 agent=e.get("agent", ""),
                 t=e.get("t", ""),
@@ -674,30 +633,15 @@ def acceptance(events):
         ),
         "failed": dict(sorted(failures.items(), key=lambda kv: -kv[1])),
         "failed_by_kind": dict(sorted(failure_kinds.items(), key=lambda kv: -kv[1])),
-        "held_out": held_out(offers, settled),
-        "by_arm": {},
         "skipped": sum(1 for e in events if e.get("event") == "skipped"),
         "by_category": {},
         "by_confidence": [],
     }
-    arms = defaultdict(list)
-    for o in offers.values():
-        if "shown" in o:
-            arms[o["arm"]].append(o)
-    for arm, part in sorted(arms.items()):
-        arm_seen = [o for o in part if o["shown"] and o["seen"]]
-        report["by_arm"][arm] = {
-            "predicted": len(part),
-            "seen": len(arm_seen),
-            "acceptance": rate([o for o in arm_seen if o["used"]], arm_seen),
-        }
-    # The live arms (see NextPromptSettings): context, floor and return.
+    # The live arms (see NextPromptSettings): context and prompt.
     contexts = defaultdict(list)
-    floors = defaultdict(list)
     for o in offers.values():
         if "shown" in o:
             contexts[o["context_arm"]].append(o)
-            floors[str(o["floor"])].append(o)
     report["by_context_arm"] = {}
     for arm, part in sorted(contexts.items()):
         arm_seen = [o for o in part if o["shown"] and o["seen"]]
@@ -742,33 +686,17 @@ def acceptance(events):
                 [o for o in part if o["category"] == "correct"], part
             ),
         }
-    report["by_floor"] = {}
-    for floor, part in sorted(floors.items()):
-        floor_seen = [o for o in part if o["shown"] and o["seen"]]
-        floor_used = [o for o in floor_seen if o["used"]]
-        report["by_floor"][floor] = {
-            "predicted": len(part),
-            "offered": sum(1 for o in part if o["shown"]),
-            "seen": len(floor_seen),
-            "used": len(floor_used),
-            "acceptance": rate(floor_used, floor_seen),
-            "used_per_guess": rate(floor_used, part),
-        }
-    # A return keeps the old guess or guesses again; either way, was the
-    # guess then on screen used?
+    # A return guesses again: was the fresh guess made, and then used? An
+    # older record's `keep` return kept its old guess and is left out.
     reguesses = sorted(
         (o for o in offers.values() if isinstance(o.get("returned"), int)),
         key=lambda o: o["t"],
     )
-    returns = {"keep": [0, 0], "reguess": [0, 0, 0]}
+    returns = {"returns": 0, "guessed": 0, "used": 0}
     for e in events:
-        if e.get("event") != "return" or e.get("arm") not in returns:
+        if e.get("event") != "return" or e.get("arm", "reguess") != "reguess":
             continue
-        counts = returns[e["arm"]]
-        counts[0] += 1
-        if e["arm"] == "keep":
-            counts[1] += bool((offers.get(e.get("offer")) or {}).get("used"))
-            continue
+        returns["returns"] += 1
         fresh = next(
             (
                 o
@@ -778,16 +706,9 @@ def acceptance(events):
             None,
         )
         if fresh:
-            counts[1] += 1
-            counts[2] += bool(fresh["used"])
-    report["returns"] = {
-        "keep": {"returns": returns["keep"][0], "used": returns["keep"][1]},
-        "reguess": {
-            "returns": returns["reguess"][0],
-            "guessed": returns["reguess"][1],
-            "used": returns["reguess"][2],
-        },
-    }
+            returns["guessed"] += 1
+            returns["used"] += bool(fresh["used"])
+    report["returns"] = returns
     groups = defaultdict(list)
     for o in seen:
         groups[o["category"]].append(o)
@@ -1063,7 +984,7 @@ def main(argv=None):
         "--context-arm",
         choices=next_prompt.CONTEXT_ARMS,
         default="base",
-        help="base is the final-block view; legacy is the old merged clip",
+        help="base asks for three candidates; wide asks for five",
     )
     replay_mode.add_argument(
         "--oracle",

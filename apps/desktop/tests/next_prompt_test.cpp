@@ -33,9 +33,6 @@ NextPromptSettings on(int max_per_hour = 60, const QString& effort = {}) {
     settings.automatic = true;
     settings.maxPerHour = max_per_hour;
     settings.effort = effort;
-    settings.experimentShare = 0;         // the chosen model every time
-    settings.holdoutShare = 0;            // and every guess shown
-    settings.experimentMinConfidence = 0; // at the one floor
     settings.contextArms = {QStringLiteral("base")};
     return settings;
 }
@@ -95,38 +92,37 @@ QString fixtureProgram(const QDir& root, const QString& name) {
 void settingsReadFromTheConfig() {
     const auto defaults = lapis::desktop::parse_next_prompt(QJsonValue());
     require(defaults == NextPromptSettings{} && !defaults.automatic &&
-                defaults.model == QLatin1String("claude-opus-5-5") &&
-                defaults.minConfidence == 0.0 && defaults.maxPerHour == 60,
-            "off by default, Opus, every guess offered, sixty an hour");
+                defaults.model == QLatin1String("claude-opus-5-5") && defaults.maxPerHour == 60,
+            "off by default, Opus, sixty an hour");
     const auto set = lapis::desktop::parse_next_prompt(
         QJsonDocument::fromJson(R"({"auto": true, "model": "claude-sonnet-5", "effort": "low",
-                                    "minConfidence": 7, "maxPerHour": -3})")
+                                    "maxPerHour": -3})")
             .object());
     require(set.automatic && set.model == QLatin1String("claude-sonnet-5") &&
-                set.effort == QLatin1String("low") && set.minConfidence == 1.0 &&
-                set.maxPerHour == 0,
+                set.effort == QLatin1String("low") && set.maxPerHour == 0,
             "each field, clamped");
     require(defaults.contextArms == QStringList{QStringLiteral("base")} &&
-                defaults.experimentShare == 0.0 && defaults.holdoutShare == 0.0 &&
-                defaults.experimentMinConfidence == 0.0 && defaults.returnMinutes == 30 &&
-                defaults.returnShare == 1.0,
-            "the base context by default: no model arm, holdout, floor arm or wide-candidate cost");
+                defaults.returnMinutes == 30,
+            "the base context by default: no wide-candidate cost");
     const auto arms = lapis::desktop::parse_next_prompt(
-        QJsonDocument::fromJson(R"({"contextArms": ["thread", "bogus", "thread"],
-                                    "experimentMinConfidence": 2, "returnMinutes": 0,
-                                    "returnShare": 0})")
+        QJsonDocument::fromJson(R"({"contextArms": ["wide", "bogus", "wide"],
+                                    "returnMinutes": 0})")
             .object());
-    require(arms.contextArms == QStringList{QStringLiteral("thread")} &&
-                arms.experimentMinConfidence == 1.0 && arms.returnMinutes == 1 &&
-                arms.returnShare == 0.0,
-            "known arms once each, clamped floor and return settings");
+    require(arms.contextArms == QStringList{QStringLiteral("wide")} && arms.returnMinutes == 1,
+            "known arms once each, a clamped return setting");
     const auto none = lapis::desktop::parse_next_prompt(
         QJsonDocument::fromJson(R"({"contextArms": []})").object());
     require(none.contextArms == QStringList{QStringLiteral("base")}, "no arms: the base one");
-    const auto offline_only = lapis::desktop::parse_next_prompt(
-        QJsonDocument::fromJson(R"({"contextArms": ["legacy"]})").object());
-    require(offline_only.contextArms == QStringList{QStringLiteral("base")},
-            "legacy is an offline replay arm, not a live arm");
+    // The finished experiments' settings and arms load as if absent.
+    const auto retired = lapis::desktop::parse_next_prompt(
+        QJsonDocument::fromJson(
+            R"({"contextArms": ["legacy", "thread", "retrieval", "evidence", "moves", "pack"],
+                "experiment": 0.5, "experimentModels": ["claude-sonnet-5-5"],
+                "localEndpoint": "http://127.0.0.1:8000/v1", "localModel": "local",
+                "holdout": 0.2, "minConfidence": 0.4, "experimentMinConfidence": 0.4,
+                "returnShare": 0.5})")
+            .object());
+    require(retired == NextPromptSettings{}, "the retired experiments' settings are ignored");
     require(defaults.promptArms == QStringList({QStringLiteral("base"), QStringLiteral("checks")}),
             "the prompt checks are compared half and half by default");
     const auto prompts = lapis::desktop::parse_next_prompt(
@@ -411,9 +407,9 @@ void predictsAndOffers() {
     // Another machine: its conversation is read there, with the helper on stdin.
     write(root.filePath(QStringLiteral("predict.reply")),
           R"({"category": "new", "candidates": [{"text": "rerun it on 8 GPUs", "p": 0.2}]})");
-    auto cautious = on(60, QStringLiteral("low"));
-    cautious.minConfidence = 0.4;
-    next.setSettings(cautious);
+    // Tie the offering behaviour to the parsed default, not only the struct.
+    next.setSettings(lapis::desktop::parse_next_prompt(QJsonObject{
+        {QStringLiteral("auto"), true}, {QStringLiteral("effort"), QStringLiteral("low")}}));
     next.turnFinished(QStringLiteral("b"));
     require(waitFor([&] { return events(log).size() == 4; }), "the remote prediction is logged");
     const auto ssh =
@@ -425,24 +421,11 @@ void predictsAndOffers() {
         "ssh runs the helper there without prompts");
     require(read(root.filePath(QStringLiteral("ssh.stdin"))).contains("def predict("),
             "and sends it on stdin");
-    require(next.suggestion(QStringLiteral("b")).isEmpty() &&
-                !events(log).last().value(QStringLiteral("shown")).toBool(),
-            "below a chosen minConfidence, a guess is logged but not offered");
-    // Tie the offering behaviour to the parsed default, not only the struct.
-    const auto default_on = lapis::desktop::parse_next_prompt(QJsonObject{
-        {QStringLiteral("auto"), true}, {QStringLiteral("effort"), QStringLiteral("low")}});
-    // Holdout sampling has its own deterministic loop below; keep this case
-    // observable every time instead of making the default threshold flaky.
-    auto default_without_holdout = default_on;
-    default_without_holdout.holdoutShare = 0;
-    // The floor arm, which hides half the unlikely guesses, has its own case.
-    default_without_holdout.experimentMinConfidence = 0;
-    next.setSettings(default_without_holdout);
-    next.turnFinished(QStringLiteral("b"));
-    require(waitFor([&] {
-                return next.suggestion(QStringLiteral("b")) == QLatin1String("rerun it on 8 GPUs");
-            }),
-            "an unlikely guess is still offered by default");
+    require(next.suggestion(QStringLiteral("b")) == QLatin1String("rerun it on 8 GPUs") &&
+                events(log).last().value(QStringLiteral("shown")).toBool() &&
+                !events(log).last().contains(QStringLiteral("min_confidence")) &&
+                !events(log).last().contains(QStringLiteral("arm")),
+            "an unlikely guess is still offered, with no floor or model arm recorded");
 
     // A new turn withdraws the old offer; the hourly cap stops more.
     write(root.filePath(QStringLiteral("predict.reply")),
@@ -463,7 +446,7 @@ void predictsAndOffers() {
     require(withdrawn.value(QStringLiteral("event")) == QLatin1String("withdrawn") &&
                 withdrawn.value(QStringLiteral("reason")) == QLatin1String("new_turn") &&
                 withdrawn.value(QStringLiteral("seen")).toBool() &&
-                withdrawn.value(QStringLiteral("offer")).toString().endsWith(QStringLiteral(".4")),
+                withdrawn.value(QStringLiteral("offer")).toString().endsWith(QStringLiteral(".3")),
             "an offer seen but not used is recorded as replaced");
     QFile::remove(root.filePath(QStringLiteral("context.args")));
     static_cast<void>(waitFor([] { return false; }, 300));
@@ -516,29 +499,6 @@ void predictsAndOffers() {
     next.turnFinished(QStringLiteral("a"));
     require(waitFor([&] { return next.failureStreak() == 0; }), "a guess ends the streak");
     next.seen(QStringLiteral("a")); // so the next turn is not an unseen repeat
-    // A held-out guess is made and logged but never shown.
-    auto held_out = on(60);
-    held_out.holdoutShare = 0.5; // the cap; every draw below 0.5 hides
-    for (int tries = 0; tries < 40; ++tries) {
-        next.setSettings(held_out);
-        const auto before = events(log).size();
-        next.turnFinished(QStringLiteral("a"));
-        require(waitFor([&] {
-                    const auto all = events(log);
-                    return all.size() > before &&
-                           all.last().value(QStringLiteral("event")) == QLatin1String("predicted");
-                }),
-                "a guess is made");
-        const auto made = events(log).last();
-        if (made.value(QStringLiteral("hidden")).toBool()) {
-            require(!made.value(QStringLiteral("shown")).toBool() &&
-                        next.suggestion(QStringLiteral("a")).isEmpty(),
-                    "a held-out guess is never shown");
-            break;
-        }
-        require(tries < 39, "a guess is held out at the configured share");
-        next.seen(QStringLiteral("a"));
-    }
     next.setSettings(on(60));
     write(root.filePath(QStringLiteral("no-claude")), "yes");
     const auto before_missing_cli = events(log).size();
@@ -584,7 +544,7 @@ void predictsAndOffers() {
 // guess unchanged. A turn the agent starts itself waits; /clear drops it.
 // A turn with no new prompt since an unseen guess is a repeat: nothing is
 // guessed until the agent is shown, and then once. The guess carries its
-// probability; experiments pick another arm.
+// probability; the live arms reach the helper and the log.
 void repeatsWaitUntilShown() {
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-next-XXXXXX"));
     require(directory.isValid(), "fixture directory");
@@ -627,23 +587,8 @@ void repeatsWaitUntilShown() {
             ++predicted;
     require(predicted == 2, "once");
 
-    // Experiments: every guess from the other model, logged as its arm.
-    auto settings = on();
-    settings.experimentShare = 1;
-    settings.experimentModels = {QStringLiteral("claude-sonnet-5-5")};
-    next.setSettings(settings);
-    next.seen(QStringLiteral("a"));
-    next.turnFinished(QStringLiteral("a"));
-    require(waitFor([&] {
-                const auto last = events(log).last();
-                return last.value(QStringLiteral("event")) == QLatin1String("predicted") &&
-                       last.value(QStringLiteral("arm")) == QLatin1String("model") &&
-                       last.value(QStringLiteral("model")) == QLatin1String("claude-sonnet-5-5");
-            }),
-            "an experiment's guess is logged with its arm and model");
-
     // The main guess carries the provider chain to the helper.
-    settings = on();
+    auto settings = on();
     settings.providers =
         QJsonArray{QJsonObject{{QStringLiteral("url"), QStringLiteral("https://one.test/v1")},
                                {QStringLiteral("model"), QStringLiteral("deepseek")},
@@ -666,15 +611,12 @@ void repeatsWaitUntilShown() {
                 "the helper is given the provider chain");
     }
 
-    // The context arm goes to the helper and onto the guess; the floor arm
-    // offers a p=0.6 guess at the 0 floor and holds it back at 0.9.
+    // The context and prompt arms go to the helper and onto the guess.
     settings = on();
-    settings.contextArms = {QStringLiteral("retrieval")};
+    settings.contextArms = {QStringLiteral("wide")};
     settings.promptArms = {QStringLiteral("checks")};
-    settings.experimentMinConfidence = 0.9;
     next.setSettings(settings);
-    QSet<double> floors;
-    for (int round = 0; round < 40 && floors.size() < 2; ++round) {
+    {
         const auto before = events(log).size();
         next.seen(QStringLiteral("a"));
         next.turnFinished(QStringLiteral("a"));
@@ -683,22 +625,14 @@ void repeatsWaitUntilShown() {
                     return all.size() > before &&
                            all.last().value(QStringLiteral("event")) ==
                                QLatin1String("predicted") &&
-                           all.last().value(QStringLiteral("context_arm")) ==
-                               QLatin1String("retrieval");
+                           all.last().value(QStringLiteral("context_arm")) == QLatin1String("wide");
                 }),
                 "a guess is logged with its context arm");
-        const auto last = events(log).last();
-        const auto floor = last.value(QStringLiteral("min_confidence")).toDouble();
-        floors.insert(floor);
-        require((floor == 0.0 && last.value(QStringLiteral("shown")).toBool()) ||
-                    (floor == 0.9 && !last.value(QStringLiteral("shown")).toBool()),
-                "a guess is offered against the floor it was drawn");
     }
-    require(floors.size() == 2, "both floors are drawn");
     const auto arguments = QString::fromUtf8(read(root.filePath(QStringLiteral("predict.args"))))
                                .split(QLatin1Char('\n'));
     const auto at = arguments.indexOf(QStringLiteral("--context-arm"));
-    require(at > 0 && arguments.value(at + 1) == QLatin1String("retrieval"),
+    require(at > 0 && arguments.value(at + 1) == QLatin1String("wide"),
             "the helper is told the context arm");
     const auto prompt_at = arguments.indexOf(QStringLiteral("--prompt-arm"));
     require(prompt_at > 0 && arguments.value(prompt_at + 1) == QLatin1String("checks"),
@@ -709,7 +643,6 @@ void repeatsWaitUntilShown() {
     // Coming back to an old guess: guessed again, and the return is logged.
     settings = on();
     settings.returnMinutes = 0;
-    settings.returnShare = 1;
     next.setSettings(settings);
     next.seen(QStringLiteral("a"));
     next.turnFinished(QStringLiteral("a"));
@@ -726,7 +659,7 @@ void repeatsWaitUntilShown() {
     bool withdrawn = false;
     for (const auto& event : events(log)) {
         returned |= event.value(QStringLiteral("event")) == QLatin1String("return") &&
-                    event.value(QStringLiteral("arm")) == QLatin1String("reguess");
+                    event.value(QStringLiteral("age_minutes")).toInt(-1) == 0;
         withdrawn |= event.value(QStringLiteral("event")) == QLatin1String("withdrawn") &&
                      event.value(QStringLiteral("reason")) == QLatin1String("return");
     }
@@ -735,25 +668,25 @@ void repeatsWaitUntilShown() {
         QJsonDocument::fromJson(read(root.filePath(QStringLiteral("predict.stdin")))).object();
     require(stdin_bundle.value(QStringLiteral("returned_minutes")).toInt(-1) == 0,
             "the model is told the person came back");
-    // Once per offer: the fresh guess is new, so a second look decides again,
-    // but the same offer is never decided twice.
+    // Once per offer: the fresh guess is new, so a later look returns to it
+    // again, but the same offer is never returned to twice.
     const auto count_returns = [&] {
         int count = 0;
         for (const auto& event : events(log))
             count += event.value(QStringLiteral("event")) == QLatin1String("return") ? 1 : 0;
         return count;
     };
-    settings.returnShare = 0.0001;
-    next.setSettings(settings);
+    require(waitFor([&] { return !next.suggestion(QStringLiteral("a")).isEmpty(); }),
+            "the fresh guess is offered");
     const auto before = count_returns();
     next.focused(QStringLiteral("a"));
     next.focused(QStringLiteral("a"));
     QCoreApplication::processEvents();
-    require(count_returns() == before + 1, "each offer's return is decided once");
+    require(count_returns() == before + 1, "each offer is returned to once");
 }
 
-// The chain answers the main guess, an experiment model keeps its own route,
-// and the chain works on a Mac without the Claude Code CLI.
+// The chain answers the guess, an empty chain keeps the CLI route, and the
+// chain works on a Mac without the Claude Code CLI.
 void providerChainKeepsItsOwnRoute() {
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-next-XXXXXX"));
     require(directory.isValid(), "fixture directory");
@@ -807,26 +740,24 @@ void providerChainKeepsItsOwnRoute() {
         require(budget > 0 && arguments.value(budget + 1).toInt() > 0,
                 "the chain is given the guess's time budget");
     }
-    // An experiment model keeps its own route: the chain is not passed, and
-    // an empty list is, so the helper cannot read lapis.json itself.
-    settings.experimentShare = 1;
-    settings.experimentModels = {QStringLiteral("claude-sonnet-5-5")};
-    next.setSettings(settings);
-    const auto before_experiment = events(log).size();
+    // Without a chain an empty list is passed, so the helper keeps the CLI
+    // route rather than reading lapis.json itself.
+    next.setSettings(on());
+    const auto before_cli = events(log).size();
     next.seen(QStringLiteral("a"));
     next.turnFinished(QStringLiteral("a"));
     require(waitFor([&] {
                 const auto all = events(log);
-                return all.size() > before_experiment &&
-                       all.last().value(QStringLiteral("event")) == QLatin1String("predicted") &&
-                       all.last().value(QStringLiteral("arm")) == QLatin1String("model");
+                return all.size() > before_cli &&
+                       all.last().value(QStringLiteral("event")) == QLatin1String("predicted");
             }),
-            "the experiment's guess is made");
+            "the CLI's guess is made");
     {
         const auto arguments = helper_arguments();
         const auto at = arguments.indexOf(QStringLiteral("--providers"));
-        require(at > 0 && arguments.value(at + 1) == QLatin1String("[]"),
-                "the experiment arm keeps its own route");
+        require(at > 0 && arguments.value(at + 1) == QLatin1String("[]") &&
+                    !arguments.contains(QStringLiteral("--endpoint")),
+                "no chain keeps the CLI route");
     }
     // The chain replaces the CLI call, so a Mac without the CLI still guesses.
     write(root.filePath(QStringLiteral("no-claude")), "yes");

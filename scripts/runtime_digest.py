@@ -1,7 +1,7 @@
 """What lapis did for the person in the last day, from its own runtime logs.
 
 A short, read-only digest of use rather than of code: whether guesses worked
-and were taken (by arm, and held out), Ultra Tab answers against what composing
+and were taken (by prompt arm), Ultra Tab answers against what composing
 cost, how Tab moved, ping decisions and log warnings. It
 reads ~/.lapis/runtime only and prints counts, never prompt or transcript text.
 
@@ -84,14 +84,15 @@ def guesses(runtime, since):
         for e in events
         if e.get("event") == "used" and (key := offer_key(e)) is not None
     }
+    # By the live prompt arm. Older records also carry a model `arm` and
+    # held-out guesses from finished experiments; neither is reported.
     arms = {}
     for key, offer in predicted.items():
-        arm = arms.setdefault(offer.get("arm") or "control", Counter())
+        name = offer.get("prompt_arm")
+        arm = arms.setdefault(name if isinstance(name, str) else "none", Counter())
         arm["predicted"] += 1
         arm["seen"] += key in seen
         arm["used"] += key in used
-    outcomes = [e for e in events if e.get("event") == "outcome"]
-    hidden = [o for o in outcomes if o.get("hidden")]
     streak = 0
     for event in reversed(events):
         if event.get("event") == "predicted":
@@ -108,15 +109,9 @@ def guesses(runtime, since):
         ),
         "failing_now": streak,
         "skipped": kinds.get("skipped", 0),
-        "by_arm": {
+        "by_prompt_arm": {
             arm: {**counts, "acceptance": rate(counts["used"], counts["seen"])}
             for arm, counts in sorted(arms.items())
-        },
-        "held_out": {
-            "settled": len(hidden),
-            "exact": rate(
-                sum(o.get("result") == "as_offered" for o in hidden), len(hidden)
-            ),
         },
     }
 
@@ -202,15 +197,12 @@ def lines(report):
         out.append(
             "  failed: " + ", ".join(f"{k} {v}" for k, v in g["failed_by_kind"].items())
         )
-    for arm, counts in g["by_arm"].items():
+    for arm, counts in g["by_prompt_arm"].items():
         taken = counts["acceptance"]
         out.append(
-            f"  {arm}: {counts['predicted']} made, {counts['seen']} seen, {counts['used']} taken"
+            f"  prompt {arm}: {counts['predicted']} made, {counts['seen']} seen,"
+            f" {counts['used']} taken"
             + (f" ({taken:.0%})" if taken is not None else "")
-        )
-    if g["held_out"]["settled"]:
-        out.append(
-            f"  held out: {g['held_out']['settled']} settled, exact {g['held_out']['exact']:.0%}"
         )
     composed = u["composed"].get("composed", 0) + u["composed"].get("fallback", 0)
     answered = sum(u["answers"].values())

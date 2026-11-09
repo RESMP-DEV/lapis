@@ -16,6 +16,8 @@ def stamp(minutes_ago):
 
 class DigestTest(unittest.TestCase):
     def test_counts_use_and_a_failing_streak(self):
+        # Older records keep the finished experiments' fields (a model arm,
+        # a held-out outcome); they are read without those comparisons.
         with tempfile.TemporaryDirectory() as runtime:
             events = [
                 {
@@ -27,7 +29,7 @@ class DigestTest(unittest.TestCase):
                 {
                     "event": "predicted",
                     "offer": "a:2",
-                    "arm": "control",
+                    "prompt_arm": "checks",
                     "t": stamp(50),
                 },
                 {"event": "seen", "offer": "a:2", "t": stamp(49)},
@@ -60,8 +62,9 @@ class DigestTest(unittest.TestCase):
             self.assertEqual((guesses["predicted"], guesses["attempts"]), (2, 6))
             self.assertEqual(guesses["failed_by_kind"], {"limit": 4})
             self.assertEqual(guesses["failing_now"], 4)
-            self.assertEqual(guesses["by_arm"]["control"]["acceptance"], 1.0)
-            self.assertEqual(guesses["held_out"], {"settled": 1, "exact": 0.0})
+            self.assertEqual(guesses["by_prompt_arm"]["checks"]["acceptance"], 1.0)
+            self.assertEqual(guesses["by_prompt_arm"]["none"]["predicted"], 1)
+            self.assertNotIn("held_out", guesses)
             self.assertEqual(report["pings"], {"judged fyi": 1})
             text = "\n".join(runtime_digest.lines(report))
             self.assertIn("FAILING NOW, 4 in a row", text)

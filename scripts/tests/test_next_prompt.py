@@ -460,69 +460,30 @@ class TranscriptTests(Homes):
             ["check the disk", "run the suite"],
         )
         self.assertNotIn("answered", context)
+        for retired in ("snippets", "earlier"):
+            self.assertNotIn(retired, context)
 
-    def test_context_brings_the_persons_messages_before_the_window(self):
-        arguments = next_prompt.argparse.Namespace(
-            cli="claude", conversation="c1", folder=""
-        )
-        window = next_prompt.history
-        with patch.object(
-            next_prompt, "history", lambda turns: window(turns, limit=11)
-        ):
-            context = next_prompt.command_context(arguments)
-        self.assertEqual(
-            context["turns"],
-            [
-                {
-                    "role": "agent",
-                    "text": "Installed.",
-                    "time": "2026-09-28T10:04:00Z",
-                }
-            ],
-        )
-        self.assertEqual(context["earlier"], ["fix the paste bug", "go"])
-
-    def test_context_falls_back_to_snippets_when_the_index_lacks_a_transcript(self):
-        runtime = self.root / "runtime"
-        runtime.mkdir()
-        installed = runtime / "next_prompt.py"
-        installed.write_text("")
-        arguments = next_prompt.argparse.Namespace(
-            cli="omp", conversation="omp1", folder=""
-        )
-        with (
-            patch.object(next_prompt, "__file__", str(installed)),
-            patch.object(next_prompt, "pair_index", return_value={}),
-        ):
-            context = next_prompt.command_context(arguments)
-        self.assertTrue([snippet["text"] for snippet in context["snippets"]])
-
-    def test_past_exchanges_are_indexed_privately_and_retrieved(self):
+    def test_past_prompts_are_indexed_privately(self):
         folder = self.root / "runtime"
         folder.mkdir()
         self.assertEqual(next_prompt.pair_index(str(folder), budget=0), {})
         files = next_prompt.pair_index(str(folder))
         index = folder / next_prompt.INDEX_NAME
         self.assertEqual(stat.S_IMODE(index.stat().st_mode), 0o600)
-        pairs = files[str(self.claude_path)]["pairs"]
-        self.assertEqual([p[2] for p in pairs], ["go"])
-        self.assertIn("Fixed; tests pass.", pairs[0][1])
-        self.assertEqual(files[str(self.codex_path)]["pairs"], [])
-        found = next_prompt.retrieve(files, "The tests pass. Install it?")
-        self.assertEqual([p[2] for p in found], ["go"])
-        self.assertEqual(next_prompt.retrieve(files, "tests pass", skip="c1"), [])
-        self.assertEqual(next_prompt.retrieve(files, "zzz unrelated words"), [])
+        prompts = files[str(self.claude_path)]["prompts"]
+        self.assertEqual([p[2] for p in prompts], ["fix the paste bug", "go"])
         stamp = index.stat().st_mtime_ns
         self.assertEqual(next_prompt.pair_index(str(folder)), files)
         self.assertEqual(index.stat().st_mtime_ns, stamp)
 
-    def test_the_index_holds_no_tool_output(self):
+    def test_the_index_holds_no_tool_output_or_exchanges(self):
         """Tool output stays in the transcript and is read only in use."""
         folder = self.root / "runtime"
         folder.mkdir()
         files = next_prompt.pair_index(str(folder))
         self.assertTrue(files)
         self.assertFalse(any("snippets" in entry for entry in files.values()))
+        self.assertFalse(any("pairs" in entry for entry in files.values()))
         index = folder / next_prompt.INDEX_NAME
         self.assertEqual(
             json.loads(index.read_text())["version"], next_prompt.INDEX_VERSION
@@ -583,7 +544,7 @@ class TranscriptTests(Homes):
                 folder=str(folder), parsed={path: (stamp, turns)}
             )
         self.assertNotIn(path, reads)
-        self.assertEqual([pair[2] for pair in files[path]["pairs"]], ["go"])
+        self.assertEqual([p[2] for p in files[path]["prompts"]][-1], "go")
 
         os.utime(self.claude_path, (stamp + 5, stamp + 5))
         with patch.object(next_prompt, "turns_of", counting):
@@ -591,20 +552,7 @@ class TranscriptTests(Homes):
                 folder=str(folder), parsed={path: (stamp, turns)}
             )
         self.assertIn(path, reads, "a newer transcript is read again")
-        self.assertEqual([pair[2] for pair in files[path]["pairs"]], ["go"])
-
-    def test_pairs_join_an_answer_to_the_agent_turn_it_follows(self):
-        pairs = next_prompt.transcript_pairs(
-            [
-                {"role": "person", "text": "no reply yet", "time": "t0"},
-                {"role": "agent", "text": "the reply", "time": "t1"},
-                {"role": "person", "text": "go", "time": "t2"},
-                {"role": "person", "text": "also go", "time": "t3"},
-                {"role": "agent", "text": "done", "time": "t4"},
-                {"role": "person", "text": "/compact", "time": "t5"},
-            ]
-        )
-        self.assertEqual(pairs, [["t2", "the reply", "go"]])
+        self.assertEqual([p[2] for p in files[path]["prompts"]][-1], "go")
 
     def test_context_brings_what_was_sent_for_an_earlier_offer(self):
         ask = next_prompt.argparse.Namespace
@@ -666,10 +614,9 @@ class TranscriptTests(Homes):
         item = sample["items"][0]
         self.assertEqual((item["conversation"], item["actual"]), (path.stem, "three"))
         self.assertEqual([t["text"] for t in item["turns"]], ["one", "a", "two", "b"])
-        self.assertEqual(
-            [t["text"] for t in item["legacy_turns"]], ["one", "a", "two", "b"]
-        )
         self.assertIn("recent", item)
+        for retired in ("legacy_turns", "snippets"):
+            self.assertNotIn(retired, item)
         for since in ("2026-09-28T11:01:00Z", "2026-09-28T14:01:00+03:00"):
             same = next_prompt.command_sample(
                 next_prompt.argparse.Namespace(
@@ -683,7 +630,7 @@ class TranscriptTests(Homes):
                     count=1, since="", seed=1, exclude=["c1"]
                 )
             )
-        self.assertEqual(remote["items"][0]["snippets"], sample["items"][0]["snippets"])
+        self.assertEqual(remote["items"][0]["turns"], sample["items"][0]["turns"])
         self.assertEqual(list(self.root.rglob(next_prompt.INDEX_NAME)), [])
 
     def test_history_keeps_the_newest_turns_that_fit(self):
@@ -708,20 +655,6 @@ class TranscriptTests(Homes):
         self.assertLessEqual(
             len(text), next_prompt.NARRATION_CHARS + 1 + next_prompt.FINAL_CHARS
         )
-
-    def test_the_legacy_history_keeps_the_old_merged_clip(self):
-        turns = [
-            {
-                "role": "agent",
-                "text": "head\nfinal",
-                "legacy": "head\n" + "M" * 5000,
-                "time": "2026-09-28T10:00:00Z",
-            }
-        ]
-        self.assertEqual(next_prompt.history(turns)[0]["text"], "head\nfinal")
-        legacy = next_prompt.history(turns, legacy=True)[0]["text"]
-        self.assertIn("[...]", legacy)
-        self.assertEqual(len(legacy), 3000 + len("\n[...]\n"))
 
     def test_turns_carry_their_age_relative_to_the_target(self):
         prompt = next_prompt.render(
@@ -775,30 +708,10 @@ class TranscriptTests(Homes):
         self.assertIn("blue jacket", prompt)
         self.assertIn("[-18m] [-dev] check the disk", prompt)
 
-    def test_the_three_move_instruction_names_all_three_moves(self):
-        self.assertIn("Pivot", next_prompt.MOVES)
-        self.assertIn("cross-session", next_prompt.MOVES)
-        self.assertIn("different move", next_prompt.MOVES)
-
-    def test_the_moves_arm_sends_the_three_move_instruction(self):
-        response = json.dumps(
-            {
-                "category": "other",
-                "candidates": [{"text": "go", "p": 0.5}],
-            }
-        )
-        with patch.object(next_prompt, "ask", return_value=(response, {})) as ask:
-            next_prompt.predict({"context": {"turns": []}}, "m", arm="moves")
-        system = ask.call_args.args[0]
-        self.assertIn("Pivot", system)
-        self.assertIn("Before writing, read the agent's latest reply", system)
-
-    def test_omp_turns_snippets_and_session_lookup(self):
+    def test_omp_turns_and_session_lookup(self):
         turns = next_prompt.omp_turns(str(self.omp_path))
         self.assertEqual([t["role"] for t in turns], ["person", "agent"])
         self.assertIn("host-a has 55 GB free", turns[-1]["text"])
-        snippets = next_prompt.omp_snippets(str(self.omp_path))
-        self.assertEqual([s["text"] for s in snippets], ["model-x uses 203 GB"])
         found = next_prompt.find_transcript("omp", "omp1", str(self.work))
         self.assertEqual(found, str(self.omp_path))
 
@@ -811,40 +724,10 @@ class TranscriptTests(Homes):
             with patch.object(next_prompt.time, "time", return_value=when):
                 context = next_prompt.command_context(arguments)
         self.assertEqual(
-            (
-                context["conversation"],
-                context["conversation_id"],
-                [s["text"] for s in context["snippets"]],
-            ),
-            (
-                "2026-09-28T10-00-00-000Z_omp1",
-                "omp1",
-                ["model-x uses 203 GB"],
-            ),
+            (context["conversation"], context["conversation_id"]),
+            ("2026-09-28T10-00-00-000Z_omp1", "omp1"),
         )
         self.assertEqual(list(self.root.rglob(next_prompt.INDEX_NAME)), [])
-
-    def test_tool_and_codex_outputs_are_kept_as_exact_snippets(self):
-        claude = next_prompt.claude_snippets(str(self.claude_path))
-        self.assertEqual([s["text"] for s in claude], ["output"])
-        codex = next_prompt.codex_snippets(str(self.codex_path))
-        self.assertEqual(len(codex), 1)
-        self.assertIn("model-x uses 203 GB", codex[0]["text"])
-
-    def test_snippet_pack_keeps_matching_results_from_before_the_target(self):
-        turns = [{"role": "agent", "text": "model-x is using space on host-a"}]
-        snippets = [
-            {
-                "time": "2026-09-28T10:00:00Z",
-                "text": "model-x uses 203 GB; host-b has 70 GB free",
-            },
-            {"time": "2026-09-28T10:00:00Z", "text": "paste bug fixed"},
-            {"time": "2026-09-28T12:00:00Z", "text": "model-x result after the target"},
-        ]
-        pack = next_prompt.snippet_pack(turns, snippets, target="2026-09-28T11:00:00Z")
-        self.assertEqual(len(pack), 1)
-        self.assertIn("203 GB", pack[0]["text"])
-        self.assertNotIn("after the target", pack[0]["text"])
 
     def test_the_wide_arm_asks_for_five_candidates(self):
         response = json.dumps(
@@ -897,18 +780,9 @@ class TranscriptTests(Homes):
         self.assertEqual(len(next_prompt.parse(body)["candidates"]), 3)
         self.assertEqual(len(next_prompt.parse(body, limit=5)["candidates"]), 5)
 
-    def test_the_pack_arm_quotes_exact_results_and_base_does_not(self):
-        bundle = {
-            "context": {
-                "turns": [],
-                "snippets": [{"text": "model-x uses 203 GB; host-b has 70 GB free"}],
-            }
-        }
-        pack = next_prompt.render(bundle, fence="f", arm="pack")
-        base = next_prompt.render(bundle, fence="f")
-        self.assertIn('kind="snippets"', pack)
-        self.assertIn("model-x uses 203 GB", pack)
-        self.assertNotIn("model-x uses 203 GB", base)
+    def test_only_the_live_context_arms_remain(self):
+        self.assertEqual(next_prompt.CONTEXT_ARMS, ("base", "wide"))
+        self.assertEqual(next_prompt.PROMPT_ARMS, ("base", "checks"))
 
 
 class ModelTests(unittest.TestCase):
@@ -950,36 +824,25 @@ class ModelTests(unittest.TestCase):
             self.assertIn(part, text)
         self.assertTrue(text.endswith("Write the person's next message."))
 
-    def test_each_context_arm_adds_only_its_own_material(self):
+    def test_a_return_and_the_context_arm_reach_the_model(self):
         bundle = {
             "time": "Sat 2:00 pm",
             "context": {
                 "returned_minutes": 45,
                 "turns": [{"role": "agent", "text": "Shall I merge?"}],
+                # A field an older sample may carry, no longer drawn.
                 "earlier": ["ship it tonight"],
             },
         }
-        retrieved = [["t", "Merge now?", "check ci first"]]
         base = next_prompt.render(bundle, fence="f")
         self.assertIn("came 45 minutes ago", base)
         self.assertNotIn("ship it tonight", base)
-        self.assertNotIn("check ci first", base)
-        thread = next_prompt.render(bundle, fence="f", arm="thread")
-        self.assertIn("ship it tonight", thread)
-        similar = next_prompt.render(
-            bundle, fence="f", arm="retrieval", retrieved=retrieved
-        )
-        self.assertIn('they sent: "check ci first"', similar)
-        self.assertNotIn("ship it tonight", similar)
         self.assertNotIn("came 0 minutes", next_prompt.render({}, fence="f"))
         reply = '{"category": "approve", "candidates": [{"text": "go", "p": 0.5}]}'
         with patch.object(next_prompt, "ask", return_value=(reply, {})) as call:
-            answer = next_prompt.predict(bundle, "m", arm="evidence")
-        self.assertEqual(answer["context_arm"], "evidence")
-        self.assertTrue(call.call_args[0][0].endswith(next_prompt.EVIDENCE))
-        with patch.object(next_prompt, "ask", return_value=(reply, {})) as call:
-            next_prompt.predict(bundle, "m")
-        self.assertNotIn(next_prompt.EVIDENCE, call.call_args[0][0])
+            answer = next_prompt.predict(bundle, "m")
+        self.assertEqual(answer["context_arm"], "base")
+        self.assertNotIn(next_prompt.WIDE, call.call_args[0][0])
 
     def test_agent_text_cannot_close_its_block(self):
         text = next_prompt.render(
@@ -1035,45 +898,6 @@ class ModelTests(unittest.TestCase):
             [(c["text"], c["p"], c["scored"]) for c in huge],
             [("huge", 0.0, False)],
         )
-
-    def test_endpoint_answers_must_have_message_content(self):
-        import urllib.request
-
-        class Reply:
-            def __init__(self, body):
-                self.body = body
-
-            def read(self, limit):
-                return json.dumps(self.body).encode()
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_):
-                return False
-
-        for body in (
-            {},
-            {"choices": []},
-            {"choices": [{"message": {"content": None}}]},
-        ):
-            with patch.object(urllib.request, "urlopen", return_value=Reply(body)):
-                with self.assertRaisesRegex(ValueError, "endpoint response"):
-                    next_prompt.ask_endpoint(
-                        "system", "prompt", "http://127.0.0.1", "model"
-                    )
-
-        with patch.object(
-            urllib.request,
-            "urlopen",
-            return_value=Reply({"choices": [{"message": {"content": " hello "}}]}),
-        ):
-            self.assertEqual(
-                next_prompt.ask_endpoint(
-                    "system", "prompt", "http://127.0.0.1", "model"
-                ),
-                ("hello", {}),
-            )
 
     def test_the_model_runs_on_the_plan_with_tools_off(self):
         folder = Path(tempfile.mkdtemp(prefix="lapis-claude-"))
@@ -1166,18 +990,6 @@ class ModelTests(unittest.TestCase):
         self.assertIn("- why is it slow?", text)
         self.assertIn('kind="person">\n[took a guess] go ahead and ship', text)
         self.assertIn('kind="agent">\ngo ahead and ship', text)
-
-    def test_the_local_model_thinking_aloud_is_not_a_guess(self):
-        for text in (
-            "The user wants to know if the download is done.\nWait, let me check.",
-            "Thinking Process:\n1. look",
-            "<think>hmm</think>",
-            "ok go ahead\nWait, actually no",
-        ):
-            self.assertIsNone(next_prompt.spoken(text), text)
-        self.assertEqual(next_prompt.spoken("<think>x</think>\nstatus?"), "status?")
-        for text in ("ok the user list looks right, ship it", "let me see the diff"):
-            self.assertEqual(next_prompt.spoken(text), text)
 
     def test_a_failed_call_is_an_error_not_a_guess(self):
         folder = Path(tempfile.mkdtemp(prefix="lapis-claude-"))
@@ -1877,11 +1689,11 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(report["by_prompt_arm"]["base"]["top_guess_words_median"], 11)
         self.assertEqual(report["by_prompt_arm"]["base"]["acceptance"], 0.0)
 
-    def test_live_arms_are_reported_apart(self):
+    def test_context_arms_and_returns_are_reported_from_old_and_new_records(self):
         sys.path.insert(0, str(ROOT / "scripts"))
         import next_prompt_eval
 
-        def predicted(key, context, floor, shown=True, t="1", **extra):
+        def predicted(key, context, shown=True, t="1", **extra):
             return dict(
                 event="predicted",
                 offer=key,
@@ -1889,21 +1701,23 @@ class AcceptanceTests(unittest.TestCase):
                 t=t,
                 shown=shown,
                 context_arm=context,
-                min_confidence=floor,
                 candidates=[{"text": "go", "p": 0.3}],
                 **extra,
             )
 
         events = [
-            predicted("a:1", "thread", 0),
+            # Older records: a finished context arm, a floor, a model arm, a
+            # held-out guess and a return that kept its old guess.
+            predicted("a:1", "thread", min_confidence=0, arm="model"),
             {"event": "seen", "offer": "a:1"},
             {"event": "used", "offer": "a:1"},
-            predicted("a:2", "base", 0.4, shown=False),
-            predicted("a:3", "base", 0, t="2"),
+            predicted("a:2", "base", shown=False, hidden=True, min_confidence=0.4),
+            {"event": "outcome", "offer": "a:2", "hidden": True, "result": "own"},
+            predicted("a:3", "base", t="2", arm="control"),
             {"event": "seen", "offer": "a:3"},
             {"event": "return", "offer": "a:3", "agent": "a", "t": "3", "arm": "keep"},
             {"event": "used", "offer": "a:3"},
-            predicted("a:4", "base", 0, t="4"),
+            predicted("a:4", "base", t="4"),
             {
                 "event": "return",
                 "offer": "a:4",
@@ -1911,22 +1725,22 @@ class AcceptanceTests(unittest.TestCase):
                 "t": "5",
                 "arm": "reguess",
             },
-            predicted("a:5", "evidence", 0, t="6", returned_minutes=40),
+            predicted("a:5", "wide", t="6", returned_minutes=40),
             {"event": "seen", "offer": "a:5"},
             {"event": "used", "offer": "a:5"},
+            # A current record: every return guesses again, with no arm.
+            predicted("a:6", "base", t="7"),
+            {"event": "return", "offer": "a:6", "agent": "a", "t": "8"},
+            predicted("a:7", "base", t="9", returned_minutes=31),
         ]
         _, report = next_prompt_eval.acceptance(events)
         self.assertEqual(report["by_context_arm"]["thread"]["acceptance"], 1.0)
-        self.assertEqual(report["by_context_arm"]["base"]["predicted"], 3)
-        self.assertEqual(report["by_floor"]["0.4"]["offered"], 0)
-        self.assertEqual(report["by_floor"]["0"]["used_per_guess"], 0.75)
-        self.assertEqual(
-            report["returns"],
-            {
-                "keep": {"returns": 1, "used": 1},
-                "reguess": {"returns": 1, "guessed": 1, "used": 1},
-            },
-        )
+        self.assertEqual(report["by_context_arm"]["base"]["predicted"], 5)
+        self.assertEqual(report["by_context_arm"]["wide"]["acceptance"], 1.0)
+        self.assertEqual(report["offered"], 6, "a held-out guess was never offered")
+        for retired in ("by_arm", "by_floor", "held_out"):
+            self.assertNotIn(retired, report)
+        self.assertEqual(report["returns"], {"returns": 2, "guessed": 2, "used": 1})
 
     def test_offers_seen_used_typed_first_and_never_seen(self):
         sys.path.insert(0, str(ROOT / "scripts"))

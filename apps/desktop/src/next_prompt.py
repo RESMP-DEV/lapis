@@ -106,21 +106,8 @@ NARRATION_CHARS = 400
 # the target message, not merely when their transcript was touched.
 RECENT_HOURS = 1
 # Context arms, compared live (each guess records its arm): the conversation
-# alone; with the person's earlier messages in it; with how they answered
-# similar replies before; with an instruction to find the reply's weakest
-# claim; or with three candidates split by conversational move. "legacy" keeps
-# the older merged-and-clipped agent turns, for the offline ablation baseline;
-# the desktop does not draw it as a live arm.
-CONTEXT_ARMS = (
-    "base",
-    "thread",
-    "retrieval",
-    "evidence",
-    "moves",
-    "legacy",
-    "pack",
-    "wide",
-)
+# as it is, or the same asked for five candidates instead of three.
+CONTEXT_ARMS = ("base", "wide")
 # Prompt arms, compared live beside the context arm (each guess records its
 # own): the system prompt as it is, or with three checks drawn from the
 # person's own Claude Code history (Oct 2026). Seen guesses of 1-5 words were
@@ -128,13 +115,12 @@ CONTEXT_ARMS = (
 # supplied a fact the agent lacked; and a redo round cost a median 47
 # minutes, while the guesser almost never guessed a correction (2.6%).
 PROMPT_ARMS = ("base", "checks")
-EARLIER_MESSAGES = 25
-RETRIEVED = 6
+# The cross-session prompt index (see pair_index). The name and version are
+# kept from when it also held past exchanges, so an existing cache is reused.
 INDEX_DAYS = 60
 INDEX_SECONDS = 3.0
 INDEX_NAME = "next_prompt_pairs.json"
 INDEX_VERSION = 3
-SNIPPET_CHARS = 600
 # Ordered OpenAI-compatible providers (`nextPrompt.providers`), tried in
 # order: a local or private endpoint first, then a hosted fallback. The chain
 # replaces the CLI for the guesses it is configured on; an unreachable host,
@@ -275,7 +261,6 @@ def add(turns, role, text, stamp):
         if turns and turns[-1]["role"] == "agent":
             turn = turns[-1]
             turn["parts"].append(text)
-            turn["legacy"] = turn["legacy"] + "\n" + text if turn["legacy"] else text
             turn["text"] = agent_text(turn["parts"])
             if stamp:
                 turn["time"] = stamp
@@ -286,7 +271,6 @@ def add(turns, role, text, stamp):
                     "text": agent_text([text]),
                     "time": stamp,
                     "parts": [text],
-                    "legacy": text,
                 }
             )
     else:
@@ -392,94 +376,10 @@ def omp_turns(path):
     return turns
 
 
-def omp_snippets(path):
-    found = []
-    for entry in transcript(path):
-        if entry.get("type") != "message":
-            continue
-        message = entry.get("message")
-        if not isinstance(message, dict) or message.get("role") != "toolResult":
-            continue
-        text = blocks_text(message.get("content"), ("text",)).strip()
-        if text:
-            found.append(
-                {"time": entry.get("timestamp", ""), "text": clip(text, SNIPPET_CHARS)}
-            )
-    return found
-
-
-def tool_text(content):
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "\n".join(
-            str(block.get("text", ""))
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
-    return ""
-
-
 def clip(text, limit):
     if len(text) <= limit:
         return text
     return text[: limit // 3] + "\n[...]\n" + text[-(limit - limit // 3) :]
-
-
-def claude_snippets(path):
-    """Bounded tool and subagent outputs the visible-turn parser drops. Each
-    keeps its timestamp and an excerpt for the pack arm."""
-    found = []
-    for entry in transcript(path):
-        if entry.get("isSidechain") or entry.get("isMeta"):
-            continue
-        content = (
-            entry.get("message", {}).get("content")
-            if isinstance(entry.get("message"), dict)
-            else None
-        )
-        if entry.get("type") == "user" and isinstance(content, list):
-            text = "\n".join(
-                tool_text(block.get("content"))
-                for block in content
-                if isinstance(block, dict) and block.get("type") == "tool_result"
-            ).strip()
-            if text:
-                found.append(
-                    {
-                        "time": entry.get("timestamp", ""),
-                        "text": clip(text, SNIPPET_CHARS),
-                    }
-                )
-    return found
-
-
-def codex_snippets(path):
-    found = []
-    for entry in transcript(path):
-        payload = entry.get("payload", {})
-        if entry.get("type") != "response_item" or payload.get("type") not in (
-            "function_call_output",
-            "custom_tool_call_output",
-        ):
-            continue
-        text = payload.get("output")
-        if isinstance(text, str) and text.strip():
-            found.append(
-                {
-                    "time": entry.get("timestamp", ""),
-                    "text": clip(text.strip(), SNIPPET_CHARS),
-                }
-            )
-    return found
-
-
-def snippets_of(cli, path):
-    if cli == "claude":
-        return claude_snippets(path)
-    if cli == "codex":
-        return codex_snippets(path)
-    return omp_snippets(path)
 
 
 def claude_home():
@@ -590,16 +490,14 @@ def turns_of(cli, path):
     return omp_turns(path)
 
 
-def history(turns, limit=CONTEXT_CHARS, legacy=False):
+def history(turns, limit=CONTEXT_CHARS):
     """The newest turns that fit in `limit` characters, oldest first.
 
-    Agent turns already carry their final block and compact narration. The
-    legacy view re-clips the merged text the way the ablation baseline did."""
+    Agent turns already carry their final block and compact narration."""
     kept, used = [], 0
     for turn in reversed(turns):
         person = turn["role"] == "person"
-        source = turn.get("legacy", turn["text"]) if legacy else turn["text"]
-        text = clip(source, 1500 if person else (3000 if legacy else 4000))
+        text = clip(turn["text"], 1500 if person else 4000)
         if used + len(text) > limit and kept:
             break
         kept.append({"role": turn["role"], "text": text, "time": turn.get("time", "")})
@@ -670,46 +568,6 @@ def recent_prompts(skip, hours=RECENT_HOURS, limit=20, before=None, files=None):
     ]
 
 
-def snippet_pack(turns, snippets, target=None, limit=2, chars=600):
-    """One or two bounded tool/subagent excerpts matching the live topic.
-
-    The topic words come from the newest visible turns, so the pack follows
-    what the person and agent are actually discussing. Results after the
-    target are never quoted."""
-    query = " ".join(turn.get("text", "") for turn in turns[-8:])
-    words = set(WORD.findall(query.lower()))
-    if not words or not snippets:
-        return []
-    cutoff = None
-    if target:
-        try:
-            cutoff = (
-                float(target)
-                if isinstance(target, (int, float))
-                else utc_timestamp(target)
-            )
-        except (ValueError, TypeError):
-            cutoff = None
-    scored = []
-    for snippet in snippets:
-        text = str(snippet.get("text", ""))
-        if not text:
-            continue
-        if cutoff is not None and snippet.get("time"):
-            try:
-                if utc_timestamp(snippet["time"]) > cutoff:
-                    continue
-            except (ValueError, TypeError):
-                pass
-        count = len(words & set(WORD.findall(text.lower())))
-        if count:
-            scored.append((count, snippet.get("time", ""), text))
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    return [
-        {"time": time, "text": clip(text, chars)} for _, time, text in scored[:limit]
-    ]
-
-
 def command_context(arguments):
     if arguments.conversation and not CONVERSATION.match(arguments.conversation):
         return {"error": "invalid conversation id"}
@@ -730,14 +588,12 @@ def command_context(arguments):
             files = pair_index(folder, parsed={path: (stamp, turns)})
         except OSError:
             files = None
-    snippets = snippets_of(arguments.cli, path)
     result = {
         "conversation": os.path.basename(path)[: -len(".jsonl")],
         "conversation_id": transcript_conversation_id(arguments.cli, path),
         "turn": len(prompts),
         "turns": shown,
         "recent": recent_prompts(path, before=now, files=files),
-        "snippets": snippet_pack(shown, snippets, target=now),
     }
     replies = [t for t in turns if t["role"] == "agent" and t.get("time")]
     if replies:
@@ -747,14 +603,6 @@ def command_context(arguments):
             minutes = 0
         if minutes > 0:
             result["returned_minutes"] = minutes
-    # The person's messages from before the turns shown (the thread arm).
-    earlier = [
-        clip(t["text"], 220)
-        for t in turns[: len(turns) - len(shown)]
-        if t["role"] == "person"
-    ][-EARLIER_MESSAGES:]
-    if earlier:
-        result["earlier"] = earlier
     # What the person sent for an earlier offer, to compare with the guess.
     answered = getattr(arguments, "answered", -1)
     if 0 <= answered < len(prompts):
@@ -871,8 +719,6 @@ def command_sample(arguments):
         except (ValueError, TypeError):
             pass
         recent = recent_prompts(path, before=before, files=files) if before else []
-        entry = files.get(path) if files is not None else None
-        snippets = entry.get("snippets", []) if entry else snippets_of(cli, path)
         replies = [t for t in turns[:index] if t["role"] == "agent" and t.get("time")]
         returned = 0
         if before and replies:
@@ -890,34 +736,13 @@ def command_sample(arguments):
             else "",
             "time": target["time"],
             "turns": history(turns[:index]),
-            "legacy_turns": history(turns[:index], legacy=True),
             "recent": recent,
-            "snippets": snippet_pack(history(turns[:index]), snippets, target=before),
             "actual": target["text"],
         }
         if returned > 0:
             item["returned_minutes"] = returned
         items.append(item)
     return {"eligible": len(eligible), "items": items}
-
-
-WORD = re.compile(r"[a-z0-9]{3,}")
-
-
-def transcript_pairs(turns):
-    """(time, reply tail, the person's answer) for each answered agent turn."""
-    return [
-        [
-            turn.get("time") or "",
-            clip(turns[i - 1]["text"], 600)[-600:],
-            clip(turn["text"], 400),
-        ]
-        for i, turn in enumerate(turns)
-        if i
-        and turn["role"] == "person"
-        and turns[i - 1]["role"] == "agent"
-        and not turn["text"].lstrip().startswith("/")
-    ]
 
 
 def transcript_prompts(cli, path, turns):
@@ -936,13 +761,14 @@ def transcript_prompts(cli, path, turns):
 
 
 def pair_index(folder, now=None, budget=INDEX_SECONDS, parsed=None):
-    """Past exchanges on this Mac, cached in `folder` and brought up to date
-    within `budget` seconds a call, newest transcripts first.
+    """The person's past prompts on this Mac, cached in `folder` and brought
+    up to date within `budget` seconds a call, newest transcripts first.
 
     `parsed` maps a transcript path to the (mtime, turns) its caller already
     read; an entry whose mtime still matches uses that parse, so the scan
     order costs no second read of the conversation. Tool output stays in the
-    transcripts; the index holds only pairs and prompts."""
+    transcripts; the index holds only prompts (an older cache may still carry
+    past exchanges as "pairs", which nothing reads)."""
     now = now or time.time()
     path = os.path.join(folder, INDEX_NAME)
     try:
@@ -997,7 +823,6 @@ def pair_index(folder, now=None, budget=INDEX_SECONDS, parsed=None):
             turns = turns_of(cli, name)
         files[name] = {
             "mtime": stamp,
-            "pairs": transcript_pairs(turns),
             "prompts": transcript_prompts(cli, name, turns),
         }
         changed = True
@@ -1009,67 +834,6 @@ def pair_index(folder, now=None, budget=INDEX_SECONDS, parsed=None):
             json.dump({"version": INDEX_VERSION, "files": files}, stream)
         os.replace(temporary, path)
     return files
-
-
-def retrieve(files, reply, skip="", k=RETRIEVED):
-    """The k past exchanges whose agent reply best matches `reply` (BM25),
-    leaving out the conversation in `skip` (its own messages are the thread
-    arm's)."""
-    documents = [
-        pair
-        for name, entry in files.items()
-        if not (skip and os.path.basename(name).endswith(skip + ".jsonl"))
-        for pair in entry.get("pairs", [])
-    ]
-    query = set(WORD.findall(reply[-1500:].lower()))
-    if not documents or not query:
-        return []
-    counts = [{} for _ in documents]
-    frequency = {}
-    for count, pair in zip(counts, documents):
-        for word in WORD.findall(pair[1].lower()):
-            count[word] = count.get(word, 0) + 1
-        for word in count:
-            frequency[word] = frequency.get(word, 0) + 1
-    average = sum(sum(c.values()) for c in counts) / len(counts) or 1
-    total = len(documents)
-
-    def score(count):
-        length = sum(count.values())
-        value = 0.0
-        for word in query & count.keys():
-            idf = math.log(
-                1 + (total - frequency[word] + 0.5) / (frequency[word] + 0.5)
-            )
-            f = count[word]
-            value += idf * f * 2.2 / (f + 1.2 * (0.25 + 0.75 * length / average))
-        return value
-
-    ranked = sorted(range(total), key=lambda i: -score(counts[i]))[:k]
-    return [documents[i] for i in ranked if score(counts[i]) > 0]
-
-
-EVIDENCE = """
-
-Before writing, read the agent's latest reply as this person would: which claim
-or proposal rests on an assumption, an unmeasured number or an unchecked
-source, and what state of the world (machines, people, inboxes, money, time)
-it depends on. When one of those decides what they should send, ask for that
-measurement or state instead of approving."""
-
-MOVES = """
-
-Write three candidates in these roles, in this order:
-1. Reply to the latest turn. If it reports a running job, a timing breakdown,
-   or an assumption, challenge the bottleneck or the unmeasured claim instead of
-   only approving.
-2. Pivot. If the latest turn is a blocked side check, a completed housekeeping
-   step, or the person has been away for at least ten minutes, return to the
-   session's main deliverable.
-3. Re-raise a cross-session or earlier open thread from the person's recent
-   prompts or earlier turns.
-Do not write three versions of the agent's latest thread. The roles may share a
-mode when one thread is live, but each must be a different move."""
 
 
 CHECKS = """
@@ -1152,7 +916,7 @@ def mark_taken(text, taken):
     return "[took a guess] " + text if " ".join(text.split()) in taken else text
 
 
-def render(bundle, fence=None, arm="base", retrieved=()):
+def render(bundle, fence=None):
     """The user turn for the model: this agent, the others, and the time.
 
     Screens, transcripts and titles come from agents and their tools, so each
@@ -1214,45 +978,11 @@ def render(bundle, fence=None, arm="base", retrieved=()):
             "Its latest reply came {} minutes ago; the person has just come back"
             " to it.".format(int(returned))
         )
-    if arm == "thread" and context.get("earlier"):
-        lines += [
-            "Their earlier messages in this conversation, before the turns below:",
-            block(
-                "earlier",
-                "\n".join("- " + t.replace("\n", " ") for t in context["earlier"]),
-            ),
-        ]
-    if arm == "retrieval" and retrieved:
-        lines += [
-            "How they answered agents in similar past situations:",
-            block(
-                "similar",
-                "\n".join(
-                    '- the agent ended: "{}"\n  they sent: "{}"'.format(
-                        reply[-280:].replace("\n", " "),
-                        sent[:220].replace("\n", " "),
-                    )
-                    for _, reply, sent in retrieved
-                ),
-            ),
-        ]
     if bundle.get("oracle"):
         lines += [
             "The person's next message is likely about this topic (a hint, not"
             " their words):",
             block("oracle", bundle["oracle"]),
-        ]
-    snippets = bundle.get("snippets") or context.get("snippets")
-    if arm == "pack" and snippets:
-        lines += [
-            "Exact tool or subagent results around this topic, copied as"
-            " evidence (clipped):",
-            block(
-                "snippets",
-                "\n".join(
-                    "- " + str(s.get("text", "")).replace("\n", " ") for s in snippets
-                ),
-            ),
         ]
     lines.append("This conversation, oldest first:")
     for turn in context.get("turns", []):
@@ -1457,38 +1187,6 @@ def ask_provider(provider, system, prompt, timeout=None):
     return content.strip(), cost
 
 
-def ask_endpoint(system, prompt, endpoint, model, timeout=60):
-    """One answer from an OpenAI-compatible chat endpoint (a local model, for
-    the experiment arm), as (text, envelope) like ask()."""
-    import urllib.request
-
-    request = urllib.request.Request(
-        endpoint.rstrip("/") + "/chat/completions",
-        data=json.dumps(
-            {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0,
-                "max_tokens": 400,
-            }
-        ).encode(),
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        body = json.loads(response.read(1 << 20))
-    choices = body.get("choices") if isinstance(body, dict) else None
-    if not isinstance(choices, list) or not choices:
-        raise ValueError("no choices in endpoint response")
-    message = choices[0].get("message") if isinstance(choices[0], dict) else None
-    content = message.get("content") if isinstance(message, dict) else None
-    if not isinstance(content, str):
-        raise ValueError("no message content in endpoint response")
-    return content.strip(), {}
-
-
 def plan_environment():
     """The environment the person's own agents get: lapis's, without any
     metered key, gateway or cloud account it inherited, plus the `env` of
@@ -1594,72 +1292,6 @@ def ask(system, prompt, model, effort="", claude="claude", timeout=150):
     return envelope.get("result", ""), envelope
 
 
-PERSONAL = """You predict the exact next message the person will type to the coding agent
-in this conversation. They supervise many CLI agents at once and voice-type;
-they are often terse ("go", "status?", "continue"), push back, ask questions, or
-start a new task. Write only their next message, verbatim in their style,
-nothing else. Their standing instructions to every agent follow."""
-PERSONAL_CONTEXT = 8000
-
-
-def personal_messages(bundle):
-    """The shape of prompt the fine-tuned local model was trained on: a
-    header and the newest conversation, as plain tags. Its training text named
-    the person and their machine; this keeps the shape without either."""
-    agent = bundle.get("agent", {})
-    context = bundle.get("context", {})
-    head = "cli: {}\nmachine: {}\ncwd: {}\ntime: {}".format(
-        agent.get("cli", ""),
-        agent.get("machine") or "this Mac",
-        agent.get("folder", ""),
-        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    )
-    body = "\n".join(
-        "<{0}>\n{1}\n</{0}>".format(
-            "person" if turn["role"] == "person" else "agent", turn["text"]
-        )
-        for turn in context.get("turns", [])
-    )
-    if len(body) > PERSONAL_CONTEXT:
-        body = "[...earlier conversation cut...]\n" + body[-PERSONAL_CONTEXT:]
-    parts = []
-    recent = [
-        "- " + r["text"].replace("\n", " ").strip()
-        for r in context.get("recent", [])[:12]
-    ]
-    if recent:
-        parts.append(
-            "Their latest prompts to other agents on this machine (newest first):\n"
-            "<recent>\n" + "\n".join(recent)[:3000] + "\n</recent>"
-        )
-    parts.append("This conversation, oldest first:\n" + head + "\n\n" + body)
-    parts.append("Write their next message.")
-    system = (
-        PERSONAL
-        + "\n\n<standing_instructions>\n"
-        + priors().strip()
-        + "\n</standing_instructions>"
-    )
-    return system, "\n\n".join(parts)
-
-
-# How a model thinking aloud starts, rather than the person's message.
-REASONING = re.compile(
-    r"^(the user\b|user wants|thinking process|okay,? so the user)"
-    r"|\n\s*(wait[,.]|hmm\b|let me\b|actually,)",
-    re.I,
-)
-
-
-def spoken(text):
-    """The local model's message, or None when what it wrote is its own
-    reasoning rather than something the person would type."""
-    words = re.sub(r"<think>.*?(</think>|$)", "", text, flags=re.S).strip()
-    if not words or REASONING.search(words) or len(words) > 1500:
-        return None
-    return words
-
-
 def predict_providers(
     system, prompt, providers, arm, started, budget=PROVIDER_BUDGET_SECONDS
 ):
@@ -1729,56 +1361,18 @@ def predict(
     model,
     effort="",
     claude="claude",
-    endpoint="",
-    style="",
     arm="base",
     providers=None,
     budget=PROVIDER_BUDGET_SECONDS,
     prompt_arm="base",
 ):
-    if style == "personal":
-        # The fine-tuned model writes the message itself: no JSON, no
-        # probability, no judgement.
-        system, prompt = personal_messages(bundle)
-        started = time.time()
-        try:
-            text, _ = ask_endpoint(system, prompt, endpoint, model)
-        except (OSError, KeyError, ValueError) as error:
-            return failure(error)
-        words = spoken(text)
-        if words is None:
-            return {"error": "the local model wrote its reasoning", "kind": "malformed"}
-        return {
-            "category": "other",
-            "candidates": [{"text": words, "p": 0.0, "scored": False}] if words else [],
-            "ms": int((time.time() - started) * 1000),
-        }
     system = SYSTEM.format(priors=priors(), categories=", ".join(CATEGORIES))
-    if arm == "evidence":
-        system += EVIDENCE
-    elif arm == "moves":
-        system += MOVES + EVIDENCE
-    elif arm == "wide":
+    if arm == "wide":
         system += WIDE
     if prompt_arm == "checks":
         system += CHECKS
     started = time.time()
-    retrieved = []
-    if arm == "retrieval":
-        turns = bundle.get("context", {}).get("turns", [])
-        reply = turns[-1]["text"] if turns and turns[-1]["role"] != "person" else ""
-        folder = index_folder()
-        files = None
-        if folder is not None:
-            try:
-                files = pair_index(folder)
-            except OSError:
-                files = None
-        if files is not None:
-            retrieved = retrieve(
-                files, reply, bundle.get("context", {}).get("conversation", "")
-            )
-    prompt = render(bundle, arm=arm, retrieved=retrieved)
+    prompt = render(bundle)
     if providers:
         result = predict_providers(system, prompt, providers, arm, started, budget)
         if "candidates" in result:
@@ -1787,10 +1381,7 @@ def predict(
     last = None
     for _ in range(2):
         try:
-            if endpoint:
-                text, envelope = ask_endpoint(system, prompt, endpoint, model)
-            else:
-                text, envelope = ask(system, prompt, model, effort, claude)
+            text, envelope = ask(system, prompt, model, effort, claude)
         except (
             RuntimeError,
             OSError,
@@ -1807,8 +1398,6 @@ def predict(
             result["cost"] = envelope.get("total_cost_usd", 0)
             result["context_arm"] = arm
             result["prompt_arm"] = prompt_arm
-            if arm == "retrieval":
-                result["retrieved"] = len(retrieved)
             return result
         except (ValueError, KeyError, TypeError, AttributeError) as error:
             last = error
@@ -1829,8 +1418,6 @@ def command_predict(arguments):
         arguments.model,
         arguments.effort,
         arguments.claude,
-        arguments.endpoint,
-        arguments.style,
         arguments.context_arm,
         providers,
         arguments.budget_seconds,
@@ -1859,10 +1446,6 @@ def main(argv=None):
     predict_mode.add_argument("--model", default="claude-opus-5-5")
     predict_mode.add_argument("--effort", default="")
     predict_mode.add_argument("--claude", default="claude")
-    # An OpenAI-compatible endpoint (a local model) instead of the CLI.
-    predict_mode.add_argument("--endpoint", default="")
-    # "personal": the local fine-tuned model's own plain-text format.
-    predict_mode.add_argument("--style", default="")
     predict_mode.add_argument("--context-arm", choices=CONTEXT_ARMS, default="base")
     predict_mode.add_argument("--prompt-arm", choices=PROMPT_ARMS, default="base")
     # A JSON array of OpenAI-compatible endpoints, tried in order. Absent:
