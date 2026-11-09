@@ -1795,6 +1795,7 @@ bool Workspace::resumeAgent(const QString& directory, const QString& title, cons
                         .program = {},
                         .model = {},
                         .mode = mode,
+                        .effort = {},
                         .select = true,
                         .resume = conversation,
                         .prefill = prefill})
@@ -1812,6 +1813,7 @@ bool Workspace::createAgent(const QString& directory, const QString& title, cons
                         .program = {},
                         .model = model,
                         .mode = mode,
+                        .effort = {},
                         .named = named,
                         .select = true,
                         .resume = {},
@@ -3647,6 +3649,7 @@ bool Workspace::reopenAgent() {
                                .program = closed.plan.launch.program,
                                .model = {},
                                .mode = {},
+                               .effort = {},
                                .select = true,
                                .resume = {},
                                .prefill = {}};
@@ -3826,6 +3829,7 @@ QString Workspace::splitAgent(const QString& edge) {
                          .program = launch.program,
                          .model = {},
                          .mode = {},
+                         .effort = {},
                          .select = false,
                          .resume = {},
                          .prefill = {}};
