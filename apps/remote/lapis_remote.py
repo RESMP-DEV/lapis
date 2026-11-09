@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve the lapis workspace's agents to the lapis iPhone or Android app.
+"""Serve the lapis workspace's agents to the lapis iPhone app.
 
 The gateway reads the desktop's workspace registry and attaches to an
 agent's session service only while the phone shows that agent. It joins the
@@ -14,8 +14,8 @@ Reconnect agent on the Mac. Agents keep running either way.
 
 It listens on this Mac's Tailscale address, or on all interfaces when a
 ZeroTier network serves the Mac. A request is served only when it comes
-from this Mac itself (the simulator), from an iOS or Android device of the
-same login over the tailnet (`tailscale whois` names both), or from a
+from this Mac itself (the simulator), from an iOS device of the same
+login over the tailnet (`tailscale whois` names both), or from a
 member of one of the Mac's joined private ZeroTier networks. Browsers are
 refused: requests that carry Origin, or lack the X-Lapis-Client header,
 are rejected, so a web page on the phone cannot drive an agent.
@@ -2099,7 +2099,7 @@ def status_message(data):
 
 
 class TailnetAuth:
-    """Admit only the Mac owner's iOS or Android devices and this Mac itself."""
+    """Admit only the Mac owner's iOS devices and this Mac itself."""
 
     MAX_WHOIS = 4
     MAX_CACHE = 256
@@ -2155,7 +2155,7 @@ class TailnetAuth:
             who = self.runner([self.tailscale, "whois", "--json", address])
             login = who["UserProfile"]["LoginName"]
             system = who["Node"]["Hostinfo"].get("OS", "")
-            verdict = login == self.owner and system.lower() in ("ios", "android")
+            verdict = login == self.owner and system.lower() == "ios"
             ttl = self.ALLOWED_TTL if verdict else self.REJECTED_TTL
         except (
             subprocess.SubprocessError,
