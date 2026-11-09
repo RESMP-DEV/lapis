@@ -1,31 +1,35 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-09T21:31:06Z",
+  "recorded_at": "2026-11-09T23:22:07Z",
   "agent": "Codex triage parent with read-only architecture review",
-  "base_revision": "113c9f690b606548830b4ce06803cd44a87dc26a",
-  "source_revision": "6e92eb2fa5a4b2c14c72c7e705ea76ab06f4fcf0",
-  "scope": "Post-rebase validation and Kilo follow-up for PR 190 after PRs 187, 188, 189, and 192 merged.",
+  "base_revision": "2f261586507a6af04f7f5191a8286b29da089125",
+  "source_revision": "de09408c650287e2c962b96ff172553141192c1e",
+  "scope": "Post-rebase validation and review follow-up for PR 190 after PRs 187, 188, 189, 192, 195, 197, and 200 merged.",
   "changed_source_manifest": {
-    "algorithm": "sha256(git diff --binary base..source_revision -- ':(exclude)evidence/*')",
-    "digest": "bc3b7cf7ed144d3502b8f4308c75ad0b85ffdb1014626d465d3b2d803b96a2bb",
-    "changed_paths": 41
+    "algorithm": "shasum -a 256 of: git diff --binary 2f261586507a6af04f7f5191a8286b29da089125..de09408c650287e2c962b96ff172553141192c1e -- ':(exclude)evidence/*'",
+    "digest": "68fa81c57182fa069b24c29635336915bdb7571da619be12901e0a82fe50dfab",
+    "changed_paths": 42
   },
   "validation": [
     {
       "command": "just quality",
-      "result": "passed after base PR 192 repaired transcript-survey formatting"
-    },
-    {
-      "command": "cmake --build build/desktop --parallel 8",
       "result": "passed"
     },
     {
-      "command": "ctest --test-dir build/desktop -R '^(live-connection|local-protocol)$' --no-tests=error --output-on-failure",
-      "result": "2/2 passed"
+      "command": "just check",
+      "result": "passed: build, 20 CTest cases, clang-format, Cppcheck, and all 43 clang-tidy partitions"
     },
     {
-      "command": "ctest --test-dir build/desktop --no-tests=error --output-on-failure",
+      "command": "cmake --build build/desktop --parallel 8 && ctest --test-dir build/desktop --no-tests=error --output-on-failure",
       "result": "all 46 enabled desktop tests passed; nine policy-disabled tests did not run"
+    },
+    {
+      "command": "just asan",
+      "result": "all 20 ASan/UBSan CTest cases passed"
+    },
+    {
+      "command": "just tsan",
+      "result": "all 20 TSan CTest cases passed"
     },
     {
       "command": "git diff --check",
@@ -34,10 +38,12 @@
   ],
   "review_followups": [
     "Log Qt errorString when a direct detached service launch fails",
-    "Include launch_spec.hpp explicitly in live_connection.cpp"
+    "Include launch_spec.hpp explicitly in live_connection.cpp",
+    "Remove the retired supervisor state/runtime rows from docs/status.md"
   ],
   "non_claims": [
     "The removed experimental supervisor suites are intentionally absent after deletion.",
-    "No native macOS GUI, login-helper reboot, packaged app, or long-run service-death recovery was exercised."
+    "No native macOS GUI, login-helper reboot, packaged app, or long-run service-death recovery was exercised.",
+    "PR 200 repaired the session-service parser-drain and complexity baseline; this receipt does not claim that PR's independent receipt or performance measurement."
   ]
 }
