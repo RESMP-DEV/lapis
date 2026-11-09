@@ -188,6 +188,15 @@ void bash_mode_commands() {
 
 // System notices once dropped, interruptions, and attachments sent with text.
 void notices_and_attachments() {
+    // A background task's wake-up starts a turn but has no row of its own.
+    ClaudeReader woken;
+    (void)woken.add(R"({"type":"user","message":{"content":"<task-notification><summary>Agent \"x\" finished</summary></task-notification>"}})");
+    (void)woken.add(R"({"type":"assistant","message":{"content":[{"type":"tool_use","id":"w1","name":"Bash","input":{"command":"ls"}}]}})");
+    (void)woken.add(R"({"type":"assistant","message":{"content":[{"type":"text","text":"Done."}]}})");
+    (void)woken.add(R"({"type":"system","subtype":"turn_duration","durationMs":5000})");
+    const auto woke = lapis::desktop::transcript::lay_out(woken.items(), {});
+    require(woke.turns.size() == 1 && woke.rows.size() == 2 && woke.rows[0].item == -1 && woke.rows[1].item == 2,
+            "a woken turn folds to its work line and reply, with no notice");
     ClaudeReader reader;
     (void)reader.add(R"({"type":"system","subtype":"informational","content":"Compacted while idle · turn off with x"})");
     (void)reader.add(R"({"type":"system","subtype":"model_consent_fallback","content":"Switched to Sonnet 5.5 for this session"})");

@@ -64,9 +64,10 @@ Code saves on this Mac and follows it as the agent works; anything it does not
 recognize shows as a plain block.
 
 As in the Codex app, a finished turn folds to your prompt, one **Worked for
-3m 12s** line that sums up the work ("ran 4 commands, edited 2 files, read 3
-files"), and the final reply. Clicking that line opens the thinking and steps
-between, indented; each step then opens on its own to show its command output
+3m 12s** line, and the final reply. A turn a background task or subagent woke
+shows only that line and the reply, with no "finished" notice. Clicking the
+line opens the thinking and steps between, indented, under a summary of the
+work ("ran 4 commands, edited 2 files, read 3 files"); each step then opens on its own to show its command output
 or diff, and a step that took a second or more shows how long ("12s", "3m
 4s", "1h 2m", "2d 3h"). A turn still running shows every step as it happens,
 then **Working for 1m 12s** and, under it, the agent's own screen above its

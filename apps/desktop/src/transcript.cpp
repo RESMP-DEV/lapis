@@ -643,13 +643,16 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded) {
         }
         const auto& turn = out.turns[static_cast<size_t>(t)];
         // A turn still running, or one with nothing to fold, shows as it is.
+        // A background task's wake-up starts a turn but is not worth a line.
+        const bool quiet = items[static_cast<size_t>(i)].quiet;
         if (!turn.closed || turn.steps == 0) {
-            if (kind != Kind::turn)
+            if (kind != Kind::turn && !quiet)
                 out.rows.push_back({.item = i, .turn = t, .in_work = false});
             continue;
         }
         if (i <= header_end[static_cast<size_t>(t)]) {
-            out.rows.push_back({.item = i, .turn = t, .in_work = false});
+            if (!quiet)
+                out.rows.push_back({.item = i, .turn = t, .in_work = false});
             if (i == header_end[static_cast<size_t>(t)])
                 out.rows.push_back({.item = -1, .turn = t, .in_work = false});
         } else if (kind == Kind::prompt) {
@@ -827,6 +830,7 @@ int ClaudeReader::add(const QByteArray& line) {
             auto item = make(Kind::notice, summary.isEmpty() ? QStringLiteral("Background task finished")
                                                              : clip(summary, 300));
             item.starts_turn = true;
+            item.quiet = true; // the turn's "Worked for" line says enough
             push(std::move(item));
             return;
         }

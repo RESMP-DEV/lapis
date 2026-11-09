@@ -56,6 +56,7 @@ struct Item {
     bool queued{};
     // Withdrawn from the queue, or sent on as a turn of its own: not shown.
     bool dropped{};
+    bool quiet{};         // starts a turn without a row of its own (a background task's wake-up)
     qint64 duration_ms{}; // a turn item: how long the turn took
 };
 

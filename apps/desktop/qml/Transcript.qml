@@ -1374,7 +1374,8 @@ FocusScope {
         Item {
             id: work
             readonly property var entry: parent ? parent.entry : null
-            height: Math.max(workText.implicitHeight, root.stepSize + 10)
+            readonly property int line: Math.max(workText.implicitHeight, root.stepSize + 10)
+            height: line + (workSummary.visible ? workSummary.implicitHeight + 2 : 0)
             MouseArea {
                 id: workHover
                 anchors.fill: parent
@@ -1383,7 +1384,8 @@ FocusScope {
                 onClicked: if (work.entry && root.model) root.model.toggleWork(work.entry.index)
             }
             Row {
-                anchors.verticalCenter: parent.verticalCenter
+                id: workRow
+                y: (work.line - height) / 2
                 spacing: 8
                 Text {
                     id: workText
@@ -1393,18 +1395,6 @@ FocusScope {
                     font.family: root.sansFamily
                     font.pixelSize: root.stepSize
                 }
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: work.entry && work.entry.steps > 0
-                    // What the work did, as the Codex app sums it up; a
-                    // turn of only thinking and notes counts its steps.
-                    text: !work.entry ? ""
-                          : work.entry.detail !== "" ? work.entry.detail
-                          : work.entry.steps === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(work.entry.steps)
-                    color: root.tint(root.mutedTextColor, 0.75)
-                    font.family: root.sansFamily
-                    font.pixelSize: root.stepSize - 1
-                }
                 Chevron {
                     anchors.verticalCenter: parent.verticalCenter
                     turned: work.entry !== null && work.entry.expanded
@@ -1412,11 +1402,26 @@ FocusScope {
                 }
             }
             Rectangle {
-                anchors.verticalCenter: parent.verticalCenter
-                x: workText.parent.width + 14
+                y: work.line / 2
+                x: workRow.width + 14
                 width: parent.width - x
                 height: 1
                 color: root.borderColor
+            }
+            // What the work did, as the Codex app sums it up, shown only once
+            // the work is opened; a turn of only thinking counts its steps.
+            Text {
+                id: workSummary
+                visible: work.entry !== null && work.entry.expanded && work.entry.steps > 0
+                y: work.line
+                width: parent.width
+                wrapMode: Text.Wrap
+                text: !work.entry ? ""
+                      : work.entry.detail !== "" ? work.entry.detail
+                      : work.entry.steps === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(work.entry.steps)
+                color: root.tint(root.mutedTextColor, 0.75)
+                font.family: root.sansFamily
+                font.pixelSize: root.stepSize - 1
             }
         }
     }
