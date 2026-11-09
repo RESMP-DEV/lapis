@@ -391,8 +391,6 @@ class SessionService final : public QObject {
     static QByteArray resolve_session_epoch(const QByteArray& requested_session_epoch) {
         return requested_session_epoch.isEmpty() ? wire::new_id() : requested_session_epoch;
     }
-    // Only the endpoint owner may trim its append log; racing GUI launches
-    // must not truncate the log of an already-running service.
     static void trim_endpoint_log(QFile& log) {
         if (log.size() > qint64{1024} * 1024 && log.open(QIODevice::ReadWrite))
             static_cast<void>(log.resize(0));
