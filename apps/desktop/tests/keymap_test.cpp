@@ -806,7 +806,7 @@ void terminal_font_persists_and_rolls_back() {
             "each invalid font value is reported");
 }
 
-// Remote settings are one KeyMap-owned transaction, not six separately
+// Remote settings are one KeyMap-owned transaction, not four separately
 // persisted setters. A failed save leaves both memory and disk where they were.
 void remote_settings_are_transactional() {
     QTemporaryDir directory;
@@ -820,23 +820,20 @@ void remote_settings_are_transactional() {
     int changes = 0;
     QObject::connect(&keymap, &KeyMap::changed, [&changes] { ++changes; });
     const KeyMap::RemoteSettingsPatch batch{.keepAwake = std::optional(false),
-                                            .alertSound = std::optional(false),
                                             .finishSound = std::optional(false),
                                             .notify = std::optional(false),
-                                            .showUsage = std::optional(false),
-                                            .alertRepeat = std::optional(7)};
+                                            .showUsage = std::optional(false)};
     require(keymap.applyRemoteSettings(batch), "a valid settings batch applies");
     require(changes == 1, "one successful settings batch publishes once");
     const auto saved = keymap.remoteSettings();
-    require(!saved.keepAwake && !saved.alertSound && !saved.finishSound && !saved.notify &&
-                !saved.showUsage && saved.alertRepeat == 7,
+    require(!saved.keepAwake && !saved.finishSound && !saved.notify && !saved.showUsage,
             "every value in a valid settings batch is applied");
     const auto written = read_config(path);
     require(!written.value(QStringLiteral("keepAwake")).toBool(true) &&
-                written.value(QStringLiteral("alerts"))
-                        .toObject()
-                        .value(QStringLiteral("repeat"))
-                        .toInt() == 7,
+                !written.value(QStringLiteral("alerts"))
+                     .toObject()
+                     .value(QStringLiteral("notify"))
+                     .toBool(true),
             "the whole settings batch is written once");
     require(written.value(QStringLiteral("retained")).toBool(),
             "settings persistence preserves unrelated config");
@@ -848,12 +845,10 @@ void remote_settings_are_transactional() {
     QString diagnostic;
     KeyMap::RemoteSettingsPatch failed_batch;
     failed_batch.keepAwake = true;
-    failed_batch.alertRepeat = 3;
+    failed_batch.notify = true;
     require(!keymap.applyRemoteSettings(failed_batch, &diagnostic),
             "a failed settings save refuses the whole batch");
     require(keymap.remoteSettings().keepAwake == before_failure.keepAwake &&
-                keymap.remoteSettings().alertRepeat == before_failure.alertRepeat &&
-                keymap.remoteSettings().alertSound == before_failure.alertSound &&
                 keymap.remoteSettings().finishSound == before_failure.finishSound &&
                 keymap.remoteSettings().notify == before_failure.notify &&
                 keymap.remoteSettings().showUsage == before_failure.showUsage,
@@ -897,8 +892,9 @@ void config_reloads_when_edited_elsewhere() {
                     QStringList{QStringLiteral("grok-4.7")} &&
                 !defaults.models.contains(QStringLiteral("claude")),
             "configured models replace what a CLI lists; names that look like options are dropped");
-    require(!keymap.alertSound() && keymap.finishSound() && keymap.alertRepeat() == 5 &&
-                !keymap.keepAwake() && !keymap.showUsage(),
+    // "sound" and "repeat" are the retired request chime's: ignored, not reported.
+    require(keymap.finishSound() && !keymap.keepAwake() && !keymap.showUsage() &&
+                !keymap.diagnostic().contains(QStringLiteral("alerts")),
             "alerts, keeping awake and usage are read, with defaults for what is missing");
     require(keymap.usageMeter() == QStringList({QStringLiteral("grok"), QStringLiteral("codex")}) &&
                 keymap.usageMachines() == QStringList{QStringLiteral("devbox")},
@@ -922,19 +918,20 @@ void config_reloads_when_edited_elsewhere() {
     require(replacement.commit(), "commit the replacement");
     require(settle([&keymap] { return keymap.themeName() == QStringLiteral("amber"); }, 3000),
             "an edit elsewhere applies without a restart");
-    require(keymap.agentDefaults().harness.isEmpty() && keymap.alertSound() && keymap.showUsage(),
+    require(keymap.agentDefaults().harness.isEmpty() && keymap.keepAwake() && keymap.showUsage(),
             "settings removed from the file return to their defaults");
     settle([] { return false; }, 400); // let the replacement's events pass
     changes = 0;
-    require(keymap.setAlertSound(false) && keymap.setKeepAwake(false) && keymap.setShowUsage(false),
+    require(keymap.setFinishSound(false) && keymap.setKeepAwake(false) &&
+                keymap.setShowUsage(false),
             "save alert and usage choices");
     const int saved = changes;
     settle([] { return false; }, 600);
-    require(changes == saved && !keymap.alertSound(), "the window's own save is not read back");
+    require(changes == saved && !keymap.finishSound(), "the window's own save is not read back");
     const QJsonObject written = read_config(path);
     require(!written.value(QStringLiteral("alerts"))
                     .toObject()
-                    .value(QStringLiteral("sound"))
+                    .value(QStringLiteral("finished"))
                     .toBool(true) &&
                 !written.value(QStringLiteral("keepAwake")).toBool(true) &&
                 !written.contains(QStringLiteral("showUsage")) &&

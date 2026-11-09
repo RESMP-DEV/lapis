@@ -15,7 +15,7 @@ key bindings and appearance it holds these:
     "models": {"codex": ["gpt-6-astra", "gpt-6-sol"]}
   },
   "harnessArguments": {"claude": ["--dangerously-skip-permissions"]},
-  "alerts": {"sound": true, "finished": true, "repeat": 3, "notify": true},
+  "alerts": {"finished": true, "notify": true},
   "editor": "Cursor",
   "keepAwake": true,
   "usage": {"show": true, "meter": ["codex", "claude", "grok"], "machines": ["devbox"]}
@@ -66,15 +66,17 @@ The wheel still reaches a full-screen program either way. See
 ## Alerts
 
 An unseen completed turn or request plays one quiet cue when `alerts.finished`
-is enabled. Requests use the same cue and background notification; custom sound
-files do not restore repeating request chimes. Appearance has one switch and
-Play button for the shared cue, plus the background-notification switch.
+is enabled. Requests use the same cue and background notification, and the cue
+does not repeat. Appearance has one switch and Play button for the shared cue,
+plus the background-notification switch. The `alerts.sound` and `alerts.repeat`
+keys of the retired repeating request chime are ignored; older files may keep
+them.
 
 A turn that ends on what you already saw of that agent stays quiet: while lapis
 is in front and you are at the Mac, the screen of the agent you are looking at
 is noted every second, and a finished turn whose screen above Claude Code's
-input box is unchanged neither chimes nor notifies. A request still chimes and
-notifies even then.
+input box is unchanged neither chimes nor notifies. A turn ending on an open
+request still gets its reminder.
 
 A notification posts when lapis is in the background or when you are away:
 no keyboard, mouse or trackpad input anywhere for `alerts.awayAfter` seconds
@@ -100,8 +102,8 @@ seconds the turn pings as before.
 
 Every decision — a chime or a notification, and each quiet reason — is logged,
 one JSON line each, to `runtime/attention.jsonl` in the lapis folder: the
-moment, the agent's conversation title, its CLI, the event (`needs you` or
-`finished`, or `still waiting` for a reminder), a `kind` of chime or
+moment, the agent's conversation title, its CLI, the event (`finished`, or
+`still waiting` for a reminder), a `kind` of chime or
 notification, and the `decision` (chimed, posted, `posted: you are away`,
 `posted: reminder`, or the quiet reason). The log is owner-only, and the title can be the
 conversation's first prompt, so the file is not for sharing. Before a line

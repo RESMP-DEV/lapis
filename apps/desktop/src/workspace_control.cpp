@@ -264,35 +264,37 @@ struct Switch {
 };
 constexpr auto switches = std::to_array<Switch>({
     {"keepAwake", &KeyMap::RemoteSettingsPatch::keepAwake, &KeyMap::keepAwake},
-    {"alertSound", &KeyMap::RemoteSettingsPatch::alertSound, &KeyMap::alertSound},
     {"finishSound", &KeyMap::RemoteSettingsPatch::finishSound, &KeyMap::finishSound},
     {"notify", &KeyMap::RemoteSettingsPatch::notify, &KeyMap::notify},
     {"showUsage", &KeyMap::RemoteSettingsPatch::showUsage, &KeyMap::showUsage},
 });
-constexpr auto repeat_name = std::string_view{"alertRepeat"};
+// The retired repeating request chime's settings. Phone builds from before
+// its removal still send them and require them in the answer, so a change to
+// either is accepted and ignored, and the answer reports the chime as off.
+constexpr auto retired_switch = std::string_view{"alertSound"};
+constexpr auto retired_repeat = std::string_view{"alertRepeat"};
 
 QString text(std::string_view name) {
     return QString::fromLatin1(name.data(), static_cast<qsizetype>(name.size()));
 }
 
 QJsonObject current_settings(const KeyMap& keymap) {
-    QJsonObject values{{text(repeat_name), keymap.alertRepeat()}};
+    QJsonObject values{{text(retired_switch), false}, {text(retired_repeat), 1}};
     for (const auto& item : switches)
         values.insert(text(item.name), (keymap.*item.get)());
     return values;
 }
 
 // Why `changes` cannot be applied, or empty. Nothing is applied unless every
-// present value has the type and range the Mac accepts.
+// present value has the type the Mac accepts.
 QString invalid_change(const QJsonObject& changes) {
     for (auto entry = changes.begin(); entry != changes.end(); ++entry) {
+        if (entry.key() == text(retired_switch) || entry.key() == text(retired_repeat))
+            continue;
         const bool is_switch = std::any_of(switches.begin(), switches.end(), [&](const auto& item) {
             return entry.key() == text(item.name);
         });
-        const auto repeat = entry.value().toDouble();
-        const bool valid_repeat = entry.value().isDouble() && std::isfinite(repeat) &&
-                                  repeat >= 1 && repeat <= 10 && repeat == std::trunc(repeat);
-        if (is_switch ? !entry.value().isBool() : entry.key() != text(repeat_name) || !valid_repeat)
+        if (!is_switch || !entry.value().isBool())
             return QStringLiteral("Invalid setting %1").arg(entry.key());
     }
     return {};
@@ -313,8 +315,6 @@ QByteArray WorkspaceControl::settings(const QString& kind, const QJsonObject& re
         for (const auto& item : switches)
             if (const auto value = changes.value(text(item.name)); value.isBool())
                 patch.*item.field = value.toBool();
-        if (const auto repeat = changes.value(text(repeat_name)); repeat.isDouble())
-            patch.alertRepeat = repeat.toInt();
         QString problem;
         if (!keymap_->applyRemoteSettings(patch, &problem))
             return reply({{QStringLiteral("ok"), false},

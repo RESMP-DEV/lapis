@@ -651,10 +651,8 @@ class Workspace final : public QObject {
     }
   signals:
     void focusChanged();
-    // An agent has a new request for you. Requests ping as finished turns do
-    // (turnFinished); nothing emits this now.
-    void agentNeedsYou(lapis::desktop::SessionPreview* item);
     // A Codex or Claude turn ended; terminal agents' output pauses do not count.
+    // A new request for you arrives here too, once its attention is applied.
     void turnFinished(lapis::desktop::SessionPreview* item);
     void sessionsChanged();
     void categoriesChanged();

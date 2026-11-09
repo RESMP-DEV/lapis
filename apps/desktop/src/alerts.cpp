@@ -127,9 +127,6 @@ bool SeenScreens::unchanged(const SessionPreview* item) const {
 Alerts::Alerts(Workspace& workspace, const KeyMap& config, Player play, Looking looking,
                QObject* parent)
     : QObject(parent), config_(config), play_(std::move(play)), looking_(std::move(looking)) {
-    repeat_.setInterval(kRepeatMs);
-    connect(&repeat_, &QTimer::timeout, this, &Alerts::tick);
-    connect(&workspace, &Workspace::agentNeedsYou, this, &Alerts::needsYou);
     finished_ = connect(&workspace, &Workspace::turnFinished, this, &Alerts::finished);
 }
 
@@ -204,48 +201,6 @@ bool Alerts::ring(Chime chime) {
     return true;
 }
 
-void Alerts::needsYou(SessionPreview* item) {
-    if (!config_.alertSound())
-        return record(item, "needs you", "alert off");
-    if (looking_(item))
-        return record(item, "needs you", "quiet: you are looking at it");
-    const auto found =
-        std::find_if(waiting_.begin(), waiting_.end(),
-                     [item](const Waiting& waiting) { return waiting.item == item; });
-    if (found == waiting_.end())
-        waiting_.push_back({item, 0});
-    else
-        found->played = 0; // a new request starts its count again
-    const bool chimed = ring(Chime::needsYou);
-    if (chimed)
-        for (auto& waiting : waiting_)
-            ++waiting.played;
-    record(item, "needs you", chimed ? "chimed" : "quiet: another chime just played");
-    if (!repeat_.isActive())
-        repeat_.start();
-}
-
-void Alerts::tick() {
-    // Answered, looked at, closed, or chimed for enough: done.
-    std::erase_if(waiting_, [this](const Waiting& waiting) {
-        return !waiting.item || waiting.item->attentionCount() == 0 || looking_(waiting.item) ||
-               waiting.played >= config_.alertRepeat();
-    });
-    if (waiting_.empty() || !config_.alertSound()) {
-        waiting_.clear();
-        repeat_.stop();
-        return;
-    }
-    // One chime covers every agent still waiting.
-    const bool chimed = ring(Chime::needsYou);
-    if (chimed)
-        for (auto& waiting : waiting_)
-            ++waiting.played;
-    for (const auto& waiting : waiting_)
-        record_decision(log_, waiting.item, "chime", "needs you",
-                        chimed ? "chimed" : "quiet: another chime just played");
-}
-
 void Alerts::finished(SessionPreview* item) {
     if (!config_.finishSound())
         return record(item, "finished", "chime off");
@@ -268,10 +223,8 @@ Notifier::Notifier(Workspace& workspace, const KeyMap& config, Post post, Backgr
     : QObject(parent), config_(config), post_(std::move(post)), background_(std::move(background)) {
     check_.setInterval(kCheckMs);
     connect(&check_, &QTimer::timeout, this, &Notifier::check);
-    connect(&workspace, &Workspace::agentNeedsYou, this,
-            [this](SessionPreview* item) { notify(item, true); });
     finished_ = connect(&workspace, &Workspace::turnFinished, this,
-                        [this](SessionPreview* item) { notify(item, false); });
+                        [this](SessionPreview* item) { notify(item); });
 }
 
 void Notifier::judgeBy(PingJudge& judge) {
@@ -285,7 +238,7 @@ void Notifier::judgeBy(PingJudge& judge) {
                                                                           : "none: judged steer");
                         return;
                     }
-                    notify(item, false);
+                    notify(item);
                 });
 }
 
@@ -303,7 +256,7 @@ qint64 Notifier::remindMs() const {
     return remind_ms_ ? *remind_ms_ : qint64{config_.remindAfterMinutes()} * 60 * 1000;
 }
 
-void Notifier::notify(SessionPreview* item, bool needsYou) {
+void Notifier::notify(SessionPreview* item) {
     if (item == nullptr)
         return;
     const bool away = !present();
@@ -314,21 +267,20 @@ void Notifier::notify(SessionPreview* item, bool needsYou) {
         // In front counts as seen only with someone there to see it.
         if (!background && !away)
             return "none: lapis is in front";
-        if (!needsYou && seen_ != nullptr && seen_->unchanged(item))
+        if (seen_ != nullptr && seen_->unchanged(item))
             return "none: nothing new since you looked";
         return nullptr;
     };
     const char* skipped = decide();
-    const char* event = needsYou ? "needs you" : "finished";
-    record_decision(log_, item, "notification", event,
+    record_decision(log_, item, "notification", "finished",
                     skipped != nullptr ? skipped
                     : background       ? "posted"
                                        : "posted: you are away");
     // A finished turn ending on what was already seen, or in front of the
     // person watching it, leaves nothing to come back to. Seeing an open
-    // request is not answering it. Live requests arrive on turnFinished;
-    // nothing emits agentNeedsYou, so the signal flag alone misses them.
-    const bool open = needsYou || item->attentionCount() > 0;
+    // request is not answering it. Live requests arrive on turnFinished
+    // after their attention is applied, so the open count tells them apart.
+    const bool open = item->attentionCount() > 0;
     const bool seen =
         !open && ((seen_ != nullptr && seen_->unchanged(item)) || (looking_ && looking_(item)));
     if (config_.notify() && !seen)
@@ -338,10 +290,7 @@ void Notifier::notify(SessionPreview* item, bool needsYou) {
     // The CLI leads the body: a title is the conversation's, and one about
     // Codex would otherwise read as a Codex agent.
     const QString cli = item->agentName();
-    QString body = needsYou ? tr("%1 needs you").arg(cli) : tr("%1 finished a turn").arg(cli);
-    if (needsYou && !item->attentionReason().isEmpty())
-        body += QStringLiteral(": ") + item->attentionReason();
-    post(item, body);
+    post(item, tr("%1 finished a turn").arg(cli));
 }
 
 void Notifier::post(const SessionPreview* item, const QString& body) {

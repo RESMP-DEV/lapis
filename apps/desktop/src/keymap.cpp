@@ -599,9 +599,7 @@ void KeyMap::apply_defaults() {
 #endif
     sidebar_visible_ = true;
     previews_visible_ = true;
-    alert_sound_ = true;
     finish_sound_ = true;
-    alert_repeat_ = 3;
     alert_sound_file_.clear();
     finish_sound_file_.clear();
     notify_ = true;
@@ -795,9 +793,9 @@ void KeyMap::load_harness_updates(const QJsonValue& value) {
 
 void KeyMap::load_alerts(const QJsonObject& root) {
     const auto alerts = root.value(QStringLiteral("alerts")).toObject();
-    alert_sound_ = alerts.value(QStringLiteral("sound")).toBool(true);
+    // "sound" and "repeat" belonged to a retired repeating request chime; a
+    // file that still has them loads, and saving leaves them as written.
     finish_sound_ = alerts.value(QStringLiteral("finished")).toBool(true);
-    alert_repeat_ = std::clamp(alerts.value(QStringLiteral("repeat")).toInt(3), 1, 10);
     notify_ = alerts.value(QStringLiteral("notify")).toBool(true);
     away_after_s_ =
         std::clamp(alerts.value(QStringLiteral("awayAfter")).toInt(kAwayAfterDefault), 15, 3600);
@@ -1167,9 +1165,7 @@ bool KeyMap::persist() {
         font.insert(QStringLiteral("family"), terminal_font_family_);
     root.insert(QStringLiteral("terminalFont"), font);
     QJsonObject alerts = root.value(QStringLiteral("alerts")).toObject();
-    alerts.insert(QStringLiteral("sound"), alert_sound_);
     alerts.insert(QStringLiteral("finished"), finish_sound_);
-    alerts.insert(QStringLiteral("repeat"), alert_repeat_);
     alerts.insert(QStringLiteral("notify"), notify_);
     root.insert(QStringLiteral("alerts"), alerts);
     root.insert(QStringLiteral("keepAwake"), keep_awake_);
@@ -1252,16 +1248,8 @@ QString KeyMap::addPlanMachine(const PlanCredential& credential, QString* reason
     return name;
 }
 
-bool KeyMap::setAlertSound(bool on) {
-    alert_sound_ = on;
-    return save();
-}
 bool KeyMap::setFinishSound(bool on) {
     finish_sound_ = on;
-    return save();
-}
-bool KeyMap::setAlertRepeat(int times) {
-    alert_repeat_ = std::clamp(times, 1, 10);
     return save();
 }
 bool KeyMap::setNotify(bool on) {
@@ -1279,39 +1267,26 @@ bool KeyMap::setShowUsage(bool on) {
 
 KeyMap::RemoteSettings KeyMap::remoteSettings() const {
     return {.keepAwake = keep_awake_,
-            .alertSound = alert_sound_,
             .finishSound = finish_sound_,
             .notify = notify_,
-            .showUsage = show_usage_,
-            .alertRepeat = alert_repeat_};
+            .showUsage = show_usage_};
 }
 
 bool KeyMap::applyRemoteSettings(const RemoteSettingsPatch& changes, QString* diagnostic) {
-    const bool has_change = changes.keepAwake || changes.alertSound || changes.finishSound ||
-                            changes.notify || changes.showUsage || changes.alertRepeat;
+    const bool has_change =
+        changes.keepAwake || changes.finishSound || changes.notify || changes.showUsage;
     if (!has_change)
         return true;
-    if (changes.alertRepeat && (*changes.alertRepeat < 1 || *changes.alertRepeat > 10)) {
-        diagnostic_ = QStringLiteral("Alert repeat must be between 1 and 10");
-        if (diagnostic)
-            *diagnostic = diagnostic_;
-        emit changed();
-        return false;
-    }
 
     const auto previous = remoteSettings();
     if (changes.keepAwake)
         keep_awake_ = *changes.keepAwake;
-    if (changes.alertSound)
-        alert_sound_ = *changes.alertSound;
     if (changes.finishSound)
         finish_sound_ = *changes.finishSound;
     if (changes.notify)
         notify_ = *changes.notify;
     if (changes.showUsage)
         show_usage_ = *changes.showUsage;
-    if (changes.alertRepeat)
-        alert_repeat_ = *changes.alertRepeat;
 
     // Observers must not see a batch that could still be rolled back. On
     // failure the file remains unchanged, so restore the fields and keep the
@@ -1323,11 +1298,9 @@ bool KeyMap::applyRemoteSettings(const RemoteSettingsPatch& changes, QString* di
     if (diagnostic)
         *diagnostic = diagnostic_;
     keep_awake_ = previous.keepAwake;
-    alert_sound_ = previous.alertSound;
     finish_sound_ = previous.finishSound;
     notify_ = previous.notify;
     show_usage_ = previous.showUsage;
-    alert_repeat_ = previous.alertRepeat;
     emit changed();
     return false;
 }

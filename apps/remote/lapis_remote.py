@@ -2405,12 +2405,13 @@ def category_route(parts, action):
 # Mac's window looks stays the Mac's to choose.
 PHONE_SETTINGS = {
     "keepAwake": bool,
-    "alertSound": bool,
-    "alertRepeat": int,
     "finishSound": bool,
     "notify": bool,
     "showUsage": bool,
 }
+# The retired repeating request chime's settings, which phone builds from
+# before its removal still send: they are dropped rather than refused.
+RETIRED_PHONE_SETTINGS = frozenset({"alertSound", "alertRepeat"})
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -2885,13 +2886,13 @@ class Handler(BaseHTTPRequestHandler):
         body = self.read_object()
         if body is None:
             return
+        body = {
+            name: value
+            for name, value in body.items()
+            if name not in RETIRED_PHONE_SETTINGS
+        }
         for name, value in body.items():
-            kind = PHONE_SETTINGS.get(name)
-            if kind is bool:
-                valid = isinstance(value, bool)
-            else:
-                valid = kind is int and position(value) and 1 <= value <= 10
-            if not valid:
+            if PHONE_SETTINGS.get(name) is not bool or not isinstance(value, bool):
                 self.fail(HTTPStatus.BAD_REQUEST, f"Invalid setting {name}")
                 return
         self.forward({"request": "changeSettings", "settings": body}, "settings")

@@ -85,20 +85,10 @@ struct SettingsView: View {
     // The Mac's own settings that matter away from it. Its window's look
     // (theme, layout, fonts, shortcuts) is set at the Mac.
     @ViewBuilder private var macSection: some View {
-        if let settings = model.macSettings {
+        if model.macSettings != nil {
             Section {
                 Toggle("Keep the Mac awake", isOn: macSwitch(\.keepAwake, "keepAwake"))
                     .accessibilityIdentifier("keepAwake")
-                Toggle("Chime when an agent needs you", isOn: macSwitch(\.alertSound, "alertSound"))
-                    .accessibilityIdentifier("alertSound")
-                if settings.alertSound {
-                    Stepper(value: Binding(get: { settings.alertRepeat },
-                                           set: { times in change(\.alertRepeat, times, "alertRepeat") }),
-                            in: 1...10) {
-                        Text(settings.alertRepeat == 1 ? "Chime once" : "Chime up to \(settings.alertRepeat) times")
-                    }
-                    .accessibilityIdentifier("alertRepeat")
-                }
                 Toggle("Chime when a turn finishes", isOn: macSwitch(\.finishSound, "finishSound"))
                     .accessibilityIdentifier("finishSound")
                 Toggle("Notify from the background", isOn: macSwitch(\.notify, "notify"))
