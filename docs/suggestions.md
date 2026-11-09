@@ -164,7 +164,7 @@ build has no extension loaded; reload it once.
   never does. Among those, anything waiting over four hours comes first, then
   work categories, requests, turns you have not seen, and the newest.
   `tabAway` in [config](config.md#tabs-next-agent) names your work categories
-  or picks another order. When nothing waits, Tab goes to the
+  and the overdue time. When nothing waits, Tab goes to the
   program as usual. A finished Claude Code or Codex turn nearly always offers
   a guess, so Tab usually takes the guess instead of moving to another agent;
   reach a waiting agent by opening it.
@@ -211,12 +211,11 @@ authentication failures stop the attempt; only a malformed answer is retried.
 Tab's choices are kept beside it in `~/.lapis/runtime/tab_away.jsonl`: every
 move Tab made, with each waiting agent's features and score, and every agent
 you settled on with the agents that were waiting when you left the one before
-(agent and category ids only, never titles or text). The ranker refits from
-them in the background and keeps its model in `tab_away_model.json`.
+(agent and category ids only, never titles or text). Tab's order does not
+learn from them; they are the record for judging that order.
 
 ```sh
 python3 scripts/runtime_digest.py                  # the last day: guesses that worked, taken by prompt arm, failures, Ultra Tab, pings
-python3 scripts/tab_away_eval.py log               # Tab's ranker against your logged choices
 python3 scripts/next_prompt_eval.py log            # acceptance: of the guesses you saw, the share you used
 python3 scripts/next_prompt_eval.py log --judge    # the ones you passed over, against what you typed
 python3 scripts/next_prompt_eval.py log --redo     # how often your next message was a redo, taken or not, by prompt arm

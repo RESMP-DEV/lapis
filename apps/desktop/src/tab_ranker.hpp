@@ -1,34 +1,25 @@
 #ifndef LAPIS_DESKTOP_TAB_RANKER_HPP
 #define LAPIS_DESKTOP_TAB_RANKER_HPP
 
-#include <QHash>
 #include <QJsonObject>
 #include <QJsonValue>
-#include <QObject>
 #include <QString>
 #include <QStringList>
 #include <algorithm>
 #include <array>
 #include <cstddef>
-#include <cstdint>
-#include <memory>
 #include <optional>
 #include <vector>
 
 namespace lapis::desktop {
 
-// {"tabAway": {"rank": "plain", "work": ["work"], "overdueHours": 4}}.
-// `rank` is "plain" (the default: an order that does not learn), "learned"
-// (a prior fitted to where the person goes) or "fixed" (the earliest order: a
-// guess not yet seen, then an unseen turn or a request, then a guess already
-// seen, longest waiting first). Plain puts first anything left waiting longer
-// than `overdueHours` (0 turns that off), oldest first, so neglected work
-// cannot sink; then work categories, requests, turns not yet seen, and the
-// newest. Choices are logged under every rank. `work` names the categories
-// that count as work; names compare without case.
-enum class TabRank : std::uint8_t { plain, learned, fixed };
+// {"tabAway": {"work": ["work"], "overdueHours": 4}}. Tab's order does not
+// learn: anything left waiting longer than `overdueHours` (0 turns that off)
+// comes first, oldest first, so neglected work cannot sink; then work
+// categories, requests, turns not yet seen, and the newest. `work` names the
+// categories that count as work; names compare without case. The retired
+// `rank` key ("learned" and "fixed" orders) is ignored.
 struct TabAwaySettings {
-    TabRank rank{TabRank::plain};
     QStringList work{QStringLiteral("work")};
     double overdueHours{4};
     bool operator==(const TabAwaySettings&) const = default;
@@ -40,7 +31,7 @@ struct TabAwaySettings {
 // flight, or a request); the ranker only orders eligible agents.
 struct TabCandidate {
     QString session;
-    QString category; // the category's id: learned weights follow it across renames
+    QString category; // the category's id
     bool work{};
     bool request{};
     bool unseen{};
@@ -51,47 +42,22 @@ struct TabCandidate {
     double sinceTurnMinutes{}; // since its last turn started; large when never
 };
 
-// Orders the agents Tab can move to, and learns that order from the person.
-// Scores are a linear softmax ranker over a few features plus one weight per
-// category, pulled toward a prior (work first, then requests, then turns not
-// yet seen, then the newest) and fitted to every recorded choice: each time
-// the person settles on a waiting agent, by Tab or by hand, the waiting agents
-// at the moment they left the previous one and the one they chose.
-//
-// Owned by the GUI thread. Scoring is a few dot products; refitting runs on
-// the thread pool from the decision log and publishes new weights back here.
-// With a folder, decisions append to `tab_away.jsonl` there and the fitted
-// model is kept in `tab_away_model.json`, both owner-only; without one
-// (previews, tests) decisions stay in memory.
-class TabRanker final : public QObject {
-    Q_OBJECT
+// Orders the agents Tab can move to, and records Tab's moves and where the
+// person settled. With a folder, records append to `tab_away.jsonl` there,
+// owner-only; without one (previews, tests) nothing is written. Owned by the
+// GUI thread.
+class TabRanker final {
   public:
     static constexpr std::size_t kFeatures = 9;
-    using Weights = std::array<double, kFeatures>;
-    struct Model {
-        Weights weights{};
-        QHash<QString, double> categories;
-        int decisions{};
-    };
-    // Feature order: work, request, unseen, guess, log wait, newest, stale,
-    // log turns in the last hour, log minutes since its last turn.
-    [[nodiscard]] static Weights prior();
+    // Each candidate's features as the log records them: work, request,
+    // unseen, guess, log wait, newest, stale, log turns in the last hour, log
+    // minutes since its last turn.
     [[nodiscard]] static std::vector<std::array<double, kFeatures>>
     features(const std::vector<TabCandidate>& candidates);
 
-    explicit TabRanker(QString folder = {}, QObject* parent = nullptr);
-    ~TabRanker() override;
-    TabRanker(const TabRanker&) = delete;
-    TabRanker& operator=(const TabRanker&) = delete;
-    TabRanker(TabRanker&&) = delete;
-    TabRanker& operator=(TabRanker&&) = delete;
+    explicit TabRanker(QString folder = {});
 
-    void setRank(TabRank rank, double overdueHours = 4) {
-        rank_ = rank;
-        overdue_minutes_ = std::max(0.0, overdueHours) * 60.0;
-    }
-    [[nodiscard]] TabRank rank() const { return rank_; }
-    [[nodiscard]] const Model& model() const { return model_; }
+    void setOverdueHours(double hours) { overdue_minutes_ = std::max(0.0, hours) * 60.0; }
 
     // Scores in candidate order (higher first) and the index Tab goes to, or
     // nullopt for no candidates. Ties go to the agent waiting longest.
@@ -100,33 +66,17 @@ class TabRanker final : public QObject {
                                                   std::vector<double>* scores = nullptr) const;
     // Records the move Tab made, with every candidate's features and score.
     void recordTab(const std::vector<TabCandidate>& candidates, const std::vector<double>& scores,
-                   std::size_t picked);
-    // Records where the person settled; under "learned", refits in the
-    // background.
-    void learn(const std::vector<TabCandidate>& candidates, std::size_t chosen, bool viaTab);
-
-    // Tests: whether a refit is running or queued, and the decision bound.
-    [[nodiscard]] bool refitting() const;
-    static constexpr int kMaxDecisions = 1000;
+                   std::size_t picked) const;
+    // Records where the person settled among the agents that were waiting.
+    void recordChoice(const std::vector<TabCandidate>& candidates, std::size_t chosen,
+                      bool viaTab) const;
 
   private:
-    struct Shared;
     void record(QJsonObject event) const;
-    void refit();
-    void adopt(Model model);
-    TabRank rank_{TabRank::plain};
     double overdue_minutes_{240};
     QString folder_;
     QString log_path_;
-    QString model_path_;
-    Model model_;
-    std::shared_ptr<Shared> shared_;
 };
-
-// The model fitted to a set of decisions (each as logged: candidates with
-// features, and the chosen index), regularized toward the prior. Pure; runs on
-// a worker thread.
-[[nodiscard]] TabRanker::Model fit_tab_ranker(const std::vector<QJsonObject>& decisions);
 
 } // namespace lapis::desktop
 #endif

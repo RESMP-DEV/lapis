@@ -558,11 +558,8 @@ class Workspace final : public QObject {
     // request, or a finished turn (no background work in flight) that is
     // unseen or has a guessed next prompt. Agents at work, paused on their own
     // background work, or without a status never qualify. The TabRanker
-    // orders them: by default the plain order (anything overdue first, then
-    // work, requests, unseen, newest), which does not learn; "tabAway":
-    // {"rank": "learned"} fits that prior to where you go, and "fixed" keeps
-    // the earlier order (a guess not yet seen, an unseen turn or request, a
-    // guess already seen, longest waiting within each). `ready` maps agents
+    // orders them (anything overdue first, then work, requests, unseen,
+    // newest). `ready` maps agents
     // with a guess to whether it was seen. Advances past the focused session;
     // false (none waiting) leaves Tab with the program. Every move is logged
     // with the candidates and their scores.
@@ -578,9 +575,8 @@ class Workspace final : public QObject {
     void setTabAway(const TabAwaySettings& settings);
     [[nodiscard]] const TabAwaySettings& tabAway() const { return tab_away_; }
     // Where the guesses come from when the person moves by hand, for the
-    // choices the ranker learns from (NextPrompt::readyAgents).
+    // choices the move log records (NextPrompt::readyAgents).
     void setGuesses(std::function<QVariantMap()> guesses) { guesses_ = std::move(guesses); }
-    [[nodiscard]] TabRanker& tabRanker() { return *tab_ranker_; }
     // How long the person stays on an agent before it counts as their choice.
     void setChoiceSettleMsForTesting(int ms) { choice_settle_.setInterval(ms); }
     [[nodiscard]] QVariantList sessions() const;

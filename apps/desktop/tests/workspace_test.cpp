@@ -597,6 +597,21 @@ bool waitFor(const std::function<bool()>& condition, int milliseconds) {
     return condition();
 }
 
+// The choices Tab's move log beside a registry holds.
+int loggedChoices(const QString& storagePath) {
+    QFile log(QFileInfo(storagePath).dir().filePath(QStringLiteral("tab_away.jsonl")));
+    if (!log.open(QIODevice::ReadOnly))
+        return 0;
+    int choices = 0;
+    while (!log.atEnd())
+        if (QJsonDocument::fromJson(log.readLine())
+                .object()
+                .value(QStringLiteral("event"))
+                .toString() == QLatin1String("choice"))
+            ++choices;
+    return choices;
+}
+
 QString uuid() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
 
 class ScopedCodexHome {
@@ -779,12 +794,12 @@ void modelessAgentsGetTheDefaultMode() {
     require(launch_mode(asked("shell"), {}, {}).isEmpty(), "a CLI without modes gets none");
 }
 
-// Tab's next agent: a guess not yet seen first, then a turn finished unseen,
-// then a guess already seen, so Tab cannot bounce between guesses while
-// another agent waits; an agent at work is not waiting even with a guess.
+// Tab's next agent: a guess not yet seen or a turn finished unseen first, then
+// a guess already seen, so Tab cannot bounce between guesses while another
+// agent waits; an agent at work is not waiting even with a guess.
 void tabGoesToTheReadyThenTheOldest() {
     Workspace workspace(WorkspaceMode::preview);
-    workspace.setTabAway({.rank = lapis::desktop::TabRank::fixed});
+    workspace.setTabAway({});
     require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
@@ -908,7 +923,6 @@ void tabAttributionFollowsTheNextHandMove() {
     require(file.write(bytes) == bytes.size(), "write attribution registry");
     file.close();
     Workspace workspace(WorkspaceMode::live, options);
-    workspace.setTabAway({.rank = lapis::desktop::TabRank::learned}); // counts fitted choices
     workspace.setChoiceSettleMsForTesting(20);
     require(workspace.focusedSession()->sessionId() == second, "start on the source agent");
     lapis::session::wire::AttentionSnapshot state;
@@ -931,12 +945,7 @@ void tabAttributionFollowsTheNextHandMove() {
     source->applyAttention(state);
     require(source->unseen(), "a turn finished out of view marks the agent");
     require(workspace.selectSession(second), "the person then moves back by hand");
-    require(waitFor(
-                [&] {
-                    return workspace.tabRanker().model().decisions == 1 &&
-                           !workspace.tabRanker().refitting();
-                },
-                5000),
+    require(waitFor([&] { return loggedChoices(options.storagePath) == 1; }, 5000),
             "the Tab-and-hand sequence settles once");
     QFile log(QFileInfo(options.storagePath).dir().filePath(QStringLiteral("tab_away.jsonl")));
     require(log.open(QIODevice::ReadOnly), "read the attribution log");
@@ -993,7 +1002,6 @@ void firstTabChoiceExcludesTheInitialFocus() {
     const auto target = QStringLiteral("eb00ff7d-e97a-472a-b74e-01c3909d5a55");
     auto options = tabAttributionRegistry(directory, QStringLiteral("source"));
     Workspace workspace(WorkspaceMode::live, options);
-    workspace.setTabAway({.rank = lapis::desktop::TabRank::learned}); // counts fitted choices
     workspace.setChoiceSettleMsForTesting(20);
     require(workspace.focusedSession()->sessionId() == source, "start on the initial focus");
     lapis::session::wire::AttentionSnapshot state;
@@ -1013,12 +1021,7 @@ void firstTabChoiceExcludesTheInitialFocus() {
     const auto selected =
         workspace.focusedSession() ? workspace.focusedSession()->sessionId() : QString();
     require(moved && selected == target, "Tab moves to the newer waiting agent");
-    require(waitFor(
-                [&] {
-                    return workspace.tabRanker().model().decisions == 1 &&
-                           !workspace.tabRanker().refitting();
-                },
-                5000),
+    require(waitFor([&] { return loggedChoices(options.storagePath) == 1; }, 5000),
             "the first move settles");
     QFile log(QFileInfo(options.storagePath).dir().filePath(QStringLiteral("tab_away.jsonl")));
     require(log.open(QIODevice::ReadOnly), "read the first Tab choice");
@@ -1035,7 +1038,7 @@ void firstTabChoiceExcludesTheInitialFocus() {
                 "the agent left at startup is excluded");
 }
 
-// A candidate closed before a choice settles is removed, never fitted as if
+// A candidate closed before a choice settles is removed, never recorded as if
 // it were still waiting.
 void closingRemovesAPendingChoiceCandidate() {
     QTemporaryDir directory;
@@ -1044,7 +1047,6 @@ void closingRemovesAPendingChoiceCandidate() {
     const auto candidate = QStringLiteral("778fc84f-1ad3-4a14-8e21-7719d9c5814d");
     auto options = tabAttributionRegistry(directory, QStringLiteral("source"));
     Workspace workspace(WorkspaceMode::live, options);
-    workspace.setTabAway({.rank = lapis::desktop::TabRank::learned}); // counts fitted choices
     workspace.setChoiceSettleMsForTesting(20);
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
@@ -1065,8 +1067,7 @@ void closingRemovesAPendingChoiceCandidate() {
             "Tab stages a choice among both waiting agents");
     require(workspace.closeSession(candidate, true), "close the pending candidate");
     QThread::msleep(60); // longer than the test settle interval
-    require(workspace.tabRanker().model().decisions == 0 && !workspace.tabRanker().refitting(),
-            "a closed candidate cannot form a learned choice");
+    require(loggedChoices(options.storagePath) == 0, "a closed candidate cannot form a choice");
 }
 
 // Closing the focused agent reassigns focus structurally. It must cancel Tab's
@@ -1076,7 +1077,6 @@ void closingFocusedAgentCancelsPendingChoice() {
     require(directory.isValid(), "focused-close directory");
     auto options = tabAttributionRegistry(directory, QStringLiteral("source"));
     Workspace workspace(WorkspaceMode::live, options);
-    workspace.setTabAway({.rank = lapis::desktop::TabRank::learned}); // counts fitted choices
     workspace.setChoiceSettleMsForTesting(20);
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
@@ -1098,8 +1098,7 @@ void closingFocusedAgentCancelsPendingChoice() {
             "Tab stages a focused choice");
     require(workspace.closeSession(target, true), "close the focused candidate");
     QThread::msleep(60);
-    require(workspace.tabRanker().model().decisions == 0 && !workspace.tabRanker().refitting(),
-            "a structural focus change teaches nothing");
+    require(loggedChoices(options.storagePath) == 0, "a structural focus change records no choice");
 }
 
 // A failed registry save must not teach a nonexistent Tab move or leave a
@@ -1134,7 +1133,6 @@ void failedTabSelectionRecordsNothing() {
     require(file.write(bytes) == bytes.size(), "write failed-tab registry");
     file.close();
     Workspace workspace(WorkspaceMode::live, options);
-    workspace.setTabAway({.rank = lapis::desktop::TabRank::learned}); // counts fitted choices
     auto* waiting = workspace.session(target);
     require(waiting != nullptr && workspace.focusedSession()->sessionId() == source,
             "load the failed-tab fixture");
@@ -1150,7 +1148,6 @@ void failedTabSelectionRecordsNothing() {
     require(!workspace.nextPriorityAttention({}), "the Tab selection fails with the registry");
     require(workspace.focusedSession()->sessionId() == source,
             "a failed Tab move leaves the source focused");
-    require(workspace.tabRanker().model().decisions == 0, "a failed Tab move teaches nothing");
     require(!QFileInfo::exists(
                 QFileInfo(options.storagePath).dir().filePath(QStringLiteral("tab_away.jsonl"))),
             "a failed Tab move writes no event log");
@@ -4110,9 +4107,11 @@ void alertsChimeWhileAnAgentWaits() {
     require(config.open(QIODevice::WriteOnly), "write the config");
     // "sound" and "repeat" are the retired request chime's, and "notify",
     // "awayAfter", "remindAfter" and "judge" the retired notifications' and
-    // ping judge's; older files keep them.
+    // ping judge's, as "tabAway.rank" is the retired learned order's; older
+    // files keep them.
     config.write(R"({"version": 1, "alerts": {"sound": true, "finished": true, "repeat": 3,
-        "notify": true, "awayAfter": 5, "remindAfter": 9999, "judge": true}})");
+        "notify": true, "awayAfter": 5, "remindAfter": 9999, "judge": true},
+        "tabAway": {"rank": "learned"}})");
     config.close();
     lapis::desktop::KeyMap keymap;
     keymap.setSourcePathForTesting(config.fileName());
@@ -4248,8 +4247,11 @@ void alertsChimeWhileAnAgentWaits() {
     {
         QFile written(config.fileName());
         require(written.open(QIODevice::ReadOnly), "read the saved alerts config");
-        const auto saved =
-            QJsonDocument::fromJson(written.readAll()).object().value("alerts").toObject();
+        const auto root_object = QJsonDocument::fromJson(written.readAll()).object();
+        const auto saved = root_object.value("alerts").toObject();
+        require(root_object.value("tabAway").toObject().value("rank").toString() ==
+                    QLatin1String("learned"),
+                "saving keeps the retired Tab order key as written");
         require(!saved.value(QStringLiteral("finished")).toBool(true) &&
                     saved.value(QStringLiteral("judge")).toBool() &&
                     saved.value(QStringLiteral("notify")).toBool() &&
