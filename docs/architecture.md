@@ -36,7 +36,7 @@ backend, display server, and workload pass their own qualification.
 | Terminal-engine adapter | Ghostty parser/reflow behavior behind a small lapis interface | Upstream types and its unstable C API stay isolated |
 | Agent adapters | Tool-specific observation, response, and reconciliation capabilities | Each tool/version is probed independently; success with one adapter is not adapter independence |
 | Attention policy | Source pending requests, ordering, aging, and reconciliation | Desktop combines and presents requests but never changes their response authority |
-| Desktop | Layout, keyboard/IME focus, selection, accessibility, rendering, and starting one session service per agent | Targets explicit sessions; never owns PTYs, and quitting the window leaves started services running |
+| Desktop | Layout, keyboard/IME focus, selection, accessibility, rendering, and starting one session service per agent | Targets explicit sessions; never owns PTYs, and quitting leaves services running only where the OS permits background execution |
 | Login helper | `scripts/restore_at_login.py`: a LaunchAgent that runs the windowless host at login to restart agents whose services died with the Mac | Leaves running agents alone; it does not watch or restart services after login |
 | Tool status | Read-only installed/version observations from `harness_catalog` | Never configures tools, changes launch semantics, or qualifies model access |
 | Renderer | Glyph/texture caches, changed-region drawing, and bounded previews | Consumes immutable snapshots; never mutates parser or PTY state |
@@ -58,7 +58,7 @@ that uses `lapis_project_options`.
 | Session wire | Internal version 6 framing with epochs, generations, history paging, and attention messages | Incompatible changes need rejection/migration tests and a private endpoint |
 | Codex route | Managed ordinary TUI with a service-owned observer and app-server backend | Observation, response, and replay capabilities are declared separately |
 | Claude route | Hook/terminal observation with explicit answers in Claude's terminal | No GUI response routing until a supported protocol is version-pinned and qualified |
-| Process birth | The window (or the windowless host) starts one detached session service per agent; agents survive the window quitting, and the login helper restarts those whose services died with the Mac | Restart of a crashed session service is not implemented: the agent keeps its last screen until it is restarted or lapis next opens |
+| Process birth | The window (or the windowless host) starts one detached session service per agent; agents survive window quitting only where the OS permits background execution, and the login helper restarts those whose services died with the Mac | Restart of a crashed session service is not implemented: the agent keeps its last screen until it is restarted or lapis next opens; macOS 27 also requires the Allow in the Background conditions in [install](install.md) |
 | Settings | Tracked `lapis.json` defaults plus private runtime workspace/window state | Machine-local state never becomes a portable credential or session transcript |
 | Native browser surfaces | CEF 8037 is a provisional engine candidate; no runtime is implemented | Run the isolated W0 probe first; product and service wiring wait for R1/R4 |
 
@@ -164,11 +164,13 @@ checkpoints do not displace the delivery order above.
 
 **R1, process lifetime.** The window starts each agent's session service and
 does not own it afterwards: quitting the window leaves the service and its
-agent running, and clients attach by validated identity. The login helper
-restarts agents whose services died with the Mac. Restart of a crashed session
-service is not implemented. Qualify GUI close/crash/replacement, service death,
-login/logout, and reboot. Same-child survival and replacement with a new epoch
-are different outcomes and must be reported separately.
+agent running where the OS permits background execution, and clients attach by
+validated identity. On macOS 27 that means the Allow in the Background and
+old-app conditions in [install](install.md); otherwise macOS ends the agents.
+The login helper restarts agents whose services died with the Mac. Restart of a
+crashed session service is not implemented. Qualify GUI close/crash/replacement,
+service death, login/logout, and reboot. Same-child survival and replacement
+with a new epoch are different outcomes and must be reported separately.
 
 **R2, input integrity.** Paste admission, mode-aware encoding, attachment
 identity, cancellation, and reconnect reporting stay service-owned. Candidate
