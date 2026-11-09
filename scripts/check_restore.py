@@ -611,8 +611,8 @@ def main():
             session.send(wire.KEY, bytes([10, 0]))
             time.sleep(3)
             say(session, prompt[name])
-            # Codex builds the observer has not qualified are followed by the
-            # service's rollout scan, once a minute after the first find.
+            # Codex's new thread is recorded when its first turn finishes and
+            # the notify program reports it; Claude Code's when its hook fires.
             conversations[name] = wait_record(
                 endpoint[name], name, timeout=90, replacing=earlier, source="observer"
             )

@@ -106,7 +106,9 @@ This does not authorize merging, releasing or expanding a worker's permissions.
   supported external protocol; do not assume internal Rust crates are a stable
   embedding API. A Codex agent is the normal CLI under a PTY; it reports
   finished turns through its notify program, as an agent on another machine
-  does (see the architecture's Codex route). lapis runs no `codex app-server`.
+  does (see the architecture's Codex route). No agent or attention route
+  runs `codex app-server`; the desktop starts one briefly only to read
+  Codex's model list and rate limits.
 - Preserve actual terminal behavior: Unicode, shaping, wide cells, escape
   sequences, resize, IME, selection, clipboard, and accessibility. Prefer an
   evaluated terminal engine over casually rebuilding terminal compatibility.

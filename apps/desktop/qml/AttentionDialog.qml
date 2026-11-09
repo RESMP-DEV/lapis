@@ -2,120 +2,33 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
+// lapis surfaces an agent's requests; the agent takes every answer in its own
+// terminal (an older service's request too), so nothing here is editable.
 Dialog {
     id: dialog
     objectName: "attentionDialog"
     property var session: null
     property string monoFamily: "monospace"
-    // Freeze the selected form while the user types. Incoming snapshots may
-    // invalidate its token, but must never replace a draft or an IME composition.
-    property var draft: null
-    property var answers: ({})
-    property var answerModes: ({})
-    property string lastDraftSessionId: ""
-    property string lastDraftToken: ""
-    property var draftCache: ({})
-    readonly property int maximumDrafts: 64
-    // Four UTF-8 bytes per UTF-16 code unit is the conservative transport bound;
-    // the unused quarter leaves room for JSON keys, IDs, and the envelope.
-    readonly property int maximumAnswerCharacters: {
-        const questions = draft ? (draft.details.questions || []) : []
-        return Math.max(1, Math.floor(28672 / (4 * Math.max(1, questions.length))))
-    }
+    // The selected request as it was when chosen. A later snapshot may retire
+    // it; the dialog then says so instead of switching to another request.
+    property var selected: null
+    property string lastSessionId: ""
+    property string lastToken: ""
     readonly property var requests: session ? session.attentionRequests : []
     readonly property var current: {
-        if (draft) {
+        if (selected) {
             for (const request of requests) {
-                if (request.token === draft.token)
+                if (request.token === selected.token)
                     return request
             }
         }
         return null
     }
-    readonly property bool canRespond: current !== null && current.enabled
-    readonly property bool terminalOnly: draft !== null &&
-                                         draft.details.responseLocation === "terminal"
-
-    function draftKey(sessionId, token) {
-        return JSON.stringify([sessionId, token])
-    }
-
-    function rememberDraft() {
-        if (!session || !draft || !requestExists(session, draft.token))
-            return
-        const key = draftKey(session.sessionId, draft.token)
-        const retained = {}
-        retained[key] = {
-            sessionId: session.sessionId,
-            token: draft.token,
-            draft: draft,
-            answers: answers,
-            answerModes: answerModes
-        }
-        for (const existingKey of Object.keys(draftCache)) {
-            if (Object.keys(retained).length >= maximumDrafts)
-                break
-            if (existingKey !== key)
-                retained[existingKey] = draftCache[existingKey]
-        }
-        draftCache = retained
-        lastDraftSessionId = session.sessionId
-        lastDraftToken = draft.token
-    }
-
-    function restoreDraft(sessionId, token) {
-        const cached = draftCache[draftKey(sessionId, token)]
-        if (!cached)
-            return false
-        draft = cached.draft
-        answers = cached.answers
-        answerModes = cached.answerModes
-        lastDraftSessionId = sessionId
-        lastDraftToken = token
-        return true
-    }
-
-    function requestExists(value, token) {
-        if (!value)
-            return false
-        for (const request of value.attentionRequests) {
-            if (request.token === token)
-                return true
-        }
-        return false
-    }
-
-    function pruneDrafts(activeSessions) {
-        const retained = {}
-        for (const key of Object.keys(draftCache)) {
-            const cached = draftCache[key]
-            let alive = false
-            for (const value of activeSessions) {
-                if (value && value.sessionId === cached.sessionId &&
-                        requestExists(value, cached.token)) {
-                    alive = true
-                    break
-                }
-            }
-            if (alive)
-                retained[key] = cached
-        }
-        draftCache = retained
-        // A changed request disables its open form without destroying typed text.
-        // Removing the entire session invalidates the dialog owner instead.
-        if (session && !activeSessions.some(value => value === session))
-            close()
-    }
 
     function showSession(value, preferredToken) {
-        rememberDraft()
-        const restoreSessionId = value && lastDraftSessionId === value.sessionId ?
-                    lastDraftSessionId : ""
-        const restoreToken = restoreSessionId ? lastDraftToken : ""
+        const restoreToken = value && lastSessionId === value.sessionId ? lastToken : ""
         session = value
-        draft = null
-        answers = ({})
-        answerModes = ({})
+        selected = null
         open()
         const targetToken = preferredToken ? preferredToken : restoreToken
         if (targetToken)
@@ -124,13 +37,9 @@ Dialog {
     function selectRequest(value) {
         if (!session || !value)
             return
-        rememberDraft()
-        if (!restoreDraft(session.sessionId, value.token)) {
-            draft = value
-            answers = ({})
-            answerModes = ({})
-        }
-        rememberDraft()
+        selected = value
+        lastSessionId = session.sessionId
+        lastToken = value.token
     }
     function selectExactRequest(token) {
         if (!session)
@@ -143,17 +52,8 @@ Dialog {
         }
         return false
     }
-    function setAnswer(id, value) {
-        updateAnswer(id, value, false)
-    }
-    function updateAnswer(id, value, fromOption) {
-        const updated = Object.assign({}, answers)
-        const modes = Object.assign({}, answerModes)
-        modes[id] = fromOption === true
-        answerModes = modes
-        updated[id] = {answers: [value]}
-        answers = updated
-        rememberDraft()
+    function optionText(option) {
+        return option.description ? option.label + " — " + option.description : option.label
     }
 
     title: qsTr("Agent requests")
@@ -170,19 +70,14 @@ Dialog {
     standardButtons: Dialog.Close
     closePolicy: Popup.CloseOnEscape
     onClosed: {
-        rememberDraft()
-        if (draft && session) {
-            lastDraftSessionId = session.sessionId
-            lastDraftToken = draft.token
-        }
-        draft = null
-        answers = ({})
-        answerModes = ({})
+        selected = null
         session = null
     }
     onRequestsChanged: {
-        if (typeof workspace !== "undefined")
-            pruneDrafts(workspace.sessions)
+        // Removing the entire session invalidates the dialog owner.
+        if (session && typeof workspace !== "undefined" &&
+                !workspace.sessions.some(value => value === session))
+            close()
     }
 
     contentItem: ScrollView {
@@ -209,24 +104,23 @@ Dialog {
                     objectName: "request-" + index
                     required property var modelData
                     Layout.fillWidth: true
-                    text: modelData.reason + (modelData.responding ? qsTr(" · response sent") : "")
-                    checked: dialog.draft !== null && modelData.token === dialog.draft.token
+                    text: modelData.reason
+                    checked: dialog.selected !== null && modelData.token === dialog.selected.token
                     onClicked: dialog.selectRequest(modelData)
                 }
             }
             ColumnLayout {
                 Layout.fillWidth: true
-                visible: dialog.draft !== null
-                enabled: dialog.canRespond || dialog.terminalOnly
+                visible: dialog.selected !== null
                 Label {
                     Layout.fillWidth: true
-                    text: dialog.draft ? dialog.draft.summary : ""
+                    text: dialog.selected ? dialog.selected.summary : ""
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: dialog.draft ? (dialog.draft.details.command || "") : ""
+                    text: dialog.selected ? (dialog.selected.details.command || "") : ""
                     visible: text.length > 0
                     font.family: dialog.monoFamily
                     textFormat: Text.PlainText
@@ -234,7 +128,7 @@ Dialog {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: dialog.draft ? (dialog.draft.details.cwd || "") : ""
+                    text: dialog.selected ? (dialog.selected.details.cwd || "") : ""
                     visible: text.length > 0
                     font.family: dialog.monoFamily
                     textFormat: Text.PlainText
@@ -242,80 +136,48 @@ Dialog {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: dialog.draft ? (dialog.draft.details.reason || "") : ""
+                    text: dialog.selected ? (dialog.selected.details.reason || "") : ""
                     visible: text.length > 0
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                 }
-                Label {
-                    Layout.fillWidth: true
-                    objectName: "terminalOnlyNotice"
-                    visible: dialog.terminalOnly
-                    text: qsTr("Answer in the originating terminal.")
-                    font.weight: Font.Medium
-                    wrapMode: Text.Wrap
-                }
+                // A question and its offered answers, as text to read before
+                // answering in the terminal.
                 Repeater {
-                    model: dialog.draft ? (dialog.draft.details.questions || []) : []
+                    model: dialog.selected ? (dialog.selected.details.questions || []) : []
                     delegate: ColumnLayout {
-                        id: questionForm
+                        id: question
                         required property var modelData
-                        readonly property var options: modelData.options || []
-                        readonly property string savedAnswer: dialog.answers[modelData.id]
-                            ? dialog.answers[modelData.id].answers[0] : ""
-                        readonly property bool optionSelected: dialog.answerModes[modelData.id] === true
                         Layout.fillWidth: true
                         Label {
                             Layout.fillWidth: true
-                            text: questionForm.modelData.question
+                            objectName: "question-" + question.modelData.id
+                            text: question.modelData.question || ""
+                            font.weight: Font.Medium
                             textFormat: Text.PlainText
                             wrapMode: Text.Wrap
                         }
-                        ComboBox {
-                            id: optionChoice
-                            objectName: "options-" + questionForm.modelData.id
-                            Layout.fillWidth: true
-                            visible: questionForm.options.length > 0
-                            model: questionForm.options
-                            textRole: "label"
-                            currentIndex: questionForm.optionSelected
-                                ? questionForm.options.findIndex(option => option.label === questionForm.savedAnswer) : -1
-                            displayText: currentIndex < 0 ? qsTr("Choose an answer") : currentText
-                            onActivated: {
-                                dialog.updateAnswer(questionForm.modelData.id, currentText, true)
-                            }
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            text: optionChoice.currentIndex >= 0 ? (questionForm.options[optionChoice.currentIndex].description || "") : ""
-                            visible: text.length > 0
-                            textFormat: Text.PlainText
-                            wrapMode: Text.Wrap
-                        }
-                        TextField {
-                            id: freeAnswer
-                            objectName: "answer-" + questionForm.modelData.id
-                            Layout.fillWidth: true
-                            visible: questionForm.options.length === 0 || questionForm.modelData.isOther === true
-                            placeholderText: qsTr("Type an answer")
-                            maximumLength: dialog.maximumAnswerCharacters
-                            echoMode: questionForm.modelData.isSecret === true ? TextInput.Password : TextInput.Normal
-                            text: questionForm.optionSelected ? "" : questionForm.savedAnswer
-                            onTextEdited: {
-                                dialog.setAnswer(questionForm.modelData.id, text)
+                        Repeater {
+                            model: question.modelData.options || []
+                            delegate: Label {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                leftPadding: 12
+                                text: "• " + dialog.optionText(modelData)
+                                textFormat: Text.PlainText
+                                wrapMode: Text.Wrap
                             }
                         }
                     }
                 }
             }
-            // lapis surfaces requests; the agent takes every answer in its own
-            // terminal (an older service's request too).
             Label {
                 Layout.fillWidth: true
-                visible: dialog.draft !== null && !dialog.terminalOnly
-                text: dialog.current === null ? qsTr("This request is no longer current.") :
-                      dialog.current.responding ? qsTr("Waiting for the agent to resolve this request.") :
-                      qsTr("Respond in the originating terminal.")
+                objectName: "requestNotice"
+                visible: dialog.selected !== null
+                text: dialog.current === null ? qsTr("This request is no longer current.")
+                                              : qsTr("Answer in the originating terminal.")
+                font.weight: Font.Medium
                 wrapMode: Text.Wrap
             }
         }

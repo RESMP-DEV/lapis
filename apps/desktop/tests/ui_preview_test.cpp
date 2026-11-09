@@ -451,15 +451,16 @@ int run_attention_dialog_tests() {
     CHECK(QMetaObject::invokeMethod(dialog, "selectRequest",
                                     Q_ARG(QVariant, document->attentionRequests()[0])));
     pump(20);
-    auto* answer = find_visual(window->contentItem(), QStringLiteral("answer-color"));
-    CHECK(answer != nullptr);
-    answer->forceActiveFocus();
-    QKeyEvent letter(QEvent::KeyPress, Qt::Key_B, Qt::NoModifier, QStringLiteral("Blue"));
-    QCoreApplication::sendEvent(window, &letter);
-    CHECK(answer->property("text").toString() == QStringLiteral("Blue"));
-    QInputMethodEvent compose(QStringLiteral("仮"), {});
-    QCoreApplication::sendEvent(window, &compose);
-    CHECK(answer->property("preeditText").toString() == QStringLiteral("仮"));
+    // The question reads as text with nothing to type into: answers go to the
+    // agent's own terminal.
+    auto* question = find_visual(window->contentItem(), QStringLiteral("question-color"));
+    auto* notice = find_visual(window->contentItem(), QStringLiteral("requestNotice"));
+    CHECK(question != nullptr && notice != nullptr);
+    CHECK(question->property("text").toString() == QStringLiteral("Choose a color"));
+    CHECK(notice->property("text").toString() ==
+          QStringLiteral("Answer in the originating terminal."));
+    CHECK(find_visual(window->contentItem(), QStringLiteral("answer-color")) == nullptr);
+    // Another request leaves the selection where it was.
     state.diagnostic = QStringLiteral("Another request arrived");
     auto other = state.requests[0];
     other.pending.request.id = std::string("other");
@@ -467,12 +468,9 @@ int run_attention_dialog_tests() {
     state.requests.push_back(other);
     document->applyAttention(state);
     pump(20);
-    CHECK(answer == find_visual(window->contentItem(), QStringLiteral("answer-color")));
-    CHECK(answer->hasActiveFocus());
-    CHECK(answer->property("text").toString() == QStringLiteral("Blue"));
-    CHECK(answer->property("preeditText").toString() == QStringLiteral("仮"));
-    QInputMethodEvent cancel;
-    QCoreApplication::sendEvent(window, &cancel);
+    CHECK(question == find_visual(window->contentItem(), QStringLiteral("question-color")));
+    CHECK(dialog->property("current").value<QVariantMap>().value(QStringLiteral("token")) ==
+          document->attentionRequests()[0].toMap().value(QStringLiteral("token")));
     QKeyEvent navigate(QEvent::KeyPress, Qt::Key_Tab, Qt::ControlModifier);
     QCoreApplication::sendEvent(window, &navigate);
     CHECK(workspace.focusedIndex() == 0);
@@ -480,10 +478,13 @@ int run_attention_dialog_tests() {
     CHECK(!window->findChild<QObject*>(QStringLiteral("settingsDialog"))
                ->property("visible")
                .toBool());
-    CHECK(dialog->property("canRespond").toBool());
-    document->invalidateAttention();
-    CHECK(!dialog->property("canRespond").toBool());
-    CHECK(answer->property("text").toString() == QStringLiteral("Blue"));
+    // A retired request stays on screen, marked as no longer current.
+    state.requests.erase(state.requests.begin());
+    document->applyAttention(state);
+    pump(20);
+    CHECK(question->property("text").toString() == QStringLiteral("Choose a color"));
+    CHECK(notice->property("text").toString() ==
+          QStringLiteral("This request is no longer current."));
     if (const auto path = qEnvironmentVariable("LAPIS_ATTENTION_CAPTURE"); !path.isEmpty())
         CHECK(window->grabWindow().save(path));
     CHECK(QMetaObject::invokeMethod(dialog, "close"));
