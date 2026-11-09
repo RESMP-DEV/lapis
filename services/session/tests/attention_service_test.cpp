@@ -18,15 +18,6 @@
 namespace lapis::session {
 class AttentionServiceTestAccess final {
   public:
-    static void seed_request(SessionService& service, const attention::Request& request) {
-        auto* state = service.codex_state_.get();
-        if (!state)
-            throw std::runtime_error("Codex attention state was not constructed");
-        state->connect(7, {true, true, true});
-        if (state->reconcile({7, 1}, {request}, 0) != attention::Outcome::applied)
-            throw std::runtime_error("Test request was not admitted");
-    }
-
     static void decide(SessionService& service, const wire::AttentionDecision& decision) {
         service.decide_attention(wire::encode_attention_decision(decision));
     }
@@ -41,10 +32,6 @@ class AttentionServiceTestAccess final {
         attachment.identity.epoch = QByteArray(16, 'e');
         attachment.generation = 1;
         service.attachment_ = std::move(attachment);
-    }
-
-    [[nodiscard]] static bool journal_failed(const SessionService& service) {
-        return !service.attention_journal_ || service.attention_journal_failed_;
     }
 
     [[nodiscard]] static const QString& diagnostic(const SessionService& service) {
@@ -185,12 +172,8 @@ class AttentionServiceTestAccess final {
 
     static void publish_paced_output(SessionService& service) { service.publish_paced_output(); }
 
-    [[nodiscard]] static bool request_pending(const SessionService& service,
-                                              const attention::RequestId& id) {
-        const auto found = service.codex_state_->pending().find(id);
-        return found != service.codex_state_->pending().end() &&
-               found->second.status == attention::RequestStatus::pending &&
-               !found->second.submitted;
+    [[nodiscard]] static bool write_pty(SessionService& service, const QByteArray& bytes) {
+        return service.pty_.writeBytes(bytes);
     }
 };
 } // namespace lapis::session
@@ -244,52 +227,15 @@ QByteArray alignment_line(int item) {
         .toUtf8();
 }
 
-attention::Request request() {
-    return {.id = std::int64_t{19},
-            .thread_id = "thread",
-            .turn_id = "turn",
-            .item_id = "item",
-            .reason = "approval",
-            .summary = "Run the fixture?",
-            .choices = {"allow", "reject"},
-            .priority = 2};
-}
-
-void failed_journal_refuses_decision() {
-    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-asvc-XXXXXX")};
-    require(directory.isValid());
-    require(QFile::setPermissions(directory.path(),
-                                  QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
-    const auto endpoint =
-        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
-    AttentionJournal lease{std::filesystem::path(
-        QFile::encodeName(endpoint + QStringLiteral(".attention")).constData())};
-
-    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
-                            .arguments = {},
-                            .directory = directory.path(),
-                            .size = {80, 24},
-                            .agent = AgentMode::codex};
-    const QByteArray session_id = QByteArray::fromHex(QByteArray(32, '1'));
-    const QByteArray session_epoch = QByteArray::fromHex(QByteArray(32, '2'));
-    SessionService service{endpoint, session_id, launch, session_epoch};
-    QLocalSocket client;
-    client.connectToServer(endpoint);
-    require(client.waitForConnected(5000));
-    lapis::session::AttentionServiceTestAccess::seed_request(service, request());
-    lapis::session::AttentionServiceTestAccess::use_client(service, &client);
-
-    lapis::session::AttentionServiceTestAccess::decide(service, {.source_epoch = 7,
-                                                                 .request_id = std::int64_t{19},
-                                                                 .revision = 1,
-                                                                 .choice = QStringLiteral("allow"),
-                                                                 .answers = {}});
-    QCoreApplication::processEvents();
-
-    require(lapis::session::AttentionServiceTestAccess::journal_failed(service));
-    require(lapis::session::AttentionServiceTestAccess::diagnostic(service) ==
-            QStringLiteral("Decision could not be recorded; try again"));
-    require(lapis::session::AttentionServiceTestAccess::request_pending(service, std::int64_t{19}));
+// A stand-in for Codex's TUI in `directory`: the arguments lapis adds come
+// first, then it behaves like cat.
+QString codex_stand_in(const QTemporaryDir& directory, const QByteArray& body = "exec /bin/cat\n") {
+    const auto path = directory.filePath(QStringLiteral("codex"));
+    QFile script(path);
+    require(script.open(QIODevice::WriteOnly) && script.write("#!/bin/sh\n" + body) > 0);
+    script.close();
+    require(script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    return path;
 }
 
 void notify_only_rejection_names_codex() {
@@ -299,7 +245,7 @@ void notify_only_rejection_names_codex() {
                                   QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
     const auto endpoint =
         lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
-    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+    const LaunchSpec launch{.program = codex_stand_in(directory),
                             .arguments = {},
                             .directory = directory.path(),
                             .size = {80, 24},
@@ -331,7 +277,7 @@ void filtered_output_still_records_pty_timing() {
                                   QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
     const auto endpoint =
         lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
-    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+    const LaunchSpec launch{.program = codex_stand_in(directory),
                             .arguments = {},
                             .directory = directory.path(),
                             .size = {80, 24},
@@ -343,6 +289,86 @@ void filtered_output_still_records_pty_timing() {
     lapis::session::AttentionServiceTestAccess::receive_filtered_only(
         service, "\x1b]7717;lapis-init;codex;not-bound\x07");
     require(lapis::session::AttentionServiceTestAccess::pty_read_ns(service) != 0);
+}
+
+// A local Codex agent runs as its own TUI with lapis's notify program. Each
+// finished turn reaches the service through the agent's terminal, invisible
+// on screen, and names the conversation to resume. A subagent's turn does
+// not replace it.
+void local_codex_turns_arrive_through_notify() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-codex-XXXXXX")};
+    require(directory.isValid());
+    require(QFile::setPermissions(directory.path(),
+                                  QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    const QString main_thread = QStringLiteral("019a0000-0000-7000-8000-000000000001");
+    const QString subagent = QStringLiteral("019a0000-0000-7000-8000-000000000002");
+    const QDir day(directory.filePath(QStringLiteral("codex-home/sessions/2026/11/09")));
+    require(QDir().mkpath(day.path()));
+    for (const auto& [thread, meta] :
+         {std::pair{main_thread, QJsonObject{{"source", "cli"}}},
+          std::pair{subagent, QJsonObject{{"parent_thread_id", main_thread}}}}) {
+        QFile rollout(
+            day.filePath(QStringLiteral("rollout-2026-11-09T12-00-00-%1.jsonl").arg(thread)));
+        require(
+            rollout.open(QIODevice::WriteOnly) &&
+            rollout.write(QJsonDocument(QJsonObject{{"type", "session_meta"}, {"payload", meta}})
+                              .toJson(QJsonDocument::Compact) +
+                          "\n") > 0);
+    }
+    const auto previous_home = qgetenv("CODEX_HOME");
+    qputenv("CODEX_HOME", QFile::encodeName(directory.filePath(QStringLiteral("codex-home"))));
+    const auto restore_home = qScopeGuard([&previous_home] {
+        if (previous_home.isNull())
+            qunsetenv("CODEX_HOME");
+        else
+            qputenv("CODEX_HOME", previous_home);
+    });
+    // Codex runs the notify program it was given; this stand-in runs the same
+    // command for each line it reads, as if a turn had finished.
+    const auto program = codex_stand_in(directory,
+                                        R"sh([ "$1" = -c ] || exit 3
+case "$2" in notify=*LAPIS_HOOK_RELAY*) ;; *) exit 4 ;; esac
+[ -n "$LAPIS_HOOK_NONCE" ] && [ "$LAPIS_HOOK_TTY" = "$(tty)" ] || exit 5
+stty -echo
+echo "codex ready"
+while read -r thread; do
+  sh -c 'exec python3 -c "$LAPIS_HOOK_RELAY" codex "$1" 2>/dev/null' lapis \
+    "{\"type\":\"agent-turn-complete\",\"thread-id\":\"$thread\",\"turn-id\":\"t1\"}"
+  echo "turn done"
+done
+)sh");
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = program,
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::codex};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    const auto screen = [&service] {
+        const auto snapshot = Access::terminal_snapshot(service);
+        QString text;
+        for (std::size_t row = 0; row < snapshot.size.rows; ++row)
+            text += row_text(snapshot, row) + QLatin1Char('\n');
+        return text;
+    };
+    require(wait_for([&] { return screen().contains(QStringLiteral("codex ready")); }));
+    require(!Access::notify_turn_completed(service));
+
+    require(Access::write_pty(service, subagent.toUtf8() + "\n"));
+    require(wait_for([&] { return Access::notify_turn_completed(service); }));
+    require(Access::resume(service).session_id.isEmpty());
+
+    require(Access::write_pty(service, main_thread.toUtf8() + "\n"));
+    require(wait_for([&] { return Access::resume(service).session_id == main_thread; }));
+    require(Access::resume(service).agent == QStringLiteral("codex") &&
+            Access::resume(service).source == ResumeSource::observer);
+    const auto saved = read_resume_record(endpoint);
+    require(saved && saved->session_id == main_thread && saved->source == ResumeSource::observer);
+    require(wait_for([&] { return screen().count(QStringLiteral("turn done")) == 2; }));
+    require(!screen().contains(QStringLiteral("7717")) &&
+            !screen().contains(QStringLiteral("lapis-event")));
 }
 
 // A local OMP agent's extension reports a finished turn and its session id
@@ -872,9 +898,9 @@ void retired_sockets_evict_in_arrival_order() {
 int main(int argc, char** argv) {
     QCoreApplication application{argc, argv};
     try {
-        failed_journal_refuses_decision();
         notify_only_rejection_names_codex();
         filtered_output_still_records_pty_timing();
+        local_codex_turns_arrive_through_notify();
         omp_turns_arrive_through_the_terminal();
         parser_carries_a_split_synchronized_marker();
         adjacent_updates_do_not_hide_a_finished_frame();

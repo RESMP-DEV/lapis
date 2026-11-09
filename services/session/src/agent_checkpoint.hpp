@@ -61,6 +61,12 @@ class CheckpointScanner {
 [[nodiscard]] std::vector<QString> codex_threads_from_open_files(const QString& listing);
 // The conversation in use: the first of codex_threads_from_open_files.
 [[nodiscard]] std::optional<QString> codex_thread_from_open_files(const QString& listing);
+// Whether a Codex thread is a conversation of its own rather than a subagent's,
+// from its rollout under <codex_home>/sessions/YYYY/MM/DD (the first line says
+// which), or nullopt when the id is not a thread id or no readable rollout
+// names it.
+[[nodiscard]] std::optional<bool> codex_main_thread(const QString& codex_home,
+                                                    const QString& thread);
 void write_resume_record(const QString& endpoint, const ResumeRecord& record);
 } // namespace lapis::session
 #endif

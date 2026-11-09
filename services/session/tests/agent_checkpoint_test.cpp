@@ -289,6 +289,42 @@ void codex_threads_from_open_files() {
                  .has_value(),
             "files outside Codex sessions are not rollouts");
 }
+// A notify event names its thread; the rollout's first line says whether it
+// is a conversation of its own or a subagent's.
+void codex_main_thread_reads_the_rollout() {
+    using lapis::session::codex_main_thread;
+    QTemporaryDir home;
+    require(home.isValid(), "Codex home");
+    const QDir older(home.filePath(QStringLiteral("sessions/2026/08/31")));
+    const QDir day(home.filePath(QStringLiteral("sessions/2026/09/24")));
+    require(QDir().mkpath(older.path()) && QDir().mkpath(day.path()), "sessions folders");
+    const auto now = QDateTime::currentDateTimeUtc();
+    const auto main_thread = QStringLiteral("01a0d4b2-82f4-7a50-bd3a-60260ad6bc71");
+    const auto subagent = QStringLiteral("01a0d4b2-9999-7441-b8b8-aad7d5c571d8");
+    const auto unreadable = QStringLiteral("01a0d4b2-0001-7441-b8b8-aad7d5c571d8");
+    static_cast<void>(rollout(older,
+                              QStringLiteral("rollout-2026-08-31T12-00-00-") + main_thread +
+                                  QStringLiteral(".jsonl"),
+                              {{QStringLiteral("source"), QStringLiteral("cli")}}, now));
+    static_cast<void>(rollout(
+        day, QStringLiteral("rollout-2026-09-24T12-05-00-") + subagent + QStringLiteral(".jsonl"),
+        {{QStringLiteral("parent_thread_id"), main_thread}}, now));
+    QFile malformed(day.filePath(QStringLiteral("rollout-2026-09-24T13-00-00-") + unreadable +
+                                 QStringLiteral(".jsonl")));
+    require(malformed.open(QIODevice::WriteOnly) && malformed.write("not JSON\n") == 9,
+            "write a malformed rollout");
+    malformed.close();
+    require(codex_main_thread(home.path(), main_thread) == true,
+            "a main thread's rollout is found in an older day");
+    require(codex_main_thread(home.path(), subagent) == false, "a subagent thread is not main");
+    require(!codex_main_thread(home.path(), unreadable).has_value(),
+            "a malformed rollout attests nothing");
+    require(!codex_main_thread(home.path(), QStringLiteral("01a0d4b2-0002-7441-b8b8-aad7d5c571d8"))
+                 .has_value(),
+            "a thread without a rollout is unknown");
+    require(!codex_main_thread(home.path(), QStringLiteral("*")).has_value(),
+            "only a thread id is looked up");
+}
 } // namespace
 
 int main() {
@@ -298,6 +334,7 @@ int main() {
         checkpoints_are_bound_to_the_launched_agent();
         records_are_private();
         codex_threads_from_open_files();
+        codex_main_thread_reads_the_rollout();
         std::cout << "Agent checkpoints across reads, identity and host checks, and private "
                      "resume records passed\n";
         return 0;

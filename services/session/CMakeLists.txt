@@ -95,7 +95,7 @@ add_executable(lapis_session_service src/session_service.cpp)
 target_link_libraries(lapis_session_service PRIVATE lapis_project_options
     lapis_session_platform lapis_session_launch lapis_terminal lapis_attention
     lapis_local_protocol lapis_pty_process lapis_history lapis_attention_journal
-    Qt6::Core Qt6::Network)
+    lapis_terminal_hook_relay Qt6::Core Qt6::Network)
 if(BUILD_TESTING)
     add_executable(lapis_history_store_tests tests/history_store_test.cpp)
     target_link_libraries(lapis_history_store_tests PRIVATE lapis_project_options lapis_history)
@@ -125,7 +125,7 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_attention_service_tests PRIVATE lapis_project_options
         lapis_session_platform lapis_session_launch lapis_terminal lapis_attention
         lapis_local_protocol lapis_pty_process lapis_history lapis_attention_journal
-        lapis_codex_adapter lapis_claude_adapter Qt6::Core Qt6::Network)
+        lapis_terminal_hook_relay lapis_claude_adapter Qt6::Core Qt6::Network)
     target_include_directories(lapis_attention_service_tests PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src")
     add_test(NAME attention-service COMMAND lapis_attention_service_tests)

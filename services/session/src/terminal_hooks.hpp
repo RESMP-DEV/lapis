@@ -11,11 +11,11 @@
 
 namespace lapis::session {
 // An agent on another machine runs behind ssh, where lapis's local hook
-// socket and app-server cannot reach. Its hooks (Claude Code) or notify
-// program (Codex) instead print private sequences to the agent's own
-// terminal, which ssh already carries here. OMP has neither a hook socket nor
-// an observer, so lapis's OMP extension prints the same sequences for a local
-// OMP agent too:
+// socket cannot reach. Its hooks (Claude Code) or notify program (Codex)
+// instead print private sequences to the agent's own terminal, which ssh
+// already carries here. Codex has no hook socket, so a local Codex agent's
+// notify program writes the same sequences to its terminal, and lapis's OMP
+// extension does so for a local OMP agent:
 //
 //   ESC ] 7717 ; lapis-init ; <cli> ; <nonce> BEL    once, by lapis's launch
 //   ESC ] 7717 ; lapis-event ; <nonce> ; <base64 JSON> BEL    per hook
@@ -24,8 +24,10 @@ namespace lapis::session {
 // and keeps it only in that process tree's environment; it is on no command
 // line and in no file. The first init sequence binds it; later inits, and
 // events without it, are ignored, so text the agent displays cannot pose as
-// a hook. Every lapis sequence is removed from the output before the
-// terminal sees it. Frames carry bounded metadata only, never prompts.
+// a hook. For a local Codex agent the session service makes the nonce and
+// binds it itself (bind), so no init sequence is ever printed. Every lapis
+// sequence is removed from the output before the terminal sees it. Frames
+// carry bounded metadata only, never prompts.
 struct TerminalHookEvent {
     QString cli; // "claude", "codex" or "omp", as bound by the init sequence
     QJsonObject source;

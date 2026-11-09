@@ -99,7 +99,9 @@ def top_level_notify(text):
             if not item:
                 return None
             basic, literal, end = item.groups()
-            words.append(json.loads('"' + basic + '"') if basic is not None else literal)
+            words.append(
+                json.loads('"' + basic + '"') if basic is not None else literal
+            )
             rest = rest[item.end() :]
             if end == "]":
                 return words

@@ -4,18 +4,16 @@
 #include "claude_observer.hpp"
 #include "history_worker.hpp"
 #include "hook_relay.hpp"
-#include "observer.hpp"
 #include "platform/posix/local_endpoint.hpp"
-#include "platform/posix/process_group_guard.hpp"
 #include "platform/posix/pty_process.hpp"
 #include "rewidth.hpp"
+#include "terminal_hook_relay.hpp"
 #include "terminal_hooks.hpp"
 #include "transport/attention_protocol.hpp"
 #include "transport/local_protocol.hpp"
 #include "transport/update_pacing.hpp"
 
 #include <QCoreApplication>
-#include <QCryptographicHash>
 #include <QDataStream>
 #include <QDebug>
 #include <QDir>
@@ -26,7 +24,7 @@
 #include <QLocalSocket>
 #include <QLockFile>
 #include <QPointer>
-#include <QRegularExpression>
+#include <QRandomGenerator>
 #include <QSet>
 #include <QTimer>
 
@@ -53,11 +51,7 @@ class AttentionServiceTestAccess;
 
 namespace {
 using namespace lapis::session;
-constexpr int codex_sync_timeout_ms = 15000;
 constexpr int terminal_sync_timeout_ms = 3000;
-constexpr int backend_probe_interval_ms = 25;
-constexpr int backend_probe_attempts = 400;
-constexpr int rollout_probe_timeout_ms = 5000;
 // Admission is atomic at the 64 KiB service boundary once sustained pressure
 // opens. Until then ordinary batches parse immediately, so pressure mode has a
 // hard retained bound of one admission limit plus one maximum PTY batch.
@@ -96,238 +90,45 @@ QByteArray parse_session_id(const QString& value) {
         throw std::invalid_argument("Session ID cannot be zero");
     return id;
 }
-// Codex 0.156 listens through a symlink it removes on a clean exit. A power
-// loss leaves the link behind (pointing into a /tmp a reboot clears); a dead
-// link at this service's own path is removed.
-void remove_dead_codex_link(const QString& path) {
-    if (!QFileInfo(path).isSymLink())
+// The Codex app-server earlier services ran for a Codex agent listened beside
+// the endpoint, through a symlink Codex 0.156 removes on a clean exit. A
+// power loss leaves the link or socket behind; nothing listens there now.
+void remove_stale_codex_endpoint(const QString& path) {
+    const QFileInfo info(path);
+    if (!info.isSymLink() && !info.exists())
         return;
     QLocalSocket existing;
     existing.connectToServer(path);
-    if (existing.waitForConnected(100))
-        throw std::runtime_error("Codex endpoint already in use");
-    if (!QFile::remove(path))
-        throw std::runtime_error("Cannot remove stale Codex endpoint");
+    if (!existing.waitForConnected(100))
+        static_cast<void>(QFile::remove(path));
 }
-// Codex root options before the subcommand that take the next argument as a
-// value. Keep this synchronized with the installed `codex --help` surface.
-bool codex_option_takes_value(const QString& argument) {
-    static const QSet<QString> options{QStringLiteral("-c"),
-                                       QStringLiteral("--config"),
-                                       QStringLiteral("--enable"),
-                                       QStringLiteral("--disable"),
-                                       QStringLiteral("--remote"),
-                                       QStringLiteral("--remote-auth-token-env"),
-                                       QStringLiteral("-i"),
-                                       QStringLiteral("--image"),
-                                       QStringLiteral("-m"),
-                                       QStringLiteral("--model"),
-                                       QStringLiteral("--local-provider"),
-                                       QStringLiteral("-p"),
-                                       QStringLiteral("--profile"),
-                                       QStringLiteral("-s"),
-                                       QStringLiteral("--sandbox"),
-                                       QStringLiteral("-C"),
-                                       QStringLiteral("--cd"),
-                                       QStringLiteral("--add-dir"),
-                                       QStringLiteral("-a"),
-                                       QStringLiteral("--ask-for-approval")};
-    return options.contains(argument);
-}
-// A Codex approval or sandbox option: its config key and value, or nothing.
-// `consumed` is how many arguments it spans. Values are Codex's own words,
-// never anything that could break out of a TOML string.
-struct CodexPermission {
-    QStringList config; // key=value pairs
-    qsizetype consumed = 0;
-    bool recognized = false;
-    QString error;
-};
-struct CodexPermissionSpec {
-    QString key;
-    bool cli_option = false;
-    QStringList shared_values;
-    QStringList config_only_values;
-
-    [[nodiscard]] const QStringList& option_values() const { return shared_values; }
-    [[nodiscard]] QStringList config_values() const { return shared_values + config_only_values; }
-};
-const std::vector<CodexPermissionSpec>& codex_permission_specs() {
-    static const std::vector<CodexPermissionSpec> specs{
-        {QStringLiteral("approval_policy"),
-         true,
-         {QStringLiteral("on-request"), QStringLiteral("never")},
-         {QStringLiteral("untrusted")}},
-        {QStringLiteral("sandbox_mode"),
-         true,
-         {QStringLiteral("read-only"), QStringLiteral("workspace-write"),
-          QStringLiteral("danger-full-access")},
-         {}},
-        {QStringLiteral("approvals_reviewer"),
-         false,
-         {},
-         {QStringLiteral("user"), QStringLiteral("auto_review"),
-          QStringLiteral("guardian_subagent")}},
-    };
-    return specs;
-}
-const CodexPermissionSpec* codex_permission_spec(const QString& key) {
-    const auto& specs = codex_permission_specs();
-    const auto found = std::find_if(specs.cbegin(), specs.cend(),
-                                    [&](const auto& spec) { return spec.key == key; });
-    return found == specs.cend() ? nullptr : &*found;
-}
-QString codex_permission_key_pattern() {
-    QStringList keys;
-    for (const auto& spec : codex_permission_specs())
-        keys << QRegularExpression::escape(spec.key);
-    return keys.join(QLatin1Char('|'));
-}
-bool codex_permission_value_valid(const QStringList& values, const QString& value) {
-    return std::find(values.cbegin(), values.cend(), value) != values.cend();
-}
-// Option scanning mirrors Codex's own CLI grammar; splitting it hides the
-// grammar from review. Defer the split to the dedicated complexity phase.
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-CodexPermission codex_permission(const QStringList& arguments, qsizetype index) {
-    const auto& argument = arguments.at(index);
-    if (argument == QStringLiteral("--dangerously-bypass-approvals-and-sandbox"))
-        return {{QStringLiteral("approval_policy=\"never\""),
-                 QStringLiteral("sandbox_mode=\"danger-full-access\"")},
-                1,
-                true,
-                {}};
-    if (argument == QStringLiteral("--full-auto"))
-        return {{QStringLiteral("approval_policy=\"on-request\""),
-                 QStringLiteral("sandbox_mode=\"workspace-write\"")},
-                1,
-                true,
-                {}};
-    if (argument == QStringLiteral("--yolo"))
-        return {{QStringLiteral("approval_policy=\"never\""),
-                 QStringLiteral("sandbox_mode=\"danger-full-access\"")},
-                1,
-                true,
-                {}};
-    if (argument == QStringLiteral("--approve-for-me"))
-        return {{QStringLiteral("approval_policy=\"on-request\""),
-                 QStringLiteral("sandbox_mode=\"workspace-write\""),
-                 QStringLiteral("approvals_reviewer=\"auto_review\"")},
-                1,
-                true,
-                {}};
-    static const std::array<std::array<const char*, 3>, 2> valued{
-        {{"-a", "--ask-for-approval", "approval_policy"}, {"-s", "--sandbox", "sandbox_mode"}}};
-    for (const auto& [short_name, long_name, key] : valued) {
-        QString value;
-        qsizetype consumed = 0;
-        if (argument == QLatin1String(short_name) || argument == QLatin1String(long_name)) {
-            if (index + 1 == arguments.size())
-                return {{}, 1, true, QStringLiteral("Codex permission option requires a value")};
-            value = arguments.at(index + 1);
-            consumed = 2;
-        } else if (argument.startsWith(QLatin1String(long_name) + QLatin1Char('=')) ||
-                   argument.startsWith(QLatin1String(short_name) + QLatin1Char('=')) ||
-                   (argument.startsWith(QLatin1String(short_name)) &&
-                    argument.size() > QLatin1String(short_name).size())) {
-            const auto prefix = argument.startsWith(QLatin1String(long_name) + QLatin1Char('='))
-                                    ? qsizetype(std::strlen(long_name)) + 1
-                                : argument.startsWith(QLatin1String(short_name) + QLatin1Char('='))
-                                    ? qsizetype(std::strlen(short_name)) + 1
-                                    : qsizetype(std::strlen(short_name));
-            value = argument.mid(prefix);
-            consumed = 1;
-        } else {
-            continue;
-        }
-        const auto* spec = codex_permission_spec(QLatin1String(key));
-        if (!spec || !spec->cli_option)
-            return {{},
-                    consumed,
-                    true,
-                    QStringLiteral("Codex permission option cannot be set from the CLI: %1")
-                        .arg(QLatin1String(key))};
-        const auto accepted = spec->option_values();
-        if (!codex_permission_value_valid(accepted, value))
-            return {{},
-                    consumed,
-                    true,
-                    QStringLiteral("Codex permission value is invalid for %1; accepted: %2")
-                        .arg(QLatin1String(key), accepted.join(QLatin1String(", ")))};
-        return {{QStringLiteral("%1=\"%2\"").arg(QLatin1String(key), value)}, consumed, true, {}};
-    }
-    return {};
-}
-// `-c key=value` carrying a permission key is an explicit override to Codex, so
-// a resuming TUI must not carry it; the server still receives the whole pair.
-// `consumed` is how many arguments the pair spans, 0 when it is not one.
-CodexPermission codex_permission_config(const QStringList& arguments, qsizetype index) {
-    const auto& argument = arguments.at(index);
-    QString value;
-    if (argument == QStringLiteral("-c") || argument == QStringLiteral("--config")) {
-        if (index + 1 == arguments.size())
-            return {};
-        value = arguments.at(index + 1);
-    } else if (argument.startsWith(QStringLiteral("--config="))) {
-        value = argument.mid(qsizetype(std::strlen("--config=")));
-    } else if (argument.startsWith(QStringLiteral("-c="))) {
-        value = argument.mid(qsizetype(std::strlen("-c=")));
-    } else {
-        return {};
-    }
-    static const QRegularExpression permission_key(
-        QStringLiteral("^\\s*(") + codex_permission_key_pattern() + QStringLiteral(")\\s*="));
-    const auto key_match = permission_key.match(value);
-    if (!key_match.hasMatch())
-        return {};
-    const qsizetype consumed = argument.contains(QLatin1Char('=')) ? 1 : 2;
-    const auto key = key_match.capturedView(1).toString();
-    const auto* spec = codex_permission_spec(key);
-    if (!spec)
-        return {{},
-                consumed,
-                true,
-                QStringLiteral("Codex permission key has no registered values: %1").arg(key)};
-    auto rhs = value.mid(key_match.capturedEnd(0)).trimmed();
-    QString configured;
-    if (rhs.startsWith(QLatin1Char('"'))) {
-        static const QRegularExpression quoted_value(QStringLiteral("^\"([^\"]*)\"$"));
-        const auto quoted_match = quoted_value.match(rhs);
-        if (!quoted_match.hasMatch())
-            return {{},
-                    consumed,
-                    true,
-                    QStringLiteral(
-                        "Codex permission config syntax is invalid for %1; expected key=value or "
-                        "key=\"value\"")
-                        .arg(key)};
-        configured = quoted_match.capturedView(1).toString();
-    } else {
-        configured = std::move(rhs);
-    }
-    const auto accepted = spec->config_values();
-    if (!codex_permission_value_valid(accepted, configured))
-        return {{},
-                consumed,
-                true,
-                QStringLiteral("Codex permission value is invalid for %1; accepted: %2")
-                    .arg(key, accepted.join(QLatin1String(", ")))};
-    return {{QStringLiteral("%1=\"%2\"").arg(key, configured)}, consumed, true, {}};
-}
-// Whether the arguments resume or fork a saved Codex thread.
-bool codex_continues_thread(const QStringList& arguments) {
+// Whether Codex's arguments set a config key with -c/--config before `--`.
+bool codex_sets(const QStringList& arguments, QLatin1StringView key) {
     for (qsizetype index = 0; index < arguments.size(); ++index) {
         const auto& argument = arguments.at(index);
-        if (argument == QStringLiteral("--"))
-            return false;
-        if (codex_option_takes_value(argument)) {
-            ++index;
-            continue;
-        }
-        if (!argument.startsWith(QLatin1Char('-')))
-            return argument == QStringLiteral("resume") || argument == QStringLiteral("fork");
+        if (argument == QLatin1String("--"))
+            break; // Following words are literal prompt data.
+        QString setting;
+        if ((argument == QLatin1String("-c") || argument == QLatin1String("--config")) &&
+            index + 1 < arguments.size())
+            setting = arguments.at(++index);
+        else if (argument.startsWith(QLatin1String("--config=")))
+            setting = argument.sliced(9);
+        else if (argument.startsWith(QLatin1String("-c")) && argument.size() > 2)
+            setting = argument.sliced(2);
+        if (setting.section(QLatin1Char('='), 0, 0).trimmed() == key)
+            return true;
     }
     return false;
+}
+// A fresh 32-hex-digit nonce for the terminal hook channel.
+QString hook_nonce() {
+    std::array<quint32, 4> words{};
+    QRandomGenerator::system()->fillRange(words.data(), words.size());
+    QString text;
+    for (const auto word : words)
+        text += QStringLiteral("%1").arg(word, 8, 16, QLatin1Char('0'));
+    return text;
 }
 
 class SessionService final : public QObject {
@@ -359,14 +160,14 @@ class SessionService final : public QObject {
         bind_endpoint(endpoint);
         snapshot_clock_.start();
         attention_clock_.start();
-        configure_timers(launch);
+        configure_timers();
         connect_session_signals();
         start_agent(endpoint, launch);
     }
 
     ~SessionService() override {
         stopping_ = true;
-        stop_codex();
+        attention_timer_.stop();
         if (claude_observer_)
             claude_observer_->stop();
         disconnect(&pty_, nullptr, this, nullptr);
@@ -424,19 +225,16 @@ class SessionService final : public QObject {
         require_private_bound_socket(endpoint);
     }
     // Arms the service's periodic clocks.
-    void configure_timers(const LaunchSpec& launch) {
+    void configure_timers() {
         timer_.setSingleShot(true);
         connect(&timer_, &QTimer::timeout, this, [this] { publish_paced_output(); });
         settle_timer_.setSingleShot(true);
         connect(&settle_timer_, &QTimer::timeout, this, [this] { publish_paced_output(); });
         ack_timer_.setSingleShot(true);
-        ack_timer_.setInterval(launch.agent == AgentMode::codex ? codex_sync_timeout_ms
-                                                                : terminal_sync_timeout_ms);
+        ack_timer_.setInterval(terminal_sync_timeout_ms);
         attention_timer_.setSingleShot(true);
         attention_timer_.setInterval(16);
         connect(&attention_timer_, &QTimer::timeout, this, [this] { publish_attention(); });
-        rollout_timer_.setInterval(5000);
-        connect(&rollout_timer_, &QTimer::timeout, this, [this] { probe_rollout(); });
     }
     // Wires the service's timers, socket and PTY to their handlers.
     void connect_session_signals() {
@@ -475,9 +273,10 @@ class SessionService final : public QObject {
     void start_agent(const QString& endpoint, const LaunchSpec& launch) {
         if (remote_transport(launch) || omp_launch(launch))
             terminal_hooks_.emplace();
-        if (launch.agent == AgentMode::codex)
-            start_codex(endpoint, launch);
-        else if (launch.agent == AgentMode::claude)
+        if (launch.agent == AgentMode::codex) {
+            remove_stale_codex_endpoint(endpoint + QStringLiteral(".codex"));
+            start_codex(launch);
+        } else if (launch.agent == AgentMode::claude)
             start_claude(launch);
         else
             pty_.start(launch);
@@ -495,21 +294,16 @@ class SessionService final : public QObject {
                QFileInfo(launch.program).fileName() == QStringLiteral("omp");
     }
     const attention::State* attention_state() const {
-        return codex_state_    ? codex_state_.get()
-               : claude_state_ ? claude_state_.get()
-                               : notify_state_.get();
+        return claude_state_ ? claude_state_.get() : notify_state_.get();
     }
     QString attention_diagnostic() const {
-        return codex_observer_    ? codex_observer_->diagnostic()
-               : claude_observer_ ? claude_observer_->diagnostic()
-               : notify_turns_ ? notify_turns_->diagnostic()
-                               : QStringLiteral("Codex notify turns are not connected; status is "
-                                                "estimated from output");
+        return claude_observer_ ? claude_observer_->diagnostic()
+               : notify_turns_  ? notify_turns_->diagnostic()
+                                : QStringLiteral("Codex notify turns are not connected; status is "
+                                                 "estimated from output");
     }
     QJsonObject attention_details(const attention::RequestId& id) const {
-        return codex_observer_    ? codex_observer_->details(id)
-               : claude_observer_ ? claude_observer_->details(id)
-                                  : QJsonObject{};
+        return claude_observer_ ? claude_observer_->details(id) : QJsonObject{};
     }
     void observer_changed() {
         decision_error_.clear();
@@ -517,9 +311,11 @@ class SessionService final : public QObject {
         journal_attention();
         schedule_attention();
     }
-    // A hook relayed from another machine through the terminal. The service
-    // owns the attention state as for a local agent, but records no resume
-    // identity: a remote launch names its conversation in its own command.
+    // A hook relayed through the terminal: from another machine, from lapis's
+    // OMP extension, or from a local Codex agent's notify program. The service
+    // owns the attention state as for a local agent. A remote launch names its
+    // conversation in its own command, so only a local Codex agent's notify
+    // event records a resume identity (see note_codex_thread).
     void receive_terminal_hook(const TerminalHookEvent& hook) {
         if (hook.cli == QLatin1String("claude")) {
             if (!claude_observer_) {
@@ -537,6 +333,8 @@ class SessionService final : public QObject {
                     identity_.session_id.toHex().toStdString(), "codex-notify");
                 notify_turns_ = std::make_unique<NotifyTurns>(*notify_state_);
             }
+            if (codex_notify_)
+                note_codex_thread(hook.source.value(QStringLiteral("thread-id")).toString());
             if (notify_turns_->completed(hook.source, attention_tick()))
                 observer_changed();
         } else if (hook.cli == QLatin1String("omp")) {
@@ -660,7 +458,7 @@ class SessionService final : public QObject {
         // an identity already learned through its independent protocol or an
         // older Codex/Claude legacy record.
         if (source == ResumeSource::terminal &&
-            (codex_observer_ || claude_observer_ || resume_.source == ResumeSource::observer ||
+            (codex_notify_ || claude_observer_ || resume_.source == ResumeSource::observer ||
              (resume_.source == ResumeSource::legacy && observer_backed_agent(checkpoint_agent_))))
             return;
         if (!valid_resume_identity(session_id) ||
@@ -745,11 +543,8 @@ class SessionService final : public QObject {
                 .ready = state->ready(),
                 .source_epoch = state->epoch(),
                 .activity = state->activity(),
-                .observation_phase = codex_observer_ ? codex_observer_->observationPhase()
-                                                     : attention::ObservationPhase::unknown,
-                .diagnostic = !decision_error_.isEmpty() ? decision_error_
-                              : !codex_error_.isEmpty()  ? codex_error_
-                                                         : attention_diagnostic(),
+                .observation_phase = attention::ObservationPhase::unknown,
+                .diagnostic = !decision_error_.isEmpty() ? decision_error_ : attention_diagnostic(),
                 .requests = {}};
             for (const auto& [id, pending] : state->pending())
                 snapshot.requests.push_back({pending, attention_details(id)});
@@ -769,239 +564,55 @@ class SessionService final : public QObject {
             }
         }
     }
-    void stop_codex() {
-        rollout_timer_.stop();
-        backend_wait_.stop();
-        backend_probe_.abort();
-        attention_timer_.stop();
-        if (codex_observer_)
-            codex_observer_->stop();
-        backend_guard_control_.reset();
-        backend_guard_read_.reset();
-        if (codex_backend_.state() != QProcess::NotRunning &&
-            !codex_backend_.waitForFinished(500)) {
-            codex_backend_.kill();
-            static_cast<void>(codex_backend_.waitForFinished(500));
-        }
-    }
-    void start_codex_tui(const LaunchSpec& launch, const QString& backend_socket) {
-        if (pty_requested_ || stopping_)
-            return;
+    // A local Codex agent is Codex's own TUI. After each finished turn Codex
+    // runs its notify program: lapis's relay, which writes the event to the
+    // agent's terminal with a nonce this service made and put only in the
+    // agent's environment, and then runs the person's own notify program from
+    // config.toml. TerminalHookChannel takes the event out of the output. When
+    // the arguments set notify themselves, nothing is added and the status
+    // stays estimated from output.
+    void start_codex(const LaunchSpec& launch) {
         auto tui = launch;
         tui.agent = AgentMode::terminal;
-        // Codex refuses approval and sandbox options when a remote TUI resumes
-        // or forks a thread ("Permission overrides are not supported when
-        // resuming a remote task"). The dedicated server already holds them as
-        // config, so the TUI goes without.
-        if (codex_continues_thread(tui.arguments)) {
-            QStringList kept;
-            for (qsizetype index = 0; index < tui.arguments.size(); ++index) {
-                if (tui.arguments.at(index) == QStringLiteral("--")) {
-                    kept += tui.arguments.mid(index);
-                    break;
-                }
-                if (const auto config = codex_permission_config(tui.arguments, index);
-                    config.consumed > 0) {
-                    index += config.consumed - 1;
-                    continue;
-                }
-                if (const auto permission = codex_permission(tui.arguments, index);
-                    permission.consumed > 0) {
-                    index += permission.consumed - 1;
-                    continue;
-                }
-                kept << tui.arguments.at(index);
-                if (codex_option_takes_value(tui.arguments.at(index)) &&
-                    index + 1 < tui.arguments.size())
-                    kept << tui.arguments.at(++index);
-            }
-            tui.arguments = kept;
+        if (!codex_sets(tui.arguments, QLatin1StringView("notify"))) {
+            const auto nonce = hook_nonce();
+            terminal_hooks_.emplace();
+            if (!terminal_hooks_->bind("codex", nonce.toLatin1()))
+                throw std::logic_error("Codex notify nonce did not bind");
+            codex_notify_ = true;
+            // Codex takes -c before any subcommand: first.
+            tui.arguments.prepend(QStringLiteral(
+                R"(notify=["sh","-c","exec python3 -c \"$LAPIS_HOOK_RELAY\" codex \"$1\" 2>/dev/null","lapis"])"));
+            tui.arguments.prepend(QStringLiteral("-c"));
+            pty_.setEnvironment(
+                {{QStringLiteral("LAPIS_HOOK_NONCE"), nonce},
+                 {QStringLiteral("LAPIS_HOOK_RELAY"), QString::fromUtf8(kTerminalHookRelay)}},
+                QStringLiteral("LAPIS_HOOK_TTY"));
         }
-        tui.arguments.prepend(QStringLiteral("unix://") + backend_socket);
-        tui.arguments.prepend(QStringLiteral("--remote"));
-        pty_requested_ = true;
         pty_.start(tui);
     }
-    // One argument list per launch mode encodes the Codex app-server and TUI
-    // contracts; the dedicated complexity phase owns any split.
-    // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-    static QStringList codex_arguments(const LaunchSpec& launch, const QString& backend_socket) {
-        QStringList arguments{QStringLiteral("app-server"), QStringLiteral("--listen"),
-                              QStringLiteral("unix://") + backend_socket};
-        // Forward explicit provider/config definitions to the server as well as
-        // the TUI, and approval/sandbox options as config, since a resumed
-        // thread takes them only from the server. Production otherwise inherits
-        // the user's ordinary Codex policy.
-        for (qsizetype index = 0; index < launch.arguments.size(); ++index) {
-            const auto& argument = launch.arguments.at(index);
-            if (argument == QStringLiteral("--"))
-                break;
-            if (const auto permission = codex_permission(launch.arguments, index);
-                permission.consumed > 0) {
-                if (permission.recognized && !permission.error.isEmpty())
-                    throw std::invalid_argument(permission.error.toStdString());
-                for (const auto& pair : permission.config)
-                    arguments << QStringLiteral("-c") << pair;
-                index += permission.consumed - 1;
-            } else if (const auto config = codex_permission_config(launch.arguments, index);
-                       config.consumed > 0) {
-                if (config.recognized && !config.error.isEmpty())
-                    throw std::invalid_argument(config.error.toStdString());
-                for (const auto& pair : config.config)
-                    arguments << QStringLiteral("-c") << pair;
-                index += config.consumed - 1;
-            } else if (argument == QStringLiteral("-c") || argument == QStringLiteral("--config") ||
-                       argument == QStringLiteral("--enable") ||
-                       argument == QStringLiteral("--disable")) {
-                ++index;
-                if (index == launch.arguments.size() ||
-                    launch.arguments.at(index) == QStringLiteral("--"))
-                    throw std::invalid_argument("Codex config option requires a value");
-                arguments << argument << launch.arguments.at(index);
-            } else if (argument.startsWith(QStringLiteral("--config=")) ||
-                       argument.startsWith(QStringLiteral("--enable=")) ||
-                       argument.startsWith(QStringLiteral("--disable=")) ||
-                       argument == QStringLiteral("--strict-config")) {
-                arguments << argument;
-            }
-        }
-        return arguments;
-    }
-    void start_codex(const QString& endpoint, const LaunchSpec& launch) {
-        const auto backend_path = endpoint + QStringLiteral(".codex");
-        remove_dead_codex_link(backend_path);
-        const auto backend_socket = posix::prepare_endpoint(backend_path);
-        if (QFileInfo::exists(backend_socket)) {
-            QLocalSocket existing;
-            existing.connectToServer(backend_socket);
-            if (existing.waitForConnected(100) ||
-                (existing.error() != QLocalSocket::ConnectionRefusedError &&
-                 existing.error() != QLocalSocket::ServerNotFoundError))
-                throw std::runtime_error("Codex endpoint already in use or inaccessible");
-            if (!QFile::remove(backend_socket))
-                throw std::runtime_error("Cannot remove stale Codex endpoint");
-        }
-        QFile executable(launch.program);
-        QCryptographicHash hash(QCryptographicHash::Sha256);
-        if (!executable.open(QIODevice::ReadOnly) || !hash.addData(&executable))
-            throw std::runtime_error("Cannot identify Codex executable");
-        const QString binary_hash = QString::fromLatin1(hash.result().toHex());
-        codex_state_ =
-            std::make_unique<attention::State>(identity_.session_id.toHex().toStdString(), "codex");
-        codex_observer_ = std::make_unique<lapis::codex::Observer>(*codex_state_);
-        connect(codex_observer_.get(), &lapis::codex::Observer::changed, this, [this] {
-            note_conversation(QStringLiteral("codex"), codex_observer_->threadId());
-            decision_error_.clear();
-            attention_dirty_ = true;
-            journal_attention();
-            schedule_attention();
-        });
-        const auto arguments = codex_arguments(launch, backend_socket);
-        codex_backend_.setProgram(launch.program);
-        codex_backend_.setArguments(arguments);
-        codex_backend_.setWorkingDirectory(launch.directory);
-        codex_backend_.setStandardInputFile(QProcess::nullDevice());
-        codex_backend_.setStandardOutputFile(QProcess::nullDevice());
-        codex_backend_.setStandardErrorFile(QProcess::nullDevice());
-        const int descriptor_limit = ::getdtablesize();
-        if (descriptor_limit <= 0 ||
-            !posix::open_guard_pipe(backend_guard_read_, backend_guard_control_))
-            throw std::runtime_error("Cannot create Codex process-group guard");
-        const std::array<int, 2> guard{backend_guard_read_.get(), backend_guard_control_.get()};
-        codex_backend_.setChildProcessModifier([guard, descriptor_limit] {
-            if (::setsid() < 0 || !posix::start_group_guard(guard, descriptor_limit))
-                ::_exit(127);
-        });
-        connect(&codex_backend_, &QProcess::started, this, [this] { backend_guard_read_.reset(); });
-        connect(&codex_backend_, &QProcess::errorOccurred, this,
-                [this](QProcess::ProcessError error) {
-                    if (error == QProcess::FailedToStart)
-                        stop(QStringLiteral("Could not start dedicated Codex server"));
-                });
-        connect(&codex_backend_, &QProcess::finished, this,
-                [this](int code, QProcess::ExitStatus status) {
-                    if (stopping_)
-                        return;
-                    stop_codex();
-                    const QString exit_kind =
-                        status == QProcess::CrashExit
-                            ? QStringLiteral("exited abnormally (crash)")
-                            : QStringLiteral("exited normally with code %1").arg(code);
-                    codex_error_ =
-                        QStringLiteral("Codex server %1; responses are disabled").arg(exit_kind);
-                    attention_dirty_ = true;
-                    schedule_attention();
-                    if (!process_started_)
-                        stop(codex_error_);
-                });
-        codex_backend_.start();
-        // The backend holds each loaded thread's rollout open. Reading its open
-        // files names the conversation whatever Codex build runs, so resuming
-        // after a reboot does not depend on the observer accepting this build.
-        rollout_timer_.start();
-        wait_for_codex(launch, backend_socket, binary_hash);
-    }
-    void probe_rollout() {
-        const auto pid = codex_backend_.processId();
-        if (pid <= 0 || stopping_ || rollout_probing_ ||
-            (codex_observer_ && !codex_observer_->threadId().isEmpty()))
+    // The conversation a local Codex agent's notify event names, kept for
+    // resume. The nonce is never printed, so the event is as trustworthy as an
+    // observer. Subagent threads report their own finished turns; their
+    // rollout says so, and `codex resume` of one is not this agent's
+    // conversation. A thread whose rollout cannot be read yet is not recorded
+    // until a later turn finds it.
+    void note_codex_thread(const QString& thread) {
+        if (thread.isEmpty() || subagent_threads_.contains(thread) ||
+            (thread == resume_.session_id && resume_.source == ResumeSource::observer))
             return;
-#ifdef Q_OS_MACOS
-        auto* probe = new QProcess(this);
-        rollout_probing_ = true;
-        connect(probe, &QProcess::finished, this, [this, probe] {
-            rollout_probing_ = false;
-            note_rollout(QString::fromUtf8(probe->readAllStandardOutput()));
-            probe->deleteLater();
-        });
-        connect(probe, &QProcess::errorOccurred, this, [this, probe](QProcess::ProcessError) {
-            rollout_probing_ = false;
-            probe->deleteLater();
-        });
-        QTimer::singleShot(rollout_probe_timeout_ms, probe, [probe] { probe->kill(); });
-        probe->setStandardInputFile(QProcess::nullDevice());
-        probe->start(QStringLiteral("/usr/sbin/lsof"),
-                     {QStringLiteral("-p"), QString::number(pid), QStringLiteral("-Fn")});
-#else
-        QString listing;
-        const QDir descriptors(QStringLiteral("/proc/%1/fd").arg(pid));
-        for (const auto& entry : descriptors.entryInfoList(QDir::Files | QDir::System))
-            listing += QStringLiteral("n") + entry.symLinkTarget() + QLatin1Char('\n');
-        note_rollout(listing);
-#endif
-    }
-    void note_rollout(const QString& open_files) {
-        if (const auto thread = codex_thread_from_open_files(open_files)) {
-            note_conversation(QStringLiteral("codex"), *thread);
-            rollout_timer_.setInterval(60000); // found; keep following /new slowly
+        const auto main_thread = codex_main_thread(codex_home(), thread);
+        if (!main_thread)
+            return;
+        if (!*main_thread) {
+            if (subagent_threads_.size() < 256)
+                subagent_threads_.insert(thread);
+            return;
         }
+        note_conversation(QStringLiteral("codex"), thread, ResumeSource::observer);
     }
-    void wait_for_codex(const LaunchSpec& launch, const QString& backend_socket,
-                        const QString& binary_hash) {
-        // A pathname can exist after bind(), before the server calls listen().
-        // Probe asynchronously and launch the TUI only once a connection succeeds.
-        connect(&backend_probe_, &QLocalSocket::connected, this,
-                [this, launch, backend_socket, binary_hash] {
-                    backend_wait_.stop();
-                    backend_probe_.abort();
-                    if (stopping_)
-                        return;
-                    codex_observer_->start(backend_socket, binary_hash);
-                    start_codex_tui(launch, backend_socket);
-                });
-        backend_wait_.setInterval(backend_probe_interval_ms);
-        connect(&backend_wait_, &QTimer::timeout, this,
-                [this, backend_socket, attempts = 0]() mutable {
-                    if (stopping_)
-                        return;
-                    if (++attempts >= backend_probe_attempts) {
-                        stop(QStringLiteral("Dedicated Codex server did not become ready"));
-                        return;
-                    }
-                    if (backend_probe_.state() == QLocalSocket::UnconnectedState)
-                        backend_probe_.connectToServer(backend_socket);
-                });
-        backend_wait_.start();
+    static QString codex_home() {
+        return qEnvironmentVariable("CODEX_HOME", QDir::homePath() + QStringLiteral("/.codex"));
     }
     void configure_history() {
         history_.failure = [this](const QString& error) {
@@ -1389,7 +1000,7 @@ class SessionService final : public QObject {
             return;
         stopping_ = true;
         output_admission_timer_.stop();
-        stop_codex();
+        attention_timer_.stop();
         if (claude_observer_)
             claude_observer_->stop();
         pty_.pauseOutput(true);
@@ -1529,9 +1140,6 @@ class SessionService final : public QObject {
         snapshot_pace_.reset();
         attention_pace_.reset();
         attention_dirty_ = true;
-        if (codex_observer_ && pty_requested_ && !codex_state_->connected() &&
-            codex_backend_.state() == QProcess::Running)
-            codex_observer_->reconnect();
         buffer_.clear();
         incoming->setReadBufferSize(wire::max_frame_bytes + 4);
         connect(incoming, &QLocalSocket::readyRead, this, [this, incoming] {
@@ -1963,84 +1571,16 @@ class SessionService final : public QObject {
     void decide_attention(const QByteArray& payload) {
         if (!attention_state())
             throw std::runtime_error("Attention decisions are unsupported for terminal sessions");
+        // Every observer lapis runs is observation only: a decision from an
+        // older desktop is refused before it reaches the agent, which takes
+        // the answer in its own terminal.
         const auto decision = wire::decode_attention_decision(payload);
-        if (claude_observer_ || notify_turns_) {
-            allow_decision_retry(decision);
-            decision_error_ = notify_turns_ && !claude_observer_
-                                  ? QStringLiteral("Answer Codex requests in the terminal")
-                                  : QStringLiteral("Answer Claude requests in the terminal");
-            attention_dirty_ = true;
-            schedule_attention();
-            return;
-        }
-        // Unavailable or failing journals refuse the forward, exactly like a
-        // decision that cannot be made durable.
-        if (!attention_journal_ || attention_journal_failed_) {
-            allow_decision_retry(decision);
-            decision_error_ = QStringLiteral("Decision could not be recorded; try again");
-            attention_dirty_ = true;
-            schedule_attention();
-            return;
-        }
-        const AttentionApproval approval{decision.source_epoch, decision.request_id,
-                                         decision.revision, decision.choice.toStdString()};
-        try {
-            if (!record_intended_decision(*attention_journal_, *attention_state(), approval)) {
-                allow_decision_retry(decision);
-                decision_error_ =
-                    QStringLiteral("Request changed or response is unsupported; refresh attention");
-                attention_dirty_ = true;
-                schedule_attention();
-                return;
-            }
-        } catch (const std::exception& error) {
-            qWarning().noquote() << "Attention decision not recorded:" << error.what();
-            if (!attention_journal_->usable())
-                attention_journal_failed_ = true;
-            allow_decision_retry(decision);
-            decision_error_ = QStringLiteral("Decision could not be recorded; try again");
-            attention_dirty_ = true;
-            schedule_attention();
-            return;
-        }
-        switch (codex_observer_->decide(decision.source_epoch, decision.request_id,
-                                        decision.revision, decision.choice, decision.answers)) {
-        case lapis::codex::DecisionOutcome::uncertain:
-            decision_error_ =
-                QStringLiteral("Delivery outcome is unknown; reconnect before deciding again");
-            attention_dirty_ = true;
-            schedule_attention();
-            return;
-        case lapis::codex::DecisionOutcome::delivered:
-            break;
-        case lapis::codex::DecisionOutcome::rejected:
-            try {
-                record_refused_decision(*attention_journal_, approval);
-                journaled_.erase(decision.request_id);
-            } catch (const std::exception& error) {
-                if (!attention_journal_->usable())
-                    attention_journal_failed_ = true;
-                qWarning().noquote() << "Attention rejection not recorded:" << error.what();
-            }
-            allow_decision_retry(decision);
-            decision_error_ =
-                QStringLiteral("Request changed or response is unsupported; refresh attention");
-            attention_dirty_ = true;
-            schedule_attention();
-            return;
-        }
-        try {
-            record_delivered_decision(*attention_journal_, approval);
-        } catch (const std::exception& error) {
-            if (!attention_journal_->usable())
-                attention_journal_failed_ = true;
-            qWarning().noquote() << "Attention delivery outcome not recorded:" << error.what();
-            decision_error_ = QStringLiteral("Delivery outcome is unknown; see the audit journal");
-            attention_dirty_ = true;
-            schedule_attention();
-            return;
-        }
-        journaled_.erase(decision.request_id);
+        allow_decision_retry(decision);
+        decision_error_ = claude_observer_
+                              ? QStringLiteral("Answer Claude requests in the terminal")
+                              : QStringLiteral("Answer Codex requests in the terminal");
+        attention_dirty_ = true;
+        schedule_attention();
     }
     void handle(const wire::Frame& frame) {
         if (!process_started_ || stopping_)
@@ -2602,23 +2142,15 @@ class SessionService final : public QObject {
     QString checkpoint_agent_;
     bool omp_extension_ = false;
     ResumeRecord resume_;
-    std::unique_ptr<attention::State> codex_state_;
-    std::unique_ptr<lapis::codex::Observer> codex_observer_;
-    QProcess codex_backend_;
-    QTimer backend_wait_;
-    QLocalSocket backend_probe_;
+    // A local Codex agent whose notify program this service set.
+    bool codex_notify_{};
+    QSet<QString> subagent_threads_;
     QTimer attention_timer_;
-    QTimer rollout_timer_;
-    bool rollout_probing_{};
-    posix::UniqueFd backend_guard_read_;
-    posix::UniqueFd backend_guard_control_;
-    bool pty_requested_{};
     bool attention_dirty_{};
     std::unique_ptr<AttentionJournal> attention_journal_;
     JournaledAsks journaled_;
     bool journal_append_failed_{};
     bool attention_journal_failed_{};
-    QString codex_error_;
     QString decision_error_;
 };
 
@@ -2709,7 +2241,7 @@ ServiceOptions parse_options(const QStringList& arguments) {
 
 #ifndef LAPIS_SESSION_SERVICE_TEST
 int main(int argc, char** argv) {
-    // Before any agent or Codex backend inherits the environment.
+    // Before any agent inherits the environment.
     clear_parent_session_markers();
     QStringList arguments;
     for (int index = 0; index < argc; ++index)
