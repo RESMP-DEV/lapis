@@ -21,7 +21,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_BUILD = ROOT / "build" / "desktop"
-SUPERVISOR_BUILD = ROOT / "build" / "supervisor" / "services" / "supervisor"
 GHOSTTY_RUNS = ROOT / "build" / "terminal-probe" / "reproduce" / "ghostty" / "runs"
 RUNTIME_DIR = ROOT / "runtime"
 DEFAULT_SOCKET = RUNTIME_DIR / "desktop-v6.sock"
@@ -390,17 +389,6 @@ def command_run(arguments):
     return launch(arguments)
 
 
-def command_supervisor(arguments):
-    """Run the headless lapis supervisor client from the focused build."""
-    binary = SUPERVISOR_BUILD / "lapis"
-    if not binary.is_file():
-        raise SetupError(
-            f"The headless supervisor client is not built: {binary}\n"
-            "Build it with: python3 scripts/lapis.py supervisor-runtime"
-        )
-    return _run([binary, *(arguments or ["--help"])], check=False).returncode
-
-
 def command_gui(arguments):
     """Live shell window with no extra flags for the common case."""
     return launch(arguments)
@@ -538,8 +526,6 @@ COMMANDS = {
     "diagnose": lambda a: run_python_script(
         "runtime_diagnostics.py", a, needs_ghostty=False
     ),
-    "supervisor-runtime": lambda a: run_python_script("check_supervisor_runtime.py", a),
-    "supervisor": command_supervisor,
     "run": command_run,
     "gui": command_gui,
     "ui": command_ui,
@@ -566,8 +552,6 @@ DESCRIPTIONS = {
     "ui-review": "Serial offscreen/software UI and input review while using the desktop",
     "codex-probe": "Record content-free evidence from the installed Codex",
     "diagnose": "Read-only runtime/package diagnosis (no GUI or session restore)",
-    "supervisor-runtime": "Focused supervisor runtime/daemon build and tests",
-    "supervisor": "Run the headless supervisor status/stop client",
     "run": "Open the live shell window (pass extra app flags through)",
     "gui": "Alias for run",
     "ui": "Open the isolated QML fixture for visual iteration",
