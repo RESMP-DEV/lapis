@@ -581,13 +581,14 @@ class Workspace final : public QObject {
     // request, or a finished turn (no background work in flight) that is
     // unseen or has a guessed next prompt. Agents at work, paused on their own
     // background work, or without a status never qualify. The TabRanker
-    // orders them: by default a prior (work, requests, unseen, newest) that
-    // learns from where you go; with "tabAway": {"rank": "fixed"} the earlier
-    // order (a guess not yet seen, an unseen turn or request, a guess already
-    // seen, longest waiting within each). `ready` maps agents with a guess to
-    // whether it was seen. Advances past the focused session; false (none
-    // waiting) leaves Tab with the program. Every move is logged with the
-    // candidates and their scores.
+    // orders them: by default the plain order (anything overdue first, then
+    // work, requests, unseen, newest), which does not learn; "tabAway":
+    // {"rank": "learned"} fits that prior to where you go, and "fixed" keeps
+    // the earlier order (a guess not yet seen, an unseen turn or request, a
+    // guess already seen, longest waiting within each). `ready` maps agents
+    // with a guess to whether it was seen. Advances past the focused session;
+    // false (none waiting) leaves Tab with the program. Every move is logged
+    // with the candidates and their scores.
     Q_INVOKABLE bool nextPriorityAttention(const QVariantMap& ready);
     // An agent is parked once the person has looked at its finished turn for
     // kParkAfterMs and moved on without a prompt: Tab, and Ultra Tab's cards,

@@ -2,9 +2,8 @@
 #define LAPIS_SESSION_ATTENTION_JOURNAL_HPP
 // Durable attention audit trail, ported from DeepSeek Harness's durable
 // approval/asked + approval/decided pairs and its fail-closed checkpoint
-// barriers (services/session/session-checkpoint-policy). Service-side only:
-// append is the barrier, so callers forward a decision only after append()
-// returned.
+// barriers. Service-side only: append is the barrier, so callers forward a
+// decision only after append() returned.
 #include <lapis/session/attention.hpp>
 
 #include "platform/posix/unique_fd.hpp"
