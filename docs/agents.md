@@ -66,25 +66,25 @@ suggestions as a local agent's do; that needs `python3` there.
 
 ## What lapis knows about an agent
 
-Codex and Claude Code report their turns: Codex through its observer, Claude
-Code through the session service's hook adapter, which also reports permission
-prompts and questions. OMP on this Mac reports finished turns through an
-extension lapis's OMP overlay loads; between turns its status is estimated.
-That extension names the main conversation once it reports its session id;
-before that, a printed checkpoint can still become the saved resume identity.
-Other CLIs show an estimate from their output, **Output active** or **Quiet**,
-rather than guessing at turns. **Turn finished** means a
-turn ended, not that the task or the process did. A new Codex agent reads **No
-prompt yet** until its first turn. Claude Code's idle reminder after a turn is
-not a request.
+Claude Code reports its turns through the session service's hook adapter,
+which also reports permission prompts and questions. Codex reports finished
+turns through its notify program: lapis starts Codex with `-c notify=[...]`
+(unless your arguments set `notify`), and lapis's relay runs your own `notify`
+from `config.toml` after it, so that keeps working; this needs `python3`.
+Between finished turns a Codex agent's status is estimated from its output,
+and its approval prompts are not reported. OMP on this Mac reports finished
+turns through an extension lapis's OMP overlay loads; between turns its status
+is estimated. That extension names the main conversation once it reports its
+session id; before that, a printed checkpoint can still become the saved
+resume identity. Other CLIs show an estimate from their output, **Output
+active** or **Quiet**, rather than guessing at turns. **Turn finished** means a
+turn ended, not that the task or the process did. Claude Code's idle reminder
+after a turn is not a request.
 
 A request (a permission prompt, a question) pings once and marks the agent just
 as a finished turn does. Answer it in the agent's terminal; lapis never changes
-a CLI's approval policy. For Codex agents, **Requests** (and **Review requests**
-in Commands) lists what the agent is asking; select one, then explicitly
-approve, decline, cancel or send answers. Opening or selecting never approves,
-and a stale source disables the buttons. Unsupported Codex builds keep explicit
-limits on status and responses; there is no way around qualification.
+a CLI's approval policy. **Requests** (and **Review requests** in Commands)
+lists what the agent is asking; opening or selecting one never approves it.
 
 A Claude agent gets one lapis hook per event, and it only reports: it never
 prints a decision or blocks a tool, so Claude Code's own permission rules and
@@ -153,8 +153,7 @@ A new agent's CLI updates itself first (`claude update`, `omp update`, `grok
 update`, `kimi upgrade`, `opencode upgrade`, `agy update`), at most every 30
 minutes per CLI. The card reads **Updating Claude…** until the agent starts on
 the new version, and results go to `runtime/harness-updates.log`. Codex is the
-exception: lapis observes only Codex builds it has qualified, so it keeps that
-build and starts Codex with its update prompt off
+exception: lapis starts Codex with its update prompt off
 (`check_for_update_on_startup=false`). Starting a supported CLI explicitly
 uses the same update queue; reconnecting and discovering agents do not. Pass
 `--no-harness-updates` to keep every installation unchanged. Queued agents
@@ -215,11 +214,11 @@ saved transcript yet, start fresh in the same folder. Resume arguments you gave
 explicitly win; lapis adds one only when none is present.
 
 Each service records its conversation beside its endpoint (`<endpoint>.resume`),
-from the Codex observer, the Claude hook adapter, or the `agent_checkpoint`
-sequence that iTerm2 restore hooks print. For Codex builds lapis has not
-qualified, and Codex agents whose service predates these records, lapis reads
-the thread from the rollouts its app-server holds open, following `/new` and
-`/resume`. Codex transcript lookup stays within the `sessions/YYYY/MM/DD`
+from Codex's notify events (each finished turn names its thread, so `/new` and
+`/resume` are followed from their first finished turn; subagent threads are
+skipped), the Claude hook adapter, or the `agent_checkpoint` sequence that
+iTerm2 restore hooks print. A Codex conversation is known once its first turn
+finishes. Codex transcript lookup stays within the `sessions/YYYY/MM/DD`
 layout and does not follow symlinks.
 
 To have agents come back at login without opening a window, install the login

@@ -16,11 +16,11 @@ from pathlib import Path
 
 if __package__:
     from .check_cli_launch import ATTENTION_DECISION, TEXT, Service, require
-    from .check_service_attention import View, cleanup_service, decision, process_groups
     from .probe_terminal import run_process
+    from .service_fixture import View, cleanup_service, decision, process_groups
 else:
     from check_cli_launch import ATTENTION_DECISION, TEXT, Service, require
-    from check_service_attention import View, cleanup_service, decision, process_groups
+    from service_fixture import View, cleanup_service, decision, process_groups
     from probe_terminal import run_process
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -804,7 +804,7 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
 
     def attention_publication_pacing():
         """Real service IPC, with a disposable Codex that runs its notify program."""
-        from check_service_attention import decision as make_attention_decision
+        from service_fixture import decision as make_attention_decision
 
         executable = codex_notify_fixture("attention-pacing-codex")
         service = Service(

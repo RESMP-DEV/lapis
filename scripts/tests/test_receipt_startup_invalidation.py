@@ -9,11 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from check_claude_hooks import main as claude_main
-from check_codex_attention import main as codex_attention_main
 from check_history import main as history_main
-from probe_codex_attention import main as codex_probe_main
-from probe_codex_external_import import main as codex_import_main
-from check_service_attention import main as attention_main
 
 
 class ReceiptInvalidationTests(unittest.TestCase):
@@ -45,94 +41,6 @@ class ReceiptInvalidationTests(unittest.TestCase):
                 self.assertRaises(KeyboardInterrupt),
             ):
                 claude_main(["--output", str(output)])
-            self.assertFalse(output.exists())
-
-    def test_interrupted_attention_check_replaces_stale_receipt(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            output = self.prepare(temporary)
-            with (
-                patch(
-                    "sys.argv", ["check_service_attention.py", "--output", str(output)]
-                ),
-                patch(
-                    "check_service_attention.exercise", side_effect=KeyboardInterrupt
-                ),
-                patch("builtins.print"),
-                self.assertRaises(KeyboardInterrupt),
-            ):
-                attention_main()
-            self.assertFalse(json.loads(output.read_text())["passed"])
-            self.assertNotIn("stale", json.loads(output.read_text()))
-
-    def test_interrupted_live_codex_check_removes_stale_receipt(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            output = self.prepare(temporary)
-            argv = ["check_codex_attention.py", "--live-glm", "--output", str(output)]
-            with (
-                patch("sys.argv", argv),
-                patch("check_codex_attention.run", side_effect=KeyboardInterrupt),
-                patch("builtins.print"),
-                self.assertRaises(KeyboardInterrupt),
-            ):
-                codex_attention_main()
-            self.assertFalse(output.exists())
-
-    def test_interrupted_shared_server_probe_removes_stale_receipt(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            output = self.prepare(temporary)
-            argv = [
-                "probe_codex_attention.py",
-                "--codex",
-                "codex",
-                "--output",
-                str(output),
-            ]
-            codex = Path(temporary) / "codex"
-            codex.write_text("#!/usr/bin/env bash\nexit 0\n")
-            codex.chmod(0o700)
-            with (
-                patch("sys.argv", argv),
-                patch(
-                    "probe_codex_attention.shutil.which",
-                    return_value=str(codex),
-                ),
-                patch(
-                    "probe_codex_attention.run_probe",
-                    side_effect=KeyboardInterrupt,
-                ),
-                patch("builtins.print"),
-                self.assertRaises(KeyboardInterrupt),
-            ):
-                codex_probe_main()
-            self.assertFalse(output.exists())
-
-    def test_interrupted_external_import_probe_removes_stale_receipt(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            output = self.prepare(temporary)
-            argv = [
-                "probe_codex_external_import.py",
-                "--codex",
-                "codex",
-                "--output",
-                str(output),
-            ]
-            codex = Path(temporary) / "codex"
-            codex.write_text("#!/usr/bin/env bash\nexit 0\n")
-            codex.chmod(0o700)
-            with (
-                patch("sys.argv", argv),
-                patch(
-                    "probe_codex_external_import.shutil.which",
-                    return_value=str(codex),
-                ),
-                patch(
-                    "probe_codex_external_import.run_probe",
-                    side_effect=KeyboardInterrupt,
-                ),
-                patch("builtins.print"),
-                self.assertRaises(KeyboardInterrupt),
-            ):
-                codex_import_main()
             self.assertFalse(output.exists())
 
 

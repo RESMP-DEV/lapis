@@ -416,8 +416,9 @@ const QRegularExpression& retiredPlanPreamble() {
     return preamble;
 }
 // An agent on another machine reports its turns through its own terminal,
-// since lapis's hook socket and app-server are on this Mac (the session
-// service's terminal_hooks.hpp has the sequence format). Its login shell
+// since lapis's hook socket is on this Mac (the session service's
+// terminal_hooks.hpp has the sequence format; a local Codex agent's service
+// sets up the same relay itself). Its login shell
 // makes a nonce that stays in the CLI's environment, prints the sequence that
 // binds it, and keeps lapis's relay and its terminal's device in the
 // environment too; Claude Code's hooks and Codex's notify program run that

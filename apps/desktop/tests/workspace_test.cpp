@@ -6042,55 +6042,6 @@ void printedCheckpointsResumeButNeverOverrideTheObserver() {
         "the legacy Claude fixture closes");
 }
 
-// Opt-in, with LAPIS_TEST_CODEX_HOME naming a Codex home that uses a local
-// fake model: a Codex agent whose service keeps no resume record (built before
-// records) still gets one, from the rollout its app-server holds open.
-void codexConversationRecoveredWithoutRecord() {
-    const auto home = qEnvironmentVariable("LAPIS_TEST_CODEX_HOME");
-    if (home.isEmpty())
-        return;
-    ScopedCodexHome codex_home_scope(home.toUtf8());
-    QTemporaryDir directory(QStringLiteral("/tmp/lapis-codex-XXXXXX"));
-    require(directory.isValid(), "codex recovery directory");
-    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
-    const auto project = QDir(canonical).filePath(QStringLiteral("project"));
-    require(QDir().mkpath(project), "project folder");
-    WorkspaceOptions options;
-    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
-    QString id;
-    QString endpoint;
-    {
-        Workspace creator(WorkspaceMode::live, options);
-        require(creator.createAgent(project, QStringLiteral("codex"), QStringLiteral("codex")),
-                "create a Codex agent");
-        auto* item = creator.focusedSession();
-        id = item->sessionId();
-        endpoint = QDir(canonical).filePath(id + QStringLiteral(".sock"));
-        require(waitFor([item] { return item->inputReady(); }, 20000), "Codex is ready");
-        waitFor([] { return false; }, 3000);
-        item->sendText("hello there");
-        waitFor([] { return false; }, 300);
-        item->sendText("\r");
-        require(waitFor([&] { return lapis::session::read_resume_record(endpoint).has_value(); },
-                        20000),
-                "the current service records the thread itself");
-        waitFor([] { return false; }, 3000);
-    }
-    const auto expected = lapis::session::read_resume_record(endpoint);
-    require(QFile::remove(endpoint + QStringLiteral(".resume")), "act like an older service");
-    options.restoreAgents = true;
-    Workspace reopened(WorkspaceMode::live, options);
-    require(
-        waitFor([&] { return lapis::session::read_resume_record(endpoint).has_value(); }, 20000),
-        "lapis records the thread from the open rollout");
-    const auto recovered = lapis::session::read_resume_record(endpoint);
-    require(recovered && expected && recovered->session_id == expected->session_id,
-            "the recovered thread is the agent's conversation");
-    require(reopened.closeSession(id), "close the Codex agent");
-    require(waitFor([&reopened] { return reopened.sessions().isEmpty(); }, 15000),
-            "the Codex agent closes");
-}
-
 void closeEndsTheAgent(const char* script, int minimum_ms) {
     QTemporaryDir directory;
     require(directory.isValid(), "service directory");
@@ -6226,7 +6177,6 @@ int main(int argc, char** argv) {
         const auto original_codex_home = qgetenv("CODEX_HOME");
         codexResumeArguments();
         savedGrokDefaultsPreserveLaunchOwnership();
-        codexConversationRecoveredWithoutRecord();
         require(qEnvironmentVariableIsSet("CODEX_HOME") == had_codex_home &&
                     qgetenv("CODEX_HOME") == original_codex_home,
                 "Codex fixtures restore the caller's exact environment");

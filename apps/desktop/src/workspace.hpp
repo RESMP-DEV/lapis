@@ -127,10 +127,11 @@ class SessionPreview final : public QObject {
     void restoreUnseen(bool unseen, qint64 neededAtMs);
     // When it last began to need you (ms since the epoch); 0 before that.
     [[nodiscard]] qint64 neededAtMs() const { return needed_at_ms_; }
-    // Where activity comes from: a service-side observer (the Codex app-server,
-    // Claude Code's hook relay) or, for other CLIs, an output-timing estimate.
-    // An agent on another machine starts from the estimate; hooks relayed
-    // through its terminal then report what they observe (see estimated()).
+    // Where activity comes from: a service-side observer (Claude Code's hook
+    // relay) or, for other CLIs, an output-timing estimate. Codex agents and
+    // agents on other machines start from the estimate; their notify program
+    // or hooks relayed through the terminal then report what they observe
+    // (see estimated()).
     enum class StatusSource : std::uint8_t { observer, output };
     void setStatusSource(StatusSource source) { status_source_ = source; }
     [[nodiscard]] StatusSource statusSource() const { return status_source_; }

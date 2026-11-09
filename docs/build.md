@@ -77,21 +77,6 @@ archives, builds both candidate engines and keeps each result. The comparison
 still exits nonzero for Contour's preserved failure; `--engine ghostty` runs the
 passing candidate. See the [receipt](../evidence/terminal-engine-probe.json).
 
-## Probing the installed Codex
-
-Needs Python 3.11+ and `codex` on PATH, and no packages:
-
-```sh
-python3 scripts/probe_codex.py --output build/reports/codex-probe.json
-```
-
-It exports the installed binary's schema to a temporary folder, starts a
-private app-server, initializes a client and lists its loaded threads. It never
-starts a turn or sends a prompt. It uses your Codex profile, so Codex may do its
-normal startup discovery and write logs. The receipt keeps method names and
-counts, not thread content or credentials. Local receipts may include machine
-paths; sanitize a dated copy before adding it to `evidence/`.
-
 ## Checking Claude Code release notes
 
 The changelog CLI reads Claude Code's public RSS feed without launching Claude
