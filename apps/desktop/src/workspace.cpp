@@ -1659,25 +1659,22 @@ void SessionPreview::setHarnessId(const QString& id) {
     emit identityChanged();
     emit statusChanged();
 }
-// The models a CLI offers the person; a list in the config replaces the
-// rest, with the CLI's default kept first.
+// The models a CLI offers the person. A list in the config replaces the CLI's
+// as written, in its order and named as the CLI names them; none is the CLI's
+// default, so the form picks the first and passes it as the model.
 std::vector<ModelChoice> Workspace::modelChoices(const QString& harness) const {
     auto found = harness_models_ ? harness_models_->models(harness) : std::vector<ModelChoice>{};
     const auto configured = agent_defaults_.models.value(harness);
     if (configured.isEmpty())
         return found;
     std::vector<ModelChoice> picked;
-    const auto fallback = std::find_if(found.begin(), found.end(),
-                                       [](const ModelChoice& model) { return model.isDefault; });
-    if (fallback != found.end())
-        picked.push_back(*fallback);
+    picked.reserve(static_cast<std::size_t>(configured.size()));
     for (const auto& name : configured) {
         const auto known = std::find_if(found.begin(), found.end(),
                                         [&](const ModelChoice& model) { return model.id == name; });
-        if (fallback == found.end() || fallback->id != name)
-            picked.push_back({.id = name,
-                              .name = known == found.end() ? name : known->name,
-                              .isDefault = false});
+        picked.push_back({.id = name,
+                          .name = known == found.end() ? name : known->name,
+                          .isDefault = false});
     }
     return picked;
 }
