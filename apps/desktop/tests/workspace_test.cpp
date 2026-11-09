@@ -2905,6 +2905,21 @@ void retiredPlansLeaveSavedAgentsStartable() {
                    {"activeCategory", "general"},
                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
                    {"agents", QJsonArray{record, local}}});
+    // A local agent's environment also carries the visual view's chart style
+    // once one is written under HOME, unless MATPLOTLIBRC is set. Point both
+    // at the fixture so the developer's own home cannot change the result.
+    const auto original_home = qgetenv("HOME");
+    const auto original_matplotlibrc = qgetenv("MATPLOTLIBRC");
+    const bool had_matplotlibrc = qEnvironmentVariableIsSet("MATPLOTLIBRC");
+    const auto restore_environment = qScopeGuard([&] {
+        qputenv("HOME", original_home);
+        if (had_matplotlibrc)
+            qputenv("MATPLOTLIBRC", original_matplotlibrc);
+        else
+            qunsetenv("MATPLOTLIBRC");
+    });
+    qputenv("HOME", QFile::encodeName(project));
+    qunsetenv("MATPLOTLIBRC");
     WorkspaceOptions options;
     options.storagePath = root.filePath(QStringLiteral("workspace.json"));
     Workspace workspace(WorkspaceMode::live, options);
