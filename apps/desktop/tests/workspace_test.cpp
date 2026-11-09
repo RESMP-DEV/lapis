@@ -2919,15 +2919,21 @@ void ompGetsItsResizeOverlay() {
     script.close();
     require(script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
             "make the stand-in executable");
-    QFile ssh(root.filePath(QStringLiteral("bin/ssh")));
-    require(ssh.open(QIODevice::WriteOnly), "write the stand-in ssh");
-    ssh.write(QByteArray("#!/bin/sh\n"
-                         "last=\n"
-                         "for argument in \"$@\"; do last=$argument; done\n"
-                         "exec env -u PI_CONFIG_FILES LAPIS_REMOTE_TEST=1 /bin/sh -c \"$last\"\n"));
-    ssh.close();
-    require(ssh.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
-            "make the stand-in ssh executable");
+    // The other machine runs its command in a stand-in login shell with a
+    // fixture home: the user's own login shell would read their profiles,
+    // which can reorder PATH or define an `omp` function, and so run the
+    // real CLI instead of the stand-in.
+    require(root.mkpath(QStringLiteral("home")), "a home on the other machine");
+    writeExecutable(root.filePath(QStringLiteral("bin/ssh")), R"(#!/bin/sh
+for last; do :; done
+d=$(cd "$(dirname "$0")/.." && pwd)
+export HOME="$d/home" SHELL="$d/bin/login-shell"
+cd "$HOME" && exec env -u PI_CONFIG_FILES LAPIS_REMOTE_TEST=1 /bin/sh -c "$last"
+)");
+    writeExecutable(root.filePath(QStringLiteral("bin/login-shell")), R"(#!/bin/sh
+[ "$1" = -lic ] && exec /bin/sh -c "$2"
+exit 64
+)");
     QFile config(root.filePath(QStringLiteral("ssh_config")));
     require(config.open(QIODevice::WriteOnly), "write an ssh config");
     config.write("Host devbox\n");
