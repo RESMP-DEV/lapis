@@ -21,10 +21,27 @@ from pathlib import Path
 
 # What transcript.cpp renders on purpose; keep in step with ClaudeReader::add
 # and tool_item. Bookkeeping records are skipped by design, not unknown.
-RENDERED_BLOCKS = {"text", "thinking", "redacted_thinking", "tool_use", "tool_result", "image"}
+RENDERED_BLOCKS = {
+    "text",
+    "thinking",
+    "redacted_thinking",
+    "tool_use",
+    "tool_result",
+    "image",
+}
 SHAPED_TOOLS = {
-    "Bash", "Read", "Write", "Edit", "MultiEdit", "Grep", "Glob", "Agent", "Task",
-    "WebFetch", "WebSearch", "TodoWrite",
+    "Bash",
+    "Read",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "Grep",
+    "Glob",
+    "Agent",
+    "Task",
+    "WebFetch",
+    "WebSearch",
+    "TodoWrite",
 }
 SHOWN_SYSTEM = {"compact_boundary"}
 
@@ -85,24 +102,38 @@ def survey(paths: list[Path]) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--sessions", type=int, default=300, help="newest sessions to read")
+    parser.add_argument(
+        "--sessions", type=int, default=300, help="newest sessions to read"
+    )
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     args = parser.parse_args()
     home = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
     result = survey(sessions(home / "projects", args.sessions))
-    unknown_blocks = {k: v for k, v in result["blocks"].items() if k not in RENDERED_BLOCKS}
-    generic_tools = {
-        k: v for k, v in result["tools"].items() if k not in SHAPED_TOOLS
+    unknown_blocks = {
+        k: v for k, v in result["blocks"].items() if k not in RENDERED_BLOCKS
     }
+    generic_tools = {k: v for k, v in result["tools"].items() if k not in SHAPED_TOOLS}
     if args.json:
-        json.dump({**{k: dict(v) if isinstance(v, collections.Counter) else v
-                      for k, v in result.items()},
-                   "unrendered_blocks": unknown_blocks, "generic_tools": generic_tools},
-                  sys.stdout, indent=1, sort_keys=True)
+        json.dump(
+            {
+                **{
+                    k: dict(v) if isinstance(v, collections.Counter) else v
+                    for k, v in result.items()
+                },
+                "unrendered_blocks": unknown_blocks,
+                "generic_tools": generic_tools,
+            },
+            sys.stdout,
+            indent=1,
+            sort_keys=True,
+        )
         print()
         return 0
-    newest = max(result["versions"], key=lambda v: tuple(int(x) for x in v.split(".") if x.isdigit()),
-                 default="?")
+    newest = max(
+        result["versions"],
+        key=lambda v: tuple(int(x) for x in v.split(".") if x.isdigit()),
+        default="?",
+    )
     print(f"{result['sessions']} sessions, newest CLI version {newest}")
     print("\ncontent blocks (* = shown as a plain block)")
     for name, count in result["blocks"].most_common():
