@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-09T21:31:06Z",
+  "agent": "Codex triage parent with read-only architecture review",
+  "base_revision": "113c9f690b606548830b4ce06803cd44a87dc26a",
+  "source_revision": "6e92eb2fa5a4b2c14c72c7e705ea76ab06f4fcf0",
+  "scope": "Post-rebase validation and Kilo follow-up for PR 190 after PRs 187, 188, 189, and 192 merged.",
+  "changed_source_manifest": {
+    "algorithm": "sha256(git diff --binary base..source_revision -- ':(exclude)evidence/*')",
+    "digest": "bc3b7cf7ed144d3502b8f4308c75ad0b85ffdb1014626d465d3b2d803b96a2bb",
+    "changed_paths": 41
+  },
+  "validation": [
+    {
+      "command": "just quality",
+      "result": "passed after base PR 192 repaired transcript-survey formatting"
+    },
+    {
+      "command": "cmake --build build/desktop --parallel 8",
+      "result": "passed"
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R '^(live-connection|local-protocol)$' --no-tests=error --output-on-failure",
+      "result": "2/2 passed"
+    },
+    {
+      "command": "ctest --test-dir build/desktop --no-tests=error --output-on-failure",
+      "result": "all 46 enabled desktop tests passed; nine policy-disabled tests did not run"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "review_followups": [
+    "Log Qt errorString when a direct detached service launch fails",
+    "Include launch_spec.hpp explicitly in live_connection.cpp"
+  ],
+  "non_claims": [
+    "The removed experimental supervisor suites are intentionally absent after deletion.",
+    "No native macOS GUI, login-helper reboot, packaged app, or long-run service-death recovery was exercised."
+  ]
+}
