@@ -15,8 +15,8 @@ class Workspace;
 // windowless host) from other lapis processes on this Mac, such as the phone
 // gateway: one JSON line per connection on <registry folder>/
 // workspace-control.sock, answered with one JSON line. Version 1 requests:
-// "harnesses", "createAgent" (category, harness, directory, optional title and
-// resume), "createCategory" (name), "renameCategory" (id, name),
+// "harnesses", "createAgent" (category, harness, directory, optional title,
+// model, mode, effort and resume), "createCategory" (name), "renameCategory" (id, name),
 // "removeCategory" (id), "placeCategory" (id, index), "closeAgent" (id),
 // "renameAgent" (id, title), "placeAgent" (id, category, index),
 // "restartAgent" (id), "openTerminal" (machine, "" for this Mac),

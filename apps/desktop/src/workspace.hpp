@@ -373,6 +373,7 @@ struct AgentRequest {
     QString program; // the CLI's path on `machine`, when known
     QString model;   // passed with the CLI's model flag; empty for its default
     QString mode;    // ask, edits, plan, auto or full; empty for the CLI's own setting
+    QString effort;  // low, medium, high, xhigh or max; empty for the CLI's own setting
     // An explicit form or wire title is someone's choice, even when it happens
     // to match the folder. A wire request that omits the title still gets the
     // generated folder default and can follow the conversation.

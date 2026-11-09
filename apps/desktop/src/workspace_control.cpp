@@ -157,7 +157,7 @@ QByteArray WorkspaceControl::create(const QString& /*kind*/, const QJsonObject& 
         const auto parts = QDir::cleanPath(directory).split(QLatin1Char('/'));
         title = parts.constLast().isEmpty() ? QStringLiteral("/") : parts.constLast();
     }
-    for (const auto* field : {"machine", "program", "title", "model", "mode", "resume"})
+    for (const auto* field : {"machine", "program", "title", "model", "mode", "effort", "resume"})
         if (request.contains(QLatin1String(field)) &&
             !request.value(QLatin1String(field)).isString())
             return refusal(QStringLiteral("Invalid %1").arg(QLatin1String(field)));
@@ -170,6 +170,7 @@ QByteArray WorkspaceControl::create(const QString& /*kind*/, const QJsonObject& 
                                .program = request.value(QStringLiteral("program")).toString(),
                                .model = request.value(QStringLiteral("model")).toString(),
                                .mode = request.value(QStringLiteral("mode")).toString(),
+                               .effort = request.value(QStringLiteral("effort")).toString(),
                                .named = named,
                                .select = false,
                                .resume = request.value(QStringLiteral("resume")).toString()});

@@ -4086,6 +4086,94 @@ void terminalsRunPlainShells() {
     }
 }
 
+// An effort asked for over the control socket reaches the CLI as its own
+// option, after the model; a CLI without one refuses it rather than ignoring it.
+void askedEffortReachesTheCli() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-effort-XXXXXX"));
+    require(directory.isValid(), "effort directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    const auto restore_path = qScopeGuard([&] { qputenv("PATH", path); });
+    QFile script(root.filePath(QStringLiteral("bin/claude")));
+    require(script.open(QIODevice::WriteOnly), "write the stand-in Claude Code");
+    script.write("#!/bin/sh\necho \"claude args: $*\"\nexec sleep 600\n");
+    script.close();
+    require(script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make it executable");
+    QFile codex_script(root.filePath(QStringLiteral("bin/codex")));
+    require(codex_script.open(QIODevice::WriteOnly), "write the stand-in Codex CLI");
+    codex_script.write("#!/bin/sh\necho \"codex args: $*\"\nexec sleep 600\n");
+    codex_script.close();
+    require(codex_script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make the Codex stand-in executable");
+    QFile ssh(root.filePath(QStringLiteral("bin/ssh")));
+    require(ssh.open(QIODevice::WriteOnly), "write the stand-in ssh");
+    ssh.write("#!/bin/sh\n"
+              "last=\n"
+              "for argument in \"$@\"; do last=$argument; done\n"
+              "exec /bin/sh -c \"$last\"\n");
+    ssh.close();
+    require(ssh.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make the ssh stand-in executable");
+    QFile config(root.filePath(QStringLiteral("ssh_config")));
+    require(config.open(QIODevice::WriteOnly), "write an ssh config");
+    config.write("Host devbox\n");
+    config.close();
+    const auto project = root.filePath(QStringLiteral("project"));
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    Workspace workspace(WorkspaceMode::live, options);
+    workspace.setSshConfigForTesting(config.fileName());
+    const auto close_owned = qScopeGuard([&] {
+        for (const auto& value : workspace.sessions())
+            if (auto* item = value.value<lapis::desktop::SessionPreview*>())
+                static_cast<void>(workspace.closeSession(item->sessionId()));
+        static_cast<void>(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000));
+    });
+    lapis::desktop::WorkspaceControl control(workspace, false);
+    auto request = createRequest(workspace.activeCategoryId(), QStringLiteral("claude"), project);
+    request.insert(QStringLiteral("model"), QStringLiteral("opus"));
+    request.insert(QStringLiteral("effort"), QStringLiteral("medium"));
+    const auto started = askWorkspace(workspace.storagePath(), request);
+    auto* agent = workspace.session(started.value(QStringLiteral("id")).toString());
+    require(agent != nullptr &&
+                waitFor(
+                    [agent] {
+                        return screenText(agent->snapshot())
+                            .remove(QLatin1Char('\n'))
+                            .contains(QStringLiteral("--model opus --effort medium "
+                                                     "--permission-mode bypassPermissions"));
+                    },
+                    10000),
+            "Claude Code starts with the effort after its model");
+    auto codex_request =
+        createRequest(workspace.activeCategoryId(), QStringLiteral("codex"), project);
+    codex_request.insert(QStringLiteral("machine"), QStringLiteral("devbox"));
+    codex_request.insert(QStringLiteral("program"), root.filePath(QStringLiteral("bin/codex")));
+    codex_request.insert(QStringLiteral("effort"), QStringLiteral("max"));
+    const auto codex_started = askWorkspace(workspace.storagePath(), codex_request);
+    auto* codex_agent = workspace.session(codex_started.value(QStringLiteral("id")).toString());
+    require(codex_agent != nullptr &&
+                waitFor(
+                    [codex_agent] {
+                        return screenText(codex_agent->snapshot())
+                            .remove(QLatin1Char('\n'))
+                            .contains(QStringLiteral("-c model_reasoning_effort=max"));
+                    },
+                    10000),
+            "Codex accepts the maximum effort");
+    for (const auto& [harness, effort] :
+         {std::pair{"grok", "medium"}, std::pair{"claude", "extreme"}}) {
+        auto refused =
+            createRequest(workspace.activeCategoryId(), QString::fromLatin1(harness), project);
+        refused.insert(QStringLiteral("effort"), QString::fromLatin1(effort));
+        require(
+            !askWorkspace(workspace.storagePath(), refused).value(QStringLiteral("ok")).toBool(),
+            "an effort the CLI cannot take is refused");
+    }
+    require(workspace.sessions().size() == 2, "a refused effort starts nothing");
+}
+
 // Resuming a past conversation starts its CLI with the resume option, from the
 // window or the phone, and the pair is lapis's to follow on a later restart.
 void resumingAConversationStartsItsCli() {
@@ -7038,6 +7126,7 @@ int main(int argc, char** argv) {
             } else if (selected == QStringLiteral("launch-policy")) {
                 modelessAgentsGetTheDefaultMode();
                 resumingAConversationStartsItsCli();
+                askedEffortReachesTheCli();
             } else if (selected == QStringLiteral("updater")) {
                 updaterLifecycle();
                 updaterOutputIsDrainedWithABoundedTail();
@@ -7140,6 +7229,7 @@ int main(int argc, char** argv) {
         startupAndManualUpdatesShareOneInstaller();
         skippedClaudeUpdateReportsTheCurrentOperation();
         resumingAConversationStartsItsCli();
+        askedEffortReachesTheCli();
         terminalsRunPlainShells();
         wheelReachesAFullScreenProgram();
         ompGetsItsResizeOverlay();
