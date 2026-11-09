@@ -32,7 +32,7 @@ constexpr int history_timeout_ms = 5000;
 // length and the attachment.
 constexpr qint64 input_queue_bytes = qint64{1024} * 1024;
 constexpr qint64 message_overhead = 45;
-bool start_service_detached(const ServiceLaunchRequest& launch) {
+bool start_service_detached(const ServiceLaunchRequest& launch, QString* error) {
     QProcess service;
     service.setProgram(launch.program);
     service.setArguments(launch.arguments);
@@ -46,7 +46,8 @@ bool start_service_detached(const ServiceLaunchRequest& launch) {
     }
     if (service.startDetached())
         return true;
-    qWarning().noquote() << "Session service launch failed:" << service.errorString();
+    *error = QStringLiteral("%1: %2").arg(launch.program, service.errorString());
+    qWarning().noquote() << "Session service launch failed:" << *error;
     return false;
 }
 } // namespace
@@ -595,8 +596,15 @@ void LiveConnection::begin(wire::AttachMode mode) {
             const ServiceLaunchRequest launch_request{session_service_program(), arguments,
                                                       endpoint_ + QStringLiteral(".log"),
                                                       document_.serviceEnvironment()};
-            if (!(launcher_ ? launcher_(launch_request) : start_service_detached(launch_request)))
-                throw std::runtime_error("Could not start session service");
+            QString launch_error;
+            if (!(launcher_ ? launcher_(launch_request)
+                            : start_service_detached(launch_request, &launch_error))) {
+                throw std::runtime_error(
+                    QStringLiteral("Could not start session service: %1")
+                        .arg(launch_error.isEmpty() ? QStringLiteral("launcher refused the request")
+                                                    : launch_error)
+                        .toStdString());
+            }
             request_.expected.session_id = session_id;
         }
         connectSocket();
