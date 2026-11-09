@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-09T21:36:40Z",
+  "agent": "Codex triage parent",
+  "base_revision": "113c9f690b606548830b4ce06803cd44a87dc26a",
+  "source_revision": "fac41e15e60a02c8ab6b656342b07a2cf2443d5f",
+  "scope": "Validate the visual-view Tab-guess and strict-compiler regression repair.",
+  "changed_source_manifest": {
+    "algorithm": "sha256(git diff --binary base..source_revision -- ':(exclude)evidence/*')",
+    "digest": "2aef3ff1d89468aaf07534c83f636b2a876ffe4c143e15529f097b41ebd6020a",
+    "changed_paths": 3
+  },
+  "validation": [
+    {
+      "command": "just quality",
+      "result": "passed"
+    },
+    {
+      "command": "python3 scripts/lapis.py ui-review --json",
+      "result": "configure/build and all three background UI cases passed with Homebrew Clang 23.1.5; receipt at build/reports/ui-review/20261109T213502Z-2aueg869/receipt.json"
+    },
+    {
+      "command": "rg -n 'TypeError|Property.*guesses.*not a function' build/reports/ui-review/20261109T213502Z-2aueg869",
+      "result": "no matches"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "non_claims": [
+    "The UI review is offscreen/software and does not qualify native GPU presentation, AppKit input routing, IME, or the system pasteboard.",
+    "No native Tab-key interaction outside the offscreen fixture was exercised."
+  ]
+}
