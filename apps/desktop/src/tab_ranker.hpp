@@ -14,8 +14,9 @@
 namespace lapis::desktop {
 
 // {"tabAway": {"work": ["work"], "overdueHours": 4}}. Tab's order does not
-// learn: anything left waiting longer than `overdueHours` (0 turns that off)
-// comes first, oldest first, so neglected work cannot sink; then work
+// learn: a request, unseen turn or unseen guess waiting longer than
+// `overdueHours` (0 turns that off) comes first, oldest first, so neglected
+// work cannot sink; then work
 // categories, requests, turns not yet seen, and the newest. `work` names the
 // categories that count as work; names compare without case. The retired
 // `rank` key ("learned" and "fixed" orders) is ignored.

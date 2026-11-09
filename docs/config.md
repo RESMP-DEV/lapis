@@ -157,8 +157,8 @@ kinds:
   no movement.
 - `agent-focus`, `category`, `history`, `dialog`, `command`, `shortcut`
   (``Command-` ``), `window` and `app`: the selected agent and category with how
-  each changed (`via`: `click`, `key`, `shortcut`, `tab-away`, `notification`,
-  `terminal-key`, `wheel` or `program`), the history position, dialogs and menus opening and
+  each changed (`via`: `click`, `key`, `shortcut`, `tab-away`, `terminal-key`,
+  `wheel` or `program`), the history position, dialogs and menus opening and
   closing, the command run from the palette, window focus and app activation.
 
 Passwords stay out. While macOS secure input is on, or the line the cursor is on
@@ -188,9 +188,10 @@ you (see [suggestions](suggestions.md#tab)):
 "tabAway": {"work": ["work"], "overdueHours": 4}
 ```
 
-Tab's order does not learn: anything left waiting more than `overdueHours` (0
-turns this off) comes first, oldest first, so neglected work cannot sink; then
-work categories, requests, turns you have not seen, and the newest. `work`
+Tab's order does not learn: an agent that needs you (a request, an unseen turn
+or an unseen guess) and waits more than `overdueHours` (0 turns this off) comes
+first, oldest first, so neglected work cannot sink; then work categories,
+requests, turns you have not seen, and the newest. `work`
 lists the categories, by name and without case, that count as work; the
 default matches a category called `work`. The retired `rank` key chose between
 this order and a `learned` or `fixed` one; a learned order was the default
@@ -200,7 +201,7 @@ which agent needed you. Older files may keep `rank`; it is ignored and left as
 written.
 
 Only agents truly waiting on you qualify: a request, or a turn that finished
-with no background work in flight and that you have not parked. Looking at a
+with no background work in flight, unseen or with a guess, and not parked. Looking at a
 finished turn for 2.5 seconds or more and moving on without a prompt parks the
 agent: Tab passes it over until it next begins to wait. A request
 is never parked. Choices and Tab moves are kept in `runtime/tab_away.jsonl`,

@@ -758,7 +758,7 @@ class Workspace final : public QObject {
     [[nodiscard]] static bool serviceRunning(const QString& endpoint);
     void noteStatus(SessionPreview* item);
     QHash<const SessionPreview*, QString> last_kind_;
-    // Tab's ranking, and the choices it learns from: the agents waiting when
+    // Tab's ranking, and the choices it records: the agents waiting when
     // the person left one, kept until they settle on another (or Tab moved
     // them), then recorded with the one they settled on.
     std::unique_ptr<TabRanker> tab_ranker_{std::make_unique<TabRanker>()};

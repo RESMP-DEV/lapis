@@ -161,8 +161,9 @@ build has no extension loaded; reload it once.
   finished with no background tasks, subagents or wakeups in flight, unseen or
   with a guess, and not parked (looked at for 2.5 seconds and left without a
   prompt). An agent at work, or paused while its own background work runs,
-  never does. Among those, anything waiting over four hours comes first, then
-  work categories, requests, turns you have not seen, and the newest.
+  never does. Among those, a request, an unseen turn or an unseen guess
+  waiting over four hours comes first, then work categories, requests, turns
+  you have not seen, and the newest.
   `tabAway` in [config](config.md#tabs-next-agent) names your work categories
   and the overdue time. When nothing waits, Tab goes to the
   program as usual. A finished Claude Code or Codex turn nearly always offers

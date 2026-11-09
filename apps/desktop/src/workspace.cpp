@@ -910,7 +910,7 @@ bool Workspace::nextPriorityAttention(const QVariantMap& ready) {
     if (!selectSession(candidates[*best].session))
         return false;
     tab_ranker_->recordTab(candidates, scores, *best);
-    // Where the person settles after this move is the choice it learns from.
+    // Where the person settles after this move is the choice it records.
     // A Tab before the last move settled passes over that agent: the choice
     // stays among the agents waiting since they left the one before.
     if (choice_)

@@ -606,7 +606,7 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
         NextPrompt::Files{data.filePath(QStringLiteral("runtime")), log});
     const auto follow = [&next, &keymap] { next.setSettings(keymap.nextPrompt()); };
     follow();
-    // Tab learns from moves made by hand too, with the guesses then on offer.
+    // Tab's log covers moves made by hand too, with the guesses then on offer.
     workspace.setGuesses([&next] { return next.readyAgents(); });
     QObject::connect(&next, &QObject::destroyed, &workspace,
                      [&workspace] { workspace.setGuesses({}); });
