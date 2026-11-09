@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-09T22:50:46Z",
+  "recorded_at": "2026-11-09T23:07:10Z",
   "agent": "Codex triage parent with a single-file MiniMax refactor worker",
   "base_revision": "302e5a2329882a6f271a4449c930699daeb750df",
-  "source_revision": "79517ad6962c6e0719053584d1b71410e016fe33",
+  "source_revision": "e383f0de2e9550a52ed2dc4e354d6678255241fd",
   "scope": "Repair current-main session-service gates: the sanitizer parser-drain deadline and the two clang-tidy cognitive-complexity findings.",
   "changed_source_manifest": {
-    "algorithm": "shasum -a 256 of: git diff --binary 302e5a2329882a6f271a4449c930699daeb750df..79517ad6962c6e0719053584d1b71410e016fe33 -- ':(exclude)evidence/*'",
-    "digest": "1e0cbd7d6127e909e1ec5b1e8055eda7733d88e32ffdfc2e2a2e1fcd572dbadf",
+    "algorithm": "shasum -a 256 of: git diff --binary 302e5a2329882a6f271a4449c930699daeb750df..e383f0de2e9550a52ed2dc4e354d6678255241fd -- ':(exclude)evidence/*'",
+    "digest": "766deaa8437c10052f44f60a94083565bd23ea97354b1868d5bc025d84403378",
     "changed_paths": 2
   },
   "validation": [
@@ -25,7 +25,7 @@
     },
     {
       "command": "LAPIS_GHOSTTY_PREFIX=<verified pinned Ghostty prefix> just tsan",
-      "result": "passed: all 20 TSan CTest cases after the drain bound was widened from 1000 ms to 5000 ms"
+      "result": "passed: all 20 TSan CTest cases after the drain was changed to bounded synchronous parser passes"
     },
     {
       "command": "clang-tidy threshold-1 measurement on services/session/src/session_service.cpp",
@@ -38,7 +38,7 @@
   },
   "non_claims": [
     "No desktop GUI, packaging, native input, iOS, or long-run service-death recovery was exercised.",
-    "The first 1000 ms TSan run failed with 18080 of 32768 bytes pending; the final 5000 ms bound passed the isolated test and the full suite.",
+    "The first 1000 ms TSan run failed with 18080 of 32768 bytes pending; a 5000 ms event-loop bound passed once but could race the production settle cap, so the final test drives bounded synchronous parser passes instead.",
     "This is a gate repair, not a claim that parser throughput meets a product performance target."
   ]
 }
