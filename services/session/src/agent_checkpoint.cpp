@@ -1,7 +1,6 @@
 #include "agent_checkpoint.hpp"
 
 #include "platform/posix/unique_fd.hpp"
-#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -176,46 +175,6 @@ std::optional<ResumeRecord> CheckpointScanner::scan(QByteArrayView output) {
             newest = std::move(record);
         from = end + 1;
     }
-}
-
-std::vector<QString> codex_threads_from_open_files(const QString& listing) {
-    static const QRegularExpression rollout(
-        QStringLiteral(R"(^n(\S*/sessions/\S*/(rollout-[^/]*-([0-9a-f]{8}-[0-9a-f]{4}-)"
-                       R"([0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))\.jsonl)$)"),
-        QRegularExpression::MultilineOption);
-    struct Open {
-        QString thread;
-        QString name;
-        QDateTime written;
-    };
-    std::vector<Open> open;
-    for (auto matches = rollout.globalMatch(listing); matches.hasNext();) {
-        const auto match = matches.next();
-        const QFileInfo info(match.captured(1));
-        if (!info.isFile())
-            continue;
-        const auto subagent = subagent_rollout(info.filePath());
-        if (subagent.value_or(true))
-            continue;
-        open.push_back({match.captured(3), match.captured(2), info.lastModified()});
-    }
-    // Rollout names start with their creation time and break ties.
-    std::sort(open.begin(), open.end(), [](const Open& left, const Open& right) {
-        return left.written != right.written ? left.written > right.written
-                                             : left.name > right.name;
-    });
-    std::vector<QString> threads;
-    for (const auto& each : open)
-        if (std::find(threads.begin(), threads.end(), each.thread) == threads.end())
-            threads.push_back(each.thread);
-    return threads;
-}
-
-std::optional<QString> codex_thread_from_open_files(const QString& listing) {
-    const auto threads = codex_threads_from_open_files(listing);
-    if (threads.empty())
-        return std::nullopt;
-    return threads.front();
 }
 
 namespace {

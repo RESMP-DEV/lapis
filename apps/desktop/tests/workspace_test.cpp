@@ -82,9 +82,10 @@ void explicitAgentIdentity() {
                                  : mode == AgentMode::claude ? QStringLiteral("claude")
                                                              : QString{};
         require(item && item->harnessId() == expected, "explicit attach retains harness identity");
-        require(item->statusSource() == (mode == AgentMode::terminal
-                                             ? SessionPreview::StatusSource::output
-                                             : SessionPreview::StatusSource::observer),
+        // Codex's notify program reports only finished turns.
+        require(item->statusSource() == (mode == AgentMode::claude
+                                             ? SessionPreview::StatusSource::observer
+                                             : SessionPreview::StatusSource::output),
                 "explicit attach selects the correct status source");
         require(!workspace.createAgent(directory.path(), QStringLiteral("Blocked")),
                 "an explicit attach cannot create an unpersisted managed agent");
@@ -2489,6 +2490,156 @@ for n, line in enumerate(sys.stdin, 1):
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
+}
+
+// A local Codex agent reports each finished turn through the notify program
+// its session service adds, as an agent on another machine does: the turn
+// pings once, no hook bytes reach the screen, the person's own notify program
+// from config.toml still runs, the notify event's thread is saved as the
+// conversation, and a restart resumes it.
+void localCodexReportsTurnsThroughNotify() {
+    using lapis::desktop::SessionPreview;
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-local-codex-XXXXXX"));
+    require(directory.isValid(), "local Codex directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    const auto thread = QStringLiteral("019a0000-0000-7000-8000-00000000c0de");
+    const auto home = root.filePath(QStringLiteral("codex-home"));
+    const auto marker = root.filePath(QStringLiteral("user-notify-ran"));
+    const auto starts = root.filePath(QStringLiteral("codex-starts"));
+    require(root.mkpath(QStringLiteral("codex-home")), "a Codex home");
+    writeExecutable(root.filePath(QStringLiteral("bin/user-notify")),
+                    "#!/bin/sh\nprintf '%s' \"$1\" > '" + QFile::encodeName(marker) + "'\n");
+    QFile config(root.filePath(QStringLiteral("codex-home/config.toml")));
+    require(config.open(QIODevice::WriteOnly), "write the person's Codex config");
+    config.write("model = \"stand-in\"\nnotify = [\"" +
+                 QFile::encodeName(root.filePath(QStringLiteral("bin/user-notify"))) +
+                 "\"]\n\n[tui]\nnotifications = false\n");
+    config.close();
+    // Codex runs its notify program with the event as the last argument after
+    // each finished turn, and keeps the thread's rollout under CODEX_HOME.
+    writeExecutable(root.filePath(QStringLiteral("bin/codex")), R"(#!/usr/bin/env python3
+import json, os, subprocess, sys, time
+args = sys.argv[1:]
+with open(os.environ["LAPIS_TEST_STARTS"], "a") as starts:
+    starts.write(json.dumps(args) + "\n")
+if args[:1] != ["-c"] or not args[1].startswith("notify="):
+    sys.exit(3)
+notify = json.loads(args[1].split("=", 1)[1])
+thread = args[args.index("resume") + 1] if "resume" in args else os.environ["LAPIS_TEST_THREAD"]
+day = os.path.join(os.environ["CODEX_HOME"], "sessions", "2026", "11", "09")
+os.makedirs(day, exist_ok=True)
+with open(os.path.join(day, f"rollout-2026-11-09T12-00-00-{thread}.jsonl"), "a") as rollout:
+    meta = {"type": "session_meta", "payload": {"id": thread, "source": "cli"}}
+    rollout.write(json.dumps(meta) + "\n")
+print("codex ready", flush=True)
+for n, line in enumerate(sys.stdin, 1):
+    if line.strip() == "exit":
+        sys.exit(0)
+    for i in range(30):
+        print(f"working {i}", flush=True)
+        time.sleep(0.05)
+    done ={"type": "agent-turn-complete", "thread-id": thread, "turn-id": f"t{n}",
+            "input-messages": [line.strip()], "last-assistant-message": "private reply"}
+    subprocess.run(notify + [json.dumps(done)], start_new_session=True)
+    print(f"turn done {n}", flush=True)
+)");
+    const auto previous_home = qgetenv("CODEX_HOME");
+    const bool had_home = qEnvironmentVariableIsSet("CODEX_HOME");
+    qputenv("CODEX_HOME", QFile::encodeName(home));
+    qputenv("LAPIS_TEST_STARTS", QFile::encodeName(starts));
+    qputenv("LAPIS_TEST_THREAD", thread.toUtf8());
+    const auto restore = qScopeGuard([&] {
+        if (had_home)
+            qputenv("CODEX_HOME", previous_home);
+        else
+            qunsetenv("CODEX_HOME");
+        qunsetenv("LAPIS_TEST_STARTS");
+        qunsetenv("LAPIS_TEST_THREAD");
+        qputenv("PATH", path);
+    });
+    const auto started = [&starts] {
+        QStringList lines;
+        QFile file(starts);
+        if (file.open(QIODevice::ReadOnly))
+            for (const auto& line : file.readAll().split('\n'))
+                if (!line.isEmpty())
+                    lines.append(QString::fromUtf8(line));
+        return lines;
+    };
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    options.restoreAgents = true;
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        QHash<QString, int> pings;
+        QObject::connect(&workspace, &Workspace::turnFinished,
+                         [&pings](SessionPreview* item) { ++pings[item->sessionId()]; });
+        require(workspace.createAgent(root.filePath(QStringLiteral("project")),
+                                      QStringLiteral("local codex"), QStringLiteral("codex")),
+                "a local Codex agent");
+        auto* codex = workspace.focusedSession();
+        require(codex != nullptr && codex->statusSource() == SessionPreview::StatusSource::output,
+                "a local Codex agent starts from the output estimate");
+        const auto id = codex->sessionId();
+        codex->setOutputTimingForTesting({.settle_ms = 0, .burst_ms = 1500, .quiet_ms = 4000});
+        const auto shows = [&codex](const QString& text) {
+            return screenText(codex->snapshot()).contains(text);
+        };
+        require(waitFor([&] { return codex->inputReady() && shows(QStringLiteral("codex ready")); },
+                        15000),
+                "the local Codex stand-in starts with lapis's notify program");
+        for (int turn = 1; turn <= 2; ++turn) {
+            require(codex->sendText("next prompt\r"), "type a Codex prompt");
+            require(waitFor([&] { return pings.value(id) == turn; }, 15000) &&
+                        codex->statusKind() == QStringLiteral("finished"),
+                    "Codex's notify program finishes each turn once; a prompt starts the next");
+        }
+        require(waitFor([&] { return shows(QStringLiteral("turn done 2")); }, 10000),
+                "the stand-in's output is shown");
+        const auto screen = screenText(codex->snapshot());
+        require(!screen.contains(QStringLiteral("7717")) &&
+                    !screen.contains(QStringLiteral("lapis-")),
+                "notify sequences never reach the screen");
+        require(waitFor([&] { return QFileInfo::exists(marker); }, 10000),
+                "the person's own notify program still runs");
+        QFile chained(marker);
+        require(chained.open(QIODevice::ReadOnly) && QJsonDocument::fromJson(chained.readAll())
+                                                             .object()
+                                                             .value(QStringLiteral("thread-id"))
+                                                             .toString() == thread,
+                "it receives Codex's whole event");
+        const auto endpoint = root.filePath(id + QStringLiteral(".sock"));
+        const auto saved = lapis::session::read_resume_record(endpoint);
+        require(saved && saved->agent == QStringLiteral("codex") && saved->session_id == thread &&
+                    saved->source == lapis::session::ResumeSource::observer,
+                "the notify event's thread is saved as the conversation");
+        require(started().size() == 1, "one Codex start so far");
+        require(
+            codex->sendText("exit\r") &&
+                waitFor([&] { return codex->connectionState() == QStringLiteral("ended"); }, 15000),
+            "the stand-in exits");
+        // The ended agent's service finishes its own exit first.
+        require(waitFor([&] { return workspace.restartAgent(id); }, 10000),
+                "the ended agent restarts");
+        require(waitFor([&] { return started().size() == 2; }, 15000),
+                "a restart starts Codex again");
+        const auto restarted = QJsonDocument::fromJson(started().at(1).toUtf8()).array();
+        require(restarted.contains(QStringLiteral("resume")) && restarted.contains(thread) &&
+                    restarted.at(0) == QStringLiteral("-c"),
+                "the restart resumes the saved thread, with the notify program again");
+        auto* again = workspace.session(id);
+        require(again != nullptr && waitFor(
+                                        [&] {
+                                            return screenText(again->snapshot())
+                                                .contains(QStringLiteral("codex ready"));
+                                        },
+                                        15000),
+                "the resumed stand-in starts");
+        require(workspace.closeSession(id, true), "close the stand-in agent");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agent closes");
+    }
 }
 
 // Reload ends an agent's CLI and starts it again in its tab, for one tab, the
@@ -5975,6 +6126,7 @@ int main(int argc, char** argv) {
             require(argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--case") &&
                         (QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-hooks") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("local-codex") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("retired-plans") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("launch-policy") ||
@@ -5985,7 +6137,7 @@ int main(int argc, char** argv) {
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("stage-size")),
                     "Usage: lapis_workspace_tests [--case "
-                    "remote-options|remote-hooks|retired-plans|reload|updater|"
+                    "remote-options|remote-hooks|local-codex|retired-plans|reload|updater|"
                     "updates-off|startup-defaults|launch-policy|omp-overlay|chimes|stage-size]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("retired-plans")) {
@@ -5995,6 +6147,8 @@ int main(int argc, char** argv) {
                 remoteClaudeReconnectsToItsConversation();
             } else if (selected == QStringLiteral("remote-hooks")) {
                 remoteAgentsReportTurnsThroughTheirTerminal();
+            } else if (selected == QStringLiteral("local-codex")) {
+                localCodexReportsTurnsThroughNotify();
             } else if (selected == QStringLiteral("startup-defaults")) {
                 savedGrokDefaultsPreserveLaunchOwnership();
                 savedCodexDefaultsKeepTheScreenMode();

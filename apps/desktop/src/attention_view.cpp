@@ -99,7 +99,7 @@ QString SessionPreview::statusLabel() const {
         return QStringLiteral("Unavailable");
     if (kind == QStringLiteral("ended"))
         return QStringLiteral("Ended");
-    if (harnessId() != QStringLiteral("codex") && input_ready_)
+    if (input_ready_)
         return QStringLiteral("Connected");
     if (attention_ && attention_->connected && !attention_->ready && awaiting_first_prompt_)
         return QStringLiteral("No prompt yet");

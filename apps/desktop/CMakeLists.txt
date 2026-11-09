@@ -211,6 +211,10 @@ if(BUILD_TESTING)
     set_tests_properties(workspace-updates-off PROPERTIES TIMEOUT 60)
     add_test(NAME workspace-omp-overlay COMMAND lapis_workspace_tests --case omp-overlay)
     set_tests_properties(workspace-omp-overlay PROPERTIES TIMEOUT 60)
+    # A local Codex stand-in through the real session service; windowless.
+    add_test(NAME workspace-local-codex COMMAND lapis_workspace_tests --case local-codex)
+    set_tests_properties(workspace-local-codex PROPERTIES TIMEOUT 90
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     # These launch the real desktop host or QML windows. On a Mac someone is
     # using they would show windows, so they run only on request.
     set_tests_properties(workspace workspace-remote-hooks workspace-retired-plans

@@ -30,7 +30,6 @@
 #include <QTimer>
 #include <QVariantList>
 
-#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -658,10 +657,6 @@ class Workspace final : public QObject {
     void startUpdatedAgents(const QStringList& ids);
     void logUpdate(const QString& line) const;
     QString update_log_directory_;
-    // Records conversations for agents whose services do not.
-    QTimer conversation_timer_;
-    std::shared_ptr<std::atomic_bool> probing_{std::make_shared<std::atomic_bool>(false)};
-    void recordConversations();
     struct Category {
         QString id;
         QString name;

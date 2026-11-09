@@ -5,15 +5,14 @@
 #include <QString>
 #include <cstdint>
 #include <optional>
-#include <vector>
 
 #include "launch_spec.hpp"
 
 namespace lapis::session {
 // How a conversation's identity was learned: printed by the agent's session
-// hook (terminal), by lapis's own Codex or Claude observer, or before lapis
-// recorded which (legacy, a version 1 record). Printed output never replaces
-// an identity the observer learned.
+// hook (terminal), by lapis's own Claude observer or Codex notify program, or
+// before lapis recorded which (legacy, a version 1 record). Printed output
+// never replaces an identity the observer learned.
 enum class ResumeSource : std::uint8_t { terminal, observer, legacy };
 
 struct ResumeRecord {
@@ -53,14 +52,6 @@ class CheckpointScanner {
 // on failure.
 [[nodiscard]] std::optional<ResumeRecord> read_resume_record(const QString& endpoint);
 
-// The Codex threads whose rollouts a Codex app-server holds open, from its
-// `lsof -Fn` listing, most recently written first. Codex keeps every loaded
-// thread's rollout open, including the previous conversation after /new or
-// /resume; subagent threads, which say so in their rollout's first line, are
-// left out. Rollouts that are not readable regular files are skipped.
-[[nodiscard]] std::vector<QString> codex_threads_from_open_files(const QString& listing);
-// The conversation in use: the first of codex_threads_from_open_files.
-[[nodiscard]] std::optional<QString> codex_thread_from_open_files(const QString& listing);
 // Whether a Codex thread is a conversation of its own rather than a subagent's,
 // from its rollout under <codex_home>/sessions/YYYY/MM/DD (the first line says
 // which), or nullopt when the id is not a thread id or no readable rollout

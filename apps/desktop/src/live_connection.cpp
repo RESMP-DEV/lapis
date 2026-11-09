@@ -25,7 +25,6 @@
 namespace lapis::desktop {
 namespace wire = session::wire;
 namespace {
-constexpr int codex_sync_timeout_ms = 15000;
 constexpr int terminal_sync_timeout_ms = 5000;
 constexpr int history_timeout_ms = 5000;
 // Input waiting for the socket, and what each message adds to it: a kind, a
@@ -512,8 +511,7 @@ LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
     retry_.setSingleShot(true);
     retry_.setInterval(100);
     handshake_.setSingleShot(true);
-    handshake_.setInterval(launch.agent == session::AgentMode::codex ? codex_sync_timeout_ms
-                                                                     : terminal_sync_timeout_ms);
+    handshake_.setInterval(terminal_sync_timeout_ms);
     // A size other than the default is the view's, so the CLI starts in it.
     if (launch.size != session::LaunchSpec{}.size)
         service_arguments_ =

@@ -27,9 +27,7 @@
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSaveFile>
-#include <QScopeGuard>
 #include <QStandardPaths>
-#include <QThreadPool>
 #include <QUuid>
 #include <algorithm>
 #include <array>
@@ -1978,43 +1976,6 @@ void Workspace::loadCategories(const QJsonArray& groups) {
     categories_ = std::move(categories);
 }
 namespace {
-// Services built before resume records keep none, and services built before
-// the rollout scan do not follow /new. A Codex agent's app-server, found by the
-// backend socket it listens on, still holds its threads' rollouts open.
-std::vector<QString> openCodexThreads(const QString& endpoint) {
-    // Only platform-owned process tools may attest an observer identity.
-    const auto lsof = QStandardPaths::findExecutable(
-        QStringLiteral("lsof"), {QStringLiteral("/usr/sbin"), QStringLiteral("/usr/bin")});
-    const auto ps = QStandardPaths::findExecutable(
-        QStringLiteral("ps"), {QStringLiteral("/bin"), QStringLiteral("/usr/bin")});
-    if (lsof.isEmpty() || ps.isEmpty())
-        return {};
-    // No backend socket means no app-server can still hold a rollout open.
-    if (!QFileInfo::exists(endpoint + QStringLiteral(".codex")))
-        return {};
-    QProcess list;
-    list.start(ps, {QStringLiteral("-axo"), QStringLiteral("pid=,command=")});
-    if (!list.waitForFinished(3000))
-        return {};
-    const auto listen =
-        QStringLiteral("app-server --listen unix://") + endpoint + QStringLiteral(".codex");
-    QString pid;
-    for (const auto& line : QString::fromUtf8(list.readAllStandardOutput()).split('\n')) {
-        const auto row = line.trimmed();
-        if (row.endsWith(listen) || row.contains(listen + QLatin1Char(' '))) {
-            if (!pid.isEmpty())
-                return {};
-            pid = row.section(QLatin1Char(' '), 0, 0);
-        }
-    }
-    if (pid.isEmpty())
-        return {};
-    QProcess files;
-    files.start(lsof, {QStringLiteral("-p"), pid, QStringLiteral("-Fn")});
-    if (!files.waitForFinished(5000))
-        return {};
-    return session::codex_threads_from_open_files(QString::fromUtf8(files.readAllStandardOutput()));
-}
 // Hooks report a conversation at session start, before anything is saved; a
 // conversation without a transcript cannot be resumed, so it starts fresh.
 // CLIs whose storage is not known here are trusted to resume or say why not.
@@ -2129,39 +2090,6 @@ QString Workspace::agentFolder(const QString& id) const {
     return entry == agents_.cend() ? QString() : entry->launch.directory;
 }
 
-void Workspace::recordConversations() {
-    QStringList endpoints;
-    for (const auto& agent : std::as_const(agents_)) {
-        if (agent.harness == QLatin1String("codex"))
-            endpoints.append(agent.endpoint);
-    }
-    if (endpoints.isEmpty() || probing_->exchange(true))
-        return;
-    // Process listing is slow enough to keep off the GUI thread; the worker
-    // touches only files beside each endpoint.
-    QThreadPool::globalInstance()->start([endpoints, busy = probing_] {
-        const auto done = qScopeGuard([busy] { busy->store(false); });
-        for (const auto& endpoint : endpoints) {
-            const auto open = openCodexThreads(endpoint);
-            if (open.empty())
-                continue;
-            // A saved thread still loaded but no longer written last was left
-            // by /new or /resume. One not loaded may be a thread the service
-            // recorded before Codex wrote its rollout, so it stays.
-            const auto saved = session::read_resume_record(endpoint);
-            if (saved && saved->source == session::ResumeSource::observer &&
-                (saved->session_id == open.front() ||
-                 std::find(open.begin(), open.end(), saved->session_id) == open.end()))
-                continue;
-            try {
-                session::write_resume_record(endpoint, {QStringLiteral("codex"), open.front(),
-                                                        session::ResumeSource::observer});
-            } catch (const std::exception& error) {
-                qWarning().noquote() << "Resume record not saved:" << error.what();
-            }
-        }
-    });
-}
 // Restart an ended or unreachable agent in its card, resuming its conversation.
 bool Workspace::restartAgent(const QString& id) {
     if (!mutableRegistry())
@@ -2903,12 +2831,6 @@ void Workspace::connectRestoredAgents() {
     }
     if (restore_agents_ && !headless_)
         watchNetwork();
-    if (restore_agents_ && !headless_) {
-        conversation_timer_.setInterval(60000);
-        connect(&conversation_timer_, &QTimer::timeout, this, &Workspace::recordConversations);
-        conversation_timer_.start();
-        recordConversations();
-    }
 }
 
 void SessionPreview::setUpdating(const QString& label) {
@@ -3160,10 +3082,12 @@ void Workspace::noteStatus(SessionPreview* item) {
     if ((finished || observed) && item != focusedSession())
         item->setUnseen(true);
 }
+// Claude Code's hooks report its whole turn. Codex's notify program reports
+// only finished turns, so between them its status is estimated from output,
+// as for a terminal agent.
 SessionPreview::StatusSource Workspace::statusSource(const Agent& agent) {
-    return agent.launch.agent == session::AgentMode::terminal
-               ? SessionPreview::StatusSource::output
-               : SessionPreview::StatusSource::observer;
+    return agent.launch.agent == session::AgentMode::claude ? SessionPreview::StatusSource::observer
+                                                            : SessionPreview::StatusSource::output;
 }
 // Command-Shift-T brings it back, resuming its conversation where it can.
 void Workspace::rememberClosed(const Agent& agent, const QString& title) {
