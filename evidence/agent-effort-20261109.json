@@ -3,11 +3,11 @@
   "recorded_at": "2026-11-09T20:39:04Z",
   "agent": "Codex triage parent",
   "base_revision": "5a7649fbeabc47920c501da2a3675789216c33dc",
-  "source_revision": "be20f0cfb9249b684776403888fac0a28c33b0d7",
+  "source_revision": "084d48124f4ac227d99d2ccc1618d2c43db45e88",
   "scope": "Validate PR 187 reasoning-effort launch plumbing and add Codex maximum-effort regression coverage.",
   "changed_source_manifest": {
     "algorithm": "sha256(git diff --binary base..source_revision -- ':(exclude)evidence/*')",
-    "digest": "235b0d758096292dd3ac863072e0a9c1059ed024e3933654d7ae29e5f056ceaa",
+    "digest": "3431b1d9849eddb316df98ab026b833193fb03701ec38e8dfa3c9809b5dc1fe2",
     "changed_paths": 7
   },
   "validation": [
@@ -30,6 +30,10 @@
     {
       "command": "git diff --check && just quality",
       "result": "passed"
+    },
+    {
+      "command": "/opt/homebrew/opt/llvm/bin/clang-tidy -p build/desktop apps/desktop/src/workspace.cpp",
+      "result": "the effort function no longer emits bugprone-easily-swappable-parameters; the file retains five recorded pre-existing cognitive-complexity findings"
     }
   ],
   "non_claims": [
