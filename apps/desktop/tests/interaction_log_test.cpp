@@ -331,7 +331,7 @@ void credential_dialogs_pause_recording() {
 import QtQuick.Controls
 Window {
     width: 400; height: 300
-    Dialog { objectName: "planSignInDialog"; width: 100; height: 100 }
+    Dialog { objectName: "signInDialog"; width: 100; height: 100 }
     Dialog { objectName: "commandsDialog"; width: 100; height: 100
              signal requested(string commandId) }
 })",
@@ -340,7 +340,7 @@ Window {
     require(root != nullptr, component.errorString().toStdString());
     auto* window = qobject_cast<QQuickWindow*>(root.get());
     fixture.recorder->watchWindow(window);
-    auto* sign_in = root->findChild<QObject*>(QStringLiteral("planSignInDialog"));
+    auto* sign_in = root->findChild<QObject*>(QStringLiteral("signInDialog"));
     auto* commands = root->findChild<QObject*>(QStringLiteral("commandsDialog"));
     QMetaObject::invokeMethod(commands, "open");
     QMetaObject::invokeMethod(commands, "requested", Q_ARG(QString, QStringLiteral("newAgent")));
@@ -356,8 +356,7 @@ Window {
             "the palette's command is recorded");
     const auto dialogs = of_kind(lines, QStringLiteral("dialog"));
     require(dialogs.size() == 4 && dialogs[0].value("name") == "commandsDialog" &&
-                dialogs[0].value("open").toBool() &&
-                dialogs[2].value("name") == "planSignInDialog" &&
+                dialogs[0].value("open").toBool() && dialogs[2].value("name") == "signInDialog" &&
                 !dialogs[3].value("open").toBool() && dialogs[3].contains("unrecordedMs"),
             "dialogs open and close; a credential dialog leaves only a gap");
     const auto keys = of_kind(lines, QStringLiteral("key"));
@@ -395,7 +394,7 @@ QQuickItem* find_item(QQuickItem* root, const QString& name) {
 }
 
 // The production window, offscreen: a click on a strip card names the card's
-// agent, and the real sign-in and usage dialogs hold recording.
+// agent, and the real usage dialog holds recording.
 void production_window_is_described() {
     Fixture fixture;
     fixture.recorder->setSettings({.enabled = true});
@@ -422,7 +421,7 @@ void production_window_is_described() {
                         Qt::NoModifier);
     QCoreApplication::sendEvent(window, &release);
     pump(20);
-    for (const auto* name : {"planSignInDialog", "usageDialog"}) {
+    for (const auto* name : {"usageDialog"}) {
         auto* dialog = window->findChild<QObject*>(QLatin1String(name));
         require(dialog != nullptr, std::string("the window has ") + name);
         QMetaObject::invokeMethod(dialog, "open");
@@ -459,7 +458,7 @@ void production_window_is_described() {
     int gaps = 0;
     for (const auto& dialog : of_kind(lines, QStringLiteral("dialog")))
         gaps += dialog.contains("unrecordedMs") ? 1 : 0;
-    require(gaps == 2, "each credential dialog leaves one gap record");
+    require(gaps == 1, "the credential dialog leaves one gap record");
 }
 
 // Microseconds of GUI-thread time per key event, recording against not.

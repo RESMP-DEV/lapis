@@ -252,20 +252,6 @@ class KeyMap final : public QObject {
     [[nodiscard]] const AgentDefaults& agentDefaults() const { return agent_defaults_; }
     // The Claude Code and Codex plans lapis may give sessions ("accounts").
     [[nodiscard]] const AccountsConfig& accounts() const { return accounts_; }
-    // Records that lapis keeps a credential for `email`'s `cli` plan on
-    // `machine` ("" for this Mac): the plan with that email, else a new one
-    // named from it. Returns the plan's name, or empty with `reason`.
-    struct PlanCredential {
-        QString cli;
-        QString email;
-        QString machine;
-        QString expectedName{}; // optional identity pinned before asynchronous delivery
-    };
-    // Called with the freshly allocated name, after config validation and before
-    // publishing machine availability. A failed credential write leaves config intact.
-    using PreparePlan = std::function<bool(const QString& name, QString* reason)>;
-    QString addPlanMachine(const PlanCredential& credential, QString* reason = nullptr,
-                           PreparePlan prepare = {});
     // {"nextPrompt": {...}}: when and how lapis predicts the next prompt.
     [[nodiscard]] const NextPromptSettings& nextPrompt() const { return next_prompt_; }
     // {"interactionLog": {...}}: the local log of input in lapis's windows.
@@ -338,15 +324,6 @@ class KeyMap final : public QObject {
     QStringList usage_machines_;
     AgentDefaults agent_defaults_;
     AccountsConfig accounts_;
-    struct PlanMachine {
-        QString cli;
-        QString name;
-        QString email;
-        QString machine;
-        QString expectedName{};
-    };
-    std::optional<PlanMachine> adding_plan_;
-    PreparePlan prepare_plan_;
     NextPromptSettings next_prompt_;
     InteractionLogSettings interaction_log_;
     TabAwaySettings tab_away_;

@@ -34,7 +34,6 @@ add_library(lapis_desktop_view STATIC
     src/tab_ranker.cpp src/tab_ranker.hpp
     src/agent_state.cpp src/agent_state.hpp src/attention_order.hpp
     src/open_request.cpp src/open_request.hpp
-    src/plan_sign_in.cpp src/plan_sign_in.hpp
     src/harness_models.cpp src/harness_models.hpp
     src/attention_view.cpp
     src/keymap.cpp src/keymap.hpp
@@ -79,10 +78,6 @@ configure_file(src/count_tokens.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/co
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/next_prompt.py)
 file(READ src/next_prompt.py LAPIS_NEXT_PROMPT_SCRIPT)
 configure_file(src/next_prompt_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/next_prompt_script.hpp" @ONLY)
-# The plan sign-in helper, compiled in the same way.
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/plan_sign_in.py)
-file(READ src/plan_sign_in.py LAPIS_PLAN_SIGN_IN_SCRIPT)
-configure_file(src/plan_sign_in_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/plan_sign_in_script.hpp" @ONLY)
 # The hook relay a remote agent's python3 runs, compiled in the same way.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/remote_hook_relay.py)
 file(READ src/remote_hook_relay.py LAPIS_REMOTE_HOOK_RELAY)
@@ -226,10 +221,6 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_agent_state_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME agent-state COMMAND lapis_agent_state_tests)
     set_tests_properties(agent-state PROPERTIES TIMEOUT 30)
-    add_executable(lapis_plan_sign_in_tests tests/plan_sign_in_test.cpp)
-    target_link_libraries(lapis_plan_sign_in_tests PRIVATE lapis_project_options lapis_desktop_view)
-    add_test(NAME plan-sign-in COMMAND lapis_plan_sign_in_tests)
-    set_tests_properties(plan-sign-in PROPERTIES TIMEOUT 60)
     add_executable(lapis_usage_tests tests/usage_test.cpp)
     target_link_libraries(lapis_usage_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME usage COMMAND lapis_usage_tests)

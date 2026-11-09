@@ -193,9 +193,9 @@ PIN or OTP (also one-time and verification codes, any case, as whole words) or
 ends in `secret:`, `token:` or `key:`, typed characters, IME text and pastes are
 recorded as `redacted` with only their class or length; keys such as Return
 and Backspace keep their names. The rule reads the screen, so a prompt that
-mentions a password redacts your typing there too. While the plan sign-in or
-usage (accounts) dialog is open nothing at all is recorded; closing it leaves
-one `dialog` record with the unrecorded milliseconds.
+mentions a password redacts your typing there too. While the usage (accounts)
+dialog is open nothing at all is recorded; closing it leaves one `dialog`
+record with the unrecorded milliseconds.
 
 Each file rotates before it would pass `maxFileMiB` (1 to 1024): the current file
 becomes `interaction.jsonl.1`, older ones move up, and only `maxFiles` files (1
