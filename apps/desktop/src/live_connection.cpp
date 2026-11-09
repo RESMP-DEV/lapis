@@ -1,5 +1,6 @@
 #include "live_connection.hpp"
 #include "app_paths.hpp"
+#include "launch_spec.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "session_descriptor.hpp"
 #include "workspace.hpp"
@@ -43,7 +44,10 @@ bool start_service_detached(const ServiceLaunchRequest& launch) {
             environment.insert(it.key(), it.value());
         service.setProcessEnvironment(environment);
     }
-    return service.startDetached();
+    if (service.startDetached())
+        return true;
+    qWarning().noquote() << "Session service launch failed:" << service.errorString();
+    return false;
 }
 } // namespace
 SessionPreview::~SessionPreview() { live_.reset(); }
