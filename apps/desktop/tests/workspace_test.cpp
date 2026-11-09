@@ -2570,8 +2570,42 @@ for n, line in enumerate(sys.stdin, 1):
     WorkspaceOptions options;
     options.storagePath = root.filePath(QStringLiteral("workspace.json"));
     options.restoreAgents = true;
+    // Session services outlive the window by design, so the test ends each one
+    // it started and waits for it to exit, on a failed requirement too.
+    const auto servicesListening = [&root] {
+        for (const auto& name : root.entryList({QStringLiteral("*.sock")}, QDir::System)) {
+            QLocalSocket probe;
+            probe.connectToServer(root.filePath(name));
+            if (probe.waitForConnected(250))
+                return true;
+        }
+        return false;
+    };
+    const auto stop_services = qScopeGuard([&] {
+        if (!servicesListening())
+            return;
+        // Only this fixture's directory names these processes.
+        qWarning() << "local-codex: stopping session services left in" << root.path();
+        QProcess::execute(QStringLiteral("/usr/bin/pkill"),
+                          {QStringLiteral("-f"), root.path() + QLatin1Char('/')});
+        static_cast<void>(waitFor([&] { return !servicesListening(); }, 5000));
+    });
     {
         Workspace workspace(WorkspaceMode::live, options);
+        const auto close_owned = qScopeGuard([&] {
+            for (const auto& value : workspace.sessions())
+                if (auto* item = value.value<SessionPreview*>()) {
+                    static_cast<void>(waitFor(
+                        [item] {
+                            return item->reachable() ||
+                                   item->connectionState() == QStringLiteral("ended");
+                        },
+                        10000));
+                    static_cast<void>(workspace.closeSession(item->sessionId()));
+                }
+            static_cast<void>(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000));
+            static_cast<void>(waitFor([&] { return !servicesListening(); }, 10000));
+        });
         QHash<QString, int> pings;
         QObject::connect(&workspace, &Workspace::turnFinished,
                          [&pings](SessionPreview* item) { ++pings[item->sessionId()]; });
@@ -2636,9 +2670,12 @@ for n, line in enumerate(sys.stdin, 1):
                                         },
                                         15000),
                 "the resumed stand-in starts");
-        require(workspace.closeSession(id, true), "close the stand-in agent");
+        require(waitFor([&] { return again->reachable(); }, 15000),
+                "the resumed agent's service is reachable");
+        require(workspace.closeSession(id), "close the stand-in agent");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "the stand-in agent closes");
+        require(waitFor([&] { return !servicesListening(); }, 10000), "its session service exits");
     }
 }
 
