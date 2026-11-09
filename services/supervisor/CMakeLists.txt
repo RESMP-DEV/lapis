@@ -1,16 +1,7 @@
 find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Core Network)
 
-# The focused state-only build reuses the session platform RAII source without
-# configuring Ghostty or the whole session service. A normal session build
-# supplies the same target above this component.
-if(NOT TARGET lapis_session_platform)
-    add_library(lapis_session_platform STATIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/../session/src/platform/posix/unique_fd.cpp")
-    target_include_directories(lapis_session_platform
-        PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../session/src")
-    target_link_libraries(lapis_session_platform PRIVATE lapis_project_options)
-endif()
-
+# lapis_session_platform, lapis_session_launch and lapis_local_protocol come
+# from services/session, which the root project always configures first.
 add_library(lapis_supervisor_state STATIC
     src/state.cpp src/json_state_codec.cpp src/posix_state_storage.cpp)
 target_include_directories(lapis_supervisor_state
@@ -35,14 +26,9 @@ if(LAPIS_BUILD_SUPERVISOR_RUNTIME)
     target_link_libraries(lapis_supervisor_runtime
         PRIVATE lapis_project_options lapis_session_platform lapis_session_launch
         PUBLIC lapis_supervisor_state Qt6::Core Qt6::Network)
-    if(TARGET lapis_local_protocol)
-        target_sources(lapis_supervisor_runtime PRIVATE src/session_service_launcher.cpp)
-        target_link_libraries(lapis_supervisor_runtime PRIVATE
-            lapis_local_protocol lapis_session_launch Qt6::Network)
-    else()
-        message(FATAL_ERROR
-            "LAPIS_BUILD_SUPERVISOR_RUNTIME requires LAPIS_BUILD_SESSION")
-    endif()
+    target_sources(lapis_supervisor_runtime PRIVATE src/session_service_launcher.cpp)
+    target_link_libraries(lapis_supervisor_runtime PRIVATE
+        lapis_local_protocol lapis_session_launch Qt6::Network)
     add_executable(lapis_supervisor_child_fixture tests/supervisor_child_fixture.cpp)
     target_link_libraries(lapis_supervisor_child_fixture PRIVATE lapis_project_options)
     add_executable(lapis_supervisor_daemon src/daemon.cpp)

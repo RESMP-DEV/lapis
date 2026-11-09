@@ -35,7 +35,6 @@
       "name": "supervisor",
       "inherits": "dev",
       "cacheVariables": {
-        "LAPIS_BUILD_SESSION": "ON",
         "LAPIS_BUILD_DESKTOP": "OFF",
         "LAPIS_BUILD_SUPERVISOR_RUNTIME": "ON"
       }

@@ -13,23 +13,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(cmake/ProjectOptions.cmake)
 
 option(LAPIS_BUILD_DESKTOP "Build the live desktop preview and local session service" OFF)
-option(LAPIS_BUILD_SESSION "Build the existing session service and its terminal dependency" ON)
 option(LAPIS_PACKAGE "Build the desktop as the downloadable app (see scripts/package_macos.py)" OFF)
 option(LAPIS_BUILD_SUPERVISOR_STATE "Build the focused supervisor state-core test target" OFF)
 option(LAPIS_BUILD_SUPERVISOR_RUNTIME "Build the experimental one-session supervisor runtime" OFF)
 
-if(LAPIS_BUILD_DESKTOP AND NOT LAPIS_BUILD_SESSION)
-    message(FATAL_ERROR "LAPIS_BUILD_DESKTOP requires LAPIS_BUILD_SESSION")
-endif()
-
 include(CTest)
 
-if(LAPIS_BUILD_SESSION)
-    add_subdirectory(adapters/codex)
-    add_subdirectory(adapters/claude)
-    add_subdirectory(services/session)
-    target_link_libraries(lapis_session_service PRIVATE lapis_codex_adapter lapis_claude_adapter)
-endif()
+add_subdirectory(adapters/codex)
+add_subdirectory(adapters/claude)
+add_subdirectory(services/session)
+target_link_libraries(lapis_session_service PRIVATE lapis_codex_adapter lapis_claude_adapter)
 
 if(LAPIS_BUILD_SUPERVISOR_RUNTIME AND NOT LAPIS_BUILD_SUPERVISOR_STATE)
     set(LAPIS_BUILD_SUPERVISOR_STATE ON)
