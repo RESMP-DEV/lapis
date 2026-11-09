@@ -1108,6 +1108,26 @@ void added_plans_preserve_account_identity() {
             "malformed account collection is preserved");
 }
 
+// Settings of retired features load without a diagnostic, and saving another
+// setting leaves them exactly as written.
+void retired_plan_settings_survive() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    const QString path =
+        write_config(QDir(directory.path()),
+                     R"({"version": 1, "limitResets": {"auto": true, "minBlockedMinutes": 30}})");
+    const auto before = read_config(path);
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load() && keymap.diagnostic().isEmpty(),
+            "retired settings load without a diagnostic");
+    require(keymap.setFinishSound(false), "another setting saves");
+    const auto after = read_config(path);
+    for (const auto* key : {"limitResets"})
+        require(after.value(QLatin1String(key)) == before.value(QLatin1String(key)),
+                "saving leaves a retired setting as written");
+}
+
 int main(int argc, char** argv) {
     QCoreApplication application(argc, argv);
     try {
@@ -1136,6 +1156,7 @@ int main(int argc, char** argv) {
         remote_settings_are_transactional();
         config_reloads_when_edited_elsewhere();
         added_plans_preserve_account_identity();
+        retired_plan_settings_survive();
     } catch (const std::exception& error) {
         std::cerr << "keymap_test: " << error.what() << '\n';
         return 1;

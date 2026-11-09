@@ -1,6 +1,5 @@
 #ifndef LAPIS_DESKTOP_PLATFORM_DESKTOP_HPP
 #define LAPIS_DESKTOP_PLATFORM_DESKTOP_HPP
-#include <QByteArray>
 #include <QString>
 #include <QtGlobal>
 #include <functional>
@@ -30,10 +29,6 @@ bool on_latest_attention_key(const std::function<void()>& handler);
 // (Ultra Tab's Command-L) reaches the front window rather than an inactive
 // application whose window AppKit cannot make key.
 void activate_application();
-// Claude Code's stored sign-in (its keychain item's JSON), empty when absent or
-// refused. The first read asks the person's permission, so call it off the main
-// thread.
-[[nodiscard]] QByteArray claude_code_credentials();
 // Secure event input is on: some field (in any app) is taking a password.
 [[nodiscard]] bool secure_input_enabled();
 // Seconds since the last keyboard, mouse or trackpad input anywhere on this
@@ -50,7 +45,6 @@ inline bool updater_available() { return false; }
 inline void on_terminal_keys(const std::function<bool(bool)>&) {}
 inline bool on_latest_attention_key(const std::function<void()>&) { return false; }
 inline void activate_application() {}
-inline QByteArray claude_code_credentials() { return {}; }
 inline bool secure_input_enabled() { return false; }
 inline double seconds_since_input() { return -1; }
 #endif

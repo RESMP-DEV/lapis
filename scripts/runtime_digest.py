@@ -2,7 +2,7 @@
 
 A short, read-only digest of use rather than of code: whether guesses worked
 and were taken (by arm, and held out), Ultra Tab answers against what composing
-cost, how Tab moved, ping decisions, limit-reset outcomes and log warnings. It
+cost, how Tab moved, ping decisions and log warnings. It
 reads ~/.lapis/runtime only and prints counts, never prompt or transcript text.
 
     python3 scripts/runtime_digest.py            # the last 24 hours
@@ -157,8 +157,8 @@ def pings(runtime, since):
 
 
 def window_log(runtime, since):
-    """Limit-reset outcomes and the most frequent warnings in lapis.log."""
-    resets, warnings = Counter(), Counter()
+    """The most frequent warnings in lapis.log."""
+    warnings = Counter()
     path = os.path.join(runtime, "lapis.log")
     if not os.path.isfile(path):
         return {}
@@ -168,17 +168,10 @@ def window_log(runtime, since):
             found = LOG_TIME.match(line)
             if not found or found.group(1) < stamp:
                 continue
-            if "Limit reset" in line:
-                reason = re.search(
-                    r"plan identity could not be verified|reset helper failed|"
-                    r"no eligible reset|skipping automatic reset|spent|restored",
-                    line,
-                )
-                resets[reason.group(0) if reason else "other"] += 1
-            elif " warning: " in line:
+            if " warning: " in line:
                 text = line.split(" warning: ", 1)[1]
                 warnings[re.sub(r"\d+", "N", text)[:70].strip()] += 1
-    return {"limit_resets": dict(resets), "warnings": dict(warnings.most_common(3))}
+    return {"warnings": dict(warnings.most_common(3))}
 
 
 def digest(runtime, hours):
@@ -229,11 +222,6 @@ def lines(report):
     if report["pings"]:
         out.append(
             "pings: " + ", ".join(f"{k} {v}" for k, v in report["pings"].items())
-        )
-    if w.get("limit_resets"):
-        out.append(
-            "limit resets: "
-            + ", ".join(f"{k} {v}" for k, v in w["limit_resets"].items())
         )
     for text, count in w.get("warnings", {}).items():
         out.append(f"warning x{count}: {text}")

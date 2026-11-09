@@ -3,7 +3,6 @@
 
 #include "accounts.hpp"
 #include "interaction_log.hpp"
-#include "limit_resets.hpp"
 #include "next_prompt.hpp"
 #include "tab_ranker.hpp"
 #include <QFileSystemWatcher>
@@ -267,7 +266,6 @@ class KeyMap final : public QObject {
     using PreparePlan = std::function<bool(const QString& name, QString* reason)>;
     QString addPlanMachine(const PlanCredential& credential, QString* reason = nullptr,
                            PreparePlan prepare = {});
-    [[nodiscard]] const LimitResetSettings& limitResets() const { return limit_resets_; }
     // {"nextPrompt": {...}}: when and how lapis predicts the next prompt.
     [[nodiscard]] const NextPromptSettings& nextPrompt() const { return next_prompt_; }
     // {"interactionLog": {...}}: the local log of input in lapis's windows.
@@ -349,7 +347,6 @@ class KeyMap final : public QObject {
     };
     std::optional<PlanMachine> adding_plan_;
     PreparePlan prepare_plan_;
-    LimitResetSettings limit_resets_;
     NextPromptSettings next_prompt_;
     InteractionLogSettings interaction_log_;
     TabAwaySettings tab_away_;

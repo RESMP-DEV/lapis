@@ -64,45 +64,6 @@ still added with the script below.
 Credentials never appear on a command line: a remote session reads its plan's
 credential on its own machine.
 
-## Saved limit resets
-
-lapis can spend saved Claude Code and Codex resets for the plan selected by an
-agent. **Use a saved limit reset for this agent's plan** in
-Commands asks for one immediately, only for that CLI and plan. Claude Code on a
-Mac keeps its own sign-in in the keychain, where each read can ask for your
-login password, so the five-minute checks skip this Mac's own Claude Code
-account; only asking for its reset reads the keychain.
-
-Automatic spending is off by default (`{"limitResets": {"auto": true}}` turns
-it on; checks then start after one minute and repeat every five minutes). From
-October 5 to 11 the automatic checks logged 2,911 lines and none spent a reset:
-2,547 stopped at "selected plan identity could not be verified", the rest found
-no eligible reset or the helper failed.
-
-`limitResets` configures `auto` (false), `minBlockedMinutes` (60), `keepCredits`
-(0) and `salvageHours` (12). An automatic restore requires a window to be at
-least 99.9% used, a block that would last `minBlockedMinutes`, a credit that
-covers every exhausted window while retaining `keepCredits`, and a plausible
-reset time. Expiring credits can be salvaged when a covered weekly window is at
-least one-quarter used. That automatic policy still excludes this Mac's own
-Claude Code keychain sign-in; only the saved-reset action above reads it. A
-weekly Claude session reset clears only the five-hour window; it cannot clear an
-Opus/Sonnet weekly cap, and its credit identity is tied to that weekly reset
-boundary.
-
-Missing plan credentials or provider IDs, or an account mismatch, stop the
-operation; email alone is not an account identity. A definite provider refusal
-is reported with a bounded reason. If its reply
-is lost, lapis reports an unknown outcome and checks the recorded credit without
-spending again, even from another machine or plan alias for that account. An expired or absent credit can settle that uncertainty; this is
-not reported as a newly spent reset. Expired, settled journals are reclaimed under capacity pressure; pending or
-unrecognized records are never evicted. Corrupt, full or unwritable journals
-refuse new operations. Keep the private runtime `limit-resets/` records when recovering
-or reinstalling; deleting a pending record discards the protection against replay.
-The private journal set admits at most 256 target files. Each journal is at most
-64 KiB and retains at most 128 recent settled or refused attempt keys. Helpers
-have a three-minute deadline, a 1 MiB stdout bound, a 64 KiB stderr bound, and
-at most eight targets run concurrently.
 [Architecture](architecture.md#storage-credentials-and-diagnostics)
 owns the general storage and credential contract; [status](status.md#components)
 records the remaining live qualification.

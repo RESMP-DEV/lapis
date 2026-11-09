@@ -44,9 +44,7 @@ updates. See
 - **Plan usage** for every CLI you are signed in to, on this Mac and your other
   machines, with several plans shared across sessions. Local usage is part of the
   early-access workspace; shared plans and other-machine queries remain outside
-  its support slice. Saved-limit resets are implemented with helper and provider
-  stand-ins, but real provider spending is not qualified; automatic spending is
-  off by default and can be enabled with `{"limitResets": {"auto": true}}`.
+  its support slice.
   [Usage](docs/usage.md)
 - **Your phone** can show and drive the same agents as a separately installed
   prototype over its gateway. It is outside the early-access support slice.

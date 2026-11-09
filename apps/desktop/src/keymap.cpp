@@ -708,7 +708,8 @@ bool KeyMap::load() {
     load_visual(root);
     load_agent_defaults(root.value(QStringLiteral("newAgent")));
     accounts_ = parse_accounts(root.value(QStringLiteral("accounts")));
-    limit_resets_ = parse_limit_resets(root.value(QStringLiteral("limitResets")));
+    // "limitResets" configured the retired automatic limit resets; a file that
+    // still has it loads, and saving leaves it as written.
     next_prompt_ = parse_next_prompt(root.value(QStringLiteral("nextPrompt")));
     interaction_log_ = parse_interaction_log(root.value(QStringLiteral("interactionLog")));
     tab_away_ = parse_tab_away(root.value(QStringLiteral("tabAway")));

@@ -181,7 +181,7 @@ not replace native macOS presentation.
 
 **R3, account identity.** A missing, unreadable, or malformed selected
 credential must refuse before changing a healthy session or acting as another
-account. Uncertain reset and approval operations never replay automatically.
+account. Uncertain approval operations never replay automatically.
 Real provider/account qualification is separate from fixture refusal tests.
 
 **R4, package and update provenance.** The manifest binds source, version,
@@ -218,7 +218,7 @@ fill or Touch ID, Linux UI, and broader OS/CLI support claims. Existing
 prototype code and receipts remain valid dated observations, but no prototype
 becomes an advertised capability through this plan.
 
-Optional prediction and saved-reset features remain off the critical path.
+Optional prediction features remain off the critical path.
 Their provider calls, account identity, logs, and input behavior need separate
 reviewed contracts before they are enabled by default.
 

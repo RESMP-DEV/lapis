@@ -239,7 +239,7 @@ both owner-only.
   Code, Zed, Windsurf and Sublime Text installed).
 - `keepAwake` keeps the Mac from sleeping while it is plugged in, so the phone
   can reach it.
-- `usage`, `accounts` and `limitResets` are described in [usage](usage.md).
+- `usage` and `accounts` are described in [usage](usage.md).
 - `nextPrompt` turns on guessed next prompts; see [suggestions](suggestions.md).
 - Key bindings are listed in [keys](keys.md); Appearance shows and edits them.
 

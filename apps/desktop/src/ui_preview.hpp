@@ -36,7 +36,6 @@ struct UiPreviewOptions {
     QObject* desktop{};       // exposed to QML as `desktop`
     QObject* conversations{}; // exposed to QML as `conversations`
     QObject* terminals{};     // exposed to QML as `terminals`
-    QObject* limitResets{};   // exposed to QML as `limitResets`
     QObject* nextPrompt{};    // exposed to QML as `nextPrompt`
     QObject* planSignIn{};    // exposed to QML as `planSignIn`
     QObject* guiState{};      // exposed to QML as `guiState` (a restart keeps it)
