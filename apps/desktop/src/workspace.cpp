@@ -270,6 +270,7 @@ QStringList modeArguments(const QString& harness, const QString& mode) {
     return {};
 }
 // A reasoning effort as the CLI takes it; empty for one it cannot take.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QStringList effortArguments(const QString& harness, const QString& effort) {
     static const QStringList levels{QStringLiteral("low"), QStringLiteral("medium"),
                                     QStringLiteral("high"), QStringLiteral("xhigh"),
