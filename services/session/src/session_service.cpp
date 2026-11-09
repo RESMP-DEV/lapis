@@ -337,8 +337,7 @@ class SessionService final : public QObject {
                    const LaunchSpec& launch, const QByteArray& requested_session_epoch = {})
         : lock_(endpoint + QStringLiteral(".lock")), terminal_(launch.size, limits()),
           fingerprint_(launch_fingerprint(launch)),
-          identity_{requested_session_id,
-                    requested_session_epoch.isEmpty() ? wire::new_id() : requested_session_epoch},
+          identity_{requested_session_id, resolve_session_epoch(requested_session_epoch)},
           history_(history_root(endpoint), QString::fromLatin1(requested_session_id.toHex()),
                    history_limits()) {
         configure_history();
@@ -354,30 +353,79 @@ class SessionService final : public QObject {
         // Only the endpoint owner may trim its append log; racing GUI launches
         // must not truncate the log of an already-running service.
         QFile log(endpoint + QStringLiteral(".log"));
-        if (log.size() > qint64{1024} * 1024 && log.open(QIODevice::ReadWrite))
-            static_cast<void>(log.resize(0));
+        trim_endpoint_log(log);
         if (launch.agent != AgentMode::terminal)
             open_attention_journal(endpoint);
         claude_ = launch.agent == AgentMode::claude;
-        if (QFileInfo::exists(endpoint)) {
-            QLocalSocket existing;
-            existing.connectToServer(endpoint);
-            if (existing.waitForConnected(100) ||
-                (existing.error() != QLocalSocket::ConnectionRefusedError &&
-                 existing.error() != QLocalSocket::ServerNotFoundError))
-                throw std::runtime_error("Socket endpoint is already in use or inaccessible");
-        }
-        QLocalServer::removeServer(endpoint);
-        server_.setSocketOptions(QLocalServer::UserAccessOption);
-        if (!server_.listen(endpoint))
-            throw std::runtime_error(server_.errorString().toStdString());
+        bind_endpoint(endpoint);
+        snapshot_clock_.start();
+        attention_clock_.start();
+        configure_timers(launch);
+        connect_session_signals();
+        start_agent(endpoint, launch);
+    }
+
+    ~SessionService() override {
+        stopping_ = true;
+        stop_codex();
+        if (claude_observer_)
+            claude_observer_->stop();
+        disconnect(&pty_, nullptr, this, nullptr);
+        disconnect(&server_, nullptr, this, nullptr);
+        disconnect(&timer_, nullptr, this, nullptr);
+        if (client_)
+            disconnect(client_, nullptr, this, nullptr);
+        for (const auto& view : views_)
+            if (view->socket)
+                disconnect(view->socket, nullptr, this, nullptr);
+        for (auto* retired : retired_)
+            disconnect(retired, nullptr, this, nullptr);
+        for (auto* pending : pending_)
+            disconnect(pending, nullptr, this, nullptr);
+    }
+
+    friend class ::lapis::session::AttentionServiceTestAccess;
+
+  private:
+    // A service without a requested epoch starts a new identity.
+    static QByteArray resolve_session_epoch(const QByteArray& requested_session_epoch) {
+        return requested_session_epoch.isEmpty() ? wire::new_id() : requested_session_epoch;
+    }
+    static void trim_endpoint_log(QFile& log) {
+        if (log.size() > qint64{1024} * 1024 && log.open(QIODevice::ReadWrite))
+            static_cast<void>(log.resize(0));
+    }
+    // Refuse to start while another service still owns the endpoint socket.
+    static void reject_existing_endpoint(const QString& endpoint) {
+        if (!QFileInfo::exists(endpoint))
+            return;
+        QLocalSocket existing;
+        existing.connectToServer(endpoint);
+        if (existing.waitForConnected(100) ||
+            (existing.error() != QLocalSocket::ConnectionRefusedError &&
+             existing.error() != QLocalSocket::ServerNotFoundError))
+            throw std::runtime_error("Socket endpoint is already in use or inaccessible");
+    }
+    // The bound socket must be a Unix socket owned by this user and must not
+    // be reachable by anyone else.
+    static void require_private_bound_socket(const QString& endpoint) {
         struct stat bound_socket{};
         if (::lstat(QFile::encodeName(endpoint).constData(), &bound_socket) != 0 ||
             !S_ISSOCK(bound_socket.st_mode) || bound_socket.st_uid != ::getuid() ||
             (static_cast<unsigned int>(bound_socket.st_mode) & 0077U) != 0U)
             throw std::runtime_error("Bound socket is not private to the current user");
-        snapshot_clock_.start();
-        attention_clock_.start();
+    }
+    // Claims the endpoint socket for this service.
+    void bind_endpoint(const QString& endpoint) {
+        reject_existing_endpoint(endpoint);
+        QLocalServer::removeServer(endpoint);
+        server_.setSocketOptions(QLocalServer::UserAccessOption);
+        if (!server_.listen(endpoint))
+            throw std::runtime_error(server_.errorString().toStdString());
+        require_private_bound_socket(endpoint);
+    }
+    // Arms the service's periodic clocks.
+    void configure_timers(const LaunchSpec& launch) {
         timer_.setSingleShot(true);
         connect(&timer_, &QTimer::timeout, this, [this] { publish_paced_output(); });
         settle_timer_.setSingleShot(true);
@@ -390,6 +438,9 @@ class SessionService final : public QObject {
         connect(&attention_timer_, &QTimer::timeout, this, [this] { publish_attention(); });
         rollout_timer_.setInterval(5000);
         connect(&rollout_timer_, &QTimer::timeout, this, [this] { probe_rollout(); });
+    }
+    // Wires the service's timers, socket and PTY to their handlers.
+    void connect_session_signals() {
         connect(&ack_timer_, &QTimer::timeout, this, [this] {
             if (client_ && !ready_) {
                 send_status(client_, wire::StatusCode::rejected,
@@ -420,6 +471,9 @@ class SessionService final : public QObject {
                     else
                         finish_session(QStringLiteral("Process exited (%1)").arg(code), code);
                 });
+    }
+    // Starts the agent this service supervises.
+    void start_agent(const QString& endpoint, const LaunchSpec& launch) {
         if (remote_transport(launch) || omp_launch(launch))
             terminal_hooks_.emplace();
         if (launch.agent == AgentMode::codex)
@@ -429,29 +483,6 @@ class SessionService final : public QObject {
         else
             pty_.start(launch);
     }
-
-    ~SessionService() override {
-        stopping_ = true;
-        stop_codex();
-        if (claude_observer_)
-            claude_observer_->stop();
-        disconnect(&pty_, nullptr, this, nullptr);
-        disconnect(&server_, nullptr, this, nullptr);
-        disconnect(&timer_, nullptr, this, nullptr);
-        if (client_)
-            disconnect(client_, nullptr, this, nullptr);
-        for (const auto& view : views_)
-            if (view->socket)
-                disconnect(view->socket, nullptr, this, nullptr);
-        for (auto* retired : retired_)
-            disconnect(retired, nullptr, this, nullptr);
-        for (auto* pending : pending_)
-            disconnect(pending, nullptr, this, nullptr);
-    }
-
-    friend class ::lapis::session::AttentionServiceTestAccess;
-
-  private:
     // An agent on another machine reports its hooks through this terminal;
     // see terminal_hooks.hpp.
     static bool remote_transport(const LaunchSpec& launch) {
@@ -1141,13 +1172,7 @@ class SessionService final : public QObject {
         processing_output_ = true;
         const bool admission_deadline = output_admission_expired_;
         output_admission_expired_ = false;
-        if (output_pressure_ && !admission_deadline &&
-            pending_output_.size() < output_admission_limit) {
-            // Sustained pressure waits for its real admission boundary, but the
-            // timer remains the bound if the producer quiets below it.
-            if (!output_admission_timer_.isActive())
-                output_admission_timer_.start(static_cast<int>(frame_ms));
-            schedule_output_admission();
+        if (defer_output_for_admission(admission_deadline)) {
             processing_output_ = false;
             return;
         }
@@ -1157,66 +1182,99 @@ class SessionService final : public QObject {
                 processing_output_ = false;
                 return;
             }
-            if (pending_resize_ && !rewidth_) {
-                const auto size = *pending_resize_;
-                pending_resize_.reset();
-                apply_resize(size);
-            }
-            int budget = 16;
-            bool parser_waiting = false;
-            while (!pending_output_.isEmpty() && budget-- > 0) {
-                if (!archive_history(false)) {
-                    output_waiting_ = true;
-                    break;
-                }
-                const auto chunk = static_cast<qsizetype>(std::max(
-                    std::size_t{1},
-                    std::min(std::size_t{256},
-                             std::size_t{32768} / (std::size_t{4} * current_size_.columns))));
-                const auto sync_limit = synchronized_output_limit(pending_output_);
-                if (sync_limit < 0) {
-                    const auto safe =
-                        std::min(chunk, pending_output_.size() -
-                                            synchronized_output_holdback(pending_output_));
-                    if (safe > 0) {
-                        terminal_.feed(std::string_view(pending_output_.constData(),
-                                                        static_cast<std::size_t>(safe)));
-                        pending_output_.remove(0, safe);
-                        if (rewidth_)
-                            rewidth_->saw_output = true;
-                        mark_dirty();
-                        timing_.parse_end_ns = monotonic_ns();
-                        continue;
-                    }
-                    parser_waiting = true;
-                    break;
-                }
-                // `sync_limit` ends at a complete DEC 2026 marker. Feeding only
-                // `chunk` bytes could split that marker and lose both edges.
-                const auto size = sync_limit < pending_output_.size()
-                                      ? sync_limit
-                                      : std::min(pending_output_.size(), chunk);
-                terminal_.feed(
-                    std::string_view(pending_output_.constData(), static_cast<std::size_t>(size)));
-                pending_output_.remove(0, size);
-                if (rewidth_)
-                    rewidth_->saw_output = true;
-                mark_dirty();
-                timing_.parse_end_ns = monotonic_ns();
-                if (follow_synchronized_update())
-                    break; // a whole frame is on screen: show it before the next one starts
-            }
-            const auto replies = terminal_.take_replies();
-            if (!replies.empty() && pty_.processId() != 0 &&
-                !pty_.writeBytes(
-                    QByteArray(replies.data(), static_cast<qsizetype>(replies.size()))))
-                throw std::runtime_error("PTY reply queue overflow");
+            apply_pending_resize();
+            const bool parser_waiting = feed_pending_output();
+            flush_terminal_replies();
             schedule();
             resume_output(parser_waiting);
         } catch (const std::exception& error) {
             stop(QString::fromUtf8(error.what()));
         }
         processing_output_ = false;
+    }
+    // Sustained pressure waits for its real admission boundary, but the
+    // timer remains the bound if the producer quiets below it.
+    bool defer_output_for_admission(bool admission_deadline) {
+        if (!output_pressure_ || admission_deadline ||
+            pending_output_.size() >= output_admission_limit)
+            return false;
+        if (!output_admission_timer_.isActive())
+            output_admission_timer_.start(static_cast<int>(frame_ms));
+        schedule_output_admission();
+        return true;
+    }
+    // A pending resize waits until the rewidth settles before it is applied.
+    void apply_pending_resize() {
+        if (!pending_resize_ || rewidth_)
+            return;
+        const auto size = *pending_resize_;
+        pending_resize_.reset();
+        apply_resize(size);
+    }
+    // Bounds one parser feed so a large backlog cannot monopolize a frame.
+    qsizetype output_chunk_size() const {
+        return static_cast<qsizetype>(
+            std::max(std::size_t{1},
+                     std::min(std::size_t{256},
+                              std::size_t{32768} / (std::size_t{4} * current_size_.columns))));
+    }
+    // Feeds bytes into the terminal parser and records the parse boundary.
+    void feed_output_bytes(qsizetype size) {
+        terminal_.feed(
+            std::string_view(pending_output_.constData(), static_cast<std::size_t>(size)));
+        pending_output_.remove(0, size);
+        if (rewidth_)
+            rewidth_->saw_output = true;
+        mark_dirty();
+        timing_.parse_end_ns = monotonic_ns();
+    }
+    // Feeds the bytes that precede an incomplete synchronized marker.
+    // Returns false when the marker cannot be fed safely yet.
+    bool feed_synchronized_holdback(qsizetype chunk) {
+        const auto safe =
+            std::min(chunk, pending_output_.size() - synchronized_output_holdback(pending_output_));
+        if (safe <= 0)
+            return false;
+        feed_output_bytes(safe);
+        return true;
+    }
+    // Feeds pending PTY output into the terminal parser under a bounded
+    // budget. Returns true when the parser waits for the rest of a
+    // synchronized marker.
+    bool feed_pending_output() {
+        int budget = 16;
+        bool parser_waiting = false;
+        while (!pending_output_.isEmpty() && budget-- > 0) {
+            if (!archive_history(false)) {
+                output_waiting_ = true;
+                break;
+            }
+            const auto chunk = output_chunk_size();
+            const auto sync_limit = synchronized_output_limit(pending_output_);
+            if (sync_limit < 0) {
+                if (feed_synchronized_holdback(chunk))
+                    continue;
+                parser_waiting = true;
+                break;
+            }
+            // `sync_limit` ends at a complete DEC 2026 marker. Feeding only
+            // `chunk` bytes could split that marker and lose both edges.
+            const auto size = sync_limit < pending_output_.size()
+                                  ? sync_limit
+                                  : std::min(pending_output_.size(), chunk);
+            feed_output_bytes(size);
+            if (follow_synchronized_update())
+                break; // a whole frame is on screen: show it before the next one starts
+        }
+        return parser_waiting;
+    }
+    // Writes the terminal's queued replies back to the PTY.
+    void flush_terminal_replies() {
+        const auto replies = terminal_.take_replies();
+        if (replies.empty() || pty_.processId() == 0)
+            return;
+        if (!pty_.writeBytes(QByteArray(replies.data(), static_cast<qsizetype>(replies.size()))))
+            throw std::runtime_error("PTY reply queue overflow");
     }
     void resume_output(bool parser_waiting) {
         if (parser_waiting) {

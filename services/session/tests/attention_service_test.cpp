@@ -153,6 +153,8 @@ class AttentionServiceTestAccess final {
         service.process_output();
     }
 
+    static void process_output(SessionService& service) { service.process_output(); }
+
     [[nodiscard]] static bool in_sync(const SessionService& service) { return service.in_sync_; }
 
     [[nodiscard]] static qint64 settle_wait(SessionService& service) {
@@ -481,10 +483,13 @@ void startup_settling_does_not_block_the_parser() {
     Access::publish_paced_output(service);
     require(Access::settle_timer_active(service));
     require(!Access::publish_timer_active(service));
-    QElapsedTimer drain;
-    drain.start();
-    while (!Access::pending_output(service).isEmpty() && drain.elapsed() < 140)
-        QCoreApplication::processEvents(QEventLoop::AllEvents | QEventLoop::WaitForMoreEvents, 5);
+    // Drive the parser directly in bounded passes. The settle timer cannot
+    // fire during a synchronous call, so sanitizer scheduling cannot turn this
+    // into a race between parser progress and the settle cap.
+    for (int pass = 0; !Access::pending_output(service).isEmpty(); ++pass) {
+        require(pass < 64);
+        Access::process_output(service);
+    }
     require(Access::pending_output(service).isEmpty());
     require(Access::settle_timer_active(service));
 }
