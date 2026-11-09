@@ -100,10 +100,11 @@ class SessionPreview final : public QObject {
     [[nodiscard]] const QHash<QString, QString>& serviceEnvironment() const {
         return service_environment_;
     }
-    // When its screen last changed, in milliseconds since the epoch; 0 never.
+    // Attach again to its service, taking it from another view (Reconnect
+    // agent in Commands); discoverSession adopts a matching running one, for
+    // the side terminal's recovery.
     Q_INVOKABLE void reconnect();
-    Q_INVOKABLE void discoverSession();
-    Q_INVOKABLE void startNewSession();
+    void discoverSession();
     // A screen back or forward through kept history.
     Q_INVOKABLE void olderHistory();
     Q_INVOKABLE void newerHistory();

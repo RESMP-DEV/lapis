@@ -457,9 +457,9 @@ ApplicationWindow {
         add("older", qsTr("Browse older history"), "", hasAgent && agent.live && agent.connectionState === "ready" && !agent.historyRequestPending, qsTr("Connect the agent and wait for pending history"), () => agent.olderHistory())
         add("newer", qsTr("Browse newer history"), "", hasAgent && agent.historyActive && !agent.historyRequestPending, qsTr("Open archived history first"), () => agent.newerHistory())
         add("live", qsTr("Return to live output"), "", hasAgent && agent.historyActive, qsTr("Already showing live output"), () => agent.returnToLive())
+        // Takes the agent back from another view, such as the phone holding a
+        // session that cannot be joined; nothing else reclaims a replaced view.
         add("reconnect", qsTr("Reconnect agent"), "", window.recoveryAvailable(), qsTr("The selected agent is already connected or opening"), () => agent.reconnect())
-        add("discover", qsTr("Discover existing agent session"), "", window.recoveryAvailable(), qsTr("Available for a disconnected agent"), () => agent.discoverSession())
-        add("restart", qsTr("Start replacement agent session"), "", window.recoveryAvailable(), qsTr("Available for a disconnected agent"), () => agent.startNewSession())
         add("appearance", qsTr("Appearance"), "openSettings", true, "", () => window.openSettingsDialog())
         add("reloadConfig", qsTr("Reload configuration"), "reloadConfig", typeof keymap !== "undefined" && keymap !== null, qsTr("No configuration in this fixture"), () => keymap.reload())
         const mac = Qt.platform.os === "osx"
@@ -2578,30 +2578,6 @@ ApplicationWindow {
             enabled: workspace.focusedSession !== null && workspace.focusedSession.historyActive
             onTriggered: if (workspace.focusedSession)
                              workspace.focusedSession.returnToLive()
-        }
-        MenuSeparator {
-            visible: window.recoveryAvailable()
-        }
-        ActionItem {
-            objectName: "reconnectAgentAction"
-            text: qsTr("Reconnect")
-            visible: window.recoveryAvailable()
-            onTriggered: if (workspace.focusedSession)
-                             workspace.focusedSession.reconnect()
-        }
-        ActionItem {
-            objectName: "discoverAgentAction"
-            text: qsTr("Discover existing session")
-            visible: window.recoveryAvailable()
-            onTriggered: if (workspace.focusedSession)
-                             workspace.focusedSession.discoverSession()
-        }
-        ActionItem {
-            objectName: "startSessionAction"
-            text: qsTr("Start new session")
-            visible: window.recoveryAvailable()
-            onTriggered: if (workspace.focusedSession)
-                             workspace.focusedSession.startNewSession()
         }
     }
 

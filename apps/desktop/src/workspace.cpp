@@ -2311,8 +2311,8 @@ Workspace::ReloadResult Workspace::requestReload(const QString& id) {
                                 : ReloadResult{ReloadOutcome::failed, error_};
     if (!item->terminate())
         return {ReloadOutcome::failed,
-                QStringLiteral("Could not request a reload for %1. Reconnect its "
-                               "session, then try again.")
+                QStringLiteral("Could not request a reload for %1. Reconnect agent "
+                               "from Commands, then try again.")
                     .arg(item->title())};
     // Its CLI ends; finishReload starts it again once the session says so.
     reloading_.insert(id);
@@ -2381,7 +2381,7 @@ void Workspace::finishReload(const QString& id, int waits) {
     if (state == QLatin1String("disconnected") || state == QLatin1String("replaced")) {
         reloading_.remove(id);
         fail(QStringLiteral("Reload stopped because %1 lost its session connection. "
-                            "Reconnect the tab, then try again.")
+                            "Reconnect agent from Commands, then try again.")
                  .arg(item->title()));
         return;
     }

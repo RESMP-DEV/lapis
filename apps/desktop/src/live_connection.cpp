@@ -482,10 +482,6 @@ void SessionPreview::discoverSession() {
     if (live_)
         live_->begin(wire::AttachMode::discover);
 }
-void SessionPreview::startNewSession() {
-    if (live_)
-        live_->begin(wire::AttachMode::create);
-}
 void SessionPreview::setConnection(const QString& state, bool input_ready) {
     connection_state_ = state;
     if (input_ready && !input_ready_)

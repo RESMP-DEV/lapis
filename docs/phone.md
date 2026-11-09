@@ -119,9 +119,9 @@ can type, and the terminal takes the size of the device in use. Opening the
 agent on the phone gives it the phone's size; closing it or locking the phone,
 activating the lapis window, moving the pointer over the agent, or typing on
 the Mac gives it back. Agents started before this build run services that cannot
-be joined: opening one on the phone takes it from the desktop (its card offers
-**Reconnect agent**), and restarting it gives it a service that can. The Mac must
-be awake.
+be joined: opening one on the phone takes it from the desktop until **Reconnect
+agent** in Commands takes it back, and restarting it gives it a service that
+can. The Mac must be awake.
 
 Scrolling over a full-screen program scrolls the program itself; on the phone a
 vertical drag turns the wheel.
