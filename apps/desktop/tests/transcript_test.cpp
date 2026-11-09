@@ -110,6 +110,83 @@ void status_follows_commands() {
     require(reader.items().size() == 2, "command output adds no items");
 }
 
+// A prompt sent while the agent works shows at once, queued; the running
+// turn taking it in keeps it in place, and one sent on as the next turn is
+// shown once, as that turn's prompt.
+void queued_prompts_show() {
+    ClaudeReader reader;
+    const char* const lines[] = {
+        R"({"type":"user","uuid":"u1","message":{"content":"Build it"}})",
+        R"({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"make"}}]}})",
+        R"({"type":"queue-operation","operation":"enqueue","content":"<task-notification>x</task-notification>"})",
+        R"({"type":"queue-operation","operation":"enqueue","content":"also add tests"})",
+        R"({"type":"queue-operation","operation":"enqueue","content":"and docs"})",
+    };
+    for (const char* line : lines)
+        (void)reader.add(line);
+    require(reader.items().size() == 4 && reader.items()[2].queued && reader.items()[2].body == "also add tests" &&
+                !reader.items()[2].starts_turn,
+            "a prompt sent mid-turn shows at once, queued, inside the turn");
+    // The task notice leaves first (a dequeue names no text), then the turn
+    // takes in "also add tests"; "and docs" goes on as the next turn.
+    (void)reader.add(R"({"type":"queue-operation","operation":"dequeue"})");
+    require(reader.items()[2].queued, "a dequeue takes the oldest entry, the hidden task notice");
+    (void)reader.add(
+        R"({"type":"queue-operation","operation":"remove","content":"also add tests","reason":"absorbed_mid_turn"})");
+    require(!reader.items()[2].queued && !reader.items()[2].dropped, "taken in by the running turn");
+    (void)reader.add(R"({"type":"queue-operation","operation":"dequeue"})");
+    (void)reader.add(R"({"type":"user","uuid":"u2","message":{"content":"and docs"}})");
+    require(reader.items()[3].dropped, "sent on as a turn: its queued copy goes");
+    const auto layout = lapis::desktop::transcript::lay_out(reader.items(), {});
+    int docs = 0;
+    for (const auto& row : layout.rows)
+        if (row.item >= 0 && reader.items()[static_cast<size_t>(row.item)].body == "and docs")
+            ++docs;
+    require(docs == 1 && layout.turns.size() == 2, "shown once, as the next turn's prompt");
+    // Folded, the turn still shows the prompt sent into it.
+    (void)reader.add(R"({"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}})");
+    (void)reader.add(R"({"type":"system","subtype":"turn_duration","durationMs":90061000})");
+    const auto folded = lapis::desktop::transcript::lay_out(reader.items(), {});
+    bool kept = false;
+    for (const auto& row : folded.rows)
+        kept = kept || row.item == 2;
+    require(kept, "a folded turn keeps the prompt sent into it in view");
+    require(lapis::desktop::transcript::duration_text(90061000) == "1d 1h", "days for long turns");
+}
+
+// Command-click finds the path under the pointer, and the live tail cuts the
+// screen at the agent's input box.
+void paths_and_live_lines() {
+    using lapis::desktop::transcript::live_lines;
+    using lapis::desktop::transcript::path_at;
+    QTemporaryDir directory;
+    QDir(directory.path()).mkpath(QStringLiteral("src"));
+    QFile file(directory.filePath(QStringLiteral("src/a.cpp")));
+    require(file.open(QIODevice::WriteOnly), "path fixture");
+    file.close();
+    const auto absolute = QDir::cleanPath(QFileInfo(file.fileName()).absoluteFilePath());
+    const auto text = QStringLiteral("Fixed `src/a.cpp:42` and see %1, then run it.").arg(absolute);
+    require(path_at(text, 9, directory.path()) == absolute + ":42", "relative path with its line, in backticks");
+    require(path_at(text, static_cast<int>(text.indexOf(absolute)) + 3, {}) == absolute,
+            "absolute path, trailing comma dropped");
+    require(path_at(text, 2, directory.path()).isEmpty(), "a plain word is not a path");
+    require(path_at(QStringLiteral("see src/missing.cpp"), 6, directory.path()).isEmpty(), "missing files are not offered");
+
+    const QStringList screen{
+        QStringLiteral("⏺ Reading the build files"),
+        QStringLiteral("  ⎿  Read CMakeLists.txt"),
+        QStringLiteral(""),
+        QStringLiteral("✻ Thinking… (esc to interrupt)"),
+        QStringLiteral("────────────────────────────────────────"),
+        QStringLiteral("❯ "),
+        QStringLiteral("────────────────────────────────────────"),
+        QStringLiteral("  ⏵⏵ bypass permissions on"),
+    };
+    const auto live = live_lines(screen);
+    require(live.size() == 4 && live.front().startsWith(QStringLiteral("⏺")) && live.back().startsWith(QStringLiteral("✻")),
+            "the screen above the input box, the status line kept");
+}
+
 void model_follows_file() {
     QTemporaryDir dir;
     const auto path = dir.filePath("s.jsonl");
@@ -389,6 +466,8 @@ int main(int argc, char** argv) {
     reader_folds_records();
     result_reports_changed_card();
     status_follows_commands();
+    queued_prompts_show();
+    paths_and_live_lines();
     model_follows_file();
     reply_splits_at_code();
     items_keep_their_record();

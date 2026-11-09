@@ -2045,6 +2045,17 @@ bool TerminalSurface::submitText(const QString& text) {
     return true;
 }
 
+QStringList TerminalSurface::screenLines() const {
+    QStringList rows;
+    if (!document_)
+        return rows;
+    const auto& snapshot = document_->snapshot();
+    rows.reserve(snapshot.size.rows);
+    for (int row = 0; row < snapshot.size.rows; ++row)
+        rows.append(row_text(snapshot, row).text);
+    return rows;
+}
+
 bool TerminalSurface::interrupt() {
     if (!document_ || !document_->live() || !document_->inputReady() || window() == nullptr ||
         !window()->isActive())

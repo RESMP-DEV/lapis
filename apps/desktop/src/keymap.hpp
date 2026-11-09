@@ -333,9 +333,9 @@ class KeyMap final : public QObject {
     QString visual_code_font_{QStringLiteral("system")};
     int visual_size_{};
     bool visual_all_{};
-    // Return sends from the visual view's bar; off by default, so a stray
-    // Return adds a line and Command-Return sends.
-    bool visual_send_on_return_{};
+    // What Command-click on a file path in the visual view opens it with:
+    // vscode, cursor, zed, textedit, system, or auto (the first installed).
+    QString visual_editor_{QStringLiteral("auto")};
     QStringList usage_meter_;
     QStringList usage_machines_;
     AgentDefaults agent_defaults_;

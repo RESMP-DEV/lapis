@@ -1885,6 +1885,9 @@ ApplicationWindow {
         visualThemes: visualView.themes.map(theme => visualView.colorsOf(theme))
         visualFonts: visualView.readingFonts
         visualCodeFonts: visualView.codeFonts
+        visualEditors: workspace.transcript
+                       ? workspace.transcript.editors().map(e => ({ name: e.id, label: e.label, family: "" }))
+                       : []
         visual: window.visualSettings
         visualSize: visualView.fontSize
         onVisualChosen: function(key, value) {
@@ -3642,7 +3645,8 @@ ApplicationWindow {
                     waiting: liveTerminal.document !== null && liveTerminal.document.attentionPending
                     waitingReason: liveTerminal.document !== null ? liveTerminal.document.attentionReason : ""
                     canSend: liveTerminal.document !== null && liveTerminal.document.reachable
-                    sendOnReturn: window.visualSettings.sendOnReturn === true
+                    editor: window.visualSettings.editor || "auto"
+                    screen: () => liveTerminal.screenLines()
                     folder: window.visualActive && liveTerminal.document
                             ? workspace.agentFolder(liveTerminal.document.sessionId) : ""
                     slashCommands: liveTerminal.document !== null && liveTerminal.document.harnessId === "claude"

@@ -52,6 +52,10 @@ struct Item {
     QString record;
     qint64 at_ms{};       // when it was written (ms since the epoch), or 0
     bool starts_turn{};   // a prompt, or a background task waking the agent
+    // A prompt sent while the agent worked, waiting for it to take it in.
+    bool queued{};
+    // Withdrawn from the queue, or sent on as a turn of its own: not shown.
+    bool dropped{};
     qint64 duration_ms{}; // a turn item: how long the turn took
 };
 
@@ -136,6 +140,15 @@ struct Media {
 };
 [[nodiscard]] std::vector<Media> find_media(const QString& text);
 
+// The path written around `position` in `text` (absolute, ~, or relative to
+// `folder`), resolved, with any ":line[:column]" after it kept, when that
+// file or folder exists; else empty.
+[[nodiscard]] QString path_at(const QString& text, int position, const QString& folder);
+
+// The rows of an agent's terminal screen above its input box (the last
+// box-rule pair from the bottom), blank rows at either end dropped.
+[[nodiscard]] QStringList live_lines(const QStringList& screen);
+
 // Folds Claude Code session JSONL records, in file order, into items. Tool
 // results attach to the tool call that asked for them; a subagent's records
 // (isSidechain) are skipped.
@@ -154,6 +167,10 @@ class ClaudeReader {
     qint64 at_ms_{}; // time of the record being read
     QString record_; // uuid of the record being read
     QHash<QString, int> tools_; // tool_use id -> item index
+    // Claude Code's input queue in order: {text, item}, item -1 for entries
+    // not shown (background task notices). A dequeue names no text and
+    // takes the oldest.
+    std::vector<std::pair<QString, int>> queued_;
 };
 } // namespace transcript
 
@@ -188,6 +205,9 @@ class TranscriptModel final : public QAbstractListModel {
         ExpandedRole, // a "Worked for" row whose work is shown
         InWorkRole,   // an item shown inside an opened "Worked for"
         StepsRole,    // a "Worked for" row: how many items it folds
+        QueuedRole,   // a prompt sent mid-turn, not yet taken in
+        AtRole,       // when it was written (ms since the epoch), or 0
+        DurationRole, // how long a step, thought or turn took, in ms, or 0
     };
     explicit TranscriptModel(QObject* parent = nullptr);
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
@@ -227,6 +247,25 @@ class TranscriptModel final : public QAbstractListModel {
     // palette.json under ~/.lapis/visual) from the view's colors: background,
     // text, muted, grid and light. Unchanged files are left alone.
     Q_INVOKABLE void writeChartStyle(const QVariantMap& colors) const;
+    // The file or folder path written at `position` in a laid-out message
+    // ("/abs/file.cpp", "~/x", "src/a.cpp:42" relative to `folder`), with
+    // any ":line[:column]" kept, when it names something on this Mac; else
+    // empty.
+    Q_INVOKABLE [[nodiscard]] QString pathAt(QQuickTextDocument* source, int position,
+                                             const QString& folder) const;
+    // The editors on this Mac files can open in: [{id, label}], VS Code,
+    // Cursor, Zed and TextEdit as installed, then the system's default app.
+    Q_INVOKABLE [[nodiscard]] QVariantList editors() const;
+    // Opens a path from pathAt (or a file link) in `editor` (an id from
+    // editors(), or auto for the first installed), at its line where the
+    // editor takes one; folders open in the Finder.
+    Q_INVOKABLE bool openPath(const QString& path, const QString& editor) const;
+    // The text rows the terminal screen shows above the agent's input box,
+    // trailing blanks trimmed: the turn as it streams, harness agnostic.
+    Q_INVOKABLE [[nodiscard]] QStringList liveLines(const QStringList& screen) const;
+    // When the last turn's prompt was written (ms since the epoch) while that
+    // turn is still open, else 0: what "Working for" counts from.
+    Q_INVOKABLE [[nodiscard]] double runningSince() const;
     // Font families lapis loads from the system for reading: serif, mono.
     Q_INVOKABLE [[nodiscard]] QVariantMap fonts() const;
     // Copies text to the clipboard as plain text only (no styled HTML to

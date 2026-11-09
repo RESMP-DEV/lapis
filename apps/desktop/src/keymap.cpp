@@ -878,7 +878,7 @@ void KeyMap::load_visual(const QJsonObject& root) {
     const int size = visual.value(QStringLiteral("size")).toInt();
     visual_size_ = visual_size(size) ? size : 0;
     visual_all_ = visual.value(QStringLiteral("all")).toBool();
-    visual_send_on_return_ = visual.value(QStringLiteral("sendOnReturn")).toBool();
+    visual_editor_ = name("editor", "auto");
 }
 
 QVariantMap KeyMap::visual() const {
@@ -887,13 +887,14 @@ QVariantMap KeyMap::visual() const {
             {QStringLiteral("codeFont"), visual_code_font_},
             {QStringLiteral("size"), visual_size_},
             {QStringLiteral("all"), visual_all_},
-            {QStringLiteral("sendOnReturn"), visual_send_on_return_}};
+            {QStringLiteral("editor"), visual_editor_}};
 }
 
 bool KeyMap::setVisual(const QString& key, const QVariant& value) {
     QString* name = key == QLatin1String("theme")      ? &visual_theme_
                     : key == QLatin1String("font")     ? &visual_font_
                     : key == QLatin1String("codeFont") ? &visual_code_font_
+                    : key == QLatin1String("editor")   ? &visual_editor_
                                                        : nullptr;
     if (name != nullptr) {
         const auto text = value.toString();
@@ -913,10 +914,6 @@ bool KeyMap::setVisual(const QString& key, const QVariant& value) {
         if (visual_all_ == value.toBool())
             return true;
         visual_all_ = value.toBool();
-    } else if (key == QLatin1String("sendOnReturn")) {
-        if (visual_send_on_return_ == value.toBool())
-            return true;
-        visual_send_on_return_ = value.toBool();
     } else {
         return false;
     }
@@ -1249,7 +1246,8 @@ bool KeyMap::persist() {
     visual.insert(QStringLiteral("codeFont"), visual_code_font_);
     visual.insert(QStringLiteral("size"), visual_size_);
     visual.insert(QStringLiteral("all"), visual_all_);
-    visual.insert(QStringLiteral("sendOnReturn"), visual_send_on_return_);
+    visual.insert(QStringLiteral("editor"), visual_editor_);
+    visual.remove(QStringLiteral("sendOnReturn")); // Return always sends now
     root.insert(QStringLiteral("visual"), visual);
     if (adding_plan_) {
         PlanUpdate adding{adding_plan_->cli, {}, adding_plan_->email, adding_plan_->machine};

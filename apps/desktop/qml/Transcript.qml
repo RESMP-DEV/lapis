@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQml.Models
 import QtQuick.Dialogs
+import QtQuick.Effects
 
 // The selected agent's conversation as a readable thread: the person's
 // prompts as bubbles, the agent's replies as prose, and its work as quiet
@@ -42,13 +43,44 @@ FocusScope {
     // lapis's predicted next prompt (Tab), shown in the empty bar.
     property string suggestion: ""
     property bool suggestionConfident: false
-    property bool working: false        // a turn is running: Stop is offered
+    property bool working: false        // a turn is running: Send becomes Stop
     property bool waiting: false        // a request waits in the terminal
     property string waitingReason: ""
     property bool canSend: true
-    // Return sends; off by default, so Return adds a line and Command-Return
-    // sends, and a stray Return never sends half a thought.
-    property bool sendOnReturn: false
+    // What Command-click on a file path opens it with (an editors() id).
+    property string editor: "auto"
+    // The agent's terminal rows as text (screenLines()), which stream into
+    // the running turn; null where there is no terminal.
+    property var screen: null
+    // The live tail: the terminal's rows above its input box, read a few
+    // times a second while a turn runs and the view is shown.
+    property var liveRows: []
+    property bool liveOpen: false
+    Timer {
+        interval: 150
+        repeat: true
+        running: root.working && root.visible && root.screen !== null && root.model !== null
+        triggeredOnStart: true
+        onTriggered: {
+            const rows = root.model.liveLines(root.screen())
+            if (rows.join("\n") !== root.liveRows.join("\n"))
+                root.liveRows = rows
+        }
+        onRunningChanged: if (!running) { root.liveRows = []; root.liveOpen = false }
+    }
+    // The clock the running turn's elapsed time follows.
+    property double now: Date.now()
+    property double turnSince: 0
+    Timer {
+        interval: 1000
+        repeat: true
+        running: root.working && root.visible
+        triggeredOnStart: true
+        onTriggered: {
+            root.now = Date.now()
+            root.turnSince = root.model ? root.model.runningSince() : 0
+        }
+    }
     // The agent's folder, for its project's own slash commands, and whether
     // its CLI takes the slash commands lapis knows (Claude Code's).
     property string folder: ""
@@ -198,6 +230,14 @@ FocusScope {
         return level === "xhigh" ? qsTr("Extra High")
              : level.length > 0 ? level.charAt(0).toUpperCase() + level.slice(1) : ""
     }
+    // "12s", "3m 12s", "1h 4m", "2d 3h": the scale follows the length.
+    function durationLabel(ms) {
+        const s = Math.max(0, Math.round(ms / 1000))
+        return s < 60 ? s + "s"
+             : s < 3600 ? Math.floor(s / 60) + "m " + (s % 60) + "s"
+             : s < 86400 ? Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m"
+             : Math.floor(s / 86400) + "d " + Math.floor((s % 86400) / 3600) + "h"
+    }
     function tokensLabel(n) {
         return n >= 1000000 ? (n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1) + "M"
              : n >= 1000 ? Math.round(n / 1000) + "k" : String(n)
@@ -345,7 +385,7 @@ FocusScope {
         reuseItems: true
         cacheBuffer: 2000
         header: Item { height: 24 }
-        footer: Item { height: 40 }
+        footer: liveFooter
         onCountChanged: if (root.following) Qt.callLater(positionViewAtEnd)
         onContentHeightChanged: if (root.following) Qt.callLater(positionViewAtEnd)
         ScrollBar.vertical: ScrollBar {
@@ -391,6 +431,9 @@ FocusScope {
         required property bool expanded
         required property bool inWork
         required property int steps
+        required property bool queued
+        required property double at
+        required property double duration
         property Component block
 
         readonly property int gapAbove: index === 0 ? 0
@@ -473,7 +516,28 @@ FocusScope {
         onHoveredLinkChanged: if (textFormat === TextEdit.RichText && root.model)
                                   root.model.hoverLink(textDocument, hoveredLink)
         HoverHandler {
-            cursorShape: parent.hoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
+            id: textHover
+            cursorShape: parent.hoveredLink.length > 0
+                         || ((point.modifiers & Qt.MetaModifier) && parent.pathUnder(point.position).length > 0)
+                         ? Qt.PointingHandCursor : Qt.IBeamCursor
+        }
+        // The file or folder path under a point, or a link to a local file.
+        function pathUnder(p) {
+            if (!root.model)
+                return ""
+            if (hoveredLink.length > 0)
+                return /^(file:|\/|~)/.test(hoveredLink) ? hoveredLink : ""
+            return root.model.pathAt(textDocument, positionAt(p.x, p.y), root.folder)
+        }
+        // Command-click opens a path in the chosen editor (a folder in the
+        // Finder), as Command-click does in a terminal.
+        TapHandler {
+            acceptedModifiers: Qt.MetaModifier
+            onTapped: function(point) {
+                const path = parent.pathUnder(point.position)
+                if (path.length > 0)
+                    root.model.openPath(path, root.editor)
+            }
         }
     }
 
@@ -876,6 +940,9 @@ FocusScope {
                 height: promptText.height + 22
                 radius: Math.round(root.fontSize * 1.1)
                 color: root.raisedColor
+                // Sent while the agent worked: quieter until it takes it in.
+                opacity: prompt.entry && prompt.entry.queued ? 0.6 : 1
+                Behavior on opacity { NumberAnimation { duration: 160 } }
                 Text {
                     id: measure
                     visible: false
@@ -889,6 +956,15 @@ FocusScope {
                     width: parent.width - 36
                     text: prompt.entry ? prompt.entry.body : ""
                 }
+            }
+            Text {
+                anchors.right: parent.right
+                anchors.rightMargin: 6
+                visible: prompt.entry !== null && prompt.entry.queued
+                text: qsTr("Queued · the agent reads it at its next step")
+                color: root.mutedTextColor
+                font.family: root.sansFamily
+                font.pixelSize: root.codeSize - 1
             }
             // Images attached to the prompt, under its bubble.
             MediaList {
@@ -1042,7 +1118,8 @@ FocusScope {
                         id: target
                         visible: text.length > 0
                         anchors.verticalCenter: parent.verticalCenter
-                        width: Math.min(implicitWidth, parent.width - verb.width - counts.width - chevron.width - 30)
+                        width: Math.min(implicitWidth, parent.width - verb.width - counts.width - took.width
+                                                       - chevron.width - 36)
                         text: step.entry && !step.thinking ? step.entry.body.split("\n")[0] : ""
                         elide: Text.ElideRight
                         color: step.entry && step.entry.failed ? root.tint(root.faultColor, 0.85) : root.tint(root.textColor, 0.82)
@@ -1056,6 +1133,18 @@ FocusScope {
                         spacing: 4
                         Text { text: step.entry ? "+" + step.entry.added : ""; color: root.addedColor; font.pixelSize: root.codeSize; font.family: root.monoFamily; visible: step.entry && step.entry.added > 0 }
                         Text { text: step.entry ? "−" + step.entry.removed : ""; color: root.removedColor; font.pixelSize: root.codeSize; font.family: root.monoFamily; visible: step.entry && step.entry.removed > 0 }
+                    }
+                    // How long the step took, once it took a second or more.
+                    Text {
+                        id: took
+                        visible: step.entry !== null && !step.thinking && step.entry.duration >= 1000
+                        width: visible ? implicitWidth : 0
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: visible ? root.durationLabel(step.entry.duration) : ""
+                        color: root.tint(root.mutedTextColor, 0.75)
+                        font.family: root.sansFamily
+                        font.pixelSize: root.stepSize - 2
+                        font.features: { "tnum": 1 }
                     }
                     Chevron {
                         id: chevron
@@ -1149,6 +1238,103 @@ FocusScope {
                             color: root.mutedTextColor
                             font.pixelSize: root.stepSize
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // The end of a running turn: "Working for 1m 12s", then the agent's
+    // screen as it streams (thinking, tool output, the reply being written),
+    // dim and slightly soft so it reads as work in progress. Click to read
+    // all of it sharp; it goes when the turn ends and the saved items stand.
+    Component {
+        id: liveFooter
+        Item {
+            id: live
+            readonly property int column: Math.min(root.columnWidth, width - 56)
+            readonly property double since: root.turnSince
+            readonly property var shown: root.liveOpen ? root.liveRows : root.liveRows.slice(-8)
+            width: ListView.view ? ListView.view.width : 0
+            height: (root.working ? liveHeader.height + liveTail.height + 22 : 0) + 40
+            Item {
+                id: liveHeader
+                visible: root.working
+                x: (live.width - live.column) / 2
+                y: 12
+                width: live.column
+                height: root.stepSize + 10
+                MouseArea {
+                    id: liveHover
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    enabled: root.liveRows.length > 0
+                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onClicked: root.liveOpen = !root.liveOpen
+                }
+                Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 8
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 6; height: 6; radius: 3
+                        color: root.activityColor
+                        SequentialAnimation on opacity {
+                            running: root.working
+                            loops: Animation.Infinite
+                            NumberAnimation { to: 0.3; duration: 700; easing.type: Easing.InOutSine }
+                            NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutSine }
+                        }
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: live.since > 0 ? qsTr("Working for %1").arg(root.durationLabel(root.now - live.since))
+                                             : qsTr("Working")
+                        color: liveHover.containsMouse ? root.textColor : root.mutedTextColor
+                        font.family: root.sansFamily
+                        font.pixelSize: root.stepSize
+                        font.features: { "tnum": 1 }
+                    }
+                    Chevron {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: root.liveRows.length > 0
+                        turned: root.liveOpen
+                        color: liveHover.containsMouse ? root.textColor : root.mutedTextColor
+                    }
+                }
+            }
+            Item {
+                id: liveTail
+                visible: root.working && root.liveRows.length > 0
+                x: liveHeader.x + Math.round(root.fontSize * 0.9)
+                anchors.top: liveHeader.bottom
+                anchors.topMargin: 6
+                width: live.column - Math.round(root.fontSize * 0.9)
+                height: visible ? tailText.implicitHeight : 0
+                clip: true
+                Rectangle {
+                    x: -Math.round(root.fontSize * 0.9) + 3
+                    width: 1
+                    height: parent.height
+                    color: root.borderColor
+                }
+                Text {
+                    id: tailText
+                    width: parent.width
+                    text: live.shown.join("\n")
+                    textFormat: Text.PlainText
+                    wrapMode: Text.NoWrap
+                    elide: Text.ElideRight
+                    color: root.tint(root.mutedTextColor, root.liveOpen ? 1 : 0.8)
+                    font.family: root.monoFamily
+                    font.pixelSize: root.codeSize - 1
+                    lineHeight: 1.15
+                    // Soft while folded: it streams, it is not the answer yet.
+                    layer.enabled: !root.liveOpen
+                    layer.effect: MultiEffect {
+                        blurEnabled: true
+                        blur: 0.35
+                        blurMax: 6
                     }
                 }
             }
@@ -1399,7 +1585,7 @@ FocusScope {
             width: Math.min(root.columnWidth, parent.width - 56)
             x: (parent.width - width) / 2
             y: 0
-            height: chips.height + inputScroll.height + toolbar.height + 18
+            height: chips.height + inputScroll.height + toolbar.height + 30
             radius: Math.round(root.fontSize * 0.9)
             color: root.raisedColor
             border.width: 1
@@ -1467,11 +1653,32 @@ FocusScope {
                 }
             }
 
+            // lapis's guess, in full: it wraps, and the bar grows to hold it.
+            Text {
+                id: suggestionText
+                x: inputScroll.x
+                y: inputScroll.y
+                width: inputScroll.width
+                visible: input.text.length === 0 && input.preeditText.length === 0
+                text: root.waiting ? qsTr("Waiting for your answer in the terminal")
+                    : root.suggestion.length > 0 ? root.suggestion
+                    : qsTr("Message the agent")
+                wrapMode: Text.Wrap
+                textFormat: Text.PlainText
+                color: root.suggestion.length > 0 && !root.waiting
+                       ? root.tint(root.textColor, root.suggestionConfident ? 0.62 : 0.42)
+                       : root.mutedTextColor
+                font: input.font
+            }
             ScrollView {
                 id: inputScroll
-                x: 14; y: 10 + chips.height
-                width: parent.width - 28
-                height: Math.min(Math.max(input.implicitHeight, root.fontSize * 1.6),
+                x: 16; y: 14 + chips.height
+                width: parent.width - 32
+                // Two lines at least, so the bar never looks flat; it grows
+                // with what is typed (or offered) up to eight.
+                height: Math.min(Math.max(input.implicitHeight,
+                                          suggestionText.visible ? suggestionText.implicitHeight : 0,
+                                          Math.ceil(root.fontSize * 1.45 * 2)),
                                  root.fontSize * 1.45 * 8)
                 TextArea {
                     id: input
@@ -1488,12 +1695,6 @@ FocusScope {
                     selectedTextColor: root.textColor
                     font.family: root.sansFamily
                     font.pixelSize: root.fontSize
-                    placeholderText: root.waiting ? qsTr("Waiting for your answer in the terminal")
-                                   : root.suggestion.length > 0 ? root.suggestion
-                                   : qsTr("Message the agent")
-                    placeholderTextColor: root.suggestion.length > 0 && !root.waiting
-                                          ? root.tint(root.textColor, root.suggestionConfident ? 0.62 : 0.42)
-                                          : root.mutedTextColor
                     onTextChanged: if (text.length === 0) root.filledFromSuggestion = false
                     Keys.onPressed: function(event) {
                         // AppKit marks arrows as keypad keys; lapis keeps
@@ -1520,7 +1721,7 @@ FocusScope {
                                 return
                             }
                         }
-                        if (isReturn && (mods === Qt.MetaModifier || (plain && root.sendOnReturn))) {
+                        if (isReturn && (plain || mods === Qt.MetaModifier)) {
                             root.send()
                             event.accepted = true
                         } else if (isReturn && mods === Qt.ShiftModifier) {
@@ -1568,8 +1769,8 @@ FocusScope {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
-                anchors.margins: 8
-                anchors.leftMargin: 14
+                anchors.margins: 10
+                anchors.leftMargin: 16
                 height: sendButton.height
                 // Left: attach, model, effort. Right: context use, Stop, Send.
                 Row {
@@ -1641,8 +1842,8 @@ FocusScope {
                     readonly property real used: root.model && root.model.contextWindow > 0
                                                  ? Math.min(1, root.model.contextTokens / root.model.contextWindow) : 0
                     visible: root.model !== null && root.model.contextTokens > 0
-                    anchors.right: stopButton.left
-                    anchors.rightMargin: 10
+                    anchors.right: sendButton.left
+                    anchors.rightMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
                     width: visible ? ring.width + percent.implicitWidth + 6 : 0
                     height: sendButton.height
@@ -1704,54 +1905,45 @@ FocusScope {
                     font.family: root.sansFamily
                     font.pixelSize: Math.max(11, root.codeSize - 1)
                 }
-                Rectangle {
-                    id: stopButton
-                    visible: root.working && root.interrupt !== null
-                    width: visible ? stopText.implicitWidth + 20 : 0
-                    height: sendButton.height
-                    anchors.right: sendButton.left
-                    anchors.rightMargin: 8
-                    radius: height / 2
-                    color: stopMouse.containsMouse ? root.tint(root.textColor, 0.12) : "transparent"
-                    border.color: root.borderColor
-                    Text {
-                        id: stopText
-                        anchors.centerIn: parent
-                        text: qsTr("Stop")
-                        color: root.textColor
-                        font.family: root.sansFamily
-                        font.pixelSize: root.codeSize
-                    }
-                    MouseArea {
-                        id: stopMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.interrupt()
-                    }
-                }
+                // Send, or Stop while a turn runs: Return sends (a message
+                // typed mid-turn queues for the agent), so the button stops.
                 Rectangle {
                     id: sendButton
-                    readonly property bool ready: (input.text.trim().length > 0 || root.attachments.length > 0)
-                                                  && root.canSend && !root.waiting
+                    objectName: "visualSend"
+                    readonly property bool stops: root.working && root.interrupt !== null
+                    readonly property bool ready: stops
+                                                  || ((input.text.trim().length > 0 || root.attachments.length > 0)
+                                                      && root.canSend && !root.waiting)
                     anchors.right: parent.right
-                    width: Math.round(root.fontSize * 1.6)
+                    width: Math.round(root.fontSize * 1.75)
                     height: width
                     radius: width / 2
-                    color: ready ? root.textColor : root.tint(root.textColor, 0.18)
+                    color: ready ? (sendMouse.containsMouse ? root.tint(root.textColor, 0.85) : root.textColor)
+                                 : root.tint(root.textColor, 0.18)
                     Text {
                         anchors.centerIn: parent
+                        visible: !sendButton.stops
                         text: "↑"
                         color: root.backgroundColor
                         font.family: root.sansFamily
                         font.pixelSize: root.stepSize
                         font.bold: true
                     }
+                    Rectangle {
+                        anchors.centerIn: parent
+                        visible: sendButton.stops
+                        width: Math.round(parent.width * 0.32)
+                        height: width
+                        radius: 2
+                        color: root.backgroundColor
+                    }
                     MouseArea {
+                        id: sendMouse
                         anchors.fill: parent
+                        hoverEnabled: true
                         enabled: sendButton.ready
                         cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: root.send()
+                        onClicked: sendButton.stops ? root.interrupt() : root.send()
                     }
                 }
             }
@@ -1762,9 +1954,7 @@ FocusScope {
             anchors.top: composerBox.bottom
             anchors.topMargin: 6
             anchors.horizontalCenter: composerBox.horizontalCenter
-            text: root.sendOnReturn
-                  ? qsTr("Return to send · Shift-Return for a new line · Esc for the terminal")
-                  : qsTr("⌘Return to send · Return for a new line · Esc for the terminal")
+            text: qsTr("Return to send · Shift-Return for a new line · ⌘-click a path to open it · Esc for the terminal")
             color: root.tint(root.mutedTextColor, 0.8)
             font.family: root.sansFamily
             font.pixelSize: Math.max(11, root.codeSize - 3)

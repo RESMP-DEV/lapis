@@ -727,12 +727,15 @@ void visual_settings_persist() {
     require(keymap.load() && keymap.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal") &&
                 keymap.visual().value(QStringLiteral("size")).toInt() == 0 &&
                 !keymap.visual().value(QStringLiteral("all")).toBool() &&
-                !keymap.visual().value(QStringLiteral("sendOnReturn")).toBool(),
-            "visual defaults follow the terminal; Command-Return sends");
-    require(keymap.setVisual(QStringLiteral("sendOnReturn"), true) &&
-                read_config(path).value(QStringLiteral("visual")).toObject().value(QStringLiteral("sendOnReturn")).toBool() &&
-                keymap.setVisual(QStringLiteral("sendOnReturn"), false),
-            "Return-sends choice saves");
+                keymap.visual().value(QStringLiteral("editor")) == QStringLiteral("auto"),
+            "visual defaults follow the terminal; files open in the first editor installed");
+    require(keymap.setVisual(QStringLiteral("editor"), QStringLiteral("cursor")) &&
+                read_config(path).value(QStringLiteral("visual")).toObject().value(QStringLiteral("editor")) ==
+                    QStringLiteral("cursor") &&
+                !keymap.setVisual(QStringLiteral("editor"), QStringLiteral("Bad Name")) &&
+                !keymap.setVisual(QStringLiteral("sendOnReturn"), true) &&
+                keymap.setVisual(QStringLiteral("editor"), QStringLiteral("auto")),
+            "the editor choice saves; Return-sends is gone");
     require(keymap.setVisual(QStringLiteral("theme"), QStringLiteral("claude")) &&
                 keymap.setVisual(QStringLiteral("font"), QStringLiteral("serif")) &&
                 keymap.setVisual(QStringLiteral("size"), 18) &&

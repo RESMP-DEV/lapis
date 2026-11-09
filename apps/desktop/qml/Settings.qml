@@ -41,6 +41,8 @@ Dialog {
     property var visualThemes: []
     property var visualFonts: []
     property var visualCodeFonts: []
+    // Editors on this Mac, first the default: [{name, label, family}].
+    property var visualEditors: []
     property var visual: ({})
     property int visualSize: 15
     signal visualChosen(string key, var value)
@@ -622,13 +624,14 @@ Dialog {
                     }
                 }
 
-                SwitchRow {
-                    label: qsTr("Return sends")
-                    detail: settings.visual.sendOnReturn === true
-                            ? qsTr("Return sends from the visual view's bar; Shift-Return adds a line.")
-                            : qsTr("Return adds a line and ⌘Return sends, so a stray Return never sends.")
-                    on: settings.visual.sendOnReturn === true
-                    onToggled: function(on) { settings.visualChosen("sendOnReturn", on) }
+                // ⌘-click on a file path in the thread opens it here.
+                FontChoices {
+                    visible: settings.visualEditors.length > 0
+                    label: qsTr("Open files in (⌘-click a path)")
+                    key: "editor"
+                    choices: settings.visualEditors
+                    selected: (settings.visual.editor || "auto") !== "auto" ? settings.visual.editor
+                            : settings.visualEditors.length > 0 ? settings.visualEditors[0].name : ""
                 }
 
                 Rectangle {

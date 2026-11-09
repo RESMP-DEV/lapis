@@ -145,6 +145,9 @@ class TerminalSurface : public QQuickItem {
     // keyboard instead of this surface (the visual view's bar). Refused while
     // the agent waits on a request, so typed text never answers a dialog.
     Q_INVOKABLE bool submitText(const QString& text);
+    // The screen's rows as text, top to bottom: what the visual view streams
+    // while a turn runs.
+    Q_INVOKABLE [[nodiscard]] QStringList screenLines() const;
     // Escape for the agent: how Claude Code and Codex stop a turn.
     Q_INVOKABLE bool interrupt();
     // A valid file URL as QUrl's local or UNC path; empty for other schemes,

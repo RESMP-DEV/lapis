@@ -9,7 +9,10 @@
 
 #include <QColor>
 #include <QCommandLineParser>
+#include <QDateTime>
 #include <QElapsedTimer>
+#include <QFile>
+#include <QQmlEngine>
 #include <QFont>
 #include <QFontDatabase>
 #include <QGuiApplication>
@@ -56,7 +59,7 @@ QImage shot(QQuickView& view, QObject* list, int index) {
 }
 
 // The bar edits as the terminal does on a Mac (lapis keeps Command as Meta),
-// Return adds a line by default and Command-Return sends. Arrows carry the
+// Return sends and Shift-Return adds a line. Arrows carry the
 // keypad flag, as AppKit sends them.
 int check_keys(QQuickView& view, QQuickItem* root) {
     auto* input = root->findChild<QQuickItem*>(QStringLiteral("visualComposer"));
@@ -113,16 +116,13 @@ int check_keys(QQuickView& view, QQuickItem* root) {
     key(Qt::Key_Right, Qt::MetaModifier);
     key(Qt::Key_W, Qt::ControlModifier);
     expect("Control-W deletes the word", QStringLiteral("alpha "), 6);
-    key(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
-    expect("Return adds a line by default", QStringLiteral("alpha \n"), 7);
     key(Qt::Key_Return, Qt::ShiftModifier, QStringLiteral("\r"));
-    expect("Shift-Return adds a plain newline", QStringLiteral("alpha \n\n"), 8);
-    key(Qt::Key_Return, Qt::MetaModifier, QStringLiteral("\r"));
-    expect("Command-Return sends", QString(), -1);
-    root->setProperty("sendOnReturn", true);
-    set(QStringLiteral("hi"));
+    expect("Shift-Return adds a plain newline", QStringLiteral("alpha \n"), 7);
     key(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
-    expect("Return sends when chosen", QString(), -1);
+    expect("Return sends", QString(), -1);
+    set(QStringLiteral("hi"));
+    key(Qt::Key_Return, Qt::MetaModifier, QStringLiteral("\r"));
+    expect("Command-Return sends too", QString(), -1);
     // Typing a slash command lists the best matches; Return fills one in.
     root->setProperty("slashCommands", true);
     for (const auto letter : QStringLiteral("/comp"))
@@ -173,7 +173,8 @@ int main(int argc, char** argv) {
     parser.addOption({"bench", "Scroll the whole conversation and report frame times"});
     parser.addOption({"step", "Pixels scrolled per benchmark step", "px", "240"});
     parser.addOption({"keys", "Check the bar's Mac line editing and send keys, then exit"});
-    parser.addOption({"play", "Press play on the audio and video shown (it plays aloud) and report progress"});
+    parser.addOption({"live", "Show a running turn whose terminal screen is this text file", "file"});
+    parser.addOption({"play","Press play on the audio and video shown (it plays aloud) and report progress"});
     parser.addOption({"wait","Milliseconds to let the view settle (media to open) before shooting", "ms", "400"});
     parser.process(app);
     const bool keys = parser.isSet("keys");
@@ -230,6 +231,21 @@ int main(int argc, char** argv) {
     std::printf("fonts: sans %s, mono %s\n", qPrintable(sans), qPrintable(mono));
     root->setProperty("model", QVariant::fromValue(static_cast<QObject*>(&model)));
     auto* list = root->property("list").value<QObject*>();
+    if (parser.isSet("live")) {
+        // A turn in progress: Stop in place of Send, and the screen's rows
+        // above the input box streaming under "Working for".
+        QFile screen(parser.value("live"));
+        if (!screen.open(QIODevice::ReadOnly)) {
+            std::fprintf(stderr, "could not read %s\n", qPrintable(parser.value("live")));
+            return 2;
+        }
+        const auto rows = QString::fromUtf8(screen.readAll()).split(QLatin1Char('\n'));
+        root->setProperty("interrupt", QVariant::fromValue(view.engine()->evaluate(QStringLiteral("(function () {})"))));
+        root->setProperty("working", true);
+        root->setProperty("liveRows", model.liveLines(rows));
+        root->setProperty("turnSince", static_cast<double>(QDateTime::currentMSecsSinceEpoch() - 83'000));
+        root->setProperty("now", static_cast<double>(QDateTime::currentMSecsSinceEpoch()));
+    }
     view.show(); // offscreen: nothing reaches the screen
     settle();
     // Long enough for the view's short timers (the chart style it writes).
@@ -305,6 +321,13 @@ int main(int argc, char** argv) {
         QImage image;
     };
     std::vector<Panel> panels{{QStringLiteral("Latest"), shot(view, list, -1)}};
+    if (parser.isSet("live")) {
+        // Opened, the tail reads sharp (the software renderer draws no blur,
+        // so the folded tail shows only in the app).
+        root->setProperty("liveOpen", true);
+        panels.push_back({QStringLiteral("Live tail, opened"), shot(view, list, -1)});
+        root->setProperty("liveOpen", false);
+    }
     // Following would pull every later panel back to the end.
     root->setProperty("following", false);
     if (edit >= 0)

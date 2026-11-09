@@ -30,6 +30,8 @@
 #include <QImageReader>
 #include <QMimeData>
 #include <QStandardPaths>
+#include <QDesktopServices>
+#include <QProcess>
 #include <algorithm>
 #include <limits>
 #include <utility>
@@ -57,7 +59,9 @@ QString duration_text(qint64 ms) {
         return QStringLiteral("%1s").arg(seconds);
     if (seconds < 3600)
         return QStringLiteral("%1m %2s").arg(seconds / 60).arg(seconds % 60);
-    return QStringLiteral("%1h %2m").arg(seconds / 3600).arg((seconds % 3600) / 60);
+    if (seconds < 86400)
+        return QStringLiteral("%1h %2m").arg(seconds / 3600).arg((seconds % 3600) / 60);
+    return QStringLiteral("%1d %2h").arg(seconds / 86400).arg((seconds % 86400) / 3600);
 }
 
 namespace {
@@ -400,6 +404,78 @@ std::vector<Media> find_media(const QString& text) {
     return found;
 }
 
+QString path_at(const QString& text, int position, const QString& folder) {
+    if (position < 0 || position > text.size())
+        return {};
+    const auto stops = [](QChar c) {
+        return c.isSpace() || c == QChar::ParagraphSeparator || c == QChar::LineSeparator ||
+               QStringLiteral("\"'`()<>[]{},;|").contains(c);
+    };
+    qsizetype start = position, end = position;
+    while (start > 0 && !stops(text.at(start - 1)))
+        --start;
+    while (end < text.size() && !stops(text.at(end)))
+        ++end;
+    auto word = text.mid(start, end - start);
+    if (word.startsWith(QLatin1Char('@')))
+        word.remove(0, 1); // an @ mention
+    while (!word.isEmpty() && QStringLiteral(".:!?").contains(word.back()))
+        word.chop(1);
+    if (word.startsWith(QLatin1String("file://")))
+        word = QUrl(word).toLocalFile();
+    // "src/a.cpp:42" or "a.cpp:42:7": the line (and column) stay with it.
+    static const QRegularExpression line(QStringLiteral(R"((:\d+){1,2}$)"));
+    const auto suffix = line.match(word).captured(0);
+    auto path = word.left(word.size() - suffix.size());
+    if (path.isEmpty())
+        return {};
+    if (path == QLatin1String("~") || path.startsWith(QLatin1String("~/")))
+        path = QDir::home().filePath(path.mid(2));
+    else if (!path.startsWith(QLatin1Char('/'))) {
+        // Relative paths need a folder and must look like a path, not a word.
+        if (folder.isEmpty() || !(path.contains(QLatin1Char('/')) || path.contains(QLatin1Char('.'))))
+            return {};
+        path = QDir(folder).filePath(path);
+    }
+    const QFileInfo info(path);
+    if (!info.exists())
+        return {};
+    return QDir::cleanPath(info.absoluteFilePath()) + suffix;
+}
+
+QStringList live_lines(const QStringList& screen) {
+    // A row that is mostly a horizontal box rule: an input box's edge.
+    const auto rule = [](const QString& row) {
+        const auto trimmed = row.trimmed();
+        if (trimmed.size() < 20)
+            return false;
+        qsizetype box = 0;
+        for (const auto c : trimmed)
+            if (c.unicode() >= 0x2500 && c.unicode() <= 0x257F)
+                ++box;
+        return box * 10 >= trimmed.size() * 8;
+    };
+    qsizetype cut = screen.size();
+    // The input box: the lowest rule, then the rule above it (its top edge).
+    qsizetype found = 0;
+    for (qsizetype row = screen.size() - 1; row >= 0 && found < 2; --row) {
+        if (rule(screen.at(row))) {
+            cut = row;
+            ++found;
+        }
+    }
+    QStringList out = screen.mid(0, cut);
+    for (auto& row : out) {
+        while (!row.isEmpty() && row.back().isSpace())
+            row.chop(1);
+    }
+    while (!out.isEmpty() && out.front().trimmed().isEmpty())
+        out.removeFirst();
+    while (!out.isEmpty() && out.back().trimmed().isEmpty())
+        out.removeLast();
+    return out;
+}
+
 QString work_summary(const std::vector<Item>& items, int first, int last, int except) {
     int commands = 0, searches = 0, web = 0, agents = 0, tools = 0;
     QSet<QString> edited, read;
@@ -453,6 +529,8 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded) {
     int open = -1;
     for (int i = 0; i < count; ++i) {
         const auto& item = items[static_cast<size_t>(i)];
+        if (item.dropped)
+            continue;
         if (item.kind == Kind::turn) {
             // The CLI's own "turn took" record ends the turn and times it.
             if (open >= 0) {
@@ -502,8 +580,9 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded) {
                 break;
             }
         for (int i = end + 1; i <= turn.last; ++i) {
-            const auto kind = items[static_cast<size_t>(i)].kind;
-            if (i != turn.final_reply && kind != Kind::turn)
+            const auto& item = items[static_cast<size_t>(i)];
+            // A prompt sent mid-turn stays in view, not folded with the work.
+            if (i != turn.final_reply && item.kind != Kind::turn && item.kind != Kind::prompt && !item.dropped)
                 ++turn.steps;
         }
         if (turn.closed && turn.steps > 0)
@@ -520,6 +599,8 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded) {
     for (int i = 0; i < count; ++i) {
         const int t = turn_of[static_cast<size_t>(i)];
         const auto kind = items[static_cast<size_t>(i)].kind;
+        if (items[static_cast<size_t>(i)].dropped)
+            continue;
         if (t < 0) {
             if (kind != Kind::turn)
                 out.rows.push_back({.item = i, .turn = -1, .in_work = false});
@@ -536,6 +617,8 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded) {
             out.rows.push_back({.item = i, .turn = t, .in_work = false});
             if (i == header_end[static_cast<size_t>(t)])
                 out.rows.push_back({.item = -1, .turn = t, .in_work = false});
+        } else if (kind == Kind::prompt) {
+            out.rows.push_back({.item = i, .turn = t, .in_work = false});
         } else if (i != turn.final_reply && kind != Kind::turn && expanded.contains(turn.start)) {
             out.rows.push_back({.item = i, .turn = t, .in_work = true});
         }
@@ -592,6 +675,41 @@ int ClaudeReader::add(const QByteArray& line) {
             push(make(Kind::notice, clip(content, 600)));
         }
         return static_cast<int>(items_.size()) > first ? first : -1;
+    }
+    // A prompt sent while the agent works waits in Claude Code's queue: shown
+    // at once as queued, then taken in by the running turn (absorbed), sent
+    // on as the next turn (dequeued, and recorded again as a prompt), or
+    // withdrawn.
+    if (type == QLatin1String("queue-operation")) {
+        const auto operation = record.value(QLatin1String("operation")).toString();
+        const auto text = record.value(QLatin1String("content")).toString();
+        if (operation == QLatin1String("enqueue")) {
+            // Background task notices are not the person's words.
+            if (text.trimmed().isEmpty() || text.startsWith(QLatin1Char('<'))) {
+                queued_.emplace_back(text, -1);
+                return -1;
+            }
+            auto item = make(Kind::prompt, {}, clip(text.trimmed(), body_chars));
+            item.queued = true;
+            queued_.emplace_back(text, first);
+            push(std::move(item));
+            return first;
+        }
+        auto waiting = queued_.begin();
+        if (operation != QLatin1String("dequeue") || !text.isEmpty())
+            waiting = std::find_if(queued_.begin(), queued_.end(),
+                                   [&text](const auto& entry) { return entry.first == text; });
+        if (waiting == queued_.end())
+            return -1;
+        const int at = waiting->second;
+        queued_.erase(waiting);
+        if (at < 0)
+            return -1;
+        auto& item = items_[static_cast<size_t>(at)];
+        item.queued = false;
+        if (record.value(QLatin1String("reason")).toString() != QLatin1String("absorbed_mid_turn"))
+            item.dropped = true;
+        return at;
     }
     // Records without a message (titles, modes, file snapshots, attachments)
     // are the CLI's bookkeeping, not conversation.
@@ -685,7 +803,10 @@ int ClaudeReader::add(const QByteArray& line) {
         } else if (kind == QLatin1String("tool_result")) {
             const auto at = tools_.value(block.value(QLatin1String("tool_use_id")).toString(), -1);
             if (at >= 0) {
-                attach_result(items_[static_cast<size_t>(at)], block);
+                auto& step = items_[static_cast<size_t>(at)];
+                attach_result(step, block);
+                if (step.at_ms > 0 && at_ms_ > step.at_ms)
+                    step.duration_ms = at_ms_ - step.at_ms; // call to result
                 changed = changed < 0 ? at : std::min(changed, at);
             }
         } else if (kind == QLatin1String("image")) {
@@ -770,6 +891,9 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
                        : QStringLiteral("Worked");
         case StepsRole: return turn.steps;
         case DetailRole: return turn.summary;
+        case AtRole: return reader_.items()[static_cast<size_t>(turn.start)].at_ms;
+        case DurationRole: return turn.duration_ms;
+        case QueuedRole: return false;
         case ExpandedRole: return expanded_.contains(turn.start);
         case DiffRole: return QVariantList{};
         case AddedRole:
@@ -800,6 +924,9 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
     case AnsweredRole: return item.answered;
     case AfterStepRole: return item.after_step;
     case RecordRole: return item.record;
+    case QueuedRole: return item.queued;
+    case AtRole: return item.at_ms;
+    case DurationRole: return item.duration_ms;
     default: return {};
     }
 }
@@ -820,7 +947,10 @@ QHash<int, QByteArray> TranscriptModel::roleNames() const {
             {RecordRole, "record"},
             {ExpandedRole, "expanded"},
             {InWorkRole, "inWork"},
-            {StepsRole, "steps"}};
+            {StepsRole, "steps"},
+            {QueuedRole, "queued"},
+            {AtRole, "at"},
+            {DurationRole, "duration"}};
 }
 
 namespace {
@@ -1208,6 +1338,92 @@ void TranscriptModel::hoverLink(QQuickTextDocument* target, const QString& link)
         cursor.mergeCharFormat(format);
     }
 }
+
+QString TranscriptModel::pathAt(QQuickTextDocument* source, int position, const QString& folder) const {
+    if (source == nullptr || source->textDocument() == nullptr)
+        return {};
+    return transcript::path_at(source->textDocument()->toPlainText(), position, folder);
+}
+
+namespace {
+struct Editor {
+    const char* id;
+    const char* label;
+    const char* app;     // the bundle, in /Applications or ~/Applications
+    const char* command; // its command line tool inside the bundle, if any
+    bool lines;          // the tool opens "file:line:column"
+};
+constexpr Editor kEditors[] = {
+    {"vscode", "VS Code", "Visual Studio Code.app", "Contents/Resources/app/bin/code", true},
+    {"cursor", "Cursor", "Cursor.app", "Contents/Resources/app/bin/cursor", true},
+    {"zed", "Zed", "Zed.app", "Contents/MacOS/cli", true},
+    {"textedit", "TextEdit", "TextEdit.app", nullptr, false},
+};
+QString installed(const Editor& editor) {
+    for (const auto& base : {QStringLiteral("/Applications"), QDir::home().filePath(QStringLiteral("Applications")),
+                             QStringLiteral("/System/Applications")}) {
+        const auto bundle = QDir(base).filePath(QString::fromUtf8(editor.app));
+        if (QFileInfo(bundle).isDir())
+            return bundle;
+    }
+    return {};
+}
+} // namespace
+
+QVariantList TranscriptModel::editors() const {
+    QVariantList out;
+    for (const auto& editor : kEditors)
+        if (!installed(editor).isEmpty())
+            out.append(QVariantMap{{QStringLiteral("id"), QString::fromUtf8(editor.id)},
+                                   {QStringLiteral("label"), QString::fromUtf8(editor.label)}});
+    out.append(QVariantMap{{QStringLiteral("id"), QStringLiteral("system")},
+                           {QStringLiteral("label"), tr("Default app")}});
+    return out;
+}
+
+bool TranscriptModel::openPath(const QString& target, const QString& choice) const {
+    static const QRegularExpression line(QStringLiteral(R"((:\d+){1,2}$)"));
+    const auto suffix = line.match(target).captured(0);
+    auto path = target.left(target.size() - suffix.size());
+    if (path.startsWith(QLatin1String("file://")))
+        path = QUrl(path).toLocalFile();
+    else if (path.startsWith(QLatin1String("~/")))
+        path = QDir::home().filePath(path.mid(2));
+    const QFileInfo info(path);
+    if (!info.exists())
+        return false;
+    // A folder is shown in the Finder.
+    if (info.isDir())
+        return QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    for (const auto& editor : kEditors) {
+        if (choice != QLatin1String("auto") && choice != QLatin1String(editor.id))
+            continue;
+        const auto bundle = installed(editor);
+        if (bundle.isEmpty())
+            continue;
+        if (editor.command != nullptr) {
+            const auto tool = QDir(bundle).filePath(QString::fromUtf8(editor.command));
+            if (QFileInfo(tool).isExecutable()) {
+                QStringList arguments;
+                if (editor.lines && !suffix.isEmpty() && QLatin1String(editor.id) != QLatin1String("zed"))
+                    arguments << QStringLiteral("-g");
+                arguments << path + (editor.lines ? suffix : QString());
+                if (QProcess::startDetached(tool, arguments))
+                    return true;
+            }
+        }
+        return QProcess::startDetached(QStringLiteral("/usr/bin/open"), {QStringLiteral("-a"), bundle, path});
+    }
+    return QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+}
+
+double TranscriptModel::runningSince() const {
+    if (layout_.turns.empty() || layout_.turns.back().closed)
+        return 0;
+    return static_cast<double>(reader_.items()[static_cast<size_t>(layout_.turns.back().start)].at_ms);
+}
+
+QStringList TranscriptModel::liveLines(const QStringList& screen) const { return transcript::live_lines(screen); }
 
 QVariantMap TranscriptModel::fonts() const {
     // New York and SF Mono ship with macOS but are hidden from the font list;

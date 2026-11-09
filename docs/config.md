@@ -70,12 +70,12 @@ Appearance writes the [visual view](workspace.md#visual-view)'s choices under
 `black`, `claude-light`, `codex-light`), `font` (`system`, `serif`, `avenir`,
 `helvetica`), `codeFont` (`system`, `terminal`, `menlo`), `size` in pixels
 (10 to 40; 0 follows the terminal font), `all`, which shows every Claude
-Code agent as a thread, and `sendOnReturn`, which makes Return send from the
-bar (by default Command-Return sends and Return adds a line). An unknown name
-falls back to the first choice.
+Code agent as a thread, and `editor`, what Command-click on a file path opens
+it in (`vscode`, `cursor`, `zed`, `textedit`, `system`, or `auto` for the first
+of those installed). An unknown name falls back to the first choice.
 
 ```json
-"visual": {"theme": "terminal", "font": "system", "codeFont": "system", "size": 0, "all": false, "sendOnReturn": false}
+"visual": {"theme": "terminal", "font": "system", "codeFont": "system", "size": 0, "all": false, "editor": "auto"}
 ```
 
 ## Alerts

@@ -67,7 +67,15 @@ As in the Codex app, a finished turn folds to your prompt, one **Worked for
 3m 12s** line that sums up the work ("ran 4 commands, edited 2 files, read 3
 files"), and the final reply. Clicking that line opens the thinking and steps
 between, indented; each step then opens on its own to show its command output
-or diff. A turn still running shows every step as it happens.
+or diff, and a step that took a second or more shows how long ("12s", "3m
+4s", "1h 2m", "2d 3h"). A turn still running shows every step as it happens,
+then **Working for 1m 12s** and, under it, the agent's own screen above its
+input box as it streams (thinking, tool output, the reply being written),
+dim and slightly soft; click it to read it all sharp. The CLI saves each
+block only once it is complete, so this live part comes from the terminal and
+gives way to the saved steps as they land. A prompt you send while the agent
+works shows at once, marked queued until the agent takes it in, and stays in
+view when its turn folds.
 
 Above **Commands** in the sidebar, **This agent** switches the selected agent
 between its terminal and the thread, and **All agents** shows every Claude Code
@@ -76,14 +84,15 @@ choice wins over **All agents** until lapis restarts or **All agents** is
 switched again. Both are also in Commands. The terminal keeps running underneath
 but takes no input while covered; Escape brings it back.
 
-The bar at the bottom types to the agent: Command-Return sends and Return starts
-a new line, so a stray Return never sends half a thought (**Return sends** in
-Appearance swaps them). It edits as the terminal does on a Mac: Command-Left and
+The bar at the bottom types to the agent: Return (or Command-Return) sends and
+Shift-Return starts a new line; it is two lines tall at rest and grows to fit
+what you type, and lapis's guess shows there in full. It edits as the terminal does on a Mac: Command-Left and
 -Right go to the line's start and end, Option-Left and -Right move by word,
 Command-Backspace and Option-Backspace delete to the line start and the word
 start, Control-A, E, K, U and W work as in the shell, and Shift extends the
-selection. **Stop** (while it works) interrupts it, as Escape does in the
-terminal. lapis's guess at your next prompt shows in the empty bar; Tab puts it
+selection. While the agent works, the send button is a stop button (■) that
+interrupts the turn, as Escape does in the terminal; Return still sends, and
+the message waits in the agent's queue. lapis's guess at your next prompt shows in the empty bar; Tab puts it
 in the bar to edit, and Tab again sends it. Tab with nothing typed or offered
 moves to the next agent that needs you, as in the terminal. While the agent is
 waiting on a request, the bar says so and sends nothing; answer it in the
@@ -124,7 +133,11 @@ Agents launched before the first style was written pick it up when reloaded.
 Text in the thread selects with the mouse and copies with Command-C as plain
 text that pastes cleanly anywhere: paragraphs, bullets and numbers are kept,
 and no colors or hidden characters come along. Links underline under the
-pointer. Hovering a message shows **Copy** (on prompts, replies and every code
+pointer. Command-click a file path anywhere in the thread (absolute, `~`, or
+relative to the agent's folder, with any `:line` after it) to open it in your
+editor at that line, or a folder in the Finder; Appearance's **Open files in**
+picks VS Code, Cursor, Zed, TextEdit or the default app, from those installed
+(the first installed of VS Code, Cursor and Zed until you choose). Hovering a message shows **Copy** (on prompts, replies and every code
 block or output) and, on a prompt, **Edit**: a new agent that continues from
 just before it, with the prompt waiting unsent in its input. The original
 conversation is never changed.
