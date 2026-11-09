@@ -54,7 +54,6 @@ constexpr std::array<Theme, 7> kThemes = {{
      .activity = "#74a8ff",
      .fault = "#ee7a8a",
      .plenty = "#7bd88f",
-     .scarce = "#ef6b73",
      .heading_tracking = 2.0},
     {.name = "graphite",
      .label = "Graphite",
@@ -72,7 +71,6 @@ constexpr std::array<Theme, 7> kThemes = {{
      .activity = "#6fa8dc",
      .fault = "#ec7b84",
      .plenty = "#8fc98c",
-     .scarce = "#e86a6f",
      .corner_radius = 4,
      .motion_ms = 140,
      .heading_tracking = 0.5},
@@ -92,7 +90,6 @@ constexpr std::array<Theme, 7> kThemes = {{
      .activity = "#0a6558",
      .fault = "#803ba0",
      .plenty = "#2f8f4e",
-     .scarce = "#b3261e",
      .corner_radius = 6,
      .motion_ms = 140,
      .heading_tracking = 0.5},
@@ -111,8 +108,7 @@ constexpr std::array<Theme, 7> kThemes = {{
      .attention_text = "#fdf6e3",
      .activity = "#66d7cd",
      .fault = "#b7bcff",
-     .plenty = "#859900",
-     .scarce = "#e0443f"},
+     .plenty = "#859900"},
     {.name = "amber",
      .label = "Amber",
      .background = "#17120a",
@@ -129,7 +125,6 @@ constexpr std::array<Theme, 7> kThemes = {{
      .activity = "#8fd0dc",
      .fault = "#d09cff",
      .plenty = "#a3c96b",
-     .scarce = "#ff5a4a",
      .corner_radius = 0,
      .motion_ms = 80,
      .mono_chrome = true,
@@ -150,7 +145,6 @@ constexpr std::array<Theme, 7> kThemes = {{
      .activity = "#4dd2ff",
      .fault = "#ff7af5",
      .plenty = "#5cff8a",
-     .scarce = "#ff3b3b",
      .corner_radius = 0,
      .motion_ms = 0,
      .heading_tracking = 0.0},
@@ -173,7 +167,6 @@ constexpr std::array<Theme, 7> kThemes = {{
      .activity = "#6aa6ff",
      .fault = "#ff6f86",
      .plenty = "#6fdc8c",
-     .scarce = "#ff5f6d",
      .heading_tracking = 1.0},
 }};
 
@@ -532,10 +525,7 @@ void KeyMap::apply_defaults() {
     judge_pings_ = true;
     keep_awake_ = true;
     editor_.clear();
-    show_usage_ = true;
     load_visual({});
-    usage_meter_.clear();
-    usage_machines_.clear();
     // Each CLI lists its own models (HarnessModels) unless the config names some.
     agent_defaults_ = {};
     terminal_font_family_.clear();
@@ -628,12 +618,12 @@ bool KeyMap::load() {
     load_harness_arguments(root.value(QStringLiteral("harnessArguments")));
     load_harness_updates(root.value(QStringLiteral("harnessUpdates")));
     load_alerts(root);
-    load_usage(root);
     load_visual(root);
     load_agent_defaults(root.value(QStringLiteral("newAgent")));
-    // "accounts" listed the retired lapis-managed plans and "limitResets" the
-    // retired automatic limit resets; a file that still has them loads, and
-    // saving leaves them as written.
+    // Retired features' settings: "usage" and the older top-level "showUsage"
+    // (the plan usage meter), "accounts" (lapis-managed plans) and
+    // "limitResets" (automatic limit resets). A file that still has them
+    // loads, and saving leaves them as written.
     next_prompt_ = parse_next_prompt(root.value(QStringLiteral("nextPrompt")));
     interaction_log_ = parse_interaction_log(root.value(QStringLiteral("interactionLog")));
     tab_away_ = parse_tab_away(root.value(QStringLiteral("tabAway")));
@@ -758,27 +748,6 @@ void KeyMap::load_alerts(const QJsonObject& root) {
     finish_sound_file_ = sound_file(QStringLiteral("finishedFile"));
     keep_awake_ = root.value(QStringLiteral("keepAwake")).toBool(true);
     editor_ = root.value(QStringLiteral("editor")).toString().left(1024);
-}
-
-// {"usage": {"show": true, "meter": ["codex", "claude", "grok"], "machines":
-// ["devbox"]}}; an older top-level "showUsage" still counts.
-void KeyMap::load_usage(const QJsonObject& root) {
-    const auto usage = root.value(QStringLiteral("usage")).toObject();
-    show_usage_ = usage.value(QStringLiteral("show"))
-                      .toBool(root.value(QStringLiteral("showUsage")).toBool(true));
-    const auto names = [](const QJsonValue& value, qsizetype longest) {
-        QStringList list;
-        for (const auto& item : value.toArray()) {
-            const auto name = item.toString().trimmed();
-            // Names only: nothing that could be read as an option.
-            if (!name.isEmpty() && name.size() <= longest && !name.startsWith(QLatin1Char('-')) &&
-                !name.contains(QLatin1Char(' ')) && !list.contains(name) && list.size() < 32)
-                list << name;
-        }
-        return list;
-    };
-    usage_meter_ = names(usage.value(QStringLiteral("meter")), 32);
-    usage_machines_ = names(usage.value(QStringLiteral("machines")), 128);
 }
 
 namespace {
@@ -933,7 +902,6 @@ QVariantList KeyMap::themes() const {
             {QStringLiteral("activity"), QString::fromLatin1(theme.activity)},
             {QStringLiteral("fault"), QString::fromLatin1(theme.fault)},
             {QStringLiteral("plenty"), QString::fromLatin1(theme.plenty)},
-            {QStringLiteral("scarce"), QString::fromLatin1(theme.scarce)},
             {QStringLiteral("cornerRadius"), theme.corner_radius},
             {QStringLiteral("motionDuration"), theme.motion_ms},
             {QStringLiteral("monoChrome"), theme.mono_chrome},
@@ -1161,10 +1129,6 @@ bool KeyMap::persist() {
     alerts.insert(QStringLiteral("notify"), notify_);
     root.insert(QStringLiteral("alerts"), alerts);
     root.insert(QStringLiteral("keepAwake"), keep_awake_);
-    root.remove(QStringLiteral("showUsage"));
-    QJsonObject usage = root.value(QStringLiteral("usage")).toObject();
-    usage.insert(QStringLiteral("show"), show_usage_);
-    root.insert(QStringLiteral("usage"), usage);
     QJsonObject visual = root.value(QStringLiteral("visual")).toObject();
     visual.insert(QStringLiteral("theme"), visual_theme_);
     visual.insert(QStringLiteral("font"), visual_font_);
@@ -1205,21 +1169,13 @@ bool KeyMap::setKeepAwake(bool on) {
     keep_awake_ = on;
     return save();
 }
-bool KeyMap::setShowUsage(bool on) {
-    show_usage_ = on;
-    return save();
-}
 
 KeyMap::RemoteSettings KeyMap::remoteSettings() const {
-    return {.keepAwake = keep_awake_,
-            .finishSound = finish_sound_,
-            .notify = notify_,
-            .showUsage = show_usage_};
+    return {.keepAwake = keep_awake_, .finishSound = finish_sound_, .notify = notify_};
 }
 
 bool KeyMap::applyRemoteSettings(const RemoteSettingsPatch& changes, QString* diagnostic) {
-    const bool has_change =
-        changes.keepAwake || changes.finishSound || changes.notify || changes.showUsage;
+    const bool has_change = changes.keepAwake || changes.finishSound || changes.notify;
     if (!has_change)
         return true;
 
@@ -1230,8 +1186,6 @@ bool KeyMap::applyRemoteSettings(const RemoteSettingsPatch& changes, QString* di
         finish_sound_ = *changes.finishSound;
     if (changes.notify)
         notify_ = *changes.notify;
-    if (changes.showUsage)
-        show_usage_ = *changes.showUsage;
 
     // Observers must not see a batch that could still be rolled back. On
     // failure the file remains unchanged, so restore the fields and keep the
@@ -1245,7 +1199,6 @@ bool KeyMap::applyRemoteSettings(const RemoteSettingsPatch& changes, QString* di
     keep_awake_ = previous.keepAwake;
     finish_sound_ = previous.finishSound;
     notify_ = previous.notify;
-    show_usage_ = previous.showUsage;
     emit changed();
     return false;
 }

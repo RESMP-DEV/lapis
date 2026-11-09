@@ -27,8 +27,6 @@ add_library(lapis_desktop_view STATIC
     src/agent_search.cpp src/agent_search.hpp
     src/conversation_index.cpp src/conversation_index.hpp
     src/terminals.cpp src/terminals.hpp
-    src/usage.cpp src/usage.hpp
-    src/usage_limits.cpp src/usage_limits.hpp
     src/next_prompt.cpp src/next_prompt.hpp
     src/tab_ranker.cpp src/tab_ranker.hpp
     src/agent_state.cpp src/agent_state.hpp src/attention_order.hpp
@@ -69,10 +67,6 @@ if(APPLE)
         target_link_libraries(lapis_desktop_view PUBLIC "-F${sparkle_directory}" "-framework Sparkle")
     endif()
 endif()
-# The token counter another machine runs over ssh, compiled in as text.
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/count_tokens.py)
-file(READ src/count_tokens.py LAPIS_COUNT_TOKENS_SCRIPT)
-configure_file(src/count_tokens.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/count_tokens.hpp" @ONLY)
 # The next-prompt helper, run here or sent to another machine, compiled in as text.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/next_prompt.py)
 file(READ src/next_prompt.py LAPIS_NEXT_PROMPT_SCRIPT)
@@ -103,7 +97,7 @@ if(APPLE)
     target_link_libraries(lapis_desktop PRIVATE "-framework AppKit")
 endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
-qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml)
+qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml)
 # A development bundle has its own identity, so macOS never mistakes it for
 # the installed app: `open` would otherwise bring the installed lapis forward,
 # and the two would share notification and preference state.
@@ -216,10 +210,6 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_agent_state_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME agent-state COMMAND lapis_agent_state_tests)
     set_tests_properties(agent-state PROPERTIES TIMEOUT 30)
-    add_executable(lapis_usage_tests tests/usage_test.cpp)
-    target_link_libraries(lapis_usage_tests PRIVATE lapis_project_options lapis_desktop_view)
-    add_test(NAME usage COMMAND lapis_usage_tests)
-    set_tests_properties(usage PROPERTIES TIMEOUT 60)
     add_executable(lapis_workspace_tests tests/workspace_test.cpp)
     target_link_libraries(lapis_workspace_tests PRIVATE lapis_project_options lapis_desktop_view)
     # Closing an agent is exercised against the real session service, and the
@@ -380,4 +370,4 @@ target_link_libraries(lapis_attention_ui_probe PRIVATE lapis_project_options lap
     Qt6::QuickControls2)
 target_compile_definitions(lapis_attention_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
 qt_add_resources(lapis_attention_ui_probe attention_qml PREFIX "/" FILES
-    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml)
+    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml)

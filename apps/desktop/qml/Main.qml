@@ -39,7 +39,6 @@ ApplicationWindow {
     readonly property color activityColor: appearance ? appearance.activity : "#74a8ff"
     readonly property color faultColor: appearance ? appearance.fault : "#ee7a8a"
     readonly property color plentyColor: appearance && appearance.plenty ? appearance.plenty : "#6fdc8c"
-    readonly property color scarceColor: appearance && appearance.scarce ? appearance.scarce : "#ff5f6d"
     readonly property color paneColor: backgroundColor
     readonly property int chromeRadius: appearance ? appearance.cornerRadius : 2
     readonly property int motionDuration: appearance ? appearance.motionDuration : 100
@@ -83,7 +82,6 @@ ApplicationWindow {
             || searchDialog.visible
             || resumeDialog.visible
             || terminalPicker.visible
-            || usageDialog.visible
             || toolsDialog.visible
             || settingsDialog.visible
             || attentionDialog.visible
@@ -394,31 +392,14 @@ ApplicationWindow {
         workspace.resumeAgent(conversation.directory, projectTitle(conversation.directory),
                               conversation.harness, conversation.id, mode)
     }
-    function openUsageDialog() {
-        if (!interactionArmed || dialogsVisible() || !usageAvailable) return
-        usageDialog.open()
-    }
     function openToolsDialog() {
         if (!interactionArmed || dialogsVisible() || !toolsAvailable) return
         toolsDialog.open()
     }
-    readonly property bool usageAvailable: typeof usage !== "undefined" && usage !== null
     // A named window property prevents the pane's own `tools` model from
     // resolving as the context object and forming an engine binding loop.
     readonly property var toolStatus: typeof tools !== "undefined" ? tools : null
     readonly property bool toolsAvailable: toolStatus !== null
-    readonly property bool usageShown: usageAvailable && typeof keymap !== "undefined" && keymap !== null
-                                       && keymap.showUsage
-    // Each signed-in plan at its tightest window, for the meter under the
-    // categories; the config picks which and in what order.
-    function usageRows() {
-        return usageShown ? usage.meter : []
-    }
-    // A usage gauge reads what is left: green with plenty, the attention
-    // colour under 30%, red under 10%.
-    function gaugeColor(left) {
-        return left < 10 ? scarceColor : left < 30 ? attentionColor : plentyColor
-    }
     // Built when a dialog that lists them is open: as a property it would be
     // rebuilt, and the closed lists' delegates with it, on every switch.
     function commandEntries() {
@@ -433,7 +414,6 @@ ApplicationWindow {
         add("newAgent", qsTr("New agent"), "newAgent", true, "", () => window.openNewAgentDialog())
         add("newCategory", qsTr("New category"), "newCategory", true, "", () => window.openCategoryDialog("add"))
         add("searchAgents", qsTr("Find an agent"), "searchAgents", true, "", () => window.openSearchDialog())
-        add("openUsage", qsTr("Usage"), "", usageAvailable, qsTr("Usage is not available here"), () => window.openUsageDialog())
         add("openTools", qsTr("Tools"), "", toolsAvailable, qsTr("The tools pane is not available here"), () => window.openToolsDialog())
         add("toggleSidebar", sidebarExpanded ? qsTr("Hide sidebar") : qsTr("Show sidebar"), "toggleSidebar", true, "", () => window.toggleSidebar())
         add("togglePreviews", previewsEnabled ? qsTr("Hide agent previews") : qsTr("Show agent previews"), "togglePreviews", true, "", () => window.togglePreviews())
@@ -602,7 +582,7 @@ ApplicationWindow {
     }
 
     function dialogsVisible() {
-        return commandsDialog.visible || searchDialog.visible || resumeDialog.visible || terminalPicker.visible || usageDialog.visible || toolsDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
+        return commandsDialog.visible || searchDialog.visible || resumeDialog.visible || terminalPicker.visible || toolsDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
                 || closeAgentDialog.visible || categoryDialog.visible || renameAgentDialog.visible
     }
 
@@ -1313,29 +1293,6 @@ ApplicationWindow {
         onChosen: function(conversation) { Qt.callLater(function() { window.resumeConversation(conversation) }) }
         onClosed: preview.deferTerminalFocus()
     }
-    Usage {
-        id: usageDialog
-        engine: window.usageAvailable ? usage : null
-        surfaceColor: window.surfaceColor
-        cardColor: window.cardColor
-        textColor: window.textColor
-        mutedColor: window.mutedTextColor
-        accentColor: window.focusedBorderColor
-        faultColor: window.faultColor
-        plentyColor: window.plentyColor
-        scarceColor: window.scarceColor
-        attentionColor: window.attentionColor
-        borderColor: window.borderColor
-        selectionColor: window.focusedColor
-        monoFamily: window.monoFamily
-        uiFont: window.chromeFont
-        readoutFont: window.readoutFont
-        chromeRadius: window.chromeRadius
-        motionDuration: window.motionDuration
-        motionEnabled: window.motionEnabled
-        onClosed: preview.deferTerminalFocus()
-    }
-
     Tools {
         id: toolsDialog
         engine: window.toolStatus
@@ -1903,7 +1860,6 @@ ApplicationWindow {
         motionEnabled: window.motionEnabled
         finishSound: (typeof keymap !== "undefined" && keymap !== null) ? keymap.finishSound : true
         keepAwake: (typeof keymap !== "undefined" && keymap !== null) ? keymap.keepAwake : true
-        showUsage: (typeof keymap !== "undefined" && keymap !== null) ? keymap.showUsage : true
         notify: (typeof keymap !== "undefined" && keymap !== null) ? keymap.notify : true
         loginAvailable: window.desktopAvailable && desktop.launchAtLoginAvailable
         launchAtLogin: window.desktopAvailable && desktop.launchAtLogin
@@ -1927,7 +1883,6 @@ ApplicationWindow {
         onCheckUpdates: if (window.desktopAvailable) desktop.checkForUpdates()
         onFinishSoundChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setFinishSound(on) }
         onKeepAwakeChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setKeepAwake(on) }
-        onShowUsageChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setShowUsage(on) }
         onChimePlayed: function(needsYou) { if (typeof alerts !== "undefined" && alerts !== null) alerts.preview(needsYou) }
         onClosed: preview.deferTerminalFocus()
         onFontFamilyChosen: function(name) {
@@ -3015,91 +2970,6 @@ ApplicationWindow {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
                                         Layout.alignment: Qt.AlignVCenter
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                // Plan usage: each CLI's tightest window, opening the details.
-                Button {
-                    id: usageMeter
-                    objectName: "usageMeter"
-                    readonly property var rows: window.usageRows()
-                    visible: rows.length > 0
-                    Layout.fillWidth: true
-                    implicitHeight: meterRows.implicitHeight + 14
-                    padding: 0
-                    focusPolicy: Qt.NoFocus
-                    hoverEnabled: true
-                    enabled: window.interactionArmed
-                    onClicked: window.openUsageDialog()
-                    Accessible.name: qsTr("Usage: %1").arg(rows.map(row => qsTr("%1 %2% left").arg(row.name).arg(Math.round(Math.max(0, 100 - row.percent)))).join(", "))
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 600
-                    ToolTip.text: qsTr("Plan usage")
-
-                    background: Rectangle {
-                        radius: window.chromeRadius
-                        color: usageMeter.hovered ? window.hoveredCardColor : window.surfaceColor
-                        Behavior on color {
-                            enabled: window.motionEnabled
-                            ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
-                        }
-                    }
-                    contentItem: Item {
-                        ColumnLayout {
-                            id: meterRows
-                            anchors.fill: parent
-                            anchors.topMargin: 7
-                            anchors.bottomMargin: 7
-                            anchors.leftMargin: 10
-                            anchors.rightMargin: 6
-                            spacing: 6
-                            Repeater {
-                                model: usageMeter.rows
-                                delegate: ColumnLayout {
-                                    id: meterRow
-                                    required property var modelData
-                                    // What is left of the tightest window.
-                                    readonly property real remaining: Math.max(0, Math.min(100, 100 - modelData.percent))
-                                    readonly property color tone: window.gaugeColor(remaining)
-                                    objectName: "usageMeter_" + modelData.id
-                                    Layout.fillWidth: true
-                                    spacing: 3
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 6
-                                        PlainText {
-                                            text: meterRow.modelData.name
-                                            color: usageMeter.hovered ? window.textColor : window.mutedTextColor
-                                            font.pixelSize: window.readoutFont
-                                            elide: Text.ElideRight
-                                            Layout.fillWidth: true
-                                            Layout.minimumWidth: 0
-                                        }
-                                        PlainText {
-                                            objectName: "usageLeft_" + meterRow.modelData.id
-                                            text: qsTr("%1% left %2").arg(Math.round(meterRow.remaining)).arg(meterRow.modelData.label)
-                                            color: meterRow.tone
-                                            font.family: window.monoFamily
-                                            font.pixelSize: window.readoutFont
-                                        }
-                                    }
-                                    Rectangle {
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: 2
-                                        color: window.borderColor
-                                        Rectangle {
-                                            objectName: "usageBar_" + meterRow.modelData.id
-                                            width: parent.width * meterRow.remaining / 100
-                                            height: parent.height
-                                            color: meterRow.tone
-                                            Behavior on width {
-                                                enabled: window.motionEnabled
-                                                NumberAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
-                                            }
-                                        }
                                     }
                                 }
                             }

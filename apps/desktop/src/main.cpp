@@ -17,7 +17,6 @@
 #include "tool_status.hpp"
 #include "ui_capture.hpp"
 #include "ui_preview.hpp"
-#include "usage.hpp"
 #include "workspace.hpp"
 #include "workspace_control.hpp"
 
@@ -421,10 +420,6 @@ QString cli_home(const char* variable, const QString& fallback) {
     const auto set = qEnvironmentVariable(variable);
     return set.isEmpty() ? QDir::home().filePath(fallback) : set;
 }
-lapis::desktop::TokenLedger::Roots transcript_roots() {
-    return {cli_home("CODEX_HOME", QStringLiteral(".codex")) + QStringLiteral("/sessions"),
-            cli_home("CLAUDE_CONFIG_DIR", QStringLiteral(".claude")) + QStringLiteral("/projects")};
-}
 // Past Claude and Codex conversations, to resume one and to put the folders
 // with the most recent work first in folder pickers; the running agents'
 // folders count too.
@@ -597,22 +592,6 @@ QUrl qml_source(const QCommandLineParser& parser) {
 QString target_screen(const QCommandLineParser& parser) {
     return parser.isSet(QStringLiteral("screen")) ? parser.value(QStringLiteral("screen"))
                                                   : qEnvironmentVariable("LAPIS_SCREEN");
-}
-// A CLI usage asks, or ssh, as found on this Mac.
-QString usage_program(const QString& id) {
-    return id == QLatin1String("ssh") ? QStandardPaths::findExecutable(id)
-                                      : lapis::desktop::harness_program(id);
-}
-// Usage asks the CLIs only while its setting is on, on the machines and in
-// the order the config names.
-void follow_usage_setting(lapis::desktop::Usage& usage, const lapis::desktop::KeyMap& keymap) {
-    const auto show = [&usage, &keymap] {
-        usage.setMachines(keymap.usageMachines());
-        usage.setMeterOrder(keymap.usageMeter());
-        usage.setActive(keymap.showUsage());
-    };
-    show();
-    QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &usage, show);
 }
 
 // Predicts what the person will type next to an agent that finished a turn,
@@ -985,12 +964,6 @@ int main(int argc, char** argv) {
         DesktopActions desktop(keymap);
         const bool hide_on_close = closes_to_dock(isolated, parser);
         AgentSearch agentSearch(&workspace);
-        // Plan limits and token totals, only while the setting is on and only
-        // in the real workspace. Each CLI keeps its transcripts where its own
-        // home variable says.
-        std::optional<Usage> usage;
-        if (!isolated)
-            follow_usage_setting(usage.emplace(&usage_program, transcript_roots()), keymap);
         // The canonical harness catalog's read-only status answers. It exists
         // in the isolated fixture too, so the pane is testable without config.
         ToolStatus toolStatus;
@@ -1029,7 +1002,6 @@ int main(int argc, char** argv) {
                                    .keymap = &keymap,
                                    .alerts = alerts ? &*alerts : nullptr,
                                    .agentSearch = &agentSearch,
-                                   .usage = usage ? &*usage : nullptr,
                                    .tools = &toolStatus,
                                    .desktop = &desktop,
                                    .conversations = conversations.get(),

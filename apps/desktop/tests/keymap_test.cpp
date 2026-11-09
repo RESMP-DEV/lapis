@@ -69,7 +69,7 @@ void themes_are_complete() {
         const char* fields[] = {theme.background, theme.surface,        theme.card,
                                 theme.border,     theme.text,           theme.muted_text,
                                 theme.attention,  theme.focused_border, theme.activity,
-                                theme.fault,      theme.plenty,         theme.scarce};
+                                theme.fault,      theme.plenty};
         for (const char* value : fields)
             require(value != nullptr && *value == '#', "theme colour must be a hex literal");
         // Keyboard focus, activity, pending requests and faults each keep one
@@ -81,9 +81,6 @@ void themes_are_complete() {
             for (std::size_t b = a + 1; b < semantic.size(); ++b)
                 require(semantic.at(a).compare(semantic.at(b), Qt::CaseInsensitive) != 0,
                         "focus, activity, attention and fault colours must differ");
-        require(QString::fromLatin1(theme.plenty)
-                        .compare(QString::fromLatin1(theme.scarce), Qt::CaseInsensitive) != 0,
-                "a usage gauge tells plenty from scarce");
         // Names are the config keys, so a duplicate would make one unreachable.
         for (std::size_t j = i + 1; j < themes.size(); ++j)
             require(QString::fromLatin1(themes[i].name) != QString::fromLatin1(themes[j].name),
@@ -858,7 +855,7 @@ void terminal_font_persists_and_rolls_back() {
             "each invalid font value is reported");
 }
 
-// Remote settings are one KeyMap-owned transaction, not four separately
+// Remote settings are one KeyMap-owned transaction, not three separately
 // persisted setters. A failed save leaves both memory and disk where they were.
 void remote_settings_are_transactional() {
     QTemporaryDir directory;
@@ -873,12 +870,11 @@ void remote_settings_are_transactional() {
     QObject::connect(&keymap, &KeyMap::changed, [&changes] { ++changes; });
     const KeyMap::RemoteSettingsPatch batch{.keepAwake = std::optional(false),
                                             .finishSound = std::optional(false),
-                                            .notify = std::optional(false),
-                                            .showUsage = std::optional(false)};
+                                            .notify = std::optional(false)};
     require(keymap.applyRemoteSettings(batch), "a valid settings batch applies");
     require(changes == 1, "one successful settings batch publishes once");
     const auto saved = keymap.remoteSettings();
-    require(!saved.keepAwake && !saved.finishSound && !saved.notify && !saved.showUsage,
+    require(!saved.keepAwake && !saved.finishSound && !saved.notify,
             "every value in a valid settings batch is applied");
     const auto written = read_config(path);
     require(!written.value(QStringLiteral("keepAwake")).toBool(true) &&
@@ -902,8 +898,7 @@ void remote_settings_are_transactional() {
             "a failed settings save refuses the whole batch");
     require(keymap.remoteSettings().keepAwake == before_failure.keepAwake &&
                 keymap.remoteSettings().finishSound == before_failure.finishSound &&
-                keymap.remoteSettings().notify == before_failure.notify &&
-                keymap.remoteSettings().showUsage == before_failure.showUsage,
+                keymap.remoteSettings().notify == before_failure.notify,
             "a failed settings save rolls back every field it touched");
     require(diagnostic.contains(QStringLiteral("Could not save")),
             "a failed settings save reports its diagnostic");
@@ -921,9 +916,8 @@ void config_reloads_when_edited_elsewhere() {
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
     const QDir dir(directory.path());
-    const QString path = write_config(
-        dir, R"({"version": 1, "theme": "graphite", "keepAwake": false, "showUsage": false,
-                 "usage": {"meter": ["grok", "codex", "grok"], "machines": ["devbox", "-oProxy=x", "two words"]},
+    const QString path =
+        write_config(dir, R"({"version": 1, "theme": "graphite", "keepAwake": false,
                  "alerts": {"sound": false, "repeat": 5},
                  "newAgent": {"harness": "claude", "folder": "~/dev", "mode": "full",
                               "machines": {"devbox": {"folder": "~/work"}},
@@ -945,12 +939,9 @@ void config_reloads_when_edited_elsewhere() {
                 !defaults.models.contains(QStringLiteral("claude")),
             "configured models replace what a CLI lists; names that look like options are dropped");
     // "sound" and "repeat" are the retired request chime's: ignored, not reported.
-    require(keymap.finishSound() && !keymap.keepAwake() && !keymap.showUsage() &&
+    require(keymap.finishSound() && !keymap.keepAwake() &&
                 !keymap.diagnostic().contains(QStringLiteral("alerts")),
-            "alerts, keeping awake and usage are read, with defaults for what is missing");
-    require(keymap.usageMeter() == QStringList({QStringLiteral("grok"), QStringLiteral("codex")}) &&
-                keymap.usageMachines() == QStringList{QStringLiteral("devbox")},
-            "the meter's plans and the dashboard's machines, without anything read as an option");
+            "alerts and keeping awake are read, with defaults for what is missing");
 
     int changes = 0;
     QObject::connect(&keymap, &KeyMap::changed, [&changes] { ++changes; });
@@ -970,13 +961,12 @@ void config_reloads_when_edited_elsewhere() {
     require(replacement.commit(), "commit the replacement");
     require(settle([&keymap] { return keymap.themeName() == QStringLiteral("amber"); }, 3000),
             "an edit elsewhere applies without a restart");
-    require(keymap.agentDefaults().harness.isEmpty() && keymap.keepAwake() && keymap.showUsage(),
+    require(keymap.agentDefaults().harness.isEmpty() && keymap.keepAwake(),
             "settings removed from the file return to their defaults");
     settle([] { return false; }, 400); // let the replacement's events pass
     changes = 0;
-    require(keymap.setFinishSound(false) && keymap.setKeepAwake(false) &&
-                keymap.setShowUsage(false),
-            "save alert and usage choices");
+    require(keymap.setFinishSound(false) && keymap.setKeepAwake(false),
+            "save alert and keep-awake choices");
     const int saved = changes;
     settle([] { return false; }, 600);
     require(changes == saved && !keymap.finishSound(), "the window's own save is not read back");
@@ -986,11 +976,7 @@ void config_reloads_when_edited_elsewhere() {
                     .value(QStringLiteral("finished"))
                     .toBool(true) &&
                 !written.value(QStringLiteral("keepAwake")).toBool(true) &&
-                !written.contains(QStringLiteral("showUsage")) &&
-                !written.value(QStringLiteral("usage"))
-                     .toObject()
-                     .value(QStringLiteral("show"))
-                     .toBool(true) &&
+                !written.contains(QStringLiteral("usage")) &&
                 written.value(QStringLiteral("theme")).toString() == QStringLiteral("amber"),
             "alert choices are written beside the rest of the config");
 }
@@ -1006,7 +992,9 @@ void retired_plan_settings_survive() {
             "accounts": {"switchAt": 90,
                          "claude": [{"name": "mine", "email": "me@example.com", "home": "local"},
                                     {"name": "spare", "machines": ["local", "devbox"]}],
-                         "codex": [{"name": "work", "email": "work@example.com"}]}})");
+                         "codex": [{"name": "work", "email": "work@example.com"}]},
+            "usage": {"show": false, "meter": ["codex"], "machines": ["devbox"]},
+            "showUsage": true})");
     const auto before = read_config(path);
     KeyMap keymap;
     keymap.setSourcePathForTesting(path);
@@ -1014,7 +1002,7 @@ void retired_plan_settings_survive() {
             "retired settings load without a diagnostic");
     require(keymap.setFinishSound(false), "another setting saves");
     const auto after = read_config(path);
-    for (const auto* key : {"limitResets", "accounts"})
+    for (const auto* key : {"limitResets", "accounts", "usage", "showUsage"})
         require(after.value(QLatin1String(key)) == before.value(QLatin1String(key)),
                 "saving leaves a retired setting as written");
 }

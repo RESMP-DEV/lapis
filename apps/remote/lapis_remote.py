@@ -2401,17 +2401,17 @@ def category_route(parts, action):
 
 
 # The Mac settings the phone can change, which the Mac's Settings window also
-# sets: staying awake for the phone, the Mac's alerts, and plan usage. How the
-# Mac's window looks stays the Mac's to choose.
+# sets: staying awake for the phone and the Mac's alerts. How the Mac's window
+# looks stays the Mac's to choose.
 PHONE_SETTINGS = {
     "keepAwake": bool,
     "finishSound": bool,
     "notify": bool,
-    "showUsage": bool,
 }
-# The retired repeating request chime's settings, which phone builds from
-# before its removal still send: they are dropped rather than refused.
-RETIRED_PHONE_SETTINGS = frozenset({"alertSound", "alertRepeat"})
+# Settings of retired features (the repeating request chime and the plan
+# usage meter), which phone builds from before their removal still send: they
+# are dropped rather than refused.
+RETIRED_PHONE_SETTINGS = frozenset({"alertSound", "alertRepeat", "showUsage"})
 
 
 class Handler(BaseHTTPRequestHandler):

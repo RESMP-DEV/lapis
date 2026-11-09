@@ -1010,12 +1010,11 @@ def main():
             if not (started and closed and made):
                 return 1
         if not args.only or "testMacSettingsFromThePhone" in args.only:
-            # The phone turned plan usage off and raised the chime count.
+            # The phone turned background notifications off.
             saved = json.loads((runtime / "lapis.json").read_text())
-            usage = saved.get("usage", {}).get("show")
-            repeat = saved.get("alerts", {}).get("repeat")
-            print(f"Mac: lapis.json after the phone: usage {usage}, chimes {repeat}")
-            if usage is not False or repeat != 4:
+            notify = saved.get("alerts", {}).get("notify")
+            print(f"Mac: lapis.json after the phone: notify {notify}")
+            if notify is not False:
                 return 1
         return outcome or unit_outcome
     finally:

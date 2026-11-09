@@ -4127,20 +4127,22 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
         askVersioned(workspace, {{QStringLiteral("request"), QStringLiteral("settings")}})
             .value(QStringLiteral("settings"))
             .toObject();
-    require(shown.value(QStringLiteral("keepAwake")).toBool() &&
-                shown.contains(QStringLiteral("showUsage")),
+    require(shown.value(QStringLiteral("keepAwake")).toBool(),
             "the phone reads the Mac's settings");
     // Older phone builds decode the retired request chime's two settings and
-    // still send them: the answer carries them as off, and changes are ignored.
+    // the retired usage meter's, and still send them: the answer carries them
+    // as off, and changes are ignored.
     require(shown.value(QStringLiteral("alertSound")) == QJsonValue(false) &&
-                shown.value(QStringLiteral("alertRepeat")) == QJsonValue(1),
+                shown.value(QStringLiteral("alertRepeat")) == QJsonValue(1) &&
+                shown.value(QStringLiteral("showUsage")) == QJsonValue(false),
             "the answer keeps the retired settings an older phone requires");
     const auto changed = askVersioned(
         workspace,
         {{QStringLiteral("request"), QStringLiteral("changeSettings")},
          {QStringLiteral("settings"), QJsonObject{{QStringLiteral("keepAwake"), false},
                                                   {QStringLiteral("alertSound"), true},
-                                                  {QStringLiteral("alertRepeat"), 11}}}});
+                                                  {QStringLiteral("alertRepeat"), 11},
+                                                  {QStringLiteral("showUsage"), true}}}});
     require(answeredOk(changed) && !keymap.keepAwake() &&
                 !changed.value(QStringLiteral("settings"))
                      .toObject()
@@ -4148,7 +4150,10 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
                      .toBool() &&
                 changed.value(QStringLiteral("settings"))
                         .toObject()
-                        .value(QStringLiteral("alertSound")) == QJsonValue(false),
+                        .value(QStringLiteral("alertSound")) == QJsonValue(false) &&
+                changed.value(QStringLiteral("settings"))
+                        .toObject()
+                        .value(QStringLiteral("showUsage")) == QJsonValue(false),
             "the phone changes them, and the retired settings are ignored");
     require(file.open(QIODevice::ReadOnly) && !QJsonDocument::fromJson(file.readAll())
                                                    .object()
@@ -4200,7 +4205,7 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
                                                  {QStringLiteral("finishSound"), true},
                                                  {QStringLiteral("alertRepeat"), 1},
                                                  {QStringLiteral("notify"), true},
-                                                 {QStringLiteral("showUsage"), true}}) &&
+                                                 {QStringLiteral("showUsage"), false}}) &&
                 keymap.remoteSettings() == before_failure,
             "a failed save echoes unchanged settings and preserves memory");
     require(save_failed.value(QStringLiteral("error"))

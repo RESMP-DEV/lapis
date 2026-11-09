@@ -139,13 +139,12 @@ struct FolderPayload: Codable {
 }
 
 // The Mac's settings the phone can change, kept in lapis.json there: staying
-// awake so the phone can reach it, its alerts, and its plan usage meter. How
-// the Mac's window looks is set on the Mac.
+// awake so the phone can reach it, and its alerts. How the Mac's window looks
+// is set on the Mac.
 struct MacSettings: Codable, Equatable {
     var keepAwake: Bool
     var finishSound: Bool
     var notify: Bool
-    var showUsage: Bool
 }
 
 struct StartedAgent: Decodable {

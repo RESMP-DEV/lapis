@@ -374,14 +374,6 @@ void pump(int milliseconds) {
     }
 }
 
-void wait_for(const std::function<bool()>& condition, const std::string& message) {
-    QElapsedTimer clock;
-    clock.start();
-    while (!condition() && clock.elapsed() < 5000)
-        pump(10);
-    require(condition(), message);
-}
-
 QQuickItem* find_item(QQuickItem* root, const QString& name) {
     if (root == nullptr)
         return nullptr;
@@ -394,7 +386,7 @@ QQuickItem* find_item(QQuickItem* root, const QString& name) {
 }
 
 // The production window, offscreen: a click on a strip card names the card's
-// agent, and the real usage dialog holds recording.
+// agent.
 void production_window_is_described() {
     Fixture fixture;
     fixture.recorder->setSettings({.enabled = true});
@@ -421,17 +413,6 @@ void production_window_is_described() {
                         Qt::NoModifier);
     QCoreApplication::sendEvent(window, &release);
     pump(20);
-    for (const auto* name : {"usageDialog"}) {
-        auto* dialog = window->findChild<QObject*>(QLatin1String(name));
-        require(dialog != nullptr, std::string("the window has ") + name);
-        QMetaObject::invokeMethod(dialog, "open");
-        wait_for([dialog] { return dialog->property("visible").toBool(); },
-                 std::string(name) + " opened");
-        fixture.key(QEvent::KeyPress, Qt::Key_Q, QStringLiteral("q"));
-        QMetaObject::invokeMethod(dialog, "close");
-        wait_for([dialog] { return !dialog->property("visible").toBool(); },
-                 std::string(name) + " closed");
-    }
     // Every move here is a recorded sample, so each pays the hit test.
     QElapsedTimer sampled;
     sampled.start();
@@ -453,12 +434,6 @@ void production_window_is_described() {
     require(target.value("area") == "strip" && target.value("session") == id &&
                 mouse[0].value("button") == "left",
             "the click names the strip and the card's agent");
-    require(of_kind(lines, QStringLiteral("key")).empty(),
-            "keys typed with a credential dialog open are not recorded");
-    int gaps = 0;
-    for (const auto& dialog : of_kind(lines, QStringLiteral("dialog")))
-        gaps += dialog.contains("unrecordedMs") ? 1 : 0;
-    require(gaps == 1, "the credential dialog leaves one gap record");
 }
 
 // Microseconds of GUI-thread time per key event, recording against not.

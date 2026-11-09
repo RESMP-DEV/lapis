@@ -1053,7 +1053,6 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `tile-layout` | Desktop-enabled | Tile placement, navigation and layout bounds |
 | `cell-shapes` | Desktop-enabled | Block, box and quadrant geometry |
 | `harness-models` | Desktop-enabled | Model discovery, parsing, defaults and result bounds |
-| `usage` | Desktop-enabled | Usage parsing, aggregation and provider state |
 | `ui-preview` | Desktop-enabled | Qt reload, screen selection, passive attention, modal response ownership, draft/IME preservation, input and render lifecycle |
 | `appearance-input` | Desktop-enabled, native GUI | Configured settings shortcut, modal focus, all theme/layout/density controls, persistence and shortcut reload |
 | `history-store` | Desktop-enabled | Styled page round trips, per-session/global quotas, corruption, interrupted-write cleanup and file-size write failure recovery |

@@ -93,8 +93,6 @@ struct SettingsView: View {
                     .accessibilityIdentifier("finishSound")
                 Toggle("Notify from the background", isOn: macSwitch(\.notify, "notify"))
                     .accessibilityIdentifier("notify")
-                Toggle("Show plan usage", isOn: macSwitch(\.showUsage, "showUsage"))
-                    .accessibilityIdentifier("showUsage")
             } header: {
                 Text("On the Mac")
             } footer: {
