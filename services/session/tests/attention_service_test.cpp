@@ -483,9 +483,10 @@ void startup_settling_does_not_block_the_parser() {
     require(!Access::publish_timer_active(service));
     QElapsedTimer drain;
     drain.start();
-    // Sanitizer runtimes can more than double parser-drain time. The property
-    // under test is that parsing completes before the settle window publishes.
-    while (!Access::pending_output(service).isEmpty() && drain.elapsed() < 1000)
+    // Sanitizer runtimes can extend this drain by more than an order of
+    // magnitude. Keep the wait bounded, but large enough that the assertion
+    // still tests parser progress rather than scheduler speed.
+    while (!Access::pending_output(service).isEmpty() && drain.elapsed() < 5000)
         QCoreApplication::processEvents(QEventLoop::AllEvents | QEventLoop::WaitForMoreEvents, 5);
     require(Access::pending_output(service).isEmpty());
     require(Access::settle_timer_active(service));
