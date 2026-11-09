@@ -56,29 +56,50 @@ FocusScope {
     // times a second while a turn runs and the view is shown.
     property var liveRows: []
     property bool liveOpen: false
+    // A slash command the bar sent that the CLI has not recorded yet. Some
+    // run for minutes with no turn (/compact), so it shows as running, with
+    // the same live tail, until its record lands or the screen goes quiet.
+    property string pendingCommand: ""
+    property double pendingSince: 0
+    property int quietTicks: 0
+    readonly property bool busy: working || pendingCommand.length > 0
+    // The bar sent a slash command; it may open a dialog in the terminal.
+    signal commandSent(string text)
+    // A dialog already fills the terminal, so nothing was sent.
+    signal dialogFound()
     Timer {
         interval: 150
         repeat: true
-        running: root.working && root.visible && root.screen !== null && root.model !== null
+        running: root.busy && root.visible && !!root.screen && root.model !== null
         triggeredOnStart: true
         onTriggered: {
             const rows = root.model.liveLines(root.screen())
-            if (rows.join("\n") !== root.liveRows.join("\n"))
+            if (rows.join("\n") !== root.liveRows.join("\n")) {
                 root.liveRows = rows
+                root.quietTicks = 0
+            } else if (!root.working && root.pendingCommand.length > 0 && ++root.quietTicks >= 20) {
+                root.pendingCommand = "" // three quiet seconds: it finished unrecorded
+            }
         }
         onRunningChanged: if (!running) { root.liveRows = []; root.liveOpen = false }
     }
+    Connections {
+        target: root.pendingCommand.length > 0 ? root.model : null
+        function onRowsInserted() { root.pendingCommand = "" }
+        function onModelReset() { root.pendingCommand = "" }
+    }
+    onWorkingChanged: if (working) pendingCommand = ""
     // The clock the running turn's elapsed time follows.
     property double now: Date.now()
     property double turnSince: 0
     Timer {
         interval: 1000
         repeat: true
-        running: root.working && root.visible
+        running: root.busy && root.visible
         triggeredOnStart: true
         onTriggered: {
             root.now = Date.now()
-            root.turnSince = root.model ? root.model.runningSince() : 0
+            root.turnSince = root.working ? (root.model ? root.model.runningSince() : 0) : root.pendingSince
         }
     }
     // The agent's folder, for its project's own slash commands, and whether
@@ -1256,10 +1277,10 @@ FocusScope {
             readonly property double since: root.turnSince
             readonly property var shown: root.liveOpen ? root.liveRows : root.liveRows.slice(-8)
             width: ListView.view ? ListView.view.width : 0
-            height: (root.working ? liveHeader.height + liveTail.height + 22 : 0) + 40
+            height: (root.busy ? liveHeader.height + liveTail.height + 22 : 0) + 40
             Item {
                 id: liveHeader
-                visible: root.working
+                visible: root.busy
                 x: (live.width - live.column) / 2
                 y: 12
                 width: live.column
@@ -1280,7 +1301,7 @@ FocusScope {
                         width: 6; height: 6; radius: 3
                         color: root.activityColor
                         SequentialAnimation on opacity {
-                            running: root.working
+                            running: root.busy
                             loops: Animation.Infinite
                             NumberAnimation { to: 0.3; duration: 700; easing.type: Easing.InOutSine }
                             NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutSine }
@@ -1288,8 +1309,12 @@ FocusScope {
                     }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
-                        text: live.since > 0 ? qsTr("Working for %1").arg(root.durationLabel(root.now - live.since))
-                                             : qsTr("Working")
+                        readonly property string elapsed: live.since > 0 && root.now - live.since >= 1000
+                                                          ? root.durationLabel(root.now - live.since) : ""
+                        text: !root.working && root.pendingCommand.length > 0
+                              ? (elapsed.length > 0 ? qsTr("Running %1 for %2").arg(root.pendingCommand).arg(elapsed)
+                                                    : qsTr("Running %1").arg(root.pendingCommand))
+                              : elapsed.length > 0 ? qsTr("Working for %1").arg(elapsed) : qsTr("Working")
                         color: liveHover.containsMouse ? root.textColor : root.mutedTextColor
                         font.family: root.sansFamily
                         font.pixelSize: root.stepSize
@@ -1305,7 +1330,7 @@ FocusScope {
             }
             Item {
                 id: liveTail
-                visible: root.working && root.liveRows.length > 0
+                visible: root.busy && root.liveRows.length > 0
                 x: liveHeader.x + Math.round(root.fontSize * 0.9)
                 anchors.top: liveHeader.bottom
                 anchors.topMargin: 6
@@ -1419,12 +1444,45 @@ FocusScope {
 
     Component {
         id: commandBlock
-        Text {
+        // The command, then what it printed: six lines, all of it on a click.
+        Column {
+            id: commandColumn
             readonly property var entry: parent ? parent.entry : null
-            text: entry ? (entry.title + (entry.body.length > 0 ? " " + entry.body : "")) : ""
-            color: root.mutedTextColor
-            font.family: root.monoFamily
-            font.pixelSize: root.codeSize
+            property bool open: false
+            width: parent ? parent.width : 0
+            spacing: 3
+            Text {
+                text: commandColumn.entry ? (commandColumn.entry.title
+                      + (commandColumn.entry.body.length > 0 ? " " + commandColumn.entry.body : "")) : ""
+                color: root.mutedTextColor
+                font.family: root.monoFamily
+                font.pixelSize: root.codeSize
+            }
+            Selectable {
+                id: commandOutput
+                readonly property bool tall: commandColumn.entry ? commandColumn.entry.resultLines > 6 : false
+                visible: text.length > 0
+                width: parent.width
+                text: {
+                    const all = commandColumn.entry ? commandColumn.entry.result : ""
+                    return tall && !commandColumn.open ? all.split("\n").slice(0, 6).join("\n") : all
+                }
+                textFormat: TextEdit.PlainText
+                wrapMode: TextEdit.Wrap
+                color: root.tint(root.mutedTextColor, 0.85)
+                font.family: root.monoFamily
+                font.pixelSize: root.codeSize - 1
+            }
+            Text {
+                visible: commandOutput.tall
+                text: commandColumn.open ? qsTr("Show less")
+                                         : qsTr("Show all %1 lines").arg(commandColumn.entry ? commandColumn.entry.resultLines : 0)
+                color: moreHover.hovered ? root.textColor : root.mutedTextColor
+                font.family: root.sansFamily
+                font.pixelSize: root.stepSize - 1
+                HoverHandler { id: moreHover; cursorShape: Qt.PointingHandCursor }
+                TapHandler { onTapped: commandColumn.open = !commandColumn.open }
+            }
         }
     }
 
@@ -1497,7 +1555,21 @@ FocusScope {
         const text = message()
         if (text.trim().length === 0 || !root.submit)
             return
+        // A dialog in the terminal (a picker, settings) would take these
+        // keys as its own, so show it instead and keep the message here.
+        if (!root.waiting && root.slashCommands && root.screen && root.model
+                && root.model.dialogShowing(root.screen())) {
+            root.dialogFound()
+            return
+        }
+        const command = root.slashCommands && /^\/[^\s\/]+/.test(text.trim()) ? text.trim().split(/\s/)[0] : ""
         if (root.submit(text)) {
+            if (command.length > 0) {
+                root.pendingCommand = command
+                root.pendingSince = Date.now()
+                root.quietTicks = 0
+                root.commandSent(text.trim())
+            }
             if (root.filledFromSuggestion && text === root.suggestion)
                 root.suggestionSent()
             root.filledFromSuggestion = false
@@ -1710,8 +1782,12 @@ FocusScope {
                                 event.accepted = true
                                 return
                             }
+                            // As in the CLI's own list: Tab fills the
+                            // command in to add to, Return runs it.
                             if (event.key === Qt.Key_Tab || isReturn) {
                                 root.completeSlash(root.slashMatches[Math.min(root.slashIndex, count - 1)].name)
+                                if (isReturn)
+                                    root.send()
                                 event.accepted = true
                                 return
                             }

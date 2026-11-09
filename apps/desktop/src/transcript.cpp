@@ -476,6 +476,41 @@ QStringList live_lines(const QStringList& screen) {
     return out;
 }
 
+bool dialog_showing(const QStringList& screen) {
+    // Only the input box and a dialog's top edge span the screen from column
+    // 0; boxes, sliders and code samples inside a dialog are indented or drawn
+    // with other characters.
+    const auto full_rule = [](const QString& row) {
+        qsizetype end = row.size();
+        while (end > 0 && row[end - 1].isSpace())
+            --end;
+        if (end < 20)
+            return false;
+        for (qsizetype i = 0; i < end; ++i)
+            if (row[i] != QChar(0x2500))
+                return false;
+        return true;
+    };
+    qsizetype lowest = -1, above = -1;
+    for (qsizetype row = screen.size() - 1; row >= 0 && above < 0; --row) {
+        if (!full_rule(screen.at(row)))
+            continue;
+        (lowest < 0 ? lowest : above) = row;
+    }
+    if (lowest < 0)
+        return false;
+    // The input box: its first row is the prompt (or a blank start), and a
+    // draft of several lines keeps it under a dozen rows.
+    const auto between = lowest - above - 1;
+    if (above >= 0 && between >= 1 && between <= 12) {
+        const auto first = screen.at(above + 1).trimmed();
+        if (first.isEmpty() || first.startsWith(QChar(0x276F)) || first.startsWith(QLatin1Char('>')) ||
+            first.startsWith(QLatin1Char('!')) || first.startsWith(QLatin1Char('#')))
+            return false;
+    }
+    return true;
+}
+
 QString work_summary(const std::vector<Item>& items, int first, int last, int except) {
     int commands = 0, searches = 0, web = 0, agents = 0, tools = 0;
     QSet<QString> edited, read;
@@ -636,6 +671,37 @@ void ClaudeReader::push(Item item) {
     items_.push_back(std::move(item));
 }
 
+int ClaudeReader::command_output(const QString& raw) {
+    // /model and /effort take effect now, before the next answer reports them.
+    const auto said = without_escapes(tagged(raw, u"local-command-stdout")).trimmed();
+    const auto first = said.section(QLatin1Char('\n'), 0, 0);
+    static const QRegularExpression model(QStringLiteral(R"(^Set model to (.+?)(?: and saved| for this session|$))"));
+    static const QRegularExpression effort(QStringLiteral(R"(^Set effort level to ([a-z]+))"));
+    if (const auto set = model.match(first); set.hasMatch()) {
+        if (const auto id = model_id(set.captured(1)); !id.isEmpty())
+            status_.model = id;
+    } else if (const auto level = effort.match(first); level.hasMatch()) {
+        status_.effort = level.captured(1);
+    }
+    QStringList parts;
+    for (const auto tag : {u"local-command-stdout", u"local-command-stderr", u"bash-stdout", u"bash-stderr"}) {
+        if (const auto text = without_escapes(tagged(raw, tag)).trimmed(); !text.isEmpty())
+            parts << text;
+    }
+    // Output belongs to the command just run; with anything else between
+    // (a compaction, a reply) there is no telling which command it answers.
+    if (parts.isEmpty() || items_.empty() || items_.back().kind != Kind::command)
+        return -1;
+    auto& item = items_.back();
+    // stdout and stderr can arrive as separate records for one command.
+    const auto text = item.result.isEmpty() ? parts.join(QLatin1Char('\n'))
+                                            : item.result + QLatin1Char('\n') + parts.join(QLatin1Char('\n'));
+    item.result_lines = static_cast<int>(text.count(QLatin1Char('\n'))) + 1;
+    // A table (/context) reads whole, so only its size is bounded, not its lines.
+    item.result = clip(text, result_preview_chars);
+    return static_cast<int>(items_.size()) - 1;
+}
+
 int ClaudeReader::add(const QByteArray& line) {
     QJsonParseError error{};
     const auto document = QJsonDocument::fromJson(line, &error);
@@ -673,8 +739,25 @@ int ClaudeReader::add(const QByteArray& line) {
             push(std::move(item));
         } else if (subtype == QLatin1String("away_summary") && !content.isEmpty()) {
             push(make(Kind::notice, clip(content, 600)));
+        } else if (subtype == QLatin1String("local_command")) {
+            // A command run while a dialog was involved is recorded here
+            // rather than as the person's message; it reads the same.
+            if (content.contains(QLatin1String("<command-name>")))
+                push(make(Kind::command, tagged(content, u"command-name"), tagged(content, u"command-args")));
+            else
+                changed = command_output(content);
+        } else if (subtype == QLatin1String("informational") ||
+                   subtype == QLatin1String("model_consent_fallback") ||
+                   subtype == QLatin1String("scheduled_task_fire")) {
+            const auto text = without_escapes(content).trimmed();
+            if (!text.isEmpty()) {
+                auto item = make(Kind::notice, clip(text, 300));
+                // A scheduled wakeup prompts the agent, as a background task does.
+                item.starts_turn = subtype == QLatin1String("scheduled_task_fire");
+                push(std::move(item));
+            }
         }
-        return static_cast<int>(items_.size()) > first ? first : -1;
+        return static_cast<int>(items_.size()) > first ? first : changed;
     }
     // A prompt sent while the agent works waits in Claude Code's queue: shown
     // at once as queued, then taken in by the running turn (absorbed), sent
@@ -720,23 +803,24 @@ int ClaudeReader::add(const QByteArray& line) {
     const auto content = message.value(QLatin1String("content"));
     const auto thought_ms = static_cast<qint64>(record.value(QLatin1String("thinkingDurationMs")).toDouble());
 
+    bool prompted = false; // this record carried prompt text of its own
     const auto user_text = [&](const QString& raw) {
-        if (raw.startsWith(QLatin1String("<local-command-stdout>"))) {
-            // /model and /effort take effect now, before the next answer
-            // reports them.
-            const auto out = without_escapes(tagged(raw, u"local-command-stdout")).section(QLatin1Char('\n'), 0, 0);
-            static const QRegularExpression model(QStringLiteral(R"(^Set model to (.+?)(?: and saved| for this session|$))"));
-            static const QRegularExpression effort(QStringLiteral(R"(^Set effort level to ([a-z]+))"));
-            if (const auto set = model.match(out); set.hasMatch()) {
-                if (const auto id = model_id(set.captured(1)); !id.isEmpty())
-                    status_.model = id;
-            } else if (const auto level = effort.match(out); level.hasMatch()) {
-                status_.effort = level.captured(1);
-            }
+        if (raw.startsWith(QLatin1String("<local-command-std")) || raw.startsWith(QLatin1String("<bash-std"))) {
+            if (const int at = command_output(raw); at >= 0)
+                changed = changed < 0 ? at : std::min(changed, at);
             return;
         }
         if (meta || raw.startsWith(QLatin1String("<local-command-")))
             return;
+        if (raw.startsWith(QLatin1String("<bash-input>"))) {
+            // A "!" command runs in the shell; it does not prompt the agent.
+            push(make(Kind::command, QStringLiteral("!"), tagged(raw, u"bash-input")));
+            return;
+        }
+        if (raw.startsWith(QLatin1String("[Request interrupted by user"))) {
+            push(make(Kind::notice, QStringLiteral("Interrupted")));
+            return;
+        }
         if (raw.startsWith(QLatin1String("<task-notification>"))) {
             // A background task waking the agent starts a turn of its own.
             auto summary = tagged(raw, u"summary");
@@ -757,6 +841,7 @@ int ClaudeReader::add(const QByteArray& line) {
         auto item = make(Kind::prompt, {}, clip(raw.trimmed(), body_chars));
         item.starts_turn = true;
         push(std::move(item));
+        prompted = true;
     };
 
     // What the agent reports with each answer: model, effort, context use.
@@ -782,6 +867,7 @@ int ClaudeReader::add(const QByteArray& line) {
         else
             push(make(Kind::reply, {}, clip(content.toString().trimmed(), body_chars)));
     }
+    QStringList attached; // "[image]", "[document]" in order
     for (const auto& value : content.toArray()) {
         const auto block = value.toObject();
         const auto kind = block.value(QLatin1String("type")).toString();
@@ -809,14 +895,20 @@ int ClaudeReader::add(const QByteArray& line) {
                     step.duration_ms = at_ms_ - step.at_ms; // call to result
                 changed = changed < 0 ? at : std::min(changed, at);
             }
-        } else if (kind == QLatin1String("image")) {
-            if (!meta) {
-                auto item = make(Kind::prompt, {}, QStringLiteral("[image]"));
-                item.starts_turn = true;
-                push(std::move(item));
-            }
+        } else if (kind == QLatin1String("image") || kind == QLatin1String("document")) {
+            if (!meta)
+                attached << QStringLiteral("[%1]").arg(kind);
         } else {
             push(make(Kind::other, kind, {}, compact_json(block, 400)));
+        }
+    }
+    // Text sent with an image already names it ("[Image #2] is this good?");
+    // an attachment stands as the prompt only when the record has no text.
+    if (!prompted) {
+        for (const auto& name : attached) {
+            auto item = make(Kind::prompt, {}, name);
+            item.starts_turn = true;
+            push(std::move(item));
         }
     }
     if (static_cast<int>(items_.size()) > first)
@@ -1424,6 +1516,8 @@ double TranscriptModel::runningSince() const {
 }
 
 QStringList TranscriptModel::liveLines(const QStringList& screen) const { return transcript::live_lines(screen); }
+
+bool TranscriptModel::dialogShowing(const QStringList& screen) const { return transcript::dialog_showing(screen); }
 
 QVariantMap TranscriptModel::fonts() const {
     // New York and SF Mono ship with macOS but are hidden from the font list;

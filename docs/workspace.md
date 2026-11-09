@@ -112,7 +112,18 @@ Typing `/` and a few letters in a Claude Code agent's bar lists the three
 closest slash commands (letters in order match, so `/rp` finds
 `/reload-plugins`): Claude Code's own, then your commands and skills from
 `~/.claude/commands`, `~/.claude/skills` and the agent folder's `.claude/`.
-Up and Down pick, Tab or Return fills it in, Escape closes the list.
+Up and Down pick, Return runs the command, Tab fills it in to add to, and
+Escape closes the list. What a command prints shows under it in the thread
+("/model", then "Set model to …"), as does a `!` shell command's output. One
+that runs for a while with no turn of its own, such as `/compact`, shows
+**Running /compact for 40s** with the agent's screen under it until it is
+done. A command that opens a dialog of the CLI's own (the pickers of `/model`
+and `/effort` with nothing after them, `/config`, `/resume`, `/permissions`,
+`/mcp` and the like) shows the terminal, with the keyboard, for as long as the
+dialog is up, and the thread returns when it closes. The bar never types into
+such a dialog: sending while one is open shows it instead and keeps your
+message in the bar. A request the agent raises does not do this; it waits in
+the terminal as before.
 
 Code in replies is colored by its language with Tokyo Night's palette (its Day
 variant on light themes), as are the commands steps ran. Tables get a quiet

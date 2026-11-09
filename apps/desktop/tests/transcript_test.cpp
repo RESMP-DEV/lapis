@@ -110,6 +110,162 @@ void status_follows_commands() {
     require(reader.items().size() == 2, "command output adds no items");
 }
 
+// A slash command shows what it printed, escapes stripped; the same record
+// shapes arrive as system local_command records around a dialog.
+void command_output_shows() {
+    ClaudeReader reader;
+    (void)reader.add(
+        R"({"type":"user","message":{"content":"<command-name>/model</command-name>\n <command-message>model</command-message>\n <command-args></command-args>"}})");
+    require(reader.add(
+                R"({"type":"user","message":{"content":"<local-command-stdout>Set model to `Fable 5.2` and saved as your default for new sessions</local-command-stdout>"}})") ==
+                0,
+            "output reports the command it changed");
+    require(reader.items().size() == 1 && reader.items()[0].kind == Kind::command &&
+                reader.items()[0].title == "/model" &&
+                reader.items()[0].result == "Set model to `Fable 5.2` and saved as your default for new sessions",
+            "output attaches to its command");
+    require(reader.status().model == "claude-fable-5-2", "the model change still applies");
+    (void)reader.add(R"({"type":"user","message":{"content":"<command-name>/compact</command-name><command-args></command-args>"}})");
+    (void)reader.add(
+        R"({"type":"user","message":{"content":"<local-command-stdout>\u001b[2mCompacted (ctrl+o to see full summary)\u001b[22m\n  line two</local-command-stdout>"}})");
+    (void)reader.add(R"({"type":"user","message":{"content":"<local-command-stderr>warned</local-command-stderr>"}})");
+    require(reader.items()[1].result == "Compacted (ctrl+o to see full summary)\n  line two\nwarned" &&
+                reader.items()[1].result_lines == 3,
+            "escapes stripped, many lines kept, stderr after stdout");
+    (void)reader.add(R"({"type":"user","message":{"content":"<command-name>/clear</command-name>"}})");
+    require(reader.add(R"({"type":"user","message":{"content":"<local-command-stdout></local-command-stdout>"}})") == -1 &&
+                reader.items()[2].result.isEmpty(),
+            "empty output attaches nothing");
+    (void)reader.add(R"({"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}})");
+    require(reader.add(R"({"type":"user","message":{"content":"<local-command-stdout>late</local-command-stdout>"}})") == -1,
+            "output after other items attaches nowhere");
+    const QString huge = QString(9000, QLatin1Char('x'));
+    (void)reader.add(R"({"type":"user","message":{"content":"<command-name>/context</command-name>"}})");
+    (void)reader.add(QStringLiteral(R"({"type":"user","message":{"content":"<local-command-stdout>%1</local-command-stdout>"}})")
+                         .arg(huge)
+                         .toUtf8());
+    require(reader.items().back().result.size() <= lapis::desktop::transcript::result_preview_chars + 1,
+            "long output is clipped");
+
+    ClaudeReader system;
+    (void)system.add(
+        R"({"type":"system","subtype":"local_command","content":"<command-name>/model</command-name>\n <command-message>model</command-message>\n <command-args>opus</command-args>"})");
+    require(system.add(
+                R"({"type":"system","subtype":"local_command","content":"<local-command-stdout>Kept model as `Fable 5.2`</local-command-stdout>"})") ==
+                0,
+            "system command output reports its command");
+    require(system.items().size() == 1 && system.items()[0].kind == Kind::command &&
+                system.items()[0].title == "/model" && system.items()[0].body == "opus" &&
+                system.items()[0].result == "Kept model as `Fable 5.2`",
+            "a system local_command record reads like a user one");
+    (void)system.add(R"({"type":"system","subtype":"local_command","content":"<command-name>/effort</command-name>"})");
+    (void)system.add(
+        R"({"type":"system","subtype":"local_command","content":"<local-command-stdout>Set effort level to max (this session only)</local-command-stdout>"})");
+    require(system.status().effort == "max", "system command output sets the status too");
+
+    TranscriptModel model;
+    const auto roles = model.roleNames();
+    require(roles.value(TranscriptModel::ResultRole) == "result", "command output is the result role");
+}
+
+// Bash mode: "!" commands with their output, never a turn of their own.
+void bash_mode_commands() {
+    ClaudeReader reader;
+    (void)reader.add(R"({"type":"user","message":{"content":"<bash-input>open .</bash-input>"}})");
+    (void)reader.add(
+        R"({"type":"user","message":{"content":"<bash-stdout>(Bash completed with no output)</bash-stdout><bash-stderr></bash-stderr>"}})");
+    (void)reader.add(R"({"type":"user","message":{"content":"<bash-input>ls nope</bash-input>"}})");
+    (void)reader.add(
+        R"({"type":"user","message":{"content":"<bash-stdout>a</bash-stdout><bash-stderr>ls: nope: No such file</bash-stderr>"}})");
+    const auto& items = reader.items();
+    require(items.size() == 2 && items[0].kind == Kind::command && items[0].title == "!" &&
+                items[0].body == "open ." && items[0].result == "(Bash completed with no output)" &&
+                !items[0].starts_turn,
+            "bash input is a ! command with its output");
+    require(items[1].result == "a\nls: nope: No such file" && !items[1].starts_turn, "stdout then stderr");
+    require(lapis::desktop::transcript::lay_out(items, {}).turns.empty(), "bash mode starts no turn");
+}
+
+// System notices once dropped, interruptions, and attachments sent with text.
+void notices_and_attachments() {
+    ClaudeReader reader;
+    (void)reader.add(R"({"type":"system","subtype":"informational","content":"Compacted while idle · turn off with x"})");
+    (void)reader.add(R"({"type":"system","subtype":"model_consent_fallback","content":"Switched to Sonnet 5.5 for this session"})");
+    (void)reader.add(R"({"type":"system","subtype":"informational","content":""})");
+    (void)reader.add(R"({"type":"system","subtype":"scheduled_task_fire","content":"Claude resuming /loop wakeup"})");
+    (void)reader.add(R"({"type":"system","subtype":"model_refusal","content":"Refused"})");
+    (void)reader.add(R"({"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}})");
+    (void)reader.add(R"({"type":"user","message":{"content":"[Request interrupted by user]"}})");
+    const auto& items = reader.items();
+    require(items.size() == 6, "six notices, the empty one skipped");
+    if (items.size() != 6)
+        return;
+    require(items[0].kind == Kind::notice && items[0].title.startsWith("Compacted while idle") && !items[0].starts_turn,
+            "informational notice");
+    require(items[1].kind == Kind::notice && items[1].title.startsWith("Switched to Sonnet") && !items[1].starts_turn,
+            "model fallback notice");
+    require(items[2].kind == Kind::notice && items[2].title == "Claude resuming /loop wakeup" && items[2].starts_turn,
+            "a scheduled wakeup starts a turn");
+    require(items[3].failed && items[3].title == "Refused", "refusals still show");
+    require(items[4].kind == Kind::notice && items[4].title == "Interrupted" && !items[4].starts_turn &&
+                items[5].title == "Interrupted" && !items[5].starts_turn,
+            "an interruption is a notice, not a prompt");
+
+    ClaudeReader images;
+    (void)images.add(
+        R"({"type":"user","uuid":"u1","message":{"content":[{"type":"image","source":{}},{"type":"text","text":"[Image #2] is this good?"}]}})");
+    require(images.items().size() == 1 && images.items()[0].body == "[Image #2] is this good?",
+            "text sent with an image is the only prompt");
+    (void)images.add(
+        R"({"type":"user","uuid":"u2","message":{"content":[{"type":"image","source":{}},{"type":"document","source":{}}]}})");
+    require(images.items().size() == 3 && images.items()[1].body == "[image]" && images.items()[2].body == "[document]" &&
+                images.items()[2].kind == Kind::prompt,
+            "an attachment alone stands as the prompt, documents too");
+    require(lapis::desktop::transcript::lay_out(images.items(), {}).turns.size() == 2, "one turn per record");
+}
+
+// Claude Code's input box against a dialog drawn in its place.
+void dialogs_are_seen() {
+    using lapis::desktop::transcript::dialog_showing;
+    const QString rule(66, QChar(0x2500));
+    const QStringList idle{
+        QStringLiteral("  Switch with /model."), QString(), rule, QStringLiteral("❯ "), rule,
+        QStringLiteral("  Haiku 5.5 · …/folder        ◐ medium · /effort"), QStringLiteral("  ctx -- · eff medium · 0s   "),
+        QStringLiteral("  ⏵⏵ auto mode on (shift+tab to cycle)")};
+    require(!dialog_showing(idle), "an idle input box is no dialog");
+    const QStringList draft{QStringLiteral("✻ Working… (esc to interrupt)"), QString(), rule + QStringLiteral("   "),
+                            QStringLiteral("! git status"), QStringLiteral("  and more"), rule,
+                            QStringLiteral("  ⏵⏵ auto mode on")};
+    require(!dialog_showing(draft), "a running turn with a multi-line draft is no dialog");
+    require(!dialog_showing({QStringLiteral("$ ls"), QStringLiteral("a b")}), "no rule: no dialog");
+    const QStringList picker{
+        QStringLiteral("❯ /model"), QString(), rule, QStringLiteral("  Select model"),
+        QStringLiteral("    1. Default (recommended)  Sonnet 5.5"), QStringLiteral("  ❯ 5. Haiku ✔                Haiku 5.5"),
+        QString(), QStringLiteral("  Enter to set as default · Esc to cancel")};
+    require(dialog_showing(picker), "a model picker is a dialog");
+    const QStringList search{
+        QStringLiteral("❯ /resume"), QString(), rule, QStringLiteral("  Resume session"),
+        QStringLiteral("  ╭") + QString(40, QChar(0x2500)) + QStringLiteral("╮"), QStringLiteral("  │ ⌕ Search…  │"),
+        QStringLiteral("  ╰") + QString(40, QChar(0x2500)) + QStringLiteral("╯"),
+        QStringLiteral("    Ctrl+A to show all projects · Esc to cancel")};
+    require(dialog_showing(search), "a search with a boxed field is a dialog");
+    const QStringList effort{rule, QStringLiteral("  Effort"),
+                             QStringLiteral("                        ") + QString(10, QChar(0x2500)) +
+                                 QStringLiteral("▲") + QString(30, QChar(0x2500)),
+                             QStringLiteral("                        low     medium     high"),
+                             QStringLiteral("  ←/→ to adjust · Esc to cancel")};
+    require(dialog_showing(effort), "an effort slider is a dialog");
+    QStringList settings{rule, QStringLiteral("  Settings")};
+    for (int i = 0; i < 20; ++i)
+        settings << QStringLiteral("  Option %1   on").arg(i);
+    settings << QStringLiteral("  Esc to close");
+    require(dialog_showing(settings), "a long settings list is a dialog");
+    // A rule above a dialog that does not open on a prompt row is no input box.
+    const QStringList theme{rule, QStringLiteral("  Theme"), QStringLiteral("  ❯ ✔ Dark mode"), rule,
+                            QStringLiteral("  ") + QString(30, QChar(0x254C)), QStringLiteral("  1 function x() {}")};
+    require(dialog_showing(theme), "two rules around a non-prompt row are a dialog");
+}
+
 // A prompt sent while the agent works shows at once, queued; the running
 // turn taking it in keeps it in place, and one sent on as the next turn is
 // shown once, as that turn's prompt.
@@ -466,6 +622,10 @@ int main(int argc, char** argv) {
     reader_folds_records();
     result_reports_changed_card();
     status_follows_commands();
+    command_output_shows();
+    bash_mode_commands();
+    notices_and_attachments();
+    dialogs_are_seen();
     queued_prompts_show();
     paths_and_live_lines();
     model_follows_file();

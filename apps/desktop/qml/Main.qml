@@ -956,11 +956,52 @@ ApplicationWindow {
         running: window.visualWanted && window.visualFile.length === 0
         onTriggered: window.visualProbe += 1
     }
+    // Some slash commands open a dialog in the CLI's terminal (/model's
+    // picker, /config, /resume). The thread cannot show one, so after the
+    // bar sends a command the terminal is watched for a few seconds and, if a
+    // dialog replaces its input box, shown with the keyboard until the dialog
+    // closes. Only the person's own command starts this: a request an agent
+    // raises never uncovers the terminal or takes the keys.
+    property bool visualDialog: false
+    property int visualDialogTicks: -1 // -1: not watching
+    readonly property bool visualCovers: visualActive && !visualDialog
+    property string visualDialogAgent: ""
+    function watchVisualDialog(found) {
+        if (!visualActive || liveTerminal.document === null)
+            return
+        visualDialogAgent = liveTerminal.document.sessionId
+        visualDialogTicks = 0
+        if (found)
+            visualDialog = true
+    }
+    function endVisualDialog() {
+        visualDialogTicks = -1
+        visualDialog = false
+    }
+    Timer {
+        interval: 200
+        repeat: true
+        running: window.visualDialogTicks >= 0
+        onTriggered: {
+            const agent = liveTerminal.document
+            if (!window.visualActive || agent === null || agent.sessionId !== window.visualDialogAgent) {
+                window.endVisualDialog() // another agent is selected now
+            } else if (workspace.transcript.dialogShowing(liveTerminal.screenLines())) {
+                // A turn's own request is the agent's, not this command's.
+                if (window.visualDialog || agent.statusKind !== "working")
+                    window.visualDialog = true
+                else
+                    window.endVisualDialog()
+            } else if (window.visualDialog || ++window.visualDialogTicks > 25) {
+                window.endVisualDialog() // closed, or none came in five seconds
+            }
+        }
+    }
     // Selecting another agent can show or hide the thread on its own (All
     // agents); the keyboard follows whichever is shown.
-    onVisualActiveChanged: if (!inputBlocked && !dialogsVisible()) visualFocus()
+    onVisualCoversChanged: if (!inputBlocked && !dialogsVisible()) visualFocus()
     function visualFocus() {
-        Qt.callLater(() => visualActive ? visualView.composer.forceActiveFocus() : liveTerminal.forceActiveFocus())
+        Qt.callLater(() => visualCovers ? visualView.composer.forceActiveFocus() : liveTerminal.forceActiveFocus())
     }
     function toggleVisual() {
         const agent = workspace.focusedSession
@@ -969,6 +1010,7 @@ ApplicationWindow {
         const next = Object.assign({}, visualAgents)
         next[agent.sessionId] = !visualActive
         visualAgents = next
+        endVisualDialog()
         visualFocus()
     }
     function toggleVisualAll() {
@@ -1000,8 +1042,8 @@ ApplicationWindow {
     function visualCommand(kind, value) {
         const agent = liveTerminal.document
         const commands = agent ? visualCommands[agent.harnessId] : null
-        if (commands && commands[kind])
-            liveTerminal.submitText(commands[kind](value))
+        if (commands && commands[kind] && liveTerminal.submitText(commands[kind](value)))
+            watchVisualDialog(false)
     }
     // A new agent from this conversation: up to a reply, or just before a
     // prompt with that prompt waiting in its input.
@@ -3620,7 +3662,7 @@ ApplicationWindow {
                     id: visualView
                     objectName: "visualView"
                     z: 3
-                    visible: window.visualActive
+                    visible: window.visualCovers
                     x: liveTerminal.x
                     y: liveTerminal.y
                     width: liveTerminal.width
@@ -3664,6 +3706,8 @@ ApplicationWindow {
                     efforts: window.visualActive ? window.visualEfforts(liveTerminal.document) : []
                     onModelChosen: function(id) { window.visualCommand("model", id) }
                     onEffortChosen: function(level) { window.visualCommand("effort", level) }
+                    onCommandSent: window.watchVisualDialog(false)
+                    onDialogFound: window.watchVisualDialog(true)
                     onDismissed: window.toggleVisual()
                     onEditRequested: function(record, text) { window.forkVisual(record, true, text) }
                 }
@@ -3672,6 +3716,27 @@ ApplicationWindow {
                     property: "path"
                     // Nothing is read or watched while no agent shows as a thread.
                     value: window.visualActive ? window.visualFile : ""
+                }
+
+                // Why the terminal is showing in place of the thread.
+                Rectangle {
+                    objectName: "visualDialogNote"
+                    z: 4
+                    visible: window.visualDialog && window.visualActive
+                    x: liveTerminal.x + liveTerminal.width - width - 10
+                    y: liveTerminal.y + 8
+                    width: visualDialogText.implicitWidth + 20
+                    height: visualDialogText.implicitHeight + 10
+                    radius: 6
+                    color: window.cardColor
+                    border.color: window.borderColor
+                    Text {
+                        id: visualDialogText
+                        anchors.centerIn: parent
+                        text: qsTr("The agent's own dialog · the thread returns when it closes")
+                        color: window.mutedTextColor
+                        font.pixelSize: 12
+                    }
                 }
 
                 TerminalSurface {
@@ -3704,10 +3769,10 @@ ApplicationWindow {
                     // A history page stays interactive for the wheel, selection and
                     // typing back to live; input reaches the agent only when live.
                     interactive: visible && window.visible && !window.inputBlocked && document !== null
-                                 && !window.visualActive
+                                 && !window.visualCovers
                                  && (preview.active || document.inputReady || document.historyActive)
                     focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
-                           && !window.visualActive
+                           && !window.visualCovers
                     // The next prompt lapis predicted for the agent, while it
                     // waits for a prompt (never over a request): Tab types it
                     // for you to edit, Tab again sends it, and Tab with nothing

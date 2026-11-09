@@ -133,8 +133,30 @@ int check_keys(QQuickView& view, QQuickItem* root) {
         std::fputs("keys FAIL \"/comp\" lists compact first\n", stderr);
         ++failures;
     }
+    key(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    expect("Tab fills in the chosen command", QStringLiteral("/compact "), 9);
+    set(QString());
+    for (const auto letter : QStringLiteral("/comp"))
+        key(letter == QLatin1Char('/') ? Qt::Key_Slash : Qt::Key_A + (letter.unicode() - 'a'), Qt::NoModifier,
+            QString(letter));
     key(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
-    expect("Return fills in the chosen command", QStringLiteral("/compact "), 9);
+    expect("Return runs the chosen command", QString(), -1);
+    if (root->property("pendingCommand").toString() != QStringLiteral("/compact")) {
+        std::fputs("keys FAIL a sent command shows as running\n", stderr);
+        ++failures;
+    }
+    root->setProperty("pendingCommand", QString());
+    // A dialog in the terminal would take the keys as its own: nothing is
+    // sent and the message stays in the bar.
+    QJSValue dialog = view.engine()->evaluate(QStringLiteral(
+        "(function() { return [\"❯ /model\", \"\", \"─\".repeat(60), \"  Select model\", "
+        "\"  ❯ 1. Default\", \"  Enter to set · Esc to cancel\"] })"));
+    root->setProperty("screen", QVariant::fromValue(dialog));
+    set(QStringLiteral("hello"));
+    key(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+    expect("Return over a terminal dialog keeps the message", QStringLiteral("hello"), -1);
+    root->setProperty("screen", QVariant());
+    set(QString());
     std::puts(failures == 0 ? "keys: all checks passed" : "keys: failed");
     return failures == 0 ? 0 : 1;
 }

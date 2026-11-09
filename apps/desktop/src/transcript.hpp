@@ -39,7 +39,7 @@ struct Item {
     QString body;
     // A step's description, or an other block's raw JSON.
     QString detail;
-    QString result; // a tool's output, shortened
+    QString result; // a tool's or a command's output, shortened
     std::vector<DiffLine> diff;
     int added{};   // diff lines added and removed, counted in full
     int removed{};
@@ -149,6 +149,13 @@ struct Media {
 // box-rule pair from the bottom), blank rows at either end dropped.
 [[nodiscard]] QStringList live_lines(const QStringList& screen);
 
+// Whether Claude Code's screen shows a dialog (a picker, settings, a search)
+// in place of its input box: a full-width rule (a row of at least 20 U+2500
+// from column 0) with no input box, which is the lowest two such rules 1 to
+// 12 rows apart, the first row between them empty or led by ❯, >, ! or #.
+// A screen with no full rule (startup, a shell) shows none.
+[[nodiscard]] bool dialog_showing(const QStringList& screen);
+
 // Folds Claude Code session JSONL records, in file order, into items. Tool
 // results attach to the tool call that asked for them; a subagent's records
 // (isSidechain) are skipped.
@@ -162,6 +169,10 @@ class ClaudeReader {
 
   private:
     void push(Item item);
+    // A slash or bash-mode command's output (<local-command-stdout>,
+    // <bash-stdout> and their stderr), attached to the command it answers
+    // when nothing else came between. Returns the item changed, or -1.
+    int command_output(const QString& raw);
     std::vector<Item> items_;
     Status status_;
     qint64 at_ms_{}; // time of the record being read
@@ -263,6 +274,9 @@ class TranscriptModel final : public QAbstractListModel {
     // The text rows the terminal screen shows above the agent's input box,
     // trailing blanks trimmed: the turn as it streams, harness agnostic.
     Q_INVOKABLE [[nodiscard]] QStringList liveLines(const QStringList& screen) const;
+    // Whether the terminal shows a dialog in place of the input box (see
+    // transcript::dialog_showing).
+    Q_INVOKABLE [[nodiscard]] bool dialogShowing(const QStringList& screen) const;
     // When the last turn's prompt was written (ms since the epoch) while that
     // turn is still open, else 0: what "Working for" counts from.
     Q_INVOKABLE [[nodiscard]] double runningSince() const;
