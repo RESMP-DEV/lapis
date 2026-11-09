@@ -231,8 +231,8 @@ void marksComeBack() {
             "the agent shown is never marked");
     require(after.session(QStringLiteral("gone")) == nullptr && pings == 0 && away == 0,
             "an agent that is gone is skipped, and restoring pings nothing");
-    require(after.latestAttention() && after.focusedSession() == agent,
-            "the restored mark draws Command-L");
+    require(after.selectSession(QStringLiteral("agent")) && !agent->unseen(),
+            "selecting the restored mark clears it");
     // The agent at work when the window saved is found finished.
     require(after.selectSession(QStringLiteral("renderer")), "back to renderer");
     auto* checks = after.session(QStringLiteral("checks"));

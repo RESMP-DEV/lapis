@@ -344,6 +344,27 @@ void default_settings_chords_are_shared() {
             "only Shift with punctuation has a shifted form");
 }
 
+// Actions lapis no longer has. A lapis.json that still binds them loads as
+// before; the bindings reach nothing.
+constexpr std::array kRetiredActions{"nextAttention", "latestAttention"};
+
+void retired_actions_load_silently() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory for retired bindings");
+    const QDir dir(directory.path());
+    QJsonObject bindings;
+    for (const auto* removed : kRetiredActions)
+        bindings.insert(QString::fromLatin1(removed), QJsonArray{QStringLiteral("Ctrl+Alt+F12")});
+    const QString path = write_config(
+        dir, QJsonDocument(QJsonObject{{QStringLiteral("keybindings"), bindings}}).toJson());
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "a config binding retired actions loads");
+    require(keymap.diagnostic().isEmpty(), "retired action names load without complaint");
+    require(keymap.sequences(QStringLiteral("quit")) == KeyMap().sequences(QStringLiteral("quit")),
+            "the other defaults are unchanged");
+}
+
 void navigation_defaults_preserve_terminal_editing() {
     KeyMap keymap;
     require(keymap.sequences(QStringLiteral("focusLeft")).isEmpty() &&
@@ -358,6 +379,9 @@ void navigation_defaults_preserve_terminal_editing() {
     for (const auto* removed : {"nextPane", "zoomPane", "paneLeft", "dividerLeft"})
         require(keymap.sequences(QString::fromLatin1(removed)).isEmpty(),
                 "the old pane actions stay retired");
+    for (const auto* removed : kRetiredActions)
+        require(keymap.sequences(QString::fromLatin1(removed)).isEmpty(),
+                "retired actions have no default keys");
     // Tiles split with a new agent and move between tiles, as in iTerm2.
     for (const auto* tiling :
          {"splitRight", "splitDown", "tileLeft", "tileRight", "tileUp", "tileDown", "zoomTile"})
@@ -1025,6 +1049,7 @@ int main(int argc, char** argv) {
         nonregular_config_paths_are_rejected();
         default_settings_chords_are_shared();
         navigation_defaults_preserve_terminal_editing();
+        retired_actions_load_silently();
         configured_shortcuts_are_validated();
         unknown_names_are_rejected();
         malformed_values_fall_back();

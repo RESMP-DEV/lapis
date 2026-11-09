@@ -886,31 +886,6 @@ void Workspace::nextSession(int delta) {
     emit focusChanged();
 }
 
-bool Workspace::nextAttention() {
-    // Category order, then strip order, starting after the selected agent.
-    std::vector<SessionPreview*> order;
-    for (const auto& category : categories_)
-        for (const auto& item : sessions_)
-            if (agents_.value(item->sessionId()).category == category.id)
-                order.push_back(item.get());
-    auto* const focused = focusedSession();
-    const auto current = std::find(order.begin(), order.end(), focused);
-    const std::size_t start =
-        current == order.end() ? order.size() : static_cast<std::size_t>(current - order.begin());
-    for (std::size_t step = 1; step <= order.size(); ++step) {
-        auto* candidate = order[(start + step) % order.size()];
-        if (candidate != focused && candidate->unseen())
-            return selectSession(candidate->sessionId());
-    }
-    return false;
-}
-bool Workspace::latestAttention() {
-    const SessionPreview* latest = nullptr;
-    for (const auto& item : sessions_)
-        if (item->unseen() && (latest == nullptr || item->neededAtMs() > latest->neededAtMs()))
-            latest = item.get();
-    return latest != nullptr && selectSession(latest->sessionId());
-}
 // Truly waiting on the person: a request, or a turn its observer saw finish
 // with no background work in flight (a turn paused on its own background work
 // reads as working until it ends or its deadline passes) that is unseen or has

@@ -465,8 +465,6 @@ The committed `lapis.json` holds defaults only (see
 - macOS: Command-Option-left/right or Command-Shift-up/down changes category;
   Command-Shift-[ / ] moves through the category's agents. Command-1 through 4
   selects a category.
-- Command-J (`nextAttention`) selects the next agent in any category with a pending
-  request, then one that finished unseen; Linux uses Control-Shift-J.
 - Command-T starts the new-agent form; Command-N (or the + under the categories) starts
   the category form.
   Command-Shift-P opens the searchable, scrollable Commands palette. Command-B

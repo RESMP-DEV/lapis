@@ -40,8 +40,9 @@ updates. See
 - **Categories** group agents. The strip under the stage shows each agent's
   latest lines; drag a card onto the stage to tile it beside another.
   [Workspace](docs/workspace.md)
-- **Jump to what needs you** with Command-J (the next) or Command-L (the latest),
-  even from another app with Command-Option-L. Chimes and notifications say when.
+- **See what needs you**: cards and categories pulse until you look, and with
+  suggestions on, Tab with no guess to accept moves to the next agent waiting on
+  you. Chimes and notifications say when.
 - **Your phone** can show and drive the same agents as a separately installed
   prototype over its gateway. It is outside the early-access support slice.
   [Phone](docs/phone.md)

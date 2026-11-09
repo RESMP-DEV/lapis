@@ -570,12 +570,6 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool placeCategory(const QString& id, int index);
     Q_INVOKABLE bool removeSession(const QString& id);
     Q_INVOKABLE void nextSession(int delta = 1);
-    // Selects the next agent, in any category, that finished a turn or asked
-    // for something while unseen; false when none is waiting.
-    Q_INVOKABLE bool nextAttention();
-    // Selects the agent that most recently began to need you; again, the one
-    // before it. False when none is waiting.
-    Q_INVOKABLE bool latestAttention();
     // Tab's next agent, in any category, of those truly waiting on you: a
     // request, or a finished turn (no background work in flight) that is
     // unseen or has a guessed next prompt. Agents at work, paused on their own

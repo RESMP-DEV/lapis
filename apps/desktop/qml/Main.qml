@@ -417,8 +417,6 @@ ApplicationWindow {
         add("openTools", qsTr("Tools"), "", toolsAvailable, qsTr("The tools pane is not available here"), () => window.openToolsDialog())
         add("toggleSidebar", sidebarExpanded ? qsTr("Hide sidebar") : qsTr("Show sidebar"), "toggleSidebar", true, "", () => window.toggleSidebar())
         add("togglePreviews", previewsEnabled ? qsTr("Hide agent previews") : qsTr("Show agent previews"), "togglePreviews", true, "", () => window.togglePreviews())
-        add("nextAttention", qsTr("Go to agent that needs you"), "nextAttention", workspace.attentionAgents > 0, qsTr("No agent is waiting"), () => workspace.nextAttention())
-        add("latestAttention", qsTr("Go to the latest agent that needs you"), "latestAttention", workspace.attentionAgents > 0, qsTr("No agent is waiting"), () => workspace.latestAttention())
         add("nextWindow", qsTr("Next agent in category"), "nextWindow", workspace.categorySessions.length > 1, qsTr("This category needs another agent"), () => workspace.nextSession())
         add("previousWindow", qsTr("Previous agent in category"), "previousWindow", workspace.categorySessions.length > 1, qsTr("This category needs another agent"), () => workspace.nextSession(-1))
         add("closeAgent", qsTr("Close agent"), "closeAgent", hasAgent, needAgent, () => window.closeFocusedAgent())
@@ -1486,22 +1484,6 @@ ApplicationWindow {
         function onCategoryChanged() {
             window.clearAgentSelection()
         }
-    }
-    Shortcut {
-        objectName: "nextAttentionShortcut"
-        sequences: window.bindings("nextAttention")
-        context: Qt.WindowShortcut
-        enabled: window.shortcutsArmed
-        autoRepeat: false
-        onActivated: workspace.nextAttention()
-    }
-    Shortcut {
-        objectName: "latestAttentionShortcut"
-        sequences: window.bindings("latestAttention")
-        context: Qt.WindowShortcut
-        enabled: window.shortcutsArmed
-        autoRepeat: false
-        onActivated: workspace.latestAttention()
     }
     Shortcut {
         objectName: "nextCategoryShortcut"

@@ -22,9 +22,6 @@ void check_for_updates();
 // Command-` and Command-Shift-` reach the handler before AppKit can use them
 // to cycle windows; it returns true when it took the key.
 void on_terminal_keys(const std::function<bool(bool shifted)>& handler);
-// Command-Option-L from any app brings lapis to the front and runs the handler.
-// An empty handler releases the key; false when the key could not be taken.
-bool on_latest_attention_key(const std::function<void()>& handler);
 // Brings the application itself forward, so a request written by another app
 // (Ultra Tab's Command-L) reaches the front window rather than an inactive
 // application whose window AppKit cannot make key.
@@ -43,7 +40,6 @@ inline void start_updater() {}
 inline void check_for_updates() {}
 inline bool updater_available() { return false; }
 inline void on_terminal_keys(const std::function<bool(bool)>&) {}
-inline bool on_latest_attention_key(const std::function<void()>&) { return false; }
 inline void activate_application() {}
 inline bool secure_input_enabled() { return false; }
 inline double seconds_since_input() { return -1; }

@@ -180,9 +180,9 @@ kinds:
   latest position wins and `folded` counts the moves it stands for. `0` records
   no movement.
 - `agent-focus`, `category`, `tiles`, `history`, `dialog`, `command`, `shortcut`
-  (Command-` and the global Command-Option-L), `window` and `app`: the selected
+  (Command-`), `window` and `app`: the selected
   agent, category and tiles with how each changed (`via`: `click`, `key`,
-  `shortcut`, `tab-away`, `notification`, `attention-key`, `terminal-key`,
+  `shortcut`, `tab-away`, `notification`, `terminal-key`,
   `wheel` or `program`), the history position, dialogs and menus opening and
   closing, the command run from the palette, window focus and app activation.
 
@@ -253,8 +253,8 @@ install swaps the app and opens it again) leaves them running. What only the
 window knew is kept in `runtime/gui_state.json` in the lapis folder and comes
 back with it: the guessed next prompts at each agent's cursor (whether you saw
 them, a guess Tab typed in, a guess still being made), the unseen marks on
-cards and categories and when each agent began to need you (Tab's and
-Command-L's order), what you last saw of each agent (so a turn ending on it
+cards and categories and when each agent began to need you (Tab's order),
+what you last saw of each agent (so a turn ending on it
 stays quiet), the agents Command-Shift-T can reopen, and the new-agent form's
 last choices, the side terminal and a zoomed tile.
 

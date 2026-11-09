@@ -508,28 +508,6 @@ void route_terminal_keys(lapis::desktop::UiPreview& view, const lapis::desktop::
         return QMetaObject::invokeMethod(window, shifted ? "chooseTerminal" : "toggleTerminal");
     });
 }
-// Command-Option-L from any app: lapis comes forward on the agent that most
-// recently needed you. Only the real workspace takes the key.
-void route_latest_attention(lapis::desktop::UiPreview& view, lapis::desktop::Workspace& workspace,
-                            bool isolated, const QCommandLineParser& parser) {
-    if (isolated || workspace.previewMode() || parser.isSet(QStringLiteral("capture")))
-        return;
-    const bool taken = lapis::desktop::platform::on_latest_attention_key([&view, &workspace] {
-        lapis::desktop::interaction::cause(QStringLiteral("attention-key"));
-        if (auto* recorder = lapis::desktop::InteractionRecorder::active())
-            recorder->note(QStringLiteral("shortcut"),
-                           {{QStringLiteral("action"), QStringLiteral("latestAttention")},
-                            {QStringLiteral("global"), true}});
-        if (auto* window = view.window()) {
-            window->show();
-            window->raise();
-            window->requestActivate();
-        }
-        workspace.latestAttention();
-    });
-    if (!taken)
-        qWarning() << "Command-Option-L is held by another app; Command-L still works in lapis";
-}
 // The local interaction log (off unless lapis.json turns it on), only in the
 // person's own workspace: never in the isolated preview, a capture run or an
 // explicit qualification launch.
@@ -570,10 +548,7 @@ void watch_window(lapis::desktop::InteractionRecorder* recorder, QQuickWindow* w
 // A monitor must never outlive this scope. Clear it in reverse construction
 // order, including when load or exec unwinds after an exception.
 struct TerminalKeyMonitorGuard {
-    ~TerminalKeyMonitorGuard() {
-        lapis::desktop::platform::on_terminal_keys({});
-        lapis::desktop::platform::on_latest_attention_key({});
-    }
+    ~TerminalKeyMonitorGuard() { lapis::desktop::platform::on_terminal_keys({}); }
 };
 void register_qml_types() {
     using namespace lapis::desktop;
@@ -1032,7 +1007,6 @@ int main(int argc, char** argv) {
         shown = view.window();
         watch_window(recorder.get(), view.window());
         route_terminal_keys(view, keymap);
-        route_latest_attention(view, workspace, isolated, parser);
         view.window()->requestActivate();
         qInfo() << "UI preview:" << isolated
                 << "system reduced motion:" << view.systemReducedMotion();

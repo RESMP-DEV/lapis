@@ -707,13 +707,13 @@ void unseenFollowsTurnsAndSelection() {
     require(checks->unseen(), "a new request marks its agent");
     require(pings == pings_before + 1, "a new request pings once, as a finished turn does");
     require(count("general") == 1, "one unseen agent after the earlier one was selected");
-    // Jumping to the waiting agent clears it as seen.
-    require(workspace.nextAttention() && workspace.focusedSession() == checks,
-            "the next waiting agent is selected");
-    require(!checks->unseen(), "jumping to an agent is looking at it");
+    // Selecting the waiting agent clears it as seen.
+    require(workspace.selectSession(QStringLiteral("checks")) &&
+                workspace.focusedSession() == checks,
+            "the waiting agent is selected");
+    require(!checks->unseen(), "selecting an agent is looking at it");
     require(workspace.attentionAgents() == waiting_before,
             "a request already looked at no longer counts, though it is still pending");
-    require(!workspace.nextAttention(), "nor does it draw the jump again");
 }
 
 // An agent asked for without a mode starts in the forms' default, or the
@@ -777,32 +777,6 @@ void modelessAgentsGetTheDefaultMode() {
                 QLatin1String("full"),
             "other configured arguments do not");
     require(launch_mode(asked("shell"), {}, {}).isEmpty(), "a CLI without modes gets none");
-}
-
-// Command-L goes to the agent that most recently began to need you, then the
-// one before it.
-void latestAttentionGoesToTheNewest() {
-    Workspace workspace(WorkspaceMode::preview);
-    require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
-    lapis::session::wire::AttentionSnapshot state;
-    state.available = state.connected = state.ready = true;
-    const auto finish = [&](const char* id) {
-        auto* item = workspace.session(QString::fromLatin1(id));
-        state.activity = lapis::session::attention::Activity::working;
-        item->applyAttention(state);
-        state.activity = lapis::session::attention::Activity::turn_completed;
-        item->applyAttention(state);
-        require(item->unseen(), "a finished turn out of view is marked");
-        QThread::msleep(5); // a later need has a later time
-        return item;
-    };
-    auto* first = finish("agent");
-    auto* second = finish("checks");
-    require(workspace.latestAttention() && workspace.focusedSession() == second,
-            "the newest need is selected first");
-    require(workspace.latestAttention() && workspace.focusedSession() == first,
-            "then the one before it");
-    require(!workspace.latestAttention(), "and nothing once all were looked at");
 }
 
 // Tab's next agent: a guess not yet seen first, then a turn finished unseen,
@@ -6790,7 +6764,6 @@ int main(int argc, char** argv) {
         malformedAgentRegistry();
         unknownRegistryVersionsAreRejected();
         unseenFollowsTurnsAndSelection();
-        latestAttentionGoesToTheNewest();
         tabGoesToTheReadyThenTheOldest();
         tabAttributionFollowsTheNextHandMove();
         oneBadAgentDoesNotEmptyTheWorkspace();
