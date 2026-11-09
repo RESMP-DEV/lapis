@@ -63,6 +63,21 @@ scrolled-back program where it is:
 The wheel still reaches a full-screen program either way. See
 [history](workspace.md#history).
 
+## Visual view
+
+Appearance writes the [visual view](workspace.md#visual-view)'s choices under
+`visual`: `theme` (`terminal`, `tokyo-night`, `codex`, `claude`, `graphite`,
+`black`, `claude-light`, `codex-light`), `font` (`system`, `serif`, `avenir`,
+`helvetica`), `codeFont` (`system`, `terminal`, `menlo`), `size` in pixels
+(10 to 40; 0 follows the terminal font), `all`, which shows every Claude
+Code agent as a thread, and `editor`, what Command-click on a file path opens
+it in (`vscode`, `cursor`, `zed`, `textedit`, `system`, or `auto` for the first
+of those installed). An unknown name falls back to the first choice.
+
+```json
+"visual": {"theme": "terminal", "font": "system", "codeFont": "system", "size": 0, "all": false, "editor": "auto"}
+```
+
 ## Alerts
 
 An unseen completed turn or request plays one quiet cue when `alerts.finished`

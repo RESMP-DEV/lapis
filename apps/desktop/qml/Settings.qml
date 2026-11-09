@@ -36,6 +36,16 @@ Dialog {
     property bool updatesAvailable: false
     // Every action that has a key: {label, keys}.
     property var shortcutRows: []
+    // The visual view: its themes with their colors, reading and code fonts
+    // ({name, label, family}), the saved choices and the size now shown.
+    property var visualThemes: []
+    property var visualFonts: []
+    property var visualCodeFonts: []
+    // Editors on this Mac, first the default: [{name, label, family}].
+    property var visualEditors: []
+    property var visual: ({})
+    property int visualSize: 15
+    signal visualChosen(string key, var value)
 
     signal themeChosen(string name)
     signal densityChosen(string name)
@@ -228,6 +238,52 @@ Dialog {
         color: settings.paletteMuted
         font.pixelSize: Math.max(12, settings.uiFont - 1)
         font.bold: true
+    }
+
+    // Font buttons for the visual view, each label in its own font.
+    component FontChoices: ColumnLayout {
+        id: fontChoices
+        required property string label
+        required property string key
+        required property var choices
+        required property string selected
+        spacing: 8
+        Layout.fillWidth: true
+        PlainLabel {
+            text: fontChoices.label
+            color: settings.paletteText
+            font.pixelSize: settings.uiFont
+        }
+        Flow {
+            Layout.fillWidth: true
+            spacing: 6
+            Repeater {
+                model: fontChoices.choices
+                delegate: Button {
+                    id: fontButton
+                    required property var modelData
+                    objectName: "visual-" + fontChoices.key + "-" + modelData.name
+                    text: modelData.label
+                    font.family: modelData.family
+                    font.pixelSize: settings.uiFont
+                    focusPolicy: Qt.NoFocus
+                    hoverEnabled: true
+                    onClicked: settings.visualChosen(fontChoices.key, modelData.name)
+                    contentItem: PlainLabel {
+                        text: fontButton.text
+                        font: fontButton.font
+                        color: settings.paletteText
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: ChoiceSurface {
+                        marked: fontButton.modelData.name === fontChoices.selected
+                        hovered: fontButton.hovered
+                        pressed: fontButton.down
+                    }
+                }
+            }
+        }
     }
 
     component ChoiceRow: ColumnLayout {
@@ -433,6 +489,149 @@ Dialog {
                                name === "minimal" ? qsTr("Smallest chrome. The terminal stays the main surface.") : ""
                     }
                     onPicked: function(name) { settings.densityChosen(name) }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: 1
+                    color: settings.paletteBorder
+                }
+
+                SectionLabel {
+                    text: qsTr("Visual view")
+                }
+                PlainLabel {
+                    Layout.fillWidth: true
+                    text: qsTr("How an agent's conversation reads as a thread. Your terminals are unchanged.")
+                    color: settings.paletteMuted
+                    font.pixelSize: Math.max(12, settings.uiFont - 1)
+                    wrapMode: Text.WordWrap
+                }
+
+                GridLayout {
+                    objectName: "visualThemes"
+                    Layout.fillWidth: true
+                    columns: settings.width < 460 ? 2 : 4
+                    columnSpacing: 8
+                    rowSpacing: 8
+
+                    Repeater {
+                        model: settings.visualThemes
+
+                        delegate: Button {
+                            id: visualTheme
+                            required property var modelData
+                            readonly property bool marked: modelData.name === (settings.visual.theme || "terminal")
+                            objectName: "visualTheme-" + modelData.name
+                            Layout.fillWidth: true
+                            implicitHeight: Math.max(72, settings.uiFont * 5)
+                            focusPolicy: Qt.NoFocus
+                            padding: 0
+                            hoverEnabled: true
+                            onClicked: settings.visualChosen("theme", modelData.name)
+
+                            background: Rectangle {
+                                radius: 8
+                                color: visualTheme.modelData.background
+                                border.width: visualTheme.marked ? 2 : 1
+                                border.color: visualTheme.marked ? settings.paletteAccent :
+                                              visualTheme.hovered ? settings.paletteMuted : visualTheme.modelData.border
+
+                                // A prompt bubble and a line of reply, in the theme.
+                                Rectangle {
+                                    x: parent.width - width - 8; y: 8
+                                    width: parent.width * 0.45; height: 10; radius: 5
+                                    color: visualTheme.modelData.raised
+                                }
+                                Rectangle {
+                                    x: 8; y: 24
+                                    width: parent.width * 0.6; height: 4; radius: 2
+                                    color: visualTheme.modelData.text
+                                    opacity: 0.85
+                                }
+                                Rectangle {
+                                    x: 8; y: 32
+                                    width: parent.width * 0.35; height: 4; radius: 2
+                                    color: visualTheme.modelData.accent
+                                }
+                                PlainLabel {
+                                    x: 8
+                                    anchors.bottom: parent.bottom
+                                    anchors.bottomMargin: 6
+                                    width: parent.width - 16
+                                    text: visualTheme.modelData.label
+                                    color: visualTheme.modelData.text
+                                    font.pixelSize: Math.max(11, settings.uiFont - 2)
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
+                    }
+                }
+
+                FontChoices {
+                    label: qsTr("Reading font")
+                    key: "font"
+                    choices: settings.visualFonts
+                    selected: settings.visual.font || "system"
+                }
+                FontChoices {
+                    label: qsTr("Code font")
+                    key: "codeFont"
+                    choices: settings.visualCodeFonts
+                    selected: settings.visual.codeFont || "system"
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    ColumnLayout {
+                        spacing: 2
+                        Layout.fillWidth: true
+                        PlainLabel {
+                            text: qsTr("Text size")
+                            color: settings.paletteText
+                            font.pixelSize: settings.uiFont
+                        }
+                        PlainLabel {
+                            Layout.fillWidth: true
+                            objectName: "visualSizeDetail"
+                            text: (settings.visual.size || 0) > 0
+                                  ? qsTr("%1 px").arg(settings.visualSize)
+                                  : qsTr("%1 px, following the terminal font").arg(settings.visualSize)
+                            color: settings.paletteMuted
+                            font.pixelSize: Math.max(12, settings.uiFont - 1)
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                    StepButton {
+                        objectName: "visualSmaller"
+                        text: "−"
+                        enabled: settings.visualSize > 10
+                        onClicked: settings.visualChosen("size", settings.visualSize - 1)
+                    }
+                    StepButton {
+                        objectName: "visualBigger"
+                        text: "+"
+                        enabled: settings.visualSize < 40
+                        onClicked: settings.visualChosen("size", settings.visualSize + 1)
+                    }
+                    StepButton {
+                        objectName: "visualFollowTerminal"
+                        text: qsTr("Match terminal")
+                        enabled: (settings.visual.size || 0) > 0
+                        onClicked: settings.visualChosen("size", 0)
+                    }
+                }
+
+                // ⌘-click on a file path in the thread opens it here.
+                FontChoices {
+                    visible: settings.visualEditors.length > 0
+                    label: qsTr("Open files in (⌘-click a path)")
+                    key: "editor"
+                    choices: settings.visualEditors
+                    selected: (settings.visual.editor || "auto") !== "auto" ? settings.visual.editor
+                            : settings.visualEditors.length > 0 ? settings.visualEditors[0].name : ""
                 }
 
                 Rectangle {

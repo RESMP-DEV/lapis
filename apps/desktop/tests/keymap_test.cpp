@@ -716,6 +716,53 @@ void typing_scroll_preference_persists() {
             "an unparsable file resets the typing return to its default");
 }
 
+// The visual view's theme, fonts, size and all-agents switch are saved under
+// "visual"; bad values are refused and hand-edited ones fall back.
+void visual_settings_persist() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "visual fixture directory");
+    const auto path = write_config(QDir(directory.path()), R"({})");
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load() && keymap.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal") &&
+                keymap.visual().value(QStringLiteral("size")).toInt() == 0 &&
+                !keymap.visual().value(QStringLiteral("all")).toBool() &&
+                keymap.visual().value(QStringLiteral("editor")) == QStringLiteral("auto"),
+            "visual defaults follow the terminal; files open in the first editor installed");
+    require(keymap.setVisual(QStringLiteral("editor"), QStringLiteral("cursor")) &&
+                read_config(path).value(QStringLiteral("visual")).toObject().value(QStringLiteral("editor")) ==
+                    QStringLiteral("cursor") &&
+                !keymap.setVisual(QStringLiteral("editor"), QStringLiteral("Bad Name")) &&
+                !keymap.setVisual(QStringLiteral("sendOnReturn"), true) &&
+                keymap.setVisual(QStringLiteral("editor"), QStringLiteral("auto")),
+            "the editor choice saves; Return-sends is gone");
+    require(keymap.setVisual(QStringLiteral("theme"), QStringLiteral("claude")) &&
+                keymap.setVisual(QStringLiteral("font"), QStringLiteral("serif")) &&
+                keymap.setVisual(QStringLiteral("size"), 18) &&
+                keymap.setVisual(QStringLiteral("all"), true),
+            "visual choices save");
+    require(!keymap.setVisual(QStringLiteral("size"), 4) &&
+                !keymap.setVisual(QStringLiteral("theme"), QStringLiteral("Bad Name")) &&
+                !keymap.setVisual(QStringLiteral("unknown"), 1),
+            "bad visual values are refused");
+    const auto saved = read_config(path).value(QStringLiteral("visual")).toObject();
+    require(saved.value(QStringLiteral("theme")).toString() == QStringLiteral("claude") &&
+                saved.value(QStringLiteral("size")).toInt() == 18 &&
+                saved.value(QStringLiteral("all")).toBool(),
+            "visual choices are written");
+    KeyMap restored;
+    restored.setSourcePathForTesting(path);
+    require(restored.load() && restored.visual().value(QStringLiteral("font")) == QStringLiteral("serif") &&
+                restored.visual().value(QStringLiteral("size")).toInt() == 18,
+            "visual choices survive restart");
+    static_cast<void>(write_config(QDir(directory.path()),
+                                   R"({"visual":{"theme":"../x","size":200,"all":"yes"}})"));
+    require(restored.load() && restored.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal") &&
+                restored.visual().value(QStringLiteral("size")).toInt() == 0 &&
+                !restored.visual().value(QStringLiteral("all")).toBool(),
+            "hand-edited visual values fall back");
+}
+
 // The terminal font is validated, written immediately, restored on restart and
 // rolled back when the file cannot be saved.
 void terminal_font_persists_and_rolls_back() {
@@ -1063,6 +1110,7 @@ int main(int argc, char** argv) {
         oled_theme_is_black();
         sidebar_preference_and_commands();
         typing_scroll_preference_persists();
+        visual_settings_persist();
         selection_persists();
         symbolic_link_config_updates_target();
         appearance_preserves_json_and_bad_files();

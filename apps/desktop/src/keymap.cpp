@@ -609,6 +609,7 @@ void KeyMap::apply_defaults() {
     keep_awake_ = true;
     editor_.clear();
     show_usage_ = true;
+    load_visual({});
     usage_meter_.clear();
     usage_machines_.clear();
     // Each CLI lists its own models (HarnessModels) unless the config names some.
@@ -704,6 +705,7 @@ bool KeyMap::load() {
     load_harness_updates(root.value(QStringLiteral("harnessUpdates")));
     load_alerts(root);
     load_usage(root);
+    load_visual(root);
     load_agent_defaults(root.value(QStringLiteral("newAgent")));
     accounts_ = parse_accounts(root.value(QStringLiteral("accounts")));
     limit_resets_ = parse_limit_resets(root.value(QStringLiteral("limitResets")));
@@ -852,6 +854,71 @@ void KeyMap::load_usage(const QJsonObject& root) {
     };
     usage_meter_ = names(usage.value(QStringLiteral("meter")), 32);
     usage_machines_ = names(usage.value(QStringLiteral("machines")), 128);
+}
+
+namespace {
+// A theme or font choice is a short lowercase name; the view keeps the table
+// and falls back to its default for a name it does not know.
+bool visual_name(const QString& name) {
+    static const QRegularExpression pattern(QStringLiteral("^[a-z][a-z0-9-]{0,31}$"));
+    return pattern.match(name).hasMatch();
+}
+bool visual_size(int size) { return size == 0 || (size >= 10 && size <= 40); }
+} // namespace
+
+void KeyMap::load_visual(const QJsonObject& root) {
+    const auto visual = root.value(QStringLiteral("visual")).toObject();
+    const auto name = [&visual](const char* key, const char* fallback) {
+        const auto value = visual.value(QLatin1String(key)).toString();
+        return visual_name(value) ? value : QString::fromUtf8(fallback);
+    };
+    visual_theme_ = name("theme", "terminal");
+    visual_font_ = name("font", "system");
+    visual_code_font_ = name("codeFont", "system");
+    const int size = visual.value(QStringLiteral("size")).toInt();
+    visual_size_ = visual_size(size) ? size : 0;
+    visual_all_ = visual.value(QStringLiteral("all")).toBool();
+    visual_editor_ = name("editor", "auto");
+}
+
+QVariantMap KeyMap::visual() const {
+    return {{QStringLiteral("theme"), visual_theme_},
+            {QStringLiteral("font"), visual_font_},
+            {QStringLiteral("codeFont"), visual_code_font_},
+            {QStringLiteral("size"), visual_size_},
+            {QStringLiteral("all"), visual_all_},
+            {QStringLiteral("editor"), visual_editor_}};
+}
+
+bool KeyMap::setVisual(const QString& key, const QVariant& value) {
+    QString* name = key == QLatin1String("theme")      ? &visual_theme_
+                    : key == QLatin1String("font")     ? &visual_font_
+                    : key == QLatin1String("codeFont") ? &visual_code_font_
+                    : key == QLatin1String("editor")   ? &visual_editor_
+                                                       : nullptr;
+    if (name != nullptr) {
+        const auto text = value.toString();
+        if (!visual_name(text))
+            return false;
+        if (*name == text)
+            return true;
+        *name = text;
+    } else if (key == QLatin1String("size")) {
+        const int size = value.toInt();
+        if (!visual_size(size))
+            return false;
+        if (visual_size_ == size)
+            return true;
+        visual_size_ = size;
+    } else if (key == QLatin1String("all")) {
+        if (visual_all_ == value.toBool())
+            return true;
+        visual_all_ = value.toBool();
+    } else {
+        return false;
+    }
+    emit changed();
+    return save();
 }
 
 // Paths are kept as written (~ is the machine's home); the new-agent forms
@@ -1173,6 +1240,15 @@ bool KeyMap::persist() {
     QJsonObject usage = root.value(QStringLiteral("usage")).toObject();
     usage.insert(QStringLiteral("show"), show_usage_);
     root.insert(QStringLiteral("usage"), usage);
+    QJsonObject visual = root.value(QStringLiteral("visual")).toObject();
+    visual.insert(QStringLiteral("theme"), visual_theme_);
+    visual.insert(QStringLiteral("font"), visual_font_);
+    visual.insert(QStringLiteral("codeFont"), visual_code_font_);
+    visual.insert(QStringLiteral("size"), visual_size_);
+    visual.insert(QStringLiteral("all"), visual_all_);
+    visual.insert(QStringLiteral("editor"), visual_editor_);
+    visual.remove(QStringLiteral("sendOnReturn")); // Return always sends now
+    root.insert(QStringLiteral("visual"), visual);
     if (adding_plan_) {
         PlanUpdate adding{adding_plan_->cli, {}, adding_plan_->email, adding_plan_->machine};
         if (const auto error = merge_plan_machine(root, adding); !error.isEmpty())

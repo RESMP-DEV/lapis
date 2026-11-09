@@ -382,6 +382,8 @@ struct AgentRequest {
     bool select{};
     // A conversation to resume, as the CLI's resume option takes it.
     QString resume;
+    // Text left in a Claude Code agent's prompt, unsent (its --prefill).
+    QString prefill;
 };
 
 // The approval mode a new agent starts in. A modeless request uses fallback
@@ -440,6 +442,9 @@ class Workspace final : public QObject {
     Q_PROPERTY(QVariantList stageDividers READ stageDividers NOTIFY tilesChanged)
     // An agent closed since lapis opened can come back with its conversation.
     Q_PROPERTY(bool canReopenAgent READ canReopenAgent NOTIFY closedChanged)
+    // The visual view's conversation: the stage sets its path to an agent's
+    // conversationFile() while that agent shows as a thread.
+    Q_PROPERTY(QObject* transcript READ transcript CONSTANT)
   public:
     explicit Workspace(WorkspaceMode mode = WorkspaceMode::live, WorkspaceOptions options = {});
     ~Workspace() override;
@@ -490,9 +495,10 @@ class Workspace final : public QObject {
         reconnect_wait_ = timing.wait;
     }
     // Starts an agent in the active category that resumes `conversation`.
+    // `prefill` is typed into a Claude Code agent's prompt, unsent.
     Q_INVOKABLE bool resumeAgent(const QString& directory, const QString& title,
                                  const QString& harness, const QString& conversation,
-                                 const QString& mode = {});
+                                 const QString& mode = {}, const QString& prefill = {});
     // The config's new-agent defaults, for the forms: harness, folder, and
     // the folder on each ssh machine.
     Q_INVOKABLE [[nodiscard]] QVariantMap agentDefaults() const;
@@ -563,6 +569,19 @@ class Workspace final : public QObject {
     [[nodiscard]] QHash<QString, QString> agentConversations() const;
     // One agent's current conversation, or empty.
     [[nodiscard]] QString agentConversation(const QString& id) const;
+    // The file an agent's CLI saves its current conversation in, on this Mac,
+    // for the visual view. Empty for an agent on another machine, a CLI the
+    // view cannot read yet (only Claude Code so far), or before the CLI has
+    // saved anything.
+    Q_INVOKABLE [[nodiscard]] QString conversationFile(const QString& id) const;
+    // Copies an agent's conversation up to `record` (a saved record's uuid;
+    // `before` stops just ahead of it) into a new conversation beside it and
+    // returns the new id for resumeAgent, or empty.
+    Q_INVOKABLE [[nodiscard]] QString forkConversation(const QString& id, const QString& record,
+                                                       bool before) const;
+    // The folder an agent runs in, as launched.
+    Q_INVOKABLE [[nodiscard]] QString agentFolder(const QString& id) const;
+    [[nodiscard]] QObject* transcript() const { return transcript_; }
     Q_INVOKABLE bool moveSessionBy(const QString& id, int delta);
     // Puts agents, in their strip order, at `index` of a category's strip (at
     // its end when `index` is past it), moving them there from any category.
@@ -872,6 +891,7 @@ class Workspace final : public QObject {
     };
     QHash<QString, Reconnect> reconnects_;
     AccountPool accounts_;
+    QObject* transcript_{}; // a TranscriptModel this workspace owns
     QString accounts_root_;
     // Agents whose plan filled, moving at their next pause.
     QSet<QString> switching_;
@@ -920,6 +940,21 @@ class Workspace final : public QObject {
     std::chrono::milliseconds reconnect_first_hold_{std::chrono::seconds(20)};
     std::optional<std::chrono::milliseconds> reconnect_wait_;
     void reconnectIfDropped(const QString& id);
+    // Remote agents that reached their machine before: restored ones, and
+    // ones whose connection held. They retry without giving up.
+    QSet<QString> worked_remotely_;
+    // A view's reattachment to a service that is still running.
+    struct Reattach {
+        std::size_t count{};
+        int generation{};
+        bool was_ready{};
+        bool discovered{};
+    };
+    QHash<QString, Reattach> reattaches_;
+    void reattachIfDisconnected(const QString& id);
+    QTimer network_settle_;
+    void watchNetwork();
+    void retryConnectionsNow();
     int focused_index_{-1};
     bool preview_mode_{};
 };

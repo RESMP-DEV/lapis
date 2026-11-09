@@ -456,6 +456,14 @@ ApplicationWindow {
         add("toggleTerminal", sideTerminalOpen ? qsTr("Hide terminal") : qsTr("Terminal"), "toggleTerminal", terminalsAvailable, qsTr("Not available here"), () => window.toggleTerminal())
         add("chooseTerminal", qsTr("Terminal on another machine"), "chooseTerminal", terminalsAvailable, qsTr("Not available here"), () => window.chooseTerminal())
         add("find", qsTr("Find in terminal"), "find", hasAgent, needAgent, () => findBar.open())
+        const conversationFile = hasAgent && !window.visualActive ? workspace.conversationFile(agent.sessionId) : ""
+        add("toggleVisual", window.visualActive ? qsTr("Show terminal") : qsTr("Show visual view"), "",
+            window.visualActive || conversationFile.length > 0,
+            hasAgent ? qsTr("Only for a Claude Code agent on this Mac, once its conversation is saved") : needAgent,
+            () => window.toggleVisual())
+        add("toggleVisualAll", window.visualAll ? qsTr("Show terminals for all agents") : qsTr("Show visual view for all agents"), "",
+            typeof keymap !== "undefined" && keymap !== null, qsTr("Not available here"),
+            () => window.toggleVisualAll())
         add("textBigger", qsTr("Bigger text"), "textBigger", true, "", () => window.changeTextSize(1))
         add("textSmaller", qsTr("Smaller text"), "textSmaller", true, "", () => window.changeTextSize(-1))
         add("textReset", qsTr("Default text size"), "textReset", true, "", () => window.changeTextSize(0))
@@ -920,6 +928,138 @@ ApplicationWindow {
     // The selected tile fills the stage until this is turned off again.
     property bool tileZoomed: false
     readonly property int toggleModifier: Qt.platform.os === "osx" ? Qt.MetaModifier : Qt.ControlModifier
+    // Agents shown as a readable thread (the visual view) instead of their
+    // terminal, by id. The terminal keeps running under it, takes no input
+    // while it is covered, and gets the keyboard back on Escape.
+    // "All agents" (saved in lapis.json) shows every Claude Code agent on
+    // this Mac as a thread; visualAgents holds this run's per-agent choices,
+    // which win over it until lapis restarts or "all" is switched again.
+    property var visualAgents: ({})
+    readonly property var visualSettings: (typeof keymap !== "undefined" && keymap !== null) ? keymap.visual : ({})
+    readonly property bool visualAll: visualSettings.all === true
+    readonly property bool visualWanted: {
+        const agent = workspace.focusedSession
+        if (agent === null)
+            return false
+        const choice = visualAgents[agent.sessionId]
+        return choice === undefined ? visualAll : choice
+    }
+    // The file appears once the CLI saves its first message; until then the
+    // check repeats while the thread is wanted.
+    property int visualProbe: 0
+    readonly property string visualFile: visualProbe >= 0 && visualWanted
+                                         ? workspace.conversationFile(workspace.focusedSession.sessionId) : ""
+    readonly property bool visualActive: visualWanted && visualFile.length > 0
+    Timer {
+        interval: 2000
+        repeat: true
+        running: window.visualWanted && window.visualFile.length === 0
+        onTriggered: window.visualProbe += 1
+    }
+    // Some slash commands open a dialog in the CLI's terminal (/model's
+    // picker, /config, /resume). The thread cannot show one, so after the
+    // bar sends a command the terminal is watched for a few seconds and, if a
+    // dialog replaces its input box, shown with the keyboard until the dialog
+    // closes. Only the person's own command starts this: a request an agent
+    // raises never uncovers the terminal or takes the keys.
+    property bool visualDialog: false
+    property int visualDialogTicks: -1 // -1: not watching
+    readonly property bool visualCovers: visualActive && !visualDialog
+    property string visualDialogAgent: ""
+    function watchVisualDialog(found) {
+        if (!visualActive || liveTerminal.document === null)
+            return
+        visualDialogAgent = liveTerminal.document.sessionId
+        visualDialogTicks = 0
+        if (found)
+            visualDialog = true
+    }
+    function endVisualDialog() {
+        visualDialogTicks = -1
+        visualDialog = false
+    }
+    Timer {
+        interval: 200
+        repeat: true
+        running: window.visualDialogTicks >= 0
+        onTriggered: {
+            const agent = liveTerminal.document
+            if (!window.visualActive || agent === null || agent.sessionId !== window.visualDialogAgent) {
+                window.endVisualDialog() // another agent is selected now
+            } else if (workspace.transcript.dialogShowing(liveTerminal.screenLines())) {
+                // A turn's own request is the agent's, not this command's.
+                if (window.visualDialog || agent.statusKind !== "working")
+                    window.visualDialog = true
+                else
+                    window.endVisualDialog()
+            } else if (window.visualDialog || ++window.visualDialogTicks > 25) {
+                window.endVisualDialog() // closed, or none came in five seconds
+            }
+        }
+    }
+    // Selecting another agent can show or hide the thread on its own (All
+    // agents); the keyboard follows whichever is shown.
+    onVisualCoversChanged: if (!inputBlocked && !dialogsVisible()) visualFocus()
+    function visualFocus() {
+        Qt.callLater(() => visualCovers ? visualView.composer.forceActiveFocus() : liveTerminal.forceActiveFocus())
+    }
+    function toggleVisual() {
+        const agent = workspace.focusedSession
+        if (!agent)
+            return
+        const next = Object.assign({}, visualAgents)
+        next[agent.sessionId] = !visualActive
+        visualAgents = next
+        endVisualDialog()
+        visualFocus()
+    }
+    function toggleVisualAll() {
+        if (typeof keymap === "undefined" || keymap === null)
+            return
+        visualAgents = ({})
+        keymap.setVisual("all", !visualAll)
+        visualFocus()
+    }
+    // Each CLI's commands for the visual view's model and effort pickers. A
+    // CLI without an entry shows what it reports but offers no choices.
+    readonly property var visualCommands: ({
+        claude: {
+            model: id => "/model " + id,
+            effort: level => "/effort " + level,
+            efforts: ["low", "medium", "high", "xhigh", "max"]
+        }
+    })
+    function visualModels(agent) {
+        if (!agent || !visualCommands[agent.harnessId])
+            return []
+        const harness = workspace.availableHarnesses().find(h => h.id === agent.harnessId)
+        return harness && harness.models ? harness.models.map(m => ({id: m.id, name: m.name})) : []
+    }
+    function visualEfforts(agent) {
+        const commands = agent ? visualCommands[agent.harnessId] : null
+        return commands ? commands.efforts : []
+    }
+    function visualCommand(kind, value) {
+        const agent = liveTerminal.document
+        const commands = agent ? visualCommands[agent.harnessId] : null
+        if (commands && commands[kind] && liveTerminal.submitText(commands[kind](value)))
+            watchVisualDialog(false)
+    }
+    // A new agent from this conversation: up to a reply, or just before a
+    // prompt with that prompt waiting in its input.
+    function forkVisual(record, before, prefill) {
+        const agent = workspace.focusedSession
+        if (!agent)
+            return
+        const fork = workspace.forkConversation(agent.sessionId, record, before)
+        if (fork.length === 0)
+            return
+        const defaults = workspace.agentDefaults()
+        const mode = window.lastMode.length > 0 ? window.lastMode :
+                     defaults.mode && defaults.mode.length > 0 ? defaults.mode : "full"
+        const title = (agent.title.length > 0 ? agent.title : "claude").slice(0, 73) + " (fork)"
+        workspace.resumeAgent(workspace.agentFolder(agent.sessionId), title, "claude", fork, mode, prefill)
+    }
 
     function stripIds() {
         return workspace.categorySessions.map(session => session.sessionId)
@@ -1784,6 +1924,18 @@ ApplicationWindow {
         updatesAvailable: window.desktopAvailable && desktop.updatesAvailable
         shortcutRows: visible ? window.commandEntries().filter(entry => entry.shortcut.length > 0)
                                          .map(entry => ({label: entry.label, keys: entry.shortcut})) : []
+        visualThemes: visualView.themes.map(theme => visualView.colorsOf(theme))
+        visualFonts: visualView.readingFonts
+        visualCodeFonts: visualView.codeFonts
+        visualEditors: workspace.transcript
+                       ? workspace.transcript.editors().map(e => ({ name: e.id, label: e.label, family: "" }))
+                       : []
+        visual: window.visualSettings
+        visualSize: visualView.fontSize
+        onVisualChosen: function(key, value) {
+            if (typeof keymap !== "undefined" && keymap !== null)
+                keymap.setVisual(key, value)
+        }
         onNotifyChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setNotify(on) }
         onLaunchAtLoginChosen: function(on) { if (window.desktopAvailable) desktop.setLaunchAtLogin(on) }
         onCheckUpdates: if (window.desktopAvailable) desktop.checkForUpdates()
@@ -3088,6 +3240,44 @@ ApplicationWindow {
                         }
                     }
                 }
+                // The visual view for the selected agent, or for every agent.
+                PlainText {
+                    text: qsTr("Visual view")
+                    color: window.mutedTextColor
+                    font.pixelSize: window.readoutFont
+                    Layout.topMargin: 4
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    CommandButton {
+                        objectName: "visualThisAgent"
+                        text: qsTr("This agent")
+                        selected: window.visualActive
+                        enabled: window.interactionArmed && workspace.focusedSession !== null
+                                 && (window.visualActive || window.visualProbe >= 0
+                                     && workspace.conversationFile(workspace.focusedSession.sessionId).length > 0)
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 1
+                        onClicked: window.toggleVisual()
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: enabled ? qsTr("Switch this agent between its terminal and the thread")
+                                              : qsTr("Only for a Claude Code agent on this Mac, once its conversation is saved")
+                    }
+                    CommandButton {
+                        objectName: "visualAllAgents"
+                        text: qsTr("All agents")
+                        selected: window.visualAll
+                        enabled: window.interactionArmed && typeof keymap !== "undefined" && keymap !== null
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 1
+                        onClicked: window.toggleVisualAll()
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: qsTr("Show every Claude Code agent on this Mac as a thread")
+                    }
+                }
                 CommandsButton {
                     objectName: categoryRail.visible ? "commandsButton" : "railCommands"
                     Layout.fillWidth: true
@@ -3466,6 +3656,89 @@ ApplicationWindow {
                     }
                 }
 
+                // The visual view covers the selected agent's terminal (or its
+                // tile) while that agent shows as a thread.
+                Transcript {
+                    id: visualView
+                    objectName: "visualView"
+                    z: 3
+                    visible: window.visualCovers
+                    x: liveTerminal.x
+                    y: liveTerminal.y
+                    width: liveTerminal.width
+                    height: liveTerminal.height
+                    model: workspace.transcript
+                    themeName: window.visualSettings.theme || "terminal"
+                    fontName: window.visualSettings.font || "system"
+                    codeFontName: window.visualSettings.codeFont || "system"
+                    sizeSetting: window.visualSettings.size || 0
+                    terminalFontSize: window.terminalFontSize
+                    terminalFamily: window.monoFamily
+                    terminalBackground: liveTerminal.backgroundColor
+                    terminalAccent: window.focusedBorderColor
+                    // The bar types into the terminal underneath, which keeps
+                    // the session, history and Tab's guesses it always had.
+                    submit: text => liveTerminal.submitText(text)
+                    interrupt: () => liveTerminal.interrupt()
+                    tabAway: () => liveTerminal.tabFlow && liveTerminal.tabAway()
+                    suggestion: liveTerminal.suggestion
+                    suggestionConfident: liveTerminal.suggestionConfident
+                    working: liveTerminal.document !== null && liveTerminal.document.statusKind === "working"
+                    waiting: liveTerminal.document !== null && liveTerminal.document.attentionPending
+                    waitingReason: liveTerminal.document !== null ? liveTerminal.document.attentionReason : ""
+                    canSend: liveTerminal.document !== null && liveTerminal.document.reachable
+                    editor: window.visualSettings.editor || "auto"
+                    screen: () => liveTerminal.screenLines()
+                    folder: window.visualActive && liveTerminal.document
+                            ? workspace.agentFolder(liveTerminal.document.sessionId) : ""
+                    slashCommands: liveTerminal.document !== null && liveTerminal.document.harnessId === "claude"
+                    onSuggestionFilled: {
+                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null && liveTerminal.document)
+                            nextPrompt.used(liveTerminal.document.sessionId, false, 0, liveTerminal.suggestionKey)
+                    }
+                    onSuggestionSent: {
+                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null && liveTerminal.document)
+                            nextPrompt.used(liveTerminal.document.sessionId, true, 0, liveTerminal.suggestionKey)
+                    }
+                    // The same picker for every CLI; each CLI's own command
+                    // makes the change, typed into its session.
+                    models: window.visualActive ? window.visualModels(liveTerminal.document) : []
+                    efforts: window.visualActive ? window.visualEfforts(liveTerminal.document) : []
+                    onModelChosen: function(id) { window.visualCommand("model", id) }
+                    onEffortChosen: function(level) { window.visualCommand("effort", level) }
+                    onCommandSent: window.watchVisualDialog(false)
+                    onDialogFound: window.watchVisualDialog(true)
+                    onDismissed: window.toggleVisual()
+                    onEditRequested: function(record, text) { window.forkVisual(record, true, text) }
+                }
+                Binding {
+                    target: workspace.transcript
+                    property: "path"
+                    // Nothing is read or watched while no agent shows as a thread.
+                    value: window.visualActive ? window.visualFile : ""
+                }
+
+                // Why the terminal is showing in place of the thread.
+                Rectangle {
+                    objectName: "visualDialogNote"
+                    z: 4
+                    visible: window.visualDialog && window.visualActive
+                    x: liveTerminal.x + liveTerminal.width - width - 10
+                    y: liveTerminal.y + 8
+                    width: visualDialogText.implicitWidth + 20
+                    height: visualDialogText.implicitHeight + 10
+                    radius: 6
+                    color: window.cardColor
+                    border.color: window.borderColor
+                    Text {
+                        id: visualDialogText
+                        anchors.centerIn: parent
+                        text: qsTr("The agent's own dialog · the thread returns when it closes")
+                        color: window.mutedTextColor
+                        font.pixelSize: 12
+                    }
+                }
+
                 TerminalSurface {
                     id: liveTerminal
                     ToolTip.visible: hoveredLink.length > 0
@@ -3496,8 +3769,10 @@ ApplicationWindow {
                     // A history page stays interactive for the wheel, selection and
                     // typing back to live; input reaches the agent only when live.
                     interactive: visible && window.visible && !window.inputBlocked && document !== null
+                                 && !window.visualCovers
                                  && (preview.active || document.inputReady || document.historyActive)
                     focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
+                           && !window.visualCovers
                     // The next prompt lapis predicted for the agent, while it
                     // waits for a prompt (never over a request): Tab types it
                     // for you to edit, Tab again sends it, and Tab with nothing

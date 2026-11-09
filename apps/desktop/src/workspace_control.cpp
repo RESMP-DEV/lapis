@@ -173,7 +173,8 @@ QByteArray WorkspaceControl::create(const QString& /*kind*/, const QJsonObject& 
                                .effort = request.value(QStringLiteral("effort")).toString(),
                                .named = named,
                                .select = false,
-                               .resume = request.value(QStringLiteral("resume")).toString()});
+                               .resume = request.value(QStringLiteral("resume")).toString(),
+                               .prefill = {}});
     if (id.isEmpty())
         return refused();
     const auto* item = workspace_.session(id);
