@@ -1,4 +1,3 @@
-#include "agent_search.hpp"
 #include "agent_state.hpp"
 #include "alerts.hpp"
 #include "app_paths.hpp"
@@ -938,7 +937,6 @@ int main(int argc, char** argv) {
             alert_for_agents(alerts, notifier, seen, workspace, keymap, shown);
         DesktopActions desktop(keymap);
         const bool hide_on_close = closes_to_dock(isolated, parser);
-        AgentSearch agentSearch(&workspace);
         // The canonical harness catalog's read-only status answers. It exists
         // in the isolated fixture too, so the pane is testable without config.
         ToolStatus toolStatus;
@@ -976,7 +974,6 @@ int main(int argc, char** argv) {
                                    .screen = target_screen(parser),
                                    .keymap = &keymap,
                                    .alerts = alerts ? &*alerts : nullptr,
-                                   .agentSearch = &agentSearch,
                                    .tools = &toolStatus,
                                    .desktop = &desktop,
                                    .conversations = conversations.get(),

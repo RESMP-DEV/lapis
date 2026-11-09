@@ -160,14 +160,10 @@ Codex, Claude, Graphite, Black, Claude light, Codex light), a reading font
 follows the terminal font unless set. Agents on other machines and other CLIs
 are not supported yet.
 
-## Finding
+## Resuming
 
-Command-K finds an agent as you type: by the letters of its name, folder,
-category, CLI or machine, or by text on its screen; Return shows it. Command-F
-finds text in the selected terminal: the screen first, then older history a
-screen at a time (Return goes older, Shift-Return newer). Command-O resumes a
-past Claude Code or Codex conversation from this Mac, newest first under its
-CLI's own title, narrowed as you type.
+Command-O resumes a past Claude Code or Codex conversation from this Mac,
+newest first under its CLI's own title, narrowed as you type.
 
 ## The side terminal
 

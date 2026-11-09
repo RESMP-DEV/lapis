@@ -16,7 +16,6 @@ all. Terminal Control chords stay with the agent.
 | Command-1 to 9 | Go to one of the first nine categories |
 | Command-] / [, Command-Shift-J / K, Command-Shift-Up / Down, Command-Option-Left / Right | Next or previous category |
 | Command-Shift-[ / ] | Previous or next agent in the category; with tiles, see below |
-| Command-K | Find an agent by name, folder, category, CLI, machine or screen text |
 
 ## Stage and tiles
 
@@ -42,7 +41,6 @@ not tiled still puts it in the selected tile for good.
 
 | Keys | Does |
 | --- | --- |
-| Command-F | Find text on the screen, then in history (Return older, Shift-Return newer) |
 | Command-C / Command-V | Copy the selection / paste; selecting text (a drag or a double-click) copies it too |
 | Command-plus, minus, zero | Text size bigger, smaller, reset |
 | Command-Left / Right | Start or end of the line |

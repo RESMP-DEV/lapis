@@ -346,7 +346,7 @@ void default_settings_chords_are_shared() {
 
 // Actions lapis no longer has. A lapis.json that still binds them loads as
 // before; the bindings reach nothing.
-constexpr std::array kRetiredActions{"nextAttention", "latestAttention"};
+constexpr std::array kRetiredActions{"nextAttention", "latestAttention", "searchAgents", "find"};
 
 void retired_actions_load_silently() {
     QTemporaryDir directory;

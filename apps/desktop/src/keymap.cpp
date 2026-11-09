@@ -443,17 +443,15 @@ void KeyMap::apply_defaults() {
         {QStringLiteral("reloadConfig"), {modifier + QStringLiteral("R")}},
         {QStringLiteral("newAgent"), {modifier + QStringLiteral("T")}},
         {QStringLiteral("newCategory"), {modifier + QStringLiteral("N")}},
-        {QStringLiteral("searchAgents"), {modifier + QStringLiteral("K")}},
         {QStringLiteral("toggleSidebar"), {modifier + QStringLiteral("B")}},
         // Tiles: split with a new agent like the selected one, as iTerm2's
         // Command-D does, and move between tiles.
         {QStringLiteral("splitRight"), {modifier + QStringLiteral("D")}},
-        // Text size, find, and bringing back the last closed agent.
+        // Text size.
         {QStringLiteral("textBigger"),
          {modifier + QStringLiteral("="), modifier + QStringLiteral("+")}},
         {QStringLiteral("textSmaller"), {modifier + QStringLiteral("-")}},
         {QStringLiteral("textReset"), {modifier + QStringLiteral("0")}},
-        {QStringLiteral("find"), {modifier + QStringLiteral("F")}},
         // A past Claude or Codex conversation, as a new agent.
         {QStringLiteral("resumeConversation"), {modifier + QStringLiteral("O")}},
     };

@@ -1045,9 +1045,8 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
 | `workspace` | Desktop-enabled | Category registry (private atomic writes, rollback on failure), agent create/close/reopen, per-category selection, unseen marks, status sources and parent-session marker removal |
 | `window-state` | Desktop-enabled | Machine-local window geometry, off-screen restore, isolated modes, unsafe paths, legacy layout values and modal focus |
-| `agent-search` | Desktop-enabled | Agent matching, ranking and query handling |
 | `app-environment` | Desktop-enabled | Application launch environment and executable discovery |
-| `terminal-find` | Desktop-enabled | Terminal text matching and row/column results |
+| `terminal-suggestion` | Desktop-enabled | Where an offered next prompt shows after the cursor |
 | `tile-layout` | Desktop-enabled | Tile placement, navigation and layout bounds |
 | `cell-shapes` | Desktop-enabled | Block, box and quadrant geometry |
 | `harness-models` | Desktop-enabled | Model discovery, parsing, defaults and result bounds |

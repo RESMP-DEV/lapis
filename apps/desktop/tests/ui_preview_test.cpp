@@ -1,4 +1,3 @@
-#include "agent_search.hpp"
 #include "conversation_index.hpp"
 #include "gui_state.hpp"
 #include "keymap.hpp"
@@ -1446,10 +1445,9 @@ void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     pump(60);
     CHECK(strip_ids(workspace) == order);
 }
-// Command-F finds text on the page shown; Command-plus and zero change the
-// text size; categories reorder.
-void check_find_and_text_size(QQuickWindow& window, lapis::desktop::Workspace& workspace,
-                              lapis::desktop::KeyMap& keymap) {
+// Command-plus and zero change the text size; categories reorder.
+void check_text_size(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                     lapis::desktop::KeyMap& keymap) {
     const auto item = [&window](const QString& name) {
         auto* found = find_visual(window.contentItem(), name);
         if (found == nullptr)
@@ -1460,15 +1458,6 @@ void check_find_and_text_size(QQuickWindow& window, lapis::desktop::Workspace& w
         send_binding(window, keymap.sequences(QString::fromLatin1(action)).front());
         pump(80);
     };
-    const auto type = [&window](const QString& text) {
-        for (const auto character : text) {
-            QKeyEvent press(QEvent::KeyPress, 0, Qt::NoModifier, QString(character));
-            QKeyEvent release(QEvent::KeyRelease, 0, Qt::NoModifier, QString(character));
-            QCoreApplication::sendEvent(&window, &press);
-            QCoreApplication::sendEvent(&window, &release);
-        }
-        pump(60);
-    };
     auto* terminal =
         qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
     for (const auto& value : workspace.categorySessions()) {
@@ -1477,16 +1466,6 @@ void check_find_and_text_size(QQuickWindow& window, lapis::desktop::Workspace& w
             CHECK(workspace.selectSession(session->sessionId()));
     }
     pump(60);
-    key("find");
-    auto* bar = item(QStringLiteral("findBar"));
-    CHECK(bar->isVisible());
-    type(QStringLiteral("ready"));
-    CHECK(terminal->selectedText() == QStringLiteral("Ready"));
-    CHECK(terminal->countMatches(QStringLiteral("ready")) == 1);
-    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-    QCoreApplication::sendEvent(&window, &escape);
-    pump(60);
-    CHECK(!bar->isVisible() && terminal->selectedText().isEmpty());
 
     const int size = keymap.terminalFontSize();
     key("textBigger");
@@ -2078,35 +2057,6 @@ void capture_step(QQuickWindow& window, const char* name) {
         CHECK(window.grabWindow().save(path + QString::fromLatin1(name) + QStringLiteral(".png")));
 }
 
-void check_agent_search(QQuickWindow& window, lapis::desktop::Workspace& workspace,
-                        const lapis::desktop::KeyMap& keymap,
-                        lapis::desktop::TerminalSurface& terminal) {
-    // Command-K finds an agent by name; Return shows it and gives it the keys.
-    CHECK(workspace.selectSession(QStringLiteral("shell")));
-    pump(30);
-    press_action(window, keymap, "searchAgents");
-    auto* finder = window.findChild<QObject*>(QStringLiteral("searchDialog"));
-    CHECK(finder != nullptr);
-    wait_popup(*finder, true);
-    auto* field = required_visual(window, QStringLiteral("agentSearchField"));
-    CHECK(wait_for([&] { return field->hasActiveFocus(); }, 5000));
-    field->setProperty("text", QStringLiteral("wsnotes"));
-    pump(30);
-    CHECK(required_visual(window, QStringLiteral("agentResult_notes")) != nullptr);
-    send_binding(window, QStringLiteral("Return"));
-    wait_popup(*finder, false);
-    CHECK(focused_id(workspace) == QStringLiteral("notes") && terminal.hasActiveFocus());
-    // Escape leaves the focused agent alone.
-    press_action(window, keymap, "searchAgents");
-    wait_popup(*finder, true);
-    required_visual(window, QStringLiteral("agentSearchField"))
-        ->setProperty("text", QStringLiteral("shell"));
-    pump(30);
-    send_binding(window, QStringLiteral("Escape"));
-    wait_popup(*finder, false);
-    CHECK(focused_id(workspace) == QStringLiteral("notes"));
-}
-
 // With nothing open, the stage lists what to do next and takes the keyboard:
 // up and down move, Return runs the entry. Command-O finds a past conversation
 // by typing and resumes it with Return.
@@ -2439,7 +2389,6 @@ int run_strip_ui_tests() {
     CHECK(config.isValid());
     KeyMap keymap;
     keymap.setSourcePathForTesting(config.filePath(QStringLiteral("strip.json")));
-    AgentSearch search(&workspace);
     ConversationIndex conversations(config.filePath(QStringLiteral("history/claude")),
                                     config.filePath(QStringLiteral("history/codex")),
                                     config.filePath(QStringLiteral("conversations.json")));
@@ -2452,7 +2401,6 @@ int run_strip_ui_tests() {
                                   .compact = false,
                                   .screen = QString(),
                                   .keymap = &keymap,
-                                  .agentSearch = &search,
                                   .conversations = &conversations,
                                   .terminals = &terminals});
     CHECK(preview.load());
@@ -2673,8 +2621,9 @@ int run_strip_ui_tests() {
     wait_popup(*category_form, false);
 
     check_tiles_and_drags(*window, workspace, keymap);
-    check_find_and_text_size(*window, workspace, keymap);
-    check_agent_search(*window, workspace, keymap, *terminal);
+    check_text_size(*window, workspace, keymap);
+    CHECK(workspace.selectSession(QStringLiteral("notes")));
+    pump(30);
     check_home_and_resume(*window, workspace, keymap);
     check_nine_categories(*window, workspace, keymap);
     check_side_terminal(*window, terminals, keymap, *terminal);

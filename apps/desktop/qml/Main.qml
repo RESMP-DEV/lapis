@@ -79,7 +79,6 @@ ApplicationWindow {
     readonly property bool motionEnabled: !preview.reducedMotion && active && visible && motionDuration > 0
     readonly property bool inputBlocked: transitionLock
             || commandsDialog.visible
-            || searchDialog.visible
             || resumeDialog.visible
             || terminalPicker.visible
             || toolsDialog.visible
@@ -175,8 +174,6 @@ ApplicationWindow {
             return [mac ? "Meta+Shift+[" : "Ctrl+Shift+["]
         if (action === "newCategory")
             return [mod + "N"]
-        if (action === "searchAgents")
-            return [mod + "K"]
         if (action === "splitRight")
             return [mod + "D"]
         if (action === "splitDown")
@@ -197,8 +194,6 @@ ApplicationWindow {
             return [mod + "-"]
         if (action === "textReset")
             return [mod + "0"]
-        if (action === "find")
-            return [mod + "F"]
         if (action === "reopenAgent")
             return [mac ? "Meta+Shift+T" : "Ctrl+Alt+Shift+T"]
         if (action === "resumeConversation")
@@ -266,10 +261,6 @@ ApplicationWindow {
     function openCommandsDialog() {
         if (!interactionArmed) return
         commandsDialog.open()
-    }
-    function openSearchDialog() {
-        if (!interactionArmed || dialogsVisible()) return
-        searchDialog.open()
     }
     readonly property bool conversationsAvailable: typeof conversations !== "undefined" && conversations !== null
     function openResumeDialog() {
@@ -413,7 +404,6 @@ ApplicationWindow {
         }
         add("newAgent", qsTr("New agent"), "newAgent", true, "", () => window.openNewAgentDialog())
         add("newCategory", qsTr("New category"), "newCategory", true, "", () => window.openCategoryDialog("add"))
-        add("searchAgents", qsTr("Find an agent"), "searchAgents", true, "", () => window.openSearchDialog())
         add("openTools", qsTr("Tools"), "", toolsAvailable, qsTr("The tools pane is not available here"), () => window.openToolsDialog())
         add("toggleSidebar", sidebarExpanded ? qsTr("Hide sidebar") : qsTr("Show sidebar"), "toggleSidebar", true, "", () => window.toggleSidebar())
         add("togglePreviews", previewsEnabled ? qsTr("Hide agent previews") : qsTr("Show agent previews"), "togglePreviews", true, "", () => window.togglePreviews())
@@ -427,7 +417,6 @@ ApplicationWindow {
         add("resumeConversation", qsTr("Resume a conversation"), "resumeConversation", conversationsAvailable, qsTr("Not available here"), () => window.openResumeDialog())
         add("toggleTerminal", sideTerminalOpen ? qsTr("Hide terminal") : qsTr("Terminal"), "toggleTerminal", terminalsAvailable, qsTr("Not available here"), () => window.toggleTerminal())
         add("chooseTerminal", qsTr("Terminal on another machine"), "chooseTerminal", terminalsAvailable, qsTr("Not available here"), () => window.chooseTerminal())
-        add("find", qsTr("Find in terminal"), "find", hasAgent, needAgent, () => findBar.open())
         const conversationFile = hasAgent && !window.visualActive ? workspace.conversationFile(agent.sessionId) : ""
         add("toggleVisual", window.visualActive ? qsTr("Show terminal") : qsTr("Show visual view"), "",
             window.visualActive || conversationFile.length > 0,
@@ -580,7 +569,7 @@ ApplicationWindow {
     }
 
     function dialogsVisible() {
-        return commandsDialog.visible || searchDialog.visible || resumeDialog.visible || terminalPicker.visible || toolsDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
+        return commandsDialog.visible || resumeDialog.visible || terminalPicker.visible || toolsDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
                 || closeAgentDialog.visible || categoryDialog.visible || renameAgentDialog.visible
     }
 
@@ -1253,25 +1242,6 @@ ApplicationWindow {
         autoRepeat: false
         onActivated: window.toggleSidebar()
     }
-    Search {
-        id: searchDialog
-        engine: (typeof agentSearch !== "undefined") ? agentSearch : null
-        surfaceColor: window.surfaceColor
-        textColor: window.textColor
-        mutedColor: window.mutedTextColor
-        accentColor: window.focusedBorderColor
-        selectionColor: window.focusedColor
-        hoverColor: window.hoveredCardColor
-        borderColor: window.borderColor
-        monoFamily: window.monoFamily
-        uiFont: window.chromeFont
-        readoutFont: window.readoutFont
-        chromeRadius: window.chromeRadius
-        motionDuration: window.motionDuration
-        motionEnabled: window.motionEnabled
-        onChosen: function(sessionId) { Qt.callLater(function() { workspace.selectSession(sessionId) }) }
-        onClosed: preview.deferTerminalFocus()
-    }
     Resume {
         id: resumeDialog
         engine: window.conversationsAvailable ? conversations : null
@@ -1428,7 +1398,6 @@ ApplicationWindow {
     ActionShortcut { action: "textBigger"; onActivated: window.changeTextSize(1) }
     ActionShortcut { action: "textSmaller"; onActivated: window.changeTextSize(-1) }
     ActionShortcut { action: "textReset"; onActivated: window.changeTextSize(0) }
-    ActionShortcut { action: "find"; onActivated: if (workspace.focusedSession !== null) findBar.open() }
     ActionShortcut { action: "reopenAgent"; onActivated: window.reopenAgent() }
     ActionShortcut { action: "resumeConversation"; onActivated: window.openResumeDialog() }
     ActionShortcut { action: "toggleTerminal"; onActivated: window.toggleTerminal() }
@@ -1565,14 +1534,6 @@ ApplicationWindow {
         enabled: window.shortcutsArmed
         autoRepeat: false
         onActivated: window.openNewAgentDialog()
-    }
-    Shortcut {
-        objectName: "searchAgentsShortcut"
-        sequences: window.bindings("searchAgents")
-        context: Qt.WindowShortcut
-        enabled: window.shortcutsArmed
-        autoRepeat: false
-        onActivated: window.openSearchDialog()
     }
     Shortcut {
         objectName: "newCategoryShortcut"
@@ -4037,133 +3998,6 @@ ApplicationWindow {
                     color: Qt.alpha(window.focusedBorderColor, 0.08)
                     border.width: 2
                     border.color: window.focusedBorderColor
-                }
-
-                // Command-F: find text in the selected terminal, the page shown
-                // and then older history pages. Return goes older, Shift-Return newer.
-                Rectangle {
-                    id: findBar
-                    objectName: "findBar"
-                    visible: false
-                    z: 20
-                    anchors.top: parent.top
-                    anchors.right: parent.right
-                    anchors.topMargin: stage.tiled ? stage.focusedFrame.y + stage.headerHeight + 4 : 10
-                    anchors.rightMargin: stage.tiled ? stage.width - stage.focusedFrame.x - stage.focusedFrame.width + 8 : 12
-                    width: Math.min(380, stage.width - 24)
-                    height: findRow.implicitHeight + 12
-                    radius: window.chromeRadius
-                    color: window.surfaceColor
-                    border.width: 1
-                    border.color: window.focusedBorderColor
-                    property string status: ""
-                    property string paging: ""
-                    property int pages: 0
-                    function open() {
-                        visible = true
-                        status = ""
-                        findField.forceActiveFocus()
-                        findField.selectAll()
-                    }
-                    function close() {
-                        visible = false
-                        paging = ""
-                        liveTerminal.clearSelectedText()
-                        preview.deferTerminalFocus()
-                    }
-                    function search(older) {
-                        if (findField.text.length === 0)
-                            return
-                        if (liveTerminal.findText(findField.text, older)) {
-                            status = ""
-                            return
-                        }
-                        // Nothing more on this page: fetch the next page of history.
-                        const session = workspace.focusedSession
-                        if (older && session && session.live && pages < 500) {
-                            paging = "older"
-                            ++pages
-                            status = qsTr("Searching history…")
-                            session.olderHistory()
-                        } else if (!older && session && session.historyActive && pages < 500) {
-                            paging = "newer"
-                            ++pages
-                            session.newerHistory()
-                        } else {
-                            status = qsTr("No more matches")
-                        }
-                    }
-                    Connections {
-                        target: workspace.focusedSession
-                        enabled: findBar.visible && findBar.paging.length > 0
-                        function onHistoryChanged() {
-                            const session = workspace.focusedSession
-                            if (!session || session.historyRequestPending)
-                                return
-                            const older = findBar.paging === "older"
-                            findBar.paging = ""
-                            liveTerminal.clearSelectedText()
-                            if (liveTerminal.findText(findField.text, older)) {
-                                findBar.status = ""
-                                return
-                            }
-                            if (session.historyMessage.length > 0 || !session.historyActive)
-                                findBar.status = qsTr("No more matches")
-                            else // a kept screen shows at once; step on from the event loop
-                                Qt.callLater(findBar.search, older)
-                        }
-                    }
-                    RowLayout {
-                        id: findRow
-                        anchors.fill: parent
-                        anchors.margins: 6
-                        spacing: 6
-                        TextField {
-                            id: findField
-                            objectName: "findField"
-                            Layout.fillWidth: true
-                            placeholderText: qsTr("Find")
-                            font.family: window.monoFamily
-                            font.pixelSize: window.readoutFont + 1
-                            onTextEdited: {
-                                findBar.pages = 0
-                                liveTerminal.clearSelectedText()
-                                findBar.search(true)
-                            }
-                            Keys.onReturnPressed: function(event) {
-                                findBar.pages = 0
-                                findBar.search(!(event.modifiers & Qt.ShiftModifier))
-                            }
-                            Keys.onEnterPressed: function(event) {
-                                findBar.pages = 0
-                                findBar.search(!(event.modifiers & Qt.ShiftModifier))
-                            }
-                            Keys.onEscapePressed: findBar.close()
-                        }
-                        PlainText {
-                            objectName: "findStatus"
-                            text: findBar.status.length > 0 ? findBar.status :
-                                  findField.text.length > 0 ? qsTr("%1 here").arg(liveTerminal.countMatches(findField.text)) : ""
-                            color: window.mutedTextColor
-                            font.family: window.monoFamily
-                            font.pixelSize: window.readoutFont
-                        }
-                        CommandButton {
-                            text: "↑"
-                            Accessible.name: qsTr("Older match")
-                            onClicked: { findBar.pages = 0; findBar.search(true) }
-                        }
-                        CommandButton {
-                            text: "↓"
-                            Accessible.name: qsTr("Newer match")
-                            onClicked: { findBar.pages = 0; findBar.search(false) }
-                        }
-                        CommandButton {
-                            text: "×"
-                            Accessible.name: qsTr("Close find")
-                            onClicked: findBar.close()
-                        }
-                    }
                 }
 
                 Rectangle {
