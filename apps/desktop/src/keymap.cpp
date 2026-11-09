@@ -483,28 +483,6 @@ QString KeyMap::default_source_path() {
     return QDir(data_directory()).filePath(QStringLiteral("lapis.json"));
 }
 
-// Parse a requested layout. Returns false for an unrecognised name so the
-// caller can report it rather than silently switching.
-[[nodiscard]] bool parse_layout(const QString& name, WorkspaceLayout* out) {
-    if (name == QStringLiteral("focus")) {
-        *out = WorkspaceLayout::Focus;
-        return true;
-    }
-    if (name == QStringLiteral("blocks")) {
-        *out = WorkspaceLayout::Blocks;
-        return true;
-    }
-    if (name == QStringLiteral("columns")) {
-        *out = WorkspaceLayout::Columns;
-        return true;
-    }
-    if (name == QStringLiteral("stack")) {
-        *out = WorkspaceLayout::Stack;
-        return true;
-    }
-    return false;
-}
-
 [[nodiscard]] bool parse_density(const QString& name, CardDensity* out) {
     if (name == QStringLiteral("comfortable")) {
         *out = CardDensity::Comfortable;
@@ -642,7 +620,6 @@ void KeyMap::apply_defaults() {
     harness_updates_off_.clear();
     terminal_font_size_ = kTerminalFontSizeDefault;
     scroll_to_bottom_on_typing_ = true;
-    layout_ = WorkspaceLayout::Focus;
     density_ = CardDensity::Comfortable;
     theme_ = QStringLiteral("lapis");
 }
@@ -701,10 +678,6 @@ bool KeyMap::load() {
         if (!sequences.isEmpty())
             bindings_.insert(it.key(), sequences);
     }
-    const QString requested_layout = root.value(QStringLiteral("layout")).toString();
-    if (!requested_layout.isEmpty() && !parse_layout(requested_layout, &layout_))
-        diagnostic_ = QStringLiteral("Unknown layout '%1'; keeping focus").arg(requested_layout);
-
     const QString requested_theme = root.value(QStringLiteral("theme")).toString();
     if (requested_theme.isEmpty()) {
         // Tolerate a theme object as well as a plain name, so a hand-written
@@ -948,20 +921,6 @@ void KeyMap::load_terminal_font(const QJsonValue& value) {
     }
 }
 
-QString KeyMap::layoutName() const {
-    switch (layout_) {
-    case WorkspaceLayout::Blocks:
-        return QStringLiteral("blocks");
-    case WorkspaceLayout::Columns:
-        return QStringLiteral("columns");
-    case WorkspaceLayout::Stack:
-        return QStringLiteral("stack");
-    case WorkspaceLayout::Focus:
-        break;
-    }
-    return QStringLiteral("focus");
-}
-
 QString KeyMap::densityName() const { return density_name(density_); }
 
 QVariantList KeyMap::themes() const {
@@ -994,11 +953,6 @@ QVariantList KeyMap::themes() const {
     return list;
 }
 
-QStringList KeyMap::layouts() const {
-    return {QStringLiteral("focus"), QStringLiteral("columns"), QStringLiteral("blocks"),
-            QStringLiteral("stack")};
-}
-
 QStringList KeyMap::densities() const {
     return {QStringLiteral("comfortable"), QStringLiteral("compact"), QStringLiteral("minimal")};
 }
@@ -1017,28 +971,6 @@ bool KeyMap::reload() {
     qInfo().noquote() << "lapis keymap reloaded:" << (ok ? "ok" : "failed")
                       << (diagnostic_.isEmpty() ? QString() : diagnostic_);
     return ok;
-}
-
-void KeyMap::toggleLayout() {
-    const QStringList available = layouts();
-    const qsizetype next = (available.indexOf(layoutName()) + 1) % available.size();
-    static_cast<void>(setLayout(available.at(next)));
-}
-
-bool KeyMap::setLayout(const QString& name) {
-    WorkspaceLayout requested = layout_;
-    if (!parse_layout(name, &requested)) {
-        diagnostic_ = QStringLiteral("Unknown layout '%1'").arg(name);
-        emit changed();
-        return false;
-    }
-    if (requested == layout_)
-        return true;
-    layout_ = requested;
-    diagnostic_.clear();
-    qInfo().noquote() << "lapis layout:" << layoutName();
-    emit changed();
-    return save();
 }
 
 bool KeyMap::setTheme(const QString& name) {
@@ -1217,7 +1149,6 @@ bool KeyMap::persist() {
     QString read_reason;
     if (!read_config_for_update(source_path_, root, &read_reason))
         return fail(read_reason);
-    root.insert(QStringLiteral("layout"), layoutName());
     root.insert(QStringLiteral("theme"), theme_);
     root.insert(QStringLiteral("density"), densityName());
     root.insert(QStringLiteral("sidebarVisible"), sidebar_visible_);

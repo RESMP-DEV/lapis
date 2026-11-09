@@ -25,13 +25,7 @@
 #include <optional>
 
 namespace lapis::desktop {
-// Layout of the session area. "focus" keeps one large pane with a strip of
-// cards; "blocks" gives every session an equal tile; "columns" stacks the
-// previews in a left channel beside the pane; "stack" shows one session at a
-// time with the carousel hidden.
-enum class WorkspaceLayout : std::uint8_t { Focus, Blocks, Columns, Stack };
-
-// How much room the preview cards take in the focus and columns layouts.
+// How much room the preview cards take in the strip under the stage.
 enum class CardDensity : std::uint8_t { Comfortable, Compact, Minimal };
 
 // Colour scheme for the window chrome. Terminal cell colours come from the
@@ -95,19 +89,16 @@ struct AgentDefaults {
     QHash<QString, QStringList> models;
 };
 
-// User-editable keybindings, layout, theme, and card density, loaded from
+// User-editable keybindings, theme, and card density, loaded from
 // lapis.json at the project root. Missing or malformed input falls back to
 // built-in defaults, so a bad edit degrades rather than bricking the window.
 // Every action maps to a list of Qt key sequences, which QML binds through
 // Shortcut.
 class KeyMap final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QString layoutName READ layoutName NOTIFY changed)
-    Q_PROPERTY(bool blocks READ blocks NOTIFY changed)
     Q_PROPERTY(QString themeName READ themeName NOTIFY changed)
     Q_PROPERTY(QString densityName READ densityName NOTIFY changed)
     Q_PROPERTY(QVariantList themes READ themes NOTIFY changed)
-    Q_PROPERTY(QStringList layouts READ layouts NOTIFY changed)
     Q_PROPERTY(QStringList densities READ densities NOTIFY changed)
     Q_PROPERTY(bool sidebarVisible READ sidebarVisible NOTIFY changed)
     // The strip of live agent previews under the stage.
@@ -171,23 +162,16 @@ class KeyMap final : public QObject {
         return sequences(action);
     }
 
-    [[nodiscard]] WorkspaceLayout layout() const { return layout_; }
-    [[nodiscard]] QString layoutName() const;
-    [[nodiscard]] bool blocks() const { return layout_ == WorkspaceLayout::Blocks; }
     [[nodiscard]] const QString& themeName() const { return theme_; }
     [[nodiscard]] QString densityName() const;
     [[nodiscard]] QVariantList themes() const;
-    [[nodiscard]] QStringList layouts() const;
     [[nodiscard]] QStringList densities() const;
 
-    // Cycle through layouts() in order and persist through setLayout().
-    Q_INVOKABLE void toggleLayout();
     Q_INVOKABLE bool reload();
 
     // Apply an appearance change from the settings dialog. Each writes the
     // config file so the choice survives a restart, then moves keyboard focus
     // back to the terminal. Invalid names are rejected without touching state.
-    Q_INVOKABLE bool setLayout(const QString& name);
     Q_INVOKABLE bool setTheme(const QString& name);
     Q_INVOKABLE bool setDensity(const QString& name);
     Q_INVOKABLE bool setSidebarVisible(bool visible);
@@ -324,7 +308,6 @@ class KeyMap final : public QObject {
     QString source_path_;
     QString diagnostic_;
     QString chime_diagnostic_;
-    WorkspaceLayout layout_{WorkspaceLayout::Focus};
     CardDensity density_{CardDensity::Comfortable};
     QString theme_{QStringLiteral("lapis")};
     QString terminal_font_family_;
