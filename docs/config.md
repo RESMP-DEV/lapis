@@ -40,9 +40,8 @@ apply because lapis starts the executable directly.
 "harnessUpdates": {"omp": false}
 ```
 
-New agents of a listed CLI start without running its update first, and **Update
-this tab's CLI and reload it** says updates are off for that CLI instead of
-running one. An update already running when you add the key still finishes
+New agents of a listed CLI start without running its update first. An update
+already running when you add the key still finishes
 before its waiting agents start. Every CLI that is absent or set to `true` keeps
 updating as before; `--no-harness-updates` still turns off updates for all of
 them. See [keeping CLIs current](agents.md#keeping-clis-current).

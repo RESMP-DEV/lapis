@@ -173,15 +173,10 @@ bun add -g @oh-my-pi/pi-coding-agent@<version>
 "harnessUpdates": {"omp": false}
 ```
 
-New OMP agents then start on that version, other CLIs keep updating, and the
-update command in Commands says updates are off for OMP instead of running
-`omp update`.
+New OMP agents then start on that version and other CLIs keep updating.
 
-A running agent keeps the version it started with. **Update this tab's CLI and
-reload it** and **Update Claude Code and reload its tabs** in Commands run the
-update where each agent runs (over ssh, without a terminal or password prompt),
-once per CLI and machine, then reload those agents. They keep working
-meanwhile; an update that fails says why and leaves them running.
+A running agent keeps the version it started with; reloading it after an
+update starts it on the new one.
 
 ## Long jobs
 

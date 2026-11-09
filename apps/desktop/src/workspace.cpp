@@ -2230,7 +2230,7 @@ bool Workspace::restartAgent(const QString& id) {
         return fail(QStringLiteral("This agent is still closing."));
     if (serviceRunning(entry->endpoint))
         return fail(QStringLiteral("This agent is still running."));
-    if (cli_updates_.value(entry->harness + QLatin1Char('@')).starts.contains(id))
+    if (cli_updates_.value(entry->harness).starts.contains(id))
         return fail(QStringLiteral("This agent is already waiting for its CLI update."));
     QString diagnostic;
     const auto launch = restoredLaunch(*entry, &diagnostic);
@@ -2981,8 +2981,7 @@ bool Workspace::deferForUpdate(const QString& id) {
     const auto* selected = find_harness(harness);
     if (!selected || selected->updateCommand.isEmpty())
         return false;
-    const auto key = harness + QLatin1Char('@');
-    const bool running = cli_updates_.contains(key);
+    const bool running = cli_updates_.contains(harness);
     constexpr qint64 fresh_ms = qint64{30} * 60 * 1000;
     // An update already running still holds new agents until its installer
     // stops, even if lapis.json turned that CLI's updates off meanwhile.
@@ -2990,20 +2989,18 @@ bool Workspace::deferForUpdate(const QString& id) {
         (!update_harnesses_ || harness_updates_off_.contains(harness) ||
          QDateTime::currentMSecsSinceEpoch() - harness_checked_ms_.value(harness, 0) < fresh_ms))
         return false;
-    auto& update = cli_updates_[key];
+    auto& update = cli_updates_[harness];
     update.harness = harness;
     if (!update.starts.contains(id))
         update.starts.append(id);
-    update.agents.removeAll(id); // A first start must never also reload.
     if (auto* item = session(id))
         item->setUpdating(QStringLiteral("Updating %1…").arg(selected->label));
     if (running)
         return true;
-    update.process =
-        newUpdater(entry->launch.program, {selected->updateCommand},
-                   [this, key](QProcess* stopped, const QString& outcome, bool succeeded) {
-                       finishCliUpdate(key, stopped, outcome, succeeded);
-                   });
+    update.process = newUpdater(entry->launch.program, {selected->updateCommand},
+                                [this, harness](QProcess* stopped, const QString& outcome, bool) {
+                                    finishCliUpdate(harness, stopped, outcome);
+                                });
     update.process->start();
     return true;
 }
@@ -3049,140 +3046,21 @@ Workspace::newUpdater(const QString& program, const QStringList& arguments,
     return process;
 }
 
-bool Workspace::canUpdateAgent(const QString& id) const {
-    const auto entry = agents_.constFind(id);
-    const auto* cli = entry == agents_.cend() ? nullptr : find_harness(entry->harness);
-    return cli != nullptr && !cli->updateCommand.isEmpty();
-}
-int Workspace::updateAndReloadAgent(const QString& id) {
-    if (!canUpdateAgent(id)) {
-        fail(QStringLiteral("lapis has no update command for this agent's CLI."));
-        return 0;
-    }
-    if (refuseUpdatesOff(agents_.value(id).harness))
-        return 0;
-    return updateAndReload({id});
-}
-bool Workspace::refuseUpdatesOff(const QString& harness) {
-    if (!harness_updates_off_.contains(harness))
-        return false;
-    const auto* cli = find_harness(harness);
-    fail(QStringLiteral("Updates are off for %1 in lapis.json (harnessUpdates).")
-             .arg(cli != nullptr ? cli->label : harness));
-    return true;
-}
-int Workspace::updateClaudeAndReload() {
-    if (refuseUpdatesOff(QStringLiteral("claude")))
-        return 0;
-    QStringList ids;
-    for (const auto& item : sessions_)
-        if (agents_.value(item->sessionId()).harness == QLatin1String("claude"))
-            ids << item->sessionId();
-    if (ids.isEmpty()) {
-        fail(QStringLiteral("No Claude Code agent is open."));
-        return 0;
-    }
-    return updateAndReload(ids);
-}
-// On another machine the update goes through the agent's own ssh options, in
-// a login shell there so PATH finds the CLI, without a terminal or password
-// prompt, on a connection of its own.
-int Workspace::updateAndReload(const QStringList& ids) {
-    if (!mutableRegistry())
-        return 0;
-    clearError();
-    int waiting = 0;
-    int skipped = 0;
-    for (const auto& id : ids) {
-        auto* item = session(id);
-        const auto entry = agents_.constFind(id);
-        const auto* cli = entry == agents_.cend() ? nullptr : find_harness(entry->harness);
-        if (item == nullptr || cli == nullptr || cli->updateCommand.isEmpty() || item->closing() ||
-            reloading_.contains(id)) {
-            ++skipped;
-            continue;
-        }
-        const auto remote = remoteCommand(entry->launch);
-        const auto machine = remote ? remote->first : QString();
-        const auto key = entry->harness + QLatin1Char('@') + machine;
-        auto& update = cli_updates_[key];
-        update.manual = true;
-        if (!update.agents.contains(id) && !update.starts.contains(id))
-            update.agents << id;
-        item->setUpdating(QStringLiteral("Updating %1…").arg(cli->label));
-        ++waiting;
-        if (update.process)
-            continue;
-        update.harness = entry->harness;
-        update.machine = machine;
-        auto program = entry->launch.program;
-        QStringList arguments{cli->updateCommand};
-        if (remote) {
-            const auto options = entry->launch.arguments.mid(
-                0, entry->launch.arguments.indexOf(QStringLiteral("-t")));
-            arguments = QStringList{QStringLiteral("-o"), QStringLiteral("BatchMode=yes"),
-                                    QStringLiteral("-o"), QStringLiteral("ConnectTimeout=10"),
-                                    QStringLiteral("-o"), QStringLiteral("ControlPath=none")} +
-                        options +
-                        QStringList{QStringLiteral("-T"), QStringLiteral("--"), machine,
-                                    QStringLiteral(R"(exec "${SHELL:-/bin/sh}" -lic '%1 %2')")
-                                        .arg(cli->command, cli->updateCommand)};
-        } else if (QFileInfo(program).fileName() != cli->command ||
-                   !QFileInfo(program).isExecutable()) {
-            program = harness_program(entry->harness);
-        }
-        update.process =
-            newUpdater(program, arguments,
-                       [this, key](QProcess* stopped, const QString& outcome, bool succeeded) {
-                           finishCliUpdate(key, stopped, outcome, succeeded);
-                       });
-        update.process->start();
-    }
-    if (skipped > 0)
-        fail(QStringLiteral("%1 agent(s) cannot update now because they are unavailable, "
-                            "closing, reloading, or have no update command.")
-                 .arg(skipped));
-    return waiting;
-}
-void Workspace::finishCliUpdate(const QString& key, QProcess* process, const QString& outcome,
-                                bool succeeded) {
-    const auto found = cli_updates_.constFind(key);
+void Workspace::finishCliUpdate(const QString& harness, QProcess* process, const QString& outcome) {
+    const auto found = cli_updates_.constFind(harness);
     if (found == cli_updates_.cend() || found->process != process)
         return;
-    const auto update = cli_updates_.take(key);
+    const auto update = cli_updates_.take(harness);
     drainUpdater(process);
     const auto output = QString::fromUtf8(updater_output_.take(process)).simplified().right(600);
     updater_stopping_.remove(process);
     process->deleteLater();
-    const auto where = update.machine.isEmpty() ? QStringLiteral("this Mac") : update.machine;
-    logUpdate(update.machine.isEmpty()
-                  ? QStringLiteral("%1 %2 update: %3. %4")
-                        .arg(QDateTime::currentDateTime().toString(Qt::ISODate), update.harness,
-                             outcome, output)
-                  : QStringLiteral("%1 %2 update on %3: %4. %5")
-                        .arg(QDateTime::currentDateTime().toString(Qt::ISODate), update.harness,
-                             where, outcome, output));
-    if (update.machine.isEmpty() && (succeeded || !update.starts.isEmpty()))
-        harness_checked_ms_.insert(update.harness, QDateTime::currentMSecsSinceEpoch());
-    for (const auto& id : update.agents)
-        if (auto* item = session(id))
-            item->setUpdating({});
-    // Startup consumers may use the installed CLI even after an update fails.
-    // Already-running consumers keep their process when the update fails.
+    logUpdate(QStringLiteral("%1 %2 update: %3. %4")
+                  .arg(QDateTime::currentDateTime().toString(Qt::ISODate), update.harness, outcome,
+                       output));
+    harness_checked_ms_.insert(update.harness, QDateTime::currentMSecsSinceEpoch());
+    // Waiting agents start with the installed CLI even after an update fails.
     startUpdatedAgents(update.starts);
-    if (!update.manual)
-        return;
-    const auto* cli = find_harness(update.harness);
-    const auto label = cli != nullptr ? cli->label : update.harness;
-    if (!succeeded) {
-        fail(
-            QStringLiteral("%1 did not update on %2 (%3), so existing agents were not reloaded. %4")
-                .arg(label, where, outcome, output.right(300))
-                .trimmed());
-        return;
-    }
-    if (!update.agents.isEmpty())
-        reloadAgents(update.agents);
 }
 
 void Workspace::drainUpdater(QProcess* process) {

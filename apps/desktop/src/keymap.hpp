@@ -182,7 +182,7 @@ class KeyMap final : public QObject {
     [[nodiscard]] const QHash<QString, QStringList>& harnessArguments() const {
         return harness_arguments_;
     }
-    // CLIs whose automatic and explicit updates lapis skips, from
+    // CLIs whose automatic updates lapis skips, from
     // {"harnessUpdates": {"omp": false}}; every other CLI updates as before.
     [[nodiscard]] const QSet<QString>& harnessUpdatesOff() const { return harness_updates_off_; }
     Q_INVOKABLE bool setFinishSound(bool on);

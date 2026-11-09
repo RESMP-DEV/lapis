@@ -49,7 +49,7 @@ it.
 ## Commands
 
 **Commands** (Command-Shift-P) searches every action with its shortcut. It holds
-**New category**, the reload and update actions from [agents](agents.md), and
+**New category**, the reload actions from [agents](agents.md), and
 the card actions.
 
 ## Visual view
