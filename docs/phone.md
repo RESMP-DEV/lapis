@@ -7,7 +7,7 @@ agents as the Mac and can type to them, start them and arrange them.
 ## Access
 
 There is nothing to sign in to. The gateway answers a request only when
-`tailscale whois` names the Mac owner's login on an iOS or Android device, or
+`tailscale whois` names the Mac owner's login on an iOS device, or
 when the peer belongs to one of the Mac's private ZeroTier networks. So the
 phone must be signed in to Tailscale with the Mac's account, or joined to its
 ZeroTier network. Keep Tailscale active on both when using HTTP: its WireGuard

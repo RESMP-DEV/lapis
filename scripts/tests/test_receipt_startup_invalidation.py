@@ -8,7 +8,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import check_android_remote
 from check_claude_hooks import main as claude_main
 from check_codex_attention import main as codex_attention_main
 from check_history import main as history_main
@@ -134,26 +133,6 @@ class ReceiptInvalidationTests(unittest.TestCase):
                 self.assertRaises(KeyboardInterrupt),
             ):
                 codex_import_main()
-            self.assertFalse(output.exists())
-
-    def test_android_check_removes_stale_receipt_before_skipping(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            output = root / "remote-check.json"
-            output.write_text(json.dumps({"passed": True, "stale": True}))
-            service = root / "service"
-            service.write_text("fixture")
-            with (
-                patch("sys.argv", ["check_android_remote.py"]),
-                patch.object(check_android_remote, "BUILD", root),
-                patch.object(check_android_remote, "SERVICE", service),
-                patch.object(
-                    check_android_remote.android_ctl, "find_sdk", return_value=None
-                ),
-                patch("builtins.print"),
-            ):
-                result = check_android_remote.main()
-            self.assertEqual(result, check_android_remote.SKIP_EXIT)
             self.assertFalse(output.exists())
 
 

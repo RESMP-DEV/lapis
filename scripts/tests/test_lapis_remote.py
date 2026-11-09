@@ -432,29 +432,6 @@ class AdmissionTests(unittest.TestCase):
         self.assertIn("mac.example.ts.net:7349", auth.hosts(7349))
         self.assertNotIn("localhost:7349", auth.hosts(7349))
 
-    def test_android_devices_of_the_owner(self):
-        auth = remote.TailnetAuth(
-            runner=fake_tailscale(
-                {
-                    "100.64.0.5": ("owner@example.com", "android"),
-                    "100.64.0.6": ("owner@example.com", "Android"),
-                }
-            )
-        )
-        self.assertTrue(auth.allowed("100.64.0.5"))
-        self.assertTrue(auth.allowed("100.64.0.6"))
-        # Other systems and other owners' Android devices are still refused.
-        auth = remote.TailnetAuth(
-            runner=fake_tailscale(
-                {
-                    "100.64.0.3": ("owner@example.com", "linux"),
-                    "100.64.0.4": ("someone@example.com", "android"),
-                }
-            )
-        )
-        self.assertFalse(auth.allowed("100.64.0.3"))
-        self.assertFalse(auth.allowed("100.64.0.4"))
-
     def test_zerotier_members_and_this_mac(self):
         auth = remote.ZeroTierAuth(runner=fake_zerotier([ZT_NETWORK]))
         self.assertTrue(auth.allowed("10.243.9.7"))  # a member inside the route
