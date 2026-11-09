@@ -2603,6 +2603,9 @@ void restoredAgentsStartAtTheStageSize() {
     const QString id = uuid();
     auto record = agentRecord(canonical, id, "general");
     record.insert(QStringLiteral("program"), script);
+    // A terminal CLI: a record without a harness is Codex, which runs its
+    // app-server instead of drawing the stand-in's output.
+    record.insert(QStringLiteral("harness"), QStringLiteral("grok"));
     WorkspaceOptions options;
     options.restoreAgents = true;
     options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
@@ -5992,6 +5995,7 @@ int main(int argc, char** argv) {
             } else if (selected == QStringLiteral("stage-size")) {
                 // Windowless: a stand-in CLI under a real session service.
                 agentsStartAtTheStageSize();
+                restoredAgentsStartAtTheStageSize();
             } else if (selected == QStringLiteral("launch-policy")) {
                 modelessAgentsGetTheDefaultMode();
                 resumingAConversationStartsItsCli();
