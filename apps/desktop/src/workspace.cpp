@@ -3,13 +3,13 @@
 #include "app_paths.hpp"
 #include "conversation_index.hpp"
 #include "harness_catalog.hpp"
-#include "transcript.hpp"
 #include "hook_relay.hpp"
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "platform/updater_process.hpp"
 #include "remote_hook_relay.hpp"
 #include "terminals.hpp"
+#include "transcript.hpp"
 #include "workspace_control.hpp"
 
 #include <QCoreApplication>
@@ -2165,9 +2165,9 @@ bool resumable(const session::ResumeRecord& record, const QString& harness) {
 // Where Claude Code saved a conversation on this Mac: one folder per project
 // under its projects directory. Empty when it has not saved one.
 QString claudeTranscript(const QString& conversation) {
-    const QDir projects(qEnvironmentVariable("CLAUDE_CONFIG_DIR",
-                                             QDir::homePath() + QStringLiteral("/.claude")) +
-                        QStringLiteral("/projects"));
+    const QDir projects(
+        qEnvironmentVariable("CLAUDE_CONFIG_DIR", QDir::homePath() + QStringLiteral("/.claude")) +
+        QStringLiteral("/projects"));
     const auto transcript = conversation + QStringLiteral(".jsonl");
     for (const auto& folder : projects.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
         const auto path = projects.filePath(folder + QLatin1Char('/') + transcript);
@@ -2536,7 +2536,8 @@ bool Workspace::applyAccount(Agent& agent, SessionPreview& item) {
     if (!remoteCommand(agent.launch) && QFile::exists(charts + QStringLiteral("/matplotlibrc")) &&
         qEnvironmentVariableIsEmpty("MATPLOTLIBRC")) {
         environment.insert(QStringLiteral("MATPLOTLIBRC"), charts);
-        environment.insert(QStringLiteral("LAPIS_CHART_PALETTE"), charts + QStringLiteral("/palette.json"));
+        environment.insert(QStringLiteral("LAPIS_CHART_PALETTE"),
+                           charts + QStringLiteral("/palette.json"));
     }
     if (agent.harness == QLatin1String("omp") && !remoteCommand(agent.launch)) {
         const auto overlay = omp_overlay(QFileInfo(storage_path_).absolutePath());

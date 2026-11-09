@@ -724,14 +724,17 @@ void visual_settings_persist() {
     const auto path = write_config(QDir(directory.path()), R"({})");
     KeyMap keymap;
     keymap.setSourcePathForTesting(path);
-    require(keymap.load() && keymap.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal") &&
+    require(keymap.load() &&
+                keymap.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal") &&
                 keymap.visual().value(QStringLiteral("size")).toInt() == 0 &&
                 !keymap.visual().value(QStringLiteral("all")).toBool() &&
                 keymap.visual().value(QStringLiteral("editor")) == QStringLiteral("auto"),
             "visual defaults follow the terminal; files open in the first editor installed");
     require(keymap.setVisual(QStringLiteral("editor"), QStringLiteral("cursor")) &&
-                read_config(path).value(QStringLiteral("visual")).toObject().value(QStringLiteral("editor")) ==
-                    QStringLiteral("cursor") &&
+                read_config(path)
+                        .value(QStringLiteral("visual"))
+                        .toObject()
+                        .value(QStringLiteral("editor")) == QStringLiteral("cursor") &&
                 !keymap.setVisual(QStringLiteral("editor"), QStringLiteral("Bad Name")) &&
                 !keymap.setVisual(QStringLiteral("sendOnReturn"), true) &&
                 keymap.setVisual(QStringLiteral("editor"), QStringLiteral("auto")),
@@ -752,12 +755,14 @@ void visual_settings_persist() {
             "visual choices are written");
     KeyMap restored;
     restored.setSourcePathForTesting(path);
-    require(restored.load() && restored.visual().value(QStringLiteral("font")) == QStringLiteral("serif") &&
+    require(restored.load() &&
+                restored.visual().value(QStringLiteral("font")) == QStringLiteral("serif") &&
                 restored.visual().value(QStringLiteral("size")).toInt() == 18,
             "visual choices survive restart");
     static_cast<void>(write_config(QDir(directory.path()),
                                    R"({"visual":{"theme":"../x","size":200,"all":"yes"}})"));
-    require(restored.load() && restored.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal") &&
+    require(restored.load() &&
+                restored.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal") &&
                 restored.visual().value(QStringLiteral("size")).toInt() == 0 &&
                 !restored.visual().value(QStringLiteral("all")).toBool(),
             "hand-edited visual values fall back");

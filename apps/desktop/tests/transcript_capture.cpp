@@ -12,7 +12,6 @@
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QFile>
-#include <QQmlEngine>
 #include <QFont>
 #include <QFontDatabase>
 #include <QGuiApplication>
@@ -87,7 +86,8 @@ int check_keys(QQuickView& view, QQuickItem* root) {
         const int at = input->property("cursorPosition").toInt();
         if (got != text || (cursor >= 0 && at != cursor)) {
             std::fprintf(stderr, "keys FAIL %s: got \"%s\" at %d\n", what,
-                         qPrintable(QString(got).replace(QLatin1Char('\n'), QStringLiteral("\\n"))), at);
+                         qPrintable(QString(got).replace(QLatin1Char('\n'), QStringLiteral("\\n"))),
+                         at);
             ++failures;
         }
     };
@@ -97,13 +97,15 @@ int check_keys(QQuickView& view, QQuickItem* root) {
     };
     set(QStringLiteral("alpha beta.gamma\nsecond line"));
     key(Qt::Key_Left, Qt::MetaModifier);
-    expect("Command-Left goes to the line start", QStringLiteral("alpha beta.gamma\nsecond line"), 17);
+    expect("Command-Left goes to the line start", QStringLiteral("alpha beta.gamma\nsecond line"),
+           17);
     key(Qt::Key_Right, Qt::AltModifier);
     expect("Option-Right ends the word", QStringLiteral("alpha beta.gamma\nsecond line"), 23);
     key(Qt::Key_Backspace, Qt::AltModifier);
     expect("Option-Backspace deletes the word", QStringLiteral("alpha beta.gamma\n line"), 17);
     key(Qt::Key_Backspace, Qt::MetaModifier);
-    expect("Command-Backspace at a line start joins it", QStringLiteral("alpha beta.gamma line"), 16);
+    expect("Command-Backspace at a line start joins it", QStringLiteral("alpha beta.gamma line"),
+           16);
     key(Qt::Key_Left, Qt::AltModifier);
     expect("Option-Left stops at the word start", QStringLiteral("alpha beta.gamma line"), 11);
     key(Qt::Key_Delete, Qt::MetaModifier);
@@ -126,10 +128,11 @@ int check_keys(QQuickView& view, QQuickItem* root) {
     // Typing a slash command lists the best matches; Return fills one in.
     root->setProperty("slashCommands", true);
     for (const auto letter : QStringLiteral("/comp"))
-        key(letter == QLatin1Char('/') ? Qt::Key_Slash : Qt::Key_A + (letter.unicode() - 'a'), Qt::NoModifier,
-            QString(letter));
+        key(letter == QLatin1Char('/') ? Qt::Key_Slash : Qt::Key_A + (letter.unicode() - 'a'),
+            Qt::NoModifier, QString(letter));
     const auto matches = root->property("slashMatches").toList();
-    if (matches.isEmpty() || matches.front().toMap().value(QStringLiteral("name")) != QStringLiteral("compact")) {
+    if (matches.isEmpty() ||
+        matches.front().toMap().value(QStringLiteral("name")) != QStringLiteral("compact")) {
         std::fputs("keys FAIL \"/comp\" lists compact first\n", stderr);
         ++failures;
     }
@@ -137,8 +140,8 @@ int check_keys(QQuickView& view, QQuickItem* root) {
     expect("Tab fills in the chosen command", QStringLiteral("/compact "), 9);
     set(QString());
     for (const auto letter : QStringLiteral("/comp"))
-        key(letter == QLatin1Char('/') ? Qt::Key_Slash : Qt::Key_A + (letter.unicode() - 'a'), Qt::NoModifier,
-            QString(letter));
+        key(letter == QLatin1Char('/') ? Qt::Key_Slash : Qt::Key_A + (letter.unicode() - 'a'),
+            Qt::NoModifier, QString(letter));
     key(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
     expect("Return runs the chosen command", QString(), -1);
     if (root->property("pendingCommand").toString() != QStringLiteral("/compact")) {
@@ -190,14 +193,18 @@ int main(int argc, char** argv) {
     parser.addOption({"theme", "Visual theme name", "name", "terminal"});
     parser.addOption({"font", "Reading font name", "name", "system"});
     parser.addOption({"code-font", "Code font name", "name", "system"});
-    parser.addOption({"terminal-background", "Background the terminal theme matches", "color", "#0f131c"});
+    parser.addOption(
+        {"terminal-background", "Background the terminal theme matches", "color", "#0f131c"});
     parser.addOption({"suggestion", "A Tab suggestion shown in the empty bar", "text", ""});
     parser.addOption({"bench", "Scroll the whole conversation and report frame times"});
     parser.addOption({"step", "Pixels scrolled per benchmark step", "px", "240"});
     parser.addOption({"keys", "Check the bar's Mac line editing and send keys, then exit"});
-    parser.addOption({"live", "Show a running turn whose terminal screen is this text file", "file"});
-    parser.addOption({"play","Press play on the audio and video shown (it plays aloud) and report progress"});
-    parser.addOption({"wait","Milliseconds to let the view settle (media to open) before shooting", "ms", "400"});
+    parser.addOption(
+        {"live", "Show a running turn whose terminal screen is this text file", "file"});
+    parser.addOption(
+        {"play", "Press play on the audio and video shown (it plays aloud) and report progress"});
+    parser.addOption({"wait", "Milliseconds to let the view settle (media to open) before shooting",
+                      "ms", "400"});
     parser.process(app);
     const bool keys = parser.isSet("keys");
     if (!keys && (!parser.isSet("jsonl") || !parser.isSet("out"))) {
@@ -230,10 +237,12 @@ int main(int argc, char** argv) {
     root->setProperty("suggestion", parser.value("suggestion"));
     // The choices the app passes for a Claude Code agent, so the menus'
     // chevrons draw.
-    root->setProperty("models", QVariantList{QVariantMap{{QStringLiteral("id"), QStringLiteral("claude-opus-5-5")},
-                                                         {QStringLiteral("name"), QStringLiteral("Opus 5.5")}}});
-    root->setProperty("efforts", QStringList{QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high"),
-                                             QStringLiteral("xhigh"), QStringLiteral("max")});
+    root->setProperty("models", QVariantList{QVariantMap{
+                                    {QStringLiteral("id"), QStringLiteral("claude-opus-5-5")},
+                                    {QStringLiteral("name"), QStringLiteral("Opus 5.5")}}});
+    root->setProperty("efforts", QStringList{QStringLiteral("low"), QStringLiteral("medium"),
+                                             QStringLiteral("high"), QStringLiteral("xhigh"),
+                                             QStringLiteral("max")});
     // The offscreen platform reports generic names ("Sans Serif") whose
     // fallback spaces digits apart; name the Mac's interface fonts instead,
     // as the real window's platform resolves them.
@@ -244,10 +253,12 @@ int main(int argc, char** argv) {
                 return family;
         return QFontDatabase::systemFont(fallback).family();
     };
-    const auto sans = first_of({QStringLiteral("SF Pro Text"), QStringLiteral("SF Pro"),
-                                QStringLiteral(".AppleSystemUIFont"), QStringLiteral("Helvetica Neue")},
-                               QFontDatabase::GeneralFont);
-    const auto mono = first_of({QStringLiteral("SF Mono"), QStringLiteral("Menlo")}, QFontDatabase::FixedFont);
+    const auto sans =
+        first_of({QStringLiteral("SF Pro Text"), QStringLiteral("SF Pro"),
+                  QStringLiteral(".AppleSystemUIFont"), QStringLiteral("Helvetica Neue")},
+                 QFontDatabase::GeneralFont);
+    const auto mono =
+        first_of({QStringLiteral("SF Mono"), QStringLiteral("Menlo")}, QFontDatabase::FixedFont);
     root->setProperty("systemFamily", sans);
     root->setProperty("terminalFamily", mono);
     std::printf("fonts: sans %s, mono %s\n", qPrintable(sans), qPrintable(mono));
@@ -262,10 +273,12 @@ int main(int argc, char** argv) {
             return 2;
         }
         const auto rows = QString::fromUtf8(screen.readAll()).split(QLatin1Char('\n'));
-        root->setProperty("interrupt", QVariant::fromValue(view.engine()->evaluate(QStringLiteral("(function () {})"))));
+        root->setProperty("interrupt", QVariant::fromValue(view.engine()->evaluate(
+                                           QStringLiteral("(function () {})"))));
         root->setProperty("working", true);
         root->setProperty("liveRows", model.liveLines(rows));
-        root->setProperty("turnSince", static_cast<double>(QDateTime::currentMSecsSinceEpoch() - 83'000));
+        root->setProperty("turnSince",
+                          static_cast<double>(QDateTime::currentMSecsSinceEpoch() - 83'000));
         root->setProperty("now", static_cast<double>(QDateTime::currentMSecsSinceEpoch()));
     }
     view.show(); // offscreen: nothing reaches the screen
@@ -299,9 +312,10 @@ int main(int argc, char** argv) {
         const auto media = player->property("media").toMap();
         const auto frame = player->property("frame").toSizeF();
         std::printf("playback %s: %d ms, frame %dx%d, %d frames decoded, status %d %s\n",
-                    qPrintable(media.value(QStringLiteral("name")).toString()), player->property("duration").toInt(),
-                    static_cast<int>(frame.width()), static_cast<int>(frame.height()),
-                    player->property("frames").toInt(), player->property("status").toInt(),
+                    qPrintable(media.value(QStringLiteral("name")).toString()),
+                    player->property("duration").toInt(), static_cast<int>(frame.width()),
+                    static_cast<int>(frame.height()), player->property("frames").toInt(),
+                    player->property("status").toInt(),
                     qPrintable(player->property("problem").toString()));
     }
     if (!players.empty() && parser.isSet("play")) {
@@ -318,9 +332,11 @@ int main(int argc, char** argv) {
 #endif
         }
         for (auto* player : players) {
-            std::printf("after play %s: playing %d, %d frames decoded\n",
-                        qPrintable(player->property("media").toMap().value(QStringLiteral("name")).toString()),
-                        player->property("playing").toBool(), player->property("frames").toInt());
+            std::printf(
+                "after play %s: playing %d, %d frames decoded\n",
+                qPrintable(
+                    player->property("media").toMap().value(QStringLiteral("name")).toString()),
+                player->property("playing").toBool(), player->property("frames").toInt());
             QMetaObject::invokeMethod(player, "toggle");
         }
     }
@@ -359,7 +375,8 @@ int main(int argc, char** argv) {
     // The latest folded turn, closed and then opened.
     int work = -1;
     for (int row = model.rowCount() - 1; row >= 0 && work < 0; --row)
-        if (model.data(model.index(row), TranscriptModel::KindRole).toString() == QLatin1String("work"))
+        if (model.data(model.index(row), TranscriptModel::KindRole).toString() ==
+            QLatin1String("work"))
             work = row;
     if (work >= 0) {
         panels.push_back({QStringLiteral("Latest turn, folded"), shot(view, list, work)});
@@ -392,8 +409,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "could not write %s\n", qPrintable(parser.value("out")));
         return 1;
     }
-    std::printf("items %d  load %lld ms  sheet %s\n", model.rowCount(), static_cast<long long>(load_ms),
-                qPrintable(parser.value("out")));
+    std::printf("items %d  load %lld ms  sheet %s\n", model.rowCount(),
+                static_cast<long long>(load_ms), qPrintable(parser.value("out")));
 
     if (parser.isSet("bench")) {
         // Scroll top to bottom a step at a time; each step polishes, renders
@@ -408,7 +425,9 @@ int main(int argc, char** argv) {
         std::vector<double> frames, scrolls, renders;
         QElapsedTimer total;
         total.start();
-        const auto ms = [](const QElapsedTimer& timer) { return static_cast<double>(timer.nsecsElapsed()) / 1e6; };
+        const auto ms = [](const QElapsedTimer& timer) {
+            return static_cast<double>(timer.nsecsElapsed()) / 1e6;
+        };
         for (int step = 0; step < 4000; ++step) {
             const bool at_end = list->property("atYEnd").toBool();
             if (at_end)
@@ -420,18 +439,23 @@ int main(int argc, char** argv) {
             scrolls.push_back(ms(frame));
             if (scrolls.back() > 80 && parser.isSet("bench")) {
                 // Name the items that just came into view, to see what is slow.
-                const qreal bottom = list->property("contentY").toReal() + list->property("height").toReal();
+                const qreal bottom =
+                    list->property("contentY").toReal() + list->property("height").toReal();
                 int at = -1;
-                QMetaObject::invokeMethod(list, "indexAt", Q_RETURN_ARG(int, at), Q_ARG(qreal, 10.0),
-                                          Q_ARG(qreal, bottom - 10));
+                QMetaObject::invokeMethod(list, "indexAt", Q_RETURN_ARG(int, at),
+                                          Q_ARG(qreal, 10.0), Q_ARG(qreal, bottom - 10));
                 if (at >= 0) {
                     const auto index = model.index(at);
-                    std::printf("  slow step %.0f ms at item %d: %s %s, body %lld chars, result %lld chars\n",
-                                scrolls.back(), at,
-                                qPrintable(model.data(index, TranscriptModel::KindRole).toString()),
-                                qPrintable(model.data(index, TranscriptModel::TitleRole).toString()),
-                                static_cast<long long>(model.data(index, TranscriptModel::BodyRole).toString().size()),
-                                static_cast<long long>(model.data(index, TranscriptModel::ResultRole).toString().size()));
+                    std::printf(
+                        "  slow step %.0f ms at item %d: %s %s, body %lld chars, result %lld "
+                        "chars\n",
+                        scrolls.back(), at,
+                        qPrintable(model.data(index, TranscriptModel::KindRole).toString()),
+                        qPrintable(model.data(index, TranscriptModel::TitleRole).toString()),
+                        static_cast<long long>(
+                            model.data(index, TranscriptModel::BodyRole).toString().size()),
+                        static_cast<long long>(
+                            model.data(index, TranscriptModel::ResultRole).toString().size()));
                 }
             }
             QElapsedTimer render;
@@ -441,11 +465,12 @@ int main(int argc, char** argv) {
             frames.push_back(ms(frame));
         }
         const auto line = [](const char* name, const std::vector<double>& values) {
-            std::printf("  %-22s p50 %6.2f  p95 %6.2f  p99 %6.2f  max %7.2f ms\n", name, percentile(values, 0.50),
-                        percentile(values, 0.95), percentile(values, 0.99), percentile(values, 1.0));
+            std::printf("  %-22s p50 %6.2f  p95 %6.2f  p99 %6.2f  max %7.2f ms\n", name,
+                        percentile(values, 0.50), percentile(values, 0.95),
+                        percentile(values, 0.99), percentile(values, 1.0));
         };
-        std::printf("bench: %zu steps of %.0f px in %lld ms (offscreen, software scene graph)\n", frames.size(), step_px,
-                    static_cast<long long>(total.elapsed()));
+        std::printf("bench: %zu steps of %.0f px in %lld ms (offscreen, software scene graph)\n",
+                    frames.size(), step_px, static_cast<long long>(total.elapsed()));
         line("scroll + item creation", scrolls);
         line("render + readback", renders);
         line("whole step", frames);

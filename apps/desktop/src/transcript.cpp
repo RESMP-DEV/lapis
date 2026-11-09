@@ -1,37 +1,37 @@
 #include "transcript.hpp"
 
+#include "code_highlight.hpp"
+#include "slash_commands.hpp"
 #include <QClipboard>
+#include <QColor>
+#include <QDateTime>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QFont>
 #include <QFontDatabase>
 #include <QGuiApplication>
+#include <QImage>
+#include <QImageReader>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMimeData>
+#include <QPointer>
+#include <QProcess>
 #include <QQuickTextDocument>
+#include <QRegularExpression>
+#include <QStandardPaths>
 #include <QTextBlock>
-#include <QColor>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextList>
 #include <QTextTable>
-#include "code_highlight.hpp"
-#include "slash_commands.hpp"
-#include <QFileInfo>
-#include <QFileSystemWatcher>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QPointer>
-#include <QRegularExpression>
 #include <QThreadPool>
 #include <QVariantList>
 #include <QVariantMap>
-#include <QDateTime>
-#include <QImage>
-#include <QImageReader>
-#include <QMimeData>
-#include <QStandardPaths>
-#include <QDesktopServices>
-#include <QProcess>
 #include <algorithm>
 #include <limits>
 #include <utility>
@@ -40,15 +40,24 @@ namespace lapis::desktop {
 namespace transcript {
 QString kind_name(Kind kind) {
     switch (kind) {
-    case Kind::prompt: return QStringLiteral("prompt");
-    case Kind::reply: return QStringLiteral("reply");
-    case Kind::thinking: return QStringLiteral("thinking");
-    case Kind::tool: return QStringLiteral("tool");
-    case Kind::command: return QStringLiteral("command");
-    case Kind::notice: return QStringLiteral("notice");
-    case Kind::divider: return QStringLiteral("divider");
-    case Kind::turn: return QStringLiteral("turn");
-    case Kind::other: break;
+    case Kind::prompt:
+        return QStringLiteral("prompt");
+    case Kind::reply:
+        return QStringLiteral("reply");
+    case Kind::thinking:
+        return QStringLiteral("thinking");
+    case Kind::tool:
+        return QStringLiteral("tool");
+    case Kind::command:
+        return QStringLiteral("command");
+    case Kind::notice:
+        return QStringLiteral("notice");
+    case Kind::divider:
+        return QStringLiteral("divider");
+    case Kind::turn:
+        return QStringLiteral("turn");
+    case Kind::other:
+        break;
     }
     return QStringLiteral("other");
 }
@@ -118,9 +127,10 @@ QString tagged(const QString& text, QStringView tag) {
 }
 
 QString compact_json(const QJsonValue& value, qsizetype limit) {
-    const auto bytes = value.isObject()  ? QJsonDocument(value.toObject()).toJson(QJsonDocument::Compact)
-                       : value.isArray() ? QJsonDocument(value.toArray()).toJson(QJsonDocument::Compact)
-                                         : QJsonDocument(QJsonArray{value}).toJson(QJsonDocument::Compact);
+    const auto bytes =
+        value.isObject()  ? QJsonDocument(value.toObject()).toJson(QJsonDocument::Compact)
+        : value.isArray() ? QJsonDocument(value.toArray()).toJson(QJsonDocument::Compact)
+                          : QJsonDocument(QJsonArray{value}).toJson(QJsonDocument::Compact);
     return clip(QString::fromUtf8(bytes), limit);
 }
 
@@ -176,7 +186,9 @@ Item tool_item(const QJsonObject& block) {
     item.tool_id = block.value(QLatin1String("id")).toString();
     const auto name = block.value(QLatin1String("name")).toString();
     const auto input = block.value(QLatin1String("input")).toObject();
-    const auto text = [&input](const char* key) { return input.value(QLatin1String(key)).toString(); };
+    const auto text = [&input](const char* key) {
+        return input.value(QLatin1String(key)).toString();
+    };
     const auto step = [&item](const char* verb, QString target, QString detail = {}) {
         item.title = QString::fromUtf8(verb);
         item.body = std::move(target);
@@ -196,8 +208,10 @@ Item tool_item(const QJsonObject& block) {
     } else if (name == QLatin1String("MultiEdit")) {
         step("Edited", homeless(text("file_path")));
         for (const auto& edit : input.value(QLatin1String("edits")).toArray()) {
-            add_lines(item, QLatin1Char('-'), edit.toObject().value(QLatin1String("old_string")).toString());
-            add_lines(item, QLatin1Char('+'), edit.toObject().value(QLatin1String("new_string")).toString());
+            add_lines(item, QLatin1Char('-'),
+                      edit.toObject().value(QLatin1String("old_string")).toString());
+            add_lines(item, QLatin1Char('+'),
+                      edit.toObject().value(QLatin1String("new_string")).toString());
         }
     } else if (name == QLatin1String("Grep")) {
         step("Searched for", text("pattern"), homeless(text("path")));
@@ -210,7 +224,8 @@ Item tool_item(const QJsonObject& block) {
     } else if (name == QLatin1String("WebSearch")) {
         step("Searched the web for", text("query"));
     } else if (name == QLatin1String("Monitor")) {
-        step("Watched", text("description").isEmpty() ? first_line(text("command")) : text("description"));
+        step("Watched",
+             text("description").isEmpty() ? first_line(text("command")) : text("description"));
     } else if (name == QLatin1String("SendMessage")) {
         step("Messaged", text("to"), text("summary"));
     } else if (name == QLatin1String("ScheduleWakeup")) {
@@ -234,7 +249,8 @@ Item tool_item(const QJsonObject& block) {
             const auto mark = status == QLatin1String("completed")     ? QStringLiteral("✓")
                               : status == QLatin1String("in_progress") ? QStringLiteral("▸")
                                                                        : QStringLiteral("·");
-            todos << QStringLiteral("%1 %2").arg(mark, entry.value(QLatin1String("content")).toString());
+            todos << QStringLiteral("%1 %2").arg(mark,
+                                                 entry.value(QLatin1String("content")).toString());
         }
         step("Updated the plan", {}, todos.join(QLatin1Char('\n')));
     } else if (name.startsWith(QLatin1String("mcp__"))) {
@@ -260,7 +276,8 @@ void attach_result(Item& item, const QJsonObject& block) {
     const auto text = without_escapes(result_text(block.value(QLatin1String("content")))).trimmed();
     const auto lines = text.isEmpty() ? QStringList{} : text.split(QLatin1Char('\n'));
     item.result_lines = static_cast<int>(lines.size());
-    item.result = clip(lines.mid(0, result_preview_lines).join(QLatin1Char('\n')), result_preview_chars);
+    item.result =
+        clip(lines.mid(0, result_preview_lines).join(QLatin1Char('\n')), result_preview_chars);
 }
 
 bool is_step(Kind kind) { return kind == Kind::tool || kind == Kind::thinking; }
@@ -281,7 +298,8 @@ std::vector<Piece> pieces(const QString& markdown) {
     for (const auto& line : markdown.split(QLatin1Char('\n'))) {
         const auto trimmed = line.trimmed();
         if (fence.isEmpty()) {
-            if (trimmed.startsWith(QLatin1String("```")) || trimmed.startsWith(QLatin1String("~~~"))) {
+            if (trimmed.startsWith(QLatin1String("```")) ||
+                trimmed.startsWith(QLatin1String("~~~"))) {
                 flush_prose();
                 // The fence is its run of ` or ~; a closing fence is at least as long.
                 qsizetype length = 0;
@@ -313,8 +331,8 @@ QString clean_copy(QString text) {
     text.replace(QLatin1Char('\r'), QLatin1Char('\n'));
     text.replace(QChar(0x00a0), QLatin1Char(' '));
     text.replace(QChar(0x202f), QLatin1Char(' '));
-    for (const QChar invisible : {QChar(0xfffc), QChar(0x200b), QChar(0x200c), QChar(0x200d),
-                                  QChar(0xfeff), QChar(0x2060)})
+    for (const QChar invisible :
+         {QChar(0xfffc), QChar(0x200b), QChar(0x200c), QChar(0x200d), QChar(0xfeff), QChar(0x2060)})
         text.remove(invisible);
     auto lines = text.split(QLatin1Char('\n'));
     for (auto& line : lines) {
@@ -333,10 +351,10 @@ QString clean_copy(QString text) {
 qint64 context_window(const QString& model, qint64 used) {
     // Claude Code 2.1.319's model table: these have a 1M window natively.
     static const QStringList million{
-        QStringLiteral("claude-opus-5"),     QStringLiteral("claude-fable-5"),
-        QStringLiteral("claude-sonnet-5"),   QStringLiteral("claude-haiku-5"),
-        QStringLiteral("claude-opus-4-6"),   QStringLiteral("claude-opus-4-7"),
-        QStringLiteral("claude-opus-4-8"),   QStringLiteral("claude-sonnet-4-6"),
+        QStringLiteral("claude-opus-5"),   QStringLiteral("claude-fable-5"),
+        QStringLiteral("claude-sonnet-5"), QStringLiteral("claude-haiku-5"),
+        QStringLiteral("claude-opus-4-6"), QStringLiteral("claude-opus-4-7"),
+        QStringLiteral("claude-opus-4-8"), QStringLiteral("claude-sonnet-4-6"),
         QStringLiteral("claude-haiku-4-5")};
     const auto name = model.toLower();
     qint64 window = 200'000;
@@ -351,26 +369,38 @@ QString chart_style_folder() { return QDir::home().filePath(QStringLiteral(".lap
 
 std::vector<Media> find_media(const QString& text) {
     static const QHash<QString, QString> kinds = {
-        {QStringLiteral("png"), QStringLiteral("image")},  {QStringLiteral("jpg"), QStringLiteral("image")},
-        {QStringLiteral("jpeg"), QStringLiteral("image")}, {QStringLiteral("bmp"), QStringLiteral("image")},
-        {QStringLiteral("webp"), QStringLiteral("image")}, {QStringLiteral("gif"), QStringLiteral("animation")},
-        {QStringLiteral("svg"), QStringLiteral("svg")},    {QStringLiteral("mp3"), QStringLiteral("audio")},
-        {QStringLiteral("wav"), QStringLiteral("audio")},  {QStringLiteral("m4a"), QStringLiteral("audio")},
-        {QStringLiteral("aac"), QStringLiteral("audio")},  {QStringLiteral("flac"), QStringLiteral("audio")},
-        {QStringLiteral("aiff"), QStringLiteral("audio")}, {QStringLiteral("caf"), QStringLiteral("audio")},
-        {QStringLiteral("mp4"), QStringLiteral("video")},  {QStringLiteral("mov"), QStringLiteral("video")},
+        {QStringLiteral("png"), QStringLiteral("image")},
+        {QStringLiteral("jpg"), QStringLiteral("image")},
+        {QStringLiteral("jpeg"), QStringLiteral("image")},
+        {QStringLiteral("bmp"), QStringLiteral("image")},
+        {QStringLiteral("webp"), QStringLiteral("image")},
+        {QStringLiteral("gif"), QStringLiteral("animation")},
+        {QStringLiteral("svg"), QStringLiteral("svg")},
+        {QStringLiteral("mp3"), QStringLiteral("audio")},
+        {QStringLiteral("wav"), QStringLiteral("audio")},
+        {QStringLiteral("m4a"), QStringLiteral("audio")},
+        {QStringLiteral("aac"), QStringLiteral("audio")},
+        {QStringLiteral("flac"), QStringLiteral("audio")},
+        {QStringLiteral("aiff"), QStringLiteral("audio")},
+        {QStringLiteral("caf"), QStringLiteral("audio")},
+        {QStringLiteral("mp4"), QStringLiteral("video")},
+        {QStringLiteral("mov"), QStringLiteral("video")},
         {QStringLiteral("m4v"), QStringLiteral("video")},
         // macOS's player cannot open these; they are cards for their app.
-        {QStringLiteral("ogg"), QStringLiteral("file")},   {QStringLiteral("opus"), QStringLiteral("file")},
-        {QStringLiteral("webm"), QStringLiteral("file")},  {QStringLiteral("mkv"), QStringLiteral("file")},
+        {QStringLiteral("ogg"), QStringLiteral("file")},
+        {QStringLiteral("opus"), QStringLiteral("file")},
+        {QStringLiteral("webm"), QStringLiteral("file")},
+        {QStringLiteral("mkv"), QStringLiteral("file")},
         {QStringLiteral("html"), QStringLiteral("html")},
-        {QStringLiteral("htm"), QStringLiteral("html")},   {QStringLiteral("pdf"), QStringLiteral("pdf")},
+        {QStringLiteral("htm"), QStringLiteral("html")},
+        {QStringLiteral("pdf"), QStringLiteral("pdf")},
     };
     // Markdown targets first, then bare paths; quotes, brackets and
     // backticks end a path, as does trailing punctuation.
-    static const QRegularExpression markdown(QStringLiteral(R"(!?\[[^\]]*\]\((?:<([^>\n]+)>|([^)\s]+))\))"));
-    static const QRegularExpression bare(
-        QStringLiteral(R"((?:^|[\s`'"(\[@])((?:~|/)[^\s`'"()<>\[\]]+\.([A-Za-z0-9]{2,5}))(?=$|[\s`'".,;:!?)\]]))"));
+    static const QRegularExpression markdown(
+        QStringLiteral(R"(!?\[[^\]]*\]\((?:<([^>\n]+)>|([^)\s]+))\))"));
+    static const QRegularExpression bare(QStringLiteral(
+        R"((?:^|[\s`'"(\[@])((?:~|/)[^\s`'"()<>\[\]]+\.([A-Za-z0-9]{2,5}))(?=$|[\s`'".,;:!?)\]]))"));
     std::vector<Media> found;
     QSet<QString> seen;
     const auto consider = [&](QString path) {
@@ -433,7 +463,8 @@ QString path_at(const QString& text, int position, const QString& folder) {
         path = QDir::home().filePath(path.mid(2));
     else if (!path.startsWith(QLatin1Char('/'))) {
         // Relative paths need a folder and must look like a path, not a word.
-        if (folder.isEmpty() || !(path.contains(QLatin1Char('/')) || path.contains(QLatin1Char('.'))))
+        if (folder.isEmpty() ||
+            !(path.contains(QLatin1Char('/')) || path.contains(QLatin1Char('.'))))
             return {};
         path = QDir(folder).filePath(path);
     }
@@ -504,8 +535,9 @@ bool dialog_showing(const QStringList& screen) {
     const auto between = lowest - above - 1;
     if (above >= 0 && between >= 1 && between <= 12) {
         const auto first = screen.at(above + 1).trimmed();
-        if (first.isEmpty() || first.startsWith(QChar(0x276F)) || first.startsWith(QLatin1Char('>')) ||
-            first.startsWith(QLatin1Char('!')) || first.startsWith(QLatin1Char('#')))
+        if (first.isEmpty() || first.startsWith(QChar(0x276F)) ||
+            first.startsWith(QLatin1Char('>')) || first.startsWith(QLatin1Char('!')) ||
+            first.startsWith(QLatin1Char('#')))
             return false;
     }
     return true;
@@ -529,7 +561,8 @@ QString work_summary(const std::vector<Item>& items, int first, int last, int ex
             read.insert(item.body);
         else if (verb == QLatin1String("Searched for") || verb == QLatin1String("Listed"))
             ++searches;
-        else if (verb.startsWith(QLatin1String("Searched the web")) || verb == QLatin1String("Fetched"))
+        else if (verb.startsWith(QLatin1String("Searched the web")) ||
+                 verb == QLatin1String("Fetched"))
             ++web;
         else if (verb == QLatin1String("Started agent"))
             ++agents;
@@ -606,7 +639,8 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded) {
         auto& turn = out.turns[t];
         int end = turn.start;
         while (end + 1 <= turn.last && items[static_cast<size_t>(end + 1)].kind == Kind::prompt &&
-               items[static_cast<size_t>(end + 1)].record == items[static_cast<size_t>(turn.start)].record)
+               items[static_cast<size_t>(end + 1)].record ==
+                   items[static_cast<size_t>(turn.start)].record)
             ++end;
         header_end[t] = end;
         for (int i = turn.last; i > end; --i)
@@ -617,7 +651,8 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded) {
         for (int i = end + 1; i <= turn.last; ++i) {
             const auto& item = items[static_cast<size_t>(i)];
             // A prompt sent mid-turn stays in view, not folded with the work.
-            if (i != turn.final_reply && item.kind != Kind::turn && item.kind != Kind::prompt && !item.dropped)
+            if (i != turn.final_reply && item.kind != Kind::turn && item.kind != Kind::prompt &&
+                !item.dropped)
                 ++turn.steps;
         }
         if (turn.closed && turn.steps > 0)
@@ -678,7 +713,8 @@ int ClaudeReader::command_output(const QString& raw) {
     // /model and /effort take effect now, before the next answer reports them.
     const auto said = without_escapes(tagged(raw, u"local-command-stdout")).trimmed();
     const auto first = said.section(QLatin1Char('\n'), 0, 0);
-    static const QRegularExpression model(QStringLiteral(R"(^Set model to (.+?)(?: and saved| for this session|$))"));
+    static const QRegularExpression model(
+        QStringLiteral(R"(^Set model to (.+?)(?: and saved| for this session|$))"));
     static const QRegularExpression effort(QStringLiteral(R"(^Set effort level to ([a-z]+))"));
     if (const auto set = model.match(first); set.hasMatch()) {
         if (const auto id = model_id(set.captured(1)); !id.isEmpty())
@@ -687,7 +723,8 @@ int ClaudeReader::command_output(const QString& raw) {
         status_.effort = level.captured(1);
     }
     QStringList parts;
-    for (const auto tag : {u"local-command-stdout", u"local-command-stderr", u"bash-stdout", u"bash-stderr"}) {
+    for (const auto tag :
+         {u"local-command-stdout", u"local-command-stderr", u"bash-stdout", u"bash-stderr"}) {
         if (const auto text = without_escapes(tagged(raw, tag)).trimmed(); !text.isEmpty())
             parts << text;
     }
@@ -697,8 +734,9 @@ int ClaudeReader::command_output(const QString& raw) {
         return -1;
     auto& item = items_.back();
     // stdout and stderr can arrive as separate records for one command.
-    const auto text = item.result.isEmpty() ? parts.join(QLatin1Char('\n'))
-                                            : item.result + QLatin1Char('\n') + parts.join(QLatin1Char('\n'));
+    const auto text = item.result.isEmpty()
+                          ? parts.join(QLatin1Char('\n'))
+                          : item.result + QLatin1Char('\n') + parts.join(QLatin1Char('\n'));
     item.result_lines = static_cast<int>(text.count(QLatin1Char('\n'))) + 1;
     // A table (/context) reads whole, so only its size is bounded, not its lines.
     item.result = clip(text, result_preview_chars);
@@ -716,7 +754,8 @@ int ClaudeReader::add(const QByteArray& line) {
     const auto type = record.value(QLatin1String("type")).toString();
     record_ = record.value(QLatin1String("uuid")).toString();
     const auto stamp = record.value(QLatin1String("timestamp")).toString();
-    at_ms_ = stamp.isEmpty() ? 0 : QDateTime::fromString(stamp, Qt::ISODateWithMs).toMSecsSinceEpoch();
+    at_ms_ =
+        stamp.isEmpty() ? 0 : QDateTime::fromString(stamp, Qt::ISODateWithMs).toMSecsSinceEpoch();
     const auto first = static_cast<int>(items_.size());
     int changed = -1;
 
@@ -725,13 +764,18 @@ int ClaudeReader::add(const QByteArray& line) {
         const auto content = record.value(QLatin1String("content")).toString();
         if (subtype == QLatin1String("compact_boundary")) {
             // The context is now the summary; the size before no longer applies.
-            status_.context_tokens = static_cast<qint64>(
-                record.value(QLatin1String("compactMetadata")).toObject().value(QLatin1String("postTokens")).toDouble());
+            status_.context_tokens =
+                static_cast<qint64>(record.value(QLatin1String("compactMetadata"))
+                                        .toObject()
+                                        .value(QLatin1String("postTokens"))
+                                        .toDouble());
             push(make(Kind::divider, QStringLiteral("Conversation compacted")));
         } else if (subtype == QLatin1String("turn_duration")) {
-            const auto ms = static_cast<qint64>(record.value(QLatin1String("durationMs")).toDouble());
+            const auto ms =
+                static_cast<qint64>(record.value(QLatin1String("durationMs")).toDouble());
             if (ms > 0) {
-                auto item = make(Kind::turn, QStringLiteral("Worked for %1").arg(duration_text(ms)));
+                auto item =
+                    make(Kind::turn, QStringLiteral("Worked for %1").arg(duration_text(ms)));
                 item.duration_ms = ms;
                 push(std::move(item));
             }
@@ -746,7 +790,8 @@ int ClaudeReader::add(const QByteArray& line) {
             // A command run while a dialog was involved is recorded here
             // rather than as the person's message; it reads the same.
             if (content.contains(QLatin1String("<command-name>")))
-                push(make(Kind::command, tagged(content, u"command-name"), tagged(content, u"command-args")));
+                push(make(Kind::command, tagged(content, u"command-name"),
+                          tagged(content, u"command-args")));
             else
                 changed = command_output(content);
         } else if (subtype == QLatin1String("informational") ||
@@ -804,11 +849,13 @@ int ClaudeReader::add(const QByteArray& line) {
         return -1;
     const bool meta = record.value(QLatin1String("isMeta")).toBool();
     const auto content = message.value(QLatin1String("content"));
-    const auto thought_ms = static_cast<qint64>(record.value(QLatin1String("thinkingDurationMs")).toDouble());
+    const auto thought_ms =
+        static_cast<qint64>(record.value(QLatin1String("thinkingDurationMs")).toDouble());
 
     bool prompted = false; // this record carried prompt text of its own
     const auto user_text = [&](const QString& raw) {
-        if (raw.startsWith(QLatin1String("<local-command-std")) || raw.startsWith(QLatin1String("<bash-std"))) {
+        if (raw.startsWith(QLatin1String("<local-command-std")) ||
+            raw.startsWith(QLatin1String("<bash-std"))) {
             if (const int at = command_output(raw); at >= 0)
                 changed = changed < 0 ? at : std::min(changed, at);
             return;
@@ -827,8 +874,9 @@ int ClaudeReader::add(const QByteArray& line) {
         if (raw.startsWith(QLatin1String("<task-notification>"))) {
             // A background task waking the agent starts a turn of its own.
             auto summary = tagged(raw, u"summary");
-            auto item = make(Kind::notice, summary.isEmpty() ? QStringLiteral("Background task finished")
-                                                             : clip(summary, 300));
+            auto item =
+                make(Kind::notice, summary.isEmpty() ? QStringLiteral("Background task finished")
+                                                     : clip(summary, 300));
             item.starts_turn = true;
             item.quiet = true; // the turn's "Worked for" line says enough
             push(std::move(item));
@@ -881,11 +929,13 @@ int ClaudeReader::add(const QByteArray& line) {
                 user_text(text);
             else if (!text.trimmed().isEmpty())
                 push(make(Kind::reply, {}, clip(text.trimmed(), body_chars)));
-        } else if (kind == QLatin1String("thinking") || kind == QLatin1String("redacted_thinking")) {
-            push(make(Kind::thinking,
-                      thought_ms > 0 ? QStringLiteral("Thought for %1").arg(duration_text(thought_ms))
-                                     : QStringLiteral("Thought"),
-                      clip(block.value(QLatin1String("thinking")).toString().trimmed(), body_chars)));
+        } else if (kind == QLatin1String("thinking") ||
+                   kind == QLatin1String("redacted_thinking")) {
+            push(make(
+                Kind::thinking,
+                thought_ms > 0 ? QStringLiteral("Thought for %1").arg(duration_text(thought_ms))
+                               : QStringLiteral("Thought"),
+                clip(block.value(QLatin1String("thinking")).toString().trimmed(), body_chars)));
         } else if (kind == QLatin1String("tool_use")) {
             auto item = tool_item(block);
             tools_.insert(item.tool_id, static_cast<int>(items_.size()));
@@ -980,72 +1030,91 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
         // A turn's "Worked for" row, standing for its folded work.
         const auto& turn = layout_.turns[static_cast<size_t>(row.turn)];
         switch (role) {
-        case KindRole: return QStringLiteral("work");
+        case KindRole:
+            return QStringLiteral("work");
         case TitleRole:
-            return turn.duration_ms > 0
-                       ? QStringLiteral("Worked for %1").arg(transcript::duration_text(turn.duration_ms))
-                       : QStringLiteral("Worked");
-        case StepsRole: return turn.steps;
-        case DetailRole: return turn.summary;
-        case AtRole: return reader_.items()[static_cast<size_t>(turn.start)].at_ms;
-        case DurationRole: return turn.duration_ms;
-        case QueuedRole: return false;
-        case ExpandedRole: return expanded_.contains(turn.start);
-        case DiffRole: return QVariantList{};
+            return turn.duration_ms > 0 ? QStringLiteral("Worked for %1")
+                                              .arg(transcript::duration_text(turn.duration_ms))
+                                        : QStringLiteral("Worked");
+        case StepsRole:
+            return turn.steps;
+        case DetailRole:
+            return turn.summary;
+        case AtRole:
+            return reader_.items()[static_cast<size_t>(turn.start)].at_ms;
+        case DurationRole:
+            return turn.duration_ms;
+        case QueuedRole:
+            return false;
+        case ExpandedRole:
+            return expanded_.contains(turn.start);
+        case DiffRole:
+            return QVariantList{};
         case AddedRole:
         case RemovedRole:
-        case ResultLinesRole: return 0;
+        case ResultLinesRole:
+            return 0;
         case FailedRole:
         case AnsweredRole:
         case AfterStepRole:
-        case InWorkRole: return false;
-        default: return QString();
+        case InWorkRole:
+            return false;
+        default:
+            return QString();
         }
     }
     const auto& item = reader_.items()[static_cast<size_t>(row.item)];
     switch (role) {
-    case InWorkRole: return row.in_work;
-    case ExpandedRole: return false;
-    case StepsRole: return 0;
-    case KindRole: return transcript::kind_name(item.kind);
-    case TitleRole: return item.title;
-    case BodyRole: return item.body;
-    case DetailRole: return item.detail;
-    case ResultRole: return item.result;
-    case DiffRole: return diff_rows(item.diff);
-    case AddedRole: return item.added;
-    case RemovedRole: return item.removed;
-    case ResultLinesRole: return item.result_lines;
-    case FailedRole: return item.failed;
-    case AnsweredRole: return item.answered;
-    case AfterStepRole: return item.after_step;
-    case RecordRole: return item.record;
-    case QueuedRole: return item.queued;
-    case AtRole: return item.at_ms;
-    case DurationRole: return item.duration_ms;
-    default: return {};
+    case InWorkRole:
+        return row.in_work;
+    case ExpandedRole:
+        return false;
+    case StepsRole:
+        return 0;
+    case KindRole:
+        return transcript::kind_name(item.kind);
+    case TitleRole:
+        return item.title;
+    case BodyRole:
+        return item.body;
+    case DetailRole:
+        return item.detail;
+    case ResultRole:
+        return item.result;
+    case DiffRole:
+        return diff_rows(item.diff);
+    case AddedRole:
+        return item.added;
+    case RemovedRole:
+        return item.removed;
+    case ResultLinesRole:
+        return item.result_lines;
+    case FailedRole:
+        return item.failed;
+    case AnsweredRole:
+        return item.answered;
+    case AfterStepRole:
+        return item.after_step;
+    case RecordRole:
+        return item.record;
+    case QueuedRole:
+        return item.queued;
+    case AtRole:
+        return item.at_ms;
+    case DurationRole:
+        return item.duration_ms;
+    default:
+        return {};
     }
 }
 
 QHash<int, QByteArray> TranscriptModel::roleNames() const {
-    return {{KindRole, "kind"},
-            {TitleRole, "title"},
-            {BodyRole, "body"},
-            {DetailRole, "detail"},
-            {ResultRole, "result"},
-            {DiffRole, "diff"},
-            {AddedRole, "added"},
-            {RemovedRole, "removed"},
-            {ResultLinesRole, "resultLines"},
-            {FailedRole, "failed"},
-            {AnsweredRole, "answered"},
-            {AfterStepRole, "afterStep"},
-            {RecordRole, "record"},
-            {ExpandedRole, "expanded"},
-            {InWorkRole, "inWork"},
-            {StepsRole, "steps"},
-            {QueuedRole, "queued"},
-            {AtRole, "at"},
+    return {{KindRole, "kind"},        {TitleRole, "title"},       {BodyRole, "body"},
+            {DetailRole, "detail"},    {ResultRole, "result"},     {DiffRole, "diff"},
+            {AddedRole, "added"},      {RemovedRole, "removed"},   {ResultLinesRole, "resultLines"},
+            {FailedRole, "failed"},    {AnsweredRole, "answered"}, {AfterStepRole, "afterStep"},
+            {RecordRole, "record"},    {ExpandedRole, "expanded"}, {InWorkRole, "inWork"},
+            {StepsRole, "steps"},      {QueuedRole, "queued"},     {AtRole, "at"},
             {DurationRole, "duration"}};
 }
 
@@ -1107,9 +1176,11 @@ void TranscriptModel::relayout(int changed) {
 }
 
 void TranscriptModel::toggleWork(int row) {
-    if (row < 0 || std::cmp_greater_equal(row, layout_.rows.size()) || layout_.rows[static_cast<size_t>(row)].item >= 0)
+    if (row < 0 || std::cmp_greater_equal(row, layout_.rows.size()) ||
+        layout_.rows[static_cast<size_t>(row)].item >= 0)
         return;
-    const int start = layout_.turns[static_cast<size_t>(layout_.rows[static_cast<size_t>(row)].turn)].start;
+    const int start =
+        layout_.turns[static_cast<size_t>(layout_.rows[static_cast<size_t>(row)].turn)].start;
     if (!expanded_.remove(start))
         expanded_.insert(start);
     relayout(std::numeric_limits<int>::max());
@@ -1137,19 +1208,22 @@ QStringList TranscriptModel::pastedFiles() const {
     // Pasted images live with the system's temporary files, which macOS
     // clears on its own; the agent reads them right after sending.
     QDir folder(QStandardPaths::writableLocation(QStandardPaths::TempLocation));
-    if (!folder.mkpath(QStringLiteral("lapis-attachments")) || !folder.cd(QStringLiteral("lapis-attachments")))
+    if (!folder.mkpath(QStringLiteral("lapis-attachments")) ||
+        !folder.cd(QStringLiteral("lapis-attachments")))
         return {};
     const auto path = folder.filePath(
-        QStringLiteral("pasted-%1.png").arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss-zzz"))));
+        QStringLiteral("pasted-%1.png")
+            .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss-zzz"))));
     return image.save(path, "PNG") ? QStringList{path} : QStringList{};
 }
 
 bool TranscriptModel::isImage(const QString& path) const {
     // What the Codex app sends as an image rather than a file.
-    static const QStringList images{QStringLiteral("png"),  QStringLiteral("jpg"), QStringLiteral("jpeg"),
-                                    QStringLiteral("gif"),  QStringLiteral("webp"), QStringLiteral("heic"),
-                                    QStringLiteral("heif"), QStringLiteral("avif"), QStringLiteral("bmp"),
-                                    QStringLiteral("tiff"), QStringLiteral("tif")};
+    static const QStringList images{
+        QStringLiteral("png"),  QStringLiteral("jpg"),  QStringLiteral("jpeg"),
+        QStringLiteral("gif"),  QStringLiteral("webp"), QStringLiteral("heic"),
+        QStringLiteral("heif"), QStringLiteral("avif"), QStringLiteral("bmp"),
+        QStringLiteral("tiff"), QStringLiteral("tif")};
     return images.contains(QFileInfo(path).suffix().toLower());
 }
 
@@ -1209,7 +1283,7 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
         block_format.setLineHeight(level > 0 ? 120 : 140, QTextBlockFormat::ProportionalHeight);
         block_format.setTopMargin(first ? 0 : level > 0 ? size * 0.8 : 0);
         // The last block adds nothing: the view spaces pieces itself.
-        block_format.setBottomMargin(!block.next().isValid()        ? 0
+        block_format.setBottomMargin(!block.next().isValid()       ? 0
                                      : level > 0                   ? size * 0.3
                                      : block.textList() != nullptr ? size * 0.25
                                                                    : size * 0.65);
@@ -1289,7 +1363,8 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
         table->setFormat(format);
         for (int column = 0; column < table->columns(); ++column) {
             QTextCursor header_cell = table->cellAt(0, column).firstCursorPosition();
-            header_cell.setPosition(table->cellAt(0, column).lastPosition(), QTextCursor::KeepAnchor);
+            header_cell.setPosition(table->cellAt(0, column).lastPosition(),
+                                    QTextCursor::KeepAnchor);
             QTextCharFormat bold;
             bold.setFontWeight(QFont::DemiBold);
             header_cell.mergeCharFormat(bold);
@@ -1343,14 +1418,15 @@ void TranscriptModel::writeChartStyle(const QVariantMap& colors) const {
     };
     const bool light = colors.value(QStringLiteral("light")).toBool();
     // Tokyo Night's accents in the order a plot uses them.
-    const QStringList series = light ? QStringList{QStringLiteral("2e7de9"), QStringLiteral("587539"),
-                                                   QStringLiteral("b15c00"), QStringLiteral("9854f1"),
-                                                   QStringLiteral("007197"), QStringLiteral("f52a65"),
-                                                   QStringLiteral("8c6c3e"), QStringLiteral("387068")}
-                                     : QStringList{QStringLiteral("7aa2f7"), QStringLiteral("9ece6a"),
-                                                   QStringLiteral("ff9e64"), QStringLiteral("bb9af7"),
-                                                   QStringLiteral("7dcfff"), QStringLiteral("f7768e"),
-                                                   QStringLiteral("e0af68"), QStringLiteral("73daca")};
+    const QStringList series =
+        light ? QStringList{QStringLiteral("2e7de9"), QStringLiteral("587539"),
+                            QStringLiteral("b15c00"), QStringLiteral("9854f1"),
+                            QStringLiteral("007197"), QStringLiteral("f52a65"),
+                            QStringLiteral("8c6c3e"), QStringLiteral("387068")}
+              : QStringList{QStringLiteral("7aa2f7"), QStringLiteral("9ece6a"),
+                            QStringLiteral("ff9e64"), QStringLiteral("bb9af7"),
+                            QStringLiteral("7dcfff"), QStringLiteral("f7768e"),
+                            QStringLiteral("e0af68"), QStringLiteral("73daca")};
     const auto background = hex("background");
     const auto text = hex("text");
     const auto muted = hex("muted");
@@ -1358,28 +1434,32 @@ void TranscriptModel::writeChartStyle(const QVariantMap& colors) const {
     QStringList quoted;
     for (const auto& color : series)
         quoted << QStringLiteral("'%1'").arg(color);
-    const auto rc = QStringLiteral(
-                        "# Written by lapis from the visual view's theme; it is rewritten when the theme changes.\n"
-                        "figure.facecolor: %1\naxes.facecolor: %1\nsavefig.facecolor: %1\nsavefig.edgecolor: %1\n"
-                        "text.color: %2\naxes.labelcolor: %2\naxes.titlecolor: %2\nxtick.color: %3\n"
-                        "ytick.color: %3\nxtick.labelcolor: %2\nytick.labelcolor: %2\naxes.edgecolor: %4\n"
-                        "axes.grid: True\ngrid.color: %4\ngrid.linewidth: 0.6\naxes.spines.top: False\n"
-                        "axes.spines.right: False\naxes.prop_cycle: cycler('color', [%5])\n"
-                        "legend.facecolor: %1\nlegend.edgecolor: %4\nlegend.labelcolor: %2\n"
-                        "legend.frameon: False\nfont.family: sans-serif\n"
-                        "font.sans-serif: Helvetica Neue, Helvetica, Arial, DejaVu Sans\n"
-                        "savefig.dpi: 200\nsavefig.bbox: tight\nimage.cmap: viridis\n")
-                        .arg(background, text, muted, grid, quoted.join(QStringLiteral(", ")));
+    const auto rc =
+        QStringLiteral(
+            "# Written by lapis from the visual view's theme; it is rewritten when the theme "
+            "changes.\n"
+            "figure.facecolor: %1\naxes.facecolor: %1\nsavefig.facecolor: %1\nsavefig.edgecolor: "
+            "%1\n"
+            "text.color: %2\naxes.labelcolor: %2\naxes.titlecolor: %2\nxtick.color: %3\n"
+            "ytick.color: %3\nxtick.labelcolor: %2\nytick.labelcolor: %2\naxes.edgecolor: %4\n"
+            "axes.grid: True\ngrid.color: %4\ngrid.linewidth: 0.6\naxes.spines.top: False\n"
+            "axes.spines.right: False\naxes.prop_cycle: cycler('color', [%5])\n"
+            "legend.facecolor: %1\nlegend.edgecolor: %4\nlegend.labelcolor: %2\n"
+            "legend.frameon: False\nfont.family: sans-serif\n"
+            "font.sans-serif: Helvetica Neue, Helvetica, Arial, DejaVu Sans\n"
+            "savefig.dpi: 200\nsavefig.bbox: tight\nimage.cmap: viridis\n")
+            .arg(background, text, muted, grid, quoted.join(QStringLiteral(", ")));
     QJsonArray palette;
     for (const auto& color : series)
         palette.append(QLatin1Char('#') + color);
-    const auto json = QJsonDocument(QJsonObject{{QStringLiteral("background"), QLatin1Char('#') + background},
-                                                {QStringLiteral("text"), QLatin1Char('#') + text},
-                                                {QStringLiteral("muted"), QLatin1Char('#') + muted},
-                                                {QStringLiteral("grid"), QLatin1Char('#') + grid},
-                                                {QStringLiteral("light"), light},
-                                                {QStringLiteral("series"), palette}})
-                          .toJson();
+    const auto json =
+        QJsonDocument(QJsonObject{{QStringLiteral("background"), QLatin1Char('#') + background},
+                                  {QStringLiteral("text"), QLatin1Char('#') + text},
+                                  {QStringLiteral("muted"), QLatin1Char('#') + muted},
+                                  {QStringLiteral("grid"), QLatin1Char('#') + grid},
+                                  {QStringLiteral("light"), light},
+                                  {QStringLiteral("series"), palette}})
+            .toJson();
     const QDir folder(transcript::chart_style_folder());
     if (!folder.exists() && !QDir().mkpath(folder.path()))
         return;
@@ -1396,7 +1476,8 @@ void TranscriptModel::writeChartStyle(const QVariantMap& colors) const {
     write(folder.filePath(QStringLiteral("palette.json")), json);
 }
 
-void TranscriptModel::highlight(QQuickTextDocument* target, const QString& language, bool light) const {
+void TranscriptModel::highlight(QQuickTextDocument* target, const QString& language,
+                                bool light) const {
     if (target == nullptr || target->textDocument() == nullptr)
         return;
     auto* document = target->textDocument();
@@ -1435,7 +1516,8 @@ void TranscriptModel::hoverLink(QQuickTextDocument* target, const QString& link)
     }
 }
 
-QString TranscriptModel::pathAt(QQuickTextDocument* source, int position, const QString& folder) const {
+QString TranscriptModel::pathAt(QQuickTextDocument* source, int position,
+                                const QString& folder) const {
     if (source == nullptr || source->textDocument() == nullptr)
         return {};
     return transcript::path_at(source->textDocument()->toPlainText(), position, folder);
@@ -1456,8 +1538,9 @@ constexpr Editor kEditors[] = {
     {"textedit", "TextEdit", "TextEdit.app", nullptr, false},
 };
 QString installed(const Editor& editor) {
-    for (const auto& base : {QStringLiteral("/Applications"), QDir::home().filePath(QStringLiteral("Applications")),
-                             QStringLiteral("/System/Applications")}) {
+    for (const auto& base :
+         {QStringLiteral("/Applications"), QDir::home().filePath(QStringLiteral("Applications")),
+          QStringLiteral("/System/Applications")}) {
         const auto bundle = QDir(base).filePath(QString::fromUtf8(editor.app));
         if (QFileInfo(bundle).isDir())
             return bundle;
@@ -1501,14 +1584,16 @@ bool TranscriptModel::openPath(const QString& target, const QString& choice) con
             const auto tool = QDir(bundle).filePath(QString::fromUtf8(editor.command));
             if (QFileInfo(tool).isExecutable()) {
                 QStringList arguments;
-                if (editor.lines && !suffix.isEmpty() && QLatin1String(editor.id) != QLatin1String("zed"))
+                if (editor.lines && !suffix.isEmpty() &&
+                    QLatin1String(editor.id) != QLatin1String("zed"))
                     arguments << QStringLiteral("-g");
                 arguments << path + (editor.lines ? suffix : QString());
                 if (QProcess::startDetached(tool, arguments))
                     return true;
             }
         }
-        return QProcess::startDetached(QStringLiteral("/usr/bin/open"), {QStringLiteral("-a"), bundle, path});
+        return QProcess::startDetached(QStringLiteral("/usr/bin/open"),
+                                       {QStringLiteral("-a"), bundle, path});
     }
     return QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
@@ -1516,12 +1601,17 @@ bool TranscriptModel::openPath(const QString& target, const QString& choice) con
 double TranscriptModel::runningSince() const {
     if (layout_.turns.empty() || layout_.turns.back().closed)
         return 0;
-    return static_cast<double>(reader_.items()[static_cast<size_t>(layout_.turns.back().start)].at_ms);
+    return static_cast<double>(
+        reader_.items()[static_cast<size_t>(layout_.turns.back().start)].at_ms);
 }
 
-QStringList TranscriptModel::liveLines(const QStringList& screen) const { return transcript::live_lines(screen); }
+QStringList TranscriptModel::liveLines(const QStringList& screen) const {
+    return transcript::live_lines(screen);
+}
 
-bool TranscriptModel::dialogShowing(const QStringList& screen) const { return transcript::dialog_showing(screen); }
+bool TranscriptModel::dialogShowing(const QStringList& screen) const {
+    return transcript::dialog_showing(screen);
+}
 
 QVariantMap TranscriptModel::fonts() const {
     // New York and SF Mono ship with macOS but are hidden from the font list;
@@ -1529,7 +1619,8 @@ QVariantMap TranscriptModel::fonts() const {
     static const QVariantMap loaded = [] {
         const auto family = [](const char* file, const char* fallback) {
             const auto id = QFontDatabase::addApplicationFont(QString::fromUtf8(file));
-            const auto families = id < 0 ? QStringList{} : QFontDatabase::applicationFontFamilies(id);
+            const auto families =
+                id < 0 ? QStringList{} : QFontDatabase::applicationFontFamilies(id);
             return families.isEmpty() ? QString::fromUtf8(fallback) : families.front();
         };
         return QVariantMap{
@@ -1590,7 +1681,8 @@ void TranscriptModel::setPath(const QString& path) {
     // Keep what was read (a load still running has nothing whole to keep).
     if (!path_.isEmpty() && !loading_) {
         std::erase_if(kept_, [this](const Parsed& kept) { return kept.path == path_; });
-        kept_.insert(kept_.begin(), Parsed{path_, std::move(reader_), offset_, std::move(pending_)});
+        kept_.insert(kept_.begin(),
+                     Parsed{path_, std::move(reader_), offset_, std::move(pending_)});
         if (kept_.size() > kept_conversations)
             kept_.pop_back();
     }
@@ -1639,7 +1731,8 @@ void TranscriptModel::setPath(const QString& path) {
     }
     loading_ = true;
     emit loadingChanged();
-    QThreadPool::globalInstance()->start([guard = QPointer<TranscriptModel>(this), path, generation] {
+    QThreadPool::globalInstance()->start([guard = QPointer<TranscriptModel>(this), path,
+                                          generation] {
         auto result = read_whole(path);
         QMetaObject::invokeMethod(
             guard.data(),
