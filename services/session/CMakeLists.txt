@@ -9,11 +9,15 @@ if(BUILD_TESTING)
     set_tests_properties(attention-state PROPERTIES TIMEOUT 10)
 endif()
 
+find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Core Network)
+
 # Shared POSIX lifetime primitives; PTY ownership remains in the service.
 # Desktop helper processes may reuse the process-group guard without owning PTYs.
+# The service and the desktop write their owner-only files through private_file.
 add_library(lapis_session_platform STATIC
-    src/platform/posix/unique_fd.cpp src/platform/posix/process_group_guard.cpp)
-target_link_libraries(lapis_session_platform PRIVATE lapis_project_options)
+    src/platform/posix/unique_fd.cpp src/platform/posix/process_group_guard.cpp
+    src/platform/posix/private_file.cpp)
+target_link_libraries(lapis_session_platform PRIVATE lapis_project_options PUBLIC Qt6::Core)
 target_include_directories(lapis_session_platform PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 if(BUILD_TESTING)
@@ -22,6 +26,12 @@ if(BUILD_TESTING)
         lapis_project_options lapis_session_platform)
     add_test(NAME session-platform-ownership COMMAND lapis_session_platform_tests)
     set_tests_properties(session-platform-ownership PROPERTIES TIMEOUT 10)
+    add_executable(lapis_private_file_tests tests/private_file_test.cpp)
+    target_link_libraries(lapis_private_file_tests PRIVATE
+        lapis_project_options lapis_session_platform)
+    add_test(NAME session-private-file COMMAND lapis_private_file_tests)
+    set_tests_properties(session-private-file PROPERTIES TIMEOUT 10
+        ENVIRONMENT QT_QPA_PLATFORM=offscreen)
 endif()
 
 # Durable attention audit of asked and resolved requests; journals written by
@@ -66,7 +76,6 @@ if(BUILD_TESTING)
     set_tests_properties(claude-rewidth PROPERTIES TIMEOUT 30)
 endif()
 
-find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Core Network)
 set(CMAKE_AUTOMOC ON)
 add_library(lapis_session_launch STATIC src/launch_spec.cpp src/platform/posix/local_endpoint.cpp)
 target_include_directories(lapis_session_launch PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
