@@ -6665,6 +6665,144 @@ void closeEndsTheAgent(const char* script, int minimum_ms) {
     require(clock.elapsed() >= minimum_ms, "escalation waited for the hangup first");
     require(workspace.workspaceError().isEmpty(), "no error on a normal close");
 }
+
+class ScopedHome {
+  public:
+    explicit ScopedHome(const QByteArray& value) : previous_(qgetenv("HOME")) {
+        qputenv("HOME", value);
+    }
+    ~ScopedHome() { qputenv("HOME", previous_); }
+    ScopedHome(const ScopedHome&) = delete;
+    ScopedHome& operator=(const ScopedHome&) = delete;
+
+  private:
+    QByteArray previous_;
+};
+
+void writeLines(const QString& path, const QList<QByteArray>& lines) {
+    require(QDir().mkpath(QFileInfo(path).absolutePath()), "create a conversation folder");
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "create a conversation file");
+    for (const auto& line : lines)
+        require(file.write(line + '\n') == line.size() + 1, "write a conversation line");
+}
+
+// The visual view's file for a local Codex or Antigravity agent: the
+// conversation lapis knows by id, else, before anything names it, the one
+// the CLI started in the agent's folder since the agent's service started,
+// never one older or another agent's, and never a subagent's or an exec run.
+void visualConversationFiles() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "visual conversation directory");
+    const QString root = QFileInfo(directory.path()).canonicalFilePath();
+    const ScopedCodexHome codex_home{QDir(root).filePath(QStringLiteral("codex")).toUtf8()};
+    const ScopedHome home{QDir(root).filePath(QStringLiteral("home")).toUtf8()};
+    const auto work = QDir(root).filePath(QStringLiteral("work"));
+    require(QDir().mkpath(work), "agent folder");
+    const auto endpoint = [&root](const QString& id) {
+        return QDir(root).filePath(id + QStringLiteral(".sock"));
+    };
+    // The agents' services "started" now: their endpoints are made now.
+    // Agent ids are UUIDs; each role names one.
+    QHash<QString, QString> ids;
+    QJsonArray agents;
+    for (const auto* role : {"codex-named", "codex-fresh", "agy-fresh", "agy-named", "grok"}) {
+        const auto id = uuid();
+        ids.insert(QString::fromLatin1(role), id);
+        QFile made(endpoint(id));
+        require(made.open(QIODevice::WriteOnly), "make an endpoint");
+        agents.append(QJsonObject{{"id", id},
+                                  {"title", QString::fromLatin1(role)},
+                                  {"category", "general"},
+                                  {"endpoint", endpoint(id)},
+                                  {"program", "/usr/bin/true"},
+                                  {"harness", QString::fromLatin1(role).section(QLatin1Char('-'), 0, 0)},
+                                  {"directory", work}});
+    }
+    const auto named_thread = uuid();
+    writeObservedResume(endpoint(ids.value(QStringLiteral("codex-named"))),
+                        {QStringLiteral("codex"), named_thread});
+    const auto named_agy = uuid();
+    lapis::session::write_resume_record(
+        endpoint(ids.value(QStringLiteral("agy-named"))),
+        {QStringLiteral("agy"), named_agy, lapis::session::ResumeSource::terminal});
+
+    const auto now = QDateTime::currentDateTimeUtc();
+    const auto stamp = [](const QDateTime& at) {
+        return at.toString(Qt::ISODateWithMs).toUtf8();
+    };
+    const auto sessions = QDir(root).filePath(QStringLiteral("codex/sessions"));
+    const auto today = QDir(sessions).filePath(
+        QDateTime::currentDateTime().date().toString(QStringLiteral("yyyy/MM/dd")));
+    const auto rollout = [&](const QString& folder, const QString& thread, const QDateTime& at,
+                             const char* source) {
+        const auto path = QDir(folder).filePath(QStringLiteral("rollout-2026-11-10T10-00-00-") +
+                                                thread + QStringLiteral(".jsonl"));
+        writeLines(path, {R"({"type":"session_meta","payload":{"id":")" + thread.toUtf8() +
+                          R"(","timestamp":")" + stamp(at) + R"(","cwd":")" + work.toUtf8() +
+                          R"(","source":")" + source + R"("}})"});
+        return path;
+    };
+    const WorkspaceOptions options{.storagePath = QDir(root).filePath(QStringLiteral("ws.json"))};
+    writeRegistry(options.storagePath,
+                  QJsonObject{{"version", 2},
+                              {"activeCategory", "general"},
+                              {"categories",
+                               QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                              {"agents", agents}});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "visual agents restored");
+    const auto file = [&workspace, &ids](const char* role) {
+        return workspace.conversationFile(ids.value(QString::fromLatin1(role)));
+    };
+    require(file("codex-fresh").isEmpty() && file("agy-fresh").isEmpty(),
+            "nothing before either CLI saved a conversation");
+
+    // Codex: the named thread, wherever its day folder is.
+    const auto named_path =
+        rollout(QDir(sessions).filePath(QStringLiteral("2026/11/09")), named_thread, now, "cli");
+    require(file("codex-named") == named_path, "Codex: the thread notify named");
+    // Before the first turn ends: the newest TUI thread started in the folder
+    // since the service, not an older one, an exec run, or the named thread.
+    (void)rollout(today, uuid(), now.addSecs(-3600), "cli");
+    (void)rollout(today, uuid(), now.addSecs(2), "exec");
+    require(file("codex-fresh").isEmpty(), "Codex: older and exec threads never count");
+    const auto fresh_path = rollout(today, uuid(), now.addSecs(1), "cli");
+    require(file("codex-fresh") == fresh_path, "Codex: the thread this agent started");
+
+    // Antigravity: the named conversation, else the folder's latest one.
+    const auto agy_home = QDir(root).filePath(QStringLiteral("home/.gemini/antigravity-cli"));
+    const auto transcript = [&](const QString& conversation, const QDateTime& at) {
+        const auto path = QDir(agy_home).filePath(
+            QStringLiteral("brain/%1/.system_generated/logs/transcript_full.jsonl")
+                .arg(conversation));
+        writeLines(path, {R"({"step_index":0,"type":"USER_INPUT","created_at":")" +
+                          at.toString(Qt::ISODate).toUtf8() + R"(","content":"x"})"});
+        return path;
+    };
+    const auto cache = QDir(agy_home).filePath(QStringLiteral("cache/last_conversations.json"));
+    const auto latest = [&](const QString& conversation) {
+        writeLines(cache, {QJsonDocument(QJsonObject{{work, conversation}}).toJson(
+                              QJsonDocument::Compact)});
+    };
+    const auto named_agy_path = transcript(named_agy, now);
+    require(file("agy-named") == named_agy_path, "agy: the conversation its hook named");
+    const auto old = uuid();
+    (void)transcript(old, now.addSecs(-3600));
+    latest(old);
+    require(file("agy-fresh").isEmpty(), "agy: a conversation from before the agent never counts");
+    latest(named_agy);
+    require(file("agy-fresh").isEmpty(), "agy: another agent's conversation never counts");
+    const auto fresh_agy = uuid();
+    const auto fresh_agy_path = transcript(fresh_agy, now.addSecs(1));
+    latest(fresh_agy);
+    require(file("agy-fresh") == fresh_agy_path, "agy: the conversation this agent started");
+
+    require(file("grok").isEmpty(), "a CLI the view cannot read has no file");
+    require(workspace.forkConversation(ids.value(QStringLiteral("codex-named")), uuid(), true)
+                .isEmpty(),
+            "only Claude Code conversations fork");
+}
 } // namespace
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
@@ -6686,13 +6824,14 @@ int main(int argc, char** argv) {
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("attention") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("sidebar") ||
-                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("stage-size")),
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("stage-size") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("visual-files")),
                     "Usage: lapis_workspace_tests [--case "
                     "adapter-status|remote-options|remote-hooks|local-codex|retired-plans|reload|"
                     "updater|"
                     "updates-off|startup-defaults|launch-policy|omp-overlay|chimes|attention|"
                     "sidebar|"
-                    "stage-size]");
+                    "stage-size|visual-files]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("adapter-status")) {
                 claudeAgentsUseServiceAdapter();
@@ -6724,6 +6863,8 @@ int main(int argc, char** argv) {
                 startupUpdatesShareOneInstaller();
             } else if (selected == QStringLiteral("updates-off")) {
                 pinnedCliIsNotUpdated();
+            } else if (selected == QStringLiteral("visual-files")) {
+                visualConversationFiles();
             } else if (selected == QStringLiteral("omp-overlay")) {
                 ompGetsItsResizeOverlay();
             } else if (selected == QStringLiteral("chimes")) {
@@ -6759,6 +6900,7 @@ int main(int argc, char** argv) {
         categoryColorsPersist();
         persistence();
         restoreAgentIdentity();
+        visualConversationFiles();
         truthfulStatus();
         placeholderMatchesTerminalDefaults();
         discardOutsideActiveCategorySelectsNeighbor();

@@ -538,9 +538,12 @@ class Workspace final : public QObject {
     // One agent's current conversation, or empty.
     [[nodiscard]] QString agentConversation(const QString& id) const;
     // The file an agent's CLI saves its current conversation in, on this Mac,
-    // for the visual view. Empty for an agent on another machine, a CLI the
-    // view cannot read yet (only Claude Code so far), or before the CLI has
-    // saved anything.
+    // for the visual view: Claude Code's transcript, Codex's rollout or
+    // Antigravity's transcript_full.jsonl. The conversation lapis knows
+    // (observer, notify or hook record, or the resumed one) names it; before
+    // that, the conversation the CLI started in the agent's folder since its
+    // service started (Codex and Antigravity). Empty for an agent on another
+    // machine, a CLI the view cannot read, or before the CLI saved anything.
     Q_INVOKABLE [[nodiscard]] QString conversationFile(const QString& id) const;
     // Copies an agent's conversation up to `record` (a saved record's uuid;
     // `before` stops just ahead of it) into a new conversation beside it and
@@ -718,6 +721,8 @@ class Workspace final : public QObject {
     };
     std::vector<Category> categories_;
     QMap<QString, AgentRecord> agents_;
+    // Codex thread id -> its rollout, found once (conversationFile).
+    mutable QHash<QString, QString> rollout_paths_;
     QString active_category_{QStringLiteral("general")};
     QString storage_path_;
     std::unique_ptr<QLockFile> registry_lock_;
