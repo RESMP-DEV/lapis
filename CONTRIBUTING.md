@@ -452,10 +452,10 @@ separate from offscreen results.
 
 `lapis.json` stores appearance and optional keybinding overrides. Empty overrides
 use platform defaults. Command-R on macOS reloads it. The product has one terminal
-stage, category navigation and the category's agent strip under the stage; no
-tab row, preview layout picker or tiling; the stage shows the category's
-selected agent. `previewsVisible` hides the strip
-(default on); the `togglePreviews` action has no default key.
+stage, a sidebar listing every category's agents, and an optional agent strip
+under the stage; no tab row, preview layout picker or tiling; the stage shows
+the category's selected agent. `previewsVisible` shows the strip
+(default off); the `togglePreviews` action has no default key.
 `harnessArguments` maps a harness id (`codex`, `claude`, `grok`, ...) to literal
 arguments added when lapis starts a new agent of that harness; each agent's
 arguments are saved with it because they are part of its launch fingerprint.
@@ -463,7 +463,7 @@ The committed `lapis.json` holds defaults only (see
 `scripts/tests/test_tracked_config.py`).
 
 - macOS: Command-Option-left/right or Command-Shift-up/down changes category;
-  Command-Shift-[ / ] moves through the category's agents. Command-1 through 4
+  Command-Shift-[ / ] moves through the sidebar's agents, across categories. Command-1 through 4
   selects a category.
 - Command-T starts the new-agent form; Command-N (or the + under the categories) starts
   the category form.

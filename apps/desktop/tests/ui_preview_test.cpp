@@ -1611,6 +1611,8 @@ int run_attention_ui_tests() {
     CHECK(palette_config.isValid());
     Config config_model;
     config_model.setSourcePathForTesting(palette_config.filePath(QStringLiteral("palette.json")));
+    // The checks below follow the selected card along the opt-in strip.
+    CHECK(config_model.setPreviewsVisible(true));
     AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
@@ -2298,6 +2300,8 @@ int run_strip_ui_tests() {
     CHECK(config.isValid());
     Config config_model;
     config_model.setSourcePathForTesting(config.filePath(QStringLiteral("strip.json")));
+    // The strip is opt-in; these checks are about it.
+    CHECK(config_model.setPreviewsVisible(true));
     ConversationIndex conversations(config.filePath(QStringLiteral("history/claude")),
                                     config.filePath(QStringLiteral("history/codex")),
                                     config.filePath(QStringLiteral("conversations.json")));
@@ -2563,13 +2567,14 @@ int run_sidebar_ui_tests() {
     Workspace workspace(WorkspaceMode::fixture);
     QTemporaryDir config(QStringLiteral("/tmp/lapis-ui-XXXXXX"));
     CHECK(config.isValid());
-    Config keymap;
-    keymap.setSourcePathForTesting(config.filePath(QStringLiteral("sidebar.json")));
-    CHECK(keymap.setPreviewsVisible(false));
+    Config config_model;
+    config_model.setSourcePathForTesting(config.filePath(QStringLiteral("sidebar.json")));
+    // The sidebar navigates; the strip is off until asked for.
+    CHECK(!config_model.previewsVisible());
     AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
-                                  .keymap = &keymap});
+                                  .config = &config_model});
     CHECK(preview.load());
     auto* window = preview.window();
     window->resize(1400, 960);
@@ -2687,14 +2692,14 @@ int run_sidebar_ui_tests() {
     wait_input_ready(*window, *terminal);
     CHECK(workspace.selectAgent(QStringLiteral("checks")));
     pump(20);
-    send_binding(*window, keymap.sequences(QStringLiteral("nextWindow")).front());
+    send_binding(*window, config_model.sequences(QStringLiteral("nextWindow")).front());
     pump(40);
     CHECK(focused_id(workspace) == QStringLiteral("service") && marked(QStringLiteral("service")));
-    send_binding(*window, keymap.sequences(QStringLiteral("nextWindow")).front());
+    send_binding(*window, config_model.sequences(QStringLiteral("nextWindow")).front());
     pump(40);
     CHECK(focused_id(workspace) == QStringLiteral("shell") &&
           workspace.activeCategoryId() == QStringLiteral("general"));
-    send_binding(*window, keymap.sequences(QStringLiteral("previousWindow")).front());
+    send_binding(*window, config_model.sequences(QStringLiteral("previousWindow")).front());
     pump(40);
     CHECK(focused_id(workspace) == QStringLiteral("service"));
 
@@ -2751,27 +2756,27 @@ int run_sidebar_ui_tests() {
     // colour transitions before it is taken.
     CHECK(workspace.selectAgent(QStringLiteral("renderer")));
     const auto settle = [] { pump(400); };
-    CHECK(keymap.setTheme(QStringLiteral("oled")));
+    CHECK(config_model.setTheme(QStringLiteral("oled")));
     settle();
     capture("oled");
-    CHECK(keymap.setTheme(QStringLiteral("daylight")));
+    CHECK(config_model.setTheme(QStringLiteral("daylight")));
     settle();
     capture("daylight");
-    CHECK(keymap.setTheme(QStringLiteral("lapis")));
-    CHECK(keymap.setTerminalFontSize(21));
+    CHECK(config_model.setTheme(QStringLiteral("lapis")));
+    CHECK(config_model.setTerminalFontSize(21));
     settle();
     auto* rail = item(QStringLiteral("categoryRail"));
     CHECK(rail->width() > 196);
     // Larger terminal text makes the sidebar's rows and names larger too.
     CHECK(item(QStringLiteral("sidebarAgent_renderer"))->height() > default_row_height);
     capture("comfortable-font21");
-    CHECK(keymap.setTerminalFontSize(kTerminalFontSizeDefault));
-    CHECK(keymap.setPreviewsVisible(true));
+    CHECK(config_model.setTerminalFontSize(kTerminalFontSizeDefault));
+    CHECK(config_model.setPreviewsVisible(true));
     settle();
     CHECK(item(QStringLiteral("agentTabs"))->isVisible());
     capture("strip");
-    CHECK(keymap.setPreviewsVisible(false));
-    CHECK(keymap.setDensity(QStringLiteral("minimal")));
+    CHECK(config_model.setPreviewsVisible(false));
+    CHECK(config_model.setDensity(QStringLiteral("minimal")));
     CHECK(workspace.renameAgent(QStringLiteral("renderer"),
                                 QStringLiteral("Refactor the renderer's glyph cache and atlas")));
     CHECK(workspace.renameAgent(QStringLiteral("agent"),
@@ -2782,7 +2787,7 @@ int run_sidebar_ui_tests() {
     auto* long_row = item(QStringLiteral("sidebarAgent_renderer"));
     CHECK(scene_rect(*rail).contains(scene_rect(*long_row)));
     capture("narrow-long");
-    CHECK(keymap.setDensity(QStringLiteral("comfortable")));
+    CHECK(config_model.setDensity(QStringLiteral("comfortable")));
     pump(40);
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;

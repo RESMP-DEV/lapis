@@ -150,7 +150,8 @@ kinds:
   terminal by Command-C, a drag or a double-click.
 - `mouse`: presses, releases and double-clicks with the position in the window
   and what is under it (`target`: the named item and its named ancestors, the
-  `area` such as `stage`, `strip`, `side-terminal`, `categories` or `dialog`,
+  `area` such as `stage`, `sidebar` (an agent's row), `strip`, `side-terminal`,
+  `categories` or `dialog`,
   and the agent's session id where there is one). `wheel`: one record per scroll
   gesture per interval with summed deltas and whether it scrolled lapis's
   `history` or went to the `program`. `pointer`: the pointer's position and the
@@ -214,6 +215,11 @@ longer read or written.
 
 - `keepAwake` keeps the Mac from sleeping while it is plugged in, so the phone
   can reach it.
+- `sidebarVisible` (on unless set) shows the sidebar of categories and their
+  agents; Command-B switches it. `previewsVisible` (off unless set) shows the
+  strip of live previews under the stage; **Show agent previews** in Commands
+  switches it. A file that already sets either keeps its value, and lapis
+  writes both whenever it saves the file.
 - `usage` (and the older top-level `showUsage`), `accounts` and `limitResets`
   belonged to retired plan features (the usage meter, lapis-managed plans and
   limit resets); a file that still has them loads, and lapis leaves them as

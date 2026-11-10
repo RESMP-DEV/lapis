@@ -271,7 +271,7 @@ class Config final : public QObject {
     bool loaded_{};
     bool file_backed_{true};
     bool sidebar_visible_{true};
-    bool previews_visible_{true};
+    bool previews_visible_{false};
     bool finish_sound_{true};
     QString alert_sound_file_;
     QString finish_sound_file_;

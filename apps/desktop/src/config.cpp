@@ -504,7 +504,7 @@ void Config::apply_defaults() {
     bindings_.insert(QStringLiteral("openCommands"), {QStringLiteral("Ctrl+Shift+P")});
 #endif
     sidebar_visible_ = true;
-    previews_visible_ = true;
+    previews_visible_ = false;
     finish_sound_ = true;
     alert_sound_file_.clear();
     finish_sound_file_.clear();
@@ -570,7 +570,9 @@ bool Config::load() {
     }
     const QJsonObject root = document.object();
     sidebar_visible_ = root.value(QStringLiteral("sidebarVisible")).toBool(true);
-    previews_visible_ = root.value(QStringLiteral("previewsVisible")).toBool(true);
+    // The sidebar navigates; the strip of live previews is opt-in. A file
+    // that already says either way keeps its choice.
+    previews_visible_ = root.value(QStringLiteral("previewsVisible")).toBool(false);
     scroll_to_bottom_on_typing_ = root.value(QStringLiteral("scrollToBottomOnTyping")).toBool(true);
     const QJsonObject keys = root.value(QStringLiteral("keybindings")).toObject();
     int applied = 0;

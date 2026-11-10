@@ -708,12 +708,14 @@ void sidebar_preference_and_commands() {
     Config config;
     config.setSourcePathForTesting(path);
     require(config.load() && config.sidebarVisible(), "sidebar defaults visible");
+    // The sidebar navigates; the preview strip is opt-in.
+    require(!config.previewsVisible(), "previews default hidden");
     QList<QPair<bool, bool>> observed;
     QObject::connect(&config, &Config::changed, &config,
                      [&] { observed.append({config.sidebarVisible(), config.previewsVisible()}); });
     require(config.setSidebarVisible(false), "hide sidebar persists");
-    require(config.setPreviewsVisible(false), "hide previews persists");
-    require(observed == QList<QPair<bool, bool>>{{false, true}, {false, false}},
+    require(config.setPreviewsVisible(true), "show previews persists");
+    require(observed == QList<QPair<bool, bool>>{{false, false}, {false, true}},
             "successful visibility saves emit each settled state once");
     Config restored;
     restored.setSourcePathForTesting(path);
@@ -731,7 +733,7 @@ void sidebar_preference_and_commands() {
         for (const auto& binding : bindings)
             require(QKeySequence(binding)[0] != paste, "workspace shortcuts must not steal paste");
     }
-    require(!restored.previewsVisible(), "hidden previews survive restart");
+    require(restored.previewsVisible(), "shown previews survive restart");
     observed.clear();
     QObject::connect(&restored, &Config::changed, &restored, [&] {
         observed.append({restored.sidebarVisible(), restored.previewsVisible()});
@@ -739,10 +741,20 @@ void sidebar_preference_and_commands() {
     static_cast<void>(write_config(QDir(directory.path()), "{broken"));
     require(!restored.setSidebarVisible(true) && !restored.sidebarVisible(),
             "failed sidebar save rolls back");
-    require(!restored.setPreviewsVisible(true) && !restored.previewsVisible(),
+    require(!restored.setPreviewsVisible(false) && restored.previewsVisible(),
             "failed preview save rolls back");
-    require(observed == QList<QPair<bool, bool>>{{false, false}, {false, false}},
+    require(observed == QList<QPair<bool, bool>>{{false, true}, {false, true}},
             "failed visibility saves never publish tentative values");
+    // A file an earlier lapis wrote with either value keeps it.
+    for (const bool shown : {true, false}) {
+        const auto earlier =
+            write_config(QDir(directory.path()),
+                         shown ? R"({"previewsVisible": true})" : R"({"previewsVisible": false})");
+        Config kept;
+        kept.setSourcePathForTesting(earlier);
+        require(kept.load() && kept.previewsVisible() == shown,
+                "an explicit previewsVisible keeps its value");
+    }
 }
 
 void typing_scroll_preference_persists() {
@@ -1041,7 +1053,7 @@ void defaults_only_touches_no_file() {
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
     const QDir dir(directory.path());
-    const QByteArray contents = R"({"version": 1, "theme": "amber", "previewsVisible": false})";
+    const QByteArray contents = R"({"version": 1, "theme": "amber", "previewsVisible": true})";
     const QString path = write_config(dir, contents);
     const QByteArray previous = qgetenv("LAPIS_CONFIG");
     const bool had_previous = qEnvironmentVariableIsSet("LAPIS_CONFIG");
@@ -1056,7 +1068,7 @@ void defaults_only_touches_no_file() {
         Config config{Config::DefaultsOnly{}};
         require(!config.fileBacked() && config.sourcePath().isEmpty(),
                 "a defaults-only config names no file");
-        require(config.themeName() == QStringLiteral("lapis") && config.previewsVisible() &&
+        require(config.themeName() == QStringLiteral("lapis") && !config.previewsVisible() &&
                     config.diagnostic().isEmpty(),
                 "a defaults-only config starts from the built-in defaults, not the file");
         require(config.sequences(QStringLiteral("openSettings")) == default_settings_shortcuts(),
@@ -1064,7 +1076,7 @@ void defaults_only_touches_no_file() {
         require(config.setTheme(QStringLiteral("graphite")) &&
                     config.themeName() == QStringLiteral("graphite"),
                 "a change applies in memory");
-        require(config.setPreviewsVisible(false) && !config.previewsVisible() &&
+        require(config.setPreviewsVisible(true) && config.previewsVisible() &&
                     config.diagnostic().isEmpty(),
                 "a change reports no save failure");
         // An edit to the file is not watched.

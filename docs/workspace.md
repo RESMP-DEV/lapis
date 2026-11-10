@@ -1,24 +1,40 @@
 # Workspace
 
-## The stage, the strip and categories
+## The stage, the sidebar and categories
 
-One terminal stage shows the selected agent. Under it, the strip shows each of
-the category's agents as a card with its latest lines (the rows ending at its
-cursor), refreshed at most four times a second, in order. There is no tab
-row: the strip is how you move through a category. Moving along it keeps part of
-the neighboring card in view, like Neovim's `sidescrolloff`, and the last card is
-**+** for a new agent. With nothing open, the stage lists what to do next (new
+One terminal stage shows the selected agent. The sidebar beside it is the
+navigation, as Chrome's vertical tabs are with tab groups: every category is a
+colour-coded group, its name under a colour mark and its recall number, with its
+agents listed under it, each with its status mark and title. A click on an agent
+shows it and its category; Command-Shift-] and [ walk the list in order, on from
+a category's last agent into the next category's first. The agent on the stage
+has a leading edge in its category's colour and a faint fill of it, and the
+shown category's name is in full ink. Larger terminal text makes the sidebar's
+names larger too. With nothing open, the stage lists what to do next (new
 agent, resume, terminal, reopen, the latest conversations and the categories
 that have agents), moved with up and down and run with Return, so nothing needs
 the mouse.
 
-Categories group agents and each remembers its selected agent. The category
-rail and the strip are separate levels of navigation; a narrow window shows a
-category selector instead of the rail. A card whose agent finished a turn or
-started needing you while another was selected pulses until you select it, and
-its category shows a pulsing dot. The Dock badge counts agents, in any category,
-that need you and have not been looked at. Attention never reorders categories
-or takes the keyboard.
+Categories group agents and each remembers its selected agent. Each takes one of
+eight colours (grey, blue, red, yellow, green, pink, purple, cyan) by its place
+in the list until you choose one under **Colour** in its menu (a right-click on
+its name); a chosen colour is kept with the category in `runtime/workspace.json`
+in the lapis folder. A narrow
+window, or Command-B, hides the sidebar and shows a category selector instead.
+
+The strip of live previews under the stage is off unless you turn it on with
+**Show agent previews** in Commands (or `previewsVisible` in
+[config](config.md#the-rest)). It shows each of the category's agents as a
+card with its latest lines (the rows ending at its cursor), refreshed at most
+four times a second, in order; moving along it keeps part of the neighboring
+card in view, like Neovim's `sidescrolloff`, and the last card is **+** for a
+new agent. Previews never take input or resize a terminal.
+
+An agent that finished a turn or started needing you while another was selected
+shows a dot beside its name in the sidebar (and its card pulses) until you
+select it, and its category counts such agents beside its name. The Dock badge
+counts agents, in any category, that need you and have not been looked at.
+Attention never reorders categories or takes the keyboard.
 
 Keyboard focus, activity, pending requests and lost connections each have their
 own color and shape. The Command theme uses dark opaque surfaces with restrained
@@ -28,17 +44,18 @@ and machine readouts.
 
 ## Arranging
 
-Cards drag along the strip to reorder, onto a category in the rail to move
-there, and onto the rail's **+** to start a new category; Command-click and
-Shift-click pick several to drag together. Categories drag up and down the rail.
-Commands and a card's menu rename, reorder or move an agent without restarting
-it.
+Agents in the sidebar drag onto another category's name to move there, and onto
+the sidebar's **+** to start a new category; cards on the strip do the same and
+also drag along it to reorder. Command-click and Shift-click pick several to drag
+together. Categories drag up and down the sidebar. Commands and an agent's menu
+(a right-click on its row or card) rename, reorder or move an agent without
+restarting it.
 
 ## Commands
 
 **Commands** (Command-Shift-P) searches every action with its shortcut. It holds
-**New category**, the reload actions from [agents](agents.md), and
-the card actions.
+**New category**, the reload actions from [agents](agents.md), the agent menu's
+actions and **Show agent previews**.
 
 ## Visual view
 
