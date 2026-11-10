@@ -73,44 +73,167 @@ def relay(cli, text):
         os.close(tty)
 
 
-def top_level_notify(text):
-    # Without tomllib (python3 before 3.11, as macOS ships): the top-level
-    # `notify = [...]` array of plain strings, which may span lines, or None.
-    word = re.compile(r'\s*(?:"((?:[^"\\\n]|\\.)*)"|\'([^\'\n]*)\')\s*(,|\]|)')
-    lines = iter(text.splitlines())
-    for line in lines:
-        if line.lstrip().startswith("["):
-            return None  # the first table ends the top level
-        found = re.match(r"\s*notify\s*=\s*\[(.*)$", line)
-        if not found:
+TOML_ESCAPES = {
+    "b": "\b",
+    "t": "\t",
+    "n": "\n",
+    "f": "\f",
+    "r": "\r",
+    '"': '"',
+    "\\": "\\",
+}
+
+
+def decode_basic_string(value):
+    out = []
+    index = 0
+    while index < len(value):
+        character = value[index]
+        if character != "\\":
+            out.append(character)
+            index += 1
             continue
-        rest, words = found.group(1), []
-        while True:
-            rest = re.sub(r"^(\s*(#.*)?)?$", "", rest)
-            if not rest:
-                rest = next(lines, None)
-                if rest is None:
-                    return None
-                continue
-            if rest.lstrip().startswith("]"):
-                return words
-            item = word.match(rest)
-            if not item:
+        index += 1
+        if index >= len(value):
+            return None
+        escape = value[index]
+        if escape in TOML_ESCAPES:
+            out.append(TOML_ESCAPES[escape])
+            index += 1
+        elif escape in ("u", "U"):
+            width = 4 if escape == "u" else 8
+            digits = value[index + 1 : index + 1 + width]
+            if len(digits) != width or any(
+                digit not in "0123456789abcdefABCDEF" for digit in digits
+            ):
                 return None
-            basic, literal, end = item.groups()
-            words.append(
-                json.loads('"' + basic + '"') if basic is not None else literal
-            )
-            rest = rest[item.end() :]
-            if end == "]":
-                return words
-            if not end:
-                if not re.fullmatch(r"\s*(?:#.*)?", rest):
-                    return None
-                closer = next((line for line in lines if line.strip()), None)
-                if closer is None or not closer.lstrip().startswith("]"):
-                    return None
-                return words
+            out.append(chr(int(digits, 16)))
+            index += 1 + width
+        else:
+            return None
+    return "".join(out)
+
+
+def read_toml_string(text, index):
+    length = len(text)
+    if text.startswith('"""', index):
+        end = text.find('"""', index + 3)
+        if end < 0:
+            return None, length
+        value = text[index + 3 : end].removeprefix("\n")
+        return decode_basic_string(re.sub(r"\\\s*\n\s*", "", value)), end + 3
+    if text.startswith("'''", index):
+        end = text.find("'''", index + 3)
+        if end < 0:
+            return None, length
+        return text[index + 3 : end].removeprefix("\n"), end + 3
+    quote = text[index]
+    index += 1
+    start = index
+    while index < length:
+        character = text[index]
+        if quote == '"' and character == "\\":
+            index += 2
+            continue
+        if character == quote:
+            raw = text[start:index]
+            return (raw if quote == "'" else decode_basic_string(raw)), index + 1
+        if character == "\n":
+            break
+        index += 1
+    return None, index
+
+
+def skip_space_and_comments(text, index):
+    length = len(text)
+    while index < length:
+        character = text[index]
+        if character.isspace():
+            index += 1
+        elif character == "#":
+            end = text.find("\n", index)
+            index = length if end < 0 else end
+        else:
+            break
+    return index
+
+
+def notify_array(text, index):
+    index = skip_space_and_comments(text, index)
+    if index >= len(text) or text[index] != "[":
+        return None
+    index += 1
+    words = []
+    while True:
+        index = skip_space_and_comments(text, index)
+        if index >= len(text):
+            return None
+        if text[index] == "]":
+            return words
+        if text[index] not in "\"'":
+            return None
+        value, index = read_toml_string(text, index)
+        if value is None:
+            return None
+        words.append(value)
+        index = skip_space_and_comments(text, index)
+        if index >= len(text):
+            return None
+        if text[index] == "]":
+            return words
+        if text[index] != ",":
+            return None
+        index += 1
+
+
+def top_level_notify(text):
+    # Without tomllib (python3 before 3.11, as macOS ships): find the top-level
+    # `notify = [...]` array of plain strings, or None. Track brackets so a
+    # nested array before notify is not mistaken for the first TOML table.
+    length = len(text)
+    index = 0
+    depth = 0
+    line_start = True
+    key = re.compile(r'([A-Za-z0-9_-]+|"[^"\n]+"|\'[^\'\n]+\')\s*=')
+    while index < length:
+        character = text[index]
+        if character == "#":
+            end = text.find("\n", index)
+            index = length if end < 0 else end
+        elif character in "\"'":
+            value, end = read_toml_string(text, index)
+            if value is None:
+                return None
+            index = end
+            line_start = False
+        elif character == "[":
+            if depth == 0 and line_start:
+                return None
+            depth += 1
+            index += 1
+            line_start = False
+        elif character == "]":
+            depth = max(0, depth - 1)
+            index += 1
+            line_start = False
+        elif depth == 0 and line_start and (character.isalpha() or character in "\"'"):
+            found = key.match(text, index)
+            if not found:
+                index += 1
+                line_start = False
+                continue
+            name = found.group(1)
+            if name in ("notify", '"notify"', "'notify'"):
+                return notify_array(text, found.end())
+            index = found.end()
+            line_start = False
+        elif character == "\n":
+            index += 1
+            line_start = True
+        else:
+            index += 1
+            if not character.isspace():
+                line_start = False
     return None
 
 

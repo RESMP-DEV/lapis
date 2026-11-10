@@ -184,6 +184,19 @@ class RemoteHookRelayTests(unittest.TestCase):
         )
         self.assertIsNone(parse('notify = [\n  "sh"\n  "-c"\n]\n'))
         self.assertEqual(parse("notify = []\n"), [])
+        self.assertEqual(
+            parse('matrix = [\n  [1, 2],\n]\nnotify = ["after-a-nested-array"]\n'),
+            ["after-a-nested-array"],
+        )
+        self.assertEqual(
+            parse('text = """\nnot [a-table]\n"""\nnotify = ["after-a-string"]\n'),
+            ["after-a-string"],
+        )
+        self.assertEqual(
+            parse('notify = ["\\U0001F600 notify"]\n'),
+            ["😀 notify"],
+        )
+        self.assertIsNone(parse('notify = ["invalid\\xescape"]\n'))
         self.assertIsNone(parse('[profiles.x]\nnotify = ["inside-a-table"]\n'))
         self.assertIsNone(parse('notify = "not-an-array"\n'))
         self.assertIsNone(parse('notify = ["unterminated"\n'))
