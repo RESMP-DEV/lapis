@@ -456,6 +456,9 @@ class Workspace final : public QObject {
     QString createCategory(const QString& name);
     Q_INVOKABLE bool renameCategory(const QString& id, const QString& name);
     Q_INVOKABLE bool removeCategory(const QString& id);
+    // One of the palette's names (category_colors.hpp), or empty to return
+    // to the colour its position gives it.
+    Q_INVOKABLE bool setCategoryColor(const QString& id, const QString& color);
     Q_INVOKABLE bool selectCategory(const QString& id);
     Q_INVOKABLE void nextCategory(int delta = 1);
     Q_INVOKABLE bool selectAgent(const QString& id);
@@ -551,7 +554,14 @@ class Workspace final : public QObject {
     // Moves a category to `index` in the rail.
     Q_INVOKABLE bool placeCategory(const QString& id, int index);
     Q_INVOKABLE bool removeAgent(const QString& id);
+    // The next agent in the active category's order, wrapping inside it.
     Q_INVOKABLE void nextAgent(int delta = 1);
+    // The next agent in the sidebar's order: each category's agents in turn,
+    // from the last agent of one category into the first of the next and
+    // wrapping at the ends; categories without agents are passed over. The
+    // active category follows. From an empty category it starts at the first
+    // agent after it (or the last before it, going back).
+    Q_INVOKABLE void nextAgentAcrossCategories(int delta = 1);
     // Tab's next agent, in any category, of those truly waiting on you: a
     // request, or a finished turn (no background work in flight) that is
     // unseen or has a guessed next prompt. Agents at work, paused on their own
@@ -660,6 +670,9 @@ class Workspace final : public QObject {
         QString id;
         QString name;
         QString selected;
+        // A colour chosen from the category menu, by name; empty takes one by
+        // position. A name this build does not know is kept and saved as read.
+        QString color{};
     };
     struct AgentRecord {
         QString category;

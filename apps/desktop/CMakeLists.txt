@@ -18,7 +18,7 @@ if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
         "<key>SUEnableAutomaticChecks</key><true/>")
 endif()
 add_library(lapis_desktop_core STATIC
-    src/workspace.cpp src/workspace.hpp
+    src/workspace.cpp src/workspace.hpp src/category_colors.hpp
     src/harness_catalog.cpp src/harness_catalog.hpp
     src/workspace_control.cpp src/workspace_control.hpp
     src/alerts.cpp src/alerts.hpp
@@ -217,6 +217,10 @@ if(BUILD_TESTING)
     # A local Codex stand-in through the real session service; windowless.
     add_test(NAME workspace-local-codex COMMAND lapis_workspace_tests --case local-codex)
     set_tests_properties(workspace-local-codex PROPERTIES TIMEOUT 90
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    # The sidebar's walk and category colours; no process or window.
+    add_test(NAME workspace-sidebar COMMAND lapis_workspace_tests --case sidebar)
+    set_tests_properties(workspace-sidebar PROPERTIES TIMEOUT 20
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     # These launch the real desktop host or QML windows. On a Mac someone is
     # using they would show windows, so they run only on request.

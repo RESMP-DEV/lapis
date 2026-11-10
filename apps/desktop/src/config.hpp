@@ -51,6 +51,8 @@ struct Theme {
     const char* plenty{};
     int corner_radius{2};
     int motion_ms{100};
+    // Light surfaces take the darker category colours.
+    bool light{};
     bool mono_chrome{};
     double heading_tracking{1.0};
 };

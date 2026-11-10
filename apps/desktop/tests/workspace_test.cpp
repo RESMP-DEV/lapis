@@ -156,6 +156,177 @@ void categoriesAndIdentity() {
         "category aggregates requests");
     require(!workspace.addCategory(QString(81, QLatin1Char('a'))), "bounded names");
 }
+QByteArray readRegistry(const QString& path);
+void writeRegistry(const QString& path, const QJsonObject& root);
+QString focusedId(const Workspace& workspace) {
+    return workspace.focusedAgent() ? workspace.focusedAgent()->agentId() : QString{};
+}
+// Command-Shift-] and [ walk the sidebar: every category's agents in turn,
+// across category edges, wrapping at the ends and passing empty categories.
+void nextAgentWalksTheSidebar() {
+    Workspace workspace(WorkspaceMode::fixture);
+    // General: shell renderer agent; Build: (empty); Review: service checks;
+    // Later: notes.
+    require(workspace.addCategory(QStringLiteral("Build")), "add an empty category");
+    const auto build = workspace.activeCategoryId();
+    require(workspace.addCategory(QStringLiteral("Review")), "add a second category");
+    const auto review = workspace.activeCategoryId();
+    require(workspace.addCategory(QStringLiteral("Later")), "add a third category");
+    const auto later = workspace.activeCategoryId();
+    require(
+        workspace.placeAgents({QStringLiteral("service"), QStringLiteral("checks")}, review, 0) &&
+            workspace.moveAgent(QStringLiteral("notes"), later),
+        "spread the agents over the categories");
+    require(workspace.selectAgent(QStringLiteral("agent")), "start at General's last agent");
+    QStringList visited;
+    QStringList categories;
+    for (int step = 0; step < 6; ++step) {
+        workspace.nextAgentAcrossCategories(1);
+        visited.append(focusedId(workspace));
+        categories.append(workspace.activeCategoryId());
+    }
+    require(visited == QStringList{QStringLiteral("service"), QStringLiteral("checks"),
+                                   QStringLiteral("notes"), QStringLiteral("shell"),
+                                   QStringLiteral("renderer"), QStringLiteral("agent")},
+            "forward crosses categories in sidebar order, skips the empty one and wraps");
+    require(categories == QStringList{review, review, later, QStringLiteral("general"),
+                                      QStringLiteral("general"), QStringLiteral("general")},
+            "the active category follows the walk");
+    workspace.nextAgentAcrossCategories(-1);
+    require(focusedId(workspace) == QStringLiteral("renderer"), "back within a category");
+    require(workspace.selectAgent(QStringLiteral("shell")), "start at the first agent");
+    workspace.nextAgentAcrossCategories(-1);
+    require(focusedId(workspace) == QStringLiteral("notes") &&
+                workspace.activeCategoryId() == later,
+            "back from the first agent wraps to the last category's last agent");
+    workspace.nextAgentAcrossCategories(-1);
+    require(focusedId(workspace) == QStringLiteral("checks") &&
+                workspace.activeCategoryId() == review,
+            "back crosses into the previous category's last agent");
+    // From an empty category the walk starts beside it.
+    require(workspace.selectCategory(build) && workspace.focusedAgent() == nullptr,
+            "an empty category shows no agent");
+    workspace.nextAgentAcrossCategories(1);
+    require(focusedId(workspace) == QStringLiteral("service"),
+            "forward from an empty category takes the next category's first agent");
+    require(workspace.selectCategory(build), "back to the empty category");
+    workspace.nextAgentAcrossCategories(-1);
+    require(focusedId(workspace) == QStringLiteral("agent") &&
+                workspace.activeCategoryId() == QStringLiteral("general"),
+            "back from an empty category takes the previous category's last agent");
+    // Each category keeps the agent the walk left it on.
+    require(workspace.selectCategory(review) && focusedId(workspace) == QStringLiteral("service"),
+            "a category remembers where the walk left it");
+    // The in-category walk is unchanged.
+    require(workspace.selectAgent(QStringLiteral("checks")), "select Review's last agent");
+    workspace.nextAgent(1);
+    require(focusedId(workspace) == QStringLiteral("service"),
+            "nextAgent still wraps inside the category");
+}
+// Each category has a colour: by position, or chosen and saved by name.
+void categoryColorsPersist() {
+    {
+        Workspace workspace(WorkspaceMode::fixture);
+        for (const auto* name : {"A", "B", "C", "D", "E", "F", "G", "H"})
+            require(workspace.addCategory(QString::fromLatin1(name)), "add categories");
+        QStringList colors;
+        for (const auto& value : workspace.categories())
+            colors.append(value.toMap().value(QStringLiteral("color")).toString());
+        require(colors.size() == 9, "nine categories");
+        require(colors.mid(0, 8) == QStringList{QStringLiteral("blue"), QStringLiteral("green"),
+                                                QStringLiteral("purple"), QStringLiteral("yellow"),
+                                                QStringLiteral("cyan"), QStringLiteral("pink"),
+                                                QStringLiteral("red"), QStringLiteral("grey")},
+                "colours come by position");
+        require(colors.at(8) == QStringLiteral("blue"), "the order cycles");
+        const auto first = workspace.categories().front().toMap();
+        require(first.value(QStringLiteral("agents")).toList().size() == 6 &&
+                    first.value(QStringLiteral("agentCount")).toInt() == 6,
+                "each category lists its agents in order");
+        require(!workspace.setCategoryColor(QStringLiteral("general"), QStringLiteral("mauve")),
+                "only palette names are chosen");
+    }
+    QTemporaryDir directory;
+    require(directory.isValid(), "colour registry directory");
+    WorkspaceOptions options;
+    options.storagePath = QDir(directory.path()).filePath(QStringLiteral("workspace.json"));
+    QString second;
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.addCategory(QStringLiteral("Research")), "add a category");
+        second = workspace.activeCategoryId();
+        require(workspace.setCategoryColor(second, QStringLiteral("pink")), "choose a colour");
+        require(workspace.categories().at(1).toMap().value(QStringLiteral("color")).toString() ==
+                    QStringLiteral("pink"),
+                "the chosen colour shows");
+    }
+    const auto saved = [&] {
+        return QJsonDocument::fromJson(readRegistry(options.storagePath))
+            .object()
+            .value(QStringLiteral("categories"))
+            .toArray();
+    };
+    require(!saved().at(0).toObject().contains(QStringLiteral("color")),
+            "a category without a chosen colour writes none");
+    require(saved().at(1).toObject().value(QStringLiteral("color")).toString() ==
+                QStringLiteral("pink"),
+            "the chosen colour is saved by name");
+    {
+        Workspace restored(WorkspaceMode::live, options);
+        require(restored.workspaceError().isEmpty(), "a registry with colours loads");
+        const auto groups = restored.categories();
+        require(groups.at(1).toMap().value(QStringLiteral("color")).toString() ==
+                        QStringLiteral("pink") &&
+                    groups.at(1).toMap().value(QStringLiteral("colorChoice")).toString() ==
+                        QStringLiteral("pink"),
+                "the chosen colour survives a restart");
+        require(restored.setCategoryColor(second, {}), "clear the choice");
+        require(restored.categories().at(1).toMap().value(QStringLiteral("color")).toString() ==
+                    QStringLiteral("green"),
+                "a cleared choice returns to the position's colour");
+    }
+    // A name this build does not know (a later build's, say) is kept as read
+    // and shown as the position's colour; a registry without colours (an
+    // earlier build's) loads unchanged.
+    auto root = QJsonDocument::fromJson(readRegistry(options.storagePath)).object();
+    auto groups = root.value(QStringLiteral("categories")).toArray();
+    auto group = groups.at(1).toObject();
+    group.insert(QStringLiteral("color"), QStringLiteral("orange"));
+    groups.replace(1, group);
+    auto first = groups.at(0).toObject();
+    first.insert(QStringLiteral("color"), 7);
+    groups.replace(0, first);
+    root.insert(QStringLiteral("categories"), groups);
+    writeRegistry(options.storagePath, root);
+    {
+        Workspace restored(WorkspaceMode::live, options);
+        require(restored.workspaceError().isEmpty(), "an unknown colour never fails the registry");
+        const auto shown = restored.categories();
+        require(shown.at(0).toMap().value(QStringLiteral("color")).toString() ==
+                        QStringLiteral("blue") &&
+                    shown.at(1).toMap().value(QStringLiteral("color")).toString() ==
+                        QStringLiteral("green"),
+                "unknown and malformed colours fall back to the position's colour");
+        require(restored.renameCategory(second, QStringLiteral("Renamed")), "save again");
+    }
+    require(saved().at(1).toObject().value(QStringLiteral("color")).toString() ==
+                    QStringLiteral("orange") &&
+                !saved().at(0).toObject().contains(QStringLiteral("color")),
+            "an unknown name is written back as read; a malformed one is dropped");
+    group = saved().at(1).toObject();
+    group.remove(QStringLiteral("color"));
+    groups = saved();
+    groups.replace(1, group);
+    root.insert(QStringLiteral("categories"), groups);
+    writeRegistry(options.storagePath, root);
+    {
+        Workspace restored(WorkspaceMode::live, options);
+        require(restored.workspaceError().isEmpty() && restored.categories().size() == 2 &&
+                    restored.categories().at(1).toMap().value(QStringLiteral("color")).toString() ==
+                        QStringLiteral("green"),
+                "a registry without colours loads with colours by position");
+    }
+}
 void categoryCountsChangeOnlyWhenNeeded() {
     Workspace workspace(WorkspaceMode::fixture);
     QObject receiver;
@@ -6172,11 +6343,13 @@ int main(int argc, char** argv) {
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("updates-off") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("omp-overlay") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("sidebar") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("stage-size")),
                     "Usage: lapis_workspace_tests [--case "
                     "adapter-status|remote-options|remote-hooks|local-codex|retired-plans|reload|"
                     "updater|"
-                    "updates-off|startup-defaults|launch-policy|omp-overlay|chimes|stage-size]");
+                    "updates-off|startup-defaults|launch-policy|omp-overlay|chimes|sidebar|"
+                    "stage-size]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("adapter-status")) {
                 claudeAgentsUseServiceAdapter();
@@ -6214,6 +6387,9 @@ int main(int argc, char** argv) {
                 alertsChimeWhileAnAgentWaits();
                 chimesPlayChosenFiles();
                 attentionLogStaysPrivateAndRotates();
+            } else if (selected == QStringLiteral("sidebar")) {
+                nextAgentWalksTheSidebar();
+                categoryColorsPersist();
             } else {
                 reloadStartsAgentsAgain();
                 reloadFailuresRemainRetryable();
@@ -6227,6 +6403,8 @@ int main(int argc, char** argv) {
         explicitAgentIdentity();
         submittedAttentionKeepsItsDisplayToken();
         categoryCountsChangeOnlyWhenNeeded();
+        nextAgentWalksTheSidebar();
+        categoryColorsPersist();
         persistence();
         restoreAgentIdentity();
         truthfulStatus();

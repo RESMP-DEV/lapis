@@ -1,6 +1,7 @@
 #include "workspace.hpp"
 #include "agent_checkpoint.hpp"
 #include "app_paths.hpp"
+#include "category_colors.hpp"
 #include "conversation_index.hpp"
 #include "harness_catalog.hpp"
 #include "hook_relay.hpp"
@@ -35,6 +36,8 @@
 #include <chrono>
 #include <iterator>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -881,6 +884,36 @@ void Workspace::nextAgent(int delta) {
     emit focusChanged();
 }
 
+void Workspace::nextAgentAcrossCategories(int delta) {
+    if (delta == 0)
+        return;
+    // The sidebar's order, and where the active category's agents begin.
+    QStringList order;
+    qsizetype boundary = 0;
+    for (const auto& group : categories_) {
+        if (group.id == active_category_)
+            boundary = order.size();
+        for (const auto& item : items_)
+            if (agents_.value(item->agentId()).category == group.id)
+                order.append(item->agentId());
+    }
+    if (order.isEmpty())
+        return;
+    const auto count = order.size();
+    const auto* focused = focusedAgent();
+    qsizetype target = 0;
+    if (focused != nullptr) {
+        const auto here = order.indexOf(focused->agentId());
+        if (here < 0)
+            return;
+        target = here + delta;
+    } else {
+        // An empty category sits between the agents before and after it.
+        target = delta > 0 ? boundary + delta - 1 : boundary + delta;
+    }
+    selectAgent(order.at(((target % count) + count) % count));
+}
+
 // Truly waiting on the person: a request, or a turn its observer saw finish
 // with no background work in flight (a turn paused on its own background work
 // reads as working until it ends or its deadline passes) that is unseen or has
@@ -1176,21 +1209,32 @@ int Workspace::attentionAgents() const {
 }
 QVariantList Workspace::categories() const {
     QVariantList result;
+    std::size_t position = 0;
     for (const auto& category : categories_) {
         int count = 0;
         int unseen = 0;
-        int agents = 0;
+        QVariantList agents;
         for (const auto& item : items_)
             if (agents_.value(item->agentId()).category == category.id) {
                 count += item->attentionCount();
                 unseen += item->unseen() ? 1 : 0;
-                ++agents;
+                agents.append(QVariant::fromValue(item.get()));
             }
-        result.append(QVariantMap{{"id", category.id},
-                                  {"name", category.name},
-                                  {"attentionCount", count},
-                                  {"unseenCount", unseen},
-                                  {"agentCount", agents}});
+        // The colour shown: the chosen one when this build knows it, else
+        // the one the category's position gives it.
+        const auto chosen = category.color.toStdString();
+        const auto shown = category_color_known(chosen) ? std::string_view(chosen)
+                                                        : category_color_for_position(position);
+        ++position;
+        result.append(QVariantMap{
+            {"id", category.id},
+            {"name", category.name},
+            {"attentionCount", count},
+            {"unseenCount", unseen},
+            {"agentCount", static_cast<int>(agents.size())},
+            {"agents", agents},
+            {"color", QString::fromLatin1(shown.data(), static_cast<qsizetype>(shown.size()))},
+            {"colorChoice", category.color}});
     }
     return result;
 }
@@ -1285,6 +1329,23 @@ bool Workspace::renameCategory(const QString& id, const QString& name) {
             return true;
         }
     return fail(QStringLiteral("Category no longer exists."));
+}
+bool Workspace::setCategoryColor(const QString& id, const QString& color) {
+    if (!mutableRegistry())
+        return false;
+    if (!color.isEmpty() && !category_color_known(color.toStdString()))
+        return fail(QStringLiteral("Choose one of the category colours."));
+    auto* place = category(id);
+    if (place == nullptr)
+        return fail(QStringLiteral("Category no longer exists."));
+    if (place->color == color)
+        return true;
+    const auto previous = checkpoint();
+    place->color = color;
+    if (!commit(previous))
+        return false;
+    emit categoriesChanged();
+    return true;
 }
 bool Workspace::removeCategory(const QString& id) {
     if (!mutableRegistry())
@@ -1946,9 +2007,14 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
         return saveError(
             QStringLiteral("Workspace registry could not be loaded; it has not been overwritten."));
     QJsonArray groups;
-    for (const auto& category : categories_)
-        groups.append(QJsonObject{
-            {"id", category.id}, {"name", category.name}, {"selected", category.selected}});
+    for (const auto& category : categories_) {
+        QJsonObject group{
+            {"id", category.id}, {"name", category.name}, {"selected", category.selected}};
+        // Only a chosen colour is written; earlier builds ignore the field.
+        if (!category.color.isEmpty())
+            group.insert(QStringLiteral("color"), category.color);
+        groups.append(group);
+    }
     QJsonArray agents;
     for (const auto& item : items_) {
         const auto entry = agents_.constFind(item->agentId());
@@ -1986,6 +2052,12 @@ void Workspace::loadCategories(const QJsonArray& groups) {
         if (!validName(category.id) || !validName(category.name) || category.selected.size() > 80 ||
             ids.contains(category.id))
             throw std::runtime_error("Invalid or duplicate category");
+        // A colour is optional and never makes the registry unreadable: a
+        // name this build does not know is kept (a later build's hue) and
+        // shown as the position's colour; anything but a short name is dropped.
+        if (const auto color = group.value(QStringLiteral("color")).toString();
+            color.size() <= 32 && validName(color))
+            category.color = color;
         ids.insert(category.id);
         categories.push_back(category);
     }

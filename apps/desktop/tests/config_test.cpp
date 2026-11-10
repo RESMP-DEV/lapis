@@ -6,6 +6,7 @@
 // choice survive a restart.
 #include "config.hpp"
 
+#include <QColor>
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -22,7 +23,9 @@
 #include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QThread>
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -668,6 +671,28 @@ void advertised_names_are_accepted() {
         const QString name = entry.toMap().value(QStringLiteral("name")).toString();
         require(!name.isEmpty(), "each advertised theme needs a name");
         require(config.setTheme(name), "every advertised theme must be accepted");
+        // Each category colour stands out from the theme's surfaces (3:1, the
+        // contrast a non-text mark needs).
+        const auto map = entry.toMap();
+        const auto colors = map.value(QStringLiteral("categoryColors")).toMap();
+        require(colors.size() == 8, "every theme resolves the eight category colours");
+        const auto luminance = [](const QColor& color) {
+            const auto channel = [](double value) {
+                return value <= 0.03928 ? value / 12.92 : std::pow((value + 0.055) / 1.055, 2.4);
+            };
+            return 0.2126 * channel(color.redF()) + 0.7152 * channel(color.greenF()) +
+                   0.0722 * channel(color.blueF());
+        };
+        for (const auto* surface : {"surface", "background", "card"}) {
+            const auto ground =
+                luminance(QColor(map.value(QString::fromLatin1(surface)).toString()));
+            for (auto hue = colors.cbegin(); hue != colors.cend(); ++hue) {
+                const auto mark = luminance(QColor(hue.value().toString()));
+                const auto ratio =
+                    (std::max(mark, ground) + 0.05) / (std::min(mark, ground) + 0.05);
+                require(ratio >= 3.0, "category colours keep 3:1 contrast on every theme");
+            }
+        }
     }
     // The final iteration leaves the last advertised name selected, and the
     // enumeration agrees with the string names written to the file.

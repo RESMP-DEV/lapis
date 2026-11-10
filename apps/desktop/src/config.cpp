@@ -1,5 +1,6 @@
 #include "config.hpp"
 #include "app_paths.hpp"
+#include "category_colors.hpp"
 
 #include <QDebug>
 #include <QDir>
@@ -92,6 +93,7 @@ constexpr std::array<Theme, 7> kThemes = {{
      .plenty = "#2f8f4e",
      .corner_radius = 6,
      .motion_ms = 140,
+     .light = true,
      .heading_tracking = 0.5},
     {.name = "solarized",
      .label = "Solarized",
@@ -868,6 +870,14 @@ QString Config::densityName() const { return density_name(density_); }
 QVariantList Config::themes() const {
     QVariantList list;
     for (const Theme& theme : kThemes) {
+        // The sidebar's category hues by name, for this theme's surfaces.
+        QVariantMap category_colors;
+        for (const auto& color : kCategoryColors) {
+            const auto hex = theme.light ? color.light : color.dark;
+            category_colors.insert(
+                QString::fromLatin1(color.name.data(), static_cast<qsizetype>(color.name.size())),
+                QString::fromLatin1(hex.data(), static_cast<qsizetype>(hex.size())));
+        }
         list.append(QVariantMap{
             {QStringLiteral("name"), QString::fromLatin1(theme.name)},
             {QStringLiteral("label"), QString::fromLatin1(theme.label)},
@@ -889,6 +899,7 @@ QVariantList Config::themes() const {
             {QStringLiteral("motionDuration"), theme.motion_ms},
             {QStringLiteral("monoChrome"), theme.mono_chrome},
             {QStringLiteral("headingTracking"), theme.heading_tracking},
+            {QStringLiteral("categoryColors"), category_colors},
         });
     }
     return list;
