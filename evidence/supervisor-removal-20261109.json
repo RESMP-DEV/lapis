@@ -7,8 +7,8 @@
   "runtime_validation_revision": "e62f90933754f305b38c20f5e9ceaca9460fcebd",
   "scope": "Post-rebase validation and review follow-up for PR 190 after PRs 187, 188, 189, 192, 195, 197, and 200 merged.",
   "changed_source_manifest": {
-    "algorithm": "shasum -a 256 of: git diff --binary 2f261586507a6af04f7f5191a8286b29da089125..f30d69db6693682425340d34e072452db58a2129 -- ':(exclude)evidence/*'",
-    "digest": "edd65ba6b2207fa59fcc35a4b181cf87576a32b448eb78102d94f828f4f478bb",
+    "algorithm": "shasum -a 256 of: git diff --binary --full-index 2f261586507a6af04f7f5191a8286b29da089125..f30d69db6693682425340d34e072452db58a2129 -- ':(exclude)evidence/*'",
+    "digest": "8b5150317b2aadbb718b07ffdeba7fbf5fc61452537682c68e974b8c939ca209",
     "changed_paths": 42
   },
   "validation": [
