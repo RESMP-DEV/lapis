@@ -199,6 +199,8 @@ class RemoteHookRelayTests(unittest.TestCase):
             ["😀 notify"],
         )
         self.assertIsNone(parse('notify = ["invalid\\xescape"]\n'))
+        self.assertIsNone(parse('notify = ["too\\U00110000large"]\n'))
+        self.assertIsNone(parse('notify = ["lone\\uD800surrogate"]\n'))
         self.assertIsNone(parse('[profiles.x]\nnotify = ["inside-a-table"]\n'))
         self.assertIsNone(parse('notify = "not-an-array"\n'))
         self.assertIsNone(parse('notify = ["unterminated"\n'))

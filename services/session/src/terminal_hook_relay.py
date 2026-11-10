@@ -107,7 +107,10 @@ def decode_basic_string(value):
                 digit not in "0123456789abcdefABCDEF" for digit in digits
             ):
                 return None
-            out.append(chr(int(digits, 16)))
+            code = int(digits, 16)
+            if code > 0x10FFFF or 0xD800 <= code <= 0xDFFF:
+                return None
+            out.append(chr(code))
             index += 1 + width
         else:
             return None
