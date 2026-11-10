@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-10T03:49:15Z",
+  "recorded_at": "2026-11-10T03:58:49Z",
   "agent": "Codex triage parent with three read-only Codex subagents",
   "base_revision": "90ce4861646c6e03662301f93f2513addb7f2a2a2",
-  "source_revision": "ceb89f45369e6b40940b8dd6f12c562a57353a48",
-  "runtime_validation_revision": "ceb89f45369e6b40940b8dd6f12c562a57353a48",
+  "source_revision": "3b40c56bfd08b21fbd5e2aeb16acb88b7d70b7ed",
+  "runtime_validation_revision": "3b40c56bfd08b21fbd5e2aeb16acb88b7d70b7ed",
   "scope": "Final PR 193 repair and qualification for local and remote Codex notify chaining across base and selected profile configuration.",
   "changed_source_manifest": {
-    "algorithm": "shasum -a 256 of: git diff --binary --full-index 90ce4861646c6e03662301f93f2513addb7f2a2a2..ceb89f45369e6b40940b8dd6f12c562a57353a48 -- ':(exclude)evidence/*'",
-    "digest": "f1ffbab872719ae541df8e5f41a00787c7ca6b5e82f8c8beb4f4f93dc9374c84",
+    "algorithm": "shasum -a 256 of: git diff --binary --full-index 90ce4861646c6e03662301f93f2513addb7f2a2a2..3b40c56bfd08b21fbd5e2aeb16acb88b7d70b7ed -- ':(exclude)evidence/*'",
+    "digest": "69dfc42b50d4ba556edf583a8b817bb9b6870fcf0812918d420f47861341953b",
     "changed_paths": 68
   },
-  "validation_scope": "Broad gates ran on the exact source content later committed as ceb89f45369e6b40940b8dd6f12c562a57353a48; TSan completion is recorded below. Earlier C++ results at 112ae72fb60ef1e42e7bf007f75d8e26df3153d5 remain reusable only for files unchanged by the parser and adapter-status follow-ups.",
+  "validation_scope": "Broad C++/desktop gates ran at ceb89f45369e6b40940b8dd6f12c562a57353a48. Final source 3b40c56bfd08b21fbd5e2aeb16acb88b7d70b7ed changes only the Python relay and tests; repository quality, both focused Python interpreters, and both Codex notify CLI cases were rerun at that final source.",
   "codex_interface_observation": {
     "binary": "codex resolved from PATH",
     "sha256": "703b845ec3313423eb7d486aa475125f87bf0cfc4a64d5e6ff93ab3068f9d38e",
@@ -28,7 +28,7 @@
       "command": "just quality",
       "result": "passed; 484 Python tests, Ruff lint/format, revision/status and diff checks",
       "receipt": "build/reports/quality/receipt.json",
-      "revision": "ceb89f45369e6b40940b8dd6f12c562a57353a48"
+      "revision": "3b40c56bfd08b21fbd5e2aeb16acb88b7d70b7ed"
     },
     {
       "command": "just check",
@@ -55,18 +55,18 @@
     },
     {
       "command": "/usr/bin/python3 scripts/tests/test_terminal_hook_relay.py && python3 -m unittest scripts.tests.test_terminal_hook_relay",
-      "result": "passed; 11 relay tests on Python 3.9 and current Python, including no-tomllib multiline/nested-array/triple-string/unicode-escape parsing and a profile-only home",
-      "revision": "5359418b6e5fd5fc5b2e786fb1f2fbeced06efbb"
+      "result": "passed; 11 relay tests on Python 3.9 and current Python, including quoted keys, no-tomllib multiline/nested-array/triple-string/unicode-escape parsing and a profile-only home",
+      "revision": "3b40c56bfd08b21fbd5e2aeb16acb88b7d70b7ed"
     },
     {
       "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop --case codex-notify-arguments",
       "result": "passed; all 10 notify/profile argument cases, including attached forms, last pre-literal selection and inherited-profile clearing",
-      "revision": "5359418b6e5fd5fc5b2e786fb1f2fbeced06efbb"
+      "revision": "3b40c56bfd08b21fbd5e2aeb16acb88b7d70b7ed"
     },
     {
       "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop --case codex-notify-reattachment",
       "result": "passed; two notify turns stayed off screen across reattachment",
-      "revision": "5359418b6e5fd5fc5b2e786fb1f2fbeced06efbb"
+      "revision": "3b40c56bfd08b21fbd5e2aeb16acb88b7d70b7ed"
     },
     {
       "command": "build/desktop/apps/desktop/lapis_workspace_tests --case remote-hooks",
@@ -87,7 +87,7 @@
     "Clear stale inherited LAPIS_CODEX_PROFILE when no profile is selected.",
     "Propagate selected profiles through new and restored remote Codex launches.",
     "Accept valid multiline TOML arrays whose final element has no trailing comma.",
-    "Do not mistake a nested top-level array or text inside a multiline string for the first TOML table, and decode TOML unicode escapes on Python before 3.11.",
+    "Do not mistake a nested top-level array or text inside a multiline string for the first TOML table; decode TOML unicode escapes and quoted notify keys on Python before 3.11.",
     "Restore a saved Codex agent with the output status estimate and keep that case in the non-screen desktop gate.",
     "Scope app-server, launch-default, Python-version and nonce-trust claims precisely."
   ],
