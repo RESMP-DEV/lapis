@@ -415,7 +415,7 @@ ApplicationWindow {
         add("restartAgent", qsTr("Restart agent"), "", stopped, qsTr("Only an ended or unreachable agent restarts"), () => workspace.restartAgent(agent.agentId))
         // A CLI rereads its settings only when it starts: these end it and
         // start it again, resuming its conversation.
-        add("reloadTab", qsTr("Reload tab"), "", hasAgent && agent.live, needAgent, () => workspace.reloadAgent(agent.agentId))
+        add("reloadTab", qsTr("Reload agent"), "", hasAgent && agent.live, needAgent, () => workspace.reloadAgent(agent.agentId))
         add("reloadCategory", qsTr("Reload category"), "", workspace.categoryAgents.length > 0, qsTr("This category has no agents"), () => workspace.reloadCategory())
         add("reloadWindow", qsTr("Reload window"), "", workspace.agents.length > 0, qsTr("No agents are open"), () => workspace.reloadAll())
         add("nextCategory", qsTr("Next category"), "nextCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory())
@@ -427,8 +427,8 @@ ApplicationWindow {
         add("renameCategory", qsTr("Rename category"), "", true, "", () => window.openCategoryDialog("rename"))
         add("removeCategory", qsTr("Remove category"), "", window.canRemoveActiveCategory(), qsTr("Move its agents first; keep at least one category"), () => window.removeActiveCategory())
         add("renameAgent", qsTr("Rename agent"), "", hasAgent, needAgent, () => window.openRenameDialog())
-        add("earlier", qsTr("Move agent earlier"), "", hasAgent && window.focusedTabIndex() > 0, qsTr("No earlier tab position"), () => window.moveFocused(-1))
-        add("later", qsTr("Move agent later"), "", hasAgent && window.focusedTabIndex() < workspace.categoryAgents.length - 1, qsTr("No later tab position"), () => window.moveFocused(1))
+        add("earlier", qsTr("Move agent earlier"), "", hasAgent && window.focusedTabIndex() > 0, qsTr("Already first in this category"), () => window.moveFocused(-1))
+        add("later", qsTr("Move agent later"), "", hasAgent && window.focusedTabIndex() < workspace.categoryAgents.length - 1, qsTr("Already last in this category"), () => window.moveFocused(1))
         for (const category of workspace.categories) {
             if (category.id !== workspace.activeCategoryId)
                 add("move:" + category.id, qsTr("Move agent to %1").arg(category.name), "", hasAgent, needAgent, () => workspace.moveAgent(agent.agentId, category.id))
@@ -2149,7 +2149,7 @@ ApplicationWindow {
     StageDialog {
         id: closeAgentDialog
         objectName: "closeAgentDialog"
-        title: reachable ? qsTr("End agent") : qsTr("Close tab")
+        title: reachable ? qsTr("End agent") : qsTr("Close agent")
         height: Math.min(window.height - 32, closeForm.implicitHeight + topPadding + bottomPadding)
         property string agentId: ""
         property string harnessId: ""
@@ -2181,7 +2181,7 @@ ApplicationWindow {
                     Layout.minimumWidth: 0
                     text: closeAgentDialog.reachable ?
                               qsTr("End %1 in %2?").arg(closeAgentDialog.agentName).arg(closeAgentDialog.place) :
-                              qsTr("Close the %1 tab for %2?").arg(closeAgentDialog.agentName).arg(closeAgentDialog.place)
+                              qsTr("Close the %1 agent in %2?").arg(closeAgentDialog.agentName).arg(closeAgentDialog.place)
                     color: window.textColor
                     font.pixelSize: window.chromeFont + 1
                     font.bold: true
@@ -2191,8 +2191,8 @@ ApplicationWindow {
             PlainLabel {
                 Layout.fillWidth: true
                 text: closeAgentDialog.reachable ?
-                          qsTr("Its process stops and the tab closes.") :
-                          qsTr("lapis can't reach this agent. If it is still running, it keeps running without a tab.")
+                          qsTr("Its process stops and lapis closes it.") :
+                          qsTr("lapis can't reach this agent. If it is still running, it keeps running outside lapis.")
                 color: window.mutedTextColor
                 wrapMode: Text.WordWrap
             }
@@ -2208,7 +2208,7 @@ ApplicationWindow {
                 CommandButton {
                     id: closeConfirm
                     objectName: "closeAgentConfirm"
-                    text: closeAgentDialog.reachable ? qsTr("End agent") : qsTr("Close tab")
+                    text: closeAgentDialog.reachable ? qsTr("End agent") : qsTr("Close agent")
                     hint: "↩"
                     selected: true
                     focusPolicy: Qt.StrongFocus

@@ -479,8 +479,8 @@ Dialog {
                     names: settings.densityModel
                     selected: settings.currentDensity
                     describe: function(name) {
-                        return name === "comfortable" ? qsTr("Wider category rail and tabs. Terminal text is unchanged.") :
-                               name === "compact" ? qsTr("Tighter categories and tabs. Terminal text is unchanged.") :
+                        return name === "comfortable" ? qsTr("Wider category rail and agent cards. Terminal text is unchanged.") :
+                               name === "compact" ? qsTr("Tighter categories and agent cards. Terminal text is unchanged.") :
                                name === "minimal" ? qsTr("Smallest chrome. The terminal stays the main surface.") : ""
                     }
                     onPicked: function(name) { settings.densityChosen(name) }

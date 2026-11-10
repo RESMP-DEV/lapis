@@ -657,7 +657,7 @@ void addRemoteOptions(session::LaunchSpec& launch) {
     if (launch.arguments.size() + missing.size() > max_saved_arguments) {
         const auto error =
             QStringLiteral("Saved SSH arguments leave no room for lapis connection options. "
-                           "Recreate this remote tab.");
+                           "Recreate this remote agent.");
         throw std::runtime_error(error.toStdString());
     }
     launch.arguments = missing + launch.arguments;
@@ -1583,7 +1583,7 @@ bool Workspace::removeAgent(const QString& id) {
         return false;
     if (item->live() && item->connectionState() != QStringLiteral("ended"))
         return fail(QStringLiteral(
-            "This agent may still be running. End it in the agent before removing its tab."));
+            "This agent may still be running. End it in the agent before removing it."));
     return discardAgent(id);
 }
 bool Workspace::discardAgent(const QString& id) {
@@ -3032,7 +3032,7 @@ bool Workspace::closeAgent(const QString& id, bool abandon) {
         return true;
     if (!item->terminate())
         return fail(QStringLiteral("lapis could not reach this agent's session to end it. "
-                                   "Reconnect it, or exit the agent, then close its tab."));
+                                   "Reconnect it, or exit the agent, then close it."));
     item->setClosing(true);
     return true;
 }
@@ -3060,8 +3060,7 @@ void Workspace::finishClosing(Agent* item) {
         // this view while its agent keeps running: reattach and say so.
         item->setClosing(false);
         fail(QStringLiteral("This agent's session service predates closing from lapis, so the "
-                            "agent is still running. Exit it inside the agent, then close its "
-                            "tab."));
+                            "agent is still running. Exit it inside the agent, then close it."));
         item->reconnect();
     }
 }

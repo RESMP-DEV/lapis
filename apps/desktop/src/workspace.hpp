@@ -505,13 +505,13 @@ class Workspace final : public QObject {
     [[nodiscard]] bool holdsRegistry() const {
         return registry_lock_ != nullptr && registry_lock_->isLocked();
     }
-    // Close an agent's tab. A reachable agent is ended through its
-    // session service first and its tab closes once the process exits. An
-    // unreachable one keeps its tab unless `abandon` accepts that it may still
-    // be running without one.
+    // Close an agent. A reachable agent is ended through its session
+    // service first and closes once the process exits. An unreachable one
+    // stays unless `abandon` accepts that it may still be running outside
+    // lapis.
     Q_INVOKABLE bool closeAgent(const QString& id, bool abandon = false);
     Q_INVOKABLE bool restartAgent(const QString& id);
-    // Ends an agent's CLI and starts it again in its tab, resuming its
+    // Ends an agent's CLI and starts it again in its card, resuming its
     // conversation as a restart does: a CLI rereads its settings (Claude
     // Code's permissions, say) only when it starts. An ended agent starts at
     // once. An agent on another machine whose conversation lapis cannot name
