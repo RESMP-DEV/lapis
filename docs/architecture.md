@@ -79,8 +79,9 @@ is valuable only when its exact source and artifact can pass the named gate.
 | 4 | Publish only the qualified local slice, then schedule controlled 32-session scale | Early-access reports identify exact source/artifact; wider capacity claims wait for the separate 32-session result |
 
 Process lifetime stays as it runs today: the window starts each session
-service, services outlive the window, and the login helper restores agents
-after login. Restart of a crashed session service is not implemented, and no
+service, services outlive the window where the OS permits background
+execution, and the login helper restores agents after login. Restart of a
+crashed session service is not implemented, and no
 step above adds it. Step 2 may proceed as parallel focused repairs, but those
 repairs cannot claim candidate readiness until they run against the assembled
 package from step 1. A merged PR, source test, or worker self-report is not a
