@@ -63,38 +63,48 @@ GATEWAY_VERSION = 1
 # a seventeenth gets an immediate busy reply instead of an unbounded thread.
 MAX_HTTP_CONNECTIONS = 16
 
-# Wire protocol v6 (services/session/src/transport/local_protocol.hpp).
-WIRE_VERSION = 6
-HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
-HISTORY_REQUEST, HISTORY_PAGE = 10, 11
-# One bounded paste admitted to the agent's input as a unit, optionally
-# followed by Return, with the service's answer (added within v6). A view asks
-# for it with the attach flag; a service that grants it says so in its hello.
-PASTE_REQUEST, PASTE_RESULT = 17, 18
-ATTACH_PASTE_TRANSACTIONS = 0x20
-MAX_PASTE = 960 * 1024
-# A turn of the wheel for a full-screen program (added within v6). Only a
-# service whose snapshots set ACCEPTS_WHEEL in the alternate-screen byte takes
-# it; one from before drops the connection on it.
-WHEEL = 16
-ALTERNATE_OFFSET, ACCEPTS_WHEEL = 21, 2
-# History direction `at` (added within v6): the page holding a row. A page's
-# history fields (total, first row, rows) say where it sits; services before
-# it send only the page itself, and reject `at`.
-HISTORY_AT = 2
-HISTORY_FIELDS_OFFSET = 37
-STATUS_NAMES = {1: "rejected", 2: "ended", 3: "replaced", 4: "overloaded"}
-# Attach modes: discover takes the agent from its current client; join (added
-# within v6) shows it beside the desktop. Services started before join reject it.
-DISCOVER, JOIN = 0, 3
-MAX_FRAME = 8 * 1024 * 1024
-ATTACHMENT_BYTES = 40
-SNAPSHOT_HEADER = 72
-PALETTE_OFFSET = 61
-POOL_OFFSET = 1085
-CELL = struct.Struct(">IIBBIBIBIBH")  # 27 bytes, local_protocol.cpp
-WIDE_TAIL, WRAP_SPACER = 2, 3
-MAX_CELLS = 32768  # wire::max_cells
+# Wire protocol v6 and launch identity, shared with the check scripts. The
+# module sits beside this file, so running this file finds it.
+from lapis_wire import (  # noqa: E402
+    ACCEPTS_WHEEL,
+    ALTERNATE_OFFSET,
+    ATTACH,
+    ATTACH_PASTE_TRANSACTIONS,
+    ATTACHMENT_BYTES,
+    CELL,
+    DISCOVER,
+    HELLO,
+    HISTORY_AT,
+    HISTORY_PAGE,
+    HISTORY_REQUEST,
+    JOIN,
+    KEY,
+    MAX_CELLS,
+    MAX_FRAME,
+    MAX_PASTE,
+    PALETTE_OFFSET,
+    PASTE,
+    PASTE_REQUEST,
+    PASTE_RESULT,
+    POOL_OFFSET,
+    READY,
+    RESIZE,
+    SNAPSHOT,
+    SNAPSHOT_HEADER,
+    STATUS,
+    STATUS_NAMES,
+    TEXT,
+    WHEEL,
+    WIDE_TAIL,
+    WIRE_VERSION,
+    WRAP_SPACER,
+    WireError,
+    decode_history_reply,
+    fingerprint,
+    frame,
+    page_place,
+    status_message,
+)
 
 # TerminalKey (services/session/include/lapis/session/terminal.hpp).
 KEYS = {
@@ -122,8 +132,9 @@ CONTROL_NAME = "workspace-control.sock"
 BOLD, ITALIC, FAINT, UNDERLINE, STRIKE, CURSOR = 1, 2, 4, 8, 16, 32
 
 
-class GatewayError(RuntimeError):
-    pass
+# One error type: a malformed wire message fails exactly where any other
+# gateway error is caught, as it did before the protocol moved to lapis_wire.
+GatewayError = WireError
 
 
 class DesktopUnavailable(GatewayError):
@@ -263,23 +274,6 @@ def require(condition, message):
 
 
 # Registry -------------------------------------------------------------------
-
-
-def qt_string(value):
-    encoded = str(value).encode("utf-16-be")
-    return struct.pack(">I", len(encoded)) + encoded
-
-
-def fingerprint(program, arguments, directory, mode):
-    """SHA-256 launch fingerprint, as launch_spec.cpp computes it."""
-    data = qt_string(program) + struct.pack(">I", len(arguments))
-    data += b"".join(qt_string(argument) for argument in arguments)
-    data += qt_string(Path(directory).resolve())
-    if mode == "claude":
-        data = b"lapis-claude-v1\0" + data
-    elif mode == "codex":
-        data = b"lapis-codex-v1\0" + data
-    return hashlib.sha256(data).digest()
 
 
 # How long a listing request that already has the registry's current version
@@ -1617,40 +1611,6 @@ def render_snapshot(payload, show_cursor=True):
     }
 
 
-def page_place(payload):
-    """Where an archived page sits: every kept row, its first row among them
-    (0 the oldest), its own rows, and whether its service can jump."""
-    require(len(payload) >= HISTORY_FIELDS_OFFSET + 24, "Truncated history place")
-    total, offset, rows = struct.unpack_from(">QQQ", payload, HISTORY_FIELDS_OFFSET)
-    require(offset <= total and rows <= total - offset, "Invalid history place")
-    return {
-        "total": total,
-        "offset": offset,
-        "rows": rows,
-        "scrubbable": offset > 0 or total > rows,
-    }
-
-
-def decode_history_reply(data, attachment):
-    """Validate a history reply before it can reach a waiter or the stream."""
-    require(
-        len(data) >= 60 and data[:ATTACHMENT_BYTES] == attachment, "Bad history reply"
-    )
-    request_id, page_id = struct.unpack_from(">QQ", data, ATTACHMENT_BYTES)
-    length = struct.unpack_from(">I", data, 56)[0]
-    require(length <= len(data) - 60, "Truncated history message")
-    message = data[60 : 60 + length].decode("utf-8", "replace")
-    snapshot = data[60 + length :]
-    if snapshot:
-        require(len(snapshot) >= POOL_OFFSET + 4, "Truncated history snapshot")
-        page_place(snapshot)
-    return request_id, {
-        "page": page_id,
-        "message": message,
-        "snapshot": snapshot or None,
-    }
-
-
 def run(texts, style, column, width):
     foreground, background, flags = style
     return [
@@ -1664,10 +1624,6 @@ def run(texts, style, column, width):
 
 
 # Session service connection -------------------------------------------------
-
-
-def frame(kind, payload=b""):
-    return struct.pack(">IB", len(payload) + 1, kind) + payload
 
 
 class WireSession:
@@ -1711,8 +1667,12 @@ class WireSession:
                 pass
         try:
             self.socket.connect(agent["endpoint"])
+            # The service canonicalized the directory; resolve it the same way.
             launch = fingerprint(
-                agent["program"], agent["arguments"], agent["directory"], agent["mode"]
+                agent["program"],
+                agent["arguments"],
+                Path(agent["directory"]).resolve(),
+                agent["mode"],
             )
             # No expected session or epoch; the fingerprint must match.
             self.socket.sendall(
@@ -2087,12 +2047,6 @@ def read_deck(registry):
     state = deck["state"]
     deck["writerRunning"] = bool(state) and process_running(state.get("pid"))
     return deck
-
-
-def status_message(data):
-    code = data[0] if data else 0
-    text = data[1:].decode("utf-8", "replace") if len(data) > 1 else ""
-    return f"{STATUS_NAMES.get(code, 'status')}: {text}".strip()
 
 
 # Tailnet identity -----------------------------------------------------------
