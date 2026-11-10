@@ -1,6 +1,6 @@
 #include "keymap.hpp"
 #include "terminal_surface.hpp"
-#include "ui_preview.hpp"
+#include "app_window.hpp"
 #include "workspace.hpp"
 
 #include <QByteArray>
@@ -62,21 +62,21 @@ void write(const QString& path, const QByteArray& bytes) {
     require(file.write(bytes) == bytes.size(), "complete fixture write");
 }
 
-UiPreviewOptions options(const QString& path) {
+AppWindowOptions options(const QString& path) {
     return {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
             .screen = {},
             .persistGeometry = true,
             .geometryPath = path};
 }
 
-void show(UiPreview& view) {
+void show(AppWindow& view) {
     require(view.load(), "load actual workspace QML");
     require(view.window() != nullptr, "workspace has a native window");
     await([&] { return view.window()->isExposed(); }, "workspace window exposed");
 }
 
 void save_normal_window(Workspace& workspace, const QString& path) {
-    UiPreview view(workspace, options(path));
+    AppWindow view(workspace, options(path));
     show(view);
     require(view.window()->close(), "close workspace without terminating its sessions");
 }
@@ -86,7 +86,7 @@ void remembered_geometry_and_offscreen_restore(Workspace& workspace, const QTemp
     QRect saved;
     QByteArray closed_registry;
     {
-        UiPreview view(workspace, options(path));
+        AppWindow view(workspace, options(path));
         show(view);
         const QRect available = view.window()->screen()->availableGeometry();
         const QRect desired(available.topLeft() + QPoint(70, 70), QSize(720, 520));
@@ -102,7 +102,7 @@ void remembered_geometry_and_offscreen_restore(Workspace& workspace, const QTemp
     require(::stat(QFile::encodeName(path).constData(), &info) == 0 && (info.st_mode & 0077U) == 0,
             "saved geometry is private");
     {
-        UiPreview restored(workspace, options(path));
+        AppWindow restored(workspace, options(path));
         show(restored);
         try {
             await([&] { return restored.window()->geometry() == saved; },
@@ -121,7 +121,7 @@ void remembered_geometry_and_offscreen_restore(Workspace& workspace, const QTemp
     }
     write(path, R"({"version":1,"x":30000,"y":30000,"width":800,"height":600})");
     {
-        UiPreview restored(workspace, options(path));
+        AppWindow restored(workspace, options(path));
         show(restored);
         const QRect available = restored.window()->screen()->availableGeometry();
         require(available.contains(restored.window()->geometry()),
@@ -135,8 +135,8 @@ void isolated_modes_leave_geometry_untouched(Workspace& workspace, const QTempor
     const QByteArray sentinel = R"({"version":1,"x":111,"y":112,"width":700,"height":510})";
     write(path, sentinel);
     {
-        Workspace fixture(WorkspaceMode::preview);
-        UiPreview preview(fixture, options(path));
+        Workspace fixture(WorkspaceMode::fixture);
+        AppWindow preview(fixture, options(path));
         show(preview);
         require(preview.window()->close(), "close fixture preview");
     }
@@ -145,7 +145,7 @@ void isolated_modes_leave_geometry_untouched(Workspace& workspace, const QTempor
         auto settings = options(path);
         settings.screen = QGuiApplication::primaryScreen()->name();
         require(!settings.screen.isEmpty(), "isolated display has a screen name");
-        UiPreview placed(workspace, settings);
+        AppWindow placed(workspace, settings);
         show(placed);
         require(placed.window()->geometry().topLeft() != QPoint(111, 112),
                 "explicit screen placement ignores saved position");
@@ -155,7 +155,7 @@ void isolated_modes_leave_geometry_untouched(Workspace& workspace, const QTempor
     {
         auto settings = options(path);
         settings.persistGeometry = false;
-        UiPreview probe(workspace, settings);
+        AppWindow probe(workspace, settings);
         show(probe);
         require(probe.window()->close(), "close persistence-disabled probe");
     }
@@ -210,7 +210,7 @@ void unsafe_paths_are_preserved(Workspace& workspace, const QTemporaryDir& temp)
 }
 
 void legacy_layout_still_focuses_single_stage(const QTemporaryDir& temp) {
-    Workspace fixture(WorkspaceMode::preview);
+    Workspace fixture(WorkspaceMode::fixture);
     KeyMap keymap;
     const QString config = temp.filePath(QStringLiteral("legacy-appearance.json"));
     write(config, R"({"layout":"blocks"})");
@@ -218,7 +218,7 @@ void legacy_layout_still_focuses_single_stage(const QTemporaryDir& temp) {
     require(keymap.load(), "legacy blocks appearance loads");
     auto settings = options(temp.filePath(QStringLiteral("legacy-window.json")));
     settings.keymap = &keymap;
-    UiPreview view(fixture, settings);
+    AppWindow view(fixture, settings);
     show(view);
     view.window()->requestActivate();
     await([&] { return view.window()->isActive(); }, "isolated workspace gets native focus");
@@ -230,7 +230,7 @@ void legacy_layout_still_focuses_single_stage(const QTemporaryDir& temp) {
 }
 
 void modal_focus_remains_owned(const QTemporaryDir& temp) {
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     KeyMap keymap;
     const QString config = temp.filePath(QStringLiteral("appearance.json"));
     write(config, R"({"layout":"blocks"})");
@@ -239,7 +239,7 @@ void modal_focus_remains_owned(const QTemporaryDir& temp) {
     auto settings = options(temp.filePath(QStringLiteral("focus.json")));
     settings.keymap = &keymap;
     settings.persistGeometry = false;
-    UiPreview view(workspace, settings);
+    AppWindow view(workspace, settings);
     show(view);
     require(view.assignTerminalFocus(), "visible stage accepts focus before modal");
     require(view.openSettings(), "settings opens over the visible stage");

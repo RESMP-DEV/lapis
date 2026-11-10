@@ -76,7 +76,7 @@ ApplicationWindow {
     readonly property bool sidebarExpanded: typeof keymap !== "undefined" && keymap !== null ? keymap.sidebarVisible : transientSidebarVisible
     readonly property bool narrow: width < 860
     // Zero-duration themes and reduced motion change state instantly.
-    readonly property bool motionEnabled: !preview.reducedMotion && active && visible && motionDuration > 0
+    readonly property bool motionEnabled: !app.reducedMotion && active && visible && motionDuration > 0
     readonly property bool inputBlocked: transitionLock
             || commandsDialog.visible
             || resumeDialog.visible
@@ -159,7 +159,7 @@ ApplicationWindow {
         if (numbered)
             return [mod + numbered[1]]
         if (action === "openSettings")
-            return preview.settingsShortcuts
+            return app.settingsShortcuts
         if (action === "toggleSidebar")
             return [mod + "B"]
         if (action === "openCommands")
@@ -212,14 +212,14 @@ ApplicationWindow {
         return name.slice(0, end) + "…"
     }
     function agentBaseTitle(session) {
-        return workspace.previewMode || session.title !== projectTitle(session.directory) ?
+        return workspace.fixtureMode || session.title !== projectTitle(session.directory) ?
                     session.title : workspace.displayPath(session.directory)
     }
     // Agents started in the same folder share a default title; number the
     // later ones so each card and menu entry names a distinct agent.
     function agentTabTitle(session) {
         const base = agentBaseTitle(session)
-        if (workspace.previewMode) return base
+        if (workspace.fixtureMode) return base
         const list = workspace.categorySessions
         let ordinal = 0
         let total = 0
@@ -341,11 +341,11 @@ ApplicationWindow {
         if (started)
             lastTerminalMachine = machine
         sideTerminalOpen = true
-        preview.deferTerminalFocus()
+        app.deferTerminalFocus()
     }
     function closeSideTerminal() {
         sideTerminalOpen = false
-        preview.deferTerminalFocus()
+        app.deferTerminalFocus()
     }
     function chooseTerminal() {
         if (!terminalsAvailable || terminalBusy || dialogsVisible())
@@ -583,7 +583,7 @@ ApplicationWindow {
         }
         transitionLock = false
         if (!dialogsVisible())
-            preview.deferTerminalFocus()
+            app.deferTerminalFocus()
     }
 
     function popupAt(menu, anchor) {
@@ -1015,7 +1015,7 @@ ApplicationWindow {
         }
         clearAgentSelection()
         if (workspace.selectSession(id))
-            preview.deferTerminalFocus()
+            app.deferTerminalFocus()
     }
     // Dragging a selected card carries the whole selection, in strip order.
     function agentsToDrag(id) {
@@ -1104,7 +1104,7 @@ ApplicationWindow {
     }
     function reopenAgent() {
         if (interactionArmed && workspace.reopenAgent())
-            preview.deferTerminalFocus()
+            app.deferTerminalFocus()
     }
     // Dropped files become their paths, quoted for a shell, as in Terminal.
     function quoteDroppedPaths(urls) {
@@ -1139,7 +1139,7 @@ ApplicationWindow {
                          keyboardOwnershipReady()
     onInputBlockedChanged: if (!inputBlocked) {
                                keyboardOwnershipReady()
-                               preview.deferTerminalFocus()
+                               app.deferTerminalFocus()
                            }
     onNarrowChanged: if (!narrow && categorySelector.popup !== null && categorySelector.popup.visible)
                          categorySelector.popup.close()
@@ -1185,7 +1185,7 @@ ApplicationWindow {
         motionDuration: window.motionDuration
         motionEnabled: window.motionEnabled
         onChosen: function(conversation) { Qt.callLater(function() { window.resumeConversation(conversation) }) }
-        onClosed: preview.deferTerminalFocus()
+        onClosed: app.deferTerminalFocus()
     }
     Tools {
         id: toolsDialog
@@ -1206,7 +1206,7 @@ ApplicationWindow {
         chromeRadius: window.chromeRadius
         motionDuration: window.motionDuration
         motionEnabled: window.motionEnabled
-        onClosed: preview.deferTerminalFocus()
+        onClosed: app.deferTerminalFocus()
     }
 
     Commands {
@@ -1226,7 +1226,7 @@ ApplicationWindow {
         motionDuration: window.motionDuration
         motionEnabled: window.motionEnabled
         onRequested: function(commandId) { Qt.callLater(function() { window.runCommand(commandId) }) }
-        onClosed: preview.deferTerminalFocus()
+        onClosed: app.deferTerminalFocus()
     }
 
     component PlainLabel: Label { textFormat: Text.PlainText }
@@ -1669,7 +1669,7 @@ ApplicationWindow {
         palette.highlight: window.focusedColor
         palette.highlightedText: window.textColor
         monoFamily: window.monoFamily
-        onClosed: preview.deferTerminalFocus()
+        onClosed: app.deferTerminalFocus()
     }
 
     NativeDialogs.FolderDialog {
@@ -1699,7 +1699,7 @@ ApplicationWindow {
         configPath: (typeof keymap !== "undefined" && keymap !== null) ? keymap.sourcePath : ""
         configDiagnostic: (typeof keymap !== "undefined" && keymap !== null) ? keymap.diagnostic : ""
         shortcutHint: window.shortcutText("openSettings")
-        fontFamilies: preview.monospaceFamilies
+        fontFamilies: app.monospaceFamilies
         fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
         resolvedFontFamily: window.monoFamily
         fontSize: liveTerminal.fontPixelSize
@@ -1732,7 +1732,7 @@ ApplicationWindow {
         onFinishSoundChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setFinishSound(on) }
         onKeepAwakeChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setKeepAwake(on) }
         onChimePlayed: function(needsYou) { if (typeof alerts !== "undefined" && alerts !== null) alerts.preview(needsYou) }
-        onClosed: preview.deferTerminalFocus()
+        onClosed: app.deferTerminalFocus()
         onFontFamilyChosen: function(name) {
             if (typeof keymap !== "undefined" && keymap !== null)
                 keymap.setTerminalFontFamily(name)
@@ -2160,7 +2160,7 @@ ApplicationWindow {
             const abandon = !reachable
             close()
             if (!workspace.closeSession(id, abandon))
-                preview.deferTerminalFocus()
+                app.deferTerminalFocus()
         }
         onOpened: Qt.callLater(function() { closeConfirm.forceActiveFocus() })
 
@@ -2504,7 +2504,7 @@ ApplicationWindow {
             agentTabs.revealFocused()
 
             if (!window.inputBlocked)
-                preview.deferTerminalFocus()
+                app.deferTerminalFocus()
         }
         function onSessionsChanged() {
             agentTabs.revealFocused()
@@ -3126,7 +3126,7 @@ ApplicationWindow {
                     // typing back to live; input reaches the agent only when live.
                     interactive: visible && window.visible && !window.inputBlocked && document !== null
                                  && !window.visualCovers
-                                 && (preview.active || document.inputReady || document.historyActive)
+                                 && (app.active || document.inputReady || document.historyActive)
                     focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
                            && !window.visualCovers
                     // The next prompt lapis predicted for the agent, while it
@@ -3249,7 +3249,7 @@ ApplicationWindow {
                                 if (historyScrubber.dragged(mouse.y) >= historyScrubber.travel - 1
                                         && historyScrubber.session) {
                                     historyScrubber.session.returnToLive()
-                                    preview.deferTerminalFocus()
+                                    app.deferTerminalFocus()
                                 }
                             }
                         }
@@ -3295,7 +3295,7 @@ ApplicationWindow {
                             onClicked: {
                                 if (historyBanner.session)
                                     historyBanner.session.returnToLive()
-                                preview.deferTerminalFocus()
+                                app.deferTerminalFocus()
                             }
                         }
                     }
@@ -3693,7 +3693,7 @@ ApplicationWindow {
                     // Assistive activation selects the agent, as a click does.
                     Accessible.onPressAction: {
                         if (window.interactionArmed && workspace.selectSession(agentTab.modelData.sessionId))
-                            preview.deferTerminalFocus()
+                            app.deferTerminalFocus()
                     }
 
                     Rectangle {
@@ -3737,7 +3737,7 @@ ApplicationWindow {
                         spacing: 6
                         AgentMark {
                             harnessId: agentTab.modelData.harnessId
-                            visible: !workspace.previewMode
+                            visible: !workspace.fixtureMode
                             ink: agentTab.marked ? window.textColor : window.mutedTextColor
                             Layout.preferredWidth: 12
                             Layout.preferredHeight: 12
@@ -3952,7 +3952,7 @@ ApplicationWindow {
             if (chosen)
                 Qt.callLater(function() { window.openTerminalOn(terminalPicker.pending) })
             else
-                preview.deferTerminalFocus()
+                app.deferTerminalFocus()
         }
         contentItem: ListView {
             id: machineList

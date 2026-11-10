@@ -47,7 +47,7 @@ QJsonObject agent(const QJsonObject& state, const QString& id) {
 void publishesEachAgentPrivately() {
     QTemporaryDir directory;
     require(directory.isValid(), "fixture directory");
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     require(workspace.selectSession(QStringLiteral("renderer")), "show the renderer");
     const auto path = directory.filePath(QStringLiteral("agent_state.json"));
     QElapsedTimer clock;

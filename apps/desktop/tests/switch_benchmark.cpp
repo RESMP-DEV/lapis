@@ -14,7 +14,7 @@
 // runs of this tool with each other.
 #include "keymap.hpp"
 #include "terminal_surface.hpp"
-#include "ui_preview.hpp"
+#include "app_window.hpp"
 #include "workspace.hpp"
 #if __has_include("interaction_recorder.hpp")
 #include "interaction_log.hpp"
@@ -479,7 +479,7 @@ QJsonObject measure(const Options& options, const QTemporaryDir& home) {
             ? recorder(workspace, home.filePath(QStringLiteral("runtime/interaction.jsonl")))
             : nullptr;
 #endif
-    lapis::desktop::UiPreview preview(
+    lapis::desktop::AppWindow preview(
         workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                     .compact = false,
                     .screen = QString(),

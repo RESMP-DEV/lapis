@@ -97,7 +97,7 @@ void explicitAgentIdentity() {
     }
 }
 void projectPaths() {
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     const auto home = QDir::homePath();
     require(workspace.homeDirectory() == home, "home comes from the platform");
     require(workspace.displayPath(home) == QStringLiteral("~"), "home label");
@@ -109,7 +109,7 @@ void projectPaths() {
             "home prefix must respect directory boundary");
 }
 void categoriesAndIdentity() {
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     auto* original = workspace.session(QStringLiteral("renderer"));
     require(!workspace.restartAgent(QStringLiteral("renderer")),
             "a preview cannot restart its sample agents");
@@ -157,7 +157,7 @@ void categoriesAndIdentity() {
     require(!workspace.addCategory(QString(81, QLatin1Char('a'))), "bounded names");
 }
 void categoryCountsChangeOnlyWhenNeeded() {
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     QObject receiver;
     int notifications = 0;
     QObject::connect(&workspace, &Workspace::categoriesChanged, &receiver,
@@ -474,7 +474,7 @@ void placeholderMatchesTerminalDefaults() {
     require(fixture.snapshot().background_rgb == 0x0d131dU, "fixtures keep the sample palette");
 }
 void discardOutsideActiveCategorySelectsNeighbor() {
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     require(workspace.addCategory(QStringLiteral("Research")), "destination category");
     const auto research = workspace.activeCategoryId();
     require(workspace.moveSession(QStringLiteral("renderer"), research), "move first neighbor");
@@ -679,7 +679,7 @@ void writeExecutable(const QString& path, const QByteArray& body) {
 // An agent that finishes a turn, or starts needing a response, while another
 // is selected is marked until it is selected; the selected agent never is.
 void unseenFollowsTurnsAndSelection() {
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
     int pings = 0;
     QObject::connect(&workspace, &Workspace::turnFinished, [&pings] { ++pings; });
@@ -794,7 +794,7 @@ void modelessAgentsGetTheDefaultMode() {
 // a guess already seen, so Tab cannot bounce between guesses while another
 // agent waits; an agent at work is not waiting even with a guess.
 void tabGoesToTheReadyThenTheOldest() {
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     workspace.setTabAway({});
     require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
     lapis::session::wire::AttentionSnapshot state;

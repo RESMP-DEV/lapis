@@ -681,7 +681,7 @@ benchmark. Capture timing targets remain provisional.
 `just ui-debug` opens LLDB with the isolated source-QML fixture. For example:
 
 ```text
-breakpoint set -n lapis::desktop::UiPreview::load
+breakpoint set -n lapis::desktop::AppWindow::load
 run
 bt
 continue
