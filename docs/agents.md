@@ -224,7 +224,10 @@ from Codex's notify events (each finished turn names its thread, so `/new` and
 skipped), the Claude hook adapter, or the `agent_checkpoint` sequence that
 iTerm2 restore hooks print. A Codex conversation is known once its first turn
 finishes. Codex transcript lookup stays within the `sessions/YYYY/MM/DD`
-layout and does not follow symlinks.
+layout and does not follow symlinks. The [visual view](workspace.md#visual-view)
+reads the same conversation; until a Codex or Antigravity conversation is
+named this way, it takes the one that CLI started in the agent's folder since
+the agent's service started.
 
 To have agents come back at login without opening a window, install the login
 helper once:

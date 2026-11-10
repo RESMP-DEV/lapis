@@ -74,12 +74,15 @@ actions and **Show agent previews**.
 
 ## Visual view
 
-The visual view shows a Claude Code agent as a readable thread instead of its
-terminal: your prompts as bubbles, its replies as prose, and its work as
-one-line steps ("Ran", "Read", "Edited +4 −10", "Thought for 6s") that open on
-click, with each edit's diff shown under it. It reads the conversation Claude
-Code saves on this Mac and follows it as the agent works; anything it does not
-recognize shows as a plain block.
+The visual view shows a Claude Code, Codex or Antigravity agent as a readable
+thread instead of its terminal: your prompts as bubbles, its replies as prose,
+and its work as one-line steps ("Ran", "Read", "Edited +4 −10", "Thought for
+6s") that open on click, with each edit's diff shown under it. It reads the
+conversation the CLI saves on this Mac (Claude Code's transcript, Codex's
+rollout under `~/.codex/sessions`, Antigravity's
+`~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs/transcript_full.jsonl`)
+and follows it as the agent works; anything it does not recognize shows as a
+plain block. Agents on other machines show their terminal only.
 
 As in the Codex app, a finished turn folds to your prompt, one **Worked for
 3m 12s** line, and the final reply. A turn a background task or subagent woke
@@ -97,11 +100,34 @@ works shows at once, marked queued until the agent takes it in, and stays in
 view when its turn folds.
 
 Above **Commands** in the sidebar, **This agent** switches the selected agent
-between its terminal and the thread, and **All agents** shows every Claude Code
-agent on this Mac as a thread (saved, so it survives a restart). A per-agent
-choice wins over **All agents** until lapis restarts or **All agents** is
-switched again. Both are also in Commands. The terminal keeps running underneath
-but takes no input while covered; Escape brings it back.
+between its terminal and the thread, and **All agents** shows every Claude
+Code, Codex and Antigravity agent on this Mac as a thread (saved, so it
+survives a restart). A per-agent choice wins over **All agents** until lapis
+restarts or **All agents** is switched again. Both are also in Commands. The
+terminal keeps running underneath but takes no input while covered; Escape
+brings it back.
+
+What differs by CLI:
+
+- **Codex** saves each step when it is done, so a running turn shows steps as
+  they finish, with no live tail. Its reasoning shows only when Codex saves a
+  summary (`model_reasoning_summary` not `none`). Its model and effort show in
+  the toolbar without choices, since Codex's `/model` is a picker. A message
+  sent mid-turn shows inside that turn once Codex takes it. A new agent's
+  thread appears with Codex's first saved message (before its first turn ends,
+  lapis takes the newest Codex conversation started in the agent's folder
+  since the agent started).
+- **Antigravity** records no turn times, so "Worked for" counts from the
+  prompt to the final reply. The toolbar's model and effort come from the
+  setting agy notes in a prompt, so a change from the menus shows from the
+  next prompt; the menus send `/model <id>` and `/effort <level>`. A turn
+  woken by a timer or a finished background task folds like one Claude Code's
+  task notification woke. agy's checkpoint, which summarizes the steps before
+  it, shows as a divider.
+- For both, slash commands are not listed as you type, the live tail and
+  the dialog peek are off (they read Claude Code's screen layout), a slash
+  command sent from the bar shows the terminal for whatever it opens, and
+  **Edit** on a prompt is not offered.
 
 The bar at the bottom types to the agent: Return (or Command-Return) sends and
 Shift-Return starts a new line; it is two lines tall at rest and grows to fit
@@ -120,7 +146,7 @@ terminal (Escape). Typing while reading goes to the bar.
 The bar's toolbar is the same for every CLI: **+** attaches files or a folder,
 then the model and the effort (Low, Medium, High, Extra High, Max) the agent
 last reported, each a menu that changes it by typing that CLI's own command
-(`/model`, `/effort` for Claude Code), and a ring with the context window's use
+(`/model`, `/effort` for Claude Code and Antigravity), and a ring with the context window's use
 written beside it ("21% · 206k / 1M"). Nothing in the view uses hover popups.
 Files attach by **+**, by dropping them on the thread, or by pasting (Finder
 files, or a screenshot saved as a PNG); each shows as a chip and is sent as an
