@@ -22,7 +22,7 @@ class QQuickItem;
 class QQuickWindow;
 
 namespace lapis::desktop {
-class SessionPreview;
+class Agent;
 class TerminalSurface;
 class Workspace;
 
@@ -149,7 +149,7 @@ class InteractionRecorder : public QObject {
     qint64 last_input_us_{};
     QString explicit_via_;
     qint64 explicit_via_us_{};
-    QPointer<SessionPreview> history_session_;
+    QPointer<Agent> history_session_;
     QMetaObject::Connection history_connection_;
     QTimer history_timer_;
     QString focused_id_;

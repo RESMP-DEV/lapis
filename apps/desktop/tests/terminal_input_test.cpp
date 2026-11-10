@@ -51,7 +51,7 @@ using lapis::desktop::tests::settle;
 using lapis::desktop::tests::until;
 using Fixture = lapis::desktop::tests::WireFixture;
 using Peer = lapis::desktop::tests::WirePeer;
-using lapis::desktop::SessionPreview;
+using lapis::desktop::Agent;
 void wait_terminal_focus(lapis::desktop::TerminalSurface& surface) {
     auto* window = surface.window();
     require(window != nullptr, "Terminal focus fixture has no window");
@@ -318,8 +318,8 @@ void input_contract(bool background) {
         QObject::disconnect(paste_ownership_connection);
     }
     {
-        SessionPreview replacement(QStringLiteral("replacement"), QStringLiteral("/tmp"), {},
-                                   QColor(Qt::white), "");
+        Agent replacement(QStringLiteral("replacement"), QStringLiteral("/tmp"), {},
+                          QColor(Qt::white), "");
         const auto rebind = QObject::connect(
             &surface, &lapis::desktop::TerminalSurface::inputOwnershipChanged, [&] {
                 if (surface.pasting())
@@ -341,8 +341,7 @@ void input_contract(bool background) {
     composition(surface, {}, QStringLiteral("late-after-history"));
     require(text_frames(peer).isEmpty(), "History transition retained stale composition");
     composition(surface, QStringLiteral("before-switch"));
-    SessionPreview other(QStringLiteral("other"), QStringLiteral("/tmp"), {}, QColor(Qt::white),
-                         "");
+    Agent other(QStringLiteral("other"), QStringLiteral("/tmp"), {}, QColor(Qt::white), "");
     surface.setDocument(&other);
     composition(surface, {}, QStringLiteral("wrong-owner"));
     surface.setDocument(&f.document);

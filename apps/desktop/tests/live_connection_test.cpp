@@ -33,8 +33,8 @@ using lapis::desktop::tests::settle;
 using lapis::desktop::tests::until;
 using Fixture = lapis::desktop::tests::WireFixture;
 using Peer = lapis::desktop::tests::WirePeer;
+using lapis::desktop::Agent;
 using lapis::desktop::ServiceLaunchRequest;
-using lapis::desktop::SessionPreview;
 using lapis::session::DescriptorStore;
 using lapis::session::DescriptorTicket;
 // The first row's text, blanks trimmed.
@@ -151,7 +151,7 @@ void history_browsing_and_input_gating() {
 void preview_decode_is_idle_first_and_burst_newest() {
     Fixture f;
     std::optional<lapis::session::TerminalSnapshot> published;
-    QObject::connect(&f.document, &SessionPreview::snapshotChanged, &f.document,
+    QObject::connect(&f.document, &Agent::snapshotChanged, &f.document,
                      [&] { published = f.document.snapshot(); });
     const auto offer = [&](const char* text) {
         lapis::session::Terminal terminal{{4, 2}};
@@ -197,7 +197,7 @@ void preview_decode_is_idle_first_and_burst_newest() {
 void preview_decode_failure_paces_retry() {
     Fixture f;
     std::optional<lapis::session::TerminalSnapshot> published;
-    QObject::connect(&f.document, &SessionPreview::snapshotChanged, &f.document,
+    QObject::connect(&f.document, &Agent::snapshotChanged, &f.document,
                      [&] { published = f.document.snapshot(); });
     const auto encode = [](const char* text) {
         lapis::session::Terminal terminal{{4, 2}};

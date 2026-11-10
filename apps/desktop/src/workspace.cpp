@@ -703,12 +703,12 @@ Workspace::~Workspace() {
         QFile::remove(storage_path_ + QStringLiteral(".restoring"));
 }
 
-SessionPreview::SessionPreview(QString title, QString directory, QString activity, QColor accent,
-                               std::string_view content)
+Agent::Agent(QString title, QString directory, QString activity, QColor accent,
+             std::string_view content)
     : title_(std::move(title)), directory_(std::move(directory)), activity_(std::move(activity)),
       accent_(accent) {
-    connect(this, &SessionPreview::connectionChanged, this, &SessionPreview::statusChanged);
-    connect(this, &SessionPreview::attentionChanged, this, &SessionPreview::statusChanged);
+    connect(this, &Agent::connectionChanged, this, &Agent::statusChanged);
+    connect(this, &Agent::attentionChanged, this, &Agent::statusChanged);
     decode_timer_.setSingleShot(true);
     connect(&decode_timer_, &QTimer::timeout, this, [this] {
         // A decode outside the timer (history opening, viewer resume) keeps the
@@ -767,7 +767,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
     });
     const auto add = [this](const char* title, const char* directory, const char* activity,
                             const char* accent, std::string_view content) {
-        sessions_.push_back(std::make_unique<SessionPreview>(
+        sessions_.push_back(std::make_unique<Agent>(
             QString::fromUtf8(title), QString::fromUtf8(directory), QString::fromUtf8(activity),
             QColor(QString::fromLatin1(accent)), content));
     };
@@ -874,7 +874,7 @@ QVariantList Workspace::sessions() const {
     return result;
 }
 
-SessionPreview* Workspace::focusedSession() const {
+Agent* Workspace::focusedSession() const {
     return focused_index_ < 0 ? nullptr
                               : sessions_.at(static_cast<std::size_t>(focused_index_)).get();
 }
@@ -882,7 +882,7 @@ SessionPreview* Workspace::focusedSession() const {
 void Workspace::nextSession(int delta) {
     QStringList strip;
     for (const auto& value : categorySessions())
-        strip.append(value.value<SessionPreview*>()->sessionId());
+        strip.append(value.value<Agent*>()->sessionId());
     auto* place = category(active_category_);
     if (strip.isEmpty() || place == nullptr)
         return;
@@ -909,7 +909,7 @@ void Workspace::nextSession(int delta) {
 // a guess. An agent at work, unknown, ended or closing never is, and neither
 // is one whose quiet is only an output estimate: silence is not a finished turn.
 std::vector<TabCandidate> Workspace::waitingCandidates(const QVariantMap& ready,
-                                                       const SessionPreview* exclude) const {
+                                                       const Agent* exclude) const {
     std::vector<TabCandidate> out;
     const auto now = QDateTime::currentMSecsSinceEpoch();
     for (const auto& item : sessions_) {
@@ -971,7 +971,7 @@ void Workspace::setTabAway(const TabAwaySettings& settings) {
 // last one settled (a quick hop, or Tab's own move) add agents that began
 // waiting since, and keep those passed over.
 qint64 Workspace::parkedAtMs(const QString& id) const { return parked_at_.value(id); }
-bool Workspace::parked(const SessionPreview* item) const {
+bool Workspace::parked(const Agent* item) const {
     if (item == nullptr)
         return false;
     const auto at = parked_at_.value(item->sessionId());
@@ -1027,7 +1027,7 @@ void Workspace::settleChoice() {
         tab_ranker_->recordChoice(candidates, static_cast<std::size_t>(chosen - candidates.begin()),
                                   via_tab);
 }
-bool SessionPreview::addPreviewRequest(const QString& id, const QString& reason) {
+bool Agent::addPreviewRequest(const QString& id, const QString& reason) {
     if (id.isEmpty() || id.size() > 64 || reason.size() > 256 || requests_.contains(id) ||
         requests_.size() >= 8)
         return false;
@@ -1037,19 +1037,19 @@ bool SessionPreview::addPreviewRequest(const QString& id, const QString& reason)
     emit attentionArrived();
     return true;
 }
-bool SessionPreview::resolvePreviewRequest(const QString& id) {
+bool Agent::resolvePreviewRequest(const QString& id) {
     if (requests_.remove(id) == 0)
         return false;
     emit attentionChanged();
     return true;
 }
-void SessionPreview::clearPreviewRequests() {
+void Agent::clearPreviewRequests() {
     if (requests_.isEmpty())
         return;
     requests_.clear();
     emit attentionChanged();
 }
-SessionPreview* Workspace::session(const QString& id) const {
+Agent* Workspace::session(const QString& id) const {
     for (const auto& item : sessions_)
         if (item->sessionId() == id)
             return item.get();
@@ -1130,13 +1130,13 @@ void Workspace::noteStructuralFocus() {
     const auto* focused = focusedSession();
     last_focus_id_ = focused != nullptr ? focused->sessionId() : QString{};
 }
-void Workspace::watch(SessionPreview* item) {
+void Workspace::watch(Agent* item) {
     // Its unseen mark and whether it is at work outlive a window (GuiState).
-    connect(item, &SessionPreview::unseenChanged, this, &Workspace::marksChanged);
-    connect(item, &SessionPreview::statusChanged, this, &Workspace::marksChanged);
-    connect(item, &SessionPreview::connectionChanged, this, [this, item] { finishClosing(item); });
+    connect(item, &Agent::unseenChanged, this, &Workspace::marksChanged);
+    connect(item, &Agent::statusChanged, this, &Workspace::marksChanged);
+    connect(item, &Agent::connectionChanged, this, [this, item] { finishClosing(item); });
     // The service reports why a session ended just after the state changes.
-    connect(item, &SessionPreview::connectionChanged, this, [this, id = item->sessionId()] {
+    connect(item, &Agent::connectionChanged, this, [this, id = item->sessionId()] {
         QTimer::singleShot(0, this, [this, id] {
             finishReload(id);
             reconnectIfDropped(id);
@@ -1145,44 +1145,41 @@ void Workspace::watch(SessionPreview* item) {
     });
     // A request pings as a finished turn does, and marks the agent the same way
     // (below); lapis shows no separate request state.
-    connect(item, &SessionPreview::attentionArrived, this,
-            [this, item] { emit turnFinished(item); });
+    connect(item, &Agent::attentionArrived, this, [this, item] { emit turnFinished(item); });
     last_kind_.insert(item, item->statusKind());
-    connect(item, &SessionPreview::statusChanged, this, [this, item] { noteStatus(item); });
+    connect(item, &Agent::statusChanged, this, [this, item] { noteStatus(item); });
     // For Tab's ranking: when it began waiting, and when its turns started.
-    connect(item, &SessionPreview::statusChanged, this,
-            [this, item, kind = item->statusKind()]() mutable {
-                const auto now = item->statusKind();
-                const auto previous = std::exchange(kind, now);
-                const auto at = QDateTime::currentMSecsSinceEpoch();
-                const auto& id = item->sessionId();
-                if (now == QLatin1String("working") &&
-                    (previous == QLatin1String("finished") || previous == QLatin1String("idle"))) {
-                    auto& starts = turn_starts_[id];
-                    std::erase_if(starts,
-                                  [at](qint64 started) { return at - started > 3'600'000; });
-                    if (starts.size() < 256)
-                        starts.push_back(at);
-                    // A prompt sent to the agent shown settles the choice now.
-                    if (item == focusedSession() && choice_) {
-                        choice_settle_.stop();
-                        settleChoice();
-                    }
-                } else if (previous == QLatin1String("working") &&
-                           (now == QLatin1String("finished") || now == QLatin1String("idle"))) {
-                    waiting_since_.insert(id, at);
-                }
-            });
-    connect(item, &SessionPreview::attentionArrived, this, [this, item] {
+    connect(item, &Agent::statusChanged, this, [this, item, kind = item->statusKind()]() mutable {
+        const auto now = item->statusKind();
+        const auto previous = std::exchange(kind, now);
+        const auto at = QDateTime::currentMSecsSinceEpoch();
+        const auto& id = item->sessionId();
+        if (now == QLatin1String("working") &&
+            (previous == QLatin1String("finished") || previous == QLatin1String("idle"))) {
+            auto& starts = turn_starts_[id];
+            std::erase_if(starts, [at](qint64 started) { return at - started > 3'600'000; });
+            if (starts.size() < 256)
+                starts.push_back(at);
+            // A prompt sent to the agent shown settles the choice now.
+            if (item == focusedSession() && choice_) {
+                choice_settle_.stop();
+                settleChoice();
+            }
+        } else if (previous == QLatin1String("working") &&
+                   (now == QLatin1String("finished") || now == QLatin1String("idle"))) {
+            waiting_since_.insert(id, at);
+        }
+    });
+    connect(item, &Agent::attentionArrived, this, [this, item] {
         waiting_since_.insert(item->sessionId(), QDateTime::currentMSecsSinceEpoch());
     });
-    connect(item, &SessionPreview::unseenChanged, this, [this] {
+    connect(item, &Agent::unseenChanged, this, [this] {
         if (!batching_categories_)
             emit categoriesChanged();
     });
     // A new request marks an unselected agent; the category's request count
     // and its unseen count change together, so publish them once.
-    connect(item, &SessionPreview::attentionChanged, this,
+    connect(item, &Agent::attentionChanged, this,
             [this, item, count = item->attentionCount()]() mutable {
                 const int updated = item->attentionCount();
                 if (updated == count)
@@ -1510,12 +1507,12 @@ bool Workspace::placeSessions(const QStringList& ids, const QString& categoryId,
         std::any_of(ids.begin(), ids.end(), [&](const auto& id) { return !session(id); }))
         return fail(QStringLiteral("Agent or category no longer exists."));
     const auto previous = checkpoint();
-    std::vector<SessionPreview*> old_order;
+    std::vector<Agent*> old_order;
     old_order.reserve(sessions_.size());
     for (const auto& item : sessions_)
         old_order.push_back(item.get());
-    std::vector<std::unique_ptr<SessionPreview>> moved;
-    std::vector<std::unique_ptr<SessionPreview>> rest;
+    std::vector<std::unique_ptr<Agent>> moved;
+    std::vector<std::unique_ptr<Agent>> rest;
     for (auto& item : sessions_)
         (moving.contains(item->sessionId()) ? moved : rest).push_back(std::move(item));
     const auto position = insertionPoint(rest, categoryId, index);
@@ -1525,7 +1522,7 @@ bool Workspace::placeSessions(const QStringList& ids, const QString& categoryId,
     recategorize(ids, categoryId);
     restoreSelection();
     if (!save()) {
-        std::vector<std::unique_ptr<SessionPreview>> restored;
+        std::vector<std::unique_ptr<Agent>> restored;
         for (auto* item : old_order) {
             const auto found = std::find_if(sessions_.begin(), sessions_.end(),
                                             [&](const auto& value) { return value.get() == item; });
@@ -1539,7 +1536,7 @@ bool Workspace::placeSessions(const QStringList& ids, const QString& categoryId,
     changed();
     return true;
 }
-std::size_t Workspace::insertionPoint(const std::vector<std::unique_ptr<SessionPreview>>& staying,
+std::size_t Workspace::insertionPoint(const std::vector<std::unique_ptr<Agent>>& staying,
                                       const QString& categoryId, int index) const {
     std::optional<std::size_t> last;
     int seen = 0;
@@ -1606,12 +1603,12 @@ bool Workspace::discardSession(const QString& id) {
         if (agents_.value(candidate->sessionId()).category == item_category)
             list.append(QVariant::fromValue(candidate.get()));
     for (qsizetype i = 0; i < list.size(); ++i) {
-        if (list[i].value<SessionPreview*>() != item)
+        if (list[i].value<Agent*>() != item)
             continue;
         const auto next =
             list.size() < 2
                 ? QString()
-                : list[i + 1 < list.size() ? i + 1 : i - 1].value<SessionPreview*>()->sessionId();
+                : list[i + 1 < list.size() ? i + 1 : i - 1].value<Agent*>()->sessionId();
         for (auto& category : categories_)
             if (category.selected == id)
                 category.selected = next;
@@ -1648,11 +1645,11 @@ bool Workspace::discardSession(const QString& id) {
 }
 QString Workspace::homeDirectory() const { return QDir::homePath(); }
 
-QString SessionPreview::agentName() const {
+QString Agent::agentName() const {
     const auto* harness = find_harness(harness_id_);
     return harness ? harness->label : QStringLiteral("Agent");
 }
-void SessionPreview::setHarnessId(const QString& id) {
+void Agent::setHarnessId(const QString& id) {
     if (harness_id_ == id)
         return;
     harness_id_ = id;
@@ -1890,9 +1887,8 @@ QString Workspace::launchAgent(const AgentRequest& request, const session::Launc
         auto id = newId();
         const auto endpoint = session::posix::prepare_endpoint(
             QDir(QFileInfo(storage_path_).absolutePath()).filePath(id + QStringLiteral(".sock")));
-        auto item =
-            std::make_unique<SessionPreview>(request.title.trimmed(), launch.directory, QString{},
-                                             QColor(QStringLiteral("#87cbac")), "");
+        auto item = std::make_unique<Agent>(request.title.trimmed(), launch.directory, QString{},
+                                            QColor(QStringLiteral("#87cbac")), "");
         item->setSessionId(id);
         item->setHarnessId(request.harness);
         AgentRecord agent{request.category, endpoint, launch, request.harness};
@@ -2329,7 +2325,7 @@ QString Workspace::agentMachine(const AgentRecord& agent) {
     const auto remote = remoteCommand(agent.launch);
     return remote ? remote->first : QString();
 }
-void Workspace::prepareStart(AgentRecord& agent, SessionPreview& item) {
+void Workspace::prepareStart(AgentRecord& agent, Agent& item) {
     QHash<QString, QString> environment;
     // Charts a local agent draws follow the visual view's theme: matplotlib
     // reads the style lapis writes, and other plotting code can read the
@@ -2669,7 +2665,7 @@ void Workspace::loadManagedResume(const QJsonValue& value, AgentRecord& agent) {
 }
 void Workspace::loadAgents(const QJsonArray& agents) {
     QMap<QString, AgentRecord> metadata;
-    std::vector<std::unique_ptr<SessionPreview>> restored;
+    std::vector<std::unique_ptr<Agent>> restored;
     const auto directory = QFileInfo(storage_path_).absolutePath();
     unreadable_agents_ = {};
     QStringList why;
@@ -2729,8 +2725,8 @@ void Workspace::loadAgents(const QJsonArray& agents) {
                 agent.launch.directory.size() > 4096 ||
                 agent.launch.directory.contains(QChar::Null))
                 throw std::runtime_error("Invalid agent record");
-            auto item = std::make_unique<SessionPreview>(title, agent.launch.directory, QString{},
-                                                         QColor(QStringLiteral("#87cbac")), "");
+            auto item = std::make_unique<Agent>(title, agent.launch.directory, QString{},
+                                                QColor(QStringLiteral("#87cbac")), "");
             item->setSessionId(id);
             item->setHarnessId(harness);
             item->setStatusSource(statusSource(agent));
@@ -2825,7 +2821,7 @@ void Workspace::connectRestoredAgents() {
     // Save the full restart plan before constructing create-mode connections.
     // Existing-service reconnections keep their separate path below.
     struct RestartPlan {
-        SessionPreview* document;
+        Agent* document;
         QString endpoint;
         session::LaunchSpec launch;
     };
@@ -2882,7 +2878,7 @@ void Workspace::connectRestoredAgents() {
         watchNetwork();
 }
 
-void SessionPreview::setUpdating(const QString& label) {
+void Agent::setUpdating(const QString& label) {
     if (updating_ == label)
         return;
     updating_ = label;
@@ -3019,7 +3015,7 @@ void Workspace::logUpdate(const QString& line) const {
     }
 }
 
-void SessionPreview::setClosing(bool closing) {
+void Agent::setClosing(bool closing) {
     if (closing_ == closing)
         return;
     closing_ = closing;
@@ -3044,12 +3040,12 @@ bool Workspace::closeSession(const QString& id, bool abandon) {
     return true;
 }
 
-void Workspace::finishClosing(SessionPreview* item) {
+void Workspace::finishClosing(Agent* item) {
     if (!item->closing())
         return;
     const auto state = item->connectionState();
     if (state == QStringLiteral("ended")) {
-        const QPointer<SessionPreview> guarded(item);
+        const QPointer<Agent> guarded(item);
         // Remove outside the connection's own signal delivery.
         QMetaObject::invokeMethod(
             this,
@@ -3072,14 +3068,14 @@ void Workspace::finishClosing(SessionPreview* item) {
         item->reconnect();
     }
 }
-void SessionPreview::restoreUnseen(bool unseen, qint64 neededAtMs) {
+void Agent::restoreUnseen(bool unseen, qint64 neededAtMs) {
     needed_at_ms_ = std::max<qint64>(0, neededAtMs);
     if (unseen_ == unseen)
         return;
     unseen_ = unseen;
     emit unseenChanged();
 }
-void SessionPreview::setUnseen(bool unseen) {
+void Agent::setUnseen(bool unseen) {
     if (unseen_ == unseen)
         return;
     unseen_ = unseen;
@@ -3088,7 +3084,7 @@ void SessionPreview::setUnseen(bool unseen) {
     emit unseenChanged();
 }
 
-void SessionPreview::noteOutput() {
+void Agent::noteOutput() {
     if (status_source_ != StatusSource::output)
         return;
     const auto now = QDateTime::currentMSecsSinceEpoch();
@@ -3110,7 +3106,7 @@ void SessionPreview::noteOutput() {
 
 // A turn ending marks an unselected agent; new requests are marked where the
 // request count changes.
-void Workspace::noteStatus(SessionPreview* item) {
+void Workspace::noteStatus(Agent* item) {
     const auto now = item->statusKind();
     const auto previous = last_kind_.value(item);
     last_kind_.insert(item, now);
@@ -3122,7 +3118,7 @@ void Workspace::noteStatus(SessionPreview* item) {
     // observed is, even after an agent on another machine had gone quiet:
     // only an observer reports "finished" for an output-estimated agent.
     const bool observed =
-        item->statusSource() != SessionPreview::StatusSource::output
+        item->statusSource() != Agent::StatusSource::output
             ? finished
             : now == QStringLiteral("finished") &&
                   (previous == QStringLiteral("working") || previous == QStringLiteral("idle"));
@@ -3134,9 +3130,9 @@ void Workspace::noteStatus(SessionPreview* item) {
 // Claude Code's hooks report its whole turn. Codex's notify program reports
 // only finished turns, so between them its status is estimated from output,
 // as for a terminal agent.
-SessionPreview::StatusSource Workspace::statusSource(const AgentRecord& agent) {
-    return agent.launch.agent == session::AgentMode::claude ? SessionPreview::StatusSource::observer
-                                                            : SessionPreview::StatusSource::output;
+Agent::StatusSource Workspace::statusSource(const AgentRecord& agent) {
+    return agent.launch.agent == session::AgentMode::claude ? Agent::StatusSource::observer
+                                                            : Agent::StatusSource::output;
 }
 // Command-Shift-T brings it back, resuming its conversation where it can.
 void Workspace::rememberClosed(const AgentRecord& agent, const QString& title) {
@@ -3251,7 +3247,7 @@ void Workspace::restoreMarks(const QJsonObject& marks) {
     }
 }
 
-void Workspace::watchFinishWhileAway(SessionPreview* item) {
+void Workspace::watchFinishWhileAway(Agent* item) {
     auto connection = std::make_shared<QMetaObject::Connection>();
     const auto check = [this, item, connection] {
         const auto kind = item->statusKind();
@@ -3260,9 +3256,9 @@ void Workspace::watchFinishWhileAway(SessionPreview* item) {
         disconnect(*connection);
         // Only an observer's word counts as a finished turn; quiet output
         // from an estimated agent only marks it.
-        const bool observed = kind == QLatin1String("finished") ||
-                              (kind == QLatin1String("idle") &&
-                               item->statusSource() != SessionPreview::StatusSource::output);
+        const bool observed =
+            kind == QLatin1String("finished") ||
+            (kind == QLatin1String("idle") && item->statusSource() != Agent::StatusSource::output);
         if (kind != QLatin1String("finished") && kind != QLatin1String("idle"))
             return;
         if (item != focusedSession())
@@ -3270,7 +3266,7 @@ void Workspace::watchFinishWhileAway(SessionPreview* item) {
         if (observed)
             emit finishedWhileAway(item);
     };
-    *connection = connect(item, &SessionPreview::statusChanged, this, check);
+    *connection = connect(item, &Agent::statusChanged, this, check);
     // The status may already have arrived.
     if (settledKind(item->statusKind()))
         check();

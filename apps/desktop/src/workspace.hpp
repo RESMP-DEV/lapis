@@ -44,7 +44,7 @@ namespace lapis::desktop {
 
 class LiveConnection;
 
-class SessionPreview final : public QObject {
+class Agent final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString sessionId READ sessionId CONSTANT)
     Q_PROPERTY(bool attentionPending READ attentionPending NOTIFY attentionChanged)
@@ -85,9 +85,9 @@ class SessionPreview final : public QObject {
     // selected; cleared when this agent is selected.
     Q_PROPERTY(bool unseen READ unseen NOTIFY unseenChanged)
   public:
-    SessionPreview(QString title, QString directory, QString activity, QColor accent,
-                   std::string_view content);
-    ~SessionPreview() override;
+    Agent(QString title, QString directory, QString activity, QColor accent,
+          std::string_view content);
+    ~Agent() override;
     void startLive(const QString& endpoint, const session::LaunchSpec& launch,
                    session::wire::AttachMode mode = session::wire::AttachMode::reconnect);
     // What a session service this card starts adds to its environment (OMP's
@@ -427,8 +427,7 @@ class Workspace final : public QObject {
     Q_PROPERTY(bool previewMode READ previewMode CONSTANT)
     Q_PROPERTY(QString homeDirectory READ homeDirectory CONSTANT)
     Q_PROPERTY(int focusedIndex READ focusedIndex NOTIFY focusChanged)
-    Q_PROPERTY(
-        lapis::desktop::SessionPreview* focusedSession READ focusedSession NOTIFY focusChanged)
+    Q_PROPERTY(lapis::desktop::Agent* focusedSession READ focusedSession NOTIFY focusChanged)
     // An agent closed since lapis opened can come back with its conversation.
     Q_PROPERTY(bool canReopenAgent READ canReopenAgent NOTIFY closedChanged)
     // The visual view's conversation: the stage sets its path to an agent's
@@ -442,7 +441,7 @@ class Workspace final : public QObject {
     Q_INVOKABLE [[nodiscard]] QVariantList availableHarnesses() const;
     [[nodiscard]] std::vector<ModelChoice> modelChoices(const QString& harness) const;
     Q_INVOKABLE [[nodiscard]] QString displayPath(const QString& directory) const;
-    [[nodiscard]] SessionPreview* session(const QString& id) const;
+    [[nodiscard]] Agent* session(const QString& id) const;
     // Development fixture v1 only. No calls are accepted in a live workspace.
     bool requestAttention(const PreviewRequest& request);
     bool resolveAttention(const PreviewRequest& request);
@@ -569,7 +568,7 @@ class Workspace final : public QObject {
     // never parked.
     static constexpr qint64 kParkAfterMs = 2500;
     [[nodiscard]] qint64 parkedAtMs(const QString& id) const;
-    [[nodiscard]] bool parked(const SessionPreview* item) const;
+    [[nodiscard]] bool parked(const Agent* item) const;
     void setParkAfterMsForTesting(qint64 ms) { park_after_ms_ = ms; }
     void setTabAway(const TabAwaySettings& settings);
     [[nodiscard]] const TabAwaySettings& tabAway() const { return tab_away_; }
@@ -580,7 +579,7 @@ class Workspace final : public QObject {
     void setChoiceSettleMsForTesting(int ms) { choice_settle_.setInterval(ms); }
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
-    [[nodiscard]] SessionPreview* focusedSession() const;
+    [[nodiscard]] Agent* focusedSession() const;
     [[nodiscard]] int attentionAgents() const;
     // Starts the most recently closed agent again, resuming its conversation
     // where its CLI can, in its category, and shows it.
@@ -610,7 +609,7 @@ class Workspace final : public QObject {
     void focusChanged();
     // A Codex or Claude turn ended; terminal agents' output pauses do not count.
     // A new request for you arrives here too, once its attention is applied.
-    void turnFinished(lapis::desktop::SessionPreview* item);
+    void turnFinished(lapis::desktop::Agent* item);
     void sessionsChanged();
     void categoriesChanged();
     void categoryChanged();
@@ -621,12 +620,12 @@ class Workspace final : public QObject {
     // An agent was parked (see parkedAtMs).
     void parkedChanged();
     // A turn that ended while no window watched (see restoreMarks).
-    void finishedWhileAway(lapis::desktop::SessionPreview* item);
+    void finishedWhileAway(lapis::desktop::Agent* item);
 
   private:
     [[nodiscard]] static QString rootDirectory();
     [[nodiscard]] static QString defaultEndpoint();
-    std::vector<std::unique_ptr<SessionPreview>> sessions_;
+    std::vector<std::unique_ptr<Agent>> sessions_;
     QHash<QString, QStringList> harness_arguments_;
     QSet<QString> harness_updates_off_;
     AgentDefaults agent_defaults_;
@@ -703,9 +702,8 @@ class Workspace final : public QObject {
     Category* category(const QString& id);
     // Where agents moving to `categoryId` go among those that stay: before its
     // index-th agent, or after its last.
-    [[nodiscard]] std::size_t
-    insertionPoint(const std::vector<std::unique_ptr<SessionPreview>>& staying,
-                   const QString& categoryId, int index) const;
+    [[nodiscard]] std::size_t insertionPoint(const std::vector<std::unique_ptr<Agent>>& staying,
+                                             const QString& categoryId, int index) const;
     // Agents moving into `categoryId` leave their old category's stage.
     void recategorize(const QStringList& ids, const QString& categoryId);
     QString failed(const QString& message) {
@@ -731,8 +729,8 @@ class Workspace final : public QObject {
     void loadCategories(const QJsonArray& groups);
     static void loadManagedResume(const QJsonValue& value, AgentRecord& agent);
     void loadAgents(const QJsonArray& agents);
-    void finishClosing(SessionPreview* item);
-    [[nodiscard]] static SessionPreview::StatusSource statusSource(const AgentRecord& agent);
+    void finishClosing(Agent* item);
+    [[nodiscard]] static Agent::StatusSource statusSource(const AgentRecord& agent);
     [[nodiscard]] static QStringList savedArguments(const QJsonValue& value);
     static void applyStartupDefaults(const AgentRecord& agent, ResumeLaunch& plan);
     [[nodiscard]] static std::optional<ResumeLaunch> restoredLaunch(const AgentRecord& agent,
@@ -749,10 +747,10 @@ class Workspace final : public QObject {
     void rememberClosed(const AgentRecord& agent, const QString& title);
     // Marks an agent saved at work as finished if its first settled status
     // after the restart is not work.
-    void watchFinishWhileAway(SessionPreview* item);
+    void watchFinishWhileAway(Agent* item);
     [[nodiscard]] static bool serviceRunning(const QString& endpoint);
-    void noteStatus(SessionPreview* item);
-    QHash<const SessionPreview*, QString> last_kind_;
+    void noteStatus(Agent* item);
+    QHash<const Agent*, QString> last_kind_;
     // Tab's ranking, and the choices it records: the agents waiting when
     // the person left one, kept until they settle on another (or Tab moved
     // them), then recorded with the one they settled on.
@@ -778,7 +776,7 @@ class Workspace final : public QObject {
     qint64 park_after_ms_{kParkAfterMs};
     QTimer choice_settle_;
     [[nodiscard]] std::vector<TabCandidate> waitingCandidates(const QVariantMap& ready,
-                                                              const SessionPreview* exclude) const;
+                                                              const Agent* exclude) const;
     void noteFocusMove();
     void settleChoice();
     void rememberInitialFocus();
@@ -787,7 +785,7 @@ class Workspace final : public QObject {
     bool discardSession(const QString& id);
     void changed();
     void restoreSelection();
-    void watch(SessionPreview* item);
+    void watch(Agent* item);
     // A remote agent's reconnection after its connection dropped.
     struct Reconnect {
         QElapsedTimer ready; // since its session last became ready
@@ -802,7 +800,7 @@ class Workspace final : public QObject {
     // Sets what the agent's next start needs beyond its saved launch: OMP's
     // overlay in the card's service environment. A remote command saved with
     // a retired plan preamble loses it, so the machine's own sign-in is used.
-    void prepareStart(AgentRecord& agent, SessionPreview& item);
+    void prepareStart(AgentRecord& agent, Agent& item);
     // Agents asked to end so they can start again.
     QSet<QString> reloading_;
     enum class ReloadOutcome : std::uint8_t { requested, kept, failed };
@@ -820,7 +818,7 @@ class Workspace final : public QObject {
     // unsized_wait), so a resumed conversation is drawn at the width it is
     // shown in. Claude Code's classic renderer never redraws what it printed.
     struct UnsizedStart {
-        QPointer<SessionPreview> document;
+        QPointer<Agent> document;
         QString endpoint;
         session::LaunchSpec launch;
     };

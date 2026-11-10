@@ -256,8 +256,7 @@ int main(int argc, char** argv) {
     application.setQuitOnLastWindowClosed(false);
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
     QQuickStyle::setStyle(QStringLiteral("Basic"));
-    qmlRegisterUncreatableType<SessionPreview>("Lapis", 1, 0, "SessionPreview",
-                                               "Owned by workspace");
+    qmlRegisterUncreatableType<Agent>("Lapis", 1, 0, "Agent", "Owned by workspace");
     qmlRegisterType<TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
     // Render-thread shutdown posts signal proxies to the GUI thread. Finish
     // their delivery and deferred deletion before destroying the application.

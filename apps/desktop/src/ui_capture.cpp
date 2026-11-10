@@ -31,7 +31,7 @@ QQuickItem* visual_item(QQuickItem& parent, const QString& name) {
 QJsonObject view_state(QQuickWindow& window, Workspace& workspace) {
     QJsonArray sessions;
     for (const auto& entry : workspace.sessions()) {
-        auto* session = entry.value<SessionPreview*>();
+        auto* session = entry.value<Agent*>();
         sessions.append(QJsonObject{{"id", session->sessionId()},
                                     {"pending", session->attentionPending()},
                                     {"requests", session->attentionCount()},

@@ -9,7 +9,7 @@
 #include <vector>
 
 namespace lapis::desktop {
-class SessionPreview;
+class Agent;
 
 // The ssh hosts named in an ssh config (following Include), without patterns.
 [[nodiscard]] QStringList ssh_config_hosts(const QString& path);
@@ -22,7 +22,7 @@ class SessionPreview;
 class Terminals final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList machines READ machines NOTIFY machinesChanged)
-    Q_PROPERTY(lapis::desktop::SessionPreview* current READ current NOTIFY currentChanged)
+    Q_PROPERTY(lapis::desktop::Agent* current READ current NOTIFY currentChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
   public:
     // `runtime` is the workspace's folder; `ssh_config` lists the machines.
@@ -30,7 +30,7 @@ class Terminals final : public QObject {
     ~Terminals() override;
     // {id ("" for this Mac), name, open}: this Mac first, then ssh hosts.
     [[nodiscard]] QVariantList machines() const;
-    [[nodiscard]] SessionPreview* current() const;
+    [[nodiscard]] Agent* current() const;
     [[nodiscard]] const QString& error() const { return error_; }
     // Shows the machine's terminal, starting a shell there when it has none
     // or its shell ended. False with `error` when it cannot start.
@@ -41,7 +41,7 @@ class Terminals final : public QObject {
     Q_INVOKABLE bool close(const QString& id);
     // Reattaches the terminals whose services still run.
     void restore();
-    [[nodiscard]] SessionPreview* terminal(const QString& id) const;
+    [[nodiscard]] Agent* terminal(const QString& id) const;
     [[nodiscard]] QString registryPath() const;
     // Tests: the shell a local terminal runs.
     void setShellForTesting(const QString& program) { shell_ = program; }
@@ -56,7 +56,7 @@ class Terminals final : public QObject {
         QString machine;
         QString endpoint;
         session::LaunchSpec launch;
-        std::unique_ptr<SessionPreview> session;
+        std::unique_ptr<Agent> session;
         // The legacy connection state starts "disconnected"; do not mistake
         // that initial value for a settled attach failure.
         bool attach_started{};
