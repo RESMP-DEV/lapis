@@ -51,7 +51,7 @@ class SeenScreens final : public QObject {
     QHash<const SessionPreview*, size_t> seen_;
 };
 
-// One line per chime decision in an owner-only log, so a missed or extra ping
+// One line per chime decision in an owner-only log, so a missed or extra chime
 // can be traced: the agent, the moment, and what was done and why.
 using AttentionLog = std::function<void(const QJsonObject&)>;
 

@@ -126,6 +126,8 @@ std::optional<std::size_t> TabRanker::pick(const std::vector<TabCandidate>& cand
 
 void TabRanker::recordTab(const std::vector<TabCandidate>& candidates,
                           const std::vector<double>& scores, std::size_t picked) const {
+    if (scores.size() != candidates.size() || picked >= candidates.size())
+        return;
     record({{QStringLiteral("event"), QStringLiteral("tab")},
             {QStringLiteral("picked"), static_cast<int>(picked)},
             {QStringLiteral("candidates"), loggedCandidates(candidates, &scores)}});

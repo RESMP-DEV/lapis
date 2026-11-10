@@ -8,10 +8,7 @@
 #ifdef LAPIS_SPARKLE
 #import <Sparkle/Sparkle.h>
 #endif
-#include <QCoreApplication>
 #include <QDebug>
-#include <QMetaObject>
-#include <utility>
 
 #ifdef LAPIS_SPARKLE
 namespace {
