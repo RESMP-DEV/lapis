@@ -11,9 +11,8 @@ Add this to `~/.lapis/lapis.json`:
 {"nextPrompt": {"auto": true}}
 ```
 
-The other settings are `model` (`claude-opus-5-5`), `effort`, `minConfidence`
-(0, so the helper's top guess shows, including its numeric fallback for an
-unscored candidate) and `maxPerHour` (60). Each prediction
+The other settings are `model` (`claude-opus-5-5`), `effort` and `maxPerHour`
+(60). Each prediction
 attempt takes the route your agents take: the `env` in `~/.claude/settings.json`
 (a plan gateway, say) applies, while API keys, custom endpoints and
 cloud-provider variables lapis itself inherited are removed. Without that `env`
@@ -22,7 +21,7 @@ may retry a malformed answer once, so `maxPerHour` bounds attempts rather than
 individual provider requests.
 
 `providers` replaces that CLI call with an ordered list of
-OpenAI-compatible endpoints, tried first to last, for the main guess:
+OpenAI-compatible endpoints, tried first to last:
 
 ```json
 {"nextPrompt": {"providers": [
@@ -52,8 +51,13 @@ guess's time budget: it stops asking providers 150 seconds in, before the app
 gives up on the guess, so a provider that never answers cannot keep the next
 one from being tried. The answering `provider` and its `model` are in
 `next_prompt.jsonl`. `[]` or no `providers` keeps the CLI route, and the
-top-level `model` and `effort` then apply as before. The experiment arms keep
-their own model or `localEndpoint`; the chain covers the control arm.
+top-level `model` and `effort` then apply as before.
+
+Settings of finished experiments are ignored, and an older `lapis.json` may keep
+them: `experiment` and `experimentModels` (a second model), `localEndpoint` and
+`localModel` (a local model), `holdout` (guesses made but never shown),
+`minConfidence` and `experimentMinConfidence` (a probability floor) and
+`returnShare`. Every guess with a probability is offered.
 
 Claude Code has its own prompt suggestions, which may show beneath lapis's. Set
 `promptSuggestionEnabled` to false in Claude Code's settings to leave only
@@ -65,11 +69,9 @@ When a Claude Code, Codex or OMP agent finishes a turn, lapis reads its conversa
 where it runs (over ssh for another machine) and asks the model, on this Mac,
 with your `~/.claude/CLAUDE.md`, the agent's screen, every other agent's state
 and your latest prompts elsewhere. The model writes one guess, preferring a
-short reply when that would do, with its probability, and judges whether the
-agent needs you ("needs", "steer" or "fyi"; see alerts.judge in
-[config](config.md)). The guess shows after the agent's cursor whenever it
-passes `minConfidence`: dim, or nearly as bright as text when the probability
-is 0.45 or more (from Oct 3 to 9, guesses scored that high were taken 65% of
+short reply when that would do, with its probability. The guess shows after
+the agent's cursor: dim, or nearly as bright as text when the probability is
+0.45 or more (from Oct 3 to 9, guesses scored that high were taken 65% of
 the time, against 25 to 34% below). None shows while an agent waits on a
 request such as a permission prompt.
 
@@ -86,31 +88,19 @@ never saw (an agent woken by its background work), is not guessed at once: the
 guess is made when you next show that agent. From Oct 7 to 9 such repeats were
 44% of guesses, and 72% of them went unseen.
 
-Experiments: `experiment` (default 0) of guesses go to another arm, chosen
-evenly from `experimentModels` (default `["claude-sonnet-5-5"]`, through the
-same CLI) and, when `localEndpoint` and `localModel` are set, a local model
-behind an OpenAI-compatible endpoint (for example
-`"localEndpoint": "http://gpu-host:8000/v1"`). Each guess's `arm` (`control`,
-`model` or `local`) and `model` are in `next_prompt.jsonl`, so arms can be
-compared on what you then sent. Set `experiment` above 0 to compare models.
+When you show an agent whose guess is at least `returnMinutes` old (default
+30) and was not typed, it is guessed again, telling the model how long it has
+been; each is logged as a `return` event. An offline replay of 232 past guesses
+(Oct 16) found guessing again after a return the largest effect it measured.
 
-At a few dozen guesses a day few live comparisons can reach a verdict, so by
-default two are split: the context arm and the prompt arm. Each is drawn on its
-own for every guess, so each comparison uses every guess. The others stay
-available:
+At a few dozen guesses a day few live comparisons can reach a verdict, so two
+are split. Each is drawn on its own for every guess, so each comparison uses
+every guess:
 
 - **Context** (`contextArms`, default `["base"]`): `base` sends the
   conversation as above. The opt-in `wide` arm asks for five candidates, logs
   all five, and offers the first; listing it with `base` compares them evenly.
-  Listing other arms draws
-  evenly among them: `thread` adds your earlier messages in the conversation,
-  from before the turns shown; `retrieval` adds the six past exchanges on this
-  Mac whose agent reply best matches this one, with what you sent to each;
-  `evidence` tells the model to look for the reply's unmeasured claim and ask
-  for it; `moves`, `pack` and `legacy` are evaluator arms. Past exchanges come
-  from the last 60 days of transcripts, indexed in the runtime folder
-  (owner-only, `next_prompt_pairs.json`) a few seconds of work per guess until
-  it is complete. Logged as `context_arm`.
+  Any other name is ignored. Logged as `context_arm`.
 - **Prompt** (`promptArms`, default `["base", "checks"]`): `checks` adds three
   checks to the system prompt. An approval, continue or ship is five words or
   fewer. Before approving a result, the model compares the reply's restated
@@ -122,33 +112,22 @@ available:
   time and those over 40 words 8%; a quarter of your corrections supplied a
   fact the agent lacked; a redo round cost a median 47 minutes; and 2.6% of
   guesses were corrections. Logged as `prompt_arm`; `["base"]` turns it off.
-- **Floor**: half the guesses use `experimentMinConfidence` (default 0, off) as
-  their floor instead of `minConfidence`, when it is higher. A guess's
-  probability is the model's own estimate and models do not share a scale: on
-  Oct 24 DeepSeek's top guess never passed 0.3, so a 0.4 floor hid every guess
-  it applied to. The floor a guess was offered against is its `min_confidence`.
-- **Return**: when you show an agent whose guess is at least `returnMinutes`
-  old (default 30) and was not typed, `returnShare` (default 1, every return)
-  of those returns guess again, telling the model how long it has been; the
-  rest keep the old guess. Each is logged as a `return` event with its `arm`
-  (`reguess` or `keep`). Set `returnShare` to 0 to keep old guesses.
 
-`next_prompt_eval.py log` reports these as `by_context_arm`, `by_prompt_arm`,
-`by_floor` and `returns`. Taking a guess is not the whole result: `log --redo`
-reads, for each prompt you sent after a guess, your next message after the
-agent answered it, and reports how often that was a redo (pushback, confusion,
-continue or status), by whether you sent the guess, edited it or typed your
-own, and for taken guesses by prompt arm. An offline replay of 232 past guesses (Oct 16) could not tell the
-context arms apart; guessing again after a return was the largest effect it
-found.
+`next_prompt_eval.py log` reports these as `by_context_arm` and
+`by_prompt_arm`, and returns as `returns`. Taking a guess is not the whole
+result: `log --redo` reads, for each prompt you sent after a guess, your next
+message after the agent answered it, and reports how often that was a redo
+(pushback, confusion, continue or status), by whether you sent the guess,
+edited it or typed your own, and for taken guesses by prompt arm. Records
+written before the finished experiments were removed keep their fields (`arm`,
+`hidden`, `min_confidence`); the reports read them without those comparisons.
 
-A shown guess shapes what you send (you can take it), so how often you take
-guesses is not how well they predict you. `holdout` (default 0, at most 0.5)
-of guesses are made and logged but never shown, and compared with what you then
-typed; `next_prompt_eval.py log` reports them as `held_out` beside the same
-figures for shown guesses, and acceptance per arm as `by_arm`. The model is
-also told which of your past prompts were guesses you took unchanged (marked
-`[took a guess]`), so it does not learn its own words as your style.
+The model is also told which of your past prompts were guesses you took
+unchanged (marked `[took a guess]`), so it does not learn its own words as
+your style. Your prompts to other agents come from the last 60 days of
+transcripts, indexed in the runtime folder (owner-only,
+`next_prompt_pairs.json`), a few seconds of work per guess until it is
+complete.
 
 An agent on another machine reports its finished turns through its own
 terminal: lapis starts it with hooks (Claude Code) or a notify program (Codex)
@@ -182,15 +161,14 @@ build has no extension loaded; reload it once.
   finished with no background tasks, subagents or wakeups in flight, unseen or
   with a guess, and not parked (looked at for 2.5 seconds and left without a
   prompt). An agent at work, or paused while its own background work runs,
-  never does. Among those, anything waiting over four hours comes first, then
-  work categories, requests, turns you have not seen, and the newest.
+  never does. Among those, a request, an unseen turn or an unseen guess
+  waiting over four hours comes first, then work categories, requests, turns
+  you have not seen, and the newest.
   `tabAway` in [config](config.md#tabs-next-agent) names your work categories
-  or picks another order. When nothing waits, Tab goes to the
-  program as usual. With the default
-  `minConfidence` of 0 a finished Claude Code or Codex turn nearly always
-  offers a guess, so Tab usually takes the guess instead of moving to another
-  agent. Raise `minConfidence` to bring the attention queue back, or reach a
-  waiting agent by opening it.
+  and the overdue time. When nothing waits, Tab goes to the
+  program as usual. A finished Claude Code or Codex turn nearly always offers
+  a guess, so Tab usually takes the guess instead of moving to another agent;
+  reach a waiting agent by opening it.
 
 Tab keeps its usual meaning in shells and in CLIs lapis does not guess for.
 
@@ -234,12 +212,11 @@ authentication failures stop the attempt; only a malformed answer is retried.
 Tab's choices are kept beside it in `~/.lapis/runtime/tab_away.jsonl`: every
 move Tab made, with each waiting agent's features and score, and every agent
 you settled on with the agents that were waiting when you left the one before
-(agent and category ids only, never titles or text). The ranker refits from
-them in the background and keeps its model in `tab_away_model.json`.
+(agent and category ids only, never titles or text). Tab's order does not
+learn from them; they are the record for judging that order.
 
 ```sh
-python3 scripts/runtime_digest.py                  # the last day: guesses that worked, taken by arm, failures, Ultra Tab, pings
-python3 scripts/tab_away_eval.py log               # Tab's ranker against your logged choices
+python3 scripts/runtime_digest.py                  # the last day: guesses that worked, taken by prompt arm, failures, Ultra Tab, pings
 python3 scripts/next_prompt_eval.py log            # acceptance: of the guesses you saw, the share you used
 python3 scripts/next_prompt_eval.py log --judge    # the ones you passed over, against what you typed
 python3 scripts/next_prompt_eval.py log --redo     # how often your next message was a redo, taken or not, by prompt arm

@@ -498,10 +498,6 @@ void KeyMap::apply_defaults() {
     finish_sound_ = true;
     alert_sound_file_.clear();
     finish_sound_file_.clear();
-    notify_ = true;
-    away_after_s_ = kAwayAfterDefault;
-    remind_after_min_ = kRemindAfterDefault;
-    judge_pings_ = true;
     keep_awake_ = true;
     load_visual({});
     // Each CLI lists its own models (HarnessModels) unless the config names some.
@@ -688,15 +684,11 @@ void KeyMap::load_harness_updates(const QJsonValue& value) {
 
 void KeyMap::load_alerts(const QJsonObject& root) {
     const auto alerts = root.value(QStringLiteral("alerts")).toObject();
-    // "sound" and "repeat" belonged to a retired repeating request chime; a
-    // file that still has them loads, and saving leaves them as written.
+    // "sound" and "repeat" belonged to a retired repeating request chime, and
+    // "notify", "awayAfter", "remindAfter" and "judge" to the retired
+    // notifications and ping judge; a file that still has them loads, and
+    // saving leaves them as written.
     finish_sound_ = alerts.value(QStringLiteral("finished")).toBool(true);
-    notify_ = alerts.value(QStringLiteral("notify")).toBool(true);
-    away_after_s_ =
-        std::clamp(alerts.value(QStringLiteral("awayAfter")).toInt(kAwayAfterDefault), 15, 3600);
-    remind_after_min_ =
-        std::clamp(alerts.value(QStringLiteral("remindAfter")).toInt(kRemindAfterDefault), 0, 1440);
-    judge_pings_ = alerts.value(QStringLiteral("judge")).toBool(true);
     // "~/" is the home folder and a relative path starts beside lapis.json.
     // File checks and reads belong to ChimeSounds' bounded background work.
     const auto sound_file = [this, &alerts](const QString& key) {
@@ -1105,7 +1097,6 @@ bool KeyMap::persist() {
     root.insert(QStringLiteral("terminalFont"), font);
     QJsonObject alerts = root.value(QStringLiteral("alerts")).toObject();
     alerts.insert(QStringLiteral("finished"), finish_sound_);
-    alerts.insert(QStringLiteral("notify"), notify_);
     root.insert(QStringLiteral("alerts"), alerts);
     root.insert(QStringLiteral("keepAwake"), keep_awake_);
     QJsonObject visual = root.value(QStringLiteral("visual")).toObject();
@@ -1140,21 +1131,17 @@ bool KeyMap::setFinishSound(bool on) {
     finish_sound_ = on;
     return save();
 }
-bool KeyMap::setNotify(bool on) {
-    notify_ = on;
-    return save();
-}
 bool KeyMap::setKeepAwake(bool on) {
     keep_awake_ = on;
     return save();
 }
 
 KeyMap::RemoteSettings KeyMap::remoteSettings() const {
-    return {.keepAwake = keep_awake_, .finishSound = finish_sound_, .notify = notify_};
+    return {.keepAwake = keep_awake_, .finishSound = finish_sound_};
 }
 
 bool KeyMap::applyRemoteSettings(const RemoteSettingsPatch& changes, QString* diagnostic) {
-    const bool has_change = changes.keepAwake || changes.finishSound || changes.notify;
+    const bool has_change = changes.keepAwake || changes.finishSound;
     if (!has_change)
         return true;
 
@@ -1163,8 +1150,6 @@ bool KeyMap::applyRemoteSettings(const RemoteSettingsPatch& changes, QString* di
         keep_awake_ = *changes.keepAwake;
     if (changes.finishSound)
         finish_sound_ = *changes.finishSound;
-    if (changes.notify)
-        notify_ = *changes.notify;
 
     // Observers must not see a batch that could still be rolled back. On
     // failure the file remains unchanged, so restore the fields and keep the
@@ -1177,7 +1162,6 @@ bool KeyMap::applyRemoteSettings(const RemoteSettingsPatch& changes, QString* di
         *diagnostic = diagnostic_;
     keep_awake_ = previous.keepAwake;
     finish_sound_ = previous.finishSound;
-    notify_ = previous.notify;
     emit changed();
     return false;
 }

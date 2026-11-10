@@ -91,15 +91,12 @@ struct SettingsView: View {
                     .accessibilityIdentifier("keepAwake")
                 Toggle("Chime when a turn finishes", isOn: macSwitch(\.finishSound, "finishSound"))
                     .accessibilityIdentifier("finishSound")
-                Toggle("Notify from the background", isOn: macSwitch(\.notify, "notify"))
-                    .accessibilityIdentifier("notify")
             } header: {
                 Text("On the Mac")
             } footer: {
                 Text("""
                     Saved in the Mac's lapis.json, as its Settings window saves them. Awake holds \
-                    only on power, and the display still sleeps. Chimes and notifications sound \
-                    on the Mac.
+                    only on power, and the display still sleeps. Chimes sound on the Mac.
                     """)
             }
         } else if let failure = model.settingsError {

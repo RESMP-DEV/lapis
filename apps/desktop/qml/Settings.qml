@@ -27,9 +27,7 @@ Dialog {
     required property bool motionEnabled
     required property bool finishSound
     required property bool keepAwake
-    // Notifications while lapis is in the background; the downloaded app's
-    // login item and updates (absent in a developer build).
-    property bool notify: true
+    // The downloaded app's login item and updates (absent in a developer build).
     property bool loginAvailable: false
     property bool launchAtLogin: false
     property bool updatesAvailable: false
@@ -52,7 +50,6 @@ Dialog {
     signal fontSizeChosen(int pixels)
     signal finishSoundChosen(bool on)
     signal keepAwakeChosen(bool on)
-    signal notifyChosen(bool on)
     signal launchAtLoginChosen(bool on)
     signal checkUpdates()
     signal chimePlayed(bool needsYou)
@@ -850,14 +847,6 @@ Dialog {
                     playable: true
                     onToggled: function(on) { settings.finishSoundChosen(on) }
                     onPlayed: settings.chimePlayed(false)
-                }
-
-                SwitchRow {
-                    objectName: "notifyRow"
-                    label: qsTr("Notify from the background")
-                    detail: qsTr("A notification for the same moments while lapis is not the app in front; clicking it shows the agent.")
-                    on: settings.notify
-                    onToggled: function(on) { settings.notifyChosen(on) }
                 }
 
                 SwitchRow {

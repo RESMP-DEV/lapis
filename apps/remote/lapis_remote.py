@@ -2406,12 +2406,11 @@ def category_route(parts, action):
 PHONE_SETTINGS = {
     "keepAwake": bool,
     "finishSound": bool,
-    "notify": bool,
 }
-# Settings of retired features (the repeating request chime and the plan
-# usage meter), which phone builds from before their removal still send: they
-# are dropped rather than refused.
-RETIRED_PHONE_SETTINGS = frozenset({"alertSound", "alertRepeat", "showUsage"})
+# Settings of retired features (the repeating request chime, the plan usage
+# meter and background notifications), which phone builds from before their
+# removal still send: they are dropped rather than refused.
+RETIRED_PHONE_SETTINGS = frozenset({"alertSound", "alertRepeat", "showUsage", "notify"})
 
 
 class Handler(BaseHTTPRequestHandler):

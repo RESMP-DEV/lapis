@@ -4,14 +4,10 @@
 #include <QtGlobal>
 #include <functional>
 
-// The macOS services behind DesktopActions and Notifier; elsewhere they do
-// nothing and report themselves unavailable.
+// The macOS services behind DesktopActions; elsewhere they do nothing and
+// report themselves unavailable.
 namespace lapis::desktop::platform {
 #ifdef Q_OS_MACOS
-// Posts a notification; the first one asks the person's permission.
-void post_notification(const QString& id, const QString& title, const QString& body);
-// Called with the agent id when the person clicks a notification.
-void on_notification_opened(const std::function<void(const QString&)>& handler);
 // The downloaded app's login item, which restarts agents at login.
 [[nodiscard]] bool login_item_enabled();
 bool set_login_item(bool on);
@@ -28,8 +24,6 @@ void on_terminal_keys(const std::function<bool(bool shifted)>& handler);
 // Mac (hardware events only), or a negative value when it cannot be read.
 [[nodiscard]] double seconds_since_input();
 #else
-inline void post_notification(const QString&, const QString&, const QString&) {}
-inline void on_notification_opened(const std::function<void(const QString&)>&) {}
 inline bool login_item_enabled() { return false; }
 inline bool set_login_item(bool) { return false; }
 inline void start_updater() {}

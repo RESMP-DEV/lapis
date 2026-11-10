@@ -531,23 +531,23 @@ final class LapisUITests: XCTestCase {
         let settings = app.buttons["settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 20))
         settings.tap()
-        let notify = app.switches["notify"]
-        for _ in 0..<3 where !notify.exists {
+        let chime = app.switches["finishSound"]
+        for _ in 0..<3 where !chime.exists {
             app.swipeUp()
-            _ = notify.waitForExistence(timeout: 5)
+            _ = chime.waitForExistence(timeout: 5)
         }
-        XCTAssertTrue(notify.exists, "the Mac's settings load")
-        XCTAssertEqual(notify.value as? String, "1")
-        notify.switches.firstMatch.tap()
-        eventually("notifications turn off") { notify.value as? String == "0" }
+        XCTAssertTrue(chime.exists, "the Mac's settings load")
+        XCTAssertEqual(chime.value as? String, "1")
+        chime.switches.firstMatch.tap()
+        eventually("the finished-turn chime turns off") { chime.value as? String == "0" }
         snap("18-mac-settings")
         app.buttons["Done"].tap()
         settings.tap()
-        for _ in 0..<3 where !notify.exists {
+        for _ in 0..<3 where !chime.exists {
             app.swipeUp()
-            _ = notify.waitForExistence(timeout: 5)
+            _ = chime.waitForExistence(timeout: 5)
         }
-        XCTAssertEqual(notify.value as? String, "0", "the Mac kept it")
+        XCTAssertEqual(chime.value as? String, "0", "the Mac kept it")
         app.buttons["Done"].tap()
     }
 

@@ -897,18 +897,17 @@ void remote_settings_are_transactional() {
     int changes = 0;
     QObject::connect(&keymap, &KeyMap::changed, [&changes] { ++changes; });
     const KeyMap::RemoteSettingsPatch batch{.keepAwake = std::optional(false),
-                                            .finishSound = std::optional(false),
-                                            .notify = std::optional(false)};
+                                            .finishSound = std::optional(false)};
     require(keymap.applyRemoteSettings(batch), "a valid settings batch applies");
     require(changes == 1, "one successful settings batch publishes once");
     const auto saved = keymap.remoteSettings();
-    require(!saved.keepAwake && !saved.finishSound && !saved.notify,
+    require(!saved.keepAwake && !saved.finishSound,
             "every value in a valid settings batch is applied");
     const auto written = read_config(path);
     require(!written.value(QStringLiteral("keepAwake")).toBool(true) &&
                 !written.value(QStringLiteral("alerts"))
                      .toObject()
-                     .value(QStringLiteral("notify"))
+                     .value(QStringLiteral("finished"))
                      .toBool(true),
             "the whole settings batch is written once");
     require(written.value(QStringLiteral("retained")).toBool(),
@@ -921,12 +920,11 @@ void remote_settings_are_transactional() {
     QString diagnostic;
     KeyMap::RemoteSettingsPatch failed_batch;
     failed_batch.keepAwake = true;
-    failed_batch.notify = true;
+    failed_batch.finishSound = true;
     require(!keymap.applyRemoteSettings(failed_batch, &diagnostic),
             "a failed settings save refuses the whole batch");
     require(keymap.remoteSettings().keepAwake == before_failure.keepAwake &&
-                keymap.remoteSettings().finishSound == before_failure.finishSound &&
-                keymap.remoteSettings().notify == before_failure.notify,
+                keymap.remoteSettings().finishSound == before_failure.finishSound,
             "a failed settings save rolls back every field it touched");
     require(diagnostic.contains(QStringLiteral("Could not save")),
             "a failed settings save reports its diagnostic");

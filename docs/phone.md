@@ -154,9 +154,8 @@ stopped, and **Close**. Each category's heading has a menu: a new agent there,
 **Remove**, allowed once the category is empty and another remains.
 
 Settings on the phone has its text size, the categories, and the Mac's settings
-that matter away from it: keeping the Mac awake, its finished-turn chime and
-background notifications, saved to the Mac's `lapis.json`.
-
+that matter away from it: keeping the Mac awake and its finished-turn chime,
+saved to the Mac's `lapis.json`.
 **Send screen to Mac** in an agent's menu saves a screenshot and the exact screen
 data under `runtime/phone-captures/`, for debugging what the phone drew; failures
 show in the same alert as delivery results.

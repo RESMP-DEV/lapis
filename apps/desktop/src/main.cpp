@@ -284,11 +284,9 @@ bool parsed_headless(const QCommandLineParser& parser, bool parsed) {
 
 // Chimes for agents that need you, in the real workspace (the preview
 // fixtures stay silent); looking means the window is active and showing that
-// agent to someone at the Mac. A notification for the same moments while
-// lapis is in the background or nobody is at the Mac, clicking one brings the
-// window to that agent. The downloaded app
-// also starts checking for updates here.
-// Every ping decision, one JSON line each, in the owner-only runtime folder;
+// agent to someone at the Mac. The downloaded app also starts checking for
+// updates here.
+// Every chime decision, one JSON line each, in the owner-only runtime folder;
 // past 2 MiB the log starts over beside its predecessor.
 // Opened from Finder or the Dock, the app's standard error is /dev/null and its
 // warnings would be lost: they go to runtime/lapis.log instead (owner-only,
@@ -361,7 +359,6 @@ lapis::desktop::AttentionLog attention_log() {
         QDir(lapis::desktop::data_directory()).filePath(QStringLiteral("runtime/attention.jsonl")));
 }
 void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
-                      std::optional<lapis::desktop::Notifier>& notifier,
                       std::optional<lapis::desktop::SeenScreens>& seen,
                       lapis::desktop::Workspace& workspace, lapis::desktop::KeyMap& keymap,
                       QPointer<QQuickWindow>& shown) {
@@ -369,11 +366,12 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
     using lapis::desktop::Chime;
     auto sounds = std::make_shared<lapis::desktop::ChimeSounds>();
     sounds->configure(keymap);
-    // Someone is at the Mac: keyboard or mouse input anywhere within
-    // alerts.awayAfter seconds. Where that cannot be read, assume so.
-    const auto present = [&keymap] {
+    // Someone is at the Mac: keyboard or mouse input anywhere within the
+    // last two minutes. Where that cannot be read, assume so.
+    const auto present = [] {
+        constexpr double kAwayAfterSeconds = 120;
         const auto idle = platform::seconds_since_input();
-        return idle < 0 || idle < keymap.awayAfterSeconds();
+        return idle < 0 || idle < kAwayAfterSeconds;
     };
     const auto looking = [&workspace, &shown, present](const lapis::desktop::SessionPreview* item) {
         return shown && shown->isActive() && workspace.focusedSession() == item && present();
@@ -388,23 +386,6 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
     alerts->setLog(log);
     QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &*alerts,
                      [sounds, &keymap] { sounds->configure(keymap); });
-    notifier.emplace(
-        workspace, keymap,
-        [](const QString& id, const QString& title, const QString& body) {
-            platform::post_notification(id, title, body);
-        },
-        [] { return QGuiApplication::applicationState() != Qt::ApplicationActive; });
-    notifier->setSeen(&*seen);
-    notifier->setLog(log);
-    notifier->setPresence(present, looking);
-    platform::on_notification_opened([&workspace, &shown](const QString& id) {
-        lapis::desktop::interaction::cause(QStringLiteral("notification"));
-        if (!workspace.selectSession(id) || !shown)
-            return;
-        shown->show();
-        shown->raise();
-        shown->requestActivate();
-    });
     platform::start_updater();
 }
 
@@ -625,7 +606,7 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
         NextPrompt::Files{data.filePath(QStringLiteral("runtime")), log});
     const auto follow = [&next, &keymap] { next.setSettings(keymap.nextPrompt()); };
     follow();
-    // Tab learns from moves made by hand too, with the guesses then on offer.
+    // Tab's log covers moves made by hand too, with the guesses then on offer.
     workspace.setGuesses([&next] { return next.readyAgents(); });
     QObject::connect(&next, &QObject::destroyed, &workspace,
                      [&workspace] { workspace.setGuesses({}); });
@@ -907,9 +888,8 @@ int main(int argc, char** argv) {
         QPointer<QQuickWindow> shown;
         std::optional<lapis::desktop::SeenScreens> seen; // outlives what reads it
         std::optional<Alerts> alerts;
-        std::optional<Notifier> notifier;
         if (!isolated)
-            alert_for_agents(alerts, notifier, seen, workspace, keymap, shown);
+            alert_for_agents(alerts, seen, workspace, keymap, shown);
         DesktopActions desktop;
         const bool hide_on_close = closes_to_dock(isolated, parser);
         // The canonical harness catalog's read-only status answers. It exists
@@ -917,20 +897,6 @@ int main(int argc, char** argv) {
         ToolStatus toolStatus;
         std::optional<NextPrompt> nextPrompt;
         QObject* const nextForQml = keep_next_prompt(nextPrompt, workspace, keymap, isolated);
-        // Finished turns ping only when the guessing model judged they need
-        // the person (alerts.judge).
-        std::optional<lapis::desktop::PingJudge> pingJudge;
-        if (alerts || notifier) {
-            pingJudge.emplace(workspace, keymap);
-            pingJudge->setActive([&nextPrompt] { return nextPrompt && nextPrompt->enabled(); });
-            if (alerts)
-                alerts->judgeBy(*pingJudge);
-            if (notifier)
-                notifier->judgeBy(*pingJudge);
-            if (nextPrompt)
-                QObject::connect(&*nextPrompt, &NextPrompt::judged, &*pingJudge,
-                                 &lapis::desktop::PingJudge::verdict);
-        }
         std::optional<lapis::desktop::AgentStatePublisher> agentState;
         keep_agent_state(agentState, workspace, nextPrompt, isolated);
         const auto conversations = conversation_index(workspace);
@@ -980,9 +946,7 @@ int main(int argc, char** argv) {
         view.window()->requestActivate();
         qInfo() << "UI preview:" << isolated
                 << "system reduced motion:" << view.systemReducedMotion();
-        const int result = QGuiApplication::exec();
-        platform::on_notification_opened({});
-        return result;
+        return QGuiApplication::exec();
     } catch (const std::exception& error) {
         qCritical().noquote() << error.what();
         return 1;

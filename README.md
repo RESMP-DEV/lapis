@@ -43,7 +43,7 @@ updates. See
   [Workspace](docs/workspace.md)
 - **See what needs you**: cards and categories pulse until you look, and with
   suggestions on, Tab with no guess to accept moves to the next agent waiting on
-  you. Chimes and notifications say when.
+  you. A chime says when.
 - **Your phone** can show and drive the same agents as a separately installed
   prototype over its gateway. It is outside the early-access support slice.
   [Phone](docs/phone.md)

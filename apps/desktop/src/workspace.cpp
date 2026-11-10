@@ -759,7 +759,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
                 ? QDir(rootDirectory()).filePath(QStringLiteral("runtime/workspace.json"))
                 : QFileInfo(options.storagePath).absoluteFilePath();
         restore();
-        // Tab's choices and model live beside the registry, owner-only.
+        // Tab's move log lives beside the registry, owner-only.
         tab_ranker_ = std::make_unique<TabRanker>(QFileInfo(storage_path_).absolutePath());
         restoreSelection();
         rememberInitialFocus();
@@ -910,7 +910,7 @@ bool Workspace::nextPriorityAttention(const QVariantMap& ready) {
     if (!selectSession(candidates[*best].session))
         return false;
     tab_ranker_->recordTab(candidates, scores, *best);
-    // Where the person settles after this move is the choice it learns from.
+    // Where the person settles after this move is the choice it records.
     // A Tab before the last move settled passes over that agent: the choice
     // stays among the agents waiting since they left the one before.
     if (choice_)
@@ -922,7 +922,7 @@ bool Workspace::nextPriorityAttention(const QVariantMap& ready) {
 }
 void Workspace::setTabAway(const TabAwaySettings& settings) {
     tab_away_ = settings;
-    tab_ranker_->setRank(settings.rank, settings.overdueHours);
+    tab_ranker_->setOverdueHours(settings.overdueHours);
 }
 // The person left an agent: remember who was waiting then. Moves before the
 // last one settled (a quick hop, or Tab's own move) add agents that began
@@ -981,8 +981,8 @@ void Workspace::settleChoice() {
             return candidate.session == last_focus_id_;
         });
     if (chosen != candidates.end())
-        tab_ranker_->learn(candidates, static_cast<std::size_t>(chosen - candidates.begin()),
-                           via_tab);
+        tab_ranker_->recordChoice(candidates, static_cast<std::size_t>(chosen - candidates.begin()),
+                                  via_tab);
 }
 bool SessionPreview::addPreviewRequest(const QString& id, const QString& reason) {
     if (id.isEmpty() || id.size() > 64 || reason.size() > 256 || requests_.contains(id) ||

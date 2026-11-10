@@ -15,7 +15,7 @@ key bindings and appearance it holds these:
     "models": {"codex": ["gpt-6-astra", "gpt-6-sol"]}
   },
   "harnessArguments": {"claude": ["--dangerously-skip-permissions"]},
-  "alerts": {"finished": true, "notify": true},
+  "alerts": {"finished": true},
   "keepAwake": true
 }
 ```
@@ -78,46 +78,24 @@ of those installed). An unknown name falls back to the first choice.
 ## Alerts
 
 An unseen completed turn or request plays one quiet cue when `alerts.finished`
-is enabled. Requests use the same cue and background notification, and the cue
-does not repeat. Appearance has one switch and Play button for the shared cue,
-plus the background-notification switch. The `alerts.sound` and `alerts.repeat`
-keys of the retired repeating request chime are ignored; older files may keep
-them.
+is enabled. Requests use the same cue, and the cue does not repeat. Appearance
+has one switch and Play button for it. lapis posts no macOS notifications.
+Keys of retired alerts are ignored, and older files may keep
+them: `alerts.sound` and `alerts.repeat` (the repeating request chime),
+`alerts.notify`, `alerts.awayAfter` and `alerts.remindAfter` (background
+notifications and their reminders), and `alerts.judge` (a model's judgement of
+whether a finished turn needed you, which kept the others quiet).
 
 A turn that ends on what you already saw of that agent stays quiet: while lapis
-is in front and you are at the Mac, the screen of the agent you are looking at
-is noted every second, and a finished turn whose screen above Claude Code's
-input box is unchanged neither chimes nor notifies. A turn ending on an open
-request still gets its reminder.
+is in front and you are at the Mac (some keyboard, mouse or trackpad input
+within two minutes), the screen of the agent you are looking at is noted every
+second, and a finished turn whose screen above Claude Code's input box is
+unchanged does not chime.
 
-A notification posts when lapis is in the background or when you are away:
-no keyboard, mouse or trackpad input anywhere for `alerts.awayAfter` seconds
-(default 120, from 15 to 3600). Away, lapis in front, even showing that agent,
-does not count as you seeing it. An agent still waiting after
-`alerts.remindAfter` minutes (default 30, up to 1440; 0 for never), with no
-new turn and not looked at (a look already recorded by the screen sampler
-counts, even after you move on), notifies once more; if you are away then, the
-reminder comes when you are back.
-
-While next-prompt guesses are on, a finished turn chimes or notifies only when
-the guessing model judged that the agent needs you (`alerts.judge`, default
-true): it reads the end of the conversation and answers "needs" (a question,
-a decision or approval), "steer" (would take direction but can go on) or "fyi"
-(waiting on background work, subagents, a job or someone else, or only a
-report). Steer and fyi stay quiet and are logged as `quiet: judged steer` and
-the like; a turn ending on a request never waits; with no judgement within 25
-seconds the turn pings as before.
-
-```json
-"alerts": {"notify": true, "awayAfter": 120, "remindAfter": 30, "judge": true}
-```
-
-Every decision — a chime or a notification, and each quiet reason — is logged,
-one JSON line each, to `runtime/attention.jsonl` in the lapis folder: the
-moment, the agent's conversation title, its CLI, the event (`finished`, or
-`still waiting` for a reminder), a `kind` of chime or
-notification, and the `decision` (chimed, posted, `posted: you are away`,
-`posted: reminder`, or the quiet reason). The log is owner-only, and the title can be the
+Every decision, a chime or its quiet reason, is logged, one JSON line each, to
+`runtime/attention.jsonl` in the lapis folder: the moment, the agent's
+conversation title, its CLI, the event (`finished`), a `kind` of chime, and the
+`decision` (chimed, or the quiet reason). The log is owner-only, and the title can be the
 conversation's first prompt, so the file is not for sharing. Before a line
 would cross 2 MiB the log rotates to `attention.jsonl.1` (one predecessor, the
 older one removed) and the fresh file opens with a `rotated` marker line.
@@ -127,7 +105,7 @@ is used at half volume. An explicitly set but unavailable `finishedFile` falls
 back to the built-in finished cue rather than borrowing a different file.
 
 ```json
-"alerts": {"finishedFile": "~/.lapis/sounds/done.wav", "finished": true, "notify": true}
+"alerts": {"finishedFile": "~/.lapis/sounds/done.wav", "finished": true}
 ```
 
 Paths may start with `~/`; relative paths start beside `lapis.json`. Files are
@@ -179,8 +157,8 @@ kinds:
   no movement.
 - `agent-focus`, `category`, `history`, `dialog`, `command`, `shortcut`
   (``Command-` ``), `window` and `app`: the selected agent and category with how
-  each changed (`via`: `click`, `key`, `shortcut`, `tab-away`, `notification`,
-  `terminal-key`, `wheel` or `program`), the history position, dialogs and menus opening and
+  each changed (`via`: `click`, `key`, `shortcut`, `tab-away`, `terminal-key`,
+  `wheel` or `program`), the history position, dialogs and menus opening and
   closing, the command run from the palette, window focus and app activation.
 
 Passwords stay out. While macOS secure input is on, or the line the cursor is on
@@ -207,28 +185,28 @@ typing never waits. The log holds what you typed and pasted, so do not share it.
 you (see [suggestions](suggestions.md#tab)):
 
 ```json
-"tabAway": {"rank": "plain", "work": ["work"], "overdueHours": 4}
+"tabAway": {"work": ["work"], "overdueHours": 4}
 ```
 
-`rank` is `plain` (the default), `learned` or `fixed`. Plain is an order that
-does not learn: anything left waiting more than `overdueHours` (0 turns this
-off) comes first, oldest first, so neglected work cannot sink; then work
-categories, requests, turns you have not seen, and the newest. Learned starts
-from a prior in the same spirit and fits it to where you go; it was the default
+Tab's order does not learn: an agent that needs you (a request, an unseen turn
+or an unseen guess) and waits more than `overdueHours` (0 turns this off) comes
+first, oldest first, so neglected work cannot sink; then work categories,
+requests, turns you have not seen, and the newest. `work`
+lists the categories, by name and without case, that count as work; the
+default matches a category called `work`. The retired `rank` key chose between
+this order and a `learned` or `fixed` one; a learned order was the default
 until October 11, when the log showed it mostly learned the order of your
 Command-number walk (597 jumps against 24 Tab moves in five days) rather than
-which agent needed you. `fixed` keeps the earliest order: a guess not yet seen,
-then an unseen turn or a request, then a guess already seen, the longest
-waiting first. `work` lists the categories, by name and without case, that
-count as work; the default matches a category called `work`.
+which agent needed you. Older files may keep `rank`; it is ignored and left as
+written.
 
 Only agents truly waiting on you qualify: a request, or a turn that finished
-with no background work in flight and that you have not parked. Looking at a
+with no background work in flight, unseen or with a guess, and not parked. Looking at a
 finished turn for 2.5 seconds or more and moving on without a prompt parks the
 agent: Tab passes it over until it next begins to wait. A request
-is never parked. Choices and Tab moves are kept in `runtime/tab_away.jsonl`
-under every rank, and the learned rank's model in `runtime/tab_away_model.json`,
-both owner-only.
+is never parked. Choices and Tab moves are kept in `runtime/tab_away.jsonl`,
+owner-only. A `runtime/tab_away_model.json` left by an older build is no
+longer read or written.
 
 ## The rest
 

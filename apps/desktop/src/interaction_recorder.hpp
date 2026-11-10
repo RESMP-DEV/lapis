@@ -170,8 +170,7 @@ void paste(const TerminalSurface* surface, const QString& text, bool accepted, c
 void wheel_outcome(const QString& handled, int amount);
 // Text copied from a terminal selection ("key", "select", "double-click").
 void copy(const TerminalSurface* surface, const QString& text, const char* how);
-// The next focus change came from this ("tab-away", "notification",
-// "terminal-key").
+// The next focus change came from this ("tab-away" or "terminal-key").
 void cause(const QString& via);
 } // namespace interaction
 

@@ -266,12 +266,12 @@ struct Switch {
 constexpr auto switches = std::to_array<Switch>({
     {"keepAwake", &KeyMap::RemoteSettingsPatch::keepAwake, &KeyMap::keepAwake},
     {"finishSound", &KeyMap::RemoteSettingsPatch::finishSound, &KeyMap::finishSound},
-    {"notify", &KeyMap::RemoteSettingsPatch::notify, &KeyMap::notify},
 });
 // Settings of retired features: the repeating request chime (alertSound,
-// alertRepeat) and the plan usage meter (showUsage). Phone builds from before
-// their removal still send them and require them in the answer, so a change
-// to any is accepted and ignored, and the answer reports them as off.
+// alertRepeat), the plan usage meter (showUsage) and background notifications
+// (notify). Phone builds from before their removal still send them and
+// require them in the answer, so a change to any is accepted and ignored, and
+// the answer reports them as off.
 struct Retired {
     std::string_view name;
     bool is_switch{}; // reported as false; otherwise as `count`
@@ -281,6 +281,7 @@ constexpr auto retired = std::to_array<Retired>({
     {.name = "alertSound", .is_switch = true},
     {.name = "alertRepeat", .count = 1},
     {.name = "showUsage", .is_switch = true},
+    {.name = "notify", .is_switch = true},
 });
 
 QString text(std::string_view name) {
