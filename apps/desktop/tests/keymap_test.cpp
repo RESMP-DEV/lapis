@@ -344,6 +344,35 @@ void default_settings_chords_are_shared() {
             "only Shift with punctuation has a shifted form");
 }
 
+// Actions lapis no longer has. A lapis.json that still binds them loads as
+// before; the bindings reach nothing.
+constexpr std::array kRetiredActions{
+    "nextAttention", "latestAttention", "searchAgents", "find",     "splitRight", "splitDown",
+    "tileLeft",      "tileRight",       "tileUp",       "tileDown", "zoomTile"};
+
+void retired_actions_load_silently() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory for retired bindings");
+    const QDir dir(directory.path());
+    QJsonObject bindings;
+    for (const auto* removed : kRetiredActions)
+        bindings.insert(QString::fromLatin1(removed), QJsonArray{QStringLiteral("Ctrl+Alt+F12")});
+    // The top-level "editor" opened an agent's folder, a retired command.
+    const QString path = write_config(
+        dir, QJsonDocument(QJsonObject{{QStringLiteral("keybindings"), bindings},
+                                       {QStringLiteral("editor"), QStringLiteral("Zed")}})
+                 .toJson());
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "a config binding retired actions loads");
+    require(keymap.diagnostic().isEmpty(), "retired names load without complaint");
+    require(keymap.setTheme(QStringLiteral("graphite")), "an appearance change saves");
+    require(read_config(path).value(QStringLiteral("editor")).toString() == QStringLiteral("Zed"),
+            "saving leaves a retired setting as written");
+    require(keymap.sequences(QStringLiteral("quit")) == KeyMap().sequences(QStringLiteral("quit")),
+            "the other defaults are unchanged");
+}
+
 void navigation_defaults_preserve_terminal_editing() {
     KeyMap keymap;
     require(keymap.sequences(QStringLiteral("focusLeft")).isEmpty() &&
@@ -358,10 +387,9 @@ void navigation_defaults_preserve_terminal_editing() {
     for (const auto* removed : {"nextPane", "zoomPane", "paneLeft", "dividerLeft"})
         require(keymap.sequences(QString::fromLatin1(removed)).isEmpty(),
                 "the old pane actions stay retired");
-    // Tiles split with a new agent and move between tiles, as in iTerm2.
-    for (const auto* tiling :
-         {"splitRight", "splitDown", "tileLeft", "tileRight", "tileUp", "tileDown", "zoomTile"})
-        require(!keymap.sequences(QString::fromLatin1(tiling)).isEmpty(), "tile actions have keys");
+    for (const auto* removed : kRetiredActions)
+        require(keymap.sequences(QString::fromLatin1(removed)).isEmpty(),
+                "retired actions have no default keys");
 #ifdef Q_OS_MACOS
     require(
         keymap.sequences(QStringLiteral("nextCategory")) ==
@@ -1025,6 +1053,7 @@ int main(int argc, char** argv) {
         nonregular_config_paths_are_rejected();
         default_settings_chords_are_shared();
         navigation_defaults_preserve_terminal_editing();
+        retired_actions_load_silently();
         configured_shortcuts_are_validated();
         unknown_names_are_rejected();
         malformed_values_fall_back();

@@ -443,31 +443,16 @@ void KeyMap::apply_defaults() {
         {QStringLiteral("reloadConfig"), {modifier + QStringLiteral("R")}},
         {QStringLiteral("newAgent"), {modifier + QStringLiteral("T")}},
         {QStringLiteral("newCategory"), {modifier + QStringLiteral("N")}},
-        {QStringLiteral("searchAgents"), {modifier + QStringLiteral("K")}},
-        {QStringLiteral("nextAttention"), {modifier + QStringLiteral("J")}},
-        // The agent that most recently needed you; Command-Option-L does it
-        // from any app on the Mac.
-        {QStringLiteral("latestAttention"), {modifier + QStringLiteral("L")}},
         {QStringLiteral("toggleSidebar"), {modifier + QStringLiteral("B")}},
-        // Tiles: split with a new agent like the selected one, as iTerm2's
-        // Command-D does, and move between tiles.
-        {QStringLiteral("splitRight"), {modifier + QStringLiteral("D")}},
-        // Text size, find, and bringing back the last closed agent.
+        // Text size.
         {QStringLiteral("textBigger"),
          {modifier + QStringLiteral("="), modifier + QStringLiteral("+")}},
         {QStringLiteral("textSmaller"), {modifier + QStringLiteral("-")}},
         {QStringLiteral("textReset"), {modifier + QStringLiteral("0")}},
-        {QStringLiteral("find"), {modifier + QStringLiteral("F")}},
         // A past Claude or Codex conversation, as a new agent.
         {QStringLiteral("resumeConversation"), {modifier + QStringLiteral("O")}},
     };
 #ifdef Q_OS_MACOS
-    bindings_.insert(QStringLiteral("splitDown"), {QStringLiteral("Meta+Shift+D")});
-    bindings_.insert(QStringLiteral("tileLeft"), {QStringLiteral("Meta+Ctrl+Left")});
-    bindings_.insert(QStringLiteral("tileRight"), {QStringLiteral("Meta+Ctrl+Right")});
-    bindings_.insert(QStringLiteral("tileUp"), {QStringLiteral("Meta+Ctrl+Up")});
-    bindings_.insert(QStringLiteral("tileDown"), {QStringLiteral("Meta+Ctrl+Down")});
-    bindings_.insert(QStringLiteral("zoomTile"), {QStringLiteral("Meta+Shift+Return")});
     bindings_.insert(QStringLiteral("reopenAgent"), {QStringLiteral("Meta+Shift+T")});
     bindings_.insert(QStringLiteral("closeAgent"), {QStringLiteral("Meta+W")});
     bindings_.insert(QStringLiteral("closeWindow"), {QStringLiteral("Meta+Shift+W")});
@@ -479,12 +464,6 @@ void KeyMap::apply_defaults() {
     bindings_.insert(QStringLiteral("chooseTerminal"),
                      {QStringLiteral("Meta+Shift+`"), QStringLiteral("Meta+~")});
 #else
-    bindings_.insert(QStringLiteral("splitDown"), {QStringLiteral("Ctrl+Alt+Shift+D")});
-    bindings_.insert(QStringLiteral("tileLeft"), {QStringLiteral("Ctrl+Alt+Left")});
-    bindings_.insert(QStringLiteral("tileRight"), {QStringLiteral("Ctrl+Alt+Right")});
-    bindings_.insert(QStringLiteral("tileUp"), {QStringLiteral("Ctrl+Alt+Up")});
-    bindings_.insert(QStringLiteral("tileDown"), {QStringLiteral("Ctrl+Alt+Down")});
-    bindings_.insert(QStringLiteral("zoomTile"), {QStringLiteral("Ctrl+Shift+Return")});
     bindings_.insert(QStringLiteral("reopenAgent"), {QStringLiteral("Ctrl+Alt+Shift+T")});
     // Without a dock to bring a closed window back, closing it stays unbound.
     bindings_.insert(QStringLiteral("closeAgent"), {modifier + QStringLiteral("W")});
@@ -524,7 +503,6 @@ void KeyMap::apply_defaults() {
     remind_after_min_ = kRemindAfterDefault;
     judge_pings_ = true;
     keep_awake_ = true;
-    editor_.clear();
     load_visual({});
     // Each CLI lists its own models (HarnessModels) unless the config names some.
     agent_defaults_ = {};
@@ -747,7 +725,8 @@ void KeyMap::load_alerts(const QJsonObject& root) {
     alert_sound_file_ = sound_file(QStringLiteral("soundFile"));
     finish_sound_file_ = sound_file(QStringLiteral("finishedFile"));
     keep_awake_ = root.value(QStringLiteral("keepAwake")).toBool(true);
-    editor_ = root.value(QStringLiteral("editor")).toString().left(1024);
+    // A top-level "editor" opened an agent's folder, a retired command; a
+    // file that still has it loads, and saving leaves it as written.
 }
 
 namespace {

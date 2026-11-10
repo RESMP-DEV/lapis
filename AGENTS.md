@@ -6,9 +6,8 @@ Build lapis into a portable desktop workspace for supervising many live CLI
 agents. Categories own ordered agent tabs and remember their selections. One
 GPU-accelerated terminal stage shows the selected agent. A strip of throttled
 live previews under the stage is the category's navigation; previews never take
-input or resize a terminal. There is no tab row. Agents dragged from the strip
-onto the stage tile it, as iTerm2 splits a tab; each category keeps its tiles.
-Normal use has no sample cards; the only plain shells are the side terminal's
+input or resize a terminal. There is no tab row and no tiling: the stage always
+shows exactly one agent, the category's selected one. Normal use has no sample cards; the only plain shells are the side terminal's
 (Command-`), one per machine for a quick command and never an agent. Codex is
 the first agent integration.
 Each additional CLI gets an independent, verified adapter.

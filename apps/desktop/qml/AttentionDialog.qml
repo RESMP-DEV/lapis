@@ -360,7 +360,7 @@ Dialog {
                 text: dialog.current === null ? qsTr("This request is no longer current.") :
                       dialog.current.responding ? qsTr("Waiting for the agent to resolve this request.") :
                       dialog.current.choices.length === 0 ? qsTr("Respond in the originating terminal.") :
-                      qsTr("Reconnect and select the current request before responding.")
+                      qsTr("Reconnect agent from Commands and select the current request before responding.")
                 wrapMode: Text.Wrap
             }
             Label {
@@ -369,7 +369,7 @@ Dialog {
                       dialog.current === null ? qsTr("This request is no longer pending.") :
                       dialog.current.responding ? qsTr("Response sent. Waiting for the agent.") :
                       dialog.canRespond ? qsTr("Response rejected. Review your answers and try again.") :
-                      qsTr("Response status is uncertain. Reconnect before responding.")
+                      qsTr("Response status is uncertain. Reconnect agent from Commands before responding.")
                 visible: text.length > 0
                 wrapMode: Text.Wrap
             }

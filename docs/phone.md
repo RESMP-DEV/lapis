@@ -119,9 +119,9 @@ can type, and the terminal takes the size of the device in use. Opening the
 agent on the phone gives it the phone's size; closing it or locking the phone,
 activating the lapis window, moving the pointer over the agent, or typing on
 the Mac gives it back. Agents started before this build run services that cannot
-be joined: opening one on the phone takes it from the desktop (its card offers
-**Reconnect agent**), and restarting it gives it a service that can. The Mac must
-be awake.
+be joined: opening one on the phone takes it from the desktop until **Reconnect
+agent** in Commands takes it back, and restarting it gives it a service that
+can. The Mac must be awake.
 
 Scrolling over a full-screen program scrolls the program itself; on the phone a
 vertical drag turns the wheel.
@@ -161,17 +161,18 @@ background notifications, saved to the Mac's `lapis.json`.
 data under `runtime/phone-captures/`, for debugging what the phone drew; failures
 show in the same alert as delivery results.
 
-## Ultra Tab
+## Agent tools
 
-[Ultra Tab for iPhone](https://github.com/RESMP-DEV/ultratab) uses the same gateway, with
-the same admission (the owner's devices over Tailscale or the Mac's ZeroTier
-networks, the `X-Lapis-Client` header, no browsers) and the same port. Two
-routes serve it:
+Tools that read and message the same agents, such as lapis-peers, use the same
+gateway, with the same admission (the owner's devices over Tailscale or the
+Mac's ZeroTier networks, the `X-Lapis-Client` header, no browsers) and the same
+port. Two routes serve them:
 
 - `GET /api/deck` returns, read-only, the registry's categories and agents
   (id, title, category, folder and CLI; no launch commands), the lapis window's
-  `agent_state.json` and the composed `ultratab_cards.json` as published
-  beside the registry, whether that window still runs, and a version. With
+  `agent_state.json` and, when present, the `ultratab_cards.json` the retired
+  Ultra Tab composed beside the registry, whether that window still runs, and
+  a version. With
   `?after=<version>` it answers once one of those files changes, or after at
   most eight seconds. A missing file is `null`; a linked, oversized or
   unreadable one is `null` with a line in `problems`.

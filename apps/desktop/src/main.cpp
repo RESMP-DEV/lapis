@@ -1,4 +1,3 @@
-#include "agent_search.hpp"
 #include "agent_state.hpp"
 #include "alerts.hpp"
 #include "app_paths.hpp"
@@ -8,7 +7,6 @@
 #include "interaction_recorder.hpp"
 #include "keymap.hpp"
 #include "next_prompt.hpp"
-#include "open_request.hpp"
 #include "platform_desktop.hpp"
 #include "platform_preferences.hpp"
 #include "shell_environment.hpp"
@@ -508,28 +506,6 @@ void route_terminal_keys(lapis::desktop::UiPreview& view, const lapis::desktop::
         return QMetaObject::invokeMethod(window, shifted ? "chooseTerminal" : "toggleTerminal");
     });
 }
-// Command-Option-L from any app: lapis comes forward on the agent that most
-// recently needed you. Only the real workspace takes the key.
-void route_latest_attention(lapis::desktop::UiPreview& view, lapis::desktop::Workspace& workspace,
-                            bool isolated, const QCommandLineParser& parser) {
-    if (isolated || workspace.previewMode() || parser.isSet(QStringLiteral("capture")))
-        return;
-    const bool taken = lapis::desktop::platform::on_latest_attention_key([&view, &workspace] {
-        lapis::desktop::interaction::cause(QStringLiteral("attention-key"));
-        if (auto* recorder = lapis::desktop::InteractionRecorder::active())
-            recorder->note(QStringLiteral("shortcut"),
-                           {{QStringLiteral("action"), QStringLiteral("latestAttention")},
-                            {QStringLiteral("global"), true}});
-        if (auto* window = view.window()) {
-            window->show();
-            window->raise();
-            window->requestActivate();
-        }
-        workspace.latestAttention();
-    });
-    if (!taken)
-        qWarning() << "Command-Option-L is held by another app; Command-L still works in lapis";
-}
 // The local interaction log (off unless lapis.json turns it on), only in the
 // person's own workspace: never in the isolated preview, a capture run or an
 // explicit qualification launch.
@@ -570,10 +546,7 @@ void watch_window(lapis::desktop::InteractionRecorder* recorder, QQuickWindow* w
 // A monitor must never outlive this scope. Clear it in reverse construction
 // order, including when load or exec unwinds after an exception.
 struct TerminalKeyMonitorGuard {
-    ~TerminalKeyMonitorGuard() {
-        lapis::desktop::platform::on_terminal_keys({});
-        lapis::desktop::platform::on_latest_attention_key({});
-    }
+    ~TerminalKeyMonitorGuard() { lapis::desktop::platform::on_terminal_keys({}); }
 };
 void register_qml_types() {
     using namespace lapis::desktop;
@@ -728,8 +701,9 @@ keep_gui_state(lapis::desktop::Workspace& workspace,
     return state;
 }
 
-// What this window knows about each agent, for Ultra Tab (RESMP-DEV/ultratab),
-// beside the registry; only from the window that owns the workspace.
+// What this window knows about each agent, for other local readers such as
+// lapis-peers, beside the registry; only from the window that owns the
+// workspace.
 void keep_agent_state(std::optional<lapis::desktop::AgentStatePublisher>& kept,
                       lapis::desktop::Workspace& workspace,
                       std::optional<lapis::desktop::NextPrompt>& next, bool isolated) {
@@ -738,31 +712,6 @@ void keep_agent_state(std::optional<lapis::desktop::AgentStatePublisher>& kept,
     kept.emplace(workspace, next ? &*next : nullptr,
                  QDir(QFileInfo(workspace.storagePath()).absolutePath())
                      .filePath(QStringLiteral("agent_state.json")));
-}
-
-// Ultra Tab's "show it in lapis" (Command-L on a card): select that agent and
-// bring the window forward, as clicking its notification does.
-void follow_open_requests(std::optional<lapis::desktop::OpenRequests>& kept,
-                          lapis::desktop::Workspace& workspace, QPointer<QQuickWindow>& shown,
-                          bool isolated) {
-    if (isolated || !workspace.holdsRegistry())
-        return;
-    kept.emplace(QDir(QFileInfo(workspace.storagePath()).absolutePath())
-                     .filePath(QStringLiteral("ultratab_open.json")),
-                 [&workspace, &shown](const QString& id) {
-                     lapis::desktop::interaction::cause(QStringLiteral("ultratab"));
-                     // Select first: a request naming an agent this window does
-                     // not hold must not steal focus from the other app.
-                     if (!workspace.selectSession(id) || !shown)
-                         return;
-                     // Ultra Tab is a different application, so its request
-                     // arrives while lapis is inactive; show/raise alone would
-                     // order a window in an application macOS never foregrounds.
-                     lapis::desktop::platform::activate_application();
-                     shown->show();
-                     shown->raise();
-                     shown->requestActivate();
-                 });
 }
 
 // The quick-command terminals beside this workspace, with ssh hosts from the
@@ -961,9 +910,8 @@ int main(int argc, char** argv) {
         std::optional<Notifier> notifier;
         if (!isolated)
             alert_for_agents(alerts, notifier, seen, workspace, keymap, shown);
-        DesktopActions desktop(keymap);
+        DesktopActions desktop;
         const bool hide_on_close = closes_to_dock(isolated, parser);
-        AgentSearch agentSearch(&workspace);
         // The canonical harness catalog's read-only status answers. It exists
         // in the isolated fixture too, so the pane is testable without config.
         ToolStatus toolStatus;
@@ -985,8 +933,6 @@ int main(int argc, char** argv) {
         }
         std::optional<lapis::desktop::AgentStatePublisher> agentState;
         keep_agent_state(agentState, workspace, nextPrompt, isolated);
-        std::optional<lapis::desktop::OpenRequests> openRequests;
-        follow_open_requests(openRequests, workspace, shown, isolated);
         const auto conversations = conversation_index(workspace);
         if (!isolated) {
             follow_conversation_titles(workspace, *conversations);
@@ -1001,7 +947,6 @@ int main(int argc, char** argv) {
                                    .screen = target_screen(parser),
                                    .keymap = &keymap,
                                    .alerts = alerts ? &*alerts : nullptr,
-                                   .agentSearch = &agentSearch,
                                    .tools = &toolStatus,
                                    .desktop = &desktop,
                                    .conversations = conversations.get(),
@@ -1032,7 +977,6 @@ int main(int argc, char** argv) {
         shown = view.window();
         watch_window(recorder.get(), view.window());
         route_terminal_keys(view, keymap);
-        route_latest_attention(view, workspace, isolated, parser);
         view.window()->requestActivate();
         qInfo() << "UI preview:" << isolated
                 << "system reduced motion:" << view.systemReducedMotion();

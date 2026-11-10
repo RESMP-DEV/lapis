@@ -38,10 +38,12 @@ updates. See
   the sign-in its machine already has.
   [Agents](docs/agents.md)
 - **Categories** group agents. The strip under the stage shows each agent's
-  latest lines; drag a card onto the stage to tile it beside another.
+  latest lines; click one, or step along with Command-Shift-[ and ], to show it
+  on the stage.
   [Workspace](docs/workspace.md)
-- **Jump to what needs you** with Command-J (the next) or Command-L (the latest),
-  even from another app with Command-Option-L. Chimes and notifications say when.
+- **See what needs you**: cards and categories pulse until you look, and with
+  suggestions on, Tab with no guess to accept moves to the next agent waiting on
+  you. Chimes and notifications say when.
 - **Your phone** can show and drive the same agents as a separately installed
   prototype over its gateway. It is outside the early-access support slice.
   [Phone](docs/phone.md)
@@ -72,12 +74,11 @@ uv run --no-project python scripts/lapis.py run
 | --- | --- |
 | [install](docs/install.md) | Download, where lapis keeps things, closing, upgrading |
 | [agents](docs/agents.md) | Starting agents, CLIs and modes, requests, restarts, reboots |
-| [workspace](docs/workspace.md) | Categories, the strip, tiles, finding, links, history |
+| [workspace](docs/workspace.md) | Categories, the strip, the visual view, links, history |
 | [keys](docs/keys.md) | Every keyboard shortcut |
-| [config](docs/config.md) | `lapis.json`: defaults, alerts, editor, CLI flags |
+| [config](docs/config.md) | `lapis.json`: defaults, alerts, CLI flags |
 | [phone](docs/phone.md) | The prototype iPhone app and its separately installed gateway |
 | [suggestions](docs/suggestions.md) | Optional next-prompt guesses, Tab, and their acceptance log |
-| [ultratab](https://github.com/RESMP-DEV/ultratab) | Ultra Tab, an overlay that deals waiting agents as cards, now its own repository |
 | [build](docs/build.md) | Building, checks, probes and fixtures |
 | [status](docs/status.md) | What is qualified, what remains, and the evidence |
 | [architecture](docs/architecture.md) | Design decisions and the plan |

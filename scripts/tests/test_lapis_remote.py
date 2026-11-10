@@ -1740,7 +1740,7 @@ class HomeTests(unittest.TestCase):
 
 
 class DeckTests(unittest.TestCase):
-    """Ultra Tab's deck for the phone: the registry without launch details,
+    """The deck for local tools: the registry without launch details,
     and the desktop's published state and composed cards, read-only."""
 
     AGENT = "11111111-2222-4333-8444-555555555555"
@@ -1866,28 +1866,13 @@ class DeckTests(unittest.TestCase):
             self.assertEqual(status, 409)
             self.assertIn("not reachable", body["error"])
 
-    def test_skip_refuses_unknown_agents_and_missing_card_keys(self):
+    def test_the_retired_skip_route_is_gone(self):
+        # Ultra Tab's skip is retired: the route is unknown and logs nothing.
         with Server(self, self.registry, self.runtime) as server:
             path = f"/api/agents/{self.AGENT}/skip"
             status, _ = server.request("POST", path, {"key": "k1"})
-            self.assertEqual(status, 200)
-            row = json.loads((self.runtime / remote.ANSWERS_FILE).read_text())
-            self.assertEqual(
-                (row["agent"], row["how"], row["key"]), (self.AGENT, "skipped", "k1")
-            )
-            os.remove(self.runtime / remote.ANSWERS_FILE)
-            # An agent the registry does not name, and a body with no card
-            # key: neither is logged.
-            status, _ = server.request(
-                "POST", "/api/agents/terminal-x/skip", {"key": "k1"}
-            )
             self.assertEqual(status, 404)
-            status, _ = server.request("POST", path, {"proposal": "ship it"})
-            self.assertEqual(status, 400)
-            self.assertFalse(
-                (self.runtime / remote.ANSWERS_FILE).exists(),
-                "invalid answers stay out",
-            )
+            self.assertFalse((self.runtime / remote.ANSWERS_FILE).exists())
 
 
 class MachineTests(unittest.TestCase):

@@ -6,7 +6,6 @@
 #include "history_strip.hpp"
 #include "keymap.hpp"
 #include "tab_ranker.hpp"
-#include "tile_layout.hpp"
 #include <lapis/session/terminal.hpp>
 
 #include "launch_spec.hpp"
@@ -100,10 +99,11 @@ class SessionPreview final : public QObject {
     [[nodiscard]] const QHash<QString, QString>& serviceEnvironment() const {
         return service_environment_;
     }
-    // When its screen last changed, in milliseconds since the epoch; 0 never.
+    // Attach again to its service, taking it from another view (Reconnect
+    // agent in Commands); discoverSession adopts a matching running one, for
+    // the side terminal's recovery.
     Q_INVOKABLE void reconnect();
-    Q_INVOKABLE void discoverSession();
-    Q_INVOKABLE void startNewSession();
+    void discoverSession();
     // A screen back or forward through kept history.
     Q_INVOKABLE void olderHistory();
     Q_INVOKABLE void newerHistory();
@@ -430,13 +430,6 @@ class Workspace final : public QObject {
     Q_PROPERTY(int focusedIndex READ focusedIndex NOTIFY focusChanged)
     Q_PROPERTY(
         lapis::desktop::SessionPreview* focusedSession READ focusedSession NOTIFY focusChanged)
-    // The active category's tiles, in unit coordinates of the stage: each
-    // {sessionId, session, x, y, width, height}. Empty while the stage shows
-    // one agent.
-    Q_PROPERTY(QVariantList stageTiles READ stageTiles NOTIFY tilesChanged)
-    // Each split's divider line and the area it divides, in the same units:
-    // {path, stacked, x, y, width, height, areaX, areaY, areaWidth, areaHeight}.
-    Q_PROPERTY(QVariantList stageDividers READ stageDividers NOTIFY tilesChanged)
     // An agent closed since lapis opened can come back with its conversation.
     Q_PROPERTY(bool canReopenAgent READ canReopenAgent NOTIFY closedChanged)
     // The visual view's conversation: the stage sets its path to an agent's
@@ -529,15 +522,6 @@ class Workspace final : public QObject {
     // Every agent in the category shown, or in every category.
     Q_INVOKABLE int reloadCategory();
     Q_INVOKABLE int reloadAll();
-    // Updates the agent's CLI where it runs, with the CLI's own update
-    // command, then reloads it so it runs the new version. One update per
-    // CLI and machine serves every agent that asks; one that fails leaves
-    // its agents running. Returns how many agents wait for an update.
-    Q_INVOKABLE int updateAndReloadAgent(const QString& id);
-    // The same for every Claude Code agent, on each machine that has one.
-    Q_INVOKABLE int updateClaudeAndReload();
-    // Whether the agent's CLI has an update command lapis can run.
-    Q_INVOKABLE [[nodiscard]] bool canUpdateAgent(const QString& id) const;
     Q_INVOKABLE bool moveSession(const QString& id, const QString& categoryId);
     // A name someone chose; it stays until they choose another.
     Q_INVOKABLE bool renameSession(const QString& id, const QString& title);
@@ -570,12 +554,6 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool placeCategory(const QString& id, int index);
     Q_INVOKABLE bool removeSession(const QString& id);
     Q_INVOKABLE void nextSession(int delta = 1);
-    // Selects the next agent, in any category, that finished a turn or asked
-    // for something while unseen; false when none is waiting.
-    Q_INVOKABLE bool nextAttention();
-    // Selects the agent that most recently began to need you; again, the one
-    // before it. False when none is waiting.
-    Q_INVOKABLE bool latestAttention();
     // Tab's next agent, in any category, of those truly waiting on you: a
     // request, or a finished turn (no background work in flight) that is
     // unseen or has a guessed next prompt. Agents at work, paused on their own
@@ -590,8 +568,9 @@ class Workspace final : public QObject {
     // with the candidates and their scores.
     Q_INVOKABLE bool nextPriorityAttention(const QVariantMap& ready);
     // An agent is parked once the person has looked at its finished turn for
-    // kParkAfterMs and moved on without a prompt: Tab, and Ultra Tab's cards,
-    // skip it until it begins to wait again. A request is never parked.
+    // kParkAfterMs and moved on without a prompt: Tab skips it, and
+    // agent_state.json marks it, until it begins to wait again. A request is
+    // never parked.
     static constexpr qint64 kParkAfterMs = 2500;
     [[nodiscard]] qint64 parkedAtMs(const QString& id) const;
     [[nodiscard]] bool parked(const SessionPreview* item) const;
@@ -608,21 +587,6 @@ class Workspace final : public QObject {
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;
     [[nodiscard]] int attentionAgents() const;
-    [[nodiscard]] QVariantList stageTiles() const;
-    [[nodiscard]] QVariantList stageDividers() const;
-    // Tiles `id` beside `target` on its category's stage (left, right, top,
-    // bottom), or in its place (center), and selects it. With no target, beside
-    // the selected agent.
-    Q_INVOKABLE bool tileSession(const QString& id, const QString& target, const QString& edge);
-    // Takes an agent off the stage; it keeps running in the strip.
-    Q_INVOKABLE bool untileSession(const QString& id);
-    // Moves a divider; `persist` saves it (once, when a drag ends).
-    Q_INVOKABLE bool setTileRatio(const QString& path, qreal ratio, bool persist);
-    // Selects the tile beside the selected one (left, right, top or bottom).
-    Q_INVOKABLE bool focusTile(const QString& direction);
-    // Starts an agent like the selected one (folder, CLI, model and mode) and
-    // tiles it beside it; returns its id.
-    Q_INVOKABLE QString splitAgent(const QString& edge);
     // Starts the most recently closed agent again, resuming its conversation
     // where its CLI can, in its category, and shows it.
     Q_INVOKABLE bool reopenAgent();
@@ -642,7 +606,7 @@ class Workspace final : public QObject {
     void setHarnessArguments(QHash<QString, QStringList> arguments) {
         harness_arguments_ = std::move(arguments);
     }
-    // CLIs lapis.json pins: never updated on start nor by the update commands.
+    // CLIs lapis.json pins: never updated on start.
     // The constructor copies the startup set; this setter applies live reloads.
     void setHarnessUpdatesOff(QSet<QString> harnesses) {
         harness_updates_off_ = std::move(harnesses);
@@ -656,7 +620,6 @@ class Workspace final : public QObject {
     void categoriesChanged();
     void categoryChanged();
     void errorChanged();
-    void tilesChanged();
     void closedChanged();
     // What saveMarks() returns may have changed.
     void marksChanged();
@@ -687,22 +650,14 @@ class Workspace final : public QObject {
                          const std::function<void(QProcess*, const QString&, bool)>& finished);
     // True when the agent waits for its CLI's update and starts after it.
     bool deferForUpdate(const QString& id);
-    // One updater per CLI and machine (empty means local), with separate
-    // consumers for first starts and successful-update reloads.
+    // One updater per CLI on this Mac, and the agents waiting to start.
     struct CliUpdate {
         QString harness;
-        QString machine;
         QPointer<QProcess> process;
-        QStringList agents;
         QStringList starts;
-        bool manual{};
     };
-    QHash<QString, CliUpdate> cli_updates_;
-    int updateAndReload(const QStringList& ids);
-    // Reports and returns true when lapis.json turned off this CLI's updates.
-    bool refuseUpdatesOff(const QString& harness);
-    void finishCliUpdate(const QString& key, QProcess* process, const QString& outcome,
-                         bool succeeded);
+    QHash<QString, CliUpdate> cli_updates_; // by harness
+    void finishCliUpdate(const QString& harness, QProcess* process, const QString& outcome);
     void drainUpdater(QProcess* process);
     void startUpdatedAgents(const QStringList& ids);
     void logUpdate(const QString& line) const;
@@ -715,8 +670,6 @@ class Workspace final : public QObject {
         QString id;
         QString name;
         QString selected;
-        // Two or more agents tiled on the stage, or empty for one agent.
-        TileLayout tiles;
     };
     struct Agent {
         QString category;
@@ -750,17 +703,6 @@ class Workspace final : public QObject {
     };
     // Build the launch and its managed resume provenance together.
     std::optional<ResumeLaunch> agentLaunch(const AgentRequest& request);
-    // The walk of the next and previous agent keys through a tiled category:
-    // the layout it started from, its order, the tile showing untiled agents,
-    // and the stage it left. Any other change to the stage starts a new walk.
-    struct TileWalk {
-        TileLayout home;
-        QStringList order;
-        QString slot;
-        QJsonObject shown;
-        QString selected;
-    };
-    QHash<QString, TileWalk> tile_walks_;
     QString insertCategory(const QString& name, bool select);
     // Starts an agent from a finished launch; the rest of startAgent. A
     // managed resume plan is committed in the same registry save as the
@@ -768,10 +710,6 @@ class Workspace final : public QObject {
     QString launchAgent(const AgentRequest& request, const session::LaunchSpec& launch,
                         int managed_resume_index = -1, const QString& managed_resume_identity = {});
     Category* category(const QString& id);
-    [[nodiscard]] const Category* activeCategory() const;
-    // After an agent leaves a category: off its stage, and one tile is no split.
-    void untile(Category& category, const QString& id);
-    void loadTiles(const QJsonArray& groups);
     // Where agents moving to `categoryId` go among those that stay: before its
     // index-th agent, or after its last.
     [[nodiscard]] std::size_t

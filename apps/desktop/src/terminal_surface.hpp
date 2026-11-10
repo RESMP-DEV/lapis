@@ -32,7 +32,7 @@ class SessionPreview;
 // when the cell is not part of one.
 [[nodiscard]] QString terminal_url_at(const session::TerminalSnapshot& snapshot, int column,
                                       int row);
-// A case-insensitive match of `needle` within one screen row.
+// A run of cells within one screen row.
 struct TerminalMatch {
     int row{};
     int first_column{};
@@ -55,11 +55,6 @@ terminal_link_at(const session::TerminalSnapshot& snapshot, int column, int row)
 // A path as written, as an existing file or folder on this Mac: absolute,
 // under ~, or relative to `folder` (none when `folder` is empty); else empty.
 [[nodiscard]] QString resolve_terminal_path(const QString& written, const QString& folder);
-// The next match after the cell `from` (column, row), or the one before it
-// when `backwards`; searching wraps around neither end of the screen.
-[[nodiscard]] std::optional<TerminalMatch> terminal_find(const session::TerminalSnapshot& snapshot,
-                                                         const QString& needle, QPoint from,
-                                                         bool backwards);
 
 // Whether the cursor's row holds text from the cursor up to its last two cells,
 // as when the cursor moved back into typed text. Blanks and faint text (a CLI's
@@ -153,13 +148,6 @@ class TerminalSurface : public QQuickItem {
     // A valid file URL as QUrl's local or UNC path; empty for other schemes,
     // malformed URLs and NUL bytes. Callers still quote the result for a shell.
     Q_INVOKABLE QString localFilePath(const QString& url) const;
-    // Selects the next match on the page shown (older first when
-    // `backwards`), starting from the current selection; false when there is
-    // none left on this page.
-    Q_INVOKABLE bool findText(const QString& text, bool backwards);
-    // How many times the page shown contains the text.
-    Q_INVOKABLE int countMatches(const QString& text) const;
-    Q_INVOKABLE void clearSelectedText() { clearSelection(); }
     ~TerminalSurface() override;
     [[nodiscard]] SessionPreview* document() const;
     void setDocument(SessionPreview* document);

@@ -453,8 +453,8 @@ separate from offscreen results.
 `lapis.json` stores appearance and optional keybinding overrides. Empty overrides
 use platform defaults. Command-R on macOS reloads it. The product has one terminal
 stage, category navigation and the category's agent strip under the stage; no
-tab row or preview layout picker; dragging an agent preview onto the stage
-creates a tile. `previewsVisible` hides the strip
+tab row, preview layout picker or tiling; the stage shows the category's
+selected agent. `previewsVisible` hides the strip
 (default on); the `togglePreviews` action has no default key.
 `harnessArguments` maps a harness id (`codex`, `claude`, `grok`, ...) to literal
 arguments added when lapis starts a new agent of that harness; each agent's
@@ -465,8 +465,6 @@ The committed `lapis.json` holds defaults only (see
 - macOS: Command-Option-left/right or Command-Shift-up/down changes category;
   Command-Shift-[ / ] moves through the category's agents. Command-1 through 4
   selects a category.
-- Command-J (`nextAttention`) selects the next agent in any category with a pending
-  request, then one that finished unseen; Linux uses Control-Shift-J.
 - Command-T starts the new-agent form; Command-N (or the + under the categories) starts
   the category form.
   Command-Shift-P opens the searchable, scrollable Commands palette. Command-B
@@ -824,7 +822,7 @@ union of the relevant checks; a check satisfying two rows runs once:
 | Session restore, resume records or the registry lock | `uv run --no-project python scripts/check_restore.py` on macOS with the installed Codex and Claude Code; it uses the fake model and leaves nothing running |
 | Disk history | `python3 scripts/check_history.py --disk-full` on macOS, plus desktop-enabled ASan/TSan; the disk-full fixture creates and removes its own 32 MiB disk image |
 | Python tooling | Focused iteration selects affected Ruff and unittest cases; an assembled integration/release handoff establishes `just quality` (includes Ruff and Python unit tests) unless unchanged assembled-source results are reusable, plus relevant runtime probes |
-| iPhone app or gateway (`apps/ios`, `apps/remote`) | `just quality` (includes the gateway suite, with a live service when the desktop is built) and `uv run --no-project python scripts/check_ios_remote.py --codex --claude` on macOS with an iOS Simulator runtime; for the gateway's deck routes, also run `scripts/check_ultratab_ios.py` from [Ultra Tab](https://github.com/RESMP-DEV/ultratab) |
+| iPhone app or gateway (`apps/ios`, `apps/remote`) | `just quality` (includes the gateway suite, with a live service when the desktop is built) and `uv run --no-project python scripts/check_ios_remote.py --codex --claude` on macOS with an iOS Simulator runtime; the gateway suite covers the deck and submit routes that lapis-peers uses |
 | Before a release (Mac and iPhone together) | The macOS desktop/native gates above, `just quality` and `just ios-check`, whose Mac-side client stays attached through every UI test and must see and answer the phone. Linux UI qualification remains deferred; run its gate when that port is explicitly selected. |
 | Mac app packaging (`scripts/package_macos.py`, `apps/desktop/macos`, `LAPIS_PACKAGE`) | `just quality`, then `package_macos.py app` and `verify` on the Mac; `verify --notarized` for a release |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |
@@ -1047,10 +1045,8 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
 | `workspace` | Desktop-enabled | Category registry (private atomic writes, rollback on failure), agent create/close/reopen, per-category selection, unseen marks, status sources and parent-session marker removal |
 | `window-state` | Desktop-enabled | Machine-local window geometry, off-screen restore, isolated modes, unsafe paths, legacy layout values and modal focus |
-| `agent-search` | Desktop-enabled | Agent matching, ranking and query handling |
 | `app-environment` | Desktop-enabled | Application launch environment and executable discovery |
-| `terminal-find` | Desktop-enabled | Terminal text matching and row/column results |
-| `tile-layout` | Desktop-enabled | Tile placement, navigation and layout bounds |
+| `terminal-suggestion` | Desktop-enabled | Where an offered next prompt shows after the cursor |
 | `cell-shapes` | Desktop-enabled | Block, box and quadrant geometry |
 | `harness-models` | Desktop-enabled | Model discovery, parsing, defaults and result bounds |
 | `ui-preview` | Desktop-enabled | Qt reload, screen selection, passive attention, modal response ownership, draft/IME preservation, input and render lifecycle |
@@ -1406,14 +1402,13 @@ build/desktop/apps/desktop/lapis_switch_benchmark --output build/switch.json
 
 It starts disposable agents (a stand-in CLI that draws a screen of text and
 waits) under the real session service in a private `LAPIS_HOME`, ends them
-afterwards, tiles three agents in every other category, loads `Main.qml` with
+afterwards, loads `Main.qml` with
 the software scene graph and switches through the keymap's own next-agent and
 next-category bindings, delivered as window-system key events, then clicks
 strip cards and moves the pointer. Each sample is GUI-thread time from the
 input to the end of its delivery (`dispatch`), to the end of the next frame's
 scene-graph sync (`synced`) and to its `frameSwapped` (`frame`), as
-p50/p95/p99; agent keys are also split by whether they changed the stage's
-tiles. Software rasterizing is included in `frame` only, and none of it is GPU
+p50/p95/p99. Software rasterizing is included in `frame` only, and none of it is GPU
 presentation: compare runs of this tool with each other, on one machine, and
 profile the same run with `sample` or `xctrace` for causes.
 Pointer-move samples measure event delivery only; they are not comparable with

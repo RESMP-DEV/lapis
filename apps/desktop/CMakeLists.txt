@@ -24,13 +24,11 @@ add_library(lapis_desktop_view STATIC
     src/alerts.cpp src/alerts.hpp
     src/chime_sounds.cpp src/chime_sounds.hpp
     src/platform/chime_file.cpp src/platform/chime_file.hpp
-    src/agent_search.cpp src/agent_search.hpp
     src/conversation_index.cpp src/conversation_index.hpp
     src/terminals.cpp src/terminals.hpp
     src/next_prompt.cpp src/next_prompt.hpp
     src/tab_ranker.cpp src/tab_ranker.hpp
-    src/agent_state.cpp src/agent_state.hpp src/attention_order.hpp
-    src/open_request.cpp src/open_request.hpp
+    src/agent_state.cpp src/agent_state.hpp
     src/harness_models.cpp src/harness_models.hpp
     src/attention_view.cpp
     src/keymap.cpp src/keymap.hpp
@@ -41,7 +39,6 @@ add_library(lapis_desktop_view STATIC
     src/platform/published_task.hpp
     src/terminal_surface.cpp src/terminal_surface.hpp
     src/cell_shapes.cpp src/cell_shapes.hpp
-    src/tile_layout.cpp src/tile_layout.hpp
     src/history_strip.cpp src/history_strip.hpp
     src/gui_state.cpp src/gui_state.hpp
     src/app_paths.cpp src/app_paths.hpp
@@ -97,7 +94,7 @@ if(APPLE)
     target_link_libraries(lapis_desktop PRIVATE "-framework AppKit")
 endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
-qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml)
+qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml)
 # A development bundle has its own identity, so macOS never mistakes it for
 # the installed app: `open` would otherwise bring the installed lapis forward,
 # and the two would share notification and preference state.
@@ -154,18 +151,14 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_conversation_index_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME conversation-index COMMAND lapis_conversation_index_tests)
     set_tests_properties(conversation-index PROPERTIES TIMEOUT 60)
-    add_executable(lapis_agent_search_tests tests/agent_search_test.cpp)
-    target_link_libraries(lapis_agent_search_tests PRIVATE lapis_project_options lapis_desktop_view)
-    add_test(NAME agent-search COMMAND lapis_agent_search_tests)
-    set_tests_properties(agent-search PROPERTIES TIMEOUT 60)
     add_executable(lapis_app_environment_tests tests/app_environment_test.cpp)
     target_link_libraries(lapis_app_environment_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME app-environment COMMAND lapis_app_environment_tests)
     set_tests_properties(app-environment PROPERTIES TIMEOUT 20)
-    add_executable(lapis_terminal_find_tests tests/terminal_find_test.cpp)
-    target_link_libraries(lapis_terminal_find_tests PRIVATE lapis_project_options lapis_desktop_view)
-    add_test(NAME terminal-find COMMAND lapis_terminal_find_tests)
-    set_tests_properties(terminal-find PROPERTIES TIMEOUT 20)
+    add_executable(lapis_terminal_suggestion_tests tests/terminal_suggestion_test.cpp)
+    target_link_libraries(lapis_terminal_suggestion_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME terminal-suggestion COMMAND lapis_terminal_suggestion_tests)
+    set_tests_properties(terminal-suggestion PROPERTIES TIMEOUT 20)
     add_executable(lapis_gui_state_tests tests/gui_state_test.cpp)
     target_link_libraries(lapis_gui_state_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME gui-state COMMAND lapis_gui_state_tests)
@@ -174,10 +167,6 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_history_strip_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME history-strip COMMAND lapis_history_strip_tests)
     set_tests_properties(history-strip PROPERTIES TIMEOUT 20)
-    add_executable(lapis_tile_layout_tests tests/tile_layout_test.cpp)
-    target_link_libraries(lapis_tile_layout_tests PRIVATE lapis_project_options lapis_desktop_view)
-    add_test(NAME tile-layout COMMAND lapis_tile_layout_tests)
-    set_tests_properties(tile-layout PROPERTIES TIMEOUT 20)
     add_executable(lapis_transcript_tests tests/transcript_test.cpp)
     target_link_libraries(lapis_transcript_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME transcript COMMAND lapis_transcript_tests)
@@ -370,4 +359,4 @@ target_link_libraries(lapis_attention_ui_probe PRIVATE lapis_project_options lap
     Qt6::QuickControls2)
 target_compile_definitions(lapis_attention_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
 qt_add_resources(lapis_attention_ui_probe attention_qml PREFIX "/" FILES
-    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml)
+    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml)

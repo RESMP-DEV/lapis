@@ -707,13 +707,13 @@ void unseenFollowsTurnsAndSelection() {
     require(checks->unseen(), "a new request marks its agent");
     require(pings == pings_before + 1, "a new request pings once, as a finished turn does");
     require(count("general") == 1, "one unseen agent after the earlier one was selected");
-    // Jumping to the waiting agent clears it as seen.
-    require(workspace.nextAttention() && workspace.focusedSession() == checks,
-            "the next waiting agent is selected");
-    require(!checks->unseen(), "jumping to an agent is looking at it");
+    // Selecting the waiting agent clears it as seen.
+    require(workspace.selectSession(QStringLiteral("checks")) &&
+                workspace.focusedSession() == checks,
+            "the waiting agent is selected");
+    require(!checks->unseen(), "selecting an agent is looking at it");
     require(workspace.attentionAgents() == waiting_before,
             "a request already looked at no longer counts, though it is still pending");
-    require(!workspace.nextAttention(), "nor does it draw the jump again");
 }
 
 // An agent asked for without a mode starts in the forms' default, or the
@@ -777,32 +777,6 @@ void modelessAgentsGetTheDefaultMode() {
                 QLatin1String("full"),
             "other configured arguments do not");
     require(launch_mode(asked("shell"), {}, {}).isEmpty(), "a CLI without modes gets none");
-}
-
-// Command-L goes to the agent that most recently began to need you, then the
-// one before it.
-void latestAttentionGoesToTheNewest() {
-    Workspace workspace(WorkspaceMode::preview);
-    require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
-    lapis::session::wire::AttentionSnapshot state;
-    state.available = state.connected = state.ready = true;
-    const auto finish = [&](const char* id) {
-        auto* item = workspace.session(QString::fromLatin1(id));
-        state.activity = lapis::session::attention::Activity::working;
-        item->applyAttention(state);
-        state.activity = lapis::session::attention::Activity::turn_completed;
-        item->applyAttention(state);
-        require(item->unseen(), "a finished turn out of view is marked");
-        QThread::msleep(5); // a later need has a later time
-        return item;
-    };
-    auto* first = finish("agent");
-    auto* second = finish("checks");
-    require(workspace.latestAttention() && workspace.focusedSession() == second,
-            "the newest need is selected first");
-    require(workspace.latestAttention() && workspace.focusedSession() == first,
-            "then the one before it");
-    require(!workspace.latestAttention(), "and nothing once all were looked at");
 }
 
 // Tab's next agent: a guess not yet seen first, then a turn finished unseen,
@@ -1288,16 +1262,16 @@ void agentArgumentsPersist() {
     require(!rejected.workspaceError().isEmpty(), "non-string arguments are rejected");
 }
 
-// A direct selection can enter an inactive category with stale selection state.
-// Even then, an untiled selection must take a real tile instead of floating
-// above the unchanged tile delegates.
-void directTileSelectionNormalizesAStaleTarget() {
+// An earlier lapis saved stage tiles per category. Such a registry still
+// loads, the stage shows the category's selected agent, the next key walks the
+// strip, and the next save drops the tiles.
+void savedTilesLoadAsTheSelectedAgent() {
     QTemporaryDir directory;
-    require(directory.isValid(), "tile-selection directory");
+    require(directory.isValid(), "saved-tiles directory");
     const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
     const QString left = uuid();
     const QString right = uuid();
-    const QString untiled = uuid();
+    const QString other = uuid();
     auto agent = [&](const QString& id) { return agentRecord(canonical, id, "work"); };
     WorkspaceOptions options;
     options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
@@ -1305,210 +1279,33 @@ void directTileSelectionNormalizesAStaleTarget() {
         options.storagePath,
         QJsonObject{
             {"version", 2},
-            {"activeCategory", "general"},
-            {"categories",
-             QJsonArray{
-                 QJsonObject{{"id", "general"}, {"name", "General"}},
-                 QJsonObject{{"id", "work"},
-                             {"name", "Work"},
-                             {"selected", uuid()},
-                             {"tiles", QJsonObject{{"stacked", false},
-                                                   {"ratio", 0.5},
-                                                   {"children",
-                                                    QJsonArray{QJsonObject{{"agent", left}},
-                                                               QJsonObject{{"agent", right}}}}}}}}},
-            {"agents", QJsonArray{agent(left), agent(right), agent(untiled)}}});
-    Workspace workspace(WorkspaceMode::live, options);
-    require(workspace.workspaceError().isEmpty(), "load the stale tile-selection registry");
-    require(workspace.selectSession(untiled), "select directly into the inactive tiled category");
-    const auto tiles = workspace.stageTiles();
-    require(tiles.size() == 2 &&
-                tiles[0].toMap().value(QStringLiteral("sessionId")).toString() == untiled &&
-                tiles[1].toMap().value(QStringLiteral("sessionId")).toString() == right &&
-                workspace.focusedSession() == workspace.session(untiled),
-            "an untiled direct selection replaces the first valid tile");
-}
-
-// The next and previous keys walk the tiles of the layout the walk started
-// from, but an agent can leave the category while the walk shows another agent
-// in its tile. Closing or moving it then finds no tile to remove, so the walk
-// must end instead of stepping onto the departed agent and putting it back.
-void tileWalkDropsDisplacedAgentsThatLeave() {
-    const auto make = [](const QString& directory, QString& left, QString& right,
-                         QString& untiled) {
-        const auto canonical = QFileInfo(directory).canonicalFilePath();
-        left = uuid();
-        right = uuid();
-        untiled = uuid();
-        auto agent = [&](const QString& id) { return agentRecord(canonical, id, "work"); };
-        WorkspaceOptions options;
-        options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
-        writeRegistry(
-            options.storagePath,
-            QJsonObject{
-                {"version", 2},
-                {"activeCategory", "work"},
-                {"categories",
-                 QJsonArray{QJsonObject{{"id", "work"},
-                                        {"name", "Work"},
-                                        {"selected", right},
-                                        {"tiles",
-                                         QJsonObject{{"stacked", false},
-                                                     {"ratio", 0.5},
-                                                     {"children",
-                                                      QJsonArray{QJsonObject{{"agent", left}},
-                                                                 QJsonObject{{"agent", right}}}}}}},
-                            QJsonObject{{"id", "other"}, {"name", "Other"}}}},
-                {"agents", QJsonArray{agent(left), agent(right), agent(untiled)}}});
-        return std::make_unique<Workspace>(WorkspaceMode::live, options);
-    };
-    const auto stage = [](const Workspace& workspace) {
-        QStringList result;
-        for (const auto& tile : workspace.stageTiles())
-            result.append(tile.toMap().value(QStringLiteral("sessionId")).toString());
-        return result;
-    };
-    const auto tile_ids = [](const QJsonObject& tiles) {
-        QStringList result;
-        const std::function<void(const QJsonObject&)> walk = [&](const QJsonObject& node) {
-            const auto children = node.value(QStringLiteral("children")).toArray();
-            if (children.isEmpty()) {
-                result.append(node.value(QStringLiteral("agent")).toString());
-                return;
-            }
-            for (const auto& child : children)
-                walk(child.toObject());
-        };
-        walk(tiles);
-        return result;
-    };
-    const auto saved = [](const QString& path, const QString& category) {
-        const auto groups = QJsonDocument::fromJson(readRegistry(path))
-                                .object()
-                                .value(QStringLiteral("categories"))
-                                .toArray();
-        for (const auto& value : groups) {
-            const auto group = value.toObject();
-            if (group.value(QStringLiteral("id")).toString() == category)
-                return group.value(QStringLiteral("tiles")).toObject();
-        }
-        throw std::runtime_error("missing category in saved registry");
-    };
-
-    QTemporaryDir closed_directory;
-    require(closed_directory.isValid(), "closed-walk directory");
-    QString left;
-    QString right;
-    QString untiled;
-    auto closed = make(closed_directory.path(), left, right, untiled);
-    require(closed->workspaceError().isEmpty(), "load the closed-walk registry");
-    require(closed->focusedSession() == closed->session(right), "the walk starts from a tile");
-    closed->nextSession(1);
-    require(stage(*closed) == QStringList{left, untiled} &&
-                closed->focusedSession() == closed->session(untiled),
-            "the walk shows the untiled agent in the tile it displaced");
-    closed->session(right)->setConnection(QStringLiteral("ended"), false);
-    require(closed->removeSession(right), "close the displaced agent while the walk shows another");
-    require(stage(*closed) == QStringList{left, untiled},
-            "closing a displaced agent leaves the shown tiles alone");
-    closed->nextSession(-1);
-    require(closed->focusedSession() == closed->session(left) &&
-                stage(*closed) == QStringList{left, untiled},
-            "the walk ends instead of stepping onto the closed agent");
-    require(tile_ids(saved(closed->storagePath(), QStringLiteral("work"))) ==
-                QStringList{left, untiled},
-            "closing a displaced agent never saves its stale tile");
-
-    QTemporaryDir moved_directory;
-    require(moved_directory.isValid(), "moved-walk directory");
-    auto moved = make(moved_directory.path(), left, right, untiled);
-    require(moved->workspaceError().isEmpty(), "load the moved-walk registry");
-    moved->nextSession(1);
-    require(stage(*moved) == QStringList{left, untiled} &&
-                moved->focusedSession() == moved->session(untiled),
-            "the moved walk displaces its starting tile");
-    require(moved->moveSession(right, QStringLiteral("other")), "move the displaced agent away");
-    require(stage(*moved) == QStringList{left, untiled},
-            "moving a displaced agent leaves the shown tiles alone");
-    moved->nextSession(-1);
-    require(moved->focusedSession() == moved->session(left) &&
-                stage(*moved) == QStringList{left, untiled},
-            "the walk ends instead of showing the moved agent back");
-    require(!moved->categorySessions().contains(QVariant::fromValue(moved->session(right))),
-            "the moved agent stays out of its old category");
-    require(tile_ids(saved(moved->storagePath(), QStringLiteral("work"))) ==
-                QStringList{left, untiled},
-            "moving a displaced agent never saves its stale tile");
-}
-
-// A walk belongs to its category. A no-op or real step elsewhere must not
-// replace the saved home layout that lets the original walk restore its tiles.
-void tileWalkSurvivesAnotherCategory() {
-    QTemporaryDir directory;
-    require(directory.isValid(), "cross-category walk directory");
-    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
-    const QString left = uuid();
-    const QString right = uuid();
-    const QString untiled = uuid();
-    const QString alone = uuid();
-    const QString first_away = uuid();
-    const QString second_away = uuid();
-    const auto agent = [&](const QString& id, const char* category) {
-        return agentRecord(root.path(), id, category);
-    };
-    WorkspaceOptions options;
-    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
-    writeRegistry(
-        options.storagePath,
-        QJsonObject{
-            {"version", 2},
             {"activeCategory", "work"},
             {"categories",
              QJsonArray{QJsonObject{
-                            {"id", "work"},
-                            {"name", "Work"},
-                            {"selected", right},
-                            {"tiles",
-                             QJsonObject{{"stacked", false},
-                                         {"ratio", 0.5},
-                                         {"children", QJsonArray{QJsonObject{{"agent", left}},
-                                                                 QJsonObject{{"agent", right}}}}}}},
-                        QJsonObject{{"id", "solo"}, {"name", "Solo"}, {"selected", alone}},
-                        QJsonObject{{"id", "away"}, {"name", "Away"}, {"selected", first_away}}}},
-            {"agents", QJsonArray{agent(left, "work"), agent(right, "work"), agent(untiled, "work"),
-                                  agent(alone, "solo"), agent(first_away, "away"),
-                                  agent(second_away, "away")}}});
+                 {"id", "work"},
+                 {"name", "Work"},
+                 {"selected", right},
+                 {"tiles", QJsonObject{{"stacked", false},
+                                       {"ratio", 0.5},
+                                       {"children", QJsonArray{QJsonObject{{"agent", left}},
+                                                               QJsonObject{{"agent", right}}}}}}}}},
+            {"agents", QJsonArray{agent(left), agent(right), agent(other)}}});
     Workspace workspace(WorkspaceMode::live, options);
-    const auto stage = [](const Workspace& item) {
-        QStringList result;
-        for (const auto& tile : item.stageTiles())
-            result.append(tile.toMap().value(QStringLiteral("sessionId")).toString());
-        return result;
-    };
-    require(workspace.workspaceError().isEmpty(), "load the cross-category walk registry");
+    require(workspace.workspaceError().isEmpty(), "a registry with saved tiles loads");
+    require(workspace.focusedSession() == workspace.session(right),
+            "the stage shows the category's selected agent");
     workspace.nextSession(1);
-    require(stage(workspace) == QStringList{left, untiled} &&
-                workspace.focusedSession() == workspace.session(untiled),
-            "the original walk displaces a home tile");
-
-    require(workspace.selectCategory(QStringLiteral("solo")), "visit a one-agent category");
-    workspace.nextSession(1);
-    require(workspace.focusedSession() == workspace.session(alone),
-            "a one-agent category's next key is a no-op");
-    require(workspace.selectCategory(QStringLiteral("away")), "visit a two-agent category");
-    workspace.nextSession(1);
-    require(workspace.focusedSession() == workspace.session(second_away),
-            "another category can take a real step");
-
-    require(workspace.selectCategory(QStringLiteral("work")), "return to the original walk");
-    require(workspace.focusedSession() == workspace.session(untiled) &&
-                stage(workspace) == QStringList{left, untiled},
-            "returning preserves the original walk's shown stage");
-    workspace.nextSession(1);
-    require(workspace.focusedSession() == workspace.session(left),
-            "the original walk restores its selected home tile");
-    require(stage(workspace) == QStringList{left, right},
-            "the original walk restores its saved home tiles");
+    require(workspace.focusedSession() == workspace.session(other),
+            "the next key walks the strip, not the old tiles");
+    const auto groups = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                            .object()
+                            .value(QStringLiteral("categories"))
+                            .toArray();
+    require(groups.size() == 1, "the saved registry keeps its category");
+    const auto saved = groups.first().toObject();
+    require(!saved.contains(QStringLiteral("tiles")) &&
+                saved.value(QStringLiteral("selected")).toString() == other,
+            "the next save drops the tiles and keeps the selection");
 }
 
 void unknownRegistryVersionsAreRejected() {
@@ -1935,8 +1732,7 @@ void failedUpdaterStartClearsTheQueue() {
 }
 
 // harnessUpdates in lapis.json pins a CLI: its agents start without an
-// update and the explicit command says updates are off, while every other
-// CLI still updates first.
+// update, while every other CLI still updates first.
 void pinnedCliIsNotUpdated() {
     const QByteArray script = "#!/bin/sh\n"
                               "if [ \"$1\" = update ]; then\n"
@@ -1964,19 +1760,6 @@ void pinnedCliIsNotUpdated() {
             "the unpinned agent starts after its update");
     require(fixture.read(QStringLiteral("updates")) == "claude\n",
             "only the unpinned CLI was updated");
-    workspace.clearError();
-    require(workspace.canUpdateAgent(pinned->sessionId()) &&
-                workspace.updateAndReloadAgent(pinned->sessionId()) == 0 &&
-                workspace.workspaceError().contains(QStringLiteral("Updates are off for Grok")),
-            "the explicit update says updates are off for the pinned CLI");
-    require(pinned->statusLabel() != QStringLiteral("Updating Grok…") &&
-                fixture.read(QStringLiteral("updates")) == "claude\n",
-            "and does not run it");
-    workspace.setHarnessUpdatesOff({QStringLiteral("grok"), QStringLiteral("claude")});
-    require(workspace.updateClaudeAndReload() == 0 &&
-                workspace.workspaceError().contains(QStringLiteral("Updates are off for Claude")) &&
-                fixture.read(QStringLiteral("updates")) == "claude\n",
-            "a config change pins Claude for the Claude update command too");
     for (const auto& id : {pinned->sessionId(), updated->sessionId()})
         require(workspace.closeSession(id), "close a pinned-update fixture agent");
     require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
@@ -2506,14 +2289,6 @@ exec sleep 600
                 [far] { return screenText(far->snapshot()).contains(QStringLiteral("connected")); },
                 10000),
             "the restarted agent is connected");
-        workspace.selectSession(id);
-        const auto split = workspace.splitAgent(QStringLiteral("right"));
-        require(!split.isEmpty() &&
-                    waitFor([&] { return calls(QStringLiteral("devbox")) >= 4; }, 10000),
-                "a split starts the same CLI beside it");
-        const auto fourth = call(QStringLiteral("devbox"), 4);
-        require(!conversation(fourth).isEmpty() && conversation(fourth) != conversation(first),
-                "as a new conversation of its own");
         // Instrumented event delivery can stretch a 300 ms hold, so prove the
         // never-held policy with a test-only wide threshold and fast retries.
         workspace.setReconnectTimingForTesting(
@@ -2540,7 +2315,7 @@ exec sleep 600
         waitFor([&] { return settle.elapsed() >= 300; }, 1000);
         require(calls(QStringLiteral("typo")) == 1, "a connection that never worked stays ended");
         // The unreachable one is abandoned; the others end.
-        for (const auto& closing : {older_id, booted_id, id, split, typo->sessionId()})
+        for (const auto& closing : {older_id, booted_id, id, typo->sessionId()})
             require(workspace.closeSession(closing, true), "close the stand-in agents");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "the stand-in agents close");
@@ -3066,136 +2841,11 @@ void batchReloadRetainsEarlierFailures() {
             "batch fixture closes its child");
 }
 
-// Updating a tab's CLI runs the CLI's update where the agent runs, once for
-// every agent that asks meanwhile, then reloads them; a failed update leaves
-// them running. On another machine it goes through ssh without a terminal.
-void updateReloadsAgentsAfterTheirCli() {
-    QTemporaryDir directory(QStringLiteral("/tmp/lapis-update-reload-XXXXXX"));
-    require(directory.isValid(), "update directory");
-    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
-    const auto path = installStandInGrok(root);
-    writeExecutable(root.filePath(QStringLiteral("bin/grok")),
-                    "#!/bin/sh\nbin=\"$(dirname \"$0\")\"\n"
-                    "if [ \"$1\" = update ]; then\n"
-                    "  echo update >> \"$bin/updates\"\n"
-                    "  while [ -f \"$bin/hold-update\" ]; do sleep 0.05; done\n"
-                    "  if [ -f \"$bin/fail-update\" ]; then echo 'no network'; exit 3; fi\n"
-                    "  exit 0\n"
-                    "fi\n"
-                    "echo start >> \"$bin/starts\"\necho \"grok ready\"\nexec sleep 600\n");
-    writeExecutable(root.filePath(QStringLiteral("bin/ssh")),
-                    "#!/bin/sh\nfor a; do if [ \"$a\" = -T ]; then\n"
-                    "  printf '%s\\n' \"$*\" >> \"$(dirname \"$0\")/remote-updates\"; exit 0\n"
-                    "fi; done\nexec sleep 600\n");
-    QFile config(root.filePath(QStringLiteral("ssh_config")));
-    require(config.open(QIODevice::WriteOnly), "write an ssh config");
-    config.write("Host devbox\n");
-    config.close();
-    const auto lines = [&root](const QString& name) {
-        QFile file(root.filePath(QStringLiteral("bin/") + name));
-        return file.open(QIODevice::ReadOnly) ? file.readAll().count('\n') : 0;
-    };
-    const auto flag = [&root](const QString& name, bool on) {
-        QFile file(root.filePath(QStringLiteral("bin/") + name));
-        require(on ? file.open(QIODevice::WriteOnly) : !file.exists() || file.remove(),
-                "set a stand-in flag");
-    };
-    WorkspaceOptions options;
-    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
-    {
-        Workspace workspace(WorkspaceMode::live, options);
-        workspace.setSshConfigForTesting(config.fileName());
-        const auto ready = [&workspace](const QString& id) {
-            const auto* item = workspace.session(id);
-            return item != nullptr && item->inputReady();
-        };
-        const auto label = [&workspace](const QString& id) {
-            const auto* item = workspace.session(id);
-            require(item != nullptr, "updated session retains its identity");
-            return item->statusLabel();
-        };
-        const auto project = root.filePath(QStringLiteral("project"));
-        require(workspace.createAgent(project, QStringLiteral("one"), QStringLiteral("grok")),
-                "a first agent");
-        const auto one = workspace.focusedSession()->sessionId();
-        require(workspace.createAgent(project, QStringLiteral("two"), QStringLiteral("grok")),
-                "a second agent");
-        const auto two = workspace.focusedSession()->sessionId();
-        require(waitFor([&] { return lines("starts") == 2 && ready(one) && ready(two); }, 10000),
-                "both run");
-        require(workspace.canUpdateAgent(one), "Grok has an update command");
-
-        flag(QStringLiteral("hold-update"), true);
-        require(workspace.updateAndReloadAgent(one) == 1 &&
-                    workspace.updateAndReloadAgent(two) == 1 &&
-                    waitFor([&] { return lines("updates") == 1; }, 10000),
-                "both tabs wait on one update");
-        require(workspace.updateAndReloadAgent(one) == 1 && workspace.workspaceError().isEmpty(),
-                "repeated update enrollment is accepted without a false error");
-        require(label(one) == QStringLiteral("Updating Grok…") &&
-                    label(two) == QStringLiteral("Updating Grok…") && ready(one),
-                "they say so and keep running meanwhile");
-        flag(QStringLiteral("hold-update"), false);
-        require(waitFor([&] { return lines("starts") == 4 && ready(one) && ready(two); }, 10000),
-                "both reload once it finishes");
-        require(lines("updates") == 1 && label(one) != QStringLiteral("Updating Grok…"),
-                "after a single update");
-
-        flag(QStringLiteral("fail-update"), true);
-        require(workspace.updateAndReloadAgent(one) == 1 &&
-                    waitFor(
-                        [&] {
-                            return workspace.workspaceError().contains(
-                                       QStringLiteral("did not update")) &&
-                                   workspace.workspaceError().contains(
-                                       QStringLiteral("no network"));
-                        },
-                        10000),
-                "a failed update says why");
-        require(lines("starts") == 4 && ready(one) &&
-                    label(one) != QStringLiteral("Updating Grok…"),
-                "and leaves the agent running");
-        flag(QStringLiteral("fail-update"), false);
-        workspace.clearError();
-
-        require(workspace.createAgent(QStringLiteral("~/far"), QStringLiteral("far"),
-                                      QStringLiteral("grok"), {}, {}, QStringLiteral("devbox")),
-                "an agent on another machine");
-        const auto far = workspace.focusedSession()->sessionId();
-        require(waitFor([&] { return ready(far); }, 10000), "it runs");
-        require(workspace.updateAndReloadAgent(far) == 1 &&
-                    waitFor([&] { return lines("remote-updates") == 1; }, 10000),
-                "its update goes to its machine");
-        QFile remote(root.filePath(QStringLiteral("bin/remote-updates")));
-        require(remote.open(QIODevice::ReadOnly), "read the remote update");
-        const auto sent = QString::fromUtf8(remote.readAll());
-        require(sent.contains(QStringLiteral("BatchMode=yes")) &&
-                    sent.contains(QStringLiteral("ControlPath=none")) &&
-                    sent.contains(QStringLiteral("-- devbox")) &&
-                    sent.contains(QStringLiteral("-lic 'grok update'")),
-                "through its own ssh connection, in a login shell, without prompts");
-        require(
-            waitFor([&] { return workspace.workspaceError().contains(QStringLiteral("/resume")); },
-                    10000) &&
-                ready(far),
-            "an agent whose conversation lapis cannot name is updated but left running");
-        workspace.clearError();
-        require(workspace.updateClaudeAndReload() == 0 &&
-                    workspace.workspaceError().contains(QStringLiteral("No Claude Code agent")),
-                "updating Claude Code needs a Claude Code agent");
-        for (const auto& closing : {one, two, far})
-            require(workspace.closeSession(closing, true), "close the stand-in agents");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
-                "the stand-in agents close");
-    }
-    qputenv("PATH", path);
-}
-
-// Manual and startup consumers share one installer, whichever arrives first.
-void startupAndManualUpdatesShareOneInstaller() {
-    for (const bool manual_first : {false, true}) {
-        for (const bool failed : {false, true}) {
-            UpdaterFixture fixture(R"(#!/usr/bin/env bash
+// Agents that start while their CLI updates share one installer and start
+// once it ends, whether it succeeded or not.
+void startupUpdatesShareOneInstaller() {
+    for (const bool failed : {false, true}) {
+        UpdaterFixture fixture(R"(#!/usr/bin/env bash
 bin="${0%/*}"
 if [ "$1" = update ]; then
     echo update >> "$bin/updates"
@@ -3207,70 +2857,40 @@ echo start >> "$bin/starts"
 echo ready
 exec sleep 600
 )");
-            fixture.options.updateHarnesses = !manual_first;
-            const auto flag = [&](const char* name) {
-                QFile file(fixture.root.filePath(QStringLiteral("bin/") + QLatin1String(name)));
-                require(file.open(QIODevice::WriteOnly), "create updater flag");
-            };
-            flag("hold");
-            if (failed)
-                flag("fail");
-            Workspace workspace(WorkspaceMode::live, fixture.options);
-            fixture.create(workspace);
-            auto* one = workspace.focusedSession();
-            const auto first_id = one->sessionId();
-            if (manual_first)
-                require(waitFor([&] { return one->inputReady(); }, 10000),
-                        "first agent is running");
-            require(workspace.updateAndReloadAgent(first_id) == 1 &&
-                        workspace.updateAndReloadAgent(first_id) == 1,
-                    "manual request joins either kind of update idempotently");
-            fixture.create(workspace);
-            auto* two = workspace.focusedSession();
-            const auto second_id = two->sessionId();
-            require(waitFor([&] { return QFileInfo::exists(fixture.root.filePath("bin/updates")); },
-                            10000),
-                    "the one installer started");
-            require(fixture.read("bin/updates") == "update\n" && !two->live() &&
-                        (!manual_first || one->inputReady()),
-                    "startup waits while an existing agent keeps running");
-            require(QFile::remove(fixture.root.filePath("bin/hold")), "release installer");
-            const int expected_starts = manual_first && !failed ? 3 : 2;
-            require(waitFor(
-                        [&] {
-                            return one->inputReady() && two->inputReady() &&
-                                   QFileInfo::exists(fixture.root.filePath("bin/starts")) &&
-                                   fixture.read("bin/starts").count('\n') == expected_starts &&
-                                   one->statusLabel() != QStringLiteral("Updating Grok…");
-                        },
-                        10000),
-                    "each consumer starts or reloads once according to the result");
-            require(fixture.read("bin/updates") == "update\n", "both paths used one installer");
-            require(failed ? workspace.workspaceError().contains(QStringLiteral("did not update"))
-                           : workspace.workspaceError().isEmpty(),
-                    "manual callers see the updater outcome");
-            for (const auto& id : {first_id, second_id})
-                require(workspace.closeSession(id, true), "close shared updater consumer");
-            require(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000),
-                    "consumers close");
-        }
+        const auto flag = [&](const char* name) {
+            QFile file(fixture.root.filePath(QStringLiteral("bin/") + QLatin1String(name)));
+            require(file.open(QIODevice::WriteOnly), "create updater flag");
+        };
+        flag("hold");
+        if (failed)
+            flag("fail");
+        Workspace workspace(WorkspaceMode::live, fixture.options);
+        fixture.create(workspace);
+        auto* one = workspace.focusedSession();
+        const auto first_id = one->sessionId();
+        fixture.create(workspace);
+        auto* two = workspace.focusedSession();
+        const auto second_id = two->sessionId();
+        require(
+            waitFor([&] { return QFileInfo::exists(fixture.root.filePath("bin/updates")); }, 10000),
+            "the one installer started");
+        require(fixture.read("bin/updates") == "update\n" && !one->live() && !two->live(),
+                "both agents wait for it");
+        require(QFile::remove(fixture.root.filePath("bin/hold")), "release installer");
+        require(waitFor(
+                    [&] {
+                        return one->inputReady() && two->inputReady() &&
+                               QFileInfo::exists(fixture.root.filePath("bin/starts")) &&
+                               fixture.read("bin/starts").count('\n') == 2 &&
+                               one->statusLabel() != QStringLiteral("Updating Grok…");
+                    },
+                    10000),
+                "each starts once, whatever the result");
+        require(fixture.read("bin/updates") == "update\n", "both used one installer");
+        for (const auto& id : {first_id, second_id})
+            require(workspace.closeSession(id, true), "close shared updater consumer");
+        require(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000), "consumers close");
     }
-}
-
-void skippedClaudeUpdateReportsTheCurrentOperation() {
-    UpdaterFixture fixture("#!/usr/bin/env bash\necho ready\nexec sleep 600\n", "claude");
-    fixture.options.updateHarnesses = false;
-    Workspace workspace(WorkspaceMode::live, fixture.options);
-    fixture.create(workspace);
-    auto* item = workspace.focusedSession();
-    require(waitFor([&] { return item->inputReady(); }, 10000), "Claude stand-in is ready");
-    require(workspace.closeSession(item->sessionId()), "Claude begins closing");
-    require(!workspace.restartAgent(QStringLiteral("missing")), "set an earlier unrelated error");
-    require(workspace.updateClaudeAndReload() == 0 &&
-                workspace.workspaceError().contains(QStringLiteral("cannot update now")),
-            "all-skipped Claude update reports its own reason");
-    require(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000),
-            "Claude stand-in closes");
 }
 
 // OMP's inline UI rebuilds its scrollback on resize unless its config overlay
@@ -6754,9 +6374,7 @@ int main(int argc, char** argv) {
                 updaterOutputIsDrainedWithABoundedTail();
                 failedUpdaterStartClearsTheQueue();
                 pinnedCliIsNotUpdated();
-                updateReloadsAgentsAfterTheirCli();
-                startupAndManualUpdatesShareOneInstaller();
-                skippedClaudeUpdateReportsTheCurrentOperation();
+                startupUpdatesShareOneInstaller();
             } else if (selected == QStringLiteral("updates-off")) {
                 pinnedCliIsNotUpdated();
             } else if (selected == QStringLiteral("omp-overlay")) {
@@ -6790,7 +6408,6 @@ int main(int argc, char** argv) {
         malformedAgentRegistry();
         unknownRegistryVersionsAreRejected();
         unseenFollowsTurnsAndSelection();
-        latestAttentionGoesToTheNewest();
         tabGoesToTheReadyThenTheOldest();
         tabAttributionFollowsTheNextHandMove();
         oneBadAgentDoesNotEmptyTheWorkspace();
@@ -6801,9 +6418,7 @@ int main(int argc, char** argv) {
         modelessAgentsGetTheDefaultMode();
         claudeAgentsUseServiceAdapter();
         agentArgumentsPersist();
-        directTileSelectionNormalizesAStaleTarget();
-        tileWalkDropsDisplacedAgentsThatLeave();
-        tileWalkSurvivesAnotherCategory();
+        savedTilesLoadAsTheSelectedAgent();
         outputEstimate();
         agentsStartWithoutParentSessionMarkers();
         restartRefusesClosingAgent();
@@ -6845,9 +6460,7 @@ int main(int argc, char** argv) {
         restoredAgentsStartAtTheStageSize();
         reloadFailuresRemainRetryable();
         batchReloadRetainsEarlierFailures();
-        updateReloadsAgentsAfterTheirCli();
-        startupAndManualUpdatesShareOneInstaller();
-        skippedClaudeUpdateReportsTheCurrentOperation();
+        startupUpdatesShareOneInstaller();
         resumingAConversationStartsItsCli();
         askedEffortReachesTheCli();
         terminalsRunPlainShells();

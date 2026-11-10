@@ -1,4 +1,3 @@
-#include "agent_search.hpp"
 #include "conversation_index.hpp"
 #include "gui_state.hpp"
 #include "keymap.hpp"
@@ -1231,9 +1230,9 @@ QStringList strip_ids(const lapis::desktop::Workspace& workspace) {
     return ids;
 }
 
-// Tiles and drags, through the window as a person would use them.
+// The stage and strip drags, through the window as a person would use them.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+void check_stage_and_drags(QQuickWindow& window, lapis::desktop::Workspace& workspace,
                            lapis::desktop::KeyMap& keymap) {
     const auto item = [&window](const QString& name) {
         auto* found = find_visual(window.contentItem(), name);
@@ -1248,164 +1247,59 @@ void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     auto* stage = item(QStringLiteral("focusedPane"));
     auto* terminal =
         qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
+    auto* visual = item(QStringLiteral("visualView"));
     const auto ids = strip_ids(workspace);
     CHECK(terminal != nullptr && ids.size() >= 3);
     CHECK(workspace.selectSession(ids[0]));
     pump(40);
 
-    // A card dropped on the stage's right half tiles beside the shown agent.
+    // The stage shows one agent, the selected one, filling it; the visual view
+    // lies exactly over its terminal.
+    const auto fills_stage = [&](const QString& id) {
+        CHECK(workspace.focusedSession() == workspace.session(id));
+        CHECK(terminal->document() == workspace.session(id));
+        const auto shown = scene_rect(*terminal);
+        const auto edge = scene_rect(*stage);
+        CHECK(edge.contains(shown) && shown.width() > edge.width() - 20 &&
+              shown.height() > edge.height() - 20);
+        CHECK(scene_rect(*visual) == shown);
+    };
+    fills_stage(ids[0]);
+    // Shown, the visual view covers exactly that terminal. The sample agents
+    // have no saved conversation, so it is shown directly, then hidden again.
+    visual->setVisible(true);
+    pump(40);
+    CHECK(scene_rect(*visual) == scene_rect(*terminal));
+    if (const auto path = qEnvironmentVariable("LAPIS_WORKSPACE_CAPTURE_PREFIX"); !path.isEmpty())
+        CHECK(window.grabWindow().save(path + QStringLiteral("stage-visual.png")));
+    visual->setVisible(false);
+    pump(20);
+
+    // A card dropped on the stage does not split it.
+    const auto strip_before = strip_ids(workspace);
     drag_visual(window, *item(QStringLiteral("agentTab_") + ids[1]),
                 stage->mapToScene(QPointF(stage->width() * 0.92, stage->height() * 0.5)));
-    CHECK(workspace.stageTiles().size() == 2);
-    CHECK(workspace.focusedSession() == workspace.session(ids[1]));
-    auto* left = item(QStringLiteral("tile_") + ids[0]);
-    auto* right = item(QStringLiteral("tile_") + ids[1]);
-    CHECK(scene_rect(*left).right() <= scene_rect(*right).left());
-    // The selected tile's terminal is the stage terminal, inside its tile; the
-    // other tile draws its own agent, live and at its own size.
-    CHECK(terminal->document() == workspace.session(ids[1]));
-    CHECK(scene_rect(*right).contains(scene_rect(*terminal)));
-    auto* other = qobject_cast<lapis::desktop::TerminalSurface*>(
-        item(QStringLiteral("tileTerminal_") + ids[0]));
-    CHECK(other != nullptr && other->isVisible() && other->interactive() &&
-          other->document() == workspace.session(ids[0]));
-    CHECK(other->gridSize().width() > 10 &&
-          other->gridSize().width() < terminal->gridSize().width() * 2);
-
-    // Clicking a tile selects it; the keys move between tiles.
-    click_visual(window, *other);
     pump(40);
-    CHECK(workspace.focusedSession() == workspace.session(ids[0]));
-    key("tileRight");
-    CHECK(workspace.focusedSession() == workspace.session(ids[1]));
-    key("tileLeft");
-    CHECK(workspace.focusedSession() == workspace.session(ids[0]));
-    key("tileLeft");
-    CHECK(workspace.focusedSession() == workspace.session(ids[0])); // no wraparound
+    CHECK(strip_ids(workspace) == strip_before);
+    CHECK(terminal->document() == workspace.focusedSession());
+    CHECK(workspace.selectSession(ids[0]));
+    pump(40);
 
-    // The next and previous agent keys walk the tiles in reading order, then
-    // show each untiled agent in the tile the walk left, and put the stage
-    // back as it was when they wrap onto the tiles. The selection edge and
-    // the stage terminal follow every press.
-    const auto tile_ids = [&workspace] {
-        QStringList result;
-        for (const auto& tile : workspace.stageTiles())
-            result.append(tile.toMap().value(QStringLiteral("sessionId")).toString());
-        return result;
-    };
-    const auto shows_selection = [&](const QString& id) {
-        auto* frame = item(QStringLiteral("tile_") + id);
-        CHECK(frame->property("selectedTile").toBool());
-        CHECK(scene_rect(*frame).contains(scene_rect(*terminal)));
-        CHECK(terminal->document() == workspace.session(id));
-        for (const auto& other_id : tile_ids())
-            CHECK(other_id == id ||
-                  !item(QStringLiteral("tile_") + other_id)->property("selectedTile").toBool());
-        CHECK(frame != nullptr);
-        CHECK(frame->property("selectedTile").toBool());
-        CHECK(scene_rect(*frame).contains(scene_rect(*terminal)));
-        CHECK(terminal->document() == workspace.session(id));
-        for (const auto& other_id : tile_ids()) {
-            if (other_id == id)
-                continue;
-            auto* other_frame = item(QStringLiteral("tile_") + other_id);
-            CHECK(other_frame != nullptr);
-            CHECK(!other_frame->property("selectedTile").toBool());
-        }
-    };
-    const auto capture_walk = [&window](const char* name) {
-        if (const auto path = qEnvironmentVariable("LAPIS_WORKSPACE_CAPTURE_PREFIX");
-            !path.isEmpty())
-            CHECK(window.grabWindow().save(path + QStringLiteral("tile-walk-") +
-                                           QString::fromLatin1(name) + QStringLiteral(".png")));
-    };
-    const QStringList walk_home{ids[0], ids[1]};
-    CHECK(tile_ids() == walk_home);
-    capture_walk("1-left");
-    key("nextWindow");
-    CHECK(workspace.focusedSession() == workspace.session(ids[1]) && tile_ids() == walk_home);
-    shows_selection(ids[1]);
-    capture_walk("2-right");
-    for (qsizetype untiled = 2; untiled < ids.size(); ++untiled) {
+    // The next and previous agent keys walk the strip and wrap; the stage
+    // terminal follows every press.
+    for (qsizetype step = 1; step <= ids.size(); ++step) {
         key("nextWindow");
-        CHECK(workspace.focusedSession() == workspace.session(ids[untiled]));
-        CHECK(tile_ids() == QStringList({ids[0], ids[untiled]}));
-        shows_selection(ids[untiled]);
-        if (untiled == 2)
-            capture_walk("3-untiled-in-right");
+        fills_stage(ids[step % ids.size()]);
     }
-    key("nextWindow");
-    CHECK(workspace.focusedSession() == workspace.session(ids[0]) && tile_ids() == walk_home);
-    shows_selection(ids[0]);
     key("previousWindow");
-    CHECK(workspace.focusedSession() == workspace.session(ids.constLast()));
-    CHECK(tile_ids() == QStringList({ids.constLast(), ids[1]}));
-    shows_selection(ids.constLast());
-    capture_walk("4-previous-in-left");
+    fills_stage(ids.constLast());
     key("nextWindow");
-    CHECK(workspace.focusedSession() == workspace.session(ids[0]) && tile_ids() == walk_home);
-    shows_selection(ids[0]);
+    fills_stage(ids[0]);
 
-    // The walk rebuilt the tiles it passed through.
-    left = item(QStringLiteral("tile_") + ids[0]);
-    other = qobject_cast<lapis::desktop::TerminalSurface*>(
-        item(QStringLiteral("tileTerminal_") + ids[0]));
-    CHECK(other != nullptr);
-
-    // A divider drag shares the space differently; agents resize once, at the end.
-    const auto before = left->width();
-    auto* divider = item(QStringLiteral("tileDivider_root"));
-    drag_visual(window, *divider,
-                divider->mapToScene(QPointF(divider->width() / 2 + 140, divider->height() / 2)));
-    CHECK(left->width() > before + 80);
-    CHECK(!terminal->holdResize() && !other->holdResize());
-
-    // A strip agent that is not tiled takes the selected tile.
-    const QPointer<QQuickItem> changed_tile{item(QStringLiteral("tile_") + ids[0])};
-    const QPointer<QQuickItem> kept_tile{item(QStringLiteral("tile_") + ids[1])};
-    const QPointer<lapis::desktop::TerminalSurface> changed_surface{
-        qobject_cast<lapis::desktop::TerminalSurface*>(
-            item(QStringLiteral("tileTerminal_") + ids[0]))};
-    const QPointer<lapis::desktop::TerminalSurface> kept_surface{
-        qobject_cast<lapis::desktop::TerminalSurface*>(
-            item(QStringLiteral("tileTerminal_") + ids[1]))};
-    CHECK(changed_tile);
-    CHECK(kept_tile);
-    CHECK(changed_surface);
-    CHECK(kept_surface);
-    CHECK(changed_surface->document() == workspace.session(ids[0]));
-    CHECK(kept_surface->document() == workspace.session(ids[1]));
+    // Clicking a card shows it on the stage.
     click_visual(window, *item(QStringLiteral("agentTab_") + ids[2]));
     pump(40);
-    auto tiled = workspace.stageTiles();
-    CHECK(tiled.size() == 2 && workspace.focusedSession() == workspace.session(ids[2]));
-    CHECK(tiled[0].toMap().value(QStringLiteral("sessionId")).toString() == ids[2]);
-    CHECK(changed_tile);
-    CHECK(kept_tile);
-    CHECK(changed_surface);
-    CHECK(kept_surface);
-    CHECK(changed_tile->objectName() == QStringLiteral("tile_") + ids[2]);
-    CHECK(kept_tile->objectName() == QStringLiteral("tile_") + ids[1]);
-    CHECK(changed_surface->document() == workspace.session(ids[2]));
-    CHECK(kept_surface->document() == workspace.session(ids[1]));
-
-    // The selected tile can fill the stage and come back.
-    key("zoomTile");
-    CHECK(!item(QStringLiteral("tile_") + ids[1])->isVisible());
-    key("zoomTile");
-    CHECK(item(QStringLiteral("tile_") + ids[1])->isVisible());
-
-    // A tile dragged by its name bar back to the strip leaves the stage.
-    auto* strip = item(QStringLiteral("agentTabs"));
-    drag_visual(window, *item(QStringLiteral("tilePress_") + ids[2]),
-                strip->mapToScene(QPointF(strip->width() * 0.5, strip->height() * 0.5)));
-    CHECK(workspace.stageTiles().isEmpty());
-    CHECK(workspace.tileSession(ids[1], ids[0], QStringLiteral("bottom")));
-    pump(60);
-    CHECK(workspace.stageTiles().size() == 2);
-    click_visual(window, *item(QStringLiteral("untile_") + ids[1]));
-    pump(60);
-    CHECK(workspace.stageTiles().isEmpty());
+    fills_stage(ids[2]);
 
     // Dragging a card along the strip reorders it.
     const auto order = strip_ids(workspace);
@@ -1446,10 +1340,9 @@ void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     pump(60);
     CHECK(strip_ids(workspace) == order);
 }
-// Command-F finds text on the page shown; Command-plus and zero change the
-// text size; categories reorder.
-void check_find_and_text_size(QQuickWindow& window, lapis::desktop::Workspace& workspace,
-                              lapis::desktop::KeyMap& keymap) {
+// Command-plus and zero change the text size; categories reorder.
+void check_text_size(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                     lapis::desktop::KeyMap& keymap) {
     const auto item = [&window](const QString& name) {
         auto* found = find_visual(window.contentItem(), name);
         if (found == nullptr)
@@ -1460,15 +1353,6 @@ void check_find_and_text_size(QQuickWindow& window, lapis::desktop::Workspace& w
         send_binding(window, keymap.sequences(QString::fromLatin1(action)).front());
         pump(80);
     };
-    const auto type = [&window](const QString& text) {
-        for (const auto character : text) {
-            QKeyEvent press(QEvent::KeyPress, 0, Qt::NoModifier, QString(character));
-            QKeyEvent release(QEvent::KeyRelease, 0, Qt::NoModifier, QString(character));
-            QCoreApplication::sendEvent(&window, &press);
-            QCoreApplication::sendEvent(&window, &release);
-        }
-        pump(60);
-    };
     auto* terminal =
         qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
     for (const auto& value : workspace.categorySessions()) {
@@ -1477,16 +1361,6 @@ void check_find_and_text_size(QQuickWindow& window, lapis::desktop::Workspace& w
             CHECK(workspace.selectSession(session->sessionId()));
     }
     pump(60);
-    key("find");
-    auto* bar = item(QStringLiteral("findBar"));
-    CHECK(bar->isVisible());
-    type(QStringLiteral("ready"));
-    CHECK(terminal->selectedText() == QStringLiteral("Ready"));
-    CHECK(terminal->countMatches(QStringLiteral("ready")) == 1);
-    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-    QCoreApplication::sendEvent(&window, &escape);
-    pump(60);
-    CHECK(!bar->isVisible() && terminal->selectedText().isEmpty());
 
     const int size = keymap.terminalFontSize();
     key("textBigger");
@@ -2078,35 +1952,6 @@ void capture_step(QQuickWindow& window, const char* name) {
         CHECK(window.grabWindow().save(path + QString::fromLatin1(name) + QStringLiteral(".png")));
 }
 
-void check_agent_search(QQuickWindow& window, lapis::desktop::Workspace& workspace,
-                        const lapis::desktop::KeyMap& keymap,
-                        lapis::desktop::TerminalSurface& terminal) {
-    // Command-K finds an agent by name; Return shows it and gives it the keys.
-    CHECK(workspace.selectSession(QStringLiteral("shell")));
-    pump(30);
-    press_action(window, keymap, "searchAgents");
-    auto* finder = window.findChild<QObject*>(QStringLiteral("searchDialog"));
-    CHECK(finder != nullptr);
-    wait_popup(*finder, true);
-    auto* field = required_visual(window, QStringLiteral("agentSearchField"));
-    CHECK(wait_for([&] { return field->hasActiveFocus(); }, 5000));
-    field->setProperty("text", QStringLiteral("wsnotes"));
-    pump(30);
-    CHECK(required_visual(window, QStringLiteral("agentResult_notes")) != nullptr);
-    send_binding(window, QStringLiteral("Return"));
-    wait_popup(*finder, false);
-    CHECK(focused_id(workspace) == QStringLiteral("notes") && terminal.hasActiveFocus());
-    // Escape leaves the focused agent alone.
-    press_action(window, keymap, "searchAgents");
-    wait_popup(*finder, true);
-    required_visual(window, QStringLiteral("agentSearchField"))
-        ->setProperty("text", QStringLiteral("shell"));
-    pump(30);
-    send_binding(window, QStringLiteral("Escape"));
-    wait_popup(*finder, false);
-    CHECK(focused_id(workspace) == QStringLiteral("notes"));
-}
-
 // With nothing open, the stage lists what to do next and takes the keyboard:
 // up and down move, Return runs the entry. Command-O finds a past conversation
 // by typing and resumes it with Return.
@@ -2439,7 +2284,6 @@ int run_strip_ui_tests() {
     CHECK(config.isValid());
     KeyMap keymap;
     keymap.setSourcePathForTesting(config.filePath(QStringLiteral("strip.json")));
-    AgentSearch search(&workspace);
     ConversationIndex conversations(config.filePath(QStringLiteral("history/claude")),
                                     config.filePath(QStringLiteral("history/codex")),
                                     config.filePath(QStringLiteral("conversations.json")));
@@ -2452,7 +2296,6 @@ int run_strip_ui_tests() {
                                   .compact = false,
                                   .screen = QString(),
                                   .keymap = &keymap,
-                                  .agentSearch = &search,
                                   .conversations = &conversations,
                                   .terminals = &terminals});
     CHECK(preview.load());
@@ -2672,9 +2515,10 @@ int run_strip_ui_tests() {
     CHECK(QMetaObject::invokeMethod(category_form, "close"));
     wait_popup(*category_form, false);
 
-    check_tiles_and_drags(*window, workspace, keymap);
-    check_find_and_text_size(*window, workspace, keymap);
-    check_agent_search(*window, workspace, keymap, *terminal);
+    check_stage_and_drags(*window, workspace, keymap);
+    check_text_size(*window, workspace, keymap);
+    CHECK(workspace.selectSession(QStringLiteral("notes")));
+    pump(30);
     check_home_and_resume(*window, workspace, keymap);
     check_nine_categories(*window, workspace, keymap);
     check_side_terminal(*window, terminals, keymap, *terminal);
@@ -2778,9 +2622,6 @@ int run_history_ui_tests() {
         return agent->inputReady() &&
                screen_text(agent->snapshot()).contains(QStringLiteral("all printed"));
     }));
-    QVariant folder;
-    CHECK(QMetaObject::invokeMethod(window, "focusedFolder", Q_RETURN_ARG(QVariant, folder)));
-    CHECK(folder.toString() == root.filePath(QStringLiteral("project")));
     // Exercise QML-to-C++ URL conversion and shell quoting together. No file
     // access or OS drop is needed to preserve the network authority.
     const QVariant dropUrls = QVariantList{
@@ -2939,13 +2780,10 @@ int run_restored_suggestion_tests() {
     wait_active(*window);
     CHECK(window->property("lastHarness").toString() == QStringLiteral("codex") &&
           window->property("lastMode").toString() == QStringLiteral("edits"));
-    // A routine tiles signal without tiling does not clear restored zoom.
-    window->setProperty("tileZoomed", true);
     CHECK(workspace.selectSession(QStringLiteral("checks")));
     pump(2);
     CHECK(workspace.selectSession(QStringLiteral("agent")));
     pump(2);
-    CHECK(window->property("tileZoomed").toBool());
     const auto remembered = window->property("lastModels").toMap();
     CHECK(remembered.value(QStringLiteral("claude")).toString() == QLatin1String("custom") &&
           !remembered.contains(QStringLiteral("codex")) &&

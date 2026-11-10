@@ -1047,7 +1047,7 @@ void TerminalSurface::keepFramesComing() {
 }
 
 // Shown while this view and its window are visible: a hidden window, a
-// hidden strip or a closed tile decodes nothing for its agent.
+// hidden strip decodes nothing for its agent.
 void TerminalSurface::updateViewing() {
     armSuggestionObservation();
     SessionPreview* showing =
@@ -1699,41 +1699,10 @@ RowText row_text(const session::TerminalSnapshot& snapshot, int row) {
     return result;
 }
 
-// Every case-insensitive occurrence of `needle` in one row, as columns.
-std::vector<TerminalMatch> row_matches(const session::TerminalSnapshot& snapshot, int row,
-                                       const QString& needle) {
-    std::vector<TerminalMatch> matches;
-    const auto line = row_text(snapshot, row);
-    for (auto at = line.text.indexOf(needle, 0, Qt::CaseInsensitive); at >= 0;
-         at = line.text.indexOf(needle, at + 1, Qt::CaseInsensitive))
-        matches.push_back({row, line.columns[at], line.columns[at + needle.size() - 1]});
-    return matches;
-}
-
 bool printable_url_character(char32_t value) {
     return QChar::isPrint(value) && QChar::category(value) != QChar::Other_Format;
 }
 } // namespace
-
-std::optional<TerminalMatch> terminal_find(const session::TerminalSnapshot& snapshot,
-                                           const QString& needle, QPoint from, bool backwards) {
-    const int rows = snapshot.size.rows;
-    if (needle.isEmpty() || rows <= 0 || snapshot.size.columns <= 0)
-        return std::nullopt;
-    const int step = backwards ? -1 : 1;
-    for (int row = std::clamp(from.y(), 0, rows - 1); row >= 0 && row < rows; row += step) {
-        auto matches = row_matches(snapshot, row, needle);
-        if (backwards)
-            std::reverse(matches.begin(), matches.end());
-        for (const auto& match : matches) {
-            const bool after = row > from.y() || match.first_column > from.x();
-            const bool before = row < from.y() || match.first_column < from.x();
-            if (backwards ? before : after)
-                return match;
-        }
-    }
-    return std::nullopt;
-}
 
 void TerminalSurface::setSuggestion(const QString& suggestion) {
     if (suggestion_ == suggestion)
@@ -2117,31 +2086,6 @@ QString TerminalSurface::localFilePath(const QString& url) const {
         return {};
     const QString path = parsed.toLocalFile();
     return path.isEmpty() || path.contains(u'\0') ? QString() : path;
-}
-
-bool TerminalSurface::findText(const QString& text, bool backwards) {
-    if (!document_)
-        return false;
-    const auto& snapshot = document_->snapshot();
-    const QPoint start =
-        selection_anchor_
-            ? *selection_anchor_
-            : (backwards ? QPoint(snapshot.size.columns, snapshot.size.rows - 1) : QPoint(-1, 0));
-    const auto match = terminal_find(snapshot, text, start, backwards);
-    if (!match)
-        return false;
-    setSelection(QPoint(match->first_column, match->row), QPoint(match->last_column, match->row));
-    return true;
-}
-
-int TerminalSurface::countMatches(const QString& text) const {
-    if (!document_ || text.isEmpty())
-        return 0;
-    const auto& snapshot = document_->snapshot();
-    int count = 0;
-    for (int row = 0; row < snapshot.size.rows; ++row)
-        count += static_cast<int>(row_matches(snapshot, row, text).size());
-    return count;
 }
 
 namespace {

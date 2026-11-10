@@ -117,7 +117,6 @@ class InteractionRecorder : public QObject {
     void followWorkspace();
     void agentFocused();
     void categorySelected();
-    void tilesChanged();
     void followHistory();
 
     Workspace& workspace_;
@@ -155,7 +154,6 @@ class InteractionRecorder : public QObject {
     QTimer history_timer_;
     QString focused_id_;
     QString category_id_;
-    QStringList tiles_;
 };
 
 // What lapis did with input, reported where it decides. Each is a no-op
@@ -173,7 +171,7 @@ void wheel_outcome(const QString& handled, int amount);
 // Text copied from a terminal selection ("key", "select", "double-click").
 void copy(const TerminalSurface* surface, const QString& text, const char* how);
 // The next focus change came from this ("tab-away", "notification",
-// "attention-key", "terminal-key").
+// "terminal-key").
 void cause(const QString& via);
 } // namespace interaction
 

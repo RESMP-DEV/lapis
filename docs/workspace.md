@@ -26,18 +26,6 @@ teal accents, and the macOS title bar follows the theme while keeping the
 standard window controls. One configurable fixed-width font serves the terminal
 and machine readouts.
 
-## Tiles
-
-Drag a card onto an edge of the stage to tile that agent beside the one shown,
-as iTerm2 splits a tab, or onto a tile's middle to swap it in. Dividers drag to
-share the space; agents are resized once, when the drag ends. Command-D starts an
-agent like the selected one (folder, CLI, model and mode) tiled to the right,
-Command-Shift-D below it. Command-Control-arrows move between tiles,
-Command-Shift-Return fills the stage with one, and a tile's ✕ or a drag back to
-the strip takes it off the stage while it keeps running. A strip agent that is
-not tiled takes the selected tile when you click it. Each category keeps its
-tiles.
-
 ## Arranging
 
 Cards drag along the strip to reorder, onto a category in the rail to move
@@ -49,10 +37,8 @@ it.
 ## Commands
 
 **Commands** (Command-Shift-P) searches every action with its shortcut. It holds
-**New category**, the reload and update actions from [agents](agents.md), and
-the card actions: show an agent's folder in Finder, open it in your editor
-(`editor` in [config](config.md), else the first of Cursor, VS Code, Zed,
-Windsurf and Sublime Text installed), or copy its path.
+**New category**, the reload actions from [agents](agents.md), and
+the card actions.
 
 ## Visual view
 
@@ -160,14 +146,10 @@ Codex, Claude, Graphite, Black, Claude light, Codex light), a reading font
 follows the terminal font unless set. Agents on other machines and other CLIs
 are not supported yet.
 
-## Finding
+## Resuming
 
-Command-K finds an agent as you type: by the letters of its name, folder,
-category, CLI or machine, or by text on its screen; Return shows it. Command-F
-finds text in the selected terminal: the screen first, then older history a
-screen at a time (Return goes older, Shift-Return newer). Command-O resumes a
-past Claude Code or Codex conversation from this Mac, newest first under its
-CLI's own title, narrowed as you type.
+Command-O resumes a past Claude Code or Codex conversation from this Mac,
+newest first under its CLI's own title, narrowed as you type.
 
 ## The side terminal
 

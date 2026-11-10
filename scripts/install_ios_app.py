@@ -293,9 +293,7 @@ def main():
         ],
         check=True,
     )
-    print(
-        f"installed; open {'Ultra Tab' if args.app == 'ultratab' else 'lapis'} on the phone"
-    )
+    print("installed; open lapis on the phone")
     return 0
 
 
