@@ -200,6 +200,17 @@ def top_level_notify(text):
         if character == "#":
             end = text.find("\n", index)
             index = length if end < 0 else end
+        elif depth == 0 and line_start and (character.isalpha() or character in "\"'"):
+            found = key.match(text, index)
+            if not found:
+                index += 1
+                line_start = False
+                continue
+            name = found.group(1)
+            if name in ("notify", '"notify"', "'notify'"):
+                return notify_array(text, found.end())
+            index = found.end()
+            line_start = False
         elif character in "\"'":
             value, end = read_toml_string(text, index)
             if value is None:
@@ -215,17 +226,6 @@ def top_level_notify(text):
         elif character == "]":
             depth = max(0, depth - 1)
             index += 1
-            line_start = False
-        elif depth == 0 and line_start and (character.isalpha() or character in "\"'"):
-            found = key.match(text, index)
-            if not found:
-                index += 1
-                line_start = False
-                continue
-            name = found.group(1)
-            if name in ("notify", '"notify"', "'notify'"):
-                return notify_array(text, found.end())
-            index = found.end()
             line_start = False
         elif character == "\n":
             index += 1

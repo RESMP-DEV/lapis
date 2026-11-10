@@ -184,6 +184,8 @@ class RemoteHookRelayTests(unittest.TestCase):
         )
         self.assertIsNone(parse('notify = [\n  "sh"\n  "-c"\n]\n'))
         self.assertEqual(parse("notify = []\n"), [])
+        self.assertEqual(parse('"notify" = ["quoted-key"]\n'), ["quoted-key"])
+        self.assertEqual(parse("'notify' = ['literal-key']\n"), ["literal-key"])
         self.assertEqual(
             parse('matrix = [\n  [1, 2],\n]\nnotify = ["after-a-nested-array"]\n'),
             ["after-a-nested-array"],
