@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-09T23:59:43Z",
+  "recorded_at": "2026-11-10T00:12:45Z",
   "agent": "Codex triage parent with read-only architecture review",
   "base_revision": "2f261586507a6af04f7f5191a8286b29da089125",
-  "source_revision": "fe4fe336796450862ad9ecb8b3b00de5f98846c8",
+  "source_revision": "f30d69db6693682425340d34e072452db58a2129",
   "runtime_validation_revision": "e62f90933754f305b38c20f5e9ceaca9460fcebd",
   "scope": "Post-rebase validation and review follow-up for PR 190 after PRs 187, 188, 189, 192, 195, 197, and 200 merged.",
   "changed_source_manifest": {
-    "algorithm": "shasum -a 256 of: git diff --binary 2f261586507a6af04f7f5191a8286b29da089125..fe4fe336796450862ad9ecb8b3b00de5f98846c8 -- ':(exclude)evidence/*'",
-    "digest": "50d649ffc9fe086b397f11adf8bd76a6a36e3ee2e7d6830e7afac999d0e728da",
+    "algorithm": "shasum -a 256 of: git diff --binary 2f261586507a6af04f7f5191a8286b29da089125..f30d69db6693682425340d34e072452db58a2129 -- ':(exclude)evidence/*'",
+    "digest": "edd65ba6b2207fa59fcc35a4b181cf87576a32b448eb78102d94f828f4f478bb",
     "changed_paths": 42
   },
   "validation": [
