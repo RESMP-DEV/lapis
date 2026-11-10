@@ -9,6 +9,8 @@
 #include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
+#include <memory>
+#include <optional>
 #include <vector>
 
 class QQuickTextDocument;
@@ -66,12 +68,16 @@ struct Status {
     QString model;           // as the API names it ("claude-opus-5-5")
     QString effort;          // "low" ... "max", or empty when not reported
     qint64 context_tokens{}; // what the last request sent and got back
+    // The window the CLI itself reported (Codex does), or 0 to look it up.
+    qint64 window_tokens{};
     bool operator==(const Status&) const = default;
 };
 // The model's context window in tokens, from Claude Code's own table: 1M for
 // the current Opus, Fable, Sonnet 4.6+ and Haiku 4.5 (and any "[1m]" name),
 // else 200k; never less than what was already used.
 [[nodiscard]] qint64 context_window(const QString& model, qint64 used);
+// The window for a status: what the CLI reported, else the table above.
+[[nodiscard]] qint64 context_window(const Status& status);
 
 // The thread as shown: each finished turn folds to its prompt, one "Worked
 // for" row standing for its work (thinking, steps, notes between), and its
@@ -157,16 +163,48 @@ struct Media {
 // A screen with no full rule (startup, a shell) shows none.
 [[nodiscard]] bool dialog_showing(const QStringList& screen);
 
+// The CLIs whose saved conversations lapis reads, each with its own reader.
+enum class Format { claude, codex, antigravity };
+[[nodiscard]] QString format_name(Format format);
+// A format by name ("claude", "codex", "antigravity"; the CLIs' ids "agy"
+// too), or nullopt.
+[[nodiscard]] std::optional<Format> format_named(const QString& name);
+// The format of a conversation file by its name, as each CLI names them:
+// Codex's rollout-*.jsonl, Antigravity's transcript_full.jsonl (or
+// transcript.jsonl), and Claude Code's <session>.jsonl otherwise.
+[[nodiscard]] Format format_of(const QString& path);
+
+// One CLI's conversation file read into the thread's items: each line, in
+// file order, folds into the same item kinds whatever the CLI, so one view
+// shows them all. A reader ignores lines it cannot parse or does not know.
+class Reader {
+  public:
+    Reader() = default;
+    virtual ~Reader() = default;
+    Reader(const Reader&) = delete;
+    Reader& operator=(const Reader&) = delete;
+    Reader(Reader&&) = default;
+    Reader& operator=(Reader&&) = default;
+    // Index of the first item changed by this line, or -1 when none was;
+    // appended items follow it.
+    virtual int add(const QByteArray& line) = 0;
+    [[nodiscard]] virtual Format format() const = 0;
+    [[nodiscard]] const std::vector<Item>& items() const { return items_; }
+    [[nodiscard]] const Status& status() const { return status_; }
+
+  protected:
+    std::vector<Item> items_;
+    Status status_;
+};
+[[nodiscard]] std::unique_ptr<Reader> make_reader(Format format);
+
 // Folds Claude Code session JSONL records, in file order, into items. Tool
 // results attach to the tool call that asked for them; a subagent's records
 // (isSidechain) are skipped.
-class ClaudeReader {
+class ClaudeReader final : public Reader {
   public:
-    // Index of the first item changed by this line, or -1 when none was;
-    // appended items follow it.
-    int add(const QByteArray& line);
-    [[nodiscard]] const std::vector<Item>& items() const { return items_; }
-    [[nodiscard]] const Status& status() const { return status_; }
+    int add(const QByteArray& line) override;
+    [[nodiscard]] Format format() const override { return Format::claude; }
 
   private:
     void push(Item item);
@@ -174,8 +212,6 @@ class ClaudeReader {
     // <bash-stdout> and their stderr), attached to the command it answers
     // when nothing else came between. Returns the item changed, or -1.
     int command_output(const QString& raw);
-    std::vector<Item> items_;
-    Status status_;
     qint64 at_ms_{};            // time of the record being read
     QString record_;            // uuid of the record being read
     QHash<QString, int> tools_; // tool_use id -> item index
@@ -199,6 +235,16 @@ class TranscriptModel final : public QAbstractListModel {
     Q_PROPERTY(QString effort READ effort NOTIFY statusChanged)
     Q_PROPERTY(qint64 contextTokens READ contextTokens NOTIFY statusChanged)
     Q_PROPERTY(qint64 contextWindow READ contextWindow NOTIFY statusChanged)
+    // Which CLI's file this is ("claude", "codex", "antigravity"), from its
+    // name unless a tool chose one (setFormat).
+    Q_PROPERTY(QString format READ formatName NOTIFY pathChanged)
+    // Claude Code conversations can be forked from a message (Edit); the
+    // others cannot yet.
+    Q_PROPERTY(bool forkable READ forkable NOTIFY pathChanged)
+    // Whether liveLines and dialogShowing know this CLI's terminal layout
+    // (Claude Code's input box); for the others the view shows no live tail
+    // and never peeks at a dialog.
+    Q_PROPERTY(bool screenKnown READ screenKnown NOTIFY pathChanged)
   public:
     enum Role {
         KindRole = Qt::UserRole + 1,
@@ -277,7 +323,8 @@ class TranscriptModel final : public QAbstractListModel {
     // trailing blanks trimmed: the turn as it streams, harness agnostic.
     Q_INVOKABLE [[nodiscard]] QStringList liveLines(const QStringList& screen) const;
     // Whether the terminal shows a dialog in place of the input box (see
-    // transcript::dialog_showing).
+    // transcript::dialog_showing). Both are Claude Code's layout: for other
+    // CLIs (screenKnown false) liveLines is empty and dialogShowing false.
     Q_INVOKABLE [[nodiscard]] bool dialogShowing(const QStringList& screen) const;
     // When the last turn's prompt was written (ms since the epoch) while that
     // turn is still open, else 0: what "Working for" counts from.
@@ -302,12 +349,20 @@ class TranscriptModel final : public QAbstractListModel {
     // A local file path for a dropped or picked file URL, or empty.
     Q_INVOKABLE [[nodiscard]] QString localPath(const QUrl& url) const;
 
-    [[nodiscard]] const QString& model() const { return reader_.status().model; }
-    [[nodiscard]] const QString& effort() const { return reader_.status().effort; }
-    [[nodiscard]] qint64 contextTokens() const { return reader_.status().context_tokens; }
+    [[nodiscard]] const QString& model() const { return reader_->status().model; }
+    [[nodiscard]] const QString& effort() const { return reader_->status().effort; }
+    [[nodiscard]] qint64 contextTokens() const { return reader_->status().context_tokens; }
     [[nodiscard]] qint64 contextWindow() const {
-        return transcript::context_window(reader_.status().model, reader_.status().context_tokens);
+        return transcript::context_window(reader_->status());
     }
+    [[nodiscard]] transcript::Format format() const { return reader_->format(); }
+    [[nodiscard]] QString formatName() const { return transcript::format_name(format()); }
+    [[nodiscard]] bool forkable() const { return format() == transcript::Format::claude; }
+    [[nodiscard]] bool screenKnown() const { return format() == transcript::Format::claude; }
+    // Reads every later path as `format` whatever its name (for tools that
+    // show a file saved elsewhere); nullopt goes back to the name. Applies
+    // from the next setPath.
+    void setFormat(std::optional<transcript::Format> format) { forced_format_ = format; }
 
   signals:
     void pathChanged();
@@ -316,7 +371,8 @@ class TranscriptModel final : public QAbstractListModel {
     void statusChanged();
 
   private:
-    void apply(transcript::ClaudeReader reader, qint64 offset, QByteArray pending);
+    [[nodiscard]] transcript::Format format_for(const QString& path) const;
+    void apply(std::unique_ptr<transcript::Reader> reader, qint64 offset, QByteArray pending);
     // Lays the thread out again and tells the view only what moved: rows
     // that stayed are kept, `changed` (an item index) and later are redrawn.
     void relayout(int changed);
@@ -328,14 +384,16 @@ class TranscriptModel final : public QAbstractListModel {
     // shows its thread at once and reads only what it wrote since.
     struct Parsed {
         QString path;
-        transcript::ClaudeReader reader;
+        std::unique_ptr<transcript::Reader> reader;
         qint64 offset{};
         QByteArray pending;
     };
     static constexpr std::size_t kept_conversations = 6;
     std::vector<Parsed> kept_;
     QString path_;
-    transcript::ClaudeReader reader_;
+    std::optional<transcript::Format> forced_format_;
+    // Never null: an empty Claude Code reader until a path is set.
+    std::unique_ptr<transcript::Reader> reader_;
     transcript::Status shown_status_;
     qint64 offset_{};
     QByteArray pending_; // a line the CLI has not finished writing

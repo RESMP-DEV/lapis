@@ -46,7 +46,7 @@ add_library(lapis_desktop_core STATIC
     src/shell_environment.cpp src/shell_environment.hpp
     src/tool_status.cpp src/tool_status.hpp
     src/app_window.cpp src/app_window.hpp
-    src/transcript.cpp src/transcript.hpp
+    src/transcript.cpp src/transcript.hpp src/transcript_parts.hpp
     src/code_highlight.cpp src/code_highlight.hpp
     src/slash_commands.cpp src/slash_commands.hpp)
 target_include_directories(lapis_desktop_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")

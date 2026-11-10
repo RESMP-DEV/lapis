@@ -2,6 +2,7 @@
 
 #include "code_highlight.hpp"
 #include "slash_commands.hpp"
+#include "transcript_parts.hpp"
 #include <QClipboard>
 #include <QColor>
 #include <QDateTime>
@@ -73,7 +74,7 @@ QString duration_text(qint64 ms) {
     return QStringLiteral("%1d %2h").arg(seconds / 86400).arg((seconds % 86400) / 3600);
 }
 
-namespace {
+namespace detail {
 QString clip(QString text, qsizetype limit) {
     if (text.size() <= limit)
         return text;
@@ -95,6 +96,63 @@ QString without_escapes(QString text) {
     static const QRegularExpression escapes(QStringLiteral(R"(\x1b\[[0-9;?]*[ -/]*[@-~])"));
     return text.remove(escapes);
 }
+
+QString compact_json(const QJsonValue& value, qsizetype limit) {
+    const auto bytes =
+        value.isObject()  ? QJsonDocument(value.toObject()).toJson(QJsonDocument::Compact)
+        : value.isArray() ? QJsonDocument(value.toArray()).toJson(QJsonDocument::Compact)
+                          : QJsonDocument(QJsonArray{value}).toJson(QJsonDocument::Compact);
+    return clip(QString::fromUtf8(bytes), limit);
+}
+
+Item make(Kind kind, QString title, QString body, QString detail) {
+    Item item;
+    item.kind = kind;
+    item.title = std::move(title);
+    item.body = std::move(body);
+    item.detail = std::move(detail);
+    return item;
+}
+
+void add_lines(Item& item, QChar sign, const QString& text) {
+    if (text.isEmpty())
+        return;
+    const auto lines = text.split(QLatin1Char('\n'));
+    (sign == QLatin1Char('+') ? item.added : item.removed) += static_cast<int>(lines.size());
+    for (const auto& line : lines) {
+        if (std::cmp_greater_equal(item.diff.size(), diff_preview_lines))
+            return;
+        item.diff.push_back({sign, clip(line, 400)});
+    }
+}
+
+QString first_line(const QString& text) {
+    const auto end = text.indexOf(QLatin1Char('\n'));
+    return end < 0 ? text : text.left(end) + QStringLiteral(" …");
+}
+
+void set_result(Item& item, const QString& output) {
+    const auto text = without_escapes(output).trimmed();
+    const auto lines = text.isEmpty() ? QStringList{} : text.split(QLatin1Char('\n'));
+    item.result_lines = static_cast<int>(lines.size());
+    item.result =
+        clip(lines.mid(0, result_preview_lines).join(QLatin1Char('\n')), result_preview_chars);
+}
+
+bool is_step(Kind kind) { return kind == Kind::tool || kind == Kind::thinking; }
+
+qint64 time_ms(const QString& stamp) {
+    if (stamp.isEmpty())
+        return 0;
+    auto at = QDateTime::fromString(stamp, Qt::ISODateWithMs);
+    if (!at.isValid())
+        at = QDateTime::fromString(stamp, Qt::ISODate);
+    return at.isValid() ? at.toMSecsSinceEpoch() : 0;
+}
+} // namespace detail
+
+namespace {
+using namespace detail;
 
 // The API name for a model as /model reports it: "Opus 5.5 (1M context)"
 // is "claude-opus-5-5[1m]"; an API name stays as it is.
@@ -126,36 +184,6 @@ QString tagged(const QString& text, QStringView tag) {
     return text.mid(from, end < 0 ? -1 : end - from).trimmed();
 }
 
-QString compact_json(const QJsonValue& value, qsizetype limit) {
-    const auto bytes =
-        value.isObject()  ? QJsonDocument(value.toObject()).toJson(QJsonDocument::Compact)
-        : value.isArray() ? QJsonDocument(value.toArray()).toJson(QJsonDocument::Compact)
-                          : QJsonDocument(QJsonArray{value}).toJson(QJsonDocument::Compact);
-    return clip(QString::fromUtf8(bytes), limit);
-}
-
-Item make(Kind kind, QString title, QString body = {}, QString detail = {}) {
-    Item item;
-    item.kind = kind;
-    item.title = std::move(title);
-    item.body = std::move(body);
-    item.detail = std::move(detail);
-    return item;
-}
-
-// Adds `text`'s lines to the diff preview and counts all of them.
-void add_lines(Item& item, QChar sign, const QString& text) {
-    if (text.isEmpty())
-        return;
-    const auto lines = text.split(QLatin1Char('\n'));
-    (sign == QLatin1Char('+') ? item.added : item.removed) += static_cast<int>(lines.size());
-    for (const auto& line : lines) {
-        if (std::cmp_greater_equal(item.diff.size(), diff_preview_lines))
-            return;
-        item.diff.push_back({sign, clip(line, 400)});
-    }
-}
-
 QString result_text(const QJsonValue& content) {
     if (content.isString())
         return content.toString();
@@ -171,11 +199,6 @@ QString result_text(const QJsonValue& content) {
             parts << QStringLiteral("[%1]").arg(type);
     }
     return parts.join(QLatin1Char('\n'));
-}
-
-QString first_line(const QString& text) {
-    const auto end = text.indexOf(QLatin1Char('\n'));
-    return end < 0 ? text : text.left(end) + QStringLiteral(" …");
 }
 
 // A tool call as one step: a past-tense verb and its target, in the words
@@ -279,8 +302,6 @@ void attach_result(Item& item, const QJsonObject& block) {
     item.result =
         clip(lines.mid(0, result_preview_lines).join(QLatin1Char('\n')), result_preview_chars);
 }
-
-bool is_step(Kind kind) { return kind == Kind::tool || kind == Kind::thinking; }
 } // namespace
 
 std::vector<Piece> pieces(const QString& markdown) {
@@ -363,6 +384,53 @@ qint64 context_window(const QString& model, qint64 used) {
                     [&name](const QString& prefix) { return name.startsWith(prefix); }))
         window = 1'000'000;
     return std::max(window, used);
+}
+
+qint64 context_window(const Status& status) {
+    if (status.window_tokens > 0)
+        return std::max(status.window_tokens, status.context_tokens);
+    return context_window(status.model, status.context_tokens);
+}
+
+QString format_name(Format format) {
+    switch (format) {
+    case Format::codex:
+        return QStringLiteral("codex");
+    case Format::antigravity:
+        return QStringLiteral("antigravity");
+    case Format::claude:
+        break;
+    }
+    return QStringLiteral("claude");
+}
+
+std::optional<Format> format_named(const QString& name) {
+    if (name == QLatin1String("claude"))
+        return Format::claude;
+    if (name == QLatin1String("codex"))
+        return Format::codex;
+    if (name == QLatin1String("antigravity") || name == QLatin1String("agy"))
+        return Format::antigravity;
+    return std::nullopt;
+}
+
+Format format_of(const QString& path) {
+    const auto name = QFileInfo(path).fileName();
+    if (name.startsWith(QLatin1String("rollout-")))
+        return Format::codex;
+    if (name == QLatin1String("transcript_full.jsonl") || name == QLatin1String("transcript.jsonl"))
+        return Format::antigravity;
+    return Format::claude;
+}
+
+std::unique_ptr<Reader> make_reader(Format format) {
+    switch (format) {
+    case Format::codex:
+    case Format::antigravity:
+    case Format::claude:
+        break;
+    }
+    return std::make_unique<ClaudeReader>();
 }
 
 QString chart_style_folder() { return QDir::home().filePath(QStringLiteral(".lapis/visual")); }
@@ -555,7 +623,8 @@ QString work_summary(const std::vector<Item>& items, int first, int last, int ex
         const auto& verb = item.title;
         if (verb == QLatin1String("Ran"))
             ++commands;
-        else if (verb == QLatin1String("Edited") || verb == QLatin1String("Wrote"))
+        else if (verb == QLatin1String("Edited") || verb == QLatin1String("Wrote") ||
+                 verb == QLatin1String("Deleted")) // Deleted: Codex's patches
             edited.insert(item.body);
         else if (verb == QLatin1String("Read"))
             read.insert(item.body);
@@ -973,7 +1042,7 @@ int ClaudeReader::add(const QByteArray& line) {
 
 namespace {
 struct ReadResult {
-    transcript::ClaudeReader reader;
+    std::unique_ptr<transcript::Reader> reader;
     qint64 offset{};
     QByteArray pending;
 };
@@ -981,7 +1050,7 @@ struct ReadResult {
 // Feeds `bytes` (after `pending`, a line started earlier) to the reader and
 // keeps a trailing unfinished line for next time. Returns the first item a
 // line changed, or -1.
-int feed(transcript::ClaudeReader& reader, QByteArray& pending, const QByteArray& bytes) {
+int feed(transcript::Reader& reader, QByteArray& pending, const QByteArray& bytes) {
     pending += bytes;
     int changed = -1;
     qsizetype start = 0;
@@ -995,13 +1064,13 @@ int feed(transcript::ClaudeReader& reader, QByteArray& pending, const QByteArray
     return changed;
 }
 
-ReadResult read_whole(const QString& path) {
-    ReadResult result;
+ReadResult read_whole(const QString& path, transcript::Format format) {
+    ReadResult result{transcript::make_reader(format), 0, {}};
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
         return result;
     while (!file.atEnd())
-        feed(result.reader, result.pending, file.read(qint64{1} << 20));
+        feed(*result.reader, result.pending, file.read(qint64{1} << 20));
     result.offset = file.pos();
     return result;
 }
@@ -1016,7 +1085,12 @@ QVariantList diff_rows(const std::vector<transcript::DiffLine>& diff) {
 }
 } // namespace
 
-TranscriptModel::TranscriptModel(QObject* parent) : QAbstractListModel(parent) {}
+TranscriptModel::TranscriptModel(QObject* parent)
+    : QAbstractListModel(parent), reader_(transcript::make_reader(transcript::Format::claude)) {}
+
+transcript::Format TranscriptModel::format_for(const QString& path) const {
+    return forced_format_ ? *forced_format_ : transcript::format_of(path);
+}
 
 int TranscriptModel::rowCount(const QModelIndex& parent) const {
     return parent.isValid() ? 0 : static_cast<int>(layout_.rows.size());
@@ -1041,7 +1115,7 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
         case DetailRole:
             return turn.summary;
         case AtRole:
-            return reader_.items()[static_cast<size_t>(turn.start)].at_ms;
+            return reader_->items()[static_cast<size_t>(turn.start)].at_ms;
         case DurationRole:
             return turn.duration_ms;
         case QueuedRole:
@@ -1063,7 +1137,7 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
             return QString();
         }
     }
-    const auto& item = reader_.items()[static_cast<size_t>(row.item)];
+    const auto& item = reader_->items()[static_cast<size_t>(row.item)];
     switch (role) {
     case InWorkRole:
         return row.in_work;
@@ -1131,7 +1205,7 @@ int row_depends_on(const transcript::Layout& layout, const transcript::Row& row)
 } // namespace
 
 void TranscriptModel::relayout(int changed) {
-    auto next = transcript::lay_out(reader_.items(), expanded_);
+    auto next = transcript::lay_out(reader_->items(), expanded_);
     const auto old_size = layout_.rows.size();
     const auto new_size = next.rows.size();
     size_t prefix = 0;
@@ -1602,15 +1676,17 @@ double TranscriptModel::runningSince() const {
     if (layout_.turns.empty() || layout_.turns.back().closed)
         return 0;
     return static_cast<double>(
-        reader_.items()[static_cast<size_t>(layout_.turns.back().start)].at_ms);
+        reader_->items()[static_cast<size_t>(layout_.turns.back().start)].at_ms);
 }
 
 QStringList TranscriptModel::liveLines(const QStringList& screen) const {
-    return transcript::live_lines(screen);
+    // Cut at Claude Code's input box; another CLI's screen would stream its
+    // own prompt and footer, so it shows no tail rather than a wrong one.
+    return screenKnown() ? transcript::live_lines(screen) : QStringList{};
 }
 
 bool TranscriptModel::dialogShowing(const QStringList& screen) const {
-    return transcript::dialog_showing(screen);
+    return screenKnown() && transcript::dialog_showing(screen);
 }
 
 QVariantMap TranscriptModel::fonts() const {
@@ -1678,8 +1754,14 @@ QString transcript::selection_text(const QTextDocument& document, int start, int
 void TranscriptModel::setPath(const QString& path) {
     if (path == path_)
         return;
+    const auto generation = ++generation_;
+    const bool was_loading = loading_;
+    loading_ = false;
+    // The reader is swapped inside the reset, so the view never sees the old
+    // rows over the new reader.
+    beginResetModel();
     // Keep what was read (a load still running has nothing whole to keep).
-    if (!path_.isEmpty() && !loading_) {
+    if (!path_.isEmpty() && !was_loading) {
         std::erase_if(kept_, [this](const Parsed& kept) { return kept.path == path_; });
         kept_.insert(kept_.begin(),
                      Parsed{path_, std::move(reader_), offset_, std::move(pending_)});
@@ -1687,31 +1769,29 @@ void TranscriptModel::setPath(const QString& path) {
             kept_.pop_back();
     }
     path_ = path;
-    emit pathChanged();
-    const auto generation = ++generation_;
-    if (loading_) {
-        loading_ = false;
-        emit loadingChanged();
-    }
-    const auto hit = std::find_if(kept_.begin(), kept_.end(),
-                                  [&path](const Parsed& kept) { return kept.path == path; });
-    beginResetModel();
+    const auto format = format_for(path);
+    const auto hit = std::find_if(kept_.begin(), kept_.end(), [&path, format](const Parsed& kept) {
+        return kept.path == path && kept.reader->format() == format;
+    });
     if (hit != kept_.end() && !path.isEmpty()) {
         reader_ = std::move(hit->reader);
         offset_ = hit->offset;
         pending_ = std::move(hit->pending);
         kept_.erase(hit);
     } else {
-        reader_ = {};
+        reader_ = transcript::make_reader(format);
         offset_ = 0;
         pending_.clear();
     }
     expanded_.clear();
-    layout_ = transcript::lay_out(reader_.items(), expanded_);
+    layout_ = transcript::lay_out(reader_->items(), expanded_);
     endResetModel();
+    emit pathChanged();
+    if (was_loading)
+        emit loadingChanged();
     emit countChanged();
     noteStatus();
-    const bool warm = !reader_.items().empty() || offset_ > 0;
+    const bool warm = !reader_->items().empty() || offset_ > 0;
     auto* watcher = findChild<QFileSystemWatcher*>();
     if (watcher == nullptr) {
         watcher = new QFileSystemWatcher(this);
@@ -1731,9 +1811,9 @@ void TranscriptModel::setPath(const QString& path) {
     }
     loading_ = true;
     emit loadingChanged();
-    QThreadPool::globalInstance()->start([guard = QPointer<TranscriptModel>(this), path,
+    QThreadPool::globalInstance()->start([guard = QPointer<TranscriptModel>(this), path, format,
                                           generation] {
-        auto result = read_whole(path);
+        auto result = read_whole(path, format);
         QMetaObject::invokeMethod(
             guard.data(),
             [guard, generation, result = std::move(result)]() mutable {
@@ -1747,17 +1827,21 @@ void TranscriptModel::setPath(const QString& path) {
 
 void TranscriptModel::loadNow() {
     ++generation_;
-    auto result = read_whole(path_);
+    auto result = read_whole(path_, format_for(path_));
     apply(std::move(result.reader), result.offset, std::move(result.pending));
 }
 
-void TranscriptModel::apply(transcript::ClaudeReader reader, qint64 offset, QByteArray pending) {
+void TranscriptModel::apply(std::unique_ptr<transcript::Reader> reader, qint64 offset,
+                            QByteArray pending) {
+    const bool format_changed = reader->format() != reader_->format();
     beginResetModel();
     reader_ = std::move(reader);
-    layout_ = transcript::lay_out(reader_.items(), expanded_);
+    layout_ = transcript::lay_out(reader_->items(), expanded_);
     offset_ = offset;
     pending_ = std::move(pending);
     endResetModel();
+    if (format_changed)
+        emit pathChanged(); // the format and what depends on it
     emit countChanged();
     noteStatus();
     if (loading_) {
@@ -1779,16 +1863,16 @@ void TranscriptModel::readMore() {
         return;
     const auto bytes = file.readAll();
     offset_ += bytes.size();
-    const auto changed = feed(reader_, pending_, bytes);
+    const auto changed = feed(*reader_, pending_, bytes);
     noteStatus();
     if (changed >= 0)
         relayout(changed);
 }
 
 void TranscriptModel::noteStatus() {
-    if (reader_.status() == shown_status_)
+    if (reader_->status() == shown_status_)
         return;
-    shown_status_ = reader_.status();
+    shown_status_ = reader_->status();
     emit statusChanged();
 }
 } // namespace lapis::desktop
