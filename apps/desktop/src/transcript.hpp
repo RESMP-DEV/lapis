@@ -244,6 +244,31 @@ class CodexReader final : public Reader {
     QString turn_;         // the running turn's id, or empty between turns
     bool turn_prompted_{}; // the running turn has its prompt
 };
+
+// Folds an Antigravity CLI transcript (brain/<conversation>/.system_generated
+// /logs/transcript_full.jsonl, as agy 1.5 appends it) into items. Each line is
+// a step: the person's input (USER_INPUT), a model response (thinking, text
+// and tool calls), each call's result in call order (GENERIC), and the CLI's
+// own messages. A turn ends at a response with text and no tool calls; the
+// file records no durations, so turns and steps are timed from their times.
+// The model and effort come from the settings change agy notes in a prompt.
+class AntigravityReader final : public Reader {
+  public:
+    int add(const QByteArray& line) override;
+    [[nodiscard]] Format format() const override { return Format::antigravity; }
+
+  private:
+    void push(Item item);
+    // A model step after the turn ended (a timer or background task woke
+    // the agent) starts a turn of its own, with no row for its start.
+    void wake(const QString& why);
+    qint64 at_ms_{};
+    QString record_;
+    std::vector<int> waiting_; // tool items awaiting their result, in call order
+    bool turn_open_{};
+    qint64 turn_since_ms_{};
+    QSet<qint64> steps_; // step indexes read, so a step written twice counts once
+};
 } // namespace transcript
 
 // The items of one conversation file for QML, following the file as the CLI

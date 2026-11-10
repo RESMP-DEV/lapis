@@ -428,6 +428,7 @@ std::unique_ptr<Reader> make_reader(Format format) {
     case Format::codex:
         return std::make_unique<CodexReader>();
     case Format::antigravity:
+        return std::make_unique<AntigravityReader>();
     case Format::claude:
         break;
     }
