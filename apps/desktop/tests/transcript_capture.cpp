@@ -191,9 +191,9 @@ int main(int argc, char** argv) {
                       "Read the file as this CLI's: claude, codex or antigravity (default: by "
                       "its name)",
                       "name"});
-    parser.addOption({"work", "Fold and open the N-th \"Worked for\" row (default: the latest)",
-                      "n", "0"});
-    parser.addOption({"census","Print how many items of each kind and step the file makes "
+    parser.addOption(
+        {"work", "Fold and open the N-th \"Worked for\" row (default: the latest)", "n", "0"});
+    parser.addOption({"census", "Print how many items of each kind and step the file makes "
                                 "(counts and step names only), then exit"});
     parser.addOption({"out", "Contact sheet PNG", "file"});
     parser.addOption({"width", "Panel width", "px", "900"});

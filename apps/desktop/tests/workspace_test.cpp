@@ -6711,13 +6711,14 @@ void visualConversationFiles() {
         ids.insert(QString::fromLatin1(role), id);
         QFile made(endpoint(id));
         require(made.open(QIODevice::WriteOnly), "make an endpoint");
-        agents.append(QJsonObject{{"id", id},
-                                  {"title", QString::fromLatin1(role)},
-                                  {"category", "general"},
-                                  {"endpoint", endpoint(id)},
-                                  {"program", "/usr/bin/true"},
-                                  {"harness", QString::fromLatin1(role).section(QLatin1Char('-'), 0, 0)},
-                                  {"directory", work}});
+        agents.append(
+            QJsonObject{{"id", id},
+                        {"title", QString::fromLatin1(role)},
+                        {"category", "general"},
+                        {"endpoint", endpoint(id)},
+                        {"program", "/usr/bin/true"},
+                        {"harness", QString::fromLatin1(role).section(QLatin1Char('-'), 0, 0)},
+                        {"directory", work}});
     }
     const auto named_thread = uuid();
     writeObservedResume(endpoint(ids.value(QStringLiteral("codex-named"))),
@@ -6728,9 +6729,7 @@ void visualConversationFiles() {
         {QStringLiteral("agy"), named_agy, lapis::session::ResumeSource::terminal});
 
     const auto now = QDateTime::currentDateTimeUtc();
-    const auto stamp = [](const QDateTime& at) {
-        return at.toString(Qt::ISODateWithMs).toUtf8();
-    };
+    const auto stamp = [](const QDateTime& at) { return at.toString(Qt::ISODateWithMs).toUtf8(); };
     const auto sessions = QDir(root).filePath(QStringLiteral("codex/sessions"));
     const auto today = QDir(sessions).filePath(
         QDateTime::currentDateTime().date().toString(QStringLiteral("yyyy/MM/dd")));
@@ -6744,12 +6743,12 @@ void visualConversationFiles() {
         return path;
     };
     const WorkspaceOptions options{.storagePath = QDir(root).filePath(QStringLiteral("ws.json"))};
-    writeRegistry(options.storagePath,
-                  QJsonObject{{"version", 2},
-                              {"activeCategory", "general"},
-                              {"categories",
-                               QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
-                              {"agents", agents}});
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", agents}});
     Workspace workspace(WorkspaceMode::live, options);
     require(workspace.workspaceError().isEmpty(), "visual agents restored");
     const auto file = [&workspace, &ids](const char* role) {
@@ -6782,8 +6781,9 @@ void visualConversationFiles() {
     };
     const auto cache = QDir(agy_home).filePath(QStringLiteral("cache/last_conversations.json"));
     const auto latest = [&](const QString& conversation) {
-        writeLines(cache, {QJsonDocument(QJsonObject{{work, conversation}}).toJson(
-                              QJsonDocument::Compact)});
+        writeLines(
+            cache,
+            {QJsonDocument(QJsonObject{{work, conversation}}).toJson(QJsonDocument::Compact)});
     };
     const auto named_agy_path = transcript(named_agy, now);
     require(file("agy-named") == named_agy_path, "agy: the conversation its hook named");

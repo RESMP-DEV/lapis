@@ -172,9 +172,9 @@ Item extension_item(const QJsonObject& item) {
         const bool page = text_of(action, "type") == QLatin1String("openPage");
         if (page && !text_of(action, "url").isEmpty())
             target = text_of(action, "url");
-        auto step = make(Kind::tool,
-                         page ? QStringLiteral("Fetched") : QStringLiteral("Searched the web for"),
-                         target);
+        auto step =
+            make(Kind::tool,
+                 page ? QStringLiteral("Fetched") : QStringLiteral("Searched the web for"), target);
         QStringList found;
         for (const auto& value : item.value(QLatin1String("results")).toArray()) {
             const auto result = value.toObject();
@@ -285,13 +285,14 @@ void CodexReader::item(const QJsonObject& item, qint64 started_ms, qint64 comple
         }
     } else if (type == QLatin1String("McpToolCall")) {
         const auto arguments = item.value(QLatin1String("arguments")).toObject();
-        const auto tool = QString(text_of(item, "tool")).replace(QLatin1Char('_'), QLatin1Char(' '));
+        const auto tool =
+            QString(text_of(item, "tool")).replace(QLatin1Char('_'), QLatin1Char(' '));
         const auto server =
             QString(text_of(item, "server")).replace(QLatin1Char('-'), QLatin1Char(' '));
         const auto title = text_of(arguments, "title");
-        auto step = timed(make(Kind::tool, QStringLiteral("Called"), title.isEmpty() ? tool : title,
-                               title.isEmpty() ? server
-                                               : QStringLiteral("%1 · %2").arg(server, tool)));
+        auto step =
+            timed(make(Kind::tool, QStringLiteral("Called"), title.isEmpty() ? tool : title,
+                       title.isEmpty() ? server : QStringLiteral("%1 · %2").arg(server, tool)));
         set_result(step, tool_output(item));
         const auto result = item.value(QLatin1String("result")).toObject();
         step.failed = text_of(item, "status") == QLatin1String("failed") ||
@@ -305,8 +306,8 @@ void CodexReader::item(const QJsonObject& item, qint64 started_ms, qint64 comple
             step.duration_ms = took_ms(item, started_ms, completed_ms);
         push(std::move(step));
     } else if (type == QLatin1String("ImageView")) {
-        auto step = timed(make(Kind::tool, QStringLiteral("Viewed image"),
-                               homeless(text_of(item, "path"))));
+        auto step = timed(
+            make(Kind::tool, QStringLiteral("Viewed image"), homeless(text_of(item, "path"))));
         step.answered = true;
         push(std::move(step));
     } else if (type == QLatin1String("ContextCompaction")) {
@@ -366,8 +367,7 @@ int CodexReader::add(const QByteArray& line) {
     } else if (event == QLatin1String("item_completed")) {
         item(payload.value(QLatin1String("item")).toObject(), number_of(payload, "started_at_ms"),
              number_of(payload, "completed_at_ms"));
-    } else if (event == QLatin1String("task_complete") ||
-               event == QLatin1String("turn_aborted")) {
+    } else if (event == QLatin1String("task_complete") || event == QLatin1String("turn_aborted")) {
         record_ = text_of(payload, "turn_id");
         if (event == QLatin1String("turn_aborted")) {
             const auto reason = text_of(payload, "reason");

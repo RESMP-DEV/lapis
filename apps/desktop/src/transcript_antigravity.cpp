@@ -36,9 +36,8 @@ QString inside(const QString& text, QStringView tag) {
 QString request_text(const QString& content) {
     if (const auto request = inside(content, u"USER_REQUEST"); !request.isEmpty())
         return request;
-    static const QRegularExpression notes(
-        QStringLiteral(R"(<([A-Z_]+)>.*?</\1>)"),
-        QRegularExpression::DotMatchesEverythingOption);
+    static const QRegularExpression notes(QStringLiteral(R"(<([A-Z_]+)>.*?</\1>)"),
+                                          QRegularExpression::DotMatchesEverythingOption);
     return QString(content).remove(notes).trimmed();
 }
 
@@ -229,10 +228,10 @@ int AntigravityReader::add(const QByteArray& line) {
             if (path.startsWith(QLatin1String("file://")))
                 path = QUrl(path).toLocalFile();
             const bool image = text_of(media, "mime_type").startsWith(QLatin1String("image/"));
-            auto prompt = make(Kind::prompt, {},
-                               QStringLiteral("%1 %2").arg(image ? QStringLiteral("[image]")
-                                                                 : QStringLiteral("[file]"),
-                                                           path));
+            auto prompt =
+                make(Kind::prompt, {},
+                     QStringLiteral("%1 %2").arg(
+                         image ? QStringLiteral("[image]") : QStringLiteral("[file]"), path));
             prompt.starts_turn = !shown;
             shown = true;
             push(std::move(prompt));
@@ -257,9 +256,8 @@ int AntigravityReader::add(const QByteArray& line) {
         }
         if (!reply.isEmpty() && calls.isEmpty()) {
             // Text with nothing left to do ends the turn.
-            const auto ms = turn_since_ms_ > 0 && at_ms_ > turn_since_ms_
-                                ? at_ms_ - turn_since_ms_
-                                : 0;
+            const auto ms =
+                turn_since_ms_ > 0 && at_ms_ > turn_since_ms_ ? at_ms_ - turn_since_ms_ : 0;
             auto turn = make(Kind::turn, QStringLiteral("Worked for %1").arg(duration_text(ms)));
             turn.duration_ms = ms;
             push(std::move(turn));
@@ -277,7 +275,8 @@ int AntigravityReader::add(const QByteArray& line) {
         // Notes for the model; one after the turn ended wakes the agent.
         if (!turn_open_) {
             auto why = content;
-            why.remove(QStringLiteral("<SYSTEM_MESSAGE>")).remove(QStringLiteral("</SYSTEM_MESSAGE>"));
+            why.remove(QStringLiteral("<SYSTEM_MESSAGE>"))
+                .remove(QStringLiteral("</SYSTEM_MESSAGE>"));
             wake(clip(first_line(why.trimmed()), 300));
         }
     } else if (type == QLatin1String("ERROR_MESSAGE")) {

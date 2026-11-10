@@ -103,15 +103,13 @@ void codex_items() {
             "Codex: a failed command, its output and time");
     require(items[10].title == "Called" && items[10].body == "Look up flag parsing" &&
                 items[10].detail == "docs server · search docs" &&
-                items[10].result == "Flags are parsed in main()." &&
-                items[10].duration_ms == 5000,
+                items[10].result == "Flags are parsed in main()." && items[10].duration_ms == 5000,
             "Codex: an MCP tool call");
     require(items[11].title == "Searched the web for" && items[11].body == "gtest flag parsing" &&
                 items[11].result.contains("https://example.com/flags"),
             "Codex: a web search and its results");
     require(items[12].title == "Waited" && items[12].body == "30s", "Codex: a sleep");
-    require(items[13].title == "Viewed image" &&
-                items[13].body == "/work/demo/docs/screenshot.png",
+    require(items[13].title == "Viewed image" && items[13].body == "/work/demo/docs/screenshot.png",
             "Codex: an image viewed");
     require(items[14].kind == Kind::reply && items[14].body.contains("```cpp"),
             "Codex: final answer keeps its markdown");
@@ -271,8 +269,8 @@ void antigravity_items() {
     require(items[12].title == "Checked task" && items[12].body == "Check the test task",
             "agy: task check");
     require(items[14].kind == Kind::turn && items[14].duration_ms == 12000, "agy: woken turn");
-    require(items[15].kind == Kind::prompt && items[15].starts_turn && items[16].kind == Kind::prompt &&
-                !items[16].starts_turn &&
+    require(items[15].kind == Kind::prompt && items[15].starts_turn &&
+                items[16].kind == Kind::prompt && !items[16].starts_turn &&
                 items[16].body == "[image] /work/demo/docs/screenshot.png" &&
                 items[16].record == items[15].record,
             "agy: an attached image under its prompt");
