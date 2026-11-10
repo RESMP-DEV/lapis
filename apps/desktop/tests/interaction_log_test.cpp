@@ -402,7 +402,7 @@ void production_window_is_described() {
     fixture.recorder->watchWindow(window);
     const auto sessions = fixture.workspace.categorySessions();
     require(!sessions.isEmpty(), "the preview has agents");
-    const auto id = sessions.front().value<lapis::desktop::SessionPreview*>()->sessionId();
+    const auto id = sessions.front().value<lapis::desktop::Agent*>()->sessionId();
     auto* card = find_item(window->contentItem(), QStringLiteral("cardPress_") + id);
     require(card != nullptr, "the strip card exists");
     const auto at = card->mapToScene(QPointF(card->width() / 2, card->height() / 2));
@@ -491,8 +491,8 @@ int main(int argc, char** argv) {
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
     QGuiApplication app(argc, argv);
-    qmlRegisterUncreatableType<lapis::desktop::SessionPreview>("Lapis", 1, 0, "SessionPreview",
-                                                               "owned by the workspace");
+    qmlRegisterUncreatableType<lapis::desktop::Agent>("Lapis", 1, 0, "Agent",
+                                                      "owned by the workspace");
     qmlRegisterType<lapis::desktop::TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
     qmlRegisterUncreatableType<lapis::desktop::KeyMap>("Lapis", 1, 0, "KeyMap",
                                                        "owned by the application");

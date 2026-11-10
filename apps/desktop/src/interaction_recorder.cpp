@@ -132,7 +132,7 @@ QString cursor_row(const session::TerminalSnapshot& snapshot) {
     return text;
 }
 
-QString session_harness(const SessionPreview& item) {
+QString session_harness(const Agent& item) {
     return item.harnessId().isEmpty() ? QStringLiteral("shell") : item.harnessId();
 }
 
@@ -795,7 +795,7 @@ void InteractionRecorder::followHistory() {
     history_session_ = workspace_.focusedSession();
     if (history_session_)
         history_connection_ =
-            connect(history_session_.data(), &SessionPreview::historyChanged, this, [this] {
+            connect(history_session_.data(), &Agent::historyChanged, this, [this] {
                 if (recording() && !history_timer_.isActive())
                     history_timer_.start();
             });

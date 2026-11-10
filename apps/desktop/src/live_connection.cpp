@@ -50,9 +50,9 @@ bool start_service_detached(const ServiceLaunchRequest& launch, QString* error) 
     return false;
 }
 } // namespace
-SessionPreview::~SessionPreview() { live_.reset(); }
-void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpec& launch,
-                               wire::AttachMode mode) {
+Agent::~Agent() { live_.reset(); }
+void Agent::startLive(const QString& endpoint, const session::LaunchSpec& launch,
+                      wire::AttachMode mode) {
     link_folder_ =
         QFileInfo(launch.program).fileName() == QLatin1String("ssh") ? QString() : launch.directory;
     // A replacement connection means the old program and its screen are gone.
@@ -62,7 +62,7 @@ void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpe
     program_key_debt_lines_ = 0;
     live_ = std::make_unique<LiveConnection>(*this, endpoint, launch, mode);
 }
-void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
+void Agent::applySnapshot(session::TerminalSnapshot snapshot) {
     noteOutput();
     waiting_.reset();
     if (live_snapshot_.alternate_screen != snapshot.alternate_screen) {
@@ -78,7 +78,7 @@ void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
         emit snapshotChanged();
     }
 }
-void SessionPreview::offerSnapshot(QByteArray encoded) {
+void Agent::offerSnapshot(QByteArray encoded) {
     noteOutput();
     waiting_ = std::move(encoded);
     live_snapshot_received_ = true;
@@ -98,7 +98,7 @@ void SessionPreview::offerSnapshot(QByteArray encoded) {
         decode_timer_.start(static_cast<int>(remainingDecodeDelay()));
     }
 }
-qint64 SessionPreview::remainingDecodeDelay() const {
+qint64 Agent::remainingDecodeDelay() const {
     // The fastest viewer's interval paces decodes, and a decode outside the
     // timer (history opening, viewer resume) still counts against it, so the
     // wait is only the remaining part. No attempt yet means no wait.
@@ -108,7 +108,7 @@ qint64 SessionPreview::remainingDecodeDelay() const {
     const qint64 since = last_decode_attempt_.elapsed();
     return since >= interval ? 0 : interval - since;
 }
-bool SessionPreview::decodeWaiting() const {
+bool Agent::decodeWaiting() const {
     if (!waiting_)
         return false;
     // Decode work itself paces the next attempt, even when that newest screen
@@ -137,7 +137,7 @@ bool SessionPreview::decodeWaiting() const {
         snapshot_ = live_snapshot_;
     return true;
 }
-void SessionPreview::addViewer(int interval_ms) {
+void Agent::addViewer(int interval_ms) {
     const bool first = viewers_.empty();
     if (first)
         last_decode_attempt_.invalidate();
@@ -145,20 +145,20 @@ void SessionPreview::addViewer(int interval_ms) {
     if (first && decodeWaiting() && !history_active_)
         emit snapshotChanged();
 }
-void SessionPreview::removeViewer(int interval_ms) {
+void Agent::removeViewer(int interval_ms) {
     const auto found = viewers_.find(std::max(0, interval_ms));
     if (found != viewers_.end())
         viewers_.erase(found);
     if (viewers_.empty())
         decode_timer_.stop();
 }
-void SessionPreview::captureHistoryScreen() {
+void Agent::captureHistoryScreen() {
     if (!strip_) {
         decodeWaiting();
         strip_screen_ = live_snapshot_;
     }
 }
-void SessionPreview::beginHistoryRequest() {
+void Agent::beginHistoryRequest() {
     // History shows the live screen until a page comes, so take the newest.
     decodeWaiting();
     history_active_ = true;
@@ -166,8 +166,8 @@ void SessionPreview::beginHistoryRequest() {
     emit historyChanged();
     emit connectionChanged();
 }
-void SessionPreview::completeHistoryRequest(quint64 page_id, session::TerminalSnapshot snapshot,
-                                            const QString& message) {
+void Agent::completeHistoryRequest(quint64 page_id, session::TerminalSnapshot snapshot,
+                                   const QString& message) {
     history_active_ = true;
     history_request_pending_ = false;
     history_message_ = message;
@@ -197,7 +197,7 @@ void SessionPreview::completeHistoryRequest(quint64 page_id, session::TerminalSn
     emit connectionChanged();
     showStrip();
 }
-void SessionPreview::showStrip() {
+void Agent::showStrip() {
     if (!strip_)
         return;
     // Rows no page holds wait for their page; a service that cannot fetch
@@ -212,12 +212,12 @@ void SessionPreview::showStrip() {
     emit historyChanged();
     emit snapshotChanged();
 }
-std::optional<session::TerminalSnapshot> SessionPreview::historyRowAbove() const {
+std::optional<session::TerminalSnapshot> Agent::historyRowAbove() const {
     if (!history_active_ || !strip_ || snapshot_.history.viewport_offset != strip_->top())
         return std::nullopt;
     return strip_->rowAbove();
 }
-void SessionPreview::extendStrip() {
+void Agent::extendStrip() {
     if (history_request_pending_ || !live_)
         return;
     // Row 0 of a placed history is the oldest kept.
@@ -229,18 +229,18 @@ void SessionPreview::extendStrip() {
     strip_extending_ = true;
     live_->requestHistory(wire::HistoryDirection::older, strip_oldest_page_);
 }
-qreal SessionPreview::historyPosition() const {
+qreal Agent::historyPosition() const {
     if (!strip_ || strip_->archived() == 0)
         return 1;
     return static_cast<qreal>(strip_->top()) / static_cast<qreal>(strip_->archived());
 }
-qreal SessionPreview::historySpan() const {
+qreal Agent::historySpan() const {
     if (!strip_)
         return 1;
     const auto rows = static_cast<qreal>(strip_->rows());
     return rows / std::max<qreal>(1, static_cast<qreal>(strip_->archived()) + rows);
 }
-void SessionPreview::historyAt(qreal fraction) {
+void Agent::historyAt(qreal fraction) {
     if (!strip_ || !history_scrubbable_)
         return;
     strip_->moveTo(
@@ -248,7 +248,7 @@ void SessionPreview::historyAt(qreal fraction) {
     history_message_.clear();
     showStrip();
 }
-void SessionPreview::failHistoryRequest(const QString& message) {
+void Agent::failHistoryRequest(const QString& message) {
     if (!history_request_pending_)
         return;
     history_request_pending_ = false;
@@ -269,7 +269,7 @@ void SessionPreview::failHistoryRequest(const QString& message) {
     emit historyChanged();
     emit connectionChanged();
 }
-void SessionPreview::cancelHistoryRequests() {
+void Agent::cancelHistoryRequests() {
     history_request_pending_ = false;
     strip_extending_ = false;
     if (!history_active_ && live_)
@@ -277,18 +277,18 @@ void SessionPreview::cancelHistoryRequests() {
     emit historyChanged();
     emit connectionChanged();
 }
-void SessionPreview::setHistoryRequestId(quint64 request_id) {
+void Agent::setHistoryRequestId(quint64 request_id) {
     if (request_id != 0)
         beginHistoryRequest();
 }
-void SessionPreview::olderHistory() {
+void Agent::olderHistory() {
     scrollHistory(static_cast<int>(strip_ ? strip_->rows() : live_snapshot_.size.rows));
 }
-void SessionPreview::newerHistory() {
+void Agent::newerHistory() {
     if (strip_)
         scrollHistory(-static_cast<int>(strip_->rows()));
 }
-void SessionPreview::scrollHistory(int rows) {
+void Agent::scrollHistory(int rows) {
     if (rows == 0 || !live_)
         return;
     if (!strip_) {
@@ -315,7 +315,7 @@ void SessionPreview::scrollHistory(int rows) {
     history_message_.clear();
     showStrip();
 }
-void SessionPreview::returnToLive() {
+void Agent::returnToLive() {
     decodeWaiting();
     if (live_)
         live_->cancelHistoryRequest();
@@ -336,11 +336,11 @@ void SessionPreview::returnToLive() {
     emit connectionChanged();
     emit snapshotChanged();
 }
-void SessionPreview::setActivity(const QString& activity) {
+void Agent::setActivity(const QString& activity) {
     activity_ = activity;
     emit snapshotChanged();
 }
-bool SessionPreview::sendText(const QByteArray& bytes, bool paste) {
+bool Agent::sendText(const QByteArray& bytes, bool paste) {
     if (history_active_ || history_request_pending_ || !live_) {
         setActivity(QStringLiteral(
             "Input was not sent: no live connection or history reconciliation is pending"));
@@ -355,10 +355,8 @@ bool SessionPreview::sendText(const QByteArray& bytes, bool paste) {
     }
     return live_->send(paste ? wire::Kind::paste : wire::Kind::text, bytes);
 }
-quint64 SessionPreview::sendPasteAndSubmit(const QByteArray& bytes) {
-    return requestPaste(bytes, true);
-}
-quint64 SessionPreview::requestPaste(const QByteArray& bytes, bool submit) {
+quint64 Agent::sendPasteAndSubmit(const QByteArray& bytes) { return requestPaste(bytes, true); }
+quint64 Agent::requestPaste(const QByteArray& bytes, bool submit) {
     if (!live_ || history_active_ || history_request_pending_) {
         setActivity(QStringLiteral(
             "Paste was not sent: no live connection or history reconciliation is pending"));
@@ -366,10 +364,8 @@ quint64 SessionPreview::requestPaste(const QByteArray& bytes, bool submit) {
     }
     return live_->sendPaste(bytes, submit);
 }
-bool SessionPreview::terminate() {
-    return live_ && input_ready_ && live_->send(wire::Kind::terminate, {});
-}
-bool SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers modifiers) {
+bool Agent::terminate() { return live_ && input_ready_ && live_->send(wire::Kind::terminate, {}); }
+bool Agent::sendKey(session::TerminalKey key, session::KeyModifiers modifiers) {
     if (history_active_ || history_request_pending_)
         return false;
     const unsigned int mods = (modifiers.shift ? 1U : 0U) | (modifiers.control ? 2U : 0U) |
@@ -381,7 +377,7 @@ bool SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers mod
 }
 // The wheel API is (steps, column, row) at every call site; the order is fixed
 // by the service protocol. NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-bool SessionPreview::sendWheel(int steps, int column, int row) {
+bool Agent::sendWheel(int steps, int column, int row) {
     decodeWaiting();
     if (history_active_ || history_request_pending_ || !live_snapshot_.accepts_wheel ||
         steps == 0 || !live_)
@@ -405,7 +401,7 @@ bool SessionPreview::sendWheel(int steps, int column, int row) {
     }
     return true;
 }
-bool SessionPreview::sendKeyScroll(int steps) {
+bool Agent::sendKeyScroll(int steps) {
     decodeWaiting();
     if (history_active_ || history_request_pending_ || live_snapshot_.accepts_wheel || steps == 0 ||
         !live_)
@@ -415,7 +411,7 @@ bool SessionPreview::sendKeyScroll(int steps) {
     // connection accepted, so typing returns exactly what moved.
     return sendKeyLines(steps * 3);
 }
-bool SessionPreview::sendKeyLines(int lines) {
+bool Agent::sendKeyLines(int lines) {
     const auto key = lines > 0 ? session::TerminalKey::up : session::TerminalKey::down;
     const int sign = lines > 0 ? 1 : -1;
     // One key frame per line: count each accepted key immediately, so arrows
@@ -433,7 +429,7 @@ bool SessionPreview::sendKeyLines(int lines) {
 // The same ordered connection replays forward before the next input. Keep
 // trying in service-sized chunks; a full queue leaves the remaining debt for
 // the next attempt.
-void SessionPreview::returnProgramToBottom() {
+void Agent::returnProgramToBottom() {
     if (program_wheel_debt_ == 0 && program_key_debt_lines_ == 0)
         return;
     decodeWaiting();
@@ -459,11 +455,11 @@ void SessionPreview::returnProgramToBottom() {
             return;
     }
 }
-void SessionPreview::claimTerminalSize() {
+void Agent::claimTerminalSize() {
     if (live_ && !history_active_ && !history_request_pending_)
         live_->claimSize();
 }
-void SessionPreview::resizeTerminal(session::TerminalSize size) {
+void Agent::resizeTerminal(session::TerminalSize size) {
     if (!live_)
         return;
     if (history_active_ || history_request_pending_) {
@@ -473,15 +469,15 @@ void SessionPreview::resizeTerminal(session::TerminalSize size) {
     live_->resize(size);
 }
 
-void SessionPreview::reconnect() {
+void Agent::reconnect() {
     if (live_)
         live_->begin(wire::AttachMode::reconnect);
 }
-void SessionPreview::discoverSession() {
+void Agent::discoverSession() {
     if (live_)
         live_->begin(wire::AttachMode::discover);
 }
-void SessionPreview::setConnection(const QString& state, bool input_ready) {
+void Agent::setConnection(const QString& state, bool input_ready) {
     connection_state_ = state;
     if (input_ready && !input_ready_)
         ready_since_ = QDateTime::currentMSecsSinceEpoch();
@@ -493,12 +489,12 @@ void SessionPreview::setConnection(const QString& state, bool input_ready) {
     }
     emit connectionChanged();
 }
-void SessionPreview::setServiceIdentity(const QByteArray& identity) {
+void Agent::setServiceIdentity(const QByteArray& identity) {
     service_session_id_ = QString::fromLatin1(identity.toHex());
     emit connectionChanged();
 }
-LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
-                               const session::LaunchSpec& launch, wire::AttachMode mode,
+LiveConnection::LiveConnection(Agent& document, QString endpoint, const session::LaunchSpec& launch,
+                               wire::AttachMode mode,
                                std::shared_ptr<session::DescriptorStore> descriptor_store,
                                ServiceLauncher launcher)
     : document_(document), endpoint_(std::move(endpoint)),

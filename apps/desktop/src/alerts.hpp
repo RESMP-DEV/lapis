@@ -12,7 +12,7 @@
 
 namespace lapis::desktop {
 class KeyMap;
-class SessionPreview;
+class Agent;
 class Workspace;
 
 // What the person last saw of each agent: while the window is active and
@@ -24,16 +24,16 @@ class Workspace;
 class SeenScreens final : public QObject {
     Q_OBJECT
   public:
-    using Looking = std::function<bool(const SessionPreview*)>;
+    using Looking = std::function<bool(const Agent*)>;
     static constexpr int kSampleMs = 1000;
     SeenScreens(Workspace& workspace, Looking looking, QObject* parent = nullptr);
     // Whether `item` shows what the person last saw of it.
-    [[nodiscard]] bool unchanged(const SessionPreview* item) const;
+    [[nodiscard]] bool unchanged(const Agent* item) const;
     // Records what is on `item`'s screen now as seen.
-    void see(const SessionPreview* item);
+    void see(const Agent* item);
     // The same from one launch to the next, so a restarted window still
     // knows what was seen.
-    [[nodiscard]] static size_t fingerprint(const SessionPreview* item);
+    [[nodiscard]] static size_t fingerprint(const Agent* item);
     // What was seen of each agent, by agent id, for GuiState; restoring
     // skips agents that are gone.
     [[nodiscard]] QJsonObject saveState() const;
@@ -48,7 +48,7 @@ class SeenScreens final : public QObject {
     Workspace& workspace_;
     Looking looking_;
     QTimer timer_;
-    QHash<const SessionPreview*, size_t> seen_;
+    QHash<const Agent*, size_t> seen_;
 };
 
 // One line per chime decision in an owner-only log, so a missed or extra chime
@@ -68,7 +68,7 @@ class Alerts final : public QObject {
   public:
     using Player = std::function<void(Chime)>;
     // Whether the person is looking at this agent right now.
-    using Looking = std::function<bool(const SessionPreview*)>;
+    using Looking = std::function<bool(const Agent*)>;
     static constexpr int kQuietMs = 1500;
 
     Alerts(Workspace& workspace, const KeyMap& config, Player play, Looking looking,
@@ -84,9 +84,9 @@ class Alerts final : public QObject {
     void setQuietForTesting(int ms) { quiet_ms_ = ms; }
 
   private:
-    void finished(SessionPreview* item);
+    void finished(Agent* item);
     bool ring(Chime chime);
-    void record(const SessionPreview* item, const char* event, const char* decision) const;
+    void record(const Agent* item, const char* event, const char* decision) const;
     const KeyMap& config_;
     Player play_;
     Looking looking_;

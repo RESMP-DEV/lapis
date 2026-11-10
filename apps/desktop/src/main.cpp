@@ -373,7 +373,7 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
         const auto idle = platform::seconds_since_input();
         return idle < 0 || idle < kAwayAfterSeconds;
     };
-    const auto looking = [&workspace, &shown, present](const lapis::desktop::SessionPreview* item) {
+    const auto looking = [&workspace, &shown, present](const lapis::desktop::Agent* item) {
         return shown && shown->isActive() && workspace.focusedSession() == item && present();
     };
     seen.emplace(workspace, looking);
@@ -404,7 +404,7 @@ QString cli_home(const char* variable, const QString& fallback) {
 // folders count too.
 std::unique_ptr<lapis::desktop::ConversationIndex>
 conversation_index(const lapis::desktop::Workspace& workspace) {
-    using lapis::desktop::SessionPreview;
+    using lapis::desktop::Agent;
     auto index = std::make_unique<lapis::desktop::ConversationIndex>(
         cli_home("CLAUDE_CONFIG_DIR", QStringLiteral(".claude")),
         cli_home("CODEX_HOME", QStringLiteral(".codex")),
@@ -413,7 +413,7 @@ conversation_index(const lapis::desktop::Workspace& workspace) {
     index->setOpenFolders([&workspace] {
         QStringList folders;
         for (const auto& value : workspace.sessions())
-            if (const auto* item = value.value<SessionPreview*>(); item && item->live())
+            if (const auto* item = value.value<Agent*>(); item && item->live())
                 folders.append(item->directory());
         return folders;
     });
@@ -531,8 +531,8 @@ struct TerminalKeyMonitorGuard {
 };
 void register_qml_types() {
     using namespace lapis::desktop;
-    qmlRegisterUncreatableType<SessionPreview>("Lapis", 1, 0, "SessionPreview",
-                                               "Sessions are owned by the workspace");
+    qmlRegisterUncreatableType<Agent>("Lapis", 1, 0, "Agent",
+                                      "Sessions are owned by the workspace");
     qmlRegisterType<TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
     qmlRegisterUncreatableType<KeyMap>("Lapis", 1, 0, "KeyMap",
                                        "The keymap is owned by the application");
@@ -553,8 +553,8 @@ QString target_screen(const QCommandLineParser& parser) {
 QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
                           lapis::desktop::Workspace& workspace,
                           const lapis::desktop::KeyMap& keymap, bool isolated) {
+    using lapis::desktop::Agent;
     using lapis::desktop::NextPrompt;
-    using lapis::desktop::SessionPreview;
     if (isolated)
         return nullptr;
     const QDir data(lapis::desktop::data_directory());
@@ -589,7 +589,7 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
         [&workspace] {
             QJsonArray agents;
             for (const auto& value : workspace.sessions()) {
-                const auto* item = value.value<SessionPreview*>();
+                const auto* item = value.value<Agent*>();
                 if (item == nullptr)
                     continue;
                 agents.append(QJsonObject{
@@ -612,7 +612,7 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
                      [&workspace] { workspace.setGuesses({}); });
     QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &next, follow);
     QObject::connect(&workspace, &lapis::desktop::Workspace::turnFinished, &next,
-                     [&next](SessionPreview* item) {
+                     [&next](Agent* item) {
                          if (item != nullptr)
                              next.turnFinished(item->sessionId());
                      });
@@ -624,7 +624,7 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
                      });
     // A turn that ended while no window watched still gets its guess.
     QObject::connect(&workspace, &lapis::desktop::Workspace::finishedWhileAway, &next,
-                     [&next](SessionPreview* item) {
+                     [&next](Agent* item) {
                          if (item != nullptr)
                              next.turnFinished(item->sessionId());
                      });
@@ -708,7 +708,7 @@ terminals_for(const lapis::desktop::Workspace& workspace) {
     return terminals;
 }
 int run_headless(lapis::desktop::Workspace& workspace, lapis::desktop::KeyMap& keymap, bool serve) {
-    using lapis::desktop::SessionPreview;
+    using lapis::desktop::Agent;
     using lapis::desktop::WorkspaceControl;
     if (!workspace.workspaceError().isEmpty()) {
         // An open window holds the workspace, restores agents and serves the phone.
@@ -724,15 +724,14 @@ int run_headless(lapis::desktop::Workspace& workspace, lapis::desktop::KeyMap& k
         QObject::connect(&*control, &WorkspaceControl::handoverRequested,
                          [&handed_over] { handed_over = true; });
     }
-    std::vector<SessionPreview*> started;
+    std::vector<Agent*> started;
     for (const auto& value : workspace.sessions())
-        if (auto* item = qobject_cast<SessionPreview*>(value.value<QObject*>());
-            item && item->live())
+        if (auto* item = qobject_cast<Agent*>(value.value<QObject*>()); item && item->live())
             started.push_back(item);
     // A card reads disconnected until its connection begins on the event
     // loop, so an agent has settled once it is ready, or failed after trying.
-    std::set<const SessionPreview*> tried;
-    const auto settled = [&tried](const SessionPreview* item) {
+    std::set<const Agent*> tried;
+    const auto settled = [&tried](const Agent* item) {
         const auto& state = item->connectionState();
         if (state == QStringLiteral("connecting"))
             tried.insert(item);

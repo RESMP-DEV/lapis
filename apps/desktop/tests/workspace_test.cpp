@@ -67,7 +67,7 @@ void require(bool condition, const char* message) {
 void explicitAgentIdentity() {
     QTemporaryDir directory;
     require(directory.isValid(), "private explicit-attach directory");
-    using lapis::desktop::SessionPreview;
+    using lapis::desktop::Agent;
     using lapis::session::AgentMode;
     for (const auto mode : {AgentMode::terminal, AgentMode::codex, AgentMode::claude}) {
         WorkspaceOptions options;
@@ -83,9 +83,8 @@ void explicitAgentIdentity() {
                                                              : QString{};
         require(item && item->harnessId() == expected, "explicit attach retains harness identity");
         // Codex's notify program reports only finished turns.
-        require(item->statusSource() == (mode == AgentMode::claude
-                                             ? SessionPreview::StatusSource::observer
-                                             : SessionPreview::StatusSource::output),
+        require(item->statusSource() == (mode == AgentMode::claude ? Agent::StatusSource::observer
+                                                                   : Agent::StatusSource::output),
                 "explicit attach selects the correct status source");
         require(!workspace.createAgent(directory.path(), QStringLiteral("Blocked")),
                 "an explicit attach cannot create an unpersisted managed agent");
@@ -146,8 +145,7 @@ void categoriesAndIdentity() {
     require(workspace.removeCategory(research), "remove empty category");
     require(workspace.selectSession(QStringLiteral("renderer")), "select moved agent");
     require(workspace.moveSessionBy(QStringLiteral("renderer"), -100), "reorder agent");
-    require(workspace.categorySessions().front().value<lapis::desktop::SessionPreview*>() ==
-                original,
+    require(workspace.categorySessions().front().value<lapis::desktop::Agent*>() == original,
             "reorder within category");
     require(workspace.focusedSession() == original, "reorder preserves selected identity");
     const auto selected = workspace.focusedSession();
@@ -363,10 +361,8 @@ void failedWritesPreserveState() {
         QObject::connect(&workspace, &Workspace::categoryChanged, &workspace, count);
         QObject::connect(&workspace, &Workspace::sessionsChanged, &workspace, count);
         QObject::connect(&workspace, &Workspace::focusChanged, &workspace, count);
-        QObject::connect(first_object, &lapis::desktop::SessionPreview::identityChanged, &workspace,
-                         count);
-        QObject::connect(second_object, &lapis::desktop::SessionPreview::identityChanged,
-                         &workspace, count);
+        QObject::connect(first_object, &lapis::desktop::Agent::identityChanged, &workspace, count);
+        QObject::connect(second_object, &lapis::desktop::Agent::identityChanged, &workspace, count);
         require(QDir().rename(original, moved),
                 "move registry parent to force real QSaveFile failure");
         const auto unchanged = [&] {
@@ -427,7 +423,7 @@ void failedWritesPreserveState() {
                                         entry[QStringLiteral("autoTitle")].toBool();
                              }),
                 "a later successful mutation does not persist the failed auto-title flag");
-        const QPointer<lapis::desktop::SessionPreview> removed(first_object);
+        const QPointer<lapis::desktop::Agent> removed(first_object);
         require(workspace.removeSession(first), "remove ended agent after save recovers");
         require(removed && !workspace.session(first), "removed tab survives the QML call stack");
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
@@ -470,11 +466,11 @@ void malformedAgentRegistry() {
 }
 void placeholderMatchesTerminalDefaults() {
     const auto engine = lapis::session::Terminal({2, 2}).snapshot();
-    lapis::desktop::SessionPreview live(QStringLiteral("Codex"), {}, {}, QColor{}, "");
+    lapis::desktop::Agent live(QStringLiteral("Codex"), {}, {}, QColor{}, "");
     require(live.snapshot().background_rgb == engine.background_rgb &&
                 live.snapshot().foreground_rgb == engine.foreground_rgb,
             "a live agent's placeholder uses the terminal defaults, not the sample palette");
-    lapis::desktop::SessionPreview fixture(QStringLiteral("Sample"), {}, {}, QColor{}, "sample");
+    lapis::desktop::Agent fixture(QStringLiteral("Sample"), {}, {}, QColor{}, "sample");
     require(fixture.snapshot().background_rgb == 0x0d131dU, "fixtures keep the sample palette");
 }
 void discardOutsideActiveCategorySelectsNeighbor() {
@@ -495,7 +491,7 @@ void discardOutsideActiveCategorySelectsNeighbor() {
             "closing an unseen category remembers its own neighbor");
 }
 void truthfulStatus() {
-    lapis::desktop::SessionPreview item(QStringLiteral("Codex"), {}, {}, QColor{}, "");
+    lapis::desktop::Agent item(QStringLiteral("Codex"), {}, {}, QColor{}, "");
     lapis::session::wire::AttentionSnapshot attention;
     attention.available = true;
     attention.connected = true;
@@ -520,7 +516,7 @@ void truthfulStatus() {
     // The producer owns the lifecycle phase; this diagnostic is display-only.
     fresh.diagnostic = QStringLiteral("Waiting for Codex thread history");
     fresh.observation_phase = lapis::session::attention::ObservationPhase::awaiting_first_prompt;
-    lapis::desktop::SessionPreview first(QStringLiteral("Codex"), {}, {}, QColor{}, "");
+    lapis::desktop::Agent first(QStringLiteral("Codex"), {}, {}, QColor{}, "");
     first.applyAttention(fresh);
     require(first.statusLabel() == QStringLiteral("No prompt yet"),
             "a new Codex session without a thread is not a pending status");
@@ -531,7 +527,7 @@ void truthfulStatus() {
     notice.pending.request.id = std::string("idle:prompt");
     notice.pending.request.reason = "idle";
     idle.requests.push_back(notice);
-    lapis::desktop::SessionPreview claude(QStringLiteral("Claude"), {}, {}, QColor{}, "");
+    lapis::desktop::Agent claude(QStringLiteral("Claude"), {}, {}, QColor{}, "");
     claude.applyAttention(idle);
     require(claude.attentionCount() == 0 && claude.statusKind() == QStringLiteral("finished"),
             "an idle notice after a finished turn is not a pending request");
@@ -544,11 +540,11 @@ void truthfulStatus() {
     first.applyAttention(fresh);
     require(first.statusLabel() == QStringLiteral("Status pending"),
             "an unknown phase is not relabeled from vendor text");
-    lapis::desktop::SessionPreview legacy(QStringLiteral("Codex"), {}, {}, QColor{}, "");
+    lapis::desktop::Agent legacy(QStringLiteral("Codex"), {}, {}, QColor{}, "");
     legacy.applyAttention(fresh);
     require(legacy.statusLabel() == QStringLiteral("Status pending"),
             "legacy snapshots retain conservative unknown semantics");
-    lapis::desktop::SessionPreview reconnecting(QStringLiteral("Codex"), {}, {}, QColor{}, "");
+    lapis::desktop::Agent reconnecting(QStringLiteral("Codex"), {}, {}, QColor{}, "");
     fresh.observation_phase = lapis::session::attention::ObservationPhase::reconciling;
     reconnecting.applyAttention(fresh);
     require(reconnecting.statusLabel() == QStringLiteral("Status pending"),
@@ -557,7 +553,7 @@ void truthfulStatus() {
 }
 
 void submittedAttentionKeepsItsDisplayToken() {
-    lapis::desktop::SessionPreview item(QStringLiteral("Codex"), {}, {}, QColor{}, "");
+    lapis::desktop::Agent item(QStringLiteral("Codex"), {}, {}, QColor{}, "");
     item.setConnection(QStringLiteral("ready"), true);
     lapis::session::wire::AttentionSnapshot attention;
     attention.available = attention.connected = attention.ready = true;
@@ -569,8 +565,7 @@ void submittedAttentionKeepsItsDisplayToken() {
     request.pending.request.choices = {"accept"};
     attention.requests.push_back(request);
     int arrivals = 0;
-    QObject::connect(&item, &lapis::desktop::SessionPreview::attentionArrived,
-                     [&arrivals] { ++arrivals; });
+    QObject::connect(&item, &lapis::desktop::Agent::attentionArrived, [&arrivals] { ++arrivals; });
     item.applyAttention(attention);
     require(arrivals == 1, "the original pending request arrives");
     const auto before = item.attentionRequests().first().toMap();
@@ -1186,7 +1181,7 @@ void claudeAgentsUseServiceAdapter() {
     const auto source = [](Workspace& workspace, const QString& id) {
         return workspace.session(id)->statusSource();
     };
-    using Source = lapis::desktop::SessionPreview::StatusSource;
+    using Source = lapis::desktop::Agent::StatusSource;
     {
         Workspace workspace(WorkspaceMode::live, options);
         require(workspace.workspaceError().isEmpty(), "load adapter registry");
@@ -1331,9 +1326,9 @@ void unknownRegistryVersionsAreRejected() {
 // Harnesses without an observer get an output-timing estimate that
 // says so; reattaching does not count as activity.
 void outputEstimate() {
-    lapis::desktop::SessionPreview item(QStringLiteral("Grok"), {}, {}, QColor{}, "");
+    lapis::desktop::Agent item(QStringLiteral("Grok"), {}, {}, QColor{}, "");
     item.setHarnessId(QStringLiteral("grok"));
-    item.setStatusSource(lapis::desktop::SessionPreview::StatusSource::output);
+    item.setStatusSource(lapis::desktop::Agent::StatusSource::output);
     item.setOutputTimingForTesting({.settle_ms = 200, .burst_ms = 1500, .quiet_ms = 300});
     QTemporaryDir directory;
     require(directory.isValid(), "estimate directory");
@@ -2295,9 +2290,9 @@ exec sleep 600
         require(workspace.createAgent(QStringLiteral("~"), QStringLiteral("typo"),
                                       QStringLiteral("claude"), {}, {}, QStringLiteral("typo")),
                 "an agent on a machine that never answers");
-        lapis::desktop::SessionPreview* typo = nullptr;
+        lapis::desktop::Agent* typo = nullptr;
         for (const auto& listed : workspace.sessions())
-            if (auto* item = listed.value<lapis::desktop::SessionPreview*>();
+            if (auto* item = listed.value<lapis::desktop::Agent*>();
                 item != nullptr && item->title() == QStringLiteral("typo"))
                 typo = item;
         require(typo != nullptr, "the agent is listed");
@@ -2330,7 +2325,7 @@ exec sleep 600
 // screen, a selected Codex profile's own notify program still runs, and a
 // remote agent saved before the hooks gains them on restart.
 void remoteAgentsReportTurnsThroughTheirTerminal() {
-    using lapis::desktop::SessionPreview;
+    using lapis::desktop::Agent;
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-remote-hooks-XXXXXX"));
     require(directory.isValid(), "remote hooks directory");
     const QDir root(QFileInfo(directory.path()).canonicalFilePath());
@@ -2438,11 +2433,11 @@ for n, line in enumerate(sys.stdin, 1):
         workspace.setSshConfigForTesting(config.fileName());
         QHash<QString, int> pings;
         QObject::connect(&workspace, &Workspace::turnFinished,
-                         [&pings](SessionPreview* item) { ++pings[item->sessionId()]; });
-        const auto shows = [](SessionPreview* item, const QString& text) {
+                         [&pings](Agent* item) { ++pings[item->sessionId()]; });
+        const auto shows = [](Agent* item, const QString& text) {
             return screenText(item->snapshot()).contains(text);
         };
-        const auto clean = [](SessionPreview* item) {
+        const auto clean = [](Agent* item) {
             const auto text = screenText(item->snapshot());
             return !text.contains(QStringLiteral("7717")) &&
                    !text.contains(QStringLiteral("lapis-"));
@@ -2456,8 +2451,7 @@ for n, line in enumerate(sys.stdin, 1):
                 "a Claude Code agent on another machine");
         auto* claude = workspace.focusedSession();
         require(claude != nullptr, "the remote Claude Code agent is shown");
-        require(claude != restored &&
-                    claude->statusSource() == SessionPreview::StatusSource::output,
+        require(claude != restored && claude->statusSource() == Agent::StatusSource::output,
                 "it starts from the output estimate");
         require(waitFor(
                     [&] {
@@ -2524,7 +2518,7 @@ for n, line in enumerate(sys.stdin, 1):
 // from the selected profile's config still runs, the notify event's thread is saved as the
 // conversation, and a restart resumes it.
 void localCodexReportsTurnsThroughNotify() {
-    using lapis::desktop::SessionPreview;
+    using lapis::desktop::Agent;
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-local-codex-XXXXXX"));
     require(directory.isValid(), "local Codex directory");
     const QDir root(QFileInfo(directory.path()).canonicalFilePath());
@@ -2630,7 +2624,7 @@ for n, line in enumerate(sys.stdin, 1):
         Workspace workspace(WorkspaceMode::live, options);
         const auto close_owned = qScopeGuard([&] {
             for (const auto& value : workspace.sessions())
-                if (auto* item = value.value<SessionPreview*>()) {
+                if (auto* item = value.value<Agent*>()) {
                     static_cast<void>(waitFor(
                         [item] {
                             return item->reachable() ||
@@ -2644,14 +2638,14 @@ for n, line in enumerate(sys.stdin, 1):
         });
         QHash<QString, int> pings;
         QObject::connect(&workspace, &Workspace::turnFinished,
-                         [&pings](SessionPreview* item) { ++pings[item->sessionId()]; });
+                         [&pings](Agent* item) { ++pings[item->sessionId()]; });
         workspace.setHarnessArguments(
             {{QStringLiteral("codex"), {QStringLiteral("-p"), QStringLiteral("work")}}});
         require(workspace.createAgent(root.filePath(QStringLiteral("project")),
                                       QStringLiteral("local codex"), QStringLiteral("codex")),
                 "a local Codex agent");
         auto* codex = workspace.focusedSession();
-        require(codex != nullptr && codex->statusSource() == SessionPreview::StatusSource::output,
+        require(codex != nullptr && codex->statusSource() == Agent::StatusSource::output,
                 "a local Codex agent starts from the output estimate");
         const auto id = codex->sessionId();
         codex->setOutputTimingForTesting({.settle_ms = 0, .burst_ms = 1500, .quiet_ms = 4000});
@@ -3665,7 +3659,7 @@ void askedEffortReachesTheCli() {
     workspace.setSshConfigForTesting(config.fileName());
     const auto close_owned = qScopeGuard([&] {
         for (const auto& value : workspace.sessions())
-            if (auto* item = value.value<lapis::desktop::SessionPreview*>())
+            if (auto* item = value.value<lapis::desktop::Agent*>())
                 static_cast<void>(workspace.closeSession(item->sessionId()));
         static_cast<void>(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000));
     });
@@ -3731,7 +3725,7 @@ void resumingAConversationStartsItsCli() {
         Workspace workspace(WorkspaceMode::live, options);
         const auto close_owned = qScopeGuard([&] {
             for (const auto& value : workspace.sessions())
-                if (auto* item = value.value<lapis::desktop::SessionPreview*>())
+                if (auto* item = value.value<lapis::desktop::Agent*>())
                     static_cast<void>(workspace.closeSession(item->sessionId()));
             static_cast<void>(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000));
         });
@@ -4362,12 +4356,12 @@ void alertsChimeWhileAnAgentWaits() {
     WorkspaceOptions options;
     options.storagePath = root.filePath(QStringLiteral("workspace.json"));
     Workspace workspace(WorkspaceMode::live, options);
-    lapis::desktop::SessionPreview agent(QStringLiteral("agent"), root.path(), {}, QColor(), "");
+    lapis::desktop::Agent agent(QStringLiteral("agent"), root.path(), {}, QColor(), "");
     std::vector<lapis::desktop::Chime> played;
     bool looking = false;
     lapis::desktop::Alerts alerts(
         workspace, keymap, [&played](lapis::desktop::Chime chime) { played.push_back(chime); },
-        [&looking](const lapis::desktop::SessionPreview*) { return looking; });
+        [&looking](const lapis::desktop::Agent*) { return looking; });
     alerts.setQuietForTesting(40);
     const auto request = [&agent](bool pending) {
         wire::AttentionSnapshot state;
@@ -4858,7 +4852,7 @@ void closeOnHistoryPageEndsTheAgent() {
     agent->beginHistoryRequest();
     require(!agent->inputReady() && agent->reachable(),
             "a history page hides input but the agent stays reachable");
-    const QPointer<lapis::desktop::SessionPreview> guarded(agent);
+    const QPointer<lapis::desktop::Agent> guarded(agent);
     require(workspace.closeSession(agent->sessionId(), true) && !workspace.sessions().isEmpty() &&
                 guarded && guarded->closing(),
             "closing from a history page ends the agent instead of abandoning it");

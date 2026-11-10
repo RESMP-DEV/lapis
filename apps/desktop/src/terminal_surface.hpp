@@ -24,7 +24,7 @@
 Q_MOC_INCLUDE("workspace.hpp")
 
 namespace lapis::desktop {
-class SessionPreview;
+class Agent;
 
 // Legacy printable-key encoding; native text/IME remains Unicode.
 [[nodiscard]] QByteArray terminal_text_key(const QKeyEvent& event);
@@ -80,8 +80,8 @@ struct SuggestionLayout {
 
 class TerminalSurface : public QQuickItem {
     Q_OBJECT
-    Q_PROPERTY(lapis::desktop::SessionPreview* document READ document WRITE setDocument NOTIFY
-                   documentChanged)
+    Q_PROPERTY(
+        lapis::desktop::Agent* document READ document WRITE setDocument NOTIFY documentChanged)
     Q_PROPERTY(bool interactive READ interactive WRITE setInteractive NOTIFY interactiveChanged)
     // Minimum milliseconds between redraws caused by output; 0 redraws every
     // snapshot. Previews use it so a noisy agent cannot flood the renderer.
@@ -149,8 +149,8 @@ class TerminalSurface : public QQuickItem {
     // malformed URLs and NUL bytes. Callers still quote the result for a shell.
     Q_INVOKABLE QString localFilePath(const QString& url) const;
     ~TerminalSurface() override;
-    [[nodiscard]] SessionPreview* document() const;
-    void setDocument(SessionPreview* document);
+    [[nodiscard]] Agent* document() const;
+    void setDocument(Agent* document);
     [[nodiscard]] bool interactive() const { return interactive_; }
     void setInteractive(bool enabled);
     [[nodiscard]] int frameInterval() const { return frame_interval_; }
@@ -276,7 +276,7 @@ class TerminalSurface : public QQuickItem {
     struct FrameHandoff;
     // Render callbacks own this independently of the item and validate its epoch.
     std::shared_ptr<FrameHandoff> handoff_;
-    QPointer<SessionPreview> document_;
+    QPointer<Agent> document_;
     QMetaObject::Connection window_active_connection_;
     QMetaObject::Connection window_visible_connection_;
     QMetaObject::Connection suggestion_frame_connection_;
@@ -285,7 +285,7 @@ class TerminalSurface : public QQuickItem {
     QMetaObject::Connection presentation_connection_;
     // The agent this view is showing, registered as its viewer while this
     // view and its window are visible, so unseen agents' screens stay encoded.
-    QPointer<SessionPreview> viewed_;
+    QPointer<Agent> viewed_;
     int viewed_interval_{};
     void updateViewing();
     void screenChanged();
@@ -336,7 +336,7 @@ class TerminalSurface : public QQuickItem {
     int typed_while_offered_{};
     // The guess Tab just typed in, until another key: a second Tab sends it.
     struct Filled {
-        QPointer<SessionPreview> owner;
+        QPointer<Agent> owner;
         QString session;
         QString offer;
         QString typed; // the suggestion Tab pasted, before edits

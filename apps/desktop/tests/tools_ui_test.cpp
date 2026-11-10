@@ -219,8 +219,7 @@ int main(int argc, char** argv) {
     QCoreApplication::setApplicationName(QStringLiteral("lapis-tools-ui-tests"));
     QCoreApplication::setOrganizationName(QStringLiteral("lapis"));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
-    qmlRegisterUncreatableType<lapis::desktop::SessionPreview>("Lapis", 1, 0, "SessionPreview",
-                                                               "Owned by workspace");
+    qmlRegisterUncreatableType<lapis::desktop::Agent>("Lapis", 1, 0, "Agent", "Owned by workspace");
     qmlRegisterType<lapis::desktop::TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
     const auto drain = qScopeGuard([] {
         QCoreApplication::sendPostedEvents();

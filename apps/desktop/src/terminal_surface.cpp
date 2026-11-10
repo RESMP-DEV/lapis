@@ -41,7 +41,7 @@
 #include <utility>
 
 namespace lapis::desktop {
-SessionPreview* TerminalSurface::document() const { return document_; }
+Agent* TerminalSurface::document() const { return document_; }
 namespace {
 
 QColor color(std::uint32_t rgb) { return QColor::fromRgb(rgb | 0xff000000U); }
@@ -974,7 +974,7 @@ void TerminalSurface::screenChanged() {
     updateInputContext(Qt::ImCursorRectangle);
 }
 
-void TerminalSurface::setDocument(SessionPreview* document) {
+void TerminalSurface::setDocument(Agent* document) {
     if (document_ == document)
         return;
     if (document_)
@@ -988,15 +988,14 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     clearSelection();
     clearLink();
     if (document_) {
-        connect(document_, &SessionPreview::snapshotChanged, this, &TerminalSurface::screenChanged);
-        connect(document_, &SessionPreview::attentionChanged, this,
-                [this] { publishFrame(false); });
-        connect(document_, &SessionPreview::pasteResult, this,
+        connect(document_, &Agent::snapshotChanged, this, &TerminalSurface::screenChanged);
+        connect(document_, &Agent::attentionChanged, this, [this] { publishFrame(false); });
+        connect(document_, &Agent::pasteResult, this,
                 [this](quint64, bool queued, bool, const QString& message) {
                     if (!queued)
                         emit pasteRefused(message);
                 });
-        connect(document_, &SessionPreview::connectionChanged, this, [this] {
+        connect(document_, &Agent::connectionChanged, this, [this] {
             if (!document_ || !document_->inputReady()) {
                 ++ime_epoch_;
                 resetInputContext();
@@ -1050,9 +1049,9 @@ void TerminalSurface::keepFramesComing() {
 // hidden strip decodes nothing for its agent.
 void TerminalSurface::updateViewing() {
     armSuggestionObservation();
-    SessionPreview* showing =
-        document_ && isVisible() && window() != nullptr && window()->isVisible() ? document_.data()
-                                                                                 : nullptr;
+    Agent* showing = document_ && isVisible() && window() != nullptr && window()->isVisible()
+                         ? document_.data()
+                         : nullptr;
     if (showing == viewed_ && (showing == nullptr || viewed_interval_ == frame_interval_))
         return;
     if (viewed_)
@@ -1933,7 +1932,7 @@ bool TerminalSurface::fillSuggestion() {
     typed_since_arrival_ = true;
     filled_ = filled;
     const auto connection = std::make_shared<QMetaObject::Connection>();
-    *connection = connect(owner.data(), &SessionPreview::pasteResult, owner.data(),
+    *connection = connect(owner.data(), &Agent::pasteResult, owner.data(),
                           [surface = QPointer<TerminalSurface>(this), connection,
                            filled](quint64 id, bool queued, bool, const QString&) {
                               if (id != filled.request)
@@ -1963,7 +1962,7 @@ void TerminalSurface::filledAdmitted(const Filled& made, bool queued) {
 }
 
 void TerminalSurface::sendFilled() {
-    // SessionPreview::sendKey silently drops Enter in these states. Keep the
+    // Agent::sendKey silently drops Enter in these states. Keep the
     // admitted guess armed so a later Tab can send it after history settles.
     if (!acceptsTerminalInput() || document_->historyActive() ||
         document_->historyRequestPending() || !document_->live() || document_->attentionPending())
