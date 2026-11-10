@@ -51,12 +51,12 @@ add_library(lapis_desktop_view STATIC
     src/slash_commands.cpp src/slash_commands.hpp)
 target_include_directories(lapis_desktop_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 if(APPLE)
-    # Notifications, input idle time, the login item, Command-` and (in the
-    # downloaded app) Sparkle.
+    # Input idle time, the login item, Command-` and (in the downloaded app)
+    # Sparkle.
     target_sources(lapis_desktop_view PRIVATE src/desktop_actions_mac.mm)
     target_link_libraries(lapis_desktop_view PUBLIC "-framework AppKit" "-framework Carbon"
         "-framework CoreGraphics" "-framework Foundation"
-        "-framework ServiceManagement" "-framework UserNotifications")
+        "-framework ServiceManagement")
     if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
         get_filename_component(sparkle_directory "${LAPIS_SPARKLE_FRAMEWORK}" DIRECTORY)
         target_compile_definitions(lapis_desktop_view PRIVATE LAPIS_SPARKLE)

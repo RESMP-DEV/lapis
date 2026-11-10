@@ -79,8 +79,8 @@ of those installed). An unknown name falls back to the first choice.
 
 An unseen completed turn or request plays one quiet cue when `alerts.finished`
 is enabled. Requests use the same cue, and the cue does not repeat. Appearance
-has one switch and Play button for it. lapis posts no notifications for
-finished turns. Keys of retired alerts are ignored, and older files may keep
+has one switch and Play button for it. lapis posts no macOS notifications.
+Keys of retired alerts are ignored, and older files may keep
 them: `alerts.sound` and `alerts.repeat` (the repeating request chime),
 `alerts.notify`, `alerts.awayAfter` and `alerts.remindAfter` (background
 notifications and their reminders), and `alerts.judge` (a model's judgement of

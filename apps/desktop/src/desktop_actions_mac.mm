@@ -5,7 +5,6 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <Foundation/Foundation.h>
 #import <ServiceManagement/ServiceManagement.h>
-#import <UserNotifications/UserNotifications.h>
 #ifdef LAPIS_SPARKLE
 #import <Sparkle/Sparkle.h>
 #endif
@@ -13,18 +12,6 @@
 #include <QDebug>
 #include <QMetaObject>
 #include <utility>
-
-// Notifications also show while lapis is in front.
-@interface LapisNotificationDelegate : NSObject <UNUserNotificationCenterDelegate>
-@end
-@implementation LapisNotificationDelegate
-- (void)userNotificationCenter:(UNUserNotificationCenter*)center
-       willPresentNotification:(UNNotification*)notification
-         withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
-    completionHandler(UNNotificationPresentationOptionBanner |
-                      UNNotificationPresentationOptionList);
-}
-@end
 
 #ifdef LAPIS_SPARKLE
 namespace {
@@ -41,16 +28,6 @@ SPUStandardUpdaterController* updater() {
 
 namespace lapis::desktop::platform {
 namespace {
-// Only an app bundle has a notification center; a test binary does not.
-UNUserNotificationCenter* notification_center() {
-    if (NSBundle.mainBundle.bundleIdentifier == nil)
-        return nil;
-    static LapisNotificationDelegate* delegate = [[LapisNotificationDelegate alloc] init];
-    UNUserNotificationCenter* center = UNUserNotificationCenter.currentNotificationCenter;
-    center.delegate = delegate;
-    return center;
-}
-
 SMAppService* login_item() API_AVAILABLE(macos(13.0)) {
     return [SMAppService agentServiceWithPlistName:@"dev.lapis.desktop.restore.plist"];
 }
@@ -62,26 +39,6 @@ double seconds_since_input() {
     // The HID state counts the person's own input, not events other apps post.
     return CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateHIDSystemState,
                                                   kCGAnyInputEventType);
-}
-
-void post_notification(const QString& id, const QString& title, const QString& body) {
-    UNUserNotificationCenter* center = notification_center();
-    if (center == nil)
-        return;
-    UNMutableNotificationContent* content =
-        [[[UNMutableNotificationContent alloc] init] autorelease];
-    content.title = title.toNSString();
-    content.body = body.toNSString();
-    UNNotificationRequest* request = [UNNotificationRequest requestWithIdentifier:id.toNSString()
-                                                                          content:content
-                                                                          trigger:nil];
-    [request retain];
-    [center requestAuthorizationWithOptions:UNAuthorizationOptionAlert
-                          completionHandler:^(BOOL granted, NSError*) {
-                            if (granted)
-                                [center addNotificationRequest:request withCompletionHandler:nil];
-                            [request release];
-                          }];
 }
 
 bool login_item_enabled() {
