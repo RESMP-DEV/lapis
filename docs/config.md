@@ -178,7 +178,7 @@ kinds:
   latest position wins and `folded` counts the moves it stands for. `0` records
   no movement.
 - `agent-focus`, `category`, `history`, `dialog`, `command`, `shortcut`
-  (Command-`), `window` and `app`: the selected agent and category with how
+  (``Command-` ``), `window` and `app`: the selected agent and category with how
   each changed (`via`: `click`, `key`, `shortcut`, `tab-away`, `notification`,
   `terminal-key`, `wheel` or `program`), the history position, dialogs and menus opening and
   closing, the command run from the palette, window focus and app activation.
