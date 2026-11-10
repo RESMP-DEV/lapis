@@ -11,6 +11,8 @@ from pathlib import Path
 
 if __package__:
     from .check_cli_launch import (
+        HISTORY_PAGE,
+        HISTORY_REQUEST,
         RESIZE,
         SNAPSHOT,
         TEXT,
@@ -20,6 +22,8 @@ if __package__:
     )
 else:
     from check_cli_launch import (
+        HISTORY_PAGE,
+        HISTORY_REQUEST,
         RESIZE,
         SNAPSHOT,
         TEXT,
@@ -29,7 +33,6 @@ else:
     )
 
 ROOT = Path(__file__).resolve().parents[1]
-HISTORY_REQUEST, HISTORY_PAGE = 10, 11
 FIXTURE = r"""
 import sys,termios
 attr=termios.tcgetattr(0);attr[3]&=~termios.ECHO;termios.tcsetattr(0,termios.TCSANOW,attr)
