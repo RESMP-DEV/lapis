@@ -1228,6 +1228,14 @@ QStringList strip_ids(const lapis::desktop::Workspace& workspace) {
         ids.append(value.value<lapis::desktop::Agent*>()->agentId());
     return ids;
 }
+// Every agent in the sidebar's order: each category's agents in turn.
+QStringList sidebar_ids(const lapis::desktop::Workspace& workspace) {
+    QStringList ids;
+    for (const auto& group : workspace.categories())
+        for (const auto& value : group.toMap().value(QStringLiteral("agents")).toList())
+            ids.append(value.value<lapis::desktop::Agent*>()->agentId());
+    return ids;
+}
 
 // The stage and strip drags, through the window as a person would use them.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -1248,6 +1256,7 @@ void check_stage_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
         qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
     auto* visual = item(QStringLiteral("visualView"));
     const auto ids = strip_ids(workspace);
+    const auto strip_category = workspace.activeCategoryId();
     CHECK(terminal != nullptr && ids.size() >= 3);
     CHECK(workspace.selectAgent(ids[0]));
     pump(40);
@@ -1284,16 +1293,21 @@ void check_stage_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     CHECK(workspace.selectAgent(ids[0]));
     pump(40);
 
-    // The next and previous agent keys walk the strip and wrap; the stage
+    // The next and previous agent keys walk the sidebar: through this
+    // category, on into the next one's agents, and around; the stage
     // terminal follows every press.
-    for (qsizetype step = 1; step <= ids.size(); ++step) {
+    const auto walk = sidebar_ids(workspace);
+    CHECK(walk.size() > ids.size() && walk.indexOf(ids[0]) == 0);
+    for (qsizetype step = 1; step <= walk.size(); ++step) {
         key("nextWindow");
-        fills_stage(ids[step % ids.size()]);
+        fills_stage(walk[step % walk.size()]);
     }
     key("previousWindow");
-    fills_stage(ids.constLast());
+    fills_stage(walk.constLast());
+    CHECK(workspace.activeCategoryId() != strip_category);
     key("nextWindow");
     fills_stage(ids[0]);
+    CHECK(workspace.activeCategoryId() == strip_category);
 
     // Clicking a card shows it on the stage.
     click_visual(window, *item(QStringLiteral("agentTab_") + ids[2]));
@@ -2527,6 +2541,252 @@ int run_strip_ui_tests() {
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;
 }
+
+void right_click(QQuickWindow& window, QQuickItem& item) {
+    const auto position = item.mapToScene(QPointF(item.width() / 2, item.height() / 2));
+    const auto global = window.mapToGlobal(position);
+    QMouseEvent press(QEvent::MouseButtonPress, position, global, Qt::RightButton, Qt::RightButton,
+                      Qt::NoModifier);
+    QMouseEvent release(QEvent::MouseButtonRelease, position, global, Qt::RightButton, Qt::NoButton,
+                        Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &press);
+    QCoreApplication::sendEvent(&window, &release);
+}
+
+// The sidebar is the navigation: each category a colour-coded group with its
+// agents listed under it. A row shows its agent (and category), the agent on
+// the stage is marked in its group's colour, a row's menu is the strip card's,
+// rows drag onto categories, and the category menu sets the colour.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+int run_sidebar_ui_tests() {
+    using namespace lapis::desktop;
+    Workspace workspace(WorkspaceMode::fixture);
+    QTemporaryDir config(QStringLiteral("/tmp/lapis-ui-XXXXXX"));
+    CHECK(config.isValid());
+    Config keymap;
+    keymap.setSourcePathForTesting(config.filePath(QStringLiteral("sidebar.json")));
+    CHECK(keymap.setPreviewsVisible(false));
+    AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+                                  .compact = false,
+                                  .screen = QString(),
+                                  .keymap = &keymap});
+    CHECK(preview.load());
+    auto* window = preview.window();
+    window->resize(1400, 960);
+    wait_active(*window);
+    pump(60);
+    const auto item = [window](const QString& name) {
+        auto* found = find_visual(window->contentItem(), name);
+        if (found == nullptr)
+            throw std::runtime_error("missing item " + name.toStdString());
+        return found;
+    };
+    const auto capture = [window](const char* name) {
+        if (const auto path = qEnvironmentVariable("LAPIS_WORKSPACE_CAPTURE_PREFIX");
+            !path.isEmpty())
+            CHECK(window->grabWindow().save(path + QStringLiteral("sidebar-") +
+                                            QString::fromLatin1(name) + QStringLiteral(".png")));
+    };
+    auto* terminal = qobject_cast<TerminalSurface*>(item(QStringLiteral("liveTerminal")));
+    CHECK(terminal != nullptr);
+
+    // General: Codex, Workspace notes. Build: Renderer, Agent bridge, Checks.
+    // Research: Session service. Ideas: empty.
+    const auto build = workspace.createCategory(QStringLiteral("Build"));
+    const auto research = workspace.createCategory(QStringLiteral("Research"));
+    const auto ideas = workspace.createCategory(QStringLiteral("Ideas"));
+    CHECK(!build.isEmpty() && !research.isEmpty() && !ideas.isEmpty());
+    CHECK(workspace.placeAgents(
+        {QStringLiteral("renderer"), QStringLiteral("agent"), QStringLiteral("checks")}, build, 0));
+    CHECK(workspace.moveAgent(QStringLiteral("service"), research));
+    CHECK(workspace.setCategoryColor(research, QStringLiteral("pink")));
+    CHECK(workspace.selectAgent(QStringLiteral("renderer")));
+    pump(40);
+    // One agent at work, two finished and unseen.
+    {
+        namespace wire = lapis::session::wire;
+        wire::AttentionSnapshot working;
+        working.available = working.connected = working.ready = true;
+        working.activity = lapis::session::attention::Activity::working;
+        workspace.agent(QStringLiteral("checks"))->applyAttention(working);
+    }
+    finish_turn(*workspace.agent(QStringLiteral("agent")));
+    finish_turn(*workspace.agent(QStringLiteral("service")));
+    pump(60);
+    CHECK(!item(QStringLiteral("agentTabs"))->isVisible());
+
+    // A row per agent, in the sidebar's order, under its category's header.
+    const auto order = sidebar_ids(workspace);
+    CHECK(order == (QStringList{QStringLiteral("shell"), QStringLiteral("notes"),
+                                QStringLiteral("renderer"), QStringLiteral("agent"),
+                                QStringLiteral("checks"), QStringLiteral("service")}));
+    const auto default_row_height = item(QStringLiteral("sidebarAgent_renderer"))->height();
+    qreal previous = -1;
+    for (const auto& id : order) {
+        auto* row = item(QStringLiteral("sidebarAgent_") + id);
+        CHECK(row->isVisible() && row->height() >= 24);
+        const auto top = row->mapToScene(QPointF()).y();
+        CHECK(top > previous);
+        previous = top;
+    }
+    CHECK(item(QStringLiteral("category_") + build)->mapToScene(QPointF()).y() <
+          item(QStringLiteral("sidebarAgent_renderer"))->mapToScene(QPointF()).y());
+    CHECK(item(QStringLiteral("sidebarAgent_notes"))->mapToScene(QPointF()).y() <
+          item(QStringLiteral("category_") + build)->mapToScene(QPointF()).y());
+    // Unseen and working marks, and the unseen count on another category.
+    CHECK(item(QStringLiteral("sidebarUnseen_agent"))->isVisible());
+    CHECK(!item(QStringLiteral("sidebarUnseen_renderer"))->isVisible());
+    CHECK(item(QStringLiteral("sidebarStatus_checks"))->property("shape").toString() ==
+          QStringLiteral("dot"));
+    CHECK(item(QStringLiteral("categoryUnseen_") + research)->isVisible());
+    CHECK(item(QStringLiteral("categoryUnseen_") + research)->property("text").toString() ==
+          QStringLiteral("1"));
+    // The focused row is marked in its category's colour; the others are not.
+    const auto hex = [&](const QString& category) {
+        for (const auto& value : workspace.categories())
+            if (value.toMap().value(QStringLiteral("id")).toString() == category)
+                return call_window(*window, "categoryHex",
+                                   value.toMap().value(QStringLiteral("color")).toString())
+                    .value<QColor>();
+        return QColor();
+    };
+    const auto edge = [&](const QString& id) {
+        return QQmlProperty::read(item(QStringLiteral("sidebarAgentEdge_") + id),
+                                  QStringLiteral("color"))
+            .value<QColor>();
+    };
+    const auto marked = [&](const QString& id) {
+        return item(QStringLiteral("sidebarAgent_") + id)->property("marked").toBool();
+    };
+    CHECK(marked(QStringLiteral("renderer")) && !marked(QStringLiteral("agent")));
+    CHECK(edge(QStringLiteral("renderer")) == hex(build));
+    CHECK(edge(QStringLiteral("agent")).alphaF() < 0.9);
+    CHECK(hex(research) ==
+          call_window(*window, "categoryHex", QStringLiteral("pink")).value<QColor>());
+    CHECK(hex(build) != hex(research));
+    capture("default");
+
+    // A click on a row in another category shows that agent and its category,
+    // and leaves the keyboard with the terminal.
+    wait_terminal_focus(*window, *terminal);
+    click_visual(*window, *item(QStringLiteral("sidebarAgent_service")));
+    pump(40);
+    CHECK(focused_id(workspace) == QStringLiteral("service"));
+    CHECK(workspace.activeCategoryId() == research);
+    CHECK(terminal->document() == workspace.agent(QStringLiteral("service")));
+    CHECK(terminal->hasActiveFocus());
+    CHECK(!workspace.agent(QStringLiteral("service"))->unseen());
+    CHECK(marked(QStringLiteral("service")) && !marked(QStringLiteral("renderer")));
+    CHECK(edge(QStringLiteral("service")) == hex(research));
+    // A header click selects its category and the agent it remembers.
+    click_visual(*window, *item(QStringLiteral("category_") + build));
+    pump(40);
+    CHECK(workspace.activeCategoryId() == build &&
+          focused_id(workspace) == QStringLiteral("renderer"));
+    // Command-Shift-] walks the rows in order, across the category edge.
+    wait_input_ready(*window, *terminal);
+    CHECK(workspace.selectAgent(QStringLiteral("checks")));
+    pump(20);
+    send_binding(*window, keymap.sequences(QStringLiteral("nextWindow")).front());
+    pump(40);
+    CHECK(focused_id(workspace) == QStringLiteral("service") && marked(QStringLiteral("service")));
+    send_binding(*window, keymap.sequences(QStringLiteral("nextWindow")).front());
+    pump(40);
+    CHECK(focused_id(workspace) == QStringLiteral("shell") &&
+          workspace.activeCategoryId() == QStringLiteral("general"));
+    send_binding(*window, keymap.sequences(QStringLiteral("previousWindow")).front());
+    pump(40);
+    CHECK(focused_id(workspace) == QStringLiteral("service"));
+
+    // A row's right-click opens the strip card's agent menu for that agent.
+    auto* agent_menu = window->findChild<QObject*>(QStringLiteral("agentMenu"));
+    CHECK(agent_menu != nullptr);
+    right_click(*window, *item(QStringLiteral("sidebarAgent_notes")));
+    wait_popup(*agent_menu, true);
+    CHECK(focused_id(workspace) == QStringLiteral("notes"));
+    CHECK(QMetaObject::invokeMethod(agent_menu, "close"));
+    wait_popup(*agent_menu, false);
+
+    // The category menu's Colour sets the category's colour.
+    auto* category_menu = window->findChild<QObject*>(QStringLiteral("categoryMenu"));
+    CHECK(category_menu != nullptr);
+    right_click(*window, *item(QStringLiteral("category_") + build));
+    wait_popup(*category_menu, true);
+    CHECK(workspace.activeCategoryId() == build);
+    // The swatches are the Colour submenu's items, under its content item.
+    auto* color_menu = window->findChild<QObject*>(QStringLiteral("categoryColorMenu"));
+    CHECK(color_menu != nullptr);
+    auto* swatches = color_menu->property("contentItem").value<QQuickItem*>();
+    CHECK(swatches != nullptr);
+    auto* cyan = find_visual(swatches, QStringLiteral("categoryColor_cyan"));
+    CHECK(cyan != nullptr);
+    CHECK(find_visual(swatches, QStringLiteral("categoryColor_grey")) != nullptr);
+    CHECK(QMetaObject::invokeMethod(cyan, "click"));
+    pump(40);
+    if (category_menu->property("visible").toBool())
+        CHECK(QMetaObject::invokeMethod(category_menu, "close"));
+    wait_popup(*category_menu, false);
+    CHECK(workspace.categories().at(1).toMap().value(QStringLiteral("color")).toString() ==
+          QStringLiteral("cyan"));
+    CHECK(
+        QQmlProperty::read(item(QStringLiteral("categorySwatch_") + build), QStringLiteral("color"))
+            .value<QColor>() ==
+        call_window(*window, "categoryHex", QStringLiteral("cyan")).value<QColor>());
+    CHECK(edge(QStringLiteral("renderer")).rgb() == hex(build).rgb());
+
+    // A row dragged onto another category's header moves the agent there.
+    wait_input_ready(*window, *terminal);
+    auto* target = item(QStringLiteral("category_") + ideas);
+    drag_visual(*window, *item(QStringLiteral("sidebarAgent_notes")),
+                target->mapToScene(QPointF(target->width() / 2, target->height() / 2)));
+    pump(40);
+    CHECK(workspace.agentPlace(QStringLiteral("notes"))
+              .value(QStringLiteral("category"))
+              .toString() == QStringLiteral("Ideas"));
+    CHECK(item(QStringLiteral("sidebarAgent_notes"))->mapToScene(QPointF()).y() >
+          target->mapToScene(QPointF()).y());
+
+    // Captures for review: themes, a narrow sidebar with long titles, the
+    // owner's larger text, and the strip shown. Each waits out the theme's
+    // colour transitions before it is taken.
+    CHECK(workspace.selectAgent(QStringLiteral("renderer")));
+    const auto settle = [] { pump(400); };
+    CHECK(keymap.setTheme(QStringLiteral("oled")));
+    settle();
+    capture("oled");
+    CHECK(keymap.setTheme(QStringLiteral("daylight")));
+    settle();
+    capture("daylight");
+    CHECK(keymap.setTheme(QStringLiteral("lapis")));
+    CHECK(keymap.setTerminalFontSize(21));
+    settle();
+    auto* rail = item(QStringLiteral("categoryRail"));
+    CHECK(rail->width() > 196);
+    // Larger terminal text makes the sidebar's rows and names larger too.
+    CHECK(item(QStringLiteral("sidebarAgent_renderer"))->height() > default_row_height);
+    capture("comfortable-font21");
+    CHECK(keymap.setTerminalFontSize(kTerminalFontSizeDefault));
+    CHECK(keymap.setPreviewsVisible(true));
+    settle();
+    CHECK(item(QStringLiteral("agentTabs"))->isVisible());
+    capture("strip");
+    CHECK(keymap.setPreviewsVisible(false));
+    CHECK(keymap.setDensity(QStringLiteral("minimal")));
+    CHECK(workspace.renameAgent(QStringLiteral("renderer"),
+                                QStringLiteral("Refactor the renderer's glyph cache and atlas")));
+    CHECK(workspace.renameAgent(QStringLiteral("agent"),
+                                QStringLiteral("Review the adapter contract before continuing")));
+    CHECK(workspace.renameCategory(research, QStringLiteral("Research and long-range planning")));
+    settle();
+    // Long names elide inside the sidebar.
+    auto* long_row = item(QStringLiteral("sidebarAgent_renderer"));
+    CHECK(scene_rect(*rail).contains(scene_rect(*long_row)));
+    capture("narrow-long");
+    CHECK(keymap.setDensity(QStringLiteral("comfortable")));
+    pump(40);
+    CHECK(preview.diagnostics().isEmpty());
+    return EXIT_SUCCESS;
+}
 } // namespace
 
 int run_diagnostics_reentrancy_test() {
@@ -2873,7 +3133,8 @@ int main(int argc, char** argv) {
                    run_preview_frame_sync_tests() != EXIT_SUCCESS ||
                    run_attention_dialog_tests() != EXIT_SUCCESS ||
                    run_attention_ui_tests() != EXIT_SUCCESS ||
-                   run_strip_ui_tests() != EXIT_SUCCESS || run_history_ui_tests() != EXIT_SUCCESS ||
+                   run_strip_ui_tests() != EXIT_SUCCESS || run_sidebar_ui_tests() != EXIT_SUCCESS ||
+                   run_history_ui_tests() != EXIT_SUCCESS ||
                    run_restored_suggestion_tests() != EXIT_SUCCESS)
             return EXIT_FAILURE;
         std::cout << "ui_preview_test: PASS"

@@ -67,8 +67,24 @@ ApplicationWindow {
     readonly property string densityMode: config.densityName
     readonly property int chromeFont: densityMode === "minimal" ? Math.max(12, uiFont - 1) : uiFont
     readonly property int readoutFont: Math.max(11, chromeFont - 1)
-    readonly property int railWidth: densityMode === "minimal" ? 148 : densityMode === "compact" ? 168 : 196
+    // The sidebar's names follow the terminal text size (three quarters of
+    // it, never under the chrome's size), and its width grows with them.
+    readonly property int sidebarFont: Math.max(chromeFont, Math.min(chromeFont + 8, Math.round(terminalFontSize * 0.75)))
+    readonly property int sidebarReadout: Math.max(11, sidebarFont - 2)
+    readonly property int railWidth: Math.min(360, Math.round((densityMode === "minimal" ? 148 : densityMode === "compact" ? 168 : 196)
+                                                             * sidebarFont / chromeFont))
     readonly property int tabHeight: Math.max(32, chromeFont + (densityMode === "minimal" ? 16 : densityMode === "compact" ? 20 : 24))
+    readonly property int sidebarHeaderHeight: Math.max(tabHeight, sidebarFont + (densityMode === "minimal" ? 16 : densityMode === "compact" ? 20 : 24))
+    readonly property int sidebarRowHeight: Math.max(24, sidebarFont + (densityMode === "minimal" ? 8 : densityMode === "compact" ? 11 : 15))
+    // Every category with its agents, in the sidebar's order. The sidebar's
+    // repeaters count these rather than take them as models, so a change in
+    // a count or a mark updates rows in place instead of rebuilding them
+    // (a rebuild would drop a drag, a hover and the scroll position).
+    readonly property var sidebarGroups: workspace.categories
+    readonly property var emptyGroup: ({id: "", name: "", agents: [], unseenCount: 0, attentionCount: 0, color: "grey", colorChoice: ""})
+    // The category palette's names in swatch order (category_colors.hpp);
+    // the theme gives each its hex.
+    readonly property var categoryColorNames: ["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan"]
     readonly property bool previewsEnabled: config.previewsVisible
     // The agent strip under the stage is the category's navigation: live
     // previews in tab order. Short windows get shorter cards, not fewer.
@@ -217,10 +233,11 @@ ApplicationWindow {
     }
     // Agents started in the same folder share a default title; number the
     // later ones so each card and menu entry names a distinct agent.
-    function agentTabTitle(session) {
+    // `agents` is the session's category's list; the shown category's by default.
+    function agentTabTitle(session, agents) {
         const base = agentBaseTitle(session)
         if (workspace.fixtureMode) return base
-        const list = workspace.categoryAgents
+        const list = agents || workspace.categoryAgents
         let ordinal = 0
         let total = 0
         for (let i = 0; i < list.length; ++i) {
@@ -387,8 +404,10 @@ ApplicationWindow {
         add("openTools", qsTr("Tools"), "", toolsAvailable, qsTr("The tools pane is not available here"), () => window.openToolsDialog())
         add("toggleSidebar", sidebarExpanded ? qsTr("Hide sidebar") : qsTr("Show sidebar"), "toggleSidebar", true, "", () => window.toggleSidebar())
         add("togglePreviews", previewsEnabled ? qsTr("Hide agent previews") : qsTr("Show agent previews"), "togglePreviews", true, "", () => window.togglePreviews())
-        add("nextWindow", qsTr("Next agent in category"), "nextWindow", workspace.categoryAgents.length > 1, qsTr("This category needs another agent"), () => workspace.nextAgent())
-        add("previousWindow", qsTr("Previous agent in category"), "previousWindow", workspace.categoryAgents.length > 1, qsTr("This category needs another agent"), () => workspace.nextAgent(-1))
+        // In the sidebar's order, into the next category after a category's last agent.
+        const another = workspace.agents.length > (hasAgent ? 1 : 0)
+        add("nextWindow", qsTr("Next agent"), "nextWindow", another, qsTr("Open another agent first"), () => workspace.nextAgentAcrossCategories(1))
+        add("previousWindow", qsTr("Previous agent"), "previousWindow", another, qsTr("Open another agent first"), () => workspace.nextAgentAcrossCategories(-1))
         add("closeAgent", qsTr("Close agent"), "closeAgent", hasAgent, needAgent, () => window.closeFocusedAgent())
         add("reopenAgent", qsTr("Reopen closed agent"), "reopenAgent", workspace.canReopenAgent, qsTr("No agent was closed since lapis opened"), () => window.reopenAgent())
         add("resumeConversation", qsTr("Resume a conversation"), "resumeConversation", conversationsAvailable, qsTr("Not available here"), () => window.openResumeDialog())
@@ -470,6 +489,36 @@ ApplicationWindow {
         if (kind === "idle" || kind === "finished" || kind === "waiting")
             return textColor
         return mutedTextColor
+    }
+    // A category colour's hex on this theme; the focus accent without one.
+    function categoryHex(name) {
+        const table = appearance && appearance.categoryColors ? appearance.categoryColors : null
+        return table && table[name] ? table[name] : focusedBorderColor
+    }
+    function categoryColorLabel(name) {
+        return {grey: qsTr("Grey"), blue: qsTr("Blue"), red: qsTr("Red"), yellow: qsTr("Yellow"),
+                green: qsTr("Green"), pink: qsTr("Pink"), purple: qsTr("Purple"), cyan: qsTr("Cyan")}[name] || name
+    }
+    readonly property string activeCategoryColor: {
+        const group = sidebarGroups.find(entry => entry.id === workspace.activeCategoryId)
+        return group ? group.color : ""
+    }
+    // The category an agent is in, by id.
+    function agentCategory(id) {
+        for (const group of sidebarGroups) {
+            if (group.agents.some(agent => agent.agentId === id))
+                return group.id
+        }
+        return ""
+    }
+    // Every agent in the sidebar's order: each category's in turn.
+    function sidebarIds() {
+        const ids = []
+        for (const group of sidebarGroups) {
+            for (const agent of group.agents)
+                ids.push(agent.agentId)
+        }
+        return ids
     }
     // Mono recall number for categories reachable by a category1-9 shortcut.
     function categoryRecall(index) {
@@ -1008,11 +1057,13 @@ ApplicationWindow {
         if (workspace.selectAgent(id))
             app.deferTerminalFocus()
     }
-    // Dragging a selected card carries the whole selection, in strip order.
+    // Dragging a selected card or sidebar row carries the whole selection,
+    // in the sidebar's order (the strip's, within a category).
     function agentsToDrag(id) {
         if (!isAgentSelected(id) || selectedAgents.length < 2)
             return [id]
-        return stripIds().filter(candidate => isAgentSelected(candidate))
+        const ids = sidebarIds().filter(candidate => isAgentSelected(candidate))
+        return ids.indexOf(id) >= 0 ? ids : [id]
     }
     function beginDrag(kind, label, scenePosition) {
         dragGhost.label = label
@@ -1025,7 +1076,7 @@ ApplicationWindow {
             return
         draggedAgents = ids
         dragSource = source
-        const first = workspace.categoryAgents.find(session => session.agentId === ids[0])
+        const first = workspace.agents.find(session => session.agentId === ids[0])
         const label = ids.length > 1 ? qsTr("%1 agents").arg(ids.length) : first ? agentTabTitle(first) : ""
         beginDrag("lapis-agents", label, scenePosition)
     }
@@ -1066,9 +1117,11 @@ ApplicationWindow {
         workspace.placeAgents(ids, workspace.activeCategoryId, index)
         clearAgentSelection()
     }
+    // Agents dropped on a category go to its end; any already there stay put.
     function dropOnCategory(categoryId) {
-        if (draggedAgents.length > 0 && categoryId !== workspace.activeCategoryId)
-            workspace.placeAgents(draggedAgents, categoryId, 1 << 20)
+        const ids = draggedAgents.filter(id => agentCategory(id) !== categoryId)
+        if (ids.length > 0)
+            workspace.placeAgents(ids, categoryId, 1 << 20)
         clearAgentSelection()
     }
     function dropOnNewCategory() {
@@ -1414,14 +1467,14 @@ ApplicationWindow {
         sequences: window.bindings("nextWindow")
         context: Qt.WindowShortcut
         enabled: window.shortcutsArmed
-        onActivated: workspace.nextAgent(1)
+        onActivated: workspace.nextAgentAcrossCategories(1)
     }
     Shortcut {
         objectName: "previousSessionShortcut"
         sequences: window.bindings("previousWindow")
         context: Qt.WindowShortcut
         enabled: window.shortcutsArmed
-        onActivated: workspace.nextAgent(-1)
+        onActivated: workspace.nextAgentAcrossCategories(-1)
     }
     Shortcut {
         objectName: "newAgentShortcut"
@@ -2351,6 +2404,53 @@ ApplicationWindow {
                   qsTr("Remove category")
             onTriggered: window.removeActiveCategory()
         }
+        // The category's colour in the sidebar, from the fixed palette.
+        Menu {
+            id: categoryColorMenu
+            objectName: "categoryColorMenu"
+            title: qsTr("Colour")
+            onClosed: window.onMenuClosed()
+            background: MenuSurface {}
+
+            Repeater {
+                model: window.categoryColorNames
+                delegate: MenuItem {
+                    id: colorItem
+                    required property string modelData
+                    readonly property bool current: modelData === window.activeCategoryColor
+                    objectName: "categoryColor_" + modelData
+                    text: window.categoryColorLabel(modelData)
+                    font.pixelSize: window.chromeFont
+                    implicitHeight: Math.max(32, window.chromeFont + 16)
+                    enabled: workspace.activeCategoryId.length > 0
+                    onTriggered: workspace.setCategoryColor(workspace.activeCategoryId, modelData)
+                    contentItem: RowLayout {
+                        spacing: 10
+                        Rectangle {
+                            Layout.preferredWidth: 12
+                            Layout.preferredHeight: 12
+                            Layout.alignment: Qt.AlignVCenter
+                            radius: 3
+                            color: window.categoryHex(colorItem.modelData)
+                        }
+                        PlainText {
+                            text: colorItem.text
+                            color: window.textColor
+                            font.pixelSize: window.chromeFont
+                            font.weight: colorItem.current ? Font.DemiBold : Font.Normal
+                            Layout.fillWidth: true
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        PlainText {
+                            text: colorItem.current ? "✓" : ""
+                            color: window.textColor
+                            font.pixelSize: window.chromeFont
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+                    }
+                }
+            }
+        }
         MenuSeparator {}
         ActionItem {
             objectName: "appearanceAction"
@@ -2476,6 +2576,7 @@ ApplicationWindow {
         function onFocusChanged() {
             window.keyboardOwnershipReady()
             agentTabs.revealFocused()
+            categoryList.revealActive()
 
             if (!window.inputBlocked)
                 app.deferTerminalFocus()
@@ -2512,184 +2613,341 @@ ApplicationWindow {
                 anchors.topMargin: 0
                 spacing: 8
 
-                ListView {
+                // The sidebar is the navigation: every category as a colour-coded
+                // group, its agents listed under it, scrolling as one list.
+                Flickable {
                     id: categoryList
+                    objectName: "sidebarList"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
-                    cacheBuffer: 8000
-                    spacing: 4
-                    model: workspace.categories
-                    highlight: null
-                    highlightFollowsCurrentItem: false
+                    contentWidth: width
+                    contentHeight: sidebarColumn.implicitHeight
                     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
+                    // Scroll just enough to show `item`; never animated.
+                    function reveal(item) {
+                        if (!item || height <= 0)
+                            return
+                        const top = item.mapToItem(sidebarColumn, 0, 0).y
+                        const limit = Math.max(0, contentHeight - height)
+                        if (top < contentY)
+                            contentY = Math.max(0, top)
+                        else if (top + item.height > contentY + height)
+                            contentY = Math.min(limit, top + item.height - height)
+                    }
                     function revealActive() {
-                        const index = window.categoryIndex(workspace.activeCategoryId)
-                        if (index >= 0)
-                            positionViewAtIndex(index, ListView.Contain)
+                        Qt.callLater(() => {
+                            const group = sidebarRepeater.itemAt(window.categoryIndex(workspace.activeCategoryId))
+                            if (group) {
+                                categoryList.reveal(group.header)
+                                categoryList.reveal(group.focusedRow())
+                            }
+                        })
                     }
 
-                    // Categories are quiet group labels: no resting fill, a leading
-                    // edge and full ink for the active group, and a mono recall number
-                    // for the first four. Agent tabs remain the filled session cells.
-                    delegate: Button {
-                        id: categoryButton
-                        required property var modelData
-                        required property int index
-                        objectName: "category_" + modelData.id
-                        readonly property bool marked: modelData.id === workspace.activeCategoryId
-                        readonly property string recall: window.categoryRecall(index)
+                    Column {
+                        id: sidebarColumn
                         width: categoryList.width
-                        height: window.tabHeight
-                        padding: 0
-                        focusPolicy: Qt.NoFocus
-                        hoverEnabled: true
-                        enabled: window.interactionArmed
-                        onClicked: workspace.selectCategory(modelData.id)
-                        Accessible.name: modelData.unseenCount > 0 ?
-                                             qsTr("%1, %2 waiting").arg(modelData.name).arg(modelData.unseenCount) :
-                                             modelData.name
-                        ToolTip.visible: hovered && recall.length > 0
-                        ToolTip.delay: 600
-                        ToolTip.text: window.shortcutText("category" + (index + 1))
+                        spacing: 8
 
-                        background: Rectangle {
-                            radius: window.chromeRadius
-                            color: categoryDrop.containsDrag && categoryDrop.acceptsAgents ?
-                                       Qt.alpha(window.focusedBorderColor, 0.18) :
-                                   categoryButton.hovered && !categoryButton.marked ? window.hoveredCardColor :
-                                                                                       window.surfaceColor
-                            border.width: categoryDrop.containsDrag && categoryDrop.acceptsAgents ? 1 : 0
-                            border.color: window.focusedBorderColor
-                            Behavior on color {
-                                enabled: window.motionEnabled
-                                ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
-                            }
-                            Rectangle {
-                                objectName: "categoryMarker"
-                                x: 0
-                                width: 2
-                                height: parent.height - 10
-                                anchors.verticalCenter: parent.verticalCenter
-                                color: categoryButton.marked ? window.focusedBorderColor : "transparent"
-                                Behavior on color {
-                                    enabled: window.motionEnabled
-                                    ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
-                                }
-                            }
-                        }
+                        Repeater {
+                            id: sidebarRepeater
+                            model: window.sidebarGroups.length
+                            delegate: Column {
+                                id: group
+                                required property int index
+                                readonly property var modelData: window.sidebarGroups[index] ?? window.emptyGroup
+                                readonly property var agents: modelData.agents
+                                readonly property bool active: modelData.id === workspace.activeCategoryId
+                                readonly property color hue: window.categoryHex(modelData.color)
+                                readonly property alias header: categoryButton
+                                width: sidebarColumn.width
+                                spacing: 0
 
-                        contentItem: Item {
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 10
-                                anchors.rightMargin: 6
-                                spacing: 8
-                                PlainText {
-                                    text: categoryButton.recall
-                                    visible: text.length > 0
-                                    color: categoryButton.marked ? window.textColor : window.mutedTextColor
-                                    font.family: window.monoFamily
-                                    font.pixelSize: window.readoutFont
-                                    Layout.alignment: Qt.AlignVCenter
+                                function focusedRow() {
+                                    for (let i = 0; i < agentRows.count; ++i) {
+                                        const row = agentRows.itemAt(i)
+                                        if (row && row.marked)
+                                            return row
+                                    }
+                                    return null
                                 }
-                                PlainText {
-                                    text: categoryButton.modelData.name
-                                    color: categoryButton.marked || categoryButton.hovered ? window.textColor :
-                                                                                             window.mutedTextColor
-                                    font.pixelSize: window.chromeFont
-                                    font.weight: categoryButton.marked ? Font.DemiBold : Font.Normal
-                                    elide: Text.ElideRight
-                                    Layout.fillWidth: true
-                                    Layout.minimumWidth: 0
-                                    verticalAlignment: Text.AlignVCenter
+
+                                // Categories are group labels: a colour mark, a mono recall
+                                // number for the first nine and the name; the active group's
+                                // name in full ink with a leading edge in its colour. No
+                                // resting fill.
+                                Button {
+                                    id: categoryButton
+                                    readonly property var modelData: group.modelData
+                                    readonly property int index: group.index
+                                    objectName: "category_" + modelData.id
+                                    readonly property bool marked: group.active
+                                    readonly property string recall: window.categoryRecall(index)
+                                    width: group.width
+                                    height: window.sidebarHeaderHeight
+                                    padding: 0
+                                    focusPolicy: Qt.NoFocus
+                                    hoverEnabled: true
+                                    enabled: window.interactionArmed
+                                    onClicked: workspace.selectCategory(modelData.id)
+                                    Accessible.name: modelData.unseenCount > 0 ?
+                                                         qsTr("%1, %2 waiting").arg(modelData.name).arg(modelData.unseenCount) :
+                                                         modelData.name
+                                    ToolTip.visible: hovered && recall.length > 0
+                                    ToolTip.delay: 600
+                                    ToolTip.text: window.shortcutText("category" + (index + 1))
+
+                                    background: Rectangle {
+                                        radius: window.chromeRadius
+                                        color: categoryDrop.containsDrag && categoryDrop.acceptsAgents ?
+                                                   Qt.alpha(window.focusedBorderColor, 0.18) :
+                                               categoryButton.hovered && !categoryButton.marked ? window.hoveredCardColor :
+                                                                                                   window.surfaceColor
+                                        border.width: categoryDrop.containsDrag && categoryDrop.acceptsAgents ? 1 : 0
+                                        border.color: window.focusedBorderColor
+                                        Behavior on color {
+                                            enabled: window.motionEnabled
+                                            ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                                        }
+                                        Rectangle {
+                                            objectName: "categoryMarker"
+                                            x: 0
+                                            width: 2
+                                            height: parent.height - 10
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            color: categoryButton.marked ? group.hue : "transparent"
+                                            Behavior on color {
+                                                enabled: window.motionEnabled
+                                                ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                                            }
+                                        }
+                                    }
+
+                                    contentItem: Item {
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 10
+                                            anchors.rightMargin: 8
+                                            spacing: 8
+                                            Rectangle {
+                                                objectName: "categorySwatch_" + categoryButton.modelData.id
+                                                Layout.preferredWidth: 10
+                                                Layout.preferredHeight: 10
+                                                Layout.alignment: Qt.AlignVCenter
+                                                radius: 3
+                                                color: group.hue
+                                                opacity: categoryButton.marked ? 1 : 0.8
+                                            }
+                                            PlainText {
+                                                text: categoryButton.recall
+                                                visible: text.length > 0
+                                                color: categoryButton.marked ? window.textColor : window.mutedTextColor
+                                                font.family: window.monoFamily
+                                                font.pixelSize: window.sidebarReadout
+                                                Layout.alignment: Qt.AlignVCenter
+                                            }
+                                            PlainText {
+                                                text: categoryButton.modelData.name
+                                                color: categoryButton.marked || categoryButton.hovered ? window.textColor :
+                                                                                                         window.mutedTextColor
+                                                font.pixelSize: window.sidebarFont
+                                                font.weight: categoryButton.marked ? Font.DemiBold : Font.Medium
+                                                elide: Text.ElideRight
+                                                Layout.fillWidth: true
+                                                Layout.minimumWidth: 0
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+                                            // How many agents here finished or need you and have
+                                            // not been looked at. The shown category's rows mark
+                                            // their own.
+                                            PlainText {
+                                                objectName: "categoryUnseen_" + categoryButton.modelData.id
+                                                visible: categoryButton.modelData.unseenCount > 0 && !categoryButton.marked
+                                                text: categoryButton.modelData.unseenCount
+                                                color: window.textColor
+                                                font.family: window.monoFamily
+                                                font.pixelSize: window.sidebarReadout
+                                                Layout.alignment: Qt.AlignVCenter
+                                            }
+                                        }
+                                    }
+
+                                    TapHandler {
+                                        acceptedButtons: Qt.RightButton
+                                        enabled: window.interactionArmed
+                                        onTapped: {
+                                            workspace.selectCategory(categoryButton.modelData.id)
+                                            window.popupAt(categoryMenu, categoryButton)
+                                        }
+                                    }
+                                    // Drag a category up or down the rail to reorder it.
+                                    DragHandler {
+                                        target: null
+                                        enabled: window.interactionArmed
+                                        xAxis.enabled: false
+                                        onActiveChanged: active ?
+                                            window.beginCategoryDrag(categoryButton.modelData.id, categoryButton.modelData.name,
+                                                                     centroid.scenePosition) :
+                                            window.endDrag()
+                                        onCentroidChanged: if (active)
+                                                               window.moveDragGhost(centroid.scenePosition)
+                                    }
+                                    // Agents dropped here move to this category; a category
+                                    // dropped here goes above or below this one.
+                                    DropArea {
+                                        id: categoryDrop
+                                        anchors.fill: parent
+                                        keys: ["lapis-agents", "lapis-category"]
+                                        readonly property bool acceptsAgents: window.draggedAgents.some(
+                                            id => window.agentCategory(id) !== categoryButton.modelData.id)
+                                        property bool below: false
+                                        onPositionChanged: function(drag) { below = drag.y > height / 2 }
+                                        onDropped: function(drop) {
+                                            const category = categoryButton.modelData.id
+                                            if (window.draggedCategory.length > 0) {
+                                                const at = categoryButton.index + (below ? 1 : 0)
+                                                window.queueDrop(() => window.dropCategory(at))
+                                            } else {
+                                                window.queueDrop(() => window.dropOnCategory(category))
+                                            }
+                                            drop.accept()
+                                        }
+                                    }
+                                    Rectangle {
+                                        objectName: "categoryDropMarker"
+                                        visible: categoryDrop.containsDrag && !categoryDrop.acceptsAgents
+                                                 && window.draggedCategory !== categoryButton.modelData.id
+                                        x: 4
+                                        width: parent.width - 8
+                                        height: 2
+                                        y: categoryDrop.below ? parent.height - 1 : -1
+                                        color: window.focusedBorderColor
+                                    }
                                 }
-                                // An agent here finished or needs you and has not been
-                                // looked at; it pulses with the agent's card.
-                                Rectangle {
-                                    id: unseenDot
-                                    objectName: "categoryUnseen_" + categoryButton.modelData.id
-                                    visible: categoryButton.modelData.unseenCount > 0 && !categoryButton.marked
-                                    Layout.preferredWidth: 6
-                                    Layout.preferredHeight: 6
-                                    Layout.alignment: Qt.AlignVCenter
-                                    radius: 3
-                                    color: window.textColor
-                                    SequentialAnimation on opacity {
-                                        running: unseenDot.visible && window.motionEnabled
-                                        loops: Animation.Infinite
-                                        NumberAnimation { from: 0.9; to: 0.25; duration: 900; easing.type: Easing.InOutSine }
-                                        NumberAnimation { from: 0.25; to: 0.9; duration: 900; easing.type: Easing.InOutSine }
+
+                                // The category's agents in order. A thin line in the group's
+                                // colour runs down its rows; the agent on the stage lights its
+                                // segment and takes a faint fill of that colour.
+                                Repeater {
+                                    id: agentRows
+                                    model: group.agents.length
+                                    delegate: Item {
+                                        id: agentRow
+                                        required property int index
+                                        readonly property var agent: group.agents[index] ?? null
+                                        readonly property string agentId: agent ? agent.agentId : ""
+                                        readonly property bool marked: agent !== null && workspace.focusedAgent !== null
+                                                                       && workspace.focusedAgent.agentId === agentId
+                                        readonly property bool picked: agentId.length > 0 && window.isAgentSelected(agentId)
+                                        readonly property string title: agent ? window.agentTabTitle(agent, group.agents) : ""
+                                        objectName: "sidebarAgent_" + agentId
+                                        width: group.width
+                                        height: window.sidebarRowHeight
+                                        opacity: window.dragSource === "sidebar" && window.draggedAgents.indexOf(agentId) >= 0 ?
+                                                     0.45 : 1
+                                        Accessible.role: Accessible.Button
+                                        Accessible.name: agent ? title + ", " + agent.statusLabel : ""
+                                        Accessible.onPressAction: {
+                                            if (window.interactionArmed && workspace.selectAgent(agentRow.agentId))
+                                                app.deferTerminalFocus()
+                                        }
+
+                                        Rectangle {
+                                            objectName: "sidebarAgentFill_" + agentRow.agentId
+                                            anchors.fill: parent
+                                            radius: window.chromeRadius
+                                            color: agentRow.marked ? Qt.alpha(group.hue, 0.16) :
+                                                   rowPress.pressed ? window.focusedColor :
+                                                   rowHover.hovered ? window.hoveredCardColor :
+                                                   agentRow.picked ? Qt.alpha(window.focusedBorderColor, 0.08) : "transparent"
+                                            Behavior on color {
+                                                enabled: window.motionEnabled
+                                                ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                                            }
+                                        }
+                                        Rectangle {
+                                            objectName: "sidebarAgentEdge_" + agentRow.agentId
+                                            x: 0
+                                            width: 2
+                                            height: parent.height
+                                            color: agentRow.marked ? group.hue : Qt.alpha(group.hue, group.active ? 0.55 : 0.38)
+                                        }
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 11
+                                            anchors.rightMargin: 8
+                                            spacing: 9
+                                            StatusMark {
+                                                objectName: "sidebarStatus_" + agentRow.agentId
+                                                kind: agentRow.agent ? agentRow.agent.statusKind : "unknown"
+                                                Layout.preferredWidth: 8
+                                                Layout.preferredHeight: 8
+                                                Layout.alignment: Qt.AlignVCenter
+                                            }
+                                            PlainText {
+                                                id: rowTitle
+                                                text: agentRow.title
+                                                color: agentRow.marked || rowHover.hovered || group.active ? window.textColor :
+                                                                                                             window.mutedTextColor
+                                                font.pixelSize: window.sidebarFont
+                                                font.weight: agentRow.marked ? Font.DemiBold : Font.Normal
+                                                elide: Text.ElideRight
+                                                Layout.fillWidth: true
+                                                Layout.minimumWidth: 0
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+                                            // Finished or needs you, and not looked at yet.
+                                            Rectangle {
+                                                objectName: "sidebarUnseen_" + agentRow.agentId
+                                                visible: agentRow.agent !== null && agentRow.agent.unseen && !agentRow.marked
+                                                Layout.preferredWidth: 6
+                                                Layout.preferredHeight: 6
+                                                Layout.alignment: Qt.AlignVCenter
+                                                radius: 3
+                                                color: window.textColor
+                                            }
+                                        }
+                                        HoverHandler { id: rowHover }
+                                        ToolTip.visible: rowHover.hovered && rowTitle.truncated && !rowPress.dragging
+                                        ToolTip.delay: 600
+                                        ToolTip.text: agentRow.title
+                                        // A click shows the agent (Command- and Shift-click pick
+                                        // several, as on the strip); a drag carries it to a
+                                        // category, the + or the strip.
+                                        DragOrClick {
+                                            id: rowPress
+                                            objectName: "sidebarPress_" + agentRow.agentId
+                                            anchors.fill: parent
+                                            enabled: window.interactionArmed && agentRow.agent !== null
+                                            onTapped: function(modifiers) { window.clickAgent(agentRow.agentId, modifiers) }
+                                            onDragStarted: function(scene) {
+                                                window.beginAgentDrag(window.agentsToDrag(agentRow.agentId), "sidebar", scene)
+                                            }
+                                            onDragMoved: function(scene) { window.moveDragGhost(scene) }
+                                            onDragEnded: window.endDrag()
+                                        }
+                                        TapHandler {
+                                            acceptedButtons: Qt.RightButton
+                                            enabled: window.interactionArmed && agentRow.agent !== null
+                                            onTapped: {
+                                                if (workspace.selectAgent(agentRow.agentId))
+                                                    window.popupAt(agentMenu, agentRow)
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        TapHandler {
-                            acceptedButtons: Qt.RightButton
-                            enabled: window.interactionArmed
-                            onTapped: {
-                                workspace.selectCategory(categoryButton.modelData.id)
-                                window.popupAt(categoryMenu, categoryButton)
-                            }
-                        }
-                        // Drag a category up or down the rail to reorder it.
-                        DragHandler {
-                            target: null
-                            enabled: window.interactionArmed
-                            xAxis.enabled: false
-                            onActiveChanged: active ?
-                                window.beginCategoryDrag(categoryButton.modelData.id, categoryButton.modelData.name,
-                                                         centroid.scenePosition) :
-                                window.endDrag()
-                            onCentroidChanged: if (active)
-                                                   window.moveDragGhost(centroid.scenePosition)
-                        }
-                        // Agents dropped here move to this category; a category
-                        // dropped here goes above or below this one.
-                        DropArea {
-                            id: categoryDrop
-                            anchors.fill: parent
-                            keys: ["lapis-agents", "lapis-category"]
-                            readonly property bool acceptsAgents: window.draggedAgents.length > 0
-                                                                   && !categoryButton.marked
-                            property bool below: false
-                            onPositionChanged: function(drag) { below = drag.y > height / 2 }
-                            onDropped: function(drop) {
-                                const category = categoryButton.modelData.id
-                                if (window.draggedCategory.length > 0) {
-                                    const at = categoryButton.index + (below ? 1 : 0)
-                                    window.queueDrop(() => window.dropCategory(at))
-                                } else {
-                                    window.queueDrop(() => window.dropOnCategory(category))
-                                }
-                                drop.accept()
-                            }
-                        }
-                        Rectangle {
-                            objectName: "categoryDropMarker"
-                            visible: categoryDrop.containsDrag && !categoryDrop.acceptsAgents
-                                     && window.draggedCategory !== categoryButton.modelData.id
-                            x: 4
-                            width: parent.width - 8
-                            height: 2
-                            y: categoryDrop.below ? parent.height - 1 : -1
-                            color: window.focusedBorderColor
-                        }
-                    }
-
-                    // A quiet plus right under the last category, in the recall
-                    // column, with its shortcut as a readout.
-                    footer: Item {
-                        width: categoryList.width
-                        height: window.tabHeight + categoryList.spacing
+                        // A quiet plus right under the last category, in the recall
+                        // column, with its shortcut as a readout.
                         Button {
                             id: newCategoryButton
                             objectName: "newCategoryButton"
-                            y: categoryList.spacing
-                            width: parent.width
+                            width: sidebarColumn.width
                             height: window.tabHeight
                             padding: 0
                             focusPolicy: Qt.NoFocus
@@ -2731,7 +2989,7 @@ ApplicationWindow {
                                     PlainText {
                                         text: "+"
                                         color: newCategoryButton.hovered ? window.textColor : window.mutedTextColor
-                                        font.pixelSize: window.chromeFont
+                                        font.pixelSize: window.sidebarFont
                                         Layout.alignment: Qt.AlignVCenter
                                     }
                                     PlainText {
@@ -2739,7 +2997,7 @@ ApplicationWindow {
                                         text: window.shortcutText("newCategory")
                                         color: window.mutedTextColor
                                         font.family: window.monoFamily
-                                        font.pixelSize: window.readoutFont
+                                        font.pixelSize: window.sidebarReadout
                                         elide: Text.ElideRight
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
