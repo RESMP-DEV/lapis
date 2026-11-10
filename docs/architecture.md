@@ -13,7 +13,7 @@ terminal behavior, stable session identity, explicit attention decisions, and
 durable process ownership come before additional integrations. The supported
 early-access objective is a signed Apple Silicon app that can install, launch
 local Codex and Claude Code sessions, retain work through GUI replacement and
-update, recover after daemon/service failure, diagnose its own limits, and
+update, recover after service failure, diagnose its own limits, and
 survive a measured eight-session workload.
 
 Responsiveness is the first product priority, followed by ergonomics and then
@@ -36,8 +36,8 @@ backend, display server, and workload pass their own qualification.
 | Terminal-engine adapter | Ghostty parser/reflow behavior behind a small lapis interface | Upstream types and its unstable C API stay isolated |
 | Agent adapters | Tool-specific observation, response, and reconciliation capabilities | Each tool/version is probed independently; success with one adapter is not adapter independence |
 | Attention policy | Source pending requests, ordering, aging, and reconciliation | Desktop combines and presents requests but never changes their response authority |
-| Desktop | Layout, keyboard/IME focus, selection, accessibility, and rendering | Targets explicit sessions; never owns PTYs or service lifecycle in the production route |
-| Supervisor | One-session birth admission, desired state, convergence, and private ownership records | Not a generic control plane; launchd owns registration, not session semantics |
+| Desktop | Layout, keyboard/IME focus, selection, accessibility, rendering, and starting one session service per agent | Targets explicit sessions; never owns PTYs, and quitting leaves services running only where the OS permits background execution |
+| Login helper | `scripts/restore_at_login.py`: a LaunchAgent that runs the windowless host at login to restart agents whose services died with the Mac | Leaves running agents alone; it does not watch or restart services after login |
 | Tool status | Read-only installed/version observations from `harness_catalog` | Never configures tools, changes launch semantics, or qualifies model access |
 | Renderer | Glyph/texture caches, changed-region drawing, and bounded previews | Consumes immutable snapshots; never mutates parser or PTY state |
 
@@ -58,7 +58,7 @@ that uses `lapis_project_options`.
 | Session wire | Internal version 6 framing with epochs, generations, history paging, and attention messages | Incompatible changes need rejection/migration tests and a private endpoint |
 | Codex route | Managed ordinary TUI with a service-owned observer and app-server backend | Observation, response, and replay capabilities are declared separately |
 | Claude route | Hook/terminal observation with explicit answers in Claude's terminal | No GUI response routing until a supported protocol is version-pinned and qualified |
-| Process birth | Experimental same-UID one-session supervisor daemon exists; desktop birth is split into default `DirectBirthRoute` and explicit `SupervisorBirthRoute` seams | The first production client is headless `lapis supervisor`; launchd and GUI routes follow it, and a GUI-observed supervised session must close the order-2 gate |
+| Process birth | The window (or the windowless host) starts one detached session service per agent; agents survive window quitting only where the OS permits background execution, and the login helper restarts those whose services died with the Mac | Restart of a crashed session service is not implemented: the agent keeps its last screen until it is restarted or lapis next opens; macOS 27 also requires the Allow in the Background conditions in [install](install.md) |
 | Settings | Tracked `lapis.json` defaults plus private runtime workspace/window state | Machine-local state never becomes a portable credential or session transcript |
 | Native browser surfaces | CEF 8037 is a provisional engine candidate; no runtime is implemented | Run the isolated W0 probe first; product and service wiring wait for R1/R4 |
 
@@ -73,18 +73,19 @@ is valuable only when its exact source and artifact can pass the named gate.
 
 | Order | Executable slice | Observable exit |
 | --- | --- | --- |
-| 1 | Complete supervisor lifecycle behind `LAPIS_BUILD_SUPERVISOR_RUNTIME` and expose headless `lapis supervisor status/stop/reset` | Real daemon, service, and terminal PIDs are distinct; status is read-only, failed birth is never replayed, explicit stop/reset cleans the private slot, and malformed/foreign-UID requests fail closed |
-| 2 | Add `DirectBirthRoute`, `SupervisorBirthRoute`, and `BirthTicket` without changing preview or direct tests | A GUI-observed supervised session keeps its child and v6 identity across GUI close/crash/replacement; no fallback silently rebirths it |
-| 3 | Make explicit per-user launchd registration observable | Enabled, disabled, unregistered, and unknown states are reconciled without spawning a second daemon or terminating children implicitly |
-| 4 | Package the daemon and pinned service, then exercise a live signed update transition | Manifest, appcast, app, DMG, and six candidate-gate receipts bind one immutable source/artifact pair; rollback preserves or explicitly disposes of live work |
-| 5 | Close candidate account and input gates in parallel | Missing selected credentials refuse before replacing a healthy session; large paste, bracketed-mode changes, cancellation, reconnect, and focus/IME transitions preserve exact destination and PTY bytes |
-| 6 | Run the declared eight-session support workload | Bursty output, history paging, reconnect, diagnostics, warm/idle transitions, resource bounds, Codex/Claude continuity, and input/switch/frame tails have one candidate-scoped receipt |
-| 7 | Publish only the qualified local slice, then schedule controlled 32-session scale | Early-access reports identify exact source/artifact; wider capacity claims wait for the separate 32-session result |
+| 1 | Package the pinned service, then exercise a live signed update transition | Manifest, appcast, app, DMG, and six candidate-gate receipts bind one immutable source/artifact pair; rollback preserves or explicitly disposes of live work |
+| 2 | Close candidate account and input gates in parallel | Missing selected credentials refuse before replacing a healthy session; large paste, bracketed-mode changes, cancellation, reconnect, and focus/IME transitions preserve exact destination and PTY bytes |
+| 3 | Run the declared eight-session support workload | Bursty output, history paging, reconnect, diagnostics, warm/idle transitions, resource bounds, Codex/Claude continuity, and input/switch/frame tails have one candidate-scoped receipt |
+| 4 | Publish only the qualified local slice, then schedule controlled 32-session scale | Early-access reports identify exact source/artifact; wider capacity claims wait for the separate 32-session result |
 
-Only step 1 is the current implementation batch. Step 5 may proceed as parallel
-focused repairs, but those repairs cannot claim candidate readiness until they
-run against the assembled package from steps 1-4. A merged PR, source test, or
-worker self-report is not a release qualification receipt.
+Process lifetime stays as it runs today: the window starts each session
+service, services outlive the window where the OS permits background
+execution, and the login helper restores agents after login. Restart of a
+crashed session service is not implemented, and no
+step above adds it. Step 2 may proceed as parallel focused repairs, but those
+repairs cannot claim candidate readiness until they run against the assembled
+package from step 1. A merged PR, source test, or worker self-report is not a
+release qualification receipt.
 
 ## Native browser utilization
 
@@ -101,7 +102,7 @@ promote the next, and no checkpoint makes Lapis a general-purpose browser.
 | Checkpoint | Bounded slice | Exit evidence |
 | --- | --- | --- |
 | W0: engine probe | Resolve the current exact macOS arm64 stable artifact in CEF branch 8037, then fetch and digest it; inspect SDK, codesign, and redistribution inventory; run one isolated offscreen CEF host on fixture content. Exercise BGRA `OnPaint`, trusted input synthesis, and in-process DevTools with remote-debugging TCP disabled. Measure installed size, launch/frame cost, and one-view memory. A BGRA-to-Qt upload is the first qualified display path; IOSurface/Vulkan interop is optional follow-up evidence, not a prerequisite. | `evidence/web-engine-probe.json` records the resolved version, artifact digest, toolchain, real frames/input/replies, observed limits, and cleanup. A failed result selects the recorded fallback decision; it does not silently swap engines. |
-| W1: headless vertical slice | After R1 and R4 close, add `services/web/` with one supervisor-admitted engine tree and isolated per-view request contexts. Register the deterministic bootstrap host-side for new documents, with a heartbeat and explicit degraded state. Expose only `status`, `open`, `navigate`, `snapshot`, `click`, `wait`, and `close` over a private versioned socket; the CLI emits one bounded JSON envelope and meaningful exit codes. Snapshots carry content-derived refs that the service re-resolves at action time; a changed page returns a stale-ref diff. | Real local fixtures, including full navigation and SPA-style route change, pass through the CLI without a GUI. A deliberately broken bootstrap makes injection health explicit; malformed/stale actions never execute. |
+| W1: headless vertical slice | After R1 and R4 close, add `services/web/` with one service-owned engine tree and isolated per-view request contexts. Register the deterministic bootstrap host-side for new documents, with a heartbeat and explicit degraded state. Expose only `status`, `open`, `navigate`, `snapshot`, `click`, `wait`, and `close` over a private versioned socket; the CLI emits one bounded JSON envelope and meaningful exit codes. Snapshots carry content-derived refs that the service re-resolves at action time; a changed page returns a stale-ref diff. | Real local fixtures, including full navigation and SPA-style route change, pass through the CLI without a GUI. A deliberately broken bootstrap makes injection health explicit; malformed/stale actions never execute. |
 | W2: GUI compositing | Add a `WebSurface` beside terminal tiles. Upload bounded dirty BGRA regions through public Qt scene-graph interfaces, use the same focus/IME ownership policy, and keep previews throttled, non-interactive, and never view-resizing. | Background Qt and native macOS input evidence cover typing, IME, selection, and refusal while the user owns input; terminal latency gates do not regress. |
 | W3: attention and approvals | Register `adapter_id` `web`; classify login/captcha, form submission, download, upload, clipboard, payment, and navigation-risk actions. Decision tokens bind the current view, navigation epoch, target, and arguments. | Risky fixture actions block for an explicit user decision and retire only that request. Page text can request attention but never act or redirect focus. |
 | W4: credential import and isolation | Permit explicit user-initiated import only. Start with a `storageState` interchange file; Chromium-family disk import requires a later reviewed probe under Lapis' final code signing. Cookies and storage enter one in-memory isolated context before first navigation, are never exposed by a verb/event/receipt, and are never copied as a profile directory. | User-consented fixture login passes; fixture credential bytes appear in no CLI output, event, log, or receipt; cross-view isolation and revocation/destruction tests pass. |
@@ -162,17 +163,15 @@ checkpoints do not displace the delivery order above.
 
 ## Release gates
 
-**R1, process lifetime.** The GUI is not the production process owner. A
-per-user supervisor owns birth and convergence; clients attach by validated
-identity. Qualify GUI close/crash/replacement, daemon SIGKILL, service death,
-login/logout, reboot, restart-storm bounds, and explicit operator disposition.
-Same-child survival and replacement with a new epoch are different outcomes and
-must be reported separately. A supervisor daemon signal detaches the daemon and
-preserves the supervised service, its terminal child, and its ownership record;
-only an explicit authenticated stop ends the service, and only an explicit
-authenticated reset clears the private slot after no live child remains. A
-retained peer that refuses verification stays retryable and is never converted
-into an operator stop.
+**R1, process lifetime.** The window starts each agent's session service and
+does not own it afterwards: quitting the window leaves the service and its
+agent running where the OS permits background execution, and clients attach by
+validated identity. On macOS 27 that means the Allow in the Background and
+old-app conditions in [install](install.md); otherwise macOS ends the agents.
+The login helper restarts agents whose services died with the Mac. Restart of a
+crashed session service is not implemented. Qualify GUI close/crash/replacement,
+service death, login/logout, and reboot. Same-child survival and replacement
+with a new epoch are different outcomes and must be reported separately.
 
 **R2, input integrity.** Paste admission, mode-aware encoding, attachment
 identity, cancellation, and reconnect reporting stay service-owned. Candidate
@@ -203,10 +202,6 @@ failures, and service disconnect without developer tools.
 
 | Topic | Current position | Decision gate |
 | --- | --- | --- |
-| Supervisor endpoint authority | Workspace/CLI selects the validated private endpoint; daemon owns the admitted process | Move endpoint selection only with a multi-session identity and reconnect migration receipt |
-| Supervisor registration | Explicit launchd registration follows the headless client and GUI route | Qualify enabled, disabled, missing plist, live-socket disagreement, logout/login, and reboot before automatic registration |
-| Credential environments | First birth requires an empty service environment | A reviewed contract must distinguish user consent, tool identity, same-UID exposure, and revoke/recovery behavior before admission |
-| Chart style environment | Direct birth gives local agents `MATPLOTLIBRC` and `LAPIS_CHART_PALETTE` (non-credential, `~/.lapis/visual`) once the visual view has written a style, unless the person set `MATPLOTLIBRC` | Supervisor birth refuses every environment override; it must admit these named non-credential variables (or the launch must drop them) before it carries agent launches |
 | Codex thread switch | Explicit proposal only | Select an exact persistent thread, rotate epoch, reconcile by exact ID, invalidate old tokens, and qualify foreign/archive recovery before UI navigation |
 | Codex external-agent import | Session-only importer and qualification probe exist | Consent, dedicated server ownership, duplicate reconciliation, launch/resume, and failure recovery must qualify before onboarding UI |
 | Codex native hooks | H0 inventory and delivery boundary are qualified; H1 per-session relay is the next candidate | A reviewed live receipt must qualify relay loss, trust and decision semantics; decision hooks are per-session opt-in and lapis never installs global hooks |
@@ -257,10 +252,10 @@ conversation state. A structured backend does not reproduce the TUI, and a
 separate app-server does not observe independently launched CLIs by default.
 GUI detachment does not invalidate a healthy service-owned source connection.
 
-Supervisor state owns the one-session slot, launchd owns registration, and the
-client reconciles both without treating one as a mirror of the other. Unknown
-registration or birth state refuses mutation. An unqualified one-shot birth is
-never retried automatically because a lost reply could become a second child.
+The window starts a session service only for a create-mode attach, passing the
+session ID it chose, and then attaches with that ID; later attaches use the
+saved descriptor. A failed start leaves the agent disconnected with the reason
+shown; the connection does not launch the service again by itself.
 
 ### Verified adapter contracts
 

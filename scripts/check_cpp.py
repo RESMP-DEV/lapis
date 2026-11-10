@@ -209,9 +209,6 @@ def main():
             "tsan",
             "profile",
             "desktop",
-            "supervisor",
-            "supervisor-asan",
-            "supervisor-tsan",
             "format",
         ),
         default="dev",
@@ -300,7 +297,7 @@ def _run_gate(tools, arguments, log_dir):
         return results
 
     tasks = []
-    if arguments.mode in ("dev", "desktop", "supervisor"):
+    if arguments.mode in ("dev", "desktop"):
         analysis_failed = False
         try:
             tasks.extend(_analysis_tasks(tools, arguments, log_dir))

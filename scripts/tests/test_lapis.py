@@ -118,17 +118,6 @@ class LauncherTests(unittest.TestCase):
         self.assertNotIn("--socket", command[: command.index("--")])
         self.assertFalse(self.runtime.exists())
 
-    def test_supervisor_command_uses_focused_binary_and_shows_help(self):
-        binary = self.temporary_root / "lapis"
-        binary.touch()
-        result = SimpleNamespace(returncode=0)
-        with (
-            patch.object(lapis, "SUPERVISOR_BUILD", self.temporary_root),
-            patch.object(lapis, "_run", return_value=result) as run,
-        ):
-            self.assertEqual(lapis.command_supervisor([]), 0)
-            run.assert_called_once_with([binary, "--help"], check=False)
-
     def test_bootstrap_does_not_require_existing_ghostty(self):
         with (
             patch.object(

@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-10T00:12:45Z",
+  "agent": "Codex triage parent with read-only architecture review",
+  "base_revision": "2f261586507a6af04f7f5191a8286b29da089125",
+  "source_revision": "f30d69db6693682425340d34e072452db58a2129",
+  "runtime_validation_revision": "e62f90933754f305b38c20f5e9ceaca9460fcebd",
+  "scope": "Post-rebase validation and review follow-up for PR 190 after PRs 187, 188, 189, 192, 195, 197, and 200 merged.",
+  "changed_source_manifest": {
+    "algorithm": "shasum -a 256 of: git diff --binary --full-index 2f261586507a6af04f7f5191a8286b29da089125..f30d69db6693682425340d34e072452db58a2129 -- ':(exclude)evidence/*'",
+    "digest": "8b5150317b2aadbb718b07ffdeba7fbf5fc61452537682c68e974b8c939ca209",
+    "changed_paths": 42
+  },
+  "validation": [
+    {
+      "command": "just quality",
+      "result": "passed"
+    },
+    {
+      "command": "just check",
+      "result": "passed: build, 20 CTest cases, clang-format, Cppcheck, and all 43 clang-tidy partitions"
+    },
+    {
+      "command": "cmake --build build/desktop --parallel 8 && ctest --test-dir build/desktop --no-tests=error --output-on-failure",
+      "result": "all 46 enabled desktop tests passed; nine policy-disabled tests did not run"
+    },
+    {
+      "command": "just asan",
+      "result": "all 20 ASan/UBSan CTest cases passed"
+    },
+    {
+      "command": "just tsan",
+      "result": "all 20 TSan CTest cases passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "validation_scope": "Runtime gates ran at runtime_validation_revision; the final source adds architecture text only and reran repository quality.",
+  "review_followups": [
+    "Log Qt errorString when a direct detached service launch fails",
+    "Include launch_spec.hpp explicitly in live_connection.cpp",
+    "Remove the retired supervisor state/runtime rows from docs/status.md",
+    "Surface the direct service program and Qt failure reason in the thrown launch error"
+  ],
+  "non_claims": [
+    "The removed experimental supervisor suites are intentionally absent after deletion.",
+    "No native macOS GUI, login-helper reboot, packaged app, or long-run service-death recovery was exercised.",
+    "PR 200 repaired the session-service parser-drain and complexity baseline; this receipt does not claim that PR's independent receipt or performance measurement."
+  ]
+}

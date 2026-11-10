@@ -14,8 +14,6 @@ include(cmake/ProjectOptions.cmake)
 
 option(LAPIS_BUILD_DESKTOP "Build the live desktop preview and local session service" OFF)
 option(LAPIS_PACKAGE "Build the desktop as the downloadable app (see scripts/package_macos.py)" OFF)
-option(LAPIS_BUILD_SUPERVISOR_STATE "Build the focused supervisor state-core test target" OFF)
-option(LAPIS_BUILD_SUPERVISOR_RUNTIME "Build the experimental one-session supervisor runtime" OFF)
 
 include(CTest)
 
@@ -23,14 +21,6 @@ add_subdirectory(adapters/codex)
 add_subdirectory(adapters/claude)
 add_subdirectory(services/session)
 target_link_libraries(lapis_session_service PRIVATE lapis_codex_adapter lapis_claude_adapter)
-
-if(LAPIS_BUILD_SUPERVISOR_RUNTIME AND NOT LAPIS_BUILD_SUPERVISOR_STATE)
-    set(LAPIS_BUILD_SUPERVISOR_STATE ON)
-endif()
-
-if(LAPIS_BUILD_SUPERVISOR_STATE)
-    add_subdirectory(services/supervisor)
-endif()
 
 if(BUILD_TESTING)
     # Keep the dependency-free replay contract checked as C++20. Engine adapters
