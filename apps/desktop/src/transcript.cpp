@@ -426,6 +426,7 @@ Format format_of(const QString& path) {
 std::unique_ptr<Reader> make_reader(Format format) {
     switch (format) {
     case Format::codex:
+        return std::make_unique<CodexReader>();
     case Format::antigravity:
     case Format::claude:
         break;

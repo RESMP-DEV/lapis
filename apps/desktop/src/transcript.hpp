@@ -13,6 +13,7 @@
 #include <optional>
 #include <vector>
 
+class QJsonObject;
 class QQuickTextDocument;
 class QTextDocument;
 
@@ -220,6 +221,29 @@ class ClaudeReader final : public Reader {
     // takes the oldest.
     std::vector<std::pair<QString, int>> queued_;
 };
+
+// Folds a Codex rollout (sessions/YYYY/MM/DD/rollout-*.jsonl, as Codex
+// 0.157 writes it) into items. The conversation comes from its finished
+// items (event_msg item_completed), each written whole with its output, so a
+// step shows once it is done. task_started, task_complete and turn_aborted
+// bound and time the turns; turn_context, thread_settings_applied and
+// token_count report the model, effort and context. The model-facing
+// response_item copies of the same work, and the records Codex keeps for
+// itself, are skipped.
+class CodexReader final : public Reader {
+  public:
+    int add(const QByteArray& line) override;
+    [[nodiscard]] Format format() const override { return Format::codex; }
+
+  private:
+    void push(Item item);
+    // One finished item (a payload.item) as zero or more items.
+    void item(const QJsonObject& item, qint64 started_ms, qint64 completed_ms);
+    qint64 at_ms_{};
+    QString record_;
+    QString turn_;         // the running turn's id, or empty between turns
+    bool turn_prompted_{}; // the running turn has its prompt
+};
 } // namespace transcript
 
 // The items of one conversation file for QML, following the file as the CLI
@@ -356,6 +380,9 @@ class TranscriptModel final : public QAbstractListModel {
         return transcript::context_window(reader_->status());
     }
     [[nodiscard]] transcript::Format format() const { return reader_->format(); }
+    // The items read so far and the turns laid out, for tools and tests.
+    [[nodiscard]] const std::vector<transcript::Item>& items() const { return reader_->items(); }
+    [[nodiscard]] int turnCount() const { return static_cast<int>(layout_.turns.size()); }
     [[nodiscard]] QString formatName() const { return transcript::format_name(format()); }
     [[nodiscard]] bool forkable() const { return format() == transcript::Format::claude; }
     [[nodiscard]] bool screenKnown() const { return format() == transcript::Format::claude; }

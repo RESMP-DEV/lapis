@@ -18,6 +18,7 @@
 #include <QImage>
 #include <QJSValue>
 #include <QKeyEvent>
+#include <QMap>
 #include <QPainter>
 #include <QQmlEngine>
 #include <QQuickItem>
@@ -185,7 +186,15 @@ int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
     QCommandLineParser parser;
     parser.addHelpOption();
-    parser.addOption({"jsonl", "Claude Code session file", "file"});
+    parser.addOption({"jsonl", "Conversation file (Claude Code, Codex or Antigravity)", "file"});
+    parser.addOption({"format",
+                      "Read the file as this CLI's: claude, codex or antigravity (default: by "
+                      "its name)",
+                      "name"});
+    parser.addOption({"work", "Fold and open the N-th \"Worked for\" row (default: the latest)",
+                      "n", "0"});
+    parser.addOption({"census","Print how many items of each kind and step the file makes "
+                                "(counts and step names only), then exit"});
     parser.addOption({"out", "Contact sheet PNG", "file"});
     parser.addOption({"width", "Panel width", "px", "900"});
     parser.addOption({"height", "Panel height", "px", "1200"});
@@ -207,7 +216,7 @@ int main(int argc, char** argv) {
                       "ms", "400"});
     parser.process(app);
     const bool keys = parser.isSet("keys");
-    if (!keys && (!parser.isSet("jsonl") || !parser.isSet("out"))) {
+    if (!keys && (!parser.isSet("jsonl") || (!parser.isSet("out") && !parser.isSet("census")))) {
         std::fputs("--jsonl and --out are required\n", stderr);
         return 2;
     }
@@ -215,9 +224,36 @@ int main(int argc, char** argv) {
     QElapsedTimer load_timer;
     load_timer.start();
     TranscriptModel model;
+    if (parser.isSet("format")) {
+        const auto format = lapis::desktop::transcript::format_named(parser.value("format"));
+        if (!format) {
+            std::fputs("--format takes claude, codex or antigravity\n", stderr);
+            return 2;
+        }
+        model.setFormat(format);
+    }
     model.setPath(parser.value("jsonl"));
     model.loadNow();
     const auto load_ms = load_timer.elapsed();
+    std::printf("format %s\n", qPrintable(model.formatName()));
+    if (parser.isSet("census")) {
+        // What the reader made of a file, without any of its text: kinds,
+        // and for steps, dividers and unknown blocks their fixed names.
+        QMap<QString, int> counts;
+        for (const auto& item : model.items()) {
+            const auto kind = lapis::desktop::transcript::kind_name(item.kind);
+            const bool named = item.kind == Kind::tool || item.kind == Kind::divider ||
+                               item.kind == Kind::other || item.kind == Kind::turn;
+            const auto title = item.kind == Kind::turn ? QStringLiteral("Worked for") : item.title;
+            counts[named ? kind + QStringLiteral(" ") + title : kind] += 1;
+            if (item.failed)
+                counts[kind + QStringLiteral(" failed")] += 1;
+        }
+        for (auto count = counts.cbegin(); count != counts.cend(); ++count)
+            std::printf("%6d %s\n", count.value(), qPrintable(count.key()));
+        std::printf("rows %d, turns %d\n", model.rowCount(), model.turnCount());
+        return 0;
+    }
 
     QQuickView view;
     view.setResizeMode(QQuickView::SizeRootObjectToView);
@@ -373,11 +409,19 @@ int main(int argc, char** argv) {
     if (failure >= 0)
         panels.push_back({QStringLiteral("Latest failed tool"), shot(view, list, failure)});
     // The latest folded turn, closed and then opened.
+    // --work N picks the N-th "Worked for" row from the top instead.
     int work = -1;
-    for (int row = model.rowCount() - 1; row >= 0 && work < 0; --row)
+    std::vector<int> work_rows;
+    for (int row = 0; row < model.rowCount(); ++row)
         if (model.data(model.index(row), TranscriptModel::KindRole).toString() ==
             QLatin1String("work"))
-            work = row;
+            work_rows.push_back(row);
+    if (!work_rows.empty()) {
+        const int wanted = parser.value("work").toInt();
+        work = wanted >= 1 && std::cmp_less_equal(wanted, work_rows.size())
+                   ? work_rows[static_cast<size_t>(wanted - 1)]
+                   : work_rows.back();
+    }
     if (work >= 0) {
         panels.push_back({QStringLiteral("Latest turn, folded"), shot(view, list, work)});
         model.toggleWork(work);

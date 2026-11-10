@@ -47,6 +47,7 @@ add_library(lapis_desktop_core STATIC
     src/tool_status.cpp src/tool_status.hpp
     src/app_window.cpp src/app_window.hpp
     src/transcript.cpp src/transcript.hpp src/transcript_parts.hpp
+    src/transcript_codex.cpp
     src/code_highlight.cpp src/code_highlight.hpp
     src/slash_commands.cpp src/slash_commands.hpp)
 target_include_directories(lapis_desktop_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -167,6 +168,14 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_transcript_tests PRIVATE lapis_project_options lapis_desktop_core)
     add_test(NAME transcript COMMAND lapis_transcript_tests)
     set_tests_properties(transcript PROPERTIES TIMEOUT 20)
+    # The other CLIs' readers, against the synthetic conversations in tests/visual.
+    add_executable(lapis_transcript_clis_tests tests/transcript_clis_test.cpp)
+    target_link_libraries(lapis_transcript_clis_tests PRIVATE lapis_project_options
+        lapis_desktop_core)
+    target_compile_definitions(lapis_transcript_clis_tests PRIVATE
+        LAPIS_VISUAL_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/visual")
+    add_test(NAME transcript-clis COMMAND lapis_transcript_clis_tests)
+    set_tests_properties(transcript-clis PROPERTIES TIMEOUT 20)
     # Offscreen contact sheet and scroll timing of the visual view (a review
     # tool); its --keys check of the bar's editing keys is a CTest entry.
     add_executable(lapis_transcript_capture tests/transcript_capture.cpp)
