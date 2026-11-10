@@ -115,11 +115,45 @@ bool codex_sets(const QStringList& arguments, QLatin1StringView key) {
         else if (argument.startsWith(QLatin1String("--config=")))
             setting = argument.sliced(9);
         else if (argument.startsWith(QLatin1String("-c")) && argument.size() > 2)
-            setting = argument.sliced(2);
+            setting = argument.sliced(argument.at(2) == QLatin1Char('=') ? 3 : 2);
         if (setting.section(QLatin1Char('='), 0, 0).trimmed() == key)
             return true;
     }
     return false;
+}
+// Codex profiles layer `<name>.config.toml` over the base user config. Record
+// the selected profile before `--`; Codex itself rejects conflicting repeated
+// selections before a turn can run.
+bool plain_profile_name(const QString& value) {
+    if (value.isEmpty())
+        return false;
+    for (const auto character : value)
+        if ((character < QLatin1Char('0') || character > QLatin1Char('9')) &&
+            (character < QLatin1Char('A') || character > QLatin1Char('Z')) &&
+            (character < QLatin1Char('a') || character > QLatin1Char('z')) &&
+            character != QLatin1Char('_') && character != QLatin1Char('-'))
+            return false;
+    return true;
+}
+
+QString codex_profile(const QStringList& arguments) {
+    QString profile;
+    for (qsizetype index = 0; index < arguments.size(); ++index) {
+        const auto& argument = arguments.at(index);
+        if (argument == QLatin1String("--"))
+            break;
+        QString selected;
+        if ((argument == QLatin1String("-p") || argument == QLatin1String("--profile")) &&
+            index + 1 < arguments.size())
+            selected = arguments.at(++index);
+        else if (argument.startsWith(QLatin1String("--profile=")))
+            selected = argument.sliced(10);
+        else if (argument.startsWith(QLatin1String("-p")) && argument.size() > 2)
+            selected = argument.sliced(argument.at(2) == QLatin1Char('=') ? 3 : 2);
+        if (plain_profile_name(selected))
+            profile = selected;
+    }
+    return profile;
 }
 // A fresh 32-hex-digit nonce for the terminal hook channel.
 QString hook_nonce() {
@@ -568,13 +602,14 @@ class SessionService final : public QObject {
     // runs its notify program: lapis's relay, which writes the event to the
     // agent's terminal with a nonce this service made and put only in the
     // agent's environment, and then runs the person's own notify program from
-    // config.toml. TerminalHookChannel takes the event out of the output. When
-    // the arguments set notify themselves, nothing is added and the status
-    // stays estimated from output.
+    // the effective base/profile config. TerminalHookChannel takes the event
+    // out of the output. When the arguments set notify themselves, nothing is
+    // added and the status stays estimated from output.
     void start_codex(const LaunchSpec& launch) {
         auto tui = launch;
         tui.agent = AgentMode::terminal;
         if (!codex_sets(tui.arguments, QLatin1StringView("notify"))) {
+            const QString profile = codex_profile(tui.arguments);
             const auto nonce = hook_nonce();
             terminal_hooks_.emplace();
             if (!terminal_hooks_->bind("codex", nonce.toLatin1()))
@@ -584,10 +619,11 @@ class SessionService final : public QObject {
             tui.arguments.prepend(QStringLiteral(
                 R"(notify=["sh","-c","exec python3 -c \"$LAPIS_HOOK_RELAY\" codex \"$1\" 2>/dev/null","lapis"])"));
             tui.arguments.prepend(QStringLiteral("-c"));
-            pty_.setEnvironment(
-                {{QStringLiteral("LAPIS_HOOK_NONCE"), nonce},
-                 {QStringLiteral("LAPIS_HOOK_RELAY"), QString::fromUtf8(kTerminalHookRelay)}},
-                QStringLiteral("LAPIS_HOOK_TTY"));
+            QMap<QString, QString> environment{
+                {QStringLiteral("LAPIS_HOOK_NONCE"), nonce},
+                {QStringLiteral("LAPIS_HOOK_RELAY"), QString::fromUtf8(kTerminalHookRelay)}};
+            environment.insert(QStringLiteral("LAPIS_CODEX_PROFILE"), profile);
+            pty_.setEnvironment(environment, QStringLiteral("LAPIS_HOOK_TTY"));
         }
         pty_.start(tui);
     }

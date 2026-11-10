@@ -174,6 +174,15 @@ class RemoteHookRelayTests(unittest.TestCase):
             parse('notify = [\n  "sh", # the shell\n  "-c",\n  "echo \\"hi\\"",\n]\n'),
             ["sh", "-c", 'echo "hi"'],
         )
+        self.assertEqual(
+            parse('notify = [\n  "sh",\n  "-c"\n]\n'),
+            ["sh", "-c"],
+        )
+        self.assertEqual(
+            parse('notify = [\n  "sh",\n  "-c" # flag\n]\n'),
+            ["sh", "-c"],
+        )
+        self.assertIsNone(parse('notify = [\n  "sh"\n  "-c"\n]\n'))
         self.assertEqual(parse("notify = []\n"), [])
         self.assertIsNone(parse('[profiles.x]\nnotify = ["inside-a-table"]\n'))
         self.assertIsNone(parse('notify = "not-an-array"\n'))
@@ -200,6 +209,58 @@ class RemoteHookRelayTests(unittest.TestCase):
         execvp.assert_called_once_with(
             "user-notify",
             ["user-notify", "--flag", '{"type":"agent-turn-complete"}'],
+        )
+
+    def test_effective_notify_layers_the_selected_profile(self):
+        with tempfile.TemporaryDirectory() as home:
+            Path(home, "config.toml").write_text(
+                'notify = ["base-notify"]\n', encoding="utf-8"
+            )
+            Path(home, "work.config.toml").write_text(
+                'notify = ["work-notify"]\n', encoding="utf-8"
+            )
+            with patch.dict(
+                os.environ, {"CODEX_HOME": home, "LAPIS_CODEX_PROFILE": "work"}
+            ):
+                self.assertEqual(
+                    relay.effective_notify(home),
+                    ["work-notify"],
+                )
+
+            Path(home, "work.config.toml").unlink()
+            with patch.dict(
+                os.environ, {"CODEX_HOME": home, "LAPIS_CODEX_PROFILE": "work"}
+            ):
+                self.assertEqual(
+                    relay.effective_notify(home),
+                    ["base-notify"],
+                )
+
+            with patch.dict(
+                os.environ, {"CODEX_HOME": home, "LAPIS_CODEX_PROFILE": "../evil"}
+            ):
+                self.assertEqual(
+                    relay.effective_notify(home),
+                    ["base-notify"],
+                )
+
+    def test_effective_notify_allows_a_profile_only_codex_home(self):
+        with tempfile.TemporaryDirectory() as home:
+            Path(home, "work.config.toml").write_text(
+                'notify = ["profile-notify", "--flag"]\n', encoding="utf-8"
+            )
+            with patch.dict(
+                os.environ, {"CODEX_HOME": home, "LAPIS_CODEX_PROFILE": "work"}
+            ):
+                self.assertEqual(
+                    relay.effective_notify(home),
+                    ["profile-notify", "--flag"],
+                )
+                with patch.object(os, "execvp") as execvp:
+                    relay.chain('{"type":"agent-turn-complete"}')
+        execvp.assert_called_once_with(
+            "profile-notify",
+            ["profile-notify", "--flag", '{"type":"agent-turn-complete"}'],
         )
 
 

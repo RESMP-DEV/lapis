@@ -751,19 +751,27 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             " 'argv':sys.argv[1:],\n"
             " 'nonce':os.environ.get('LAPIS_HOOK_NONCE',''),\n"
             " 'relay':'def relay(' in os.environ.get('LAPIS_HOOK_RELAY',''),\n"
+            " 'profile':os.environ.get('LAPIS_CODEX_PROFILE',''),\n"
             " 'tty':os.environ.get('LAPIS_HOOK_TTY')==tty}))\n"
         )
         executable.chmod(0o700)
         cases = [
-            ([], True),
+            ([], True, ""),
             (
                 ["--yolo", "-m", "model", "resume", "thread", "--", "-c", "notify=x"],
                 True,
+                "",
             ),
-            (['--config=notify=["user"]', "resume"], False),
-            (["-c", "notify = []"], False),
+            (['--config=notify=["user"]', "resume"], False, ""),
+            (["-c", "notify = []"], False, ""),
+            (["-c=notify=[]"], False, ""),
+            (["-p", "work"], True, "work"),
+            (["-p=work"], True, "work"),
+            (["--profile=work"], True, "work"),
+            (["-p", "first", "--profile", "second"], True, "second"),
+            (["-p", "first", "--", "-p", "second"], True, "first"),
         ]
-        for index, (arguments, injected) in enumerate(cases):
+        for index, (arguments, injected, profile) in enumerate(cases):
             marker.unlink(missing_ok=True)
             name = f"codex-arguments-{index}"
             service = Service(
@@ -774,7 +782,7 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 str(executable),
                 arguments,
                 runtime,
-                codex_home,
+                {**codex_home, "LAPIS_CODEX_PROFILE": "inherited"},
                 codex=True,
             )
             try:
@@ -794,6 +802,10 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                     and seen["relay"]
                     and seen["tty"],
                     "Notify environment is incomplete",
+                )
+                require(
+                    seen["profile"] == profile,
+                    "Selected Codex profile was not passed or cleared",
                 )
             else:
                 require(

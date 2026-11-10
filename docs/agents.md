@@ -32,10 +32,12 @@ explicit `--sandbox`, so a configured `--sandbox read-only` is preserved when a
 request omits its mode. Literal arguments after `--` do not choose launch modes
 or replace the generated conversation-resume argument.
 
-The next agent starts with the same CLI, mode and model. Everything else stays in
-each CLI's own config. lapis adds no flags of its own; to add yours to every new
-agent of a CLI, set `harnessArguments` (see [config](config.md)). Shell aliases
-do not apply, because lapis starts the executable directly.
+The next agent starts with the same CLI, mode and model. Everything else stays
+in each CLI's own config, apart from documented launch defaults (Grok
+`--fullscreen` and Codex's update prompt off) and the per-session Codex notify
+override below. To add arguments to every new agent of a CLI, set
+`harnessArguments` (see [config](config.md)). Shell aliases do not apply,
+because lapis starts the executable directly.
 
 The form's **Machine** row offers this Mac and the hosts in your ssh config (left
 and right arrows, while up and down choose the CLI). On another machine the agent
@@ -69,8 +71,9 @@ suggestions as a local agent's do; that needs `python3` there.
 Claude Code reports its turns through the session service's hook adapter,
 which also reports permission prompts and questions. Codex reports finished
 turns through its notify program: lapis starts Codex with `-c notify=[...]`
-(unless your arguments set `notify`), and lapis's relay runs your own `notify`
-from `config.toml` after it, so that keeps working; this needs `python3`.
+(unless your arguments set `notify`), and lapis's relay runs your own effective
+`notify` from `config.toml` and the selected `<profile>.config.toml` after it,
+so that keeps working; this needs `python3`.
 Between finished turns a Codex agent's status is estimated from its output,
 and its approval prompts are not reported. OMP on this Mac reports finished
 turns through an extension lapis's OMP overlay loads; between turns its status

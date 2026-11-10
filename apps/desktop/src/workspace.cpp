@@ -427,12 +427,49 @@ const QRegularExpression& retiredPlanPreamble() {
 // terminal, so /dev/tty would not reach it (observed with 2.1.290). Nothing is
 // written to that machine, and a missing python3 or a failing hook changes
 // nothing but the status, which then stays estimated from output.
-QString remoteHookPreamble(const QString& cli) {
-    return QStringLiteral(
-               R"sh(export LAPIS_HOOK_NONCE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" )sh"
-               R"sh(LAPIS_HOOK_TTY="$(tty)" )sh"
-               R"sh(LAPIS_HOOK_RELAY=%1; printf '\033]7717;lapis-init;%2;%s\007' "$LAPIS_HOOK_NONCE";)sh")
-        .arg(shellWord(QString::fromUtf8(session::kTerminalHookRelay)), cli);
+bool plain_profile_name(const QString& value) {
+    if (value.isEmpty())
+        return false;
+    for (const auto character : value)
+        if ((character < QLatin1Char('0') || character > QLatin1Char('9')) &&
+            (character < QLatin1Char('A') || character > QLatin1Char('Z')) &&
+            (character < QLatin1Char('a') || character > QLatin1Char('z')) &&
+            character != QLatin1Char('_') && character != QLatin1Char('-'))
+            return false;
+    return true;
+}
+
+QString codex_profile(const QStringList& arguments) {
+    QString profile;
+    for (qsizetype index = 0; index < arguments.size(); ++index) {
+        const auto& argument = arguments.at(index);
+        if (argument == QLatin1String("--"))
+            break;
+        QString selected;
+        if ((argument == QLatin1String("-p") || argument == QLatin1String("--profile")) &&
+            index + 1 < arguments.size())
+            selected = arguments.at(++index);
+        else if (argument.startsWith(QLatin1String("--profile=")))
+            selected = argument.sliced(10);
+        else if (argument.startsWith(QLatin1String("-p")) && argument.size() > 2)
+            selected = argument.sliced(argument.at(2) == QLatin1Char('=') ? 3 : 2);
+        if (plain_profile_name(selected))
+            profile = selected;
+    }
+    return profile;
+}
+QString remoteHookPreamble(const QString& cli, const QString& codex_profile = {}) {
+    QString preamble = QStringLiteral(
+        R"sh(export LAPIS_HOOK_NONCE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" )sh"
+        R"sh(LAPIS_HOOK_TTY="$(tty)" )sh");
+    preamble += QStringLiteral("LAPIS_HOOK_RELAY=%1; ")
+                    .arg(shellWord(QString::fromUtf8(session::kTerminalHookRelay)));
+    if (cli == QLatin1String("codex"))
+        preamble += QStringLiteral("export LAPIS_CODEX_PROFILE=%1; ").arg(shellWord(codex_profile));
+    preamble +=
+        QStringLiteral(R"sh(printf '\033]7717;lapis-init;%1;%s\007' "$LAPIS_HOOK_NONCE";)sh")
+            .arg(cli);
+    return preamble;
 }
 // One past the shell word (plain, or single-quoted as shellWord writes it)
 // starting at `start`; the end of the text when it does not close.
@@ -464,7 +501,8 @@ QString unquotedWord(QString word) {
 // with a trailing space when the conversation id follows) with that
 // preamble, plus the hook settings (Claude Code) or notify program (Codex).
 // A command that has them, or whose arguments would conflict, is unchanged.
-QString withRemoteHooks(const QString& words, const QString& harness) {
+QString withRemoteHooks(const QString& words, const QString& harness,
+                        const QString& codex_profile = {}) {
     if (words.contains(QStringLiteral("LAPIS_HOOK_NONCE")) ||
         words.contains(QStringLiteral(" -- ")))
         return words;
@@ -487,7 +525,7 @@ QString withRemoteHooks(const QString& words, const QString& harness) {
         const auto end = shellWordEnd(words, 0);
         const auto notify = QStringLiteral(
             R"(notify=["sh","-c","exec python3 -c \"$LAPIS_HOOK_RELAY\" codex \"$1\" 2>/dev/null","lapis"])");
-        return remoteHookPreamble(harness) + QLatin1Char(' ') + words.left(end) +
+        return remoteHookPreamble(harness, codex_profile) + QLatin1Char(' ') + words.left(end) +
                QStringLiteral(" -c ") + shellWord(notify) + words.mid(end);
     }
     return words;
@@ -509,7 +547,10 @@ void addRemoteHooks(session::LaunchSpec& launch, const QString& harness) {
     const auto words = unquotedWord(word);
     if (shellWord(words) != word)
         return; // not a word shellWord wrote
-    const auto hooked = withRemoteHooks(words, harness);
+    const auto profile = harness == QLatin1String("codex")
+                             ? codex_profile(words.split(QLatin1Char(' '), Qt::SkipEmptyParts))
+                             : QString{};
+    const auto hooked = withRemoteHooks(words, harness, profile);
     if (hooked == words)
         return;
     launch.arguments.last() = line.left(start) + shellWord(hooked) + line.mid(end);
@@ -564,11 +605,14 @@ QString remoteLaunch(const AgentRequest& request, const QString& command, QStrin
     if (claude)
         words.prepend(
             QStringLiteral(R"(export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-0}";)"));
+    const QString selected_profile =
+        request.harness == QLatin1String("codex") ? codex_profile(arguments) : QString{};
     const auto folder = remoteFolder(request.directory);
     const auto line =
         conversation.isEmpty()
             ? QStringLiteral(R"(cd %1 && exec "${SHELL:-/bin/sh}" -lic %2)")
-                  .arg(folder, shellWord(withRemoteHooks(words.join(' '), request.harness)))
+                  .arg(folder, shellWord(withRemoteHooks(words.join(' '), request.harness,
+                                                         selected_profile)))
             : QStringLiteral(
                   R"(cd %1 && s=%2 && p="[-]-(resume|session-id) $s" && o=--session-id && { )"
                   R"(pkill -HUP -f "$p"; n=0; )"
@@ -578,8 +622,8 @@ QString remoteLaunch(const AgentRequest& request, const QString& command, QStrin
                   R"(| grep -q . && o=--resume; )"
                   R"(exec "${SHELL:-/bin/sh}" -lic %3"$o $s"; })")
                   .arg(folder, conversation,
-                       shellWord(
-                           withRemoteHooks(words.join(' ') + QLatin1Char(' '), request.harness)));
+                       shellWord(withRemoteHooks(words.join(' ') + QLatin1Char(' '),
+                                                 request.harness, selected_profile)));
     launch = session::validate_launch(
         {ssh,
          remoteOptions() + QStringList{QStringLiteral("-t"), request.machine, line},

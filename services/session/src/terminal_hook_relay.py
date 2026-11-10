@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import re
 import stat
 import sys
 
@@ -75,9 +76,7 @@ def relay(cli, text):
 def top_level_notify(text):
     # Without tomllib (python3 before 3.11, as macOS ships): the top-level
     # `notify = [...]` array of plain strings, which may span lines, or None.
-    import re
-
-    word = re.compile(r'\s*(?:"((?:[^"\\\n]|\\.)*)"|\'([^\'\n]*)\')\s*(,|\])')
+    word = re.compile(r'\s*(?:"((?:[^"\\\n]|\\.)*)"|\'([^\'\n]*)\')\s*(,|\]|)')
     lines = iter(text.splitlines())
     for line in lines:
         if line.lstrip().startswith("["):
@@ -105,19 +104,45 @@ def top_level_notify(text):
             rest = rest[item.end() :]
             if end == "]":
                 return words
+            if not end:
+                if not re.fullmatch(r"\s*(?:#.*)?", rest):
+                    return None
+                closer = next((line for line in lines if line.strip()), None)
+                if closer is None or not closer.lstrip().startswith("]"):
+                    return None
+                return words
     return None
+
+
+def notify_from_toml(text):
+    try:
+        import tomllib
+    except ImportError:
+        return top_level_notify(text)
+    return tomllib.loads(text).get("notify")
+
+
+def effective_notify(home):
+    notify = None
+    if os.path.isfile(os.path.join(home, "config.toml")):
+        with open(os.path.join(home, "config.toml"), "rb") as f:
+            notify = notify_from_toml(f.read().decode())
+    profile = os.environ.get("LAPIS_CODEX_PROFILE")
+    if not profile or not re.fullmatch(r"[A-Za-z0-9_-]+", profile):
+        return notify
+    path = os.path.join(home, f"{profile}.config.toml")
+    if not os.path.isfile(path):
+        return notify
+    with open(path, "rb") as f:
+        layered = notify_from_toml(f.read().decode())
+    if layered is not None:
+        return layered
+    return notify
 
 
 def chain(payload):
     home = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
-    with open(os.path.join(home, "config.toml"), "rb") as f:
-        text = f.read()
-    try:
-        import tomllib
-    except ImportError:
-        notify = top_level_notify(text.decode())
-    else:
-        notify = tomllib.loads(text.decode()).get("notify")
+    notify = effective_notify(home)
     if isinstance(notify, list) and notify and all(isinstance(w, str) for w in notify):
         os.execvp(notify[0], notify + [payload])
 

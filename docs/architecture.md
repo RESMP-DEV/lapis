@@ -56,7 +56,7 @@ that uses `lapis_project_options`.
 | Terminal engine | Pinned Ghostty `libghostty-vt` | Keep the unstable C API and dependency notices isolated; replay cases remain the compatibility gate |
 | Rendering | Qt Quick, Vulkan through MoltenVK on macOS | Runtime API verification is required; presentation and resize tails still need candidate measurements |
 | Session wire | Internal version 6 framing with epochs, generations, history paging, and attention messages | Incompatible changes need rejection/migration tests and a private endpoint |
-| Codex route | Ordinary TUI under the service's PTY; Codex's notify program reports finished turns through the terminal, as for a remote agent | Observation only: requests are answered in Codex's terminal; no app-server, approval ping or interrupted-turn signal |
+| Codex route | Ordinary TUI under the service's PTY; Codex's notify program reports finished turns through the terminal, as for a remote agent | Observation only: requests are answered in Codex's terminal; there is no per-agent app-server, approval ping or interrupted-turn signal. The desktop's short-lived app-server model-list probe is outside this agent route |
 | Claude route | Hook/terminal observation with explicit answers in Claude's terminal | No GUI response routing until a supported protocol is version-pinned and qualified |
 | Process birth | The window (or the windowless host) starts one detached session service per agent; agents survive window quitting only where the OS permits background execution, and the login helper restarts those whose services died with the Mac | Restart of a crashed session service is not implemented: the agent keeps its last screen until it is restarted or lapis next opens; macOS 27 also requires the Allow in the Background conditions in [install](install.md) |
 | Settings | Tracked `lapis.json` defaults plus private runtime workspace/window state | Machine-local state never becomes a portable credential or session transcript |
@@ -129,12 +129,20 @@ relay (`services/session/src/terminal_hook_relay.py`) and the PTY device in
 the agent's environment. After each finished turn Codex runs that program: the
 relay writes the event's bounded metadata (`type`, `thread-id`, `turn-id`) to
 the device as an OSC 7717 frame, which the service removes from the output,
-and then runs the person's own `notify` from `$CODEX_HOME/config.toml`
-(read without `tomllib` on python3 before 3.11). `NotifyTurns` marks the turn
+and then runs the person's own effective `notify` from
+`$CODEX_HOME/config.toml` layered with the selected
+`$CODEX_HOME/<profile>.config.toml` (read without `tomllib` on python3 before
+3.11). `NotifyTurns` marks the turn
 finished; submitted input returns the status to the output estimate. The
 event's `thread-id` is the conversation to resume, recorded as an observer
-identity because the nonce is never printed; a thread whose rollout's first
-line names a parent is a subagent's and is skipped. Remote Codex agents use the
+identity because the nonce is never printed to the terminal. The nonce is not a
+secret from Codex or its configured notify command: both inherit it. Codex's
+default shell environment also inherits it, although
+`shell_environment_policy` can filter it from tool commands. The nonce rejects
+terminal text that does not carry the channel value; it does not identify the
+emitting process or isolate the notify program from Codex. A thread whose
+rollout's first line names a parent is a subagent's and is skipped. Remote
+Codex agents use the
 same relay through their login shell's preamble (`withRemoteHooks`).
 
 Saved arguments and the `lapis-codex-v1` launch fingerprint are unchanged, so

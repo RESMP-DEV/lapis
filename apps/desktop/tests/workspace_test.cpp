@@ -2326,7 +2326,8 @@ exec sleep 600
 // in a stand-in login shell with a fixture home; stand-in CLIs run the hooks
 // (Claude Code) and notify program (Codex) from their command lines. Each
 // finished turn pings as a local agent's does, the sequences never reach the
-// screen, and a remote agent saved before the hooks gains them on restart.
+// screen, a selected Codex profile's own notify program still runs, and a
+// remote agent saved before the hooks gains them on restart.
 void remoteAgentsReportTurnsThroughTheirTerminal() {
     using lapis::desktop::SessionPreview;
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-remote-hooks-XXXXXX"));
@@ -2334,6 +2335,26 @@ void remoteAgentsReportTurnsThroughTheirTerminal() {
     const QDir root(QFileInfo(directory.path()).canonicalFilePath());
     const auto path = installStandInGrok(root);
     require(root.mkpath(QStringLiteral("home")), "a home on the other machine");
+    require(root.mkpath(QStringLiteral("home/.codex")), "a Codex home on the other machine");
+    const auto base_marker = root.filePath(QStringLiteral("remote-base-notify-ran"));
+    const auto profile_marker = root.filePath(QStringLiteral("remote-profile-notify-ran"));
+    writeExecutable(root.filePath(QStringLiteral("bin/remote-base-notify")),
+                    "#!/bin/sh\nprintf '%s' \"$1\" > '" + QFile::encodeName(base_marker) + "'\n");
+    writeExecutable(root.filePath(QStringLiteral("bin/remote-profile-notify")),
+                    "#!/bin/sh\nprintf '%s' \"$1\" > '" + QFile::encodeName(profile_marker) +
+                        "'\n");
+    QFile remote_config(root.filePath(QStringLiteral("home/.codex/config.toml")));
+    require(remote_config.open(QIODevice::WriteOnly), "write the remote base Codex config");
+    remote_config.write("notify = [\"" +
+                        QFile::encodeName(root.filePath(QStringLiteral("bin/remote-base-notify"))) +
+                        "\"]\n");
+    remote_config.close();
+    QFile remote_profile(root.filePath(QStringLiteral("home/.codex/work.config.toml")));
+    require(remote_profile.open(QIODevice::WriteOnly), "write the remote work Codex profile");
+    remote_profile.write(
+        "notify = [\"" +
+        QFile::encodeName(root.filePath(QStringLiteral("bin/remote-profile-notify"))) + "\"]\n");
+    remote_profile.close();
     writeExecutable(root.filePath(QStringLiteral("bin/ssh")), R"(#!/bin/sh
 for last; do :; done
 d=$(cd "$(dirname "$0")/.." && pwd)
@@ -2465,6 +2486,8 @@ for n, line in enumerate(sys.stdin, 1):
         require(restored->sendText("hello\r") &&
                     waitFor([&] { return pings.value(older_id) == 1; }, 15000),
                 "the restored agent's hooks reach lapis too");
+        workspace.setHarnessArguments(
+            {{QStringLiteral("codex"), {QStringLiteral("-p"), QStringLiteral("work")}}});
         require(workspace.createAgent(QStringLiteral("~"), QStringLiteral("far codex"),
                                       QStringLiteral("codex"), {}, {}, QStringLiteral("devbox")),
                 "a Codex agent on another machine");
@@ -2484,6 +2507,8 @@ for n, line in enumerate(sys.stdin, 1):
                     "Codex's notify program finishes each turn once; a prompt starts the next");
         }
         require(clean(codex), "notify sequences never reach the screen");
+        require(QFileInfo::exists(profile_marker) && !QFileInfo::exists(base_marker),
+                "the remote relay runs the selected profile's notify program");
         for (const auto& closing : {older_id, claude->sessionId(), codex->sessionId()})
             require(workspace.closeSession(closing, true), "close the stand-in agents");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
@@ -2495,7 +2520,7 @@ for n, line in enumerate(sys.stdin, 1):
 // A local Codex agent reports each finished turn through the notify program
 // its session service adds, as an agent on another machine does: the turn
 // pings once, no hook bytes reach the screen, the person's own notify program
-// from config.toml still runs, the notify event's thread is saved as the
+// from the selected profile's config still runs, the notify event's thread is saved as the
 // conversation, and a restart resumes it.
 void localCodexReportsTurnsThroughNotify() {
     using lapis::desktop::SessionPreview;
@@ -2505,17 +2530,27 @@ void localCodexReportsTurnsThroughNotify() {
     const auto path = installStandInGrok(root);
     const auto thread = QStringLiteral("019a0000-0000-7000-8000-00000000c0de");
     const auto home = root.filePath(QStringLiteral("codex-home"));
-    const auto marker = root.filePath(QStringLiteral("user-notify-ran"));
+    const auto base_marker = root.filePath(QStringLiteral("base-notify-ran"));
+    const auto profile_marker = root.filePath(QStringLiteral("profile-notify-ran"));
     const auto starts = root.filePath(QStringLiteral("codex-starts"));
     require(root.mkpath(QStringLiteral("codex-home")), "a Codex home");
-    writeExecutable(root.filePath(QStringLiteral("bin/user-notify")),
-                    "#!/bin/sh\nprintf '%s' \"$1\" > '" + QFile::encodeName(marker) + "'\n");
+    writeExecutable(root.filePath(QStringLiteral("bin/base-notify")),
+                    "#!/bin/sh\nprintf '%s' \"$1\" > '" + QFile::encodeName(base_marker) + "'\n");
+    writeExecutable(root.filePath(QStringLiteral("bin/profile-notify")),
+                    "#!/bin/sh\nprintf '%s' \"$1\" > '" + QFile::encodeName(profile_marker) +
+                        "'\n");
     QFile config(root.filePath(QStringLiteral("codex-home/config.toml")));
     require(config.open(QIODevice::WriteOnly), "write the person's Codex config");
     config.write("model = \"stand-in\"\nnotify = [\"" +
-                 QFile::encodeName(root.filePath(QStringLiteral("bin/user-notify"))) +
+                 QFile::encodeName(root.filePath(QStringLiteral("bin/base-notify"))) +
                  "\"]\n\n[tui]\nnotifications = false\n");
     config.close();
+    QFile profile_config(root.filePath(QStringLiteral("codex-home/work.config.toml")));
+    require(profile_config.open(QIODevice::WriteOnly), "write the selected Codex profile");
+    profile_config.write("notify = [\"" +
+                         QFile::encodeName(root.filePath(QStringLiteral("bin/profile-notify"))) +
+                         "\"]\n");
+    profile_config.close();
     // Codex runs its notify program with the event as the last argument after
     // each finished turn, and keeps the thread's rollout under CODEX_HOME.
     writeExecutable(root.filePath(QStringLiteral("bin/codex")), R"(#!/usr/bin/env python3
@@ -2609,6 +2644,8 @@ for n, line in enumerate(sys.stdin, 1):
         QHash<QString, int> pings;
         QObject::connect(&workspace, &Workspace::turnFinished,
                          [&pings](SessionPreview* item) { ++pings[item->sessionId()]; });
+        workspace.setHarnessArguments(
+            {{QStringLiteral("codex"), {QStringLiteral("-p"), QStringLiteral("work")}}});
         require(workspace.createAgent(root.filePath(QStringLiteral("project")),
                                       QStringLiteral("local codex"), QStringLiteral("codex")),
                 "a local Codex agent");
@@ -2635,9 +2672,11 @@ for n, line in enumerate(sys.stdin, 1):
         require(!screen.contains(QStringLiteral("7717")) &&
                     !screen.contains(QStringLiteral("lapis-")),
                 "notify sequences never reach the screen");
-        require(waitFor([&] { return QFileInfo::exists(marker); }, 10000),
-                "the person's own notify program still runs");
-        QFile chained(marker);
+        require(waitFor([&] { return QFileInfo::exists(profile_marker); }, 10000),
+                "the selected profile's notify program still runs");
+        require(!QFileInfo::exists(base_marker),
+                "the profile notify replaces the base config notify");
+        QFile chained(profile_marker);
         require(chained.open(QIODevice::ReadOnly) && QJsonDocument::fromJson(chained.readAll())
                                                              .object()
                                                              .value(QStringLiteral("thread-id"))
@@ -2649,6 +2688,10 @@ for n, line in enumerate(sys.stdin, 1):
                     saved->source == lapis::session::ResumeSource::observer,
                 "the notify event's thread is saved as the conversation");
         require(started().size() == 1, "one Codex start so far");
+        const auto first_start = QJsonDocument::fromJson(started().at(0).toUtf8()).array();
+        require(first_start.contains(QStringLiteral("-p")) &&
+                    first_start.contains(QStringLiteral("work")),
+                "Codex receives the selected profile");
         require(
             codex->sendText("exit\r") &&
                 waitFor([&] { return codex->connectionState() == QStringLiteral("ended"); }, 15000),
@@ -2660,7 +2703,9 @@ for n, line in enumerate(sys.stdin, 1):
                 "a restart starts Codex again");
         const auto restarted = QJsonDocument::fromJson(started().at(1).toUtf8()).array();
         require(restarted.contains(QStringLiteral("resume")) && restarted.contains(thread) &&
-                    restarted.at(0) == QStringLiteral("-c"),
+                    restarted.at(0) == QStringLiteral("-c") &&
+                    restarted.contains(QStringLiteral("-p")) &&
+                    restarted.contains(QStringLiteral("work")),
                 "the restart resumes the saved thread, with the notify program again");
         auto* again = workspace.session(id);
         require(again != nullptr && waitFor(
