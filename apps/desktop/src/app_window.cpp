@@ -176,12 +176,15 @@ constexpr int kMaximumDiagnosticsLength = 4096;
 
 AppWindow::AppWindow(Workspace& workspace, AppWindowOptions options, QObject* parent)
     : QObject(parent), workspace_(workspace), options_(std::move(options)) {
+    if (options_.config == nullptr) {
+        defaults_config_ = std::make_unique<Config>(Config::DefaultsOnly{});
+        options_.config = defaults_config_.get();
+    }
     refreshSettingsShortcuts();
-    if (options_.config != nullptr)
-        connect(options_.config, &Config::changed, this, [this] {
-            refreshSettingsShortcuts();
-            deferTerminalFocus();
-        });
+    connect(options_.config, &Config::changed, this, [this] {
+        refreshSettingsShortcuts();
+        deferTerminalFocus();
+    });
     connect(&workspace_, &Workspace::focusChanged, this, &AppWindow::deferTerminalFocus);
     // Every way of quitting (Quit, the Dock's menu, logging out) sends Quit to
     // the application before it closes the window.
@@ -201,9 +204,7 @@ QStringList AppWindow::monospaceFamilies() const {
 }
 
 void AppWindow::refreshSettingsShortcuts() {
-    settings_shortcuts_ = options_.config != nullptr
-                              ? options_.config->sequences(QStringLiteral("openSettings"))
-                              : default_settings_shortcuts();
+    settings_shortcuts_ = options_.config->sequences(QStringLiteral("openSettings"));
     parsed_settings_shortcuts_.clear();
     for (const auto& text : settings_shortcuts_) {
         const QKeySequence sequence(text);
@@ -481,13 +482,14 @@ void AppWindow::publishWarnings(const QList<QQmlError>& warnings) {
     emit diagnosticsChanged();
 }
 
-// What QML reads by name. An absent object is left undefined; QML falls back.
+// What QML reads by name. Every name is always set, so QML never meets an
+// undefined service: workspace, app and config are always objects; the rest
+// are the caller's object or null, which QML checks before use.
 void AppWindow::exposeObjects(QQmlContext& context) {
     context.setContextProperty(QStringLiteral("workspace"), &workspace_);
     context.setContextProperty(QStringLiteral("app"), this);
-    // QML reads `config.actionSequences(...)`. Absent config keeps the literals.
-    const std::array<std::pair<const char*, QObject*>, 8> optional{{
-        {"config", options_.config},
+    context.setContextProperty(QStringLiteral("config"), options_.config);
+    const std::array<std::pair<const char*, QObject*>, 7> optional{{
         {"alerts", options_.alerts},
         {"tools", options_.tools},
         {"desktop", options_.desktop},
@@ -497,8 +499,7 @@ void AppWindow::exposeObjects(QQmlContext& context) {
         {"guiState", options_.guiState},
     }};
     for (const auto& [name, object] : optional)
-        if (object != nullptr)
-            context.setContextProperty(QString::fromLatin1(name), object);
+        context.setContextProperty(QString::fromLatin1(name), object);
 }
 
 bool AppWindow::loadCandidate() {

@@ -26,9 +26,11 @@ struct AppWindowOptions {
     // "built-in" for the MacBook panel and "ultrawide" for an external one.
     // Empty keeps the platform's default placement.
     QString screen;
-    // User keybindings and layout, exposed to QML as `config`. Optional; a
-    // null value uses the shared C++ settings defaults and QML navigation defaults.
+    // User keybindings and layout, exposed to QML as `config`. Optional; when
+    // null, the window owns a defaults-only Config that reads and writes no file.
     Config* config{};
+    // The rest are optional services. Each is exposed under its name either
+    // way: QML sees the object or null, never undefined.
     QObject* alerts{};        // exposed to QML as `alerts`
     QObject* tools{};         // exposed to QML as `tools`
     QObject* desktop{};       // exposed to QML as `desktop`
@@ -98,6 +100,8 @@ class AppWindow final : public QObject {
     QRect normal_geometry_;
     Workspace& workspace_;
     AppWindowOptions options_;
+    // Backs options_.config when the caller passed none; outlives engine_.
+    std::unique_ptr<Config> defaults_config_;
     std::unique_ptr<QQmlApplicationEngine> engine_;
     QPointer<QQuickWindow> window_;
     QString diagnostics_;
