@@ -30,7 +30,6 @@
 #include <QTimer>
 #include <QVariantList>
 
-#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -113,7 +112,6 @@ class SessionPreview final : public QObject {
     Q_INVOKABLE void returnToLive();
     // Moves the view to `fraction` of everything kept (0 the oldest row).
     Q_INVOKABLE void historyAt(qreal fraction);
-    Q_INVOKABLE bool respondAttention(const QString& token, const QVariantMap& response);
     // Ask the session service to end this agent's process. Returns false when
     // the request could not be queued on a synchronized connection.
     bool terminate();
@@ -129,10 +127,11 @@ class SessionPreview final : public QObject {
     void restoreUnseen(bool unseen, qint64 neededAtMs);
     // When it last began to need you (ms since the epoch); 0 before that.
     [[nodiscard]] qint64 neededAtMs() const { return needed_at_ms_; }
-    // Where activity comes from: a service-side observer (the Codex app-server,
-    // Claude Code's hook relay) or, for other CLIs, an output-timing estimate.
-    // An agent on another machine starts from the estimate; hooks relayed
-    // through its terminal then report what they observe (see estimated()).
+    // Where activity comes from: a service-side observer (Claude Code's hook
+    // relay) or, for other CLIs, an output-timing estimate. Codex agents and
+    // agents on other machines start from the estimate; their notify program
+    // or hooks relayed through the terminal then report what they observe
+    // (see estimated()).
     enum class StatusSource : std::uint8_t { observer, output };
     void setStatusSource(StatusSource source) { status_source_ = source; }
     [[nodiscard]] StatusSource statusSource() const { return status_source_; }
@@ -658,10 +657,6 @@ class Workspace final : public QObject {
     void startUpdatedAgents(const QStringList& ids);
     void logUpdate(const QString& line) const;
     QString update_log_directory_;
-    // Records conversations for agents whose services do not.
-    QTimer conversation_timer_;
-    std::shared_ptr<std::atomic_bool> probing_{std::make_shared<std::atomic_bool>(false)};
-    void recordConversations();
     struct Category {
         QString id;
         QString name;

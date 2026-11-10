@@ -522,7 +522,6 @@ COMMANDS = {
         "check_performance_budget.py", a, needs_ghostty=False
     ),
     "ui-review": lambda a: run_python_script("check_ui_review.py", a),
-    "codex-probe": lambda a: run_python_script("probe_codex.py", a),
     "diagnose": lambda a: run_python_script(
         "runtime_diagnostics.py", a, needs_ghostty=False
     ),
@@ -550,7 +549,6 @@ DESCRIPTIONS = {
     "performance-check": "Compare measured performance receipts against the "
     "reviewed snappiness budget",
     "ui-review": "Serial offscreen/software UI and input review while using the desktop",
-    "codex-probe": "Record content-free evidence from the installed Codex",
     "diagnose": "Read-only runtime/package diagnosis (no GUI or session restore)",
     "run": "Open the live shell window (pass extra app flags through)",
     "gui": "Alias for run",

@@ -7,7 +7,7 @@
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "platform/updater_process.hpp"
-#include "remote_hook_relay.hpp"
+#include "terminal_hook_relay.hpp"
 #include "terminals.hpp"
 #include "transcript.hpp"
 #include "workspace_control.hpp"
@@ -27,9 +27,7 @@
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSaveFile>
-#include <QScopeGuard>
 #include <QStandardPaths>
-#include <QThreadPool>
 #include <QUuid>
 #include <algorithm>
 #include <array>
@@ -418,8 +416,9 @@ const QRegularExpression& retiredPlanPreamble() {
     return preamble;
 }
 // An agent on another machine reports its turns through its own terminal,
-// since lapis's hook socket and app-server are on this Mac (the session
-// service's terminal_hooks.hpp has the sequence format). Its login shell
+// since lapis's hook socket is on this Mac (the session service's
+// terminal_hooks.hpp has the sequence format; a local Codex agent's service
+// sets up the same relay itself). Its login shell
 // makes a nonce that stays in the CLI's environment, prints the sequence that
 // binds it, and keeps lapis's relay and its terminal's device in the
 // environment too; Claude Code's hooks and Codex's notify program run that
@@ -428,12 +427,49 @@ const QRegularExpression& retiredPlanPreamble() {
 // terminal, so /dev/tty would not reach it (observed with 2.1.290). Nothing is
 // written to that machine, and a missing python3 or a failing hook changes
 // nothing but the status, which then stays estimated from output.
-QString remoteHookPreamble(const QString& cli) {
-    return QStringLiteral(
-               R"sh(export LAPIS_HOOK_NONCE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" )sh"
-               R"sh(LAPIS_HOOK_TTY="$(tty)" )sh"
-               R"sh(LAPIS_HOOK_RELAY=%1; printf '\033]7717;lapis-init;%2;%s\007' "$LAPIS_HOOK_NONCE";)sh")
-        .arg(shellWord(QString::fromUtf8(kRemoteHookRelay)), cli);
+bool plain_profile_name(const QString& value) {
+    if (value.isEmpty())
+        return false;
+    for (const auto character : value)
+        if ((character < QLatin1Char('0') || character > QLatin1Char('9')) &&
+            (character < QLatin1Char('A') || character > QLatin1Char('Z')) &&
+            (character < QLatin1Char('a') || character > QLatin1Char('z')) &&
+            character != QLatin1Char('_') && character != QLatin1Char('-'))
+            return false;
+    return true;
+}
+
+QString codex_profile(const QStringList& arguments) {
+    QString profile;
+    for (qsizetype index = 0; index < arguments.size(); ++index) {
+        const auto& argument = arguments.at(index);
+        if (argument == QLatin1String("--"))
+            break;
+        QString selected;
+        if ((argument == QLatin1String("-p") || argument == QLatin1String("--profile")) &&
+            index + 1 < arguments.size())
+            selected = arguments.at(++index);
+        else if (argument.startsWith(QLatin1String("--profile=")))
+            selected = argument.sliced(10);
+        else if (argument.startsWith(QLatin1String("-p")) && argument.size() > 2)
+            selected = argument.sliced(argument.at(2) == QLatin1Char('=') ? 3 : 2);
+        if (plain_profile_name(selected))
+            profile = selected;
+    }
+    return profile;
+}
+QString remoteHookPreamble(const QString& cli, const QString& codex_profile = {}) {
+    QString preamble = QStringLiteral(
+        R"sh(export LAPIS_HOOK_NONCE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" )sh"
+        R"sh(LAPIS_HOOK_TTY="$(tty)" )sh");
+    preamble += QStringLiteral("LAPIS_HOOK_RELAY=%1; ")
+                    .arg(shellWord(QString::fromUtf8(session::kTerminalHookRelay)));
+    if (cli == QLatin1String("codex"))
+        preamble += QStringLiteral("export LAPIS_CODEX_PROFILE=%1; ").arg(shellWord(codex_profile));
+    preamble +=
+        QStringLiteral(R"sh(printf '\033]7717;lapis-init;%1;%s\007' "$LAPIS_HOOK_NONCE";)sh")
+            .arg(cli);
+    return preamble;
 }
 // One past the shell word (plain, or single-quoted as shellWord writes it)
 // starting at `start`; the end of the text when it does not close.
@@ -465,7 +501,8 @@ QString unquotedWord(QString word) {
 // with a trailing space when the conversation id follows) with that
 // preamble, plus the hook settings (Claude Code) or notify program (Codex).
 // A command that has them, or whose arguments would conflict, is unchanged.
-QString withRemoteHooks(const QString& words, const QString& harness) {
+QString withRemoteHooks(const QString& words, const QString& harness,
+                        const QString& codex_profile = {}) {
     if (words.contains(QStringLiteral("LAPIS_HOOK_NONCE")) ||
         words.contains(QStringLiteral(" -- ")))
         return words;
@@ -488,7 +525,7 @@ QString withRemoteHooks(const QString& words, const QString& harness) {
         const auto end = shellWordEnd(words, 0);
         const auto notify = QStringLiteral(
             R"(notify=["sh","-c","exec python3 -c \"$LAPIS_HOOK_RELAY\" codex \"$1\" 2>/dev/null","lapis"])");
-        return remoteHookPreamble(harness) + QLatin1Char(' ') + words.left(end) +
+        return remoteHookPreamble(harness, codex_profile) + QLatin1Char(' ') + words.left(end) +
                QStringLiteral(" -c ") + shellWord(notify) + words.mid(end);
     }
     return words;
@@ -510,7 +547,10 @@ void addRemoteHooks(session::LaunchSpec& launch, const QString& harness) {
     const auto words = unquotedWord(word);
     if (shellWord(words) != word)
         return; // not a word shellWord wrote
-    const auto hooked = withRemoteHooks(words, harness);
+    const auto profile = harness == QLatin1String("codex")
+                             ? codex_profile(words.split(QLatin1Char(' '), Qt::SkipEmptyParts))
+                             : QString{};
+    const auto hooked = withRemoteHooks(words, harness, profile);
     if (hooked == words)
         return;
     launch.arguments.last() = line.left(start) + shellWord(hooked) + line.mid(end);
@@ -565,11 +605,14 @@ QString remoteLaunch(const AgentRequest& request, const QString& command, QStrin
     if (claude)
         words.prepend(
             QStringLiteral(R"(export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-0}";)"));
+    const QString selected_profile =
+        request.harness == QLatin1String("codex") ? codex_profile(arguments) : QString{};
     const auto folder = remoteFolder(request.directory);
     const auto line =
         conversation.isEmpty()
             ? QStringLiteral(R"(cd %1 && exec "${SHELL:-/bin/sh}" -lic %2)")
-                  .arg(folder, shellWord(withRemoteHooks(words.join(' '), request.harness)))
+                  .arg(folder, shellWord(withRemoteHooks(words.join(' '), request.harness,
+                                                         selected_profile)))
             : QStringLiteral(
                   R"(cd %1 && s=%2 && p="[-]-(resume|session-id) $s" && o=--session-id && { )"
                   R"(pkill -HUP -f "$p"; n=0; )"
@@ -579,8 +622,8 @@ QString remoteLaunch(const AgentRequest& request, const QString& command, QStrin
                   R"(| grep -q . && o=--resume; )"
                   R"(exec "${SHELL:-/bin/sh}" -lic %3"$o $s"; })")
                   .arg(folder, conversation,
-                       shellWord(
-                           withRemoteHooks(words.join(' ') + QLatin1Char(' '), request.harness)));
+                       shellWord(withRemoteHooks(words.join(' ') + QLatin1Char(' '),
+                                                 request.harness, selected_profile)));
     launch = session::validate_launch(
         {ssh,
          remoteOptions() + QStringList{QStringLiteral("-t"), request.machine, line},
@@ -1978,43 +2021,6 @@ void Workspace::loadCategories(const QJsonArray& groups) {
     categories_ = std::move(categories);
 }
 namespace {
-// Services built before resume records keep none, and services built before
-// the rollout scan do not follow /new. A Codex agent's app-server, found by the
-// backend socket it listens on, still holds its threads' rollouts open.
-std::vector<QString> openCodexThreads(const QString& endpoint) {
-    // Only platform-owned process tools may attest an observer identity.
-    const auto lsof = QStandardPaths::findExecutable(
-        QStringLiteral("lsof"), {QStringLiteral("/usr/sbin"), QStringLiteral("/usr/bin")});
-    const auto ps = QStandardPaths::findExecutable(
-        QStringLiteral("ps"), {QStringLiteral("/bin"), QStringLiteral("/usr/bin")});
-    if (lsof.isEmpty() || ps.isEmpty())
-        return {};
-    // No backend socket means no app-server can still hold a rollout open.
-    if (!QFileInfo::exists(endpoint + QStringLiteral(".codex")))
-        return {};
-    QProcess list;
-    list.start(ps, {QStringLiteral("-axo"), QStringLiteral("pid=,command=")});
-    if (!list.waitForFinished(3000))
-        return {};
-    const auto listen =
-        QStringLiteral("app-server --listen unix://") + endpoint + QStringLiteral(".codex");
-    QString pid;
-    for (const auto& line : QString::fromUtf8(list.readAllStandardOutput()).split('\n')) {
-        const auto row = line.trimmed();
-        if (row.endsWith(listen) || row.contains(listen + QLatin1Char(' '))) {
-            if (!pid.isEmpty())
-                return {};
-            pid = row.section(QLatin1Char(' '), 0, 0);
-        }
-    }
-    if (pid.isEmpty())
-        return {};
-    QProcess files;
-    files.start(lsof, {QStringLiteral("-p"), pid, QStringLiteral("-Fn")});
-    if (!files.waitForFinished(5000))
-        return {};
-    return session::codex_threads_from_open_files(QString::fromUtf8(files.readAllStandardOutput()));
-}
 // Hooks report a conversation at session start, before anything is saved; a
 // conversation without a transcript cannot be resumed, so it starts fresh.
 // CLIs whose storage is not known here are trusted to resume or say why not.
@@ -2129,39 +2135,6 @@ QString Workspace::agentFolder(const QString& id) const {
     return entry == agents_.cend() ? QString() : entry->launch.directory;
 }
 
-void Workspace::recordConversations() {
-    QStringList endpoints;
-    for (const auto& agent : std::as_const(agents_)) {
-        if (agent.harness == QLatin1String("codex"))
-            endpoints.append(agent.endpoint);
-    }
-    if (endpoints.isEmpty() || probing_->exchange(true))
-        return;
-    // Process listing is slow enough to keep off the GUI thread; the worker
-    // touches only files beside each endpoint.
-    QThreadPool::globalInstance()->start([endpoints, busy = probing_] {
-        const auto done = qScopeGuard([busy] { busy->store(false); });
-        for (const auto& endpoint : endpoints) {
-            const auto open = openCodexThreads(endpoint);
-            if (open.empty())
-                continue;
-            // A saved thread still loaded but no longer written last was left
-            // by /new or /resume. One not loaded may be a thread the service
-            // recorded before Codex wrote its rollout, so it stays.
-            const auto saved = session::read_resume_record(endpoint);
-            if (saved && saved->source == session::ResumeSource::observer &&
-                (saved->session_id == open.front() ||
-                 std::find(open.begin(), open.end(), saved->session_id) == open.end()))
-                continue;
-            try {
-                session::write_resume_record(endpoint, {QStringLiteral("codex"), open.front(),
-                                                        session::ResumeSource::observer});
-            } catch (const std::exception& error) {
-                qWarning().noquote() << "Resume record not saved:" << error.what();
-            }
-        }
-    });
-}
 // Restart an ended or unreachable agent in its card, resuming its conversation.
 bool Workspace::restartAgent(const QString& id) {
     if (!mutableRegistry())
@@ -2903,12 +2876,6 @@ void Workspace::connectRestoredAgents() {
     }
     if (restore_agents_ && !headless_)
         watchNetwork();
-    if (restore_agents_ && !headless_) {
-        conversation_timer_.setInterval(60000);
-        connect(&conversation_timer_, &QTimer::timeout, this, &Workspace::recordConversations);
-        conversation_timer_.start();
-        recordConversations();
-    }
 }
 
 void SessionPreview::setUpdating(const QString& label) {
@@ -3160,10 +3127,12 @@ void Workspace::noteStatus(SessionPreview* item) {
     if ((finished || observed) && item != focusedSession())
         item->setUnseen(true);
 }
+// Claude Code's hooks report its whole turn. Codex's notify program reports
+// only finished turns, so between them its status is estimated from output,
+// as for a terminal agent.
 SessionPreview::StatusSource Workspace::statusSource(const Agent& agent) {
-    return agent.launch.agent == session::AgentMode::terminal
-               ? SessionPreview::StatusSource::output
-               : SessionPreview::StatusSource::observer;
+    return agent.launch.agent == session::AgentMode::claude ? SessionPreview::StatusSource::observer
+                                                            : SessionPreview::StatusSource::output;
 }
 // Command-Shift-T brings it back, resuming its conversation where it can.
 void Workspace::rememberClosed(const Agent& agent, const QString& title) {

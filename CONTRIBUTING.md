@@ -311,8 +311,8 @@ Keep the PR description current as scope changes. Use `Change`, `Validation` and
 For visual changes include useful screenshots/captures; for performance changes
 include matched measurements or state explicitly why a claim is still unproven.
 
-Keep Markdown concentrated in the README, architecture, this guide, agent
-instructions and the Codex investigation. Update those documents in place.
+Keep Markdown concentrated in the README, architecture, this guide and agent
+instructions. Update those documents in place.
 Keep reproducible tooling in `scripts/` or `tools/`, sanitized receipts in
 `evidence/`, raw builds/logs in ignored `build/`, and local session state in ignored
 `runtime/`. Never include credentials or private transcripts. Preserve `.sindexer/`
@@ -591,19 +591,11 @@ claim follows. Logs/captures stay in a unique directory beside the receipt; runt
 sockets use a fresh private directory. The [launch receipt](evidence/cli-launch.json) and
 [reconnect receipt](evidence/session-reconnect.json) delimit the exercised scope.
 
-Read-only Codex inventory can be repeated now, without starting a model turn:
-
-```sh
-python3 scripts/probe_codex.py --output build/reports/codex-probe.json
-codex --help
-codex app-server --help
-codex features list
-```
-
-The script hashes the executable selected from PATH and records schema and live
-initialization/list results. Help and feature output advertise interfaces; they
-do not verify TUI behavior, hook dispatch, permissions or shared-server delivery.
-Record selected CLI options alongside the receipt when qualifying a route.
+Read-only Codex inventory can be repeated without starting a model turn:
+`codex --help` and `codex features list`. Help and feature output advertise
+interfaces; they do not verify TUI behavior, notify delivery or permissions.
+Record selected CLI options and the binary hash alongside a receipt when
+qualifying the Codex route.
 
 For additional CLI acceptance runs, use a dedicated service/socket and test
 directory. Record the lapis revision, Codex
@@ -1034,12 +1026,12 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `launch-spec` | Desktop-enabled | Literal launch validation and private endpoint rules |
 | `local-protocol` | Desktop-enabled | v6 identity/timing/history envelopes, framing, bounds, snapshots and invalid messages |
 | `attention-protocol` | Desktop-enabled | Bounded attention snapshots/decisions, typed IDs, stale epochs and malformed payloads |
-| `codex-transport` | Desktop-enabled | Unix WebSocket upgrade, masking, fragmentation, bounds and reentrant close |
-| `codex-observer` | Desktop-enabled | Discovery, temporary-thread isolation, exact decisions, simultaneous requests, resume/read recovery and source loss |
 | `claude-observer` | Desktop-enabled | Hook launch settings, relay identity/turn boundaries, exact retirement, privacy bounds and malformed/oversized-event loss |
 | `session-descriptor` | Desktop-enabled | Private identity hint, atomic replacement, corruption and unsafe-file rejection |
 | `agent-checkpoint` | Desktop-enabled | Restore-hook sequences, identity/host checks, private records and observer provenance |
-| `live-connection` | Desktop-enabled | Screen-before-input, exact attention decisions/rejections, duplicate gating, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
+| `live-connection` | Desktop-enabled | Screen-before-input, attention identity and refusals, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
+| `terminal-hooks` | Desktop-enabled | Hook sequences across reads, nonce binding (printed or service-made), quarantine bounds and notify turn boundaries |
+| `workspace-local-codex` | Desktop-enabled, offscreen | A stand-in `codex` through the real service: notify turns ping once, no hook bytes on screen, the person's own notify still runs, the thread is saved and a restart resumes it |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
 | `terminal-keys-mac` | Desktop-enabled, macOS | AppKit local key monitor, logical layout keys and teardown using the process's own event queue; no focus or cursor changes |
 | `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
@@ -1063,9 +1055,8 @@ replacement identities; `--desktop` adds Qt-to-shell input and
 captures, and optional `--codex` adds the installed no-prompt TUI acceptance.
 That case checks the controlled child PTY's raw-input mode before typing: the
 Codex banner can appear while terminal startup is still in progress.
-A screenshot, a headless suite and a real agent approval round trip prove different
-things. See [attention qualification](#codex-attention-qualification) for isolated
-live round trips and assembled service/desktop qualification.
+A screenshot, a headless suite and a real agent turn prove different things. See
+[Codex notify qualification](#codex-notify-qualification) for the Codex route.
 
 For retained agents, `lapis_workspace_live_probe` is an opt-in probe of real
 service-owned processes: it creates, detaches, reopens and closes agents through
@@ -1096,82 +1087,33 @@ commands below do not run format, clang-tidy or Cppcheck; `just desktop` supplie
 those checks. Save custom build/test output under `build/` and include exact
 commands with any sanitized receipt committed to `evidence/`.
 
-### Codex attention qualification
+### Codex notify qualification
 
-When the installed Codex digest changes, keep unknown binaries gated until the
-new runtime is exercised. Record the full executable SHA-256 and reported version,
-inspect the same-thread resume/read serialization and replay implementation, then
-run the no-turn inventory and shared-server probes, the live protocol/TUI probe,
-and `check_service_attention.py --live-glm --desktop`. Run GUI probes serially. Apply the
-adapter pin only with passing integration evidence and the affected compiled and
-sanitizer checks; retain failed attempts and previous receipts as dated evidence.
-See [the current binary receipt](evidence/codex-binary-update.json).
-
-### Codex external-agent import qualification
-
-Run the importer fixture whenever its adapter contract changes, and run the
-live disposable-state probe whenever the Codex binary or migration protocol
-changes:
+A local Codex agent reports finished turns through its notify program (see the
+[Codex route](docs/architecture.md#codex-route)). The routine checks use a
+stand-in `codex` and never the user's account:
 
 ```sh
-ctest --test-dir build/desktop -R '^codex-importer$' --output-on-failure
-python3 scripts/probe_codex_external_import.py \
-  --output build/codex-external-import.json
-python3 -m unittest scripts.tests.test_probe_codex_external_import -v
-ruff check --config ruff.toml scripts/probe_codex_external_import.py \
-  scripts/tests/test_probe_codex_external_import.py
+ctest --test-dir build/desktop --no-tests=error \
+  -R '^(terminal-hooks|attention-service|agent-checkpoint|workspace-local-codex)$'
+python3 scripts/check_cli_launch.py --case codex-notify-arguments \
+  --case attention-publication-pacing --case codex-notify-reattachment
+python3 -m unittest scripts.tests.test_terminal_hook_relay
 ```
 
-The live probe must remain session-only and use private `HOME` and `CODEX_HOME`
-directories. It fails rather than retrying import RPCs, records no transcript
-content or source error text, and validates the persisted thread through the
-completion target and `thread/list`. Passing it does not requalify the observer
-response pin or authorize global-config migration classes.
+They cover the argument placement (and a user's own `notify` left alone), the
+service-made nonce, frames removed from the screen, pacing, reattachment, the
+saved thread and subagent skip, the restart that resumes it, and the relay's
+chain to the user's `notify` without `tomllib`. The fixtures set `CODEX_HOME`
+to a private folder, so the chain never runs the developer's own program.
+When the installed Codex changes, record its SHA-256 and version and run one
+disposable session in a private `CODEX_HOME` with a harmless turn: the notify
+event must name the thread and finish the turn, and the screen must stay clean.
 
-Protocol, service and workspace fixtures create a new private Codex home and
-write trust for only their disposable working directory. The shared helper refuses
-to overwrite an existing configuration. They do not confirm arbitrary terminal
-prompts or modify global trust settings. This avoids depending on the TUI's
-folder-trust wording while preserving the fixture's explicit approval policy.
-
-The attention core is a standalone C++20 library, used by the managed Codex
-session service. Run `just check`, `just asan` and `just tsan` for its normal/static and
+The attention core is a standalone C++20 library used by the session service.
+Run `just check`, `just asan` and `just tsan` for its normal/static and
 separate sanitizer checks. `attention-state` is registered in all build modes;
-synthetic reducer events do not establish delivery from Codex.
-
-The compiled service has its own runner, distinct from the protocol investigation:
-
-```sh
-python3 scripts/check_service_attention.py
-python3 scripts/check_service_attention.py --live-glm
-python3 scripts/check_service_attention.py --live-glm --desktop
-```
-
-The default creates a private home, working directory and service endpoint, starts
-an ordinary Codex TUI through the managed backend, verifies same-child reattachment,
-and kills only its own service to check both process groups are cleaned up. It
-starts no model turn. `--live-glm` explicitly runs the harmless approval fixture
-and a two-question color fixture through **compiled service IPC**, rejects stale and
-duplicate decisions, verifies explicit retry eligibility after invalid answers,
-and observes source resolution and successful continuation. It also archives and
-restores only its own thread to verify source-loss gating and fresh-epoch recovery,
-cancels a subsequent question by interrupting its turn, and resolves two real
-simultaneous command approvals independently.
-`--desktop` uses the compiled production QML and Qt mouse/key events to select and
-submit both decisions, recording captures in the receipt directory. It owns desktop
-focus and must run serially with other GUI checks. The service-only variant covers
-duplicate submissions; the desktop variant covers provisional-send gating through
-CTest and the actual controls.
-The runtime model/provider and binary hash are recorded. Use `--build-dir` to
-select a sanitizer build and `--output` to isolate receipts from concurrent runs.
-
-The service fixture uses `on-request` and explicitly asks approval for its one
-whitelisted command. The installed binary rejects `approval_policy="untrusted"`
-in file/CLI config even though its exported RPC schema still advertises that
-value. Production launch inherits the caller's policy. The ordinary TUI also
-creates ephemeral backend threads; the adapter classifies source metadata and
-only enables responses for the one persistent TUI thread. Unknown binary hashes
-keep structured responses disabled. Only the `--desktop` variant exercises the desktop response controls.
+synthetic reducer events do not establish delivery from an agent.
 
 ### Reading qualification receipts
 
@@ -1242,65 +1184,10 @@ managed-daemon-lifecycle and platform limits. A launcher that changes endpoint
 selection or creates daemon state cannot reuse this receipt; it must repeat P4
 and record a new decision.
 
-The original `scripts/probe_codex.py` retains its no-turn behavior. The separate
-shared-server probe also sends no model prompt:
-
-```sh
-python3 scripts/probe_codex_attention.py --output build/codex-shared-server.json
-python3 -m unittest discover -s scripts/tests -v
-ruff check --config ruff.toml scripts
-ruff format --config ruff.toml --check scripts
-```
-
-It uses a private Codex home and server, tests WebSocket-over-Unix transport, and
-reports capability limits independently of transport success. A fresh thread may
-not yet have resumable history; successful initialization or live metadata reads
-are not proof of pending-request reconciliation.
-
-For **opt-in live model turns**, the current fixture requires the local CCR service
-at `127.0.0.1:3456` with the `zai,glm-5.3` route. There is no fallback model:
-
-```sh
-python3 scripts/check_codex_attention.py --live-glm --with-tui \
-  --output build/codex-attention-live.json
-```
-
-When requalifying native-hook inventory on a candidate that supports
-`hooks/list`, add `--with-hooks`. The runner creates and trusts one disposable
-`UserPromptSubmit` command that appends one byte to a marker in the fixture
-directory. After a bounded no-tool setup turn creates rollback history, the
-runner resumes a dedicated observer before each hook-bearing input/approval
-turn and requires exact thread/turn start and completion on both the owner and
-that pre-attached observer. Marker bytes must advance per case. Codex does not
-replay hook runs through thread history, so attachment timing is part of the
-boundary; the setup turn is not a claim that a first hook missed before
-attachment can be recovered. No global hook configuration is changed.
-
-This submits one input fixture and one command-approval fixture to a disposable
-server, reconnects an observer, and answers exact pending request IDs. The approval
-fixture permits only `python3 -c 'print(123456789)'`, optionally wrapped by a known
-shell; unexpected commands fail without approval. The input fixture chooses Blue.
-`--case input` or `--case approval` limits a diagnostic run. Each RPC/request has
-a deadline; the runner does not retry model turns automatically. Failure produces
-a nonzero exit and JSON receipt rather than synthetic success.
-
-`--with-tui` starts the ordinary Codex TUI in a private PTY, checks that it displays
-the real question/approval, and keeps it attached while the observer responds.
-Trust for the fixture's empty directory is written only to its fresh disposable
-Codex home before launch. No global hooks/configuration, user's daemon,
-clipboard or desktop focus is changed. This is not the lapis GPU/Qt input path;
-use the existing CLI and native-input procedures when integrating that path.
-
-Receipts distinguish configured/provider-reported model identity, request replay,
-explicit response, matching resolution, completed turns and TUI participation.
-Corroborate upstream routing from CCR runtime evidence; configuration alone is not
-provider proof. Raw fixture data stays under `build/` and disposable runtime state
-is removed. The runner additionally tests a pending request and a request resolved
-while a second observer is disconnected, capturing replay/resolution events before
-a subsequent same-thread `thread/read` reply. This boundary depends on the tested
-server's exclusive method serialization, so source inspection plus a new live run
-is required for another binary hash. It qualifies only the two exercised blocking
-request kinds. See the [adapter contracts](docs/architecture.md#verified-adapter-contracts).
+The app-server probes and live qualification runners these receipts describe
+(`probe_codex.py`, `probe_codex_attention.py`, `check_codex_attention.py`,
+`check_service_attention.py`) were removed with the app-server route; their
+receipts stay as dated evidence.
 
 ### History and input qualification
 

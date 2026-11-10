@@ -7,6 +7,7 @@
 
 #include <QByteArray>
 #include <QElapsedTimer>
+#include <QMap>
 #include <QObject>
 #include <QProcess>
 #include <QSocketNotifier>
@@ -23,6 +24,12 @@ class PtyProcess final : public QObject {
     explicit PtyProcess(QObject* parent = nullptr);
     ~PtyProcess() override;
     void start(const PtyLaunch& launch);
+    // Variables the next start adds to the child's environment, and the name
+    // of one it sets to the child's terminal device (none when empty), for a
+    // program the child runs that writes to its terminal directly.
+    void setEnvironment(QMap<QString, QString> variables, QString terminal_variable = {});
+    // The child's terminal device once started, for example /dev/ttys004.
+    [[nodiscard]] const QString& terminalPath() const { return terminal_path_; }
     [[nodiscard]] bool writeBytes(const QByteArray& bytes);
     [[nodiscard]] bool resize(TerminalSize size);
     void pauseOutput(bool paused);
@@ -42,6 +49,7 @@ class PtyProcess final : public QObject {
     void failure(const QString& message);
 
   private:
+    [[nodiscard]] QProcessEnvironment childEnvironment() const;
     [[nodiscard]] bool readReady();
     void finishWhenDrained(int exit_code, QProcess::ExitStatus exit_status, int drain_budget);
     void recordLeaderExit(int exit_code, QProcess::ExitStatus exit_status);
@@ -52,6 +60,9 @@ class PtyProcess final : public QObject {
     [[nodiscard]] bool signalProcessGroup(int signal);
     void clearPendingWrite();
     void writeReady();
+    QMap<QString, QString> environment_;
+    QString terminal_variable_;
+    QString terminal_path_;
     UniqueFd master_;
     UniqueFd slave_;
     UniqueFd guard_read_;

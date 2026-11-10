@@ -113,6 +113,29 @@ void binds_omp() {
             events.front().source == end);
 }
 
+// A local Codex agent's channel is bound by the service with a nonce it made
+// itself. A printed init can neither replace it nor bind a second CLI, and a
+// notify event's thread identity arrives with the event.
+void binds_service_nonce() {
+    TerminalHookChannel channel;
+    require(!channel.bind("other", nonce) && !channel.bound());
+    require(!channel.bind("codex", "short") && !channel.bound());
+    require(channel.bind("codex", nonce) && channel.bound());
+    require(!channel.bind("codex", "ffffffffffffffffffffffffffffffff"));
+    std::vector<TerminalHookEvent> events;
+    const QByteArray forged("ffffffffffffffffffffffffffffffff");
+    const QJsonObject done{{"type", "agent-turn-complete"},
+                           {"thread-id", "019a0000-0000-7000-8000-000000000001"},
+                           {"turn-id", "t1"}};
+    require(channel.filter("a" + init("claude", forged) + "b", events) == "ab");
+    require(channel.filter(event(done, forged), events).isEmpty() && events.empty());
+    require(channel.cli() == QStringLiteral("codex"));
+    require(channel.filter(event(done), events).isEmpty() && events.size() == 1);
+    require(events.front().cli == QStringLiteral("codex") &&
+            events.front().source.value("thread-id") ==
+                QStringLiteral("019a0000-0000-7000-8000-000000000001"));
+}
+
 // An oversized incomplete hook never erases terminal output that arrived
 // before it, a bare backslash does not end quarantine, and quarantine itself
 // cannot suppress later output indefinitely.
@@ -212,6 +235,7 @@ int main() {
         removes_sequences_across_reads();
         authenticates_events();
         binds_omp();
+        binds_service_nonce();
         bounds_oversized_quarantine();
         notify_turns();
         notify_turn_recovery();

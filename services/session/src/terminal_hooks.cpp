@@ -143,6 +143,16 @@ QByteArray TerminalHookChannel::filter(QByteArrayView output,
     }
 }
 
+bool TerminalHookChannel::bind(QByteArrayView cli, QByteArrayView nonce) {
+    if (!nonce_.isEmpty() || !valid_nonce(nonce) ||
+        (cli != QByteArrayView("claude") && cli != QByteArrayView("codex") &&
+         cli != QByteArrayView("omp")))
+        return false;
+    nonce_ = nonce.toByteArray();
+    cli_ = QString::fromLatin1(cli);
+    return true;
+}
+
 void TerminalHookChannel::accept(QByteArrayView body, std::vector<TerminalHookEvent>& events) {
     const auto first = body.indexOf(';');
     const auto second = first < 0 ? -1 : body.indexOf(';', first + 1);
@@ -152,12 +162,7 @@ void TerminalHookChannel::accept(QByteArrayView body, std::vector<TerminalHookEv
     const auto subject = body.sliced(first + 1, second - first - 1);
     const auto value = body.sliced(second + 1);
     if (kind == QByteArrayView("init")) {
-        if (!nonce_.isEmpty() || !valid_nonce(value) ||
-            (subject != QByteArrayView("claude") && subject != QByteArrayView("codex") &&
-             subject != QByteArrayView("omp")))
-            return;
-        nonce_ = value.toByteArray();
-        cli_ = QString::fromLatin1(subject);
+        static_cast<void>(bind(subject, value));
         return;
     }
     if (kind != QByteArrayView("event") || nonce_.isEmpty() || subject != nonce_)

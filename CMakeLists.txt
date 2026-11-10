@@ -17,10 +17,9 @@ option(LAPIS_PACKAGE "Build the desktop as the downloadable app (see scripts/pac
 
 include(CTest)
 
-add_subdirectory(adapters/codex)
 add_subdirectory(adapters/claude)
 add_subdirectory(services/session)
-target_link_libraries(lapis_session_service PRIVATE lapis_codex_adapter lapis_claude_adapter)
+target_link_libraries(lapis_session_service PRIVATE lapis_claude_adapter)
 
 if(BUILD_TESTING)
     # Keep the dependency-free replay contract checked as C++20. Engine adapters

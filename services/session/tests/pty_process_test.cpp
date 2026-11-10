@@ -81,6 +81,28 @@ void exact_arguments(const QString& directory) {
                 result.output.contains("3\r\n<literal space>\r\n<meta &$|;<>>\r\n<>\r\ncwd-ok"),
             "Literal argv or cwd was changed");
 }
+// Added variables reach the child, and the terminal variable names the device
+// the child's own `tty` reports.
+void environment(const QString& directory) {
+    PtyProcess process;
+    QEventLoop loop;
+    Result result;
+    observe(process, loop, result);
+    process.setEnvironment({{QStringLiteral("LAPIS_TEST_VALUE"), QStringLiteral("added value")}},
+                           QStringLiteral("LAPIS_TEST_TTY"));
+    process.start(
+        {.program = QStringLiteral("/bin/sh"),
+         .arguments = {QStringLiteral("-c"),
+                       QStringLiteral("printf '<%s>\\n' \"$LAPIS_TEST_VALUE\"; "
+                                      "test \"$LAPIS_TEST_TTY\" = \"$(tty)\" && echo tty-ok")},
+         .directory = directory});
+    if (result.failure.isEmpty() && !result.exited)
+        loop.exec();
+    require(result.failure.isEmpty() && result.exited && result.code == 0 &&
+                result.output.contains("<added value>\r\ntty-ok") &&
+                process.terminalPath().startsWith(QStringLiteral("/dev/")),
+            "Added environment or terminal path was lost");
+}
 void burst(const QString& directory) {
     const auto result =
         run({.program = QStringLiteral("/bin/sh"),
@@ -380,6 +402,7 @@ int main(int argc, char** argv) {
         require(marker.open(QIODevice::WriteOnly), "Marker creation failed");
         marker.close();
         exact_arguments(directory.path());
+        environment(directory.path());
         burst(directory.path());
         bounded_admission(directory.path());
         resize(directory.path());

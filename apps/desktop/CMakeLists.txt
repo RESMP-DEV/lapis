@@ -68,13 +68,9 @@ endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/next_prompt.py)
 file(READ src/next_prompt.py LAPIS_NEXT_PROMPT_SCRIPT)
 configure_file(src/next_prompt_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/next_prompt_script.hpp" @ONLY)
-# The hook relay a remote agent's python3 runs, compiled in the same way.
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/remote_hook_relay.py)
-file(READ src/remote_hook_relay.py LAPIS_REMOTE_HOOK_RELAY)
-configure_file(src/remote_hook_relay.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/remote_hook_relay.hpp" @ONLY)
 target_include_directories(lapis_desktop_view PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options lapis_session_platform
-    lapis_claude_adapter
+    lapis_claude_adapter lapis_terminal_hook_relay
     Threads::Threads
     PUBLIC lapis_terminal lapis_attention lapis_session_launch lapis_local_protocol
         Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network)
@@ -209,12 +205,19 @@ if(BUILD_TESTING)
     add_test(NAME workspace COMMAND lapis_workspace_tests)
     add_test(NAME workspace-remote-hooks COMMAND lapis_workspace_tests --case remote-hooks)
     set_tests_properties(workspace-remote-hooks PROPERTIES TIMEOUT 90)
+    add_test(NAME workspace-adapter-status COMMAND lapis_workspace_tests --case adapter-status)
+    set_tests_properties(workspace-adapter-status PROPERTIES TIMEOUT 20
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME workspace-retired-plans COMMAND lapis_workspace_tests --case retired-plans)
     set_tests_properties(workspace-retired-plans PROPERTIES TIMEOUT 20)
     add_test(NAME workspace-updates-off COMMAND lapis_workspace_tests --case updates-off)
     set_tests_properties(workspace-updates-off PROPERTIES TIMEOUT 60)
     add_test(NAME workspace-omp-overlay COMMAND lapis_workspace_tests --case omp-overlay)
     set_tests_properties(workspace-omp-overlay PROPERTIES TIMEOUT 60)
+    # A local Codex stand-in through the real session service; windowless.
+    add_test(NAME workspace-local-codex COMMAND lapis_workspace_tests --case local-codex)
+    set_tests_properties(workspace-local-codex PROPERTIES TIMEOUT 90
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     # These launch the real desktop host or QML windows. On a Mac someone is
     # using they would show windows, so they run only on request.
     set_tests_properties(workspace workspace-remote-hooks workspace-retired-plans
@@ -349,14 +352,3 @@ if(APPLE)
         LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
     add_dependencies(lapis_native_input_probe lapis_session_service)
 endif()
-
-# Uses a private service fixture supplied by check_service_attention.py --desktop.
-add_executable(lapis_attention_ui_probe tests/attention_ui_probe.cpp)
-if(APPLE)
-    target_sources(lapis_attention_ui_probe PRIVATE tests/platform/window_activation.mm)
-endif()
-target_link_libraries(lapis_attention_ui_probe PRIVATE lapis_project_options lapis_desktop_view
-    Qt6::QuickControls2)
-target_compile_definitions(lapis_attention_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
-qt_add_resources(lapis_attention_ui_probe attention_qml PREFIX "/" FILES
-    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml)

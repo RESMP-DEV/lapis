@@ -24,9 +24,9 @@ if(BUILD_TESTING)
     set_tests_properties(session-platform-ownership PROPERTIES TIMEOUT 10)
 endif()
 
-# Durable attention audit. The decision barrier lives here: a forwarded
-# decision is appended and fsynced first. POSIX file ownership only; no GUI,
-# protocol or terminal dependency.
+# Durable attention audit of asked and resolved requests; journals written by
+# older services, decisions included, stay readable. POSIX file ownership
+# only; no GUI, protocol or terminal dependency.
 add_library(lapis_attention_journal STATIC src/attention_journal.cpp src/attention_audit.cpp)
 target_link_libraries(lapis_attention_journal PRIVATE lapis_project_options
     lapis_session_platform
@@ -76,6 +76,15 @@ target_include_directories(lapis_local_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_D
 target_link_libraries(lapis_local_protocol
     PRIVATE lapis_project_options lapis_session_platform lapis_session_launch
     PUBLIC lapis_terminal lapis_attention Qt6::Core)
+# The hook relay python3 runs for a local Codex agent's notify program and
+# for agents on other machines (the desktop), compiled in as text.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/terminal_hook_relay.py)
+file(READ src/terminal_hook_relay.py LAPIS_TERMINAL_HOOK_RELAY)
+configure_file(src/terminal_hook_relay.hpp.in
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/terminal_hook_relay.hpp" @ONLY)
+add_library(lapis_terminal_hook_relay INTERFACE)
+target_include_directories(lapis_terminal_hook_relay INTERFACE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
 add_library(lapis_pty_process STATIC src/platform/posix/pty_process.cpp src/platform/posix/pty_process.hpp)
 target_link_libraries(lapis_pty_process PRIVATE lapis_project_options PUBLIC lapis_session_platform lapis_terminal lapis_session_launch Qt6::Core)
 add_library(lapis_history STATIC src/history_store.cpp src/history_worker.cpp)
@@ -86,7 +95,7 @@ add_executable(lapis_session_service src/session_service.cpp)
 target_link_libraries(lapis_session_service PRIVATE lapis_project_options
     lapis_session_platform lapis_session_launch lapis_terminal lapis_attention
     lapis_local_protocol lapis_pty_process lapis_history lapis_attention_journal
-    Qt6::Core Qt6::Network)
+    lapis_terminal_hook_relay Qt6::Core Qt6::Network)
 if(BUILD_TESTING)
     add_executable(lapis_history_store_tests tests/history_store_test.cpp)
     target_link_libraries(lapis_history_store_tests PRIVATE lapis_project_options lapis_history)
@@ -116,7 +125,7 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_attention_service_tests PRIVATE lapis_project_options
         lapis_session_platform lapis_session_launch lapis_terminal lapis_attention
         lapis_local_protocol lapis_pty_process lapis_history lapis_attention_journal
-        lapis_codex_adapter lapis_claude_adapter Qt6::Core Qt6::Network)
+        lapis_terminal_hook_relay lapis_claude_adapter Qt6::Core Qt6::Network)
     target_include_directories(lapis_attention_service_tests PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src")
     add_test(NAME attention-service COMMAND lapis_attention_service_tests)

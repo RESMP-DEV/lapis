@@ -15,6 +15,7 @@
 #include <sys/wait.h>
 #include <system_error>
 #include <unistd.h>
+#include <utility>
 
 namespace lapis::session::posix {
 namespace {
@@ -141,10 +142,8 @@ void PtyProcess::start(const PtyLaunch& launch) {
     connect(reader_.get(), &QSocketNotifier::activated, this,
             [this] { static_cast<void>(readReady()); });
     connect(writer_.get(), &QSocketNotifier::activated, this, [this] { writeReady(); });
-    auto environment = QProcessEnvironment::systemEnvironment();
-    environment.insert(QStringLiteral("TERM"), QStringLiteral("xterm-256color"));
-    environment.insert(QStringLiteral("COLORTERM"), QStringLiteral("truecolor"));
-    process_.setProcessEnvironment(environment);
+    terminal_path_ = QString::fromLocal8Bit(name.data());
+    process_.setProcessEnvironment(childEnvironment());
     process_.setWorkingDirectory(validated_launch.directory);
     process_.setProgram(validated_launch.program);
     process_.setArguments(validated_launch.arguments);
@@ -171,6 +170,20 @@ void PtyProcess::start(const PtyLaunch& launch) {
                 ::close(slave);
         });
     process_.start();
+}
+void PtyProcess::setEnvironment(QMap<QString, QString> variables, QString terminal_variable) {
+    environment_ = std::move(variables);
+    terminal_variable_ = std::move(terminal_variable);
+}
+QProcessEnvironment PtyProcess::childEnvironment() const {
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("TERM"), QStringLiteral("xterm-256color"));
+    environment.insert(QStringLiteral("COLORTERM"), QStringLiteral("truecolor"));
+    for (auto variable = environment_.cbegin(); variable != environment_.cend(); ++variable)
+        environment.insert(variable.key(), variable.value());
+    if (!terminal_variable_.isEmpty())
+        environment.insert(terminal_variable_, terminal_path_);
+    return environment;
 }
 bool PtyProcess::resize(TerminalSize size) {
     if (!master_ || size.columns == 0 || size.rows == 0)

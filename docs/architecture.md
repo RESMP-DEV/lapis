@@ -56,7 +56,7 @@ that uses `lapis_project_options`.
 | Terminal engine | Pinned Ghostty `libghostty-vt` | Keep the unstable C API and dependency notices isolated; replay cases remain the compatibility gate |
 | Rendering | Qt Quick, Vulkan through MoltenVK on macOS | Runtime API verification is required; presentation and resize tails still need candidate measurements |
 | Session wire | Internal version 6 framing with epochs, generations, history paging, and attention messages | Incompatible changes need rejection/migration tests and a private endpoint |
-| Codex route | Managed ordinary TUI with a service-owned observer and app-server backend | Observation, response, and replay capabilities are declared separately |
+| Codex route | Ordinary TUI under the service's PTY; Codex's notify program reports finished turns through the terminal, as for a remote agent | Observation only: requests are answered in Codex's terminal; there is no per-agent app-server, approval ping or interrupted-turn signal. The desktop's short-lived app-server model-list probe is outside this agent route |
 | Claude route | Hook/terminal observation with explicit answers in Claude's terminal | No GUI response routing until a supported protocol is version-pinned and qualified |
 | Process birth | The window (or the windowless host) starts one detached session service per agent; agents survive window quitting only where the OS permits background execution, and the login helper restarts those whose services died with the Mac | Restart of a crashed session service is not implemented: the agent keeps its last screen until it is restarted or lapis next opens; macOS 27 also requires the Allow in the Background conditions in [install](install.md) |
 | Settings | Tracked `lapis.json` defaults plus private runtime workspace/window state | Machine-local state never becomes a portable credential or session transcript |
@@ -119,19 +119,50 @@ Neither is a
 silent substitution. External-browser CDP attachment remains a different
 capability and does not solve profile ownership or process cleanup.
 
-## Codex native hooks
+## Codex route
+
+A local Codex agent is Codex's own TUI under the session service's PTY. The
+service starts it with `-c notify=[...]` before every other argument (unless
+the arguments already set `notify`), makes a 32-hex-digit hook nonce, binds it
+to the agent's `TerminalHookChannel` itself, and puts the nonce, the Python
+relay (`services/session/src/terminal_hook_relay.py`) and the PTY device in
+the agent's environment. After each finished turn Codex runs that program: the
+relay writes the event's bounded metadata (`type`, `thread-id`, `turn-id`) to
+the device as an OSC 7717 frame, which the service removes from the output,
+and then runs the person's own effective `notify` from
+`$CODEX_HOME/config.toml` layered with the selected
+`$CODEX_HOME/<profile>.config.toml` (read without `tomllib` on python3 before
+3.11). `NotifyTurns` marks the turn
+finished; submitted input returns the status to the output estimate. The
+event's `thread-id` is the conversation to resume, recorded as an observer
+identity because the nonce is never printed to the terminal. The nonce is not a
+secret from Codex or its configured notify command: both inherit it. Codex's
+default shell environment also inherits it, although
+`shell_environment_policy` can filter it from tool commands. The nonce rejects
+terminal text that does not carry the channel value; it does not identify the
+emitting process or isolate the notify program from Codex. A thread whose
+rollout's first line names a parent is a subagent's and is skipped. Remote
+Codex agents use the
+same relay through their login shell's preamble (`withRemoteHooks`).
+
+Saved arguments and the `lapis-codex-v1` launch fingerprint are unchanged, so
+a service started by an older lapis (a `codex app-server` beside a `--remote`
+TUI) still attaches; its requests show read-only until the agent is reloaded.
+The notify route reports no turn start, approval request or interrupted turn;
+between finished turns the status is estimated from output, and every request
+is answered in Codex's terminal. Upstream has marked `notify` legacy in favor
+of the hooks engine below; if a release removes it, Codex status falls back to
+the output estimate.
+
+### Codex native hooks (research)
 
 Codex upstream ships a Claude Code-style hooks engine, enabled and stable. The
 surface below is source-verified at inspected checkout `1f69eb089d`, whose
 upstream merge basis is `17f29f3ff8`; upstream stable at the survey time was
 0.163.0. It is recorded in
 [codex-hooks-surface evidence](../evidence/codex-hooks-surface.json). It is
-design evidence plus the later H0 runtime boundary below: lapis installs no
-production hooks and claims no hook response capability. A separately resumed
-observer receives hook-run notifications when attached before the hook-bearing
-turn; Codex does not replay hook runs through thread history, so an observer
-that attaches after a hook has finished cannot recover that run. Hook work runs
-only on a binary that passed the Codex requalification procedure.
+design evidence only: lapis installs no hooks and claims no hook response
+capability. Codex does not replay hook runs through thread history.
 
 Verified surface: twelve events (PreToolUse, PermissionRequest, PostToolUse,
 Pre/PostCompact, SessionStart/End, UserPromptSubmit, SubagentStart/Stop,
@@ -148,18 +179,11 @@ beside the existing `hook/started`/`hook/completed` run notifications, and
 hooks additionally distribute through the plugin marketplace with
 content-hash trust.
 
-| Checkpoint | Bounded slice | Exit evidence |
-| --- | --- | --- |
-| H0: inventory and delivery boundary | On a requalified binary, the existing app-server observer enumerates bounded `hooks/list` metadata and parses `hook/started`/`hook/completed`. The qualification creates one harmless hook, attaches an observer before each hook-bearing turn, and requires exact thread/turn start/completion identity on both the turn-owner and pre-attached observer connections | A disposable-session receipt records inventory, command execution, owner and pre-attached observer delivery, the no-history-replay boundary, and cleanup; no production `[hooks]` configuration is written by lapis |
-| H1: per-session decision hook | A lapis-owned PermissionRequest command hook configured only inside the session's disposable Codex home can explore direct decision-policy integration distinct from passive observation | Live allow/deny round trips on a disposable session record any-deny folding and no-decision passthrough; no global or shared hook installation exists |
-| H2: subagent visibility | Consume pre-attached SubagentStart/SubagentStop agent identity and type as advisory signals within one Codex session | A receipt maps subagent lifecycles without promoting them to lapis sessions or claiming recovery for events missed before attachment |
-
-An approval-answering hook changes the agent's execution policy, so H1 is
-strictly per-session opt-in and never a global installation. The H0 receipt for
-binary `da306dac…` is retained in
-[Codex hooks H0 evidence](../evidence/codex-hooks-h0-20261018.json). Upstream
-has marked legacy `notify` for removal in favor of this engine. These
-checkpoints do not displace the delivery order above.
+A hook that reports turn starts and approval requests through the same
+terminal relay would recover what the notify route lacks; one that answers
+approvals changes the agent's execution policy and stays per-session opt-in.
+The earlier app-server H0 receipt is retained in
+[Codex hooks H0 evidence](../evidence/codex-hooks-h0-20261018.json).
 
 ## Release gates
 
@@ -202,9 +226,7 @@ failures, and service disconnect without developer tools.
 
 | Topic | Current position | Decision gate |
 | --- | --- | --- |
-| Codex thread switch | Explicit proposal only | Select an exact persistent thread, rotate epoch, reconcile by exact ID, invalidate old tokens, and qualify foreign/archive recovery before UI navigation |
-| Codex external-agent import | Session-only importer and qualification probe exist | Consent, dedicated server ownership, duplicate reconciliation, launch/resume, and failure recovery must qualify before onboarding UI |
-| Codex native hooks | H0 inventory and delivery boundary are qualified; H1 per-session relay is the next candidate | A reviewed live receipt must qualify relay loss, trust and decision semantics; decision hooks are per-session opt-in and lapis never installs global hooks |
+| Codex native hooks | Research only; the notify route reports finished turns | A per-session hook relayed through the terminal would add turn starts and approval requests; it needs a live receipt for relay loss and trust, and lapis never installs global hooks |
 | Native browser surfaces | W0 is an isolated engine probe; W1 begins only after R1/R4 close | Promote each checkpoint with its named runtime, input, isolation, credential, and workload receipt |
 | Performance thresholds | Existing 20/30/35 ms input budget is the only reviewed budget | Promote switch, frame, sustained-output, or memory numbers only from named candidate workloads and tails |
 
@@ -246,11 +268,10 @@ reviewed contracts before they are enabled by default.
 
 ### Session identity and process boundaries
 
-Every session has a stable lapis ID. Terminal sessions own PTYs and terminal
-engines; structured Codex sessions own their app-server process/connection and
-conversation state. A structured backend does not reproduce the TUI, and a
-separate app-server does not observe independently launched CLIs by default.
-GUI detachment does not invalidate a healthy service-owned source connection.
+Every session has a stable lapis ID. Sessions own PTYs and terminal engines;
+every agent, Codex included, is its ordinary CLI. Observers (Claude Code's hook
+socket, the terminal hook channel) are service-owned, so GUI detachment does
+not invalidate a healthy source.
 
 The window starts a session service only for a create-mode attach, passing the
 session ID it chose, and then attaches with that ID; later attaches use the
@@ -281,9 +302,9 @@ active.
 
 Session positions stay stable. Manual navigation, pinning, snoozing, and an
 opt-in carousel must not starve quiet sessions. Viewing or acknowledging a
-request never approves it. Decision-capable responses route through the
-originating adapter; hook-only tools may require the user to answer in the
-original terminal.
+request never approves it. No current adapter routes a response: every agent
+takes its answers in its own terminal, and the service refuses a decision an
+older desktop sends.
 
 ### Terminal rendering and pacing
 

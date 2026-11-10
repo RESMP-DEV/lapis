@@ -30,8 +30,8 @@ component or launch an unbounded set of agents.
 1. Read [README.md](README.md), inspect the actual tree and `git status --short`,
    and identify the assigned scope before editing. Preserve other agents' work.
 2. Read [architecture and near-term plan](docs/architecture.md) when touching
-   shared behavior; it includes the attention and ownership contracts. Read the
-   [Codex investigation](adapters/codex/README.md) for Codex-specific work.
+   shared behavior; it includes the attention and ownership contracts and the
+   Codex route.
 3. Follow the [shared code standards](CONTRIBUTING.md#code-standards) and
    [CONTRIBUTING.md](CONTRIBUTING.md) for checks, profiling and PR procedure.
    Use existing scripts before writing replacements.
@@ -104,9 +104,11 @@ This does not authorize merging, releasing or expanding a worker's permissions.
   evidence in architecture before dependent work branches out.
 - Codex's Rust implementation does not require C++/Rust linkage. Prefer a
   supported external protocol; do not assume internal Rust crates are a stable
-  embedding API. The [Codex notes](adapters/codex/README.md) describe two distinct
-  routes: a lapis-owned app-server session and a normal CLI running under a PTY.
-  A new app-server is not automatically an observer of independently launched CLIs.
+  embedding API. A Codex agent is the normal CLI under a PTY; it reports
+  finished turns through its notify program, as an agent on another machine
+  does (see the architecture's Codex route). No agent or attention route
+  runs `codex app-server`; the desktop starts one briefly only to read
+  Codex's model list.
 - Preserve actual terminal behavior: Unicode, shaping, wide cells, escape
   sequences, resize, IME, selection, clipboard, and accessibility. Prefer an
   evaluated terminal engine over casually rebuilding terminal compatibility.
@@ -316,7 +318,7 @@ in `docs/`, one page per topic named with one lowercase word (`agents.md`,
 README. Consolidate design decisions in the architecture document; avoid parallel
 roadmap, component-summary or research Markdown files. Keep specialized
 documentation only when it supplies distinct operational detail, as CONTRIBUTING.md
-and the Codex investigation do. Use the single `.github/PULL_REQUEST_TEMPLATE.md`
+does. Use the single `.github/PULL_REQUEST_TEMPLATE.md`
 for PRs. Store sanitized evidence in `evidence/`.
 
 Finish with the concrete outcome, relevant checks, evidence paths, and material

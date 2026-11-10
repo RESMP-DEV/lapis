@@ -29,6 +29,12 @@ HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
 HISTORY_REQUEST, HISTORY_PAGE = range(10, 12)
 ATTENTION_SNAPSHOT, ATTENTION_DECISION, ATTENTION_RETRY = range(12, 15)
 PASTE_REQUEST, PASTE_RESULT = 17, 18
+TURN_COMPLETED = 3  # attention::Activity::turn_completed
+# The notify program the session service gives a local Codex agent.
+CODEX_NOTIFY = (
+    'notify=["sh","-c","exec python3 -c \\"$LAPIS_HOOK_RELAY\\" codex \\"$1\\" '
+    '2>/dev/null","lapis"]'
+)
 WAIT = 5
 
 
@@ -578,6 +584,31 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
         finally:
             service.stop()
 
+    def codex_notify_fixture(name):
+        # A disposable Codex: it requires lapis's notify program first, and
+        # runs it as Codex would for each input line starting with "turn".
+        executable = runtime / name
+        executable.write_text(
+            f"#!{program}\n"
+            "import json,subprocess,sys\n"
+            "if sys.argv[1:2]!=['-c'] or not sys.argv[2].startswith('notify='):\n"
+            " sys.exit(3)\n"
+            "notify=json.loads(sys.argv[2].split('=',1)[1])\n"
+            "print('READY',flush=True)\n"
+            "for line in sys.stdin:\n"
+            " line=line.strip()\n"
+            " if line.startswith('turn'):\n"
+            "  event={'type':'agent-turn-complete','turn-id':line}\n"
+            "  subprocess.run([*notify,json.dumps(event)],check=False)\n"
+            " print('ECHO:'+line,flush=True)\n"
+        )
+        executable.chmod(0o700)
+        return executable
+
+    # The relay chains to the user's own notify program from CODEX_HOME;
+    # fixtures get an empty one.
+    codex_home = {"CODEX_HOME": str(runtime / "codex-home")} if runtime else {}
+
     def hyperlink_capability():
         # The legacy decoder stays strict. A capable joined view receives the
         # same text plus OSC 8 destinations without replacing the old client.
@@ -705,30 +736,42 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             good.send(TEXT, b"after-invalid\n")
             good.snapshot(lambda s: "ECHO:after-invalid" in s["text"])
 
-    def codex_config_arguments():
-        marker = runtime / "backend-arguments.json"
+    def codex_notify_arguments():
+        # A local Codex agent is its own TUI with lapis's notify program first
+        # and every other argument unchanged; arguments that set notify
+        # themselves get nothing added.
+        marker = runtime / "notify-arguments.json"
         executable = runtime / "argument-codex"
         executable.write_text(
             f"#!{program}\n"
-            "import json,sys\n"
+            "import json,os,sys\n"
             "from pathlib import Path\n"
-            f"Path({str(marker)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+            "tty=os.ttyname(0)\n"
+            f"Path({str(marker)!r}).write_text(json.dumps({{\n"
+            " 'argv':sys.argv[1:],\n"
+            " 'nonce':os.environ.get('LAPIS_HOOK_NONCE',''),\n"
+            " 'relay':'def relay(' in os.environ.get('LAPIS_HOOK_RELAY',''),\n"
+            " 'profile':os.environ.get('LAPIS_CODEX_PROFILE',''),\n"
+            " 'tty':os.environ.get('LAPIS_HOOK_TTY')==tty}))\n"
         )
         executable.chmod(0o700)
-        cases = []
-        for option in ("-c", "--config", "--enable", "--disable"):
-            cases.extend(
-                [
-                    ([option], None),
-                    ([option, "--", "--config=literal"], None),
-                    (
-                        [option, "fixture", "--", "--config=literal"],
-                        [option, "fixture"],
-                    ),
-                ]
-            )
-        cases.append((["--", "-c", "--", "--enable=literal"], []))
-        for index, (arguments, expected) in enumerate(cases):
+        cases = [
+            ([], True, ""),
+            (
+                ["--yolo", "-m", "model", "resume", "thread", "--", "-c", "notify=x"],
+                True,
+                "",
+            ),
+            (['--config=notify=["user"]', "resume"], False, ""),
+            (["-c", "notify = []"], False, ""),
+            (["-c=notify=[]"], False, ""),
+            (["-p", "work"], True, "work"),
+            (["-p=work"], True, "work"),
+            (["--profile=work"], True, "work"),
+            (["-p", "first", "--profile", "second"], True, "second"),
+            (["-p", "first", "--", "-p", "second"], True, "first"),
+        ]
+        for index, (arguments, injected, profile) in enumerate(cases):
             marker.unlink(missing_ok=True)
             name = f"codex-arguments-{index}"
             service = Service(
@@ -739,384 +782,43 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 str(executable),
                 arguments,
                 runtime,
+                {**codex_home, "LAPIS_CODEX_PROFILE": "inherited"},
                 codex=True,
             )
             try:
-                code = service.process.wait(timeout=5)
-                require(code != 0, "Fixture backend exit must stop its service")
+                service.process.wait(timeout=5)
             finally:
                 service.stop()
-            if expected is None:
+            require(marker.exists(), f"Codex did not start: {arguments}")
+            seen = json.loads(marker.read_text())
+            if injected:
                 require(
-                    not marker.exists(),
-                    f"Malformed option launched backend: {arguments}",
+                    seen["argv"] == ["-c", CODEX_NOTIFY, *arguments],
+                    f"Notify program or literal arguments changed: {seen['argv']}",
                 )
                 require(
-                    "Codex config option requires a value"
-                    in (artifacts / (name + ".service.log")).read_text(),
-                    f"Missing config-value diagnostic: {arguments}",
+                    len(seen["nonce"]) == 32
+                    and all(c in "0123456789abcdef" for c in seen["nonce"])
+                    and seen["relay"]
+                    and seen["tty"],
+                    "Notify environment is incomplete",
+                )
+                require(
+                    seen["profile"] == profile,
+                    "Selected Codex profile was not passed or cleared",
                 )
             else:
                 require(
-                    marker.exists(), f"Valid options did not reach backend: {arguments}"
-                )
-                forwarded = json.loads(marker.read_text())
-                require(
-                    forwarded[:2] == ["app-server", "--listen"]
-                    and forwarded[2] == "unix://" + str(service.endpoint) + ".codex"
-                    and forwarded[3:] == expected,
-                    f"Literal arguments leaked into backend options: {forwarded}",
+                    seen["argv"] == arguments and not seen["nonce"],
+                    f"A notify the arguments set was replaced: {seen['argv']}",
                 )
         return {"argument_cases": len(cases), "live_codex_used": False}
 
-    def codex_resume_permissions():
-        # Codex refuses approval and sandbox options when a remote TUI resumes
-        # a thread; the dedicated server takes them as config instead.
-        executable = runtime / "permission-codex"
-        executable.write_text(
-            f"#!{program}\n"
-            "import json,socket,sys\n"
-            "from pathlib import Path\n"
-            f"fixture_root=Path({str(runtime)!r})\n"
-            "if len(sys.argv)<2:\n"
-            " sys.exit(2)\n"
-            "if sys.argv[1]=='app-server':\n"
-            " if len(sys.argv)<4:\n"
-            "  sys.exit(2)\n"
-            " endpoint=sys.argv[3].removeprefix('unix://')\n"
-            " marker=fixture_root/(Path(endpoint).name+'.backend.json')\n"
-            " marker.write_text(json.dumps(sys.argv[1:]))\n"
-            " server=socket.socket(socket.AF_UNIX)\n"
-            " server.bind(endpoint)\n"
-            " server.listen()\n"
-            " while True:\n"
-            "  connection,_=server.accept();connection.close()\n"
-            "else:\n"
-            " if len(sys.argv)<3:\n"
-            "  sys.exit(2)\n"
-            " endpoint=sys.argv[2].removeprefix('unix://')\n"
-            " marker=fixture_root/(Path(endpoint).name+'.tui.json')\n"
-            " marker.write_text(json.dumps(sys.argv[1:]))\n"
-            " for line in sys.stdin: pass\n"
-        )
-        executable.chmod(0o700)
-        thread = "00000000-0000-7000-8000-000000000001"
-        full = ['approval_policy="never"', 'sandbox_mode="danger-full-access"']
-        cases = [
-            (
-                ["--dangerously-bypass-approvals-and-sandbox", "resume", thread],
-                full,
-                ["resume", thread],
-            ),
-            (
-                ["--full-auto", "resume", thread],
-                ['approval_policy="on-request"', 'sandbox_mode="workspace-write"'],
-                ["resume", thread],
-            ),
-            (
-                ["--yolo", "fork", thread],
-                full,
-                ["fork", thread],
-            ),
-            (
-                ["--approve-for-me", "resume", thread],
-                [
-                    'approval_policy="on-request"',
-                    'sandbox_mode="workspace-write"',
-                    'approvals_reviewer="auto_review"',
-                ],
-                ["resume", thread],
-            ),
-            # Permission config on a resuming TUI is an explicit override Codex
-            # refuses; the server keeps it, unrelated config survives.
-            (
-                ["-c", "approval_policy=never", "-c", "model=o3", "resume", thread],
-                ['approval_policy="never"', "model=o3"],
-                ["-c", "model=o3", "resume", thread],
-            ),
-            (
-                ["-c", "approvals_reviewer=auto_review", "resume", thread],
-                ['approvals_reviewer="auto_review"'],
-                ["resume", thread],
-            ),
-            (
-                ["-c", "approvals_reviewer=guardian_subagent", "resume", thread],
-                ['approvals_reviewer="guardian_subagent"'],
-                ["resume", thread],
-            ),
-            (
-                ["-c", 'approvals_reviewer="auto_review"', "resume", thread],
-                ['approvals_reviewer="auto_review"'],
-                ["resume", thread],
-            ),
-            (
-                ['--config=sandbox_mode="read-only"', "resume", thread],
-                ['sandbox_mode="read-only"'],
-                ["resume", thread],
-            ),
-            (
-                ['-c=sandbox_mode = "read-only"', "resume", thread],
-                ['sandbox_mode="read-only"'],
-                ["resume", thread],
-            ),
-            (
-                ["-a", "never", "-s", "workspace-write", "fork", thread],
-                ['approval_policy="never"', 'sandbox_mode="workspace-write"'],
-                ["fork", thread],
-            ),
-            (
-                ["-s=read-only", "resume", thread],
-                ['sandbox_mode="read-only"'],
-                ["resume", thread],
-            ),
-            (
-                ["-sread-only", "resume", thread],
-                ['sandbox_mode="read-only"'],
-                ["resume", thread],
-            ),
-            (
-                ["resume", thread, "--sandbox=read-only"],
-                ['sandbox_mode="read-only"'],
-                ["resume", thread],
-            ),
-            # A new thread keeps its options; Codex accepts them there.
-            (
-                ["--dangerously-bypass-approvals-and-sandbox"],
-                full,
-                ["--dangerously-bypass-approvals-and-sandbox"],
-            ),
-            (
-                ["--full-auto"],
-                ['approval_policy="on-request"', 'sandbox_mode="workspace-write"'],
-                ["--full-auto"],
-            ),
-            (
-                ["--approve-for-me"],
-                [
-                    'approval_policy="on-request"',
-                    'sandbox_mode="workspace-write"',
-                    'approvals_reviewer="auto_review"',
-                ],
-                ["--approve-for-me"],
-            ),
-            # "resume" as an option's value is not the subcommand.
-            (["-m", "resume", "-a", "never"], ['approval_policy="never"'], None),
-            # After the literal separator, every token belongs to the TUI.
-            (
-                ["--", "-a", "never", "resume", thread],
-                [],
-                ["--", "-a", "never", "resume", thread],
-            ),
-        ]
-        for key, value in {
-            "approval_policy": "untrusted",
-            "sandbox_mode": "read-only",
-            "approvals_reviewer": "user",
-        }.items():
-            cases.extend(
-                [
-                    (
-                        ["-c", f"{key}={value}", "resume", thread],
-                        [f'{key}="{value}"'],
-                        ["resume", thread],
-                    ),
-                    (
-                        ["-c", f'{key}="{value}"', "resume", thread],
-                        [f'{key}="{value}"'],
-                        ["resume", thread],
-                    ),
-                ]
-            )
-        for index, (arguments, backend, tui) in enumerate(cases):
-            if tui is None:
-                tui = arguments
-            name = f"codex-permissions-{index}"
-            service = Service(
-                binary,
-                runtime,
-                artifacts,
-                name,
-                str(executable),
-                arguments,
-                runtime,
-                codex=True,
-            )
-            try:
-                socket_path = str(service.endpoint) + ".codex"
-                marker = Path(socket_path + ".tui.json")
-                deadline = time.monotonic() + WAIT
-                while not marker.exists():
-                    require(
-                        time.monotonic() < deadline, f"TUI never started: {arguments}"
-                    )
-                    time.sleep(0.01)
-                time.sleep(0.05)
-                forwarded = json.loads(Path(socket_path + ".backend.json").read_text())
-                # `backend` holds config values unless a case marks itself raw
-                # (a `(raw_backend)` tuple), in which case it is literal argv.
-                if isinstance(backend, tuple):
-                    expected = list(backend[0])
-                else:
-                    expected = [part for pair in backend for part in ("-c", pair)]
-                require(
-                    forwarded[3:] == expected,
-                    f"Backend permissions {forwarded[3:]} != {expected} for {arguments}",
-                )
-                launched = json.loads(marker.read_text())
-                require(
-                    launched == ["--remote", "unix://" + socket_path] + tui,
-                    f"TUI arguments {launched} for {arguments}",
-                )
-            finally:
-                service.stop()
-        invalid_arguments = [
-            ["-a", "untrusted", "resume", thread],
-            ["-s", 'x" y', "resume", thread],
-            ["-s", "read-only\n", "resume", thread],
-            ["-sandbox", "resume", thread],
-            ["-a", "on-failure", "resume", thread],
-            ["-c", 'approval_policy=x" y', "resume", thread],
-            ["-c", 'approval_policy="bogus"', "resume", thread],
-            ["-c", " approval_policy=bogus", "resume", thread],
-            ["-c", "approvals_reviewer=bogus", "resume", thread],
-            ["-a"],
-            ["--sandbox="],
-        ]
-        syntax_invalid_indices = set()
-        for key, value in {
-            "approval_policy": "never",
-            "sandbox_mode": "read-only",
-            "approvals_reviewer": "user",
-        }.items():
-            start = len(invalid_arguments)
-            invalid_arguments.extend(
-                [
-                    ["-c", f'{key}={value}"', "resume", thread],
-                    ["-c", f'{key}="{value}', "resume", thread],
-                ]
-            )
-            syntax_invalid_indices.add(start + 1)
-        syntax_invalid_indices.add(len(invalid_arguments))
-        invalid_arguments.append(["-c", 'approval_policy="never" x', "resume", thread])
-        for index, arguments in enumerate(invalid_arguments):
-            name = f"codex-permissions-invalid-{index}"
-            service = Service(
-                binary,
-                runtime,
-                artifacts,
-                name,
-                str(executable),
-                arguments,
-                runtime,
-                codex=True,
-            )
-            try:
-                try:
-                    code = service.process.wait(timeout=WAIT)
-                except subprocess.TimeoutExpired:
-                    raise CheckError(
-                        f"Invalid permission value hung the service: {arguments}"
-                    ) from None
-                else:
-                    require(
-                        code != 0,
-                        f"Invalid permission value launched service: {arguments}",
-                    )
-            finally:
-                service.stop()
-            diagnostic = (artifacts / (name + ".service.log")).read_text()
-            expected_diagnostic = (
-                "config syntax is invalid"
-                if index in syntax_invalid_indices
-                else "requires a value"
-                if arguments == ["-a"]
-                else "value is invalid for"
-            )
-            require(
-                expected_diagnostic in diagnostic,
-                f"Missing {expected_diagnostic!r} diagnostic: {arguments}",
-            )
-        return {"permission_cases": len(cases), "live_codex_used": False}
-
-    def codex_backend_exit():
-        # Exercise a dedicated backend failure before TUI startup. Raw backend
-        # output may contain private data and must not enter service diagnostics.
-        executable = runtime / "exiting-codex"
-        private_marker = "PRIVATE_BACKEND_STDERR_FIXTURE"
-        outcomes = []
-        for name, statement, expected in (
-            ("normal", "sys.exit(23)", ("23", "normal")),
-            ("signal", "os.kill(os.getpid(), signal.SIGKILL)", ("crash",)),
-        ):
-            executable.write_text(
-                f"#!{program}\n"
-                "import os,signal,sys\n"
-                f"print({private_marker!r},file=sys.stderr,flush=True)\n"
-                + statement
-                + "\n"
-            )
-            executable.chmod(0o700)
-            fixture = "codex-exit-" + name
-            service = Service(
-                binary,
-                runtime,
-                artifacts,
-                fixture,
-                str(executable),
-                [],
-                runtime,
-                codex=True,
-            )
-            try:
-                require(
-                    service.process.wait(timeout=WAIT) != 0,
-                    "Backend failure did not stop startup",
-                )
-            finally:
-                service.stop()
-            diagnostic = (artifacts / (fixture + ".service.log")).read_text()
-            require(
-                "Codex server exited" in diagnostic
-                and all(part in diagnostic.lower() for part in expected),
-                f"Backend {name} exit lost code/status diagnostic",
-            )
-            require(
-                private_marker not in diagnostic,
-                "Backend stderr leaked into service diagnostics",
-            )
-            outcomes.append(name)
-        return {"backend_exit_cases": outcomes, "raw_stderr_excluded": True}
-
     def attention_publication_pacing():
-        """Real service IPC, with an unqualified disposable Codex source."""
-        from check_service_attention import decision as make_attention_decision
+        """Real service IPC, with a disposable Codex that runs its notify program."""
+        from service_fixture import decision as make_attention_decision
 
-        executable = runtime / "attention-pacing-codex"
-        executable.write_text(
-            f"#!{sys.executable}\n"
-            "import os,socket,sys,time\n"
-            "from pathlib import Path\n"
-            "if sys.argv[1]=='app-server':\n"
-            " time.sleep(.02)\n"
-            " endpoint=sys.argv[3].removeprefix('unix://')\n"
-            " server=socket.socket(socket.AF_UNIX)\n"
-            " server.bind(endpoint)\n"
-            " Path(endpoint+'.pid').write_text(str(os.getpid()))\n"
-            " Path(endpoint+'.bound').touch()\n"
-            " server.listen()\n"
-            " while True:\n"
-            "  connection,_=server.accept();connection.close()\n"
-            "else:\n"
-            " endpoint=sys.argv[2].removeprefix('unix://')\n"
-            " deadline=time.monotonic()+5\n"
-            " while not Path(endpoint).exists() and time.monotonic()<deadline:\n"
-            "  time.sleep(.01)\n"
-            " client=socket.socket(socket.AF_UNIX)\n"
-            " client.connect(endpoint);client.close()\n"
-            " print('READY',flush=True)\n"
-            " for line in sys.stdin: print('ECHO:'+line.strip(),flush=True)\n"
-        )
-        executable.chmod(0o700)
+        executable = codex_notify_fixture("attention-pacing-codex")
         service = Service(
             binary,
             runtime,
@@ -1125,6 +827,7 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             str(executable),
             [],
             runtime,
+            codex_home,
             codex=True,
         )
 
@@ -1161,6 +864,7 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                     snapshot = {
                         "connected": bool(data[45]),
                         "ready": bool(data[46]),
+                        "activity": data[47],
                         "epoch": epoch,
                         "diagnostic": diagnostic,
                         "requests": count,
@@ -1170,23 +874,31 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                         return snapshot, publications
             raise CheckError("Attention publication deadline expired")
 
-        def wait_marker(suffix):
-            deadline = time.monotonic() + WAIT
-            marker = Path(str(service.endpoint) + suffix)
-            while not marker.exists():
-                require(time.monotonic() < deadline, "Attention fixture marker missing")
-                time.sleep(0.01)
-            return marker
+        def quiet_window(message):
+            # A first-hit read always returns 1, so it cannot show a burst
+            # produced exactly one publication; a quiet window with no further
+            # attention frames can.
+            quiet = time.monotonic() + 0.04
+            while (remaining := quiet - time.monotonic()) > 0:
+                try:
+                    kind, _ = client.receive(remaining)
+                except (FrameDeadline, socket.timeout):
+                    break
+                require(kind != ATTENTION_SNAPSHOT, message)
 
         try:
-            wait_marker(".codex.bound")
-            pid = int(wait_marker(".codex.pid").read_text())
             with service.connect() as client:
-                initial, _ = read_attention(client)
-                require(
-                    initial["requests"] == 0,
-                    "Unqualified source did not publish initial attention",
+                # The first finished turn starts the notify source.
+                client.send(TEXT, b"turn\r")
+                initial, _ = read_attention(
+                    client,
+                    predicate=lambda snapshot: snapshot["activity"] == TURN_COMPLETED,
                 )
+                require(
+                    initial["ready"] and initial["requests"] == 0,
+                    "A finished turn did not synchronize the notify source",
+                )
+                quiet_window("A finished turn produced more than one publication")
                 # Send one input batch without a Python scheduling gap between
                 # decisions: one write keeps the two revisions a single burst.
                 # The attachment prefix repeats WireClient.send's invariant, so
@@ -1213,130 +925,89 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                         )
                     )
                 client.socket.sendall(b"".join(decisions))
-                # Writing the decisions does not prove the service consumed
-                # them. If exit were raced ahead of the decision publication,
-                # stop_codex() would clear decision_error_ and publish the
-                # exit diagnostic, and the late decisions would set
-                # decision_error_ again; publish_attention() prioritizes it
-                # over codex_error_, hiding the exit diagnostic from the wait
-                # below and leaking a decision publication into the quiet
-                # window. Observe the decision batch first, then treat source
-                # exit as its own publication phase.
+                # Codex takes its answers in its own terminal: the batch is
+                # refused with one publication, and changes no request.
                 decision_snapshot, decision_publications = read_attention(client)
-                # The source has not been stopped yet, so this publication is
-                # the batch's; exit text here would mean the phases crossed.
                 require(
-                    "Codex server exited" not in decision_snapshot["diagnostic"],
-                    "Exit diagnostic arrived before the source was stopped",
+                    "Answer Codex requests in the terminal"
+                    in decision_snapshot["diagnostic"],
+                    "Decision batch was not refused",
                 )
                 require(
                     decision_snapshot["requests"] == initial["requests"],
                     "Decision batch changed the pending request count",
                 )
-                # A first-hit read always returns 1, so it cannot show the
-                # batch produced exactly one publication; a quiet window with
-                # no further attention frames can.
-                quiet = time.monotonic() + 0.04
-                while (remaining := quiet - time.monotonic()) > 0:
-                    try:
-                        kind, _ = client.receive(remaining)
-                    except (FrameDeadline, socket.timeout):
-                        break
-                    require(
-                        kind != ATTENTION_SNAPSHOT,
-                        "Decision batch produced more than one publication",
-                    )
-                os.kill(pid, signal.SIGTERM)
+                quiet_window("Decision batch produced more than one publication")
+                # Submitted input starts the next turn the notify program does
+                # not report: one publication of the newest state.
+                client.send(TEXT, b"next\r")
                 latest, publications = read_attention(
                     client,
-                    predicate=lambda snapshot: (
-                        "Codex server exited" in snapshot["diagnostic"]
-                    ),
+                    predicate=lambda snapshot: snapshot["activity"] != TURN_COMPLETED,
                 )
                 require(
-                    publications == 1,
-                    f"Source exit produced {publications} publications",
+                    publications == 1 and latest["ready"],
+                    f"Submitted input produced {publications} publications",
                 )
-                deadline = time.monotonic() + 0.04
-                while (remaining := deadline - time.monotonic()) > 0:
-                    try:
-                        kind, _ = client.receive(remaining)
-                    except (FrameDeadline, socket.timeout):
-                        break
-                    require(
-                        kind != ATTENTION_SNAPSHOT,
-                        "Unchanged attention produced another publication",
-                    )
+                quiet_window("Unchanged attention produced another publication")
             return {
                 "attention_decision_publications": decision_publications,
-                "attention_publications_through_exit": publications,
-                "newest_state": "source-exit",
+                "attention_publications_through_submit": publications,
+                "newest_state": "submitted",
             }
         finally:
             service.stop()
 
-    def delayed_codex_listener():
-        # This disposable executable is deliberately unqualified: terminal startup
-        # still works, while structured attention remains disabled.
-        executable = runtime / "delayed-codex"
-        executable.write_text(
-            f"#!{sys.executable}\n"
-            "import socket,sys,time\n"
-            "from pathlib import Path\n"
-            "if sys.argv[1]=='app-server':\n"
-            " endpoint=sys.argv[3].removeprefix('unix://')\n"
-            " server=socket.socket(socket.AF_UNIX)\n"
-            " server.bind(endpoint)\n"
-            " Path(endpoint+'.bound').touch()\n"
-            " time.sleep(.5)\n"
-            " server.listen()\n"
-            " while True:\n"
-            "  connection,_=server.accept();connection.close()\n"
-            "else:\n"
-            " client=socket.socket(socket.AF_UNIX)\n"
-            " client.connect(sys.argv[2].removeprefix('unix://'))\n"
-            " client.close()\n"
-            " print('LISTENER_READY',flush=True)\n"
-            " for line in sys.stdin: print('ECHO:'+line.strip(),flush=True)\n"
-        )
-        executable.chmod(0o700)
+    def codex_notify_reattachment():
+        # Notify frames written to the agent's terminal never reach the screen,
+        # and turns keep arriving for a client that attaches later.
+        executable = codex_notify_fixture("reattach-codex")
         service = Service(
             binary,
             runtime,
             artifacts,
-            "delayed-codex",
+            "reattach-codex",
             str(executable),
             [],
             runtime,
+            codex_home,
             codex=True,
         )
 
-        def terminal_text(client, text):
-            if client.cached_snapshot and text in client.cached_snapshot["text"]:
-                return
+        def finished_turn(client, text, *, submitted=False):
+            # After submitted input, the earlier finished turn must first give
+            # way to the new one; the notify program takes far longer than
+            # the attention pacing interval.
+            seen = {"text": "", "finished": False, "started": not submitted}
             deadline = time.monotonic() + WAIT
             while time.monotonic() < deadline:
                 kind, data = client.receive(max(0.01, deadline - time.monotonic()))
                 if kind == ATTENTION_SNAPSHOT:
-                    continue
-                require(
-                    kind == SNAPSHOT and data[:40] == client.attachment,
-                    "Unexpected frame during delayed startup",
-                )
-                if text in decode_snapshot(data[72:])["text"]:
+                    finished = data[47] == TURN_COMPLETED
+                    seen["started"] = seen["started"] or not finished
+                    seen["finished"] = finished and seen["started"]
+                elif kind == SNAPSHOT:
+                    require(
+                        data[:40] == client.attachment, "Snapshot attachment mismatch"
+                    )
+                    seen["text"] = decode_snapshot(data[72:])["text"]
+                if seen["finished"] and text in seen["text"]:
+                    require(
+                        "7717" not in seen["text"] and "lapis-" not in seen["text"],
+                        "A notify frame reached the screen",
+                    )
                     return
-            raise CheckError("Delayed backend terminal text missing")
+            raise CheckError(f"Turn or terminal text missing: {text}")
 
         try:
-            deadline = time.monotonic() + WAIT
-            while not Path(str(service.endpoint) + ".codex.bound").exists():
-                require(time.monotonic() < deadline, "Fake backend never bound")
-                time.sleep(0.01)
             with service.connect() as client:
-                terminal_text(client, "LISTENER_READY")
+                client.snapshot(lambda s: "READY" in s["text"])
+                client.send(TEXT, b"turn\r")
+                finished_turn(client, "ECHO:turn")
             with service.connect() as client:
-                client.send(TEXT, b"reattached\n")
-                terminal_text(client, "ECHO:reattached")
+                client.send(TEXT, b"turn-again\r")
+                finished_turn(client, "ECHO:turn-again", submitted=True)
+            return {"notify_turns_across_attachments": 2}
         finally:
             service.stop()
 
@@ -2152,15 +1823,9 @@ with open(sys.argv[1], 'wb', buffering=0) as output:
         ("detached output and same-PID reattachment", detach, None),
         ("mismatch and malformed attachment preserve active client", mismatch, None),
         ("failed executable and cwd", failures, None),
-        ("Codex config values and literal separator", codex_config_arguments, None),
         (
-            "Codex permissions reach the server and leave a resuming TUI",
-            codex_resume_permissions,
-            None,
-        ),
-        (
-            "Codex backend exit diagnostics exclude private stderr",
-            codex_backend_exit,
+            "Codex notify program first, other arguments and a user notify unchanged",
+            codex_notify_arguments,
             None,
         ),
         (
@@ -2169,8 +1834,8 @@ with open(sys.argv[1], 'wb', buffering=0) as output:
             None,
         ),
         (
-            "Codex bind-before-listen startup and reattachment",
-            delayed_codex_listener,
+            "Codex notify turns stay off screen and survive reattachment",
+            codex_notify_reattachment,
             None,
         ),
         (

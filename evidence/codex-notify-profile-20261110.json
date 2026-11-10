@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-10T04:15:20Z",
+  "agent": "Codex triage parent with three read-only Codex subagents",
+  "base_revision": "90ce4861646c6e03662301f93f2513addb7f2a2a2",
+  "source_revision": "b7dbdb42cdd810b301cac292b6ef239bb072cd26",
+  "runtime_validation_revision": "b7dbdb42cdd810b301cac292b6ef239bb072cd26",
+  "scope": "Final PR 193 repair and qualification for local and remote Codex notify chaining across base and selected profile configuration.",
+  "changed_source_manifest": {
+    "algorithm": "shasum -a 256 of: git diff --binary --full-index 90ce4861646c6e03662301f93f2513addb7f2a2a2..b7dbdb42cdd810b301cac292b6ef239bb072cd26 -- ':(exclude)evidence/*'",
+    "digest": "b5f77540508baea25aeac445fdafa494f8afa714e78ce454494373373d2b1edc",
+    "changed_paths": 68
+  },
+  "validation_scope": "Broad C++/desktop gates ran at ceb89f45369e6b40940b8dd6f12c562a57353a48. Final source b7dbdb42cdd810b301cac292b6ef239bb072cd26 changes only the Python relay and tests; repository quality, both focused Python interpreters, and both Codex notify CLI cases were rerun at that final source.",
+  "codex_interface_observation": {
+    "binary": "codex resolved from PATH",
+    "sha256": "703b845ec3313423eb7d486aa475125f87bf0cfc4a64d5e6ff93ab3068f9d38e",
+    "reported_version": "codex-cli 0.0.0",
+    "profile_help": "-p, --profile layers $CODEX_HOME/<name>.config.toml over the base user config",
+    "attached_forms_accepted_for_help": [
+      "-p=work",
+      "-c=notify=[]"
+    ],
+    "profile_name_source_contract": "ASCII letters, digits, underscore, or hyphen"
+  },
+  "validation": [
+    {
+      "command": "just quality",
+      "result": "passed; 484 Python tests, Ruff lint/format, revision/status and diff checks",
+      "receipt": "build/reports/quality/receipt.json",
+      "revision": "b7dbdb42cdd810b301cac292b6ef239bb072cd26"
+    },
+    {
+      "command": "just check",
+      "result": "passed; build, all 17 dev CTest cases, clang-format, Cppcheck and every clang-tidy partition",
+      "receipt": "build/reports/dev/receipt.json",
+      "revision": "ceb89f45369e6b40940b8dd6f12c562a57353a48"
+    },
+    {
+      "command": "cmake --build build/desktop --parallel && ctest --test-dir build/desktop -LE screen --output-on-failure",
+      "result": "passed; all 39 enabled desktop tests, including workspace-adapter-status",
+      "revision": "ceb89f45369e6b40940b8dd6f12c562a57353a48"
+    },
+    {
+      "command": "just asan",
+      "result": "passed; all 17 ASan/UBSan CTest cases",
+      "receipt": "build/reports/asan/receipt.json",
+      "revision": "ceb89f45369e6b40940b8dd6f12c562a57353a48"
+    },
+    {
+      "command": "just tsan",
+      "result": "passed; all 17 TSan CTest cases",
+      "receipt": "build/reports/tsan/receipt.json",
+      "revision": "ceb89f45369e6b40940b8dd6f12c562a57353a48"
+    },
+    {
+      "command": "/usr/bin/python3 scripts/tests/test_terminal_hook_relay.py && python3 -m unittest scripts.tests.test_terminal_hook_relay",
+      "result": "passed; 11 relay tests on Python 3.9 and current Python, including quoted keys, valid/invalid unicode escapes, no-tomllib multiline/nested-array/triple-string parsing, and a profile-only home",
+      "revision": "b7dbdb42cdd810b301cac292b6ef239bb072cd26"
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop --case codex-notify-arguments",
+      "result": "passed; all 10 notify/profile argument cases, including attached forms, last pre-literal selection and inherited-profile clearing",
+      "revision": "b7dbdb42cdd810b301cac292b6ef239bb072cd26"
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop --case codex-notify-reattachment",
+      "result": "passed; two notify turns stayed off screen across reattachment",
+      "revision": "b7dbdb42cdd810b301cac292b6ef239bb072cd26"
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_workspace_tests --case remote-hooks",
+      "result": "passed; remote profile notify replaces base notify while turns remain off screen"
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R '^workspace-local-codex$' --output-on-failure",
+      "result": "passed"
+    },
+    {
+      "command": "just cli-check",
+      "result": "only pre-existing snapshot-limit failed; all Codex notify cases passed. snapshot-limit also fails at current main in the pr-199-review baseline worktree's build/cli-launch-check/baseline-current-main-recheck.json"
+    }
+  ],
+  "review_followups": [
+    "Honor -p=work and -c=notify=[] attached Codex option forms.",
+    "Layer profile-only, missing-profile and missing-base Codex homes correctly.",
+    "Clear stale inherited LAPIS_CODEX_PROFILE when no profile is selected.",
+    "Propagate selected profiles through new and restored remote Codex launches.",
+    "Accept valid multiline TOML arrays whose final element has no trailing comma.",
+    "Do not mistake a nested top-level array or text inside a multiline string for the first TOML table; decode valid TOML unicode escapes and quoted notify keys while rejecting surrogates and out-of-range code points on Python before 3.11.",
+    "Restore a saved Codex agent with the output status estimate and keep that case in the non-screen desktop gate.",
+    "Scope app-server, launch-default, Python-version and nonce-trust claims precisely."
+  ],
+  "non_claims": [
+    "No end-to-end turn was submitted to an installed Codex model provider; Codex launch/profile grammar was probed locally and behavior was exercised with fixture CLIs.",
+    "Native macOS GUI input, packaged-app execution, remote resume and turn-start/approval reporting are not claimed.",
+    "The current-main snapshot-limit CLI fixture failure remains open outside PR 193."
+  ]
+}

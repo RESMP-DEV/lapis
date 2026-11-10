@@ -580,32 +580,16 @@ void attention_routing_and_reconnect() {
     const auto first_token = initial[0].toMap().value("token").toString();
     const auto second_token = initial[1].toMap().value("token").toString();
     require(first_token != second_token, "Large revisions collapsed in UI token");
-    require(!f.document.respondAttention(first_token, {{"choice", "unsupported"}}),
-            "Invalid choice accepted");
-    require(f.document.respondAttention(first_token, {{"choice", "decline"}}),
-            "Provisional decision not sent");
-    const auto rejected_frame = peer.read();
-    publish();
-    require(!f.document.attentionRequests()[0].toMap().value("enabled").toBool(),
-            "Old snapshot unblocked provisional decision");
-    peer.send(wire::Kind::attention_retry, rejected_frame.payload);
-    until([&] { return f.document.attentionRequests()[0].toMap().value("enabled").toBool(); });
-    require(f.document.respondAttention(first_token, {{"choice", "accept"}}),
-            "Explicit decision not sent");
-    const auto frame = peer.read();
-    require(frame.kind == wire::Kind::attention_decision, "Wrong response kind");
-    const auto envelope = wire::decode_control(frame.payload);
-    const auto decision = wire::decode_attention_decision(envelope.payload);
-    require(envelope.attachment == state.attachment && decision.request_id == ids[0] &&
-                decision.revision == state.requests[0].pending.revision &&
-                decision.source_epoch == 8 && decision.choice == "accept",
-            "Decision changed exact native identity");
-    require(!f.document.respondAttention(first_token, {{"choice", "accept"}}),
-            "Duplicate response sent");
-    publish(); // A queued older snapshot cannot re-enable the locally submitted token.
-    require(!f.document.attentionRequests()[0].toMap().value("enabled").toBool(),
-            "Snapshot re-enabled send");
-    require(f.document.attentionCount() == 2, "Sending resolved a request");
+    // Requests are answered in the agent's own terminal. A service still
+    // refuses a decision an older desktop sent; the refusal changes nothing.
+    const wire::AttentionDecision refused{
+        8, ids[0], state.requests[0].pending.revision, QStringLiteral("accept"), {}};
+    peer.send(wire::Kind::attention_retry,
+              wire::encode_control({state.attachment, wire::encode_attention_decision(refused)}));
+    settle();
+    require(f.document.inputReady() && f.document.attentionCount() == 2 &&
+                f.document.attentionRequests()[0].toMap().value("token") == first_token,
+            "A refused decision changed the requests");
     state.requests.erase(state.requests.begin());
     publish();
     require(f.document.attentionCount() == 1 &&
@@ -613,8 +597,6 @@ void attention_routing_and_reconnect() {
             "Resolution removed the wrong typed ID");
     peer.socket->abort();
     until([&] { return !f.document.attentionReady(); });
-    require(!f.document.respondAttention(second_token, {{"choice", "accept"}}),
-            "Disconnected send accepted");
     require(f.document.attentionCount() == 1, "Disconnect discarded pending evidence");
     f.document.reconnect();
     peer = f.accept();
@@ -627,14 +609,7 @@ void attention_routing_and_reconnect() {
     publish();
     require(f.document.attentionSerial() == before_reattach, "Attachment alone re-alerted");
     require(f.document.attentionReady(), "Reconciled requests did not become ready");
-    require(!f.document.respondAttention(second_token, {{"choice", "decline"}}),
-            "Old attachment token sent");
-    const auto fresh = f.document.attentionRequests()[0].toMap().value("token").toString();
-    require(f.document.respondAttention(fresh, {{"choice", "decline"}}),
-            "Fresh attachment token failed");
-    const auto reply =
-        wire::decode_attention_decision(wire::decode_control(peer.read().payload).payload);
-    require(reply.request_id == ids[1] && reply.choice == "decline", "String identity was coerced");
+    require(f.document.attentionCount() == 1, "Reconciliation changed the pending requests");
     state.attachment.generation = 1;
     publish();
     require(!f.document.inputReady(), "Wrong-attachment snapshot was accepted");

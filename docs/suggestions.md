@@ -131,10 +131,11 @@ complete.
 
 An agent on another machine reports its finished turns through its own
 terminal: lapis starts it with hooks (Claude Code) or a notify program (Codex)
-that run a small relay with that machine's `python3` (Python 3.11+ to preserve
-Codex's configured notify program through `tomllib`). Nothing is installed or
-left there. Without `python3` there, or for an agent started before this, its
-turns are not reported and no guess is made; restart it to add the hooks.
+that run a small relay with that machine's `python3`. The Codex relay preserves
+the configured notify program and has a fallback for Python before 3.11.
+Nothing is installed or left there. Without `python3` there, or for an agent
+started before this, its turns are not reported and no guess is made; restart
+it to add the hooks.
 
 An OMP agent on this Mac reports its turns through an extension lapis writes
 next to its OMP overlay in the runtime folder (`omp-lapis-turns.ts`, loaded by

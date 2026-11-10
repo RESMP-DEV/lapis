@@ -1,7 +1,7 @@
 #include "agent_checkpoint.hpp"
 
 #include "platform/posix/unique_fd.hpp"
-#include <QDateTime>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -177,44 +177,41 @@ std::optional<ResumeRecord> CheckpointScanner::scan(QByteArrayView output) {
     }
 }
 
-std::vector<QString> codex_threads_from_open_files(const QString& listing) {
-    static const QRegularExpression rollout(
-        QStringLiteral(R"(^n(\S*/sessions/\S*/(rollout-[^/]*-([0-9a-f]{8}-[0-9a-f]{4}-)"
-                       R"([0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))\.jsonl)$)"),
-        QRegularExpression::MultilineOption);
-    struct Open {
-        QString thread;
-        QString name;
-        QDateTime written;
-    };
-    std::vector<Open> open;
-    for (auto matches = rollout.globalMatch(listing); matches.hasNext();) {
-        const auto match = matches.next();
-        const QFileInfo info(match.captured(1));
-        if (!info.isFile())
-            continue;
-        const auto subagent = subagent_rollout(info.filePath());
-        if (subagent.value_or(true))
-            continue;
-        open.push_back({match.captured(3), match.captured(2), info.lastModified()});
+namespace {
+// The rollout in sessions/YYYY/MM/DD named for `thread`, newest days first;
+// depth counts the date levels left. No symlink is followed.
+QString codex_rollout(const QDir& directory, const QString& thread, int depth) {
+    if (depth == 0) {
+        const auto rollouts =
+            directory.entryList({QStringLiteral("rollout-*-") + thread + QStringLiteral(".jsonl")},
+                                QDir::Files | QDir::NoSymLinks);
+        return rollouts.isEmpty() ? QString() : directory.filePath(rollouts.front());
     }
-    // Rollout names start with their creation time and break ties.
-    std::sort(open.begin(), open.end(), [](const Open& left, const Open& right) {
-        return left.written != right.written ? left.written > right.written
-                                             : left.name > right.name;
-    });
-    std::vector<QString> threads;
-    for (const auto& each : open)
-        if (std::find(threads.begin(), threads.end(), each.thread) == threads.end())
-            threads.push_back(each.thread);
-    return threads;
+    const auto pattern = QStringLiteral("[0-9]").repeated(depth == 3 ? 4 : 2);
+    const auto folders =
+        directory.entryList({pattern}, QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks,
+                            QDir::Name | QDir::Reversed);
+    for (const auto& folder : folders)
+        if (auto found = codex_rollout(QDir(directory.filePath(folder)), thread, depth - 1);
+            !found.isEmpty())
+            return found;
+    return {};
 }
+} // namespace
 
-std::optional<QString> codex_thread_from_open_files(const QString& listing) {
-    const auto threads = codex_threads_from_open_files(listing);
-    if (threads.empty())
+std::optional<bool> codex_main_thread(const QString& codex_home, const QString& thread) {
+    // Only a thread id goes into the file pattern, never a wildcard.
+    static const QRegularExpression uuid(
+        QStringLiteral(R"(^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$)"));
+    if (!uuid.match(thread).hasMatch())
         return std::nullopt;
-    return threads.front();
+    const auto rollout = codex_rollout(QDir(codex_home + QStringLiteral("/sessions")), thread, 3);
+    if (rollout.isEmpty())
+        return std::nullopt;
+    const auto subagent = subagent_rollout(rollout);
+    if (!subagent)
+        return std::nullopt;
+    return !*subagent;
 }
 
 std::optional<ResumeRecord> read_resume_record(const QString& endpoint) {
