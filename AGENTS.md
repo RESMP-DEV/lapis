@@ -108,7 +108,7 @@ This does not authorize merging, releasing or expanding a worker's permissions.
   finished turns through its notify program, as an agent on another machine
   does (see the architecture's Codex route). No agent or attention route
   runs `codex app-server`; the desktop starts one briefly only to read
-  Codex's model list and rate limits.
+  Codex's model list.
 - Preserve actual terminal behavior: Unicode, shaping, wide cells, escape
   sequences, resize, IME, selection, clipboard, and accessibility. Prefer an
   evaluated terminal engine over casually rebuilding terminal compatibility.
