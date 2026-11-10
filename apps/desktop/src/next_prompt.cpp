@@ -1,6 +1,7 @@
 #include "next_prompt.hpp"
 
 #include "next_prompt_script.hpp"
+#include "platform/posix/private_file.hpp"
 #include "platform/updater_process.hpp"
 
 #include <QDateTime>
@@ -11,7 +12,6 @@
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QRandomGenerator>
-#include <QSaveFile>
 #include <QTimer>
 #include <QUuid>
 #include <lapis/session/terminal.hpp>
@@ -240,13 +240,9 @@ NextPrompt::NextPrompt(Lookup lookup, Agents agents, Program program, const File
       // Offer ids are unique across launches: the log outlives any one.
       run_(QUuid::createUuid().toString(QUuid::WithoutBraces)) {
     QDir().mkpath(files.folder, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-    QSaveFile script(script_path_);
-    if (script.open(QIODevice::WriteOnly)) {
-        script.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
-        script.write(kNextPromptScript);
-        if (!script.commit())
-            qWarning() << "Next prompt: cannot write the helper:" << script.errorString();
-    }
+    QString error;
+    if (!session::posix::write_private_file(script_path_, QByteArray(kNextPromptScript), &error))
+        qWarning() << "Next prompt: cannot write the helper:" << error;
     clock_.start();
 }
 

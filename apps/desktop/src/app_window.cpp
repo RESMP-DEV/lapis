@@ -1,5 +1,6 @@
 #include "app_window.hpp"
 #include "app_paths.hpp"
+#include "platform/posix/private_file.hpp"
 
 #include <QDebug>
 #include <QDir>
@@ -17,7 +18,6 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QRect>
-#include <QSaveFile>
 #include <QScopeGuard>
 #include <QScopedValueRollback>
 #include <QScreen>
@@ -447,12 +447,10 @@ void AppWindow::saveGeometry() {
         {QStringLiteral("width"), normal_geometry_.width()},
         {QStringLiteral("height"), normal_geometry_.height()},
         {QStringLiteral("maximized"), window_->windowState() == Qt::WindowMaximized}};
-    QSaveFile file(options_.geometryPath);
-    const QByteArray bytes = QJsonDocument(object).toJson(QJsonDocument::Compact);
-    if (!file.open(QIODevice::WriteOnly) ||
-        !file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner) ||
-        file.write(bytes) != bytes.size() || !file.commit())
-        qWarning() << "Could not save window geometry:" << file.errorString();
+    QString error;
+    if (!session::posix::write_private_file(
+            options_.geometryPath, QJsonDocument(object).toJson(QJsonDocument::Compact), &error))
+        qWarning() << "Could not save window geometry:" << error;
 }
 
 void AppWindow::rememberGeometry() {

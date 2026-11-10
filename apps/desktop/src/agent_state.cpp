@@ -2,14 +2,13 @@
 #include "next_prompt.hpp"
 #include "workspace.hpp"
 
+#include "platform/posix/private_file.hpp"
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDebug>
-#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QSaveFile>
 #include <QSet>
 #include <algorithm>
 #include <utility>
@@ -17,16 +16,13 @@
 namespace lapis::desktop {
 namespace {
 constexpr qsizetype kReasonLimit = 256;
-constexpr auto kOwnerOnly = QFile::ReadOwner | QFile::WriteOwner;
 
 bool write_private(const QString& path, const QByteArray& bytes) {
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly) || !file.setPermissions(kOwnerOnly) ||
-        file.write(bytes) != bytes.size() || !file.commit()) {
-        qWarning().noquote() << "Agent state not published:" << file.errorString();
+    QString error;
+    if (!session::posix::write_private_file(path, bytes, &error)) {
+        qWarning().noquote() << "Agent state not published:" << error;
         return false;
     }
-    QFile::setPermissions(path, kOwnerOnly);
     return true;
 }
 } // namespace
