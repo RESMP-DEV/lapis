@@ -1194,7 +1194,8 @@ void claudeAgentsUseServiceAdapter() {
                 "Claude agents read status from the service adapter");
         require(source(workspace, legacy) == Source::output,
                 "pre-adapter Claude agents keep terminal mode and the output estimate");
-        require(source(workspace, codex) == Source::observer, "Codex keeps its observer");
+        require(source(workspace, codex) == Source::output,
+                "Codex estimates status from terminal output");
         require(workspace.addCategory(QStringLiteral("Research")), "save the registry");
     }
     const auto saved = QJsonDocument::fromJson(readRegistry(options.storagePath))
@@ -6157,7 +6158,8 @@ int main(int argc, char** argv) {
     try {
         if (argc > 1) {
             require(argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--case") &&
-                        (QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options") ||
+                        (QString::fromLocal8Bit(argv[2]) == QStringLiteral("adapter-status") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-hooks") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("local-codex") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("retired-plans") ||
@@ -6170,10 +6172,13 @@ int main(int argc, char** argv) {
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("stage-size")),
                     "Usage: lapis_workspace_tests [--case "
-                    "remote-options|remote-hooks|local-codex|retired-plans|reload|updater|"
+                    "adapter-status|remote-options|remote-hooks|local-codex|retired-plans|reload|"
+                    "updater|"
                     "updates-off|startup-defaults|launch-policy|omp-overlay|chimes|stage-size]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
-            if (selected == QStringLiteral("retired-plans")) {
+            if (selected == QStringLiteral("adapter-status")) {
+                claudeAgentsUseServiceAdapter();
+            } else if (selected == QStringLiteral("retired-plans")) {
                 retiredPlansLeaveSavedAgentsStartable();
             } else if (selected == QStringLiteral("remote-options")) {
                 remoteOptionsRespectTheArgumentLimit();
