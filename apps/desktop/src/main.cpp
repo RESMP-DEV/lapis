@@ -14,7 +14,7 @@
 #include "terminals.hpp"
 #include "tool_status.hpp"
 #include "ui_capture.hpp"
-#include "ui_preview.hpp"
+#include "app_window.hpp"
 #include "workspace.hpp"
 #include "workspace_control.hpp"
 
@@ -455,7 +455,7 @@ bool closes_to_dock(bool isolated, const QCommandLineParser& parser) {
 }
 // Switching to lapis rereads reduced motion; a click on its Dock icon (or any
 // activation) brings a closed window back.
-void follow_activation(QGuiApplication& app, lapis::desktop::UiPreview& view,
+void follow_activation(QGuiApplication& app, lapis::desktop::AppWindow& view,
                        QPointer<QQuickWindow>& shown, bool hide_on_close) {
     QObject::connect(&app, &QGuiApplication::applicationStateChanged, &view,
                      [&view, &shown, hide_on_close](Qt::ApplicationState state) {
@@ -470,7 +470,7 @@ void follow_activation(QGuiApplication& app, lapis::desktop::UiPreview& view,
                      });
 }
 // Command-` before AppKit's window cycling takes it, while that key is bound.
-void route_terminal_keys(lapis::desktop::UiPreview& view, const lapis::desktop::KeyMap& keymap) {
+void route_terminal_keys(lapis::desktop::AppWindow& view, const lapis::desktop::KeyMap& keymap) {
     lapis::desktop::platform::on_terminal_keys([&view, &keymap](bool shifted) {
         auto* window = view.window();
         const auto action =
@@ -496,7 +496,7 @@ interaction_recorder(lapis::desktop::Workspace& workspace, const lapis::desktop:
                      const QCommandLineParser& parser) {
     using lapis::desktop::InteractionRecorder;
     // restoreAgents marks the normal workspace, without an explicit launch.
-    if (isolated || !options.restoreAgents || workspace.previewMode() ||
+    if (isolated || !options.restoreAgents || workspace.fixtureMode() ||
         parser.isSet(QStringLiteral("capture")))
         return nullptr;
     auto recorder = std::make_unique<InteractionRecorder>(
@@ -770,14 +770,14 @@ int run_headless(lapis::desktop::Workspace& workspace, lapis::desktop::KeyMap& k
 }
 
 // Connect keyboard ownership and any requested capture to the window that
-// UiPreview creates. Lives outside main() to keep main's branching flat.
-void wire_window(QQuickWindow& window, lapis::desktop::UiPreview& view,
+// AppWindow creates. Lives outside main() to keep main's branching flat.
+void wire_window(QQuickWindow& window, lapis::desktop::AppWindow& view,
                  lapis::desktop::Workspace& workspace, const QCommandLineParser& parser) {
     QObject::connect(&window, &QQuickWindow::activeChanged, &view, [&view, &window] {
         if (window.isActive())
             view.assignTerminalFocus();
     });
-    if (!workspace.previewMode()) {
+    if (!workspace.fixtureMode()) {
         // The Dock badge counts agents waiting on you in any category, so it
         // shows from another app.
 #ifdef Q_OS_MACOS
@@ -853,7 +853,7 @@ int main(int argc, char** argv) {
         keymap.load();
         auto options = workspace_options(parser, isolated);
         options.harnessUpdatesOff = keymap.harnessUpdatesOff();
-        Workspace workspace(isolated ? WorkspaceMode::preview : WorkspaceMode::live, options);
+        Workspace workspace(isolated ? WorkspaceMode::fixture : WorkspaceMode::live, options);
         const auto configure = [&] {
             workspace.setHarnessArguments(keymap.harnessArguments());
             workspace.setHarnessUpdatesOff(keymap.harnessUpdatesOff());
@@ -907,7 +907,7 @@ int main(int argc, char** argv) {
         const auto guiState = keep_gui_state(workspace, nextPrompt, seen, isolated);
         // Before the view, so the window callbacks never see it destroyed.
         const auto recorder = interaction_recorder(workspace, keymap, options, isolated, parser);
-        UiPreview view(workspace, {.source = qml_source(parser),
+        AppWindow view(workspace, {.source = qml_source(parser),
                                    .compact = parser.isSet(QStringLiteral("compact")),
                                    .screen = target_screen(parser),
                                    .keymap = &keymap,
@@ -928,7 +928,7 @@ int main(int argc, char** argv) {
             focus_next_prompt_on_activation(*nextPrompt, workspace, *window);
         follow_activation(app, view, shown, hide_on_close);
         const TerminalKeyMonitorGuard terminal_key_monitor;
-        QObject::connect(&view, &UiPreview::windowChanged, &view, [&](QQuickWindow* window) {
+        QObject::connect(&view, &AppWindow::windowChanged, &view, [&](QQuickWindow* window) {
             shown = window;
             wire_window(*window, view, workspace, parser);
             watch_window(recorder.get(), window);

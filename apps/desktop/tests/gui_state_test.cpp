@@ -221,7 +221,7 @@ void marksComeBack() {
     QJsonObject marks;
     qint64 needed = 0;
     {
-        Workspace before(WorkspaceMode::preview);
+        Workspace before(WorkspaceMode::fixture);
         require(before.selectSession(QStringLiteral("renderer")), "select renderer");
         auto* agent = before.session(QStringLiteral("agent"));
         finishTurn(*agent);
@@ -245,7 +245,7 @@ void marksComeBack() {
                   QJsonObject{{QStringLiteral("unseen"), true}, {QStringLiteral("neededAtMs"), 5}});
     marks.insert(QStringLiteral("agents"), agents);
 
-    Workspace after(WorkspaceMode::preview);
+    Workspace after(WorkspaceMode::fixture);
     require(after.selectSession(QStringLiteral("renderer")), "select renderer");
     int pings = 0;
     int away = 0;
@@ -278,7 +278,7 @@ void marksComeBack() {
     // Saved long ago: an idle agent is just idle.
     marks.insert(QStringLiteral("savedAtMs"),
                  QDateTime::currentMSecsSinceEpoch() - qint64{24} * 3600 * 1000);
-    Workspace later(WorkspaceMode::preview);
+    Workspace later(WorkspaceMode::fixture);
     require(later.selectSession(QStringLiteral("renderer")), "select renderer");
     int later_away = 0;
     QObject::connect(&later, &Workspace::finishedWhileAway, [&later_away] { ++later_away; });
@@ -398,7 +398,7 @@ void marksFollowTheConversation() {
 void seenScreensComeBack() {
     QJsonObject saved;
     {
-        Workspace before(WorkspaceMode::preview);
+        Workspace before(WorkspaceMode::fixture);
         SeenScreens seen(before, [](const Agent*) { return false; });
         int changes = 0;
         QObject::connect(&seen, &SeenScreens::changed, [&changes] { ++changes; });
@@ -408,7 +408,7 @@ void seenScreensComeBack() {
         saved = seen.saveState();
     }
     saved.insert(QStringLiteral("gone"), QStringLiteral("abc"));
-    Workspace after(WorkspaceMode::preview);
+    Workspace after(WorkspaceMode::fixture);
     SeenScreens seen(after, [](const Agent*) { return false; });
     int restored_changes = 0;
     QObject::connect(&seen, &SeenScreens::changed, [&restored_changes] { ++restored_changes; });

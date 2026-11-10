@@ -229,7 +229,7 @@ cat >/dev/null
             "a CLI not installed offers nothing");
 
     // The new-agent forms: the CLI's list, or the config's names as written.
-    lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::preview);
+    lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::fixture);
     workspace.setHarnessModels(&models);
     lapis::desktop::AgentDefaults defaults;
     defaults.models.insert(QStringLiteral("claude"),

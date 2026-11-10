@@ -1,6 +1,6 @@
 #include "ui_capture.hpp"
 #include "terminal_surface.hpp"
-#include "ui_preview.hpp"
+#include "app_window.hpp"
 #include "workspace.hpp"
 
 #include <QCoreApplication>
@@ -59,7 +59,7 @@ void type_smoke_text(QQuickWindow& window, const QString& text) {
         QCoreApplication::sendEvent(&window, &event);
     }
 }
-bool send_smoke_input(QQuickWindow& window, UiPreview& preview) {
+bool send_smoke_input(QQuickWindow& window, AppWindow& preview) {
     if (!preview.assignTerminalFocus())
         return false;
     auto* terminal = qobject_cast<TerminalSurface*>(window.activeFocusItem());
@@ -84,11 +84,11 @@ bool send_smoke_input(QQuickWindow& window, UiPreview& preview) {
 }
 class Capture final : public QObject {
   public:
-    Capture(QQuickWindow& window, Workspace& workspace, UiPreview& preview, CaptureOptions options)
+    Capture(QQuickWindow& window, Workspace& workspace, AppWindow& preview, CaptureOptions options)
         : QObject(&window), window_(window), workspace_(workspace), preview_(preview),
           options_(std::move(options)) {
         setObjectName(QStringLiteral("lapisWindowCapture"));
-        connect(&preview_, &UiPreview::windowChanged, this, [this](QQuickWindow* current) {
+        connect(&preview_, &AppWindow::windowChanged, this, [this](QQuickWindow* current) {
             if (current != &window_) {
                 timeout_.stop();
                 disconnect(&window_, nullptr, this, nullptr);
@@ -127,7 +127,7 @@ class Capture final : public QObject {
             return;
         if (!window_.isActive())
             return;
-        if (!workspace_.previewMode() && workspace_.focusedSession() &&
+        if (!workspace_.fixtureMode() && workspace_.focusedSession() &&
             !workspace_.focusedSession()->liveSnapshotReady())
             return;
         try {
@@ -189,7 +189,7 @@ class Capture final : public QObject {
             {"scope", "GUI-thread observations of frameSwapped; includes delivery scheduling, not "
                       "physical presentation or input latency"},
             {"scenario", options_.scenario},
-            {"preview", workspace_.previewMode()},
+            {"preview", workspace_.fixtureMode()},
             {"reduced_motion", preview_.reducedMotion()},
             {"system_reduced_motion", preview_.systemReducedMotion()},
             {"width", window_.width()},
@@ -225,7 +225,7 @@ class Capture final : public QObject {
     }
     QQuickWindow& window_;
     Workspace& workspace_;
-    UiPreview& preview_;
+    AppWindow& preview_;
     CaptureOptions options_;
     QTimer timeout_;
     QElapsedTimer clock_;
@@ -236,7 +236,7 @@ class Capture final : public QObject {
     bool sent_{};
 };
 } // namespace
-void capture_window(QQuickWindow& window, Workspace& workspace, UiPreview& preview,
+void capture_window(QQuickWindow& window, Workspace& workspace, AppWindow& preview,
                     CaptureOptions options) {
     // QObject window parent owns this one-shot observer and cancels its timers on destruction.
     if (window.findChild<QObject*>(QStringLiteral("lapisWindowCapture"),
