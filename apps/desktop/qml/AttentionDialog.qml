@@ -75,8 +75,7 @@ Dialog {
     }
     onRequestsChanged: {
         // Removing the entire session invalidates the dialog owner.
-        if (session && typeof workspace !== "undefined" &&
-                !workspace.agents.some(value => value === session))
+        if (session && !workspace.agents.some(value => value === session))
             close()
     }
 
