@@ -1,16 +1,17 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-10T03:23:41Z",
+  "recorded_at": "2026-11-10T03:35:20Z",
   "agent": "Codex triage parent with three read-only Codex subagents",
   "base_revision": "90ce4861646c6e03662301f93f2513addb7f2a2a2",
-  "source_revision": "112ae72fb60ef1e42e7bf007f75d8e26df3153d5",
-  "runtime_validation_revision": "112ae72fb60ef1e42e7bf007f75d8e26df3153d5",
+  "source_revision": "5359418b6e5fd5fc5b2e786fb1f2fbeced06efbb",
+  "runtime_validation_revision": "5359418b6e5fd5fc5b2e786fb1f2fbeced06efbb",
   "scope": "Final PR 193 repair and qualification for local and remote Codex notify chaining across base and selected profile configuration.",
   "changed_source_manifest": {
-    "algorithm": "shasum -a 256 of: git diff --binary --full-index 90ce4861646c6e03662301f93f2513addb7f2a2a2..112ae72fb60ef1e42e7bf007f75d8e26df3153d5 -- ':(exclude)evidence/*'",
-    "digest": "a534dfac062803820d207874b876fe097652eae4ebadd5a9567a9ec5c73a0f13",
-    "changed_paths": 67
+    "algorithm": "shasum -a 256 of: git diff --binary --full-index 90ce4861646c6e03662301f93f2513addb7f2a2a2..5359418b6e5fd5fc5b2e786fb1f2fbeced06efbb -- ':(exclude)evidence/*'",
+    "digest": "8cca5dd1e1e84be7a9c86595d445fdfc8207b019e50877cd5f5514340433c969",
+    "changed_paths": 68
   },
+  "validation_scope": "C++ and desktop gates ran at 112ae72fb60ef1e42e7bf007f75d8e26df3153d5. The final source changes only the Python relay and its tests; repository quality and both focused Python interpreters were rerun at 5359418b6e5fd5fc5b2e786fb1f2fbeced06efbb.",
   "codex_interface_observation": {
     "binary": "codex resolved from PATH",
     "sha256": "703b845ec3313423eb7d486aa475125f87bf0cfc4a64d5e6ff93ab3068f9d38e",
@@ -26,34 +27,46 @@
     {
       "command": "just quality",
       "result": "passed; 484 Python tests, Ruff lint/format, revision/status and diff checks",
-      "receipt": "build/reports/quality/receipt.json"
+      "receipt": "build/reports/quality/receipt.json",
+      "revision": "5359418b6e5fd5fc5b2e786fb1f2fbeced06efbb"
     },
     {
       "command": "just check",
       "result": "passed; build, all 17 dev CTest cases, clang-format, Cppcheck and every clang-tidy partition",
-      "receipt": "build/reports/dev/receipt.json"
+      "receipt": "build/reports/dev/receipt.json",
+      "revision": "112ae72fb60ef1e42e7bf007f75d8e26df3153d5"
     },
     {
       "command": "cmake --build build/desktop --parallel && ctest --test-dir build/desktop -LE screen --output-on-failure",
-      "result": "passed; all 38 enabled desktop tests"
+      "result": "passed; all 38 enabled desktop tests",
+      "revision": "112ae72fb60ef1e42e7bf007f75d8e26df3153d5"
     },
     {
       "command": "just asan",
       "result": "passed; all 17 ASan/UBSan CTest cases",
-      "receipt": "build/reports/asan/receipt.json"
+      "receipt": "build/reports/asan/receipt.json",
+      "revision": "112ae72fb60ef1e42e7bf007f75d8e26df3153d5"
     },
     {
       "command": "just tsan",
       "result": "passed; all 17 TSan CTest cases",
-      "receipt": "build/reports/tsan/receipt.json"
+      "receipt": "build/reports/tsan/receipt.json",
+      "revision": "112ae72fb60ef1e42e7bf007f75d8e26df3153d5"
     },
     {
       "command": "/usr/bin/python3 scripts/tests/test_terminal_hook_relay.py && python3 -m unittest scripts.tests.test_terminal_hook_relay",
-      "result": "passed; 11 relay tests on Python 3.9 and current Python, including the no-tomllib fallback and profile-only home"
+      "result": "passed; 11 relay tests on Python 3.9 and current Python, including no-tomllib multiline/nested-array/triple-string/unicode-escape parsing and a profile-only home",
+      "revision": "5359418b6e5fd5fc5b2e786fb1f2fbeced06efbb"
     },
     {
       "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop --case codex-notify-arguments",
-      "result": "passed; all 10 notify/profile argument cases, including attached forms, last pre-literal selection and inherited-profile clearing"
+      "result": "passed; all 10 notify/profile argument cases, including attached forms, last pre-literal selection and inherited-profile clearing",
+      "revision": "5359418b6e5fd5fc5b2e786fb1f2fbeced06efbb"
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop --case codex-notify-reattachment",
+      "result": "passed; two notify turns stayed off screen across reattachment",
+      "revision": "5359418b6e5fd5fc5b2e786fb1f2fbeced06efbb"
     },
     {
       "command": "build/desktop/apps/desktop/lapis_workspace_tests --case remote-hooks",
@@ -74,6 +87,7 @@
     "Clear stale inherited LAPIS_CODEX_PROFILE when no profile is selected.",
     "Propagate selected profiles through new and restored remote Codex launches.",
     "Accept valid multiline TOML arrays whose final element has no trailing comma.",
+    "Do not mistake a nested top-level array or text inside a multiline string for the first TOML table, and decode TOML unicode escapes on Python before 3.11.",
     "Scope app-server, launch-default, Python-version and nonce-trust claims precisely."
   ],
   "non_claims": [
