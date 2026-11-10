@@ -3,8 +3,8 @@
 
 #include "harness_catalog.hpp"
 #include "harness_models.hpp"
+#include "config.hpp"
 #include "history_strip.hpp"
-#include "keymap.hpp"
 #include "tab_ranker.hpp"
 #include <lapis/session/terminal.hpp>
 

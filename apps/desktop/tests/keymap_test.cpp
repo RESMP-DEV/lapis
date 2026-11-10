@@ -4,7 +4,7 @@
 // The keymap reads a real file rather than a stub, so these cases exercise the
 // same path the settings dialog uses, including the write-back that makes a
 // choice survive a restart.
-#include "keymap.hpp"
+#include "config.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -28,8 +28,8 @@
 
 namespace {
 using lapis::desktop::CardDensity;
+using lapis::desktop::Config;
 using lapis::desktop::default_settings_shortcuts;
-using lapis::desktop::KeyMap;
 using lapis::desktop::theme_table;
 
 void require(bool value, const char* message) {
@@ -107,7 +107,7 @@ void selection_persists() {
         dir,
         R"({"version": 1, "layout": "focus", "keybindings": {"quit": ["Ctrl+Q"], "cycleLayout": ["Ctrl+L"]}})");
 
-    KeyMap keymap;
+    Config keymap;
     require(keymap.load(), "default config should load");
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "explicit config should load");
@@ -140,7 +140,7 @@ void selection_persists() {
             "arrays should not be exploded one value per line");
 
     // A fresh instance reads the same values back, which is what a restart does.
-    KeyMap reloaded;
+    Config reloaded;
     reloaded.setSourcePathForTesting(path);
     require(reloaded.load(), "written config should reload");
     require(reloaded.themeName() == QStringLiteral("graphite"), "theme should survive a reload");
@@ -159,7 +159,7 @@ void symbolic_link_config_updates_target() {
     const QString canonical_target = QFileInfo(target).canonicalFilePath();
     require(QFileInfo(chain).canonicalFilePath() == canonical_target,
             "fixture symlink does not refer to the temporary config");
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(chain);
     require(keymap.load(), "linked config should load");
     require(keymap.setTheme(QStringLiteral("graphite")), "linked config should save");
@@ -183,7 +183,7 @@ void appearance_preserves_json_and_bad_files() {
         R"({"keybindings":{"openSettings":["Ctrl+,"],"nextWindow":["Ctrl+Shift+]"],"custom":["a, b","quote\"[]", "space  space"]},"categories":[{"title":"[one],  two"}],"layout":"focus"})";
     const QString path = write_config(dir, original);
     const QJsonObject before = read_config(path);
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "load punctuation fixture");
     require(keymap.setTheme(QStringLiteral("graphite")), "persist punctuation fixture");
@@ -219,7 +219,7 @@ void deeply_nested_values_survive_persistence() {
     const QString path =
         write_config(dir, QJsonDocument(root).toJson(QJsonDocument::JsonFormat::Compact) + '\n');
 
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "768-level JSON is accepted by Qt and loaded");
     require(keymap.setTheme(QStringLiteral("graphite")), "deep config should save");
@@ -227,7 +227,7 @@ void deeply_nested_values_survive_persistence() {
     const QJsonObject written = read_config(path);
     require(written.value(QStringLiteral("nested")) == nested,
             "deep nested values should be preserved");
-    KeyMap reloaded;
+    Config reloaded;
     reloaded.setSourcePathForTesting(path);
     require(reloaded.load(), "saved deep config should reload below the byte cap");
     require(reloaded.themeName() == QStringLiteral("graphite"), "deep config reload state");
@@ -242,7 +242,7 @@ void empty_objects_are_compact() {
     const QString path =
         write_config(dir, QByteArrayLiteral(R"({"empty":{},"nested":{"empty":{}},"version":1})"));
 
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "empty-object fixture should load");
     require(keymap.setDensity(QStringLiteral("minimal")), "empty-object fixture should save");
@@ -267,7 +267,7 @@ void expanded_config_remains_reloadable() {
     const auto contents = QJsonDocument(QJsonObject{{QStringLiteral("entries"), entries}})
                               .toJson(QJsonDocument::Compact);
     const auto path = write_config(QDir(directory.path()), contents);
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "compact array fixture loads");
     require(keymap.setTheme(QStringLiteral("amber")), "large config saves within read cap");
@@ -284,7 +284,7 @@ void zero_byte_file_initializes() {
     const QDir dir(directory.path());
     const QString path = write_config(dir, QByteArray{});
 
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(!keymap.load(), "zero-byte file has no JSON object yet");
     require(keymap.setTheme(QStringLiteral("daylight")), "zero-byte file should initialize");
@@ -304,7 +304,7 @@ void nonregular_config_paths_are_rejected() {
     require(dir.mkdir(QStringLiteral("config")), "create directory config path");
     const QString path = dir.filePath(QStringLiteral("config"));
 
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(!keymap.load(), "load must reject a nonregular path");
     require(!keymap.save(), "persist must reject a nonregular path");
@@ -320,9 +320,9 @@ void default_settings_chords_are_shared() {
 #endif
     require(default_settings_shortcuts() == expected,
             "settings defaults must preserve terminal Control chords");
-    KeyMap keymap;
+    Config keymap;
     require(keymap.actionSequences(QStringLiteral("openSettings")) == expected,
-            "KeyMap defaults must use the exported settings chords");
+            "Config defaults must use the exported settings chords");
 
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory for custom binding");
@@ -362,19 +362,19 @@ void retired_actions_load_silently() {
         dir, QJsonDocument(QJsonObject{{QStringLiteral("keybindings"), bindings},
                                        {QStringLiteral("editor"), QStringLiteral("Zed")}})
                  .toJson());
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "a config binding retired actions loads");
     require(keymap.diagnostic().isEmpty(), "retired names load without complaint");
     require(keymap.setTheme(QStringLiteral("graphite")), "an appearance change saves");
     require(read_config(path).value(QStringLiteral("editor")).toString() == QStringLiteral("Zed"),
             "saving leaves a retired setting as written");
-    require(keymap.sequences(QStringLiteral("quit")) == KeyMap().sequences(QStringLiteral("quit")),
+    require(keymap.sequences(QStringLiteral("quit")) == Config().sequences(QStringLiteral("quit")),
             "the other defaults are unchanged");
 }
 
 void navigation_defaults_preserve_terminal_editing() {
-    KeyMap keymap;
+    Config keymap;
     require(keymap.sequences(QStringLiteral("focusLeft")).isEmpty() &&
                 keymap.sequences(QStringLiteral("focusRight")).isEmpty(),
             "line-editing arrows must not change the focused agent");
@@ -478,7 +478,7 @@ void configured_shortcuts_are_validated() {
     const QString path = write_config(
         dir, QByteArrayLiteral(R"({"keybindings":{"nextCategory":["Nonsense","Ctrl+Alt+N",""],)"
                                R"("openSettings":["Ctrl+X, Ctrl+Y"],"custom":["Nonsense"]}})"));
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "mixed shortcut fixture should load");
     require(keymap.actionSequences(QStringLiteral("nextCategory")) ==
@@ -528,7 +528,7 @@ void unknown_names_are_rejected() {
     const QDir dir(directory.path());
     const QString path = write_config(dir, R"({"version": 1})");
 
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "config should load");
     const QString theme = keymap.themeName();
@@ -550,7 +550,7 @@ void malformed_values_fall_back() {
     const QString path =
         write_config(dir, R"({"layout": "diagonal", "theme": "vaporwave", "density": "gigantic"})");
 
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "a syntactically valid file should still load");
     require(keymap.themeName() == QStringLiteral("lapis"), "unknown theme should fall back");
@@ -567,7 +567,7 @@ void harness_updates_can_be_turned_off() {
     const QString path = write_config(
         QDir(directory.path()),
         R"({"harnessUpdates": {"OMP": false, "claude": true, "grok": "no", "": false}})");
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "harness updates load with the rest of the file");
     require(keymap.harnessUpdatesOff() == QSet<QString>{QStringLiteral("omp")},
@@ -591,7 +591,7 @@ void harness_arguments_are_literal_lists() {
         QDir(directory.path()),
         R"({"theme": "oled", "harnessArguments": {"claude": ["--dangerously-skip-permissions"],)"
         R"( "grok": "--yolo", "kimi": ["", 3]}})");
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "harness arguments load with the rest of the file");
     require(keymap.harnessArguments().value(QStringLiteral("claude")) ==
@@ -616,7 +616,7 @@ void harness_arguments_are_literal_lists() {
     const QString invalid_name = write_config(
         dir,
         QStringLiteral(R"({"harnessArguments":{"%1":["--qualified"]}})").arg(long_name).toUtf8());
-    KeyMap overlong_name;
+    Config overlong_name;
     overlong_name.setSourcePathForTesting(invalid_name);
     require(overlong_name.load(), "an overlong harness name still loads other defaults");
     require(overlong_name.harnessArguments().isEmpty(), "an overlong harness name is dropped");
@@ -627,7 +627,7 @@ void harness_arguments_are_literal_lists() {
     const QString invalid_argument = write_config(
         dir,
         QStringLiteral(R"({"harnessArguments":{"claude":["%1"]}})").arg(long_argument).toUtf8());
-    KeyMap overlong_argument;
+    Config overlong_argument;
     overlong_argument.setSourcePathForTesting(invalid_argument);
     require(overlong_argument.load(), "an overlong argument still loads other defaults");
     require(overlong_argument.harnessArguments().isEmpty(), "an overlong argument is dropped");
@@ -636,7 +636,7 @@ void harness_arguments_are_literal_lists() {
 
     const QString empty_name =
         write_config(dir, R"({"harnessArguments":{"":["--dropped"],"claude":["--kept"]}})");
-    KeyMap empty_key;
+    Config empty_key;
     empty_key.setSourcePathForTesting(empty_name);
     require(empty_key.load(), "an empty harness key still loads the rest of the file");
     require(!empty_key.harnessArguments().contains(QString()) &&
@@ -655,7 +655,7 @@ void advertised_names_are_accepted() {
     const QDir dir(directory.path());
     const QString path = write_config(dir, R"({"version": 1})");
 
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "config should load");
 
@@ -679,17 +679,17 @@ void sidebar_preference_and_commands() {
     QTemporaryDir directory;
     require(directory.isValid(), "sidebar fixture directory");
     const auto path = write_config(QDir(directory.path()), R"({"retained":true})");
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load() && keymap.sidebarVisible(), "sidebar defaults visible");
     QList<QPair<bool, bool>> observed;
-    QObject::connect(&keymap, &KeyMap::changed, &keymap,
+    QObject::connect(&keymap, &Config::changed, &keymap,
                      [&] { observed.append({keymap.sidebarVisible(), keymap.previewsVisible()}); });
     require(keymap.setSidebarVisible(false), "hide sidebar persists");
     require(keymap.setPreviewsVisible(false), "hide previews persists");
     require(observed == QList<QPair<bool, bool>>{{false, true}, {false, false}},
             "successful visibility saves emit each settled state once");
-    KeyMap restored;
+    Config restored;
     restored.setSourcePathForTesting(path);
     require(restored.load() && !restored.sidebarVisible(), "hidden sidebar survives restart");
     require(read_config(path).value(QStringLiteral("retained")).toBool(),
@@ -707,7 +707,7 @@ void sidebar_preference_and_commands() {
     }
     require(!restored.previewsVisible(), "hidden previews survive restart");
     observed.clear();
-    QObject::connect(&restored, &KeyMap::changed, &restored, [&] {
+    QObject::connect(&restored, &Config::changed, &restored, [&] {
         observed.append({restored.sidebarVisible(), restored.previewsVisible()});
     });
     static_cast<void>(write_config(QDir(directory.path()), "{broken"));
@@ -723,14 +723,14 @@ void typing_scroll_preference_persists() {
     QTemporaryDir directory;
     require(directory.isValid(), "typing scroll fixture directory");
     const auto path = write_config(QDir(directory.path()), R"({})");
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load() && keymap.scrollToBottomOnTyping(),
             "typing returns to the bottom by default");
     require(keymap.setScrollToBottomOnTyping(false), "the typing return can be turned off");
     require(!read_config(path).value(QStringLiteral("scrollToBottomOnTyping")).toBool(true),
             "the typing return is not persisted");
-    KeyMap restored;
+    Config restored;
     restored.setSourcePathForTesting(path);
     require(restored.load() && !restored.scrollToBottomOnTyping(),
             "the typing return preference survives restart");
@@ -747,7 +747,7 @@ void visual_settings_persist() {
     QTemporaryDir directory;
     require(directory.isValid(), "visual fixture directory");
     const auto path = write_config(QDir(directory.path()), R"({})");
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load() &&
                 keymap.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal") &&
@@ -778,7 +778,7 @@ void visual_settings_persist() {
                 saved.value(QStringLiteral("size")).toInt() == 18 &&
                 saved.value(QStringLiteral("all")).toBool(),
             "visual choices are written");
-    KeyMap restored;
+    Config restored;
     restored.setSourcePathForTesting(path);
     require(restored.load() &&
                 restored.visual().value(QStringLiteral("font")) == QStringLiteral("serif") &&
@@ -801,7 +801,7 @@ void terminal_font_persists_and_rolls_back() {
     const QDir dir(directory.path());
     const QString path =
         write_config(dir, R"({"retained":true,"terminalFont":{"size":20,"ligatures":false}})");
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "font fixture loads");
     require(keymap.terminalFontFamily().isEmpty(), "font family defaults to the system font");
@@ -820,7 +820,7 @@ void terminal_font_persists_and_rolls_back() {
     require(read_config(path).value(QStringLiteral("retained")).toBool(),
             "font save preserves unrelated settings");
 
-    KeyMap restored;
+    Config restored;
     restored.setSourcePathForTesting(path);
     require(restored.load(), "saved font config reloads");
     require(restored.terminalFontSize() == 22 &&
@@ -872,7 +872,7 @@ void terminal_font_persists_and_rolls_back() {
 
     const QString invalid =
         write_config(dir, R"({"terminalFont":{"family":"Tab\tName","size":16.5}})");
-    KeyMap fallback;
+    Config fallback;
     fallback.setSourcePathForTesting(invalid);
     require(fallback.load(), "invalid font values still load the file");
     require(fallback.terminalFontFamily().isEmpty() &&
@@ -883,20 +883,20 @@ void terminal_font_persists_and_rolls_back() {
             "each invalid font value is reported");
 }
 
-// Remote settings are one KeyMap-owned transaction, not three separately
+// Remote settings are one Config-owned transaction, not three separately
 // persisted setters. A failed save leaves both memory and disk where they were.
 void remote_settings_are_transactional() {
     QTemporaryDir directory;
     require(directory.isValid(), "remote-settings fixture directory");
     const QDir dir(directory.path());
     const QString path = write_config(dir, R"({"retained":true})");
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "remote-settings fixture loads");
 
     int changes = 0;
-    QObject::connect(&keymap, &KeyMap::changed, [&changes] { ++changes; });
-    const KeyMap::RemoteSettingsPatch batch{.keepAwake = std::optional(false),
+    QObject::connect(&keymap, &Config::changed, [&changes] { ++changes; });
+    const Config::RemoteSettingsPatch batch{.keepAwake = std::optional(false),
                                             .finishSound = std::optional(false)};
     require(keymap.applyRemoteSettings(batch), "a valid settings batch applies");
     require(changes == 1, "one successful settings batch publishes once");
@@ -918,7 +918,7 @@ void remote_settings_are_transactional() {
     static_cast<void>(write_config(dir, malformed));
     keymap.setSourcePathForTesting(path); // Keep memory; watch the new bytes only.
     QString diagnostic;
-    KeyMap::RemoteSettingsPatch failed_batch;
+    Config::RemoteSettingsPatch failed_batch;
     failed_batch.keepAwake = true;
     failed_batch.finishSound = true;
     require(!keymap.applyRemoteSettings(failed_batch, &diagnostic),
@@ -949,7 +949,7 @@ void config_reloads_when_edited_elsewhere() {
                               "machines": {"devbox": {"folder": "~/work"}},
                               "models": {"codex": ["gpt-6-sol", "custom model [v2]"],
                                          "grok": ["-oBad", "grok-4.7"]}}})");
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "config with defaults should load");
     const auto& defaults = keymap.agentDefaults();
@@ -971,7 +971,7 @@ void config_reloads_when_edited_elsewhere() {
             "alerts and keeping awake are read, with defaults for what is missing");
 
     int changes = 0;
-    QObject::connect(&keymap, &KeyMap::changed, [&changes] { ++changes; });
+    QObject::connect(&keymap, &Config::changed, [&changes] { ++changes; });
     const auto settle = [](const std::function<bool()>& done, int milliseconds) {
         QElapsedTimer clock;
         clock.start();
@@ -1023,7 +1023,7 @@ void retired_plan_settings_survive() {
             "usage": {"show": false, "meter": ["codex"], "machines": ["devbox"]},
             "showUsage": true})");
     const auto before = read_config(path);
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load() && keymap.diagnostic().isEmpty(),
             "retired settings load without a diagnostic");

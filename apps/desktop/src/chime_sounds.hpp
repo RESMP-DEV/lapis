@@ -8,7 +8,7 @@
 #include <memory>
 
 namespace lapis::desktop {
-class KeyMap;
+class Config;
 enum class Chime : std::uint8_t { needsYou, finished };
 
 // A chime as 16-bit mono WAV, synthesized so lapis ships no audio files: two
@@ -37,9 +37,9 @@ class ChimeSounds {
     ~ChimeSounds();
     ChimeSounds(const ChimeSounds&) = delete;
     ChimeSounds& operator=(const ChimeSounds&) = delete;
-    void configure(KeyMap& config);
-    [[nodiscard]] ChimeSound sound(Chime chime, KeyMap& config);
-    void play(Chime chime, KeyMap& config, const Player& player);
+    void configure(Config& config);
+    [[nodiscard]] ChimeSound sound(Chime chime, Config& config);
+    void play(Chime chime, Config& config, const Player& player);
 
   private:
     struct State;

@@ -11,7 +11,7 @@
 #include <functional>
 
 namespace lapis::desktop {
-class KeyMap;
+class Config;
 class Agent;
 class Workspace;
 
@@ -71,7 +71,7 @@ class Alerts final : public QObject {
     using Looking = std::function<bool(const Agent*)>;
     static constexpr int kQuietMs = 1500;
 
-    Alerts(Workspace& workspace, const KeyMap& config, Player play, Looking looking,
+    Alerts(Workspace& workspace, const Config& config, Player play, Looking looking,
            QObject* parent = nullptr);
     // A finished turn showing what was already seen stays quiet; every
     // decision is logged.
@@ -87,7 +87,7 @@ class Alerts final : public QObject {
     void finished(Agent* item);
     bool ring(Chime chime);
     void record(const Agent* item, const char* event, const char* decision) const;
-    const KeyMap& config_;
+    const Config& config_;
     Player play_;
     Looking looking_;
     SeenScreens* seen_{};

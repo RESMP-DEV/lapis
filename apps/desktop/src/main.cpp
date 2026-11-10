@@ -2,11 +2,11 @@
 #include "alerts.hpp"
 #include "app_paths.hpp"
 #include "app_window.hpp"
+#include "config.hpp"
 #include "conversation_index.hpp"
 #include "desktop_actions.hpp"
 #include "gui_state.hpp"
 #include "interaction_recorder.hpp"
-#include "keymap.hpp"
 #include "next_prompt.hpp"
 #include "platform_desktop.hpp"
 #include "platform_preferences.hpp"
@@ -360,7 +360,7 @@ lapis::desktop::AttentionLog attention_log() {
 }
 void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
                       std::optional<lapis::desktop::SeenScreens>& seen,
-                      lapis::desktop::Workspace& workspace, lapis::desktop::KeyMap& keymap,
+                      lapis::desktop::Workspace& workspace, lapis::desktop::Config& keymap,
                       QPointer<QQuickWindow>& shown) {
     namespace platform = lapis::desktop::platform;
     using lapis::desktop::Chime;
@@ -384,7 +384,7 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
         looking);
     alerts->setSeen(&*seen);
     alerts->setLog(log);
-    QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &*alerts,
+    QObject::connect(&keymap, &lapis::desktop::Config::changed, &*alerts,
                      [sounds, &keymap] { sounds->configure(keymap); });
     platform::start_updater();
 }
@@ -470,7 +470,7 @@ void follow_activation(QGuiApplication& app, lapis::desktop::AppWindow& view,
                      });
 }
 // Command-` before AppKit's window cycling takes it, while that key is bound.
-void route_terminal_keys(lapis::desktop::AppWindow& view, const lapis::desktop::KeyMap& keymap) {
+void route_terminal_keys(lapis::desktop::AppWindow& view, const lapis::desktop::Config& keymap) {
     lapis::desktop::platform::on_terminal_keys([&view, &keymap](bool shifted) {
         auto* window = view.window();
         const auto action =
@@ -491,7 +491,7 @@ void route_terminal_keys(lapis::desktop::AppWindow& view, const lapis::desktop::
 // person's own workspace: never in the isolated preview, a capture run or an
 // explicit qualification launch.
 std::unique_ptr<lapis::desktop::InteractionRecorder>
-interaction_recorder(lapis::desktop::Workspace& workspace, const lapis::desktop::KeyMap& keymap,
+interaction_recorder(lapis::desktop::Workspace& workspace, const lapis::desktop::Config& keymap,
                      const lapis::desktop::WorkspaceOptions& options, bool isolated,
                      const QCommandLineParser& parser) {
     using lapis::desktop::InteractionRecorder;
@@ -509,7 +509,7 @@ interaction_recorder(lapis::desktop::Workspace& workspace, const lapis::desktop:
     auto* raw = recorder.get();
     const auto follow = [raw, &keymap] { raw->setSettings(keymap.interactionLog()); };
     follow();
-    QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, raw, follow);
+    QObject::connect(&keymap, &lapis::desktop::Config::changed, raw, follow);
     QObject::connect(
         qGuiApp, &QGuiApplication::applicationStateChanged, raw, [raw](Qt::ApplicationState state) {
             const auto name = state == Qt::ApplicationActive     ? "active"
@@ -534,7 +534,7 @@ void register_qml_types() {
     qmlRegisterUncreatableType<Agent>("Lapis", 1, 0, "Agent",
                                       "Sessions are owned by the workspace");
     qmlRegisterType<TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
-    qmlRegisterUncreatableType<KeyMap>("Lapis", 1, 0, "KeyMap",
+    qmlRegisterUncreatableType<Config>("Lapis", 1, 0, "Config",
                                        "The keymap is owned by the application");
 }
 QUrl qml_source(const QCommandLineParser& parser) {
@@ -552,7 +552,7 @@ QString target_screen(const QCommandLineParser& parser) {
 // while the setting is on and only in the real workspace (see NextPrompt).
 QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
                           lapis::desktop::Workspace& workspace,
-                          const lapis::desktop::KeyMap& keymap, bool isolated) {
+                          const lapis::desktop::Config& keymap, bool isolated) {
     using lapis::desktop::Agent;
     using lapis::desktop::NextPrompt;
     if (isolated)
@@ -610,7 +610,7 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
     workspace.setGuesses([&next] { return next.readyAgents(); });
     QObject::connect(&next, &QObject::destroyed, &workspace,
                      [&workspace] { workspace.setGuesses({}); });
-    QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &next, follow);
+    QObject::connect(&keymap, &lapis::desktop::Config::changed, &next, follow);
     QObject::connect(&workspace, &lapis::desktop::Workspace::turnFinished, &next,
                      [&next](Agent* item) {
                          if (item != nullptr)
@@ -707,7 +707,7 @@ terminals_for(const lapis::desktop::Workspace& workspace) {
     terminals->restore();
     return terminals;
 }
-int run_headless(lapis::desktop::Workspace& workspace, lapis::desktop::KeyMap& keymap, bool serve) {
+int run_headless(lapis::desktop::Workspace& workspace, lapis::desktop::Config& keymap, bool serve) {
     using lapis::desktop::Agent;
     using lapis::desktop::WorkspaceControl;
     if (!workspace.workspaceError().isEmpty()) {
@@ -720,7 +720,7 @@ int run_headless(lapis::desktop::Workspace& workspace, lapis::desktop::KeyMap& k
     bool handed_over = false;
     if (serve) {
         control.emplace(workspace, true);
-        control->setKeyMap(&keymap);
+        control->setConfig(&keymap);
         QObject::connect(&*control, &WorkspaceControl::handoverRequested,
                          [&handed_over] { handed_over = true; });
     }
@@ -849,7 +849,7 @@ int main(int argc, char** argv) {
         const bool isolated = parser.isSet(QStringLiteral("ui-preview"));
         // The config file applies live: a change from the window or an agent
         // reaches new agents at once, with or without a window.
-        KeyMap keymap;
+        Config keymap;
         keymap.load();
         auto options = workspace_options(parser, isolated);
         options.harnessUpdatesOff = keymap.harnessUpdatesOff();
@@ -861,7 +861,7 @@ int main(int argc, char** argv) {
             workspace.setTabAway(keymap.tabAway());
         };
         configure();
-        QObject::connect(&keymap, &KeyMap::changed, &workspace, configure);
+        QObject::connect(&keymap, &Config::changed, &workspace, configure);
         // The models each installed CLI lists, for both new-agent forms.
         HarnessModels models(&harness_program, QDir::homePath());
         if (!isolated) {
@@ -874,14 +874,14 @@ int main(int argc, char** argv) {
         std::optional<WorkspaceControl> control;
         if (options.restoreAgents && workspace.workspaceError().isEmpty()) {
             control.emplace(workspace, false);
-            control->setKeyMap(&keymap);
+            control->setConfig(&keymap);
         }
         // Plain shells beside the agents (Command-`), for this Mac and the phone.
         const auto terminals = isolated ? nullptr : terminals_for(workspace);
         if (control)
             control->setTerminals(terminals.get());
 
-        qInfo().noquote() << "lapis keymap:" << keymap.sourcePath()
+        qInfo().noquote() << "lapis config:" << keymap.sourcePath()
                           << (keymap.loaded() ? "loaded" : "defaults");
         register_qml_types();
         QPointer<QQuickWindow> shown;
@@ -910,7 +910,7 @@ int main(int argc, char** argv) {
         AppWindow view(workspace, {.source = qml_source(parser),
                                    .compact = parser.isSet(QStringLiteral("compact")),
                                    .screen = target_screen(parser),
-                                   .keymap = &keymap,
+                                   .config = &keymap,
                                    .alerts = alerts ? &*alerts : nullptr,
                                    .tools = &toolStatus,
                                    .desktop = &desktop,

@@ -1,4 +1,4 @@
-#include "keymap.hpp"
+#include "config.hpp"
 #include "app_paths.hpp"
 
 #include <QDebug>
@@ -346,29 +346,29 @@ namespace {
 }
 } // namespace
 
-void KeyMap::setChimeDiagnostic(const QString& diagnostic) {
+void Config::setChimeDiagnostic(const QString& diagnostic) {
     if (chime_diagnostic_ == diagnostic)
         return;
     chime_diagnostic_ = diagnostic;
     emit diagnosticChanged();
 }
 
-KeyMap::KeyMap(QObject* parent) : QObject(parent) {
-    connect(this, &KeyMap::changed, this, &KeyMap::diagnosticChanged);
+Config::Config(QObject* parent) : QObject(parent) {
+    connect(this, &Config::changed, this, &Config::diagnosticChanged);
     apply_defaults();
     source_path_ = default_source_path();
     // Editors and agents often replace the file rather than write in place,
     // so the folder is watched too, and bursts of events settle first.
     settle_.setSingleShot(true);
     settle_.setInterval(150);
-    connect(&settle_, &QTimer::timeout, this, &KeyMap::fileTouched);
+    connect(&settle_, &QTimer::timeout, this, &Config::fileTouched);
     connect(&watcher_, &QFileSystemWatcher::fileChanged, &settle_, qOverload<>(&QTimer::start));
     connect(&watcher_, &QFileSystemWatcher::directoryChanged, &settle_,
             qOverload<>(&QTimer::start));
     watch();
 }
 
-void KeyMap::watch() {
+void Config::watch() {
     if (!watcher_.files().isEmpty())
         watcher_.removePaths(watcher_.files());
     if (!watcher_.directories().isEmpty())
@@ -380,7 +380,7 @@ void KeyMap::watch() {
         watcher_.addPath(info.absoluteFilePath());
 }
 
-void KeyMap::fileTouched() {
+void Config::fileTouched() {
     watch(); // a replaced file is a new file to watch
     QFile file(source_path_);
     QByteArray contents;
@@ -394,7 +394,7 @@ void KeyMap::fileTouched() {
 
 // lapis.json at the project root, or LAPIS_CONFIG's file (checks keep theirs
 // apart from the person's).
-QString KeyMap::default_source_path() {
+QString Config::default_source_path() {
     if (const auto set = qEnvironmentVariable("LAPIS_CONFIG"); !set.isEmpty())
         return QFileInfo(set).absoluteFilePath();
     return QDir(data_directory()).filePath(QStringLiteral("lapis.json"));
@@ -416,7 +416,7 @@ QString KeyMap::default_source_path() {
     return false;
 }
 
-void KeyMap::apply_defaults() {
+void Config::apply_defaults() {
 #ifdef Q_OS_MACOS
     const QString modifier = QStringLiteral("Meta+");
 #else
@@ -511,7 +511,7 @@ void KeyMap::apply_defaults() {
     theme_ = QStringLiteral("lapis");
 }
 
-bool KeyMap::load() {
+bool Config::load() {
     apply_defaults();
     diagnostic_.clear();
     loaded_ = false;
@@ -608,7 +608,7 @@ bool KeyMap::load() {
     return true;
 }
 
-void KeyMap::load_harness_arguments(const QJsonValue& value) {
+void Config::load_harness_arguments(const QJsonValue& value) {
     if (value.isUndefined() || value.isNull())
         return;
     if (!value.isObject()) {
@@ -651,7 +651,7 @@ void KeyMap::load_harness_arguments(const QJsonValue& value) {
     }
 }
 
-void KeyMap::load_harness_updates(const QJsonValue& value) {
+void Config::load_harness_updates(const QJsonValue& value) {
     if (value.isUndefined() || value.isNull())
         return;
     if (!value.isObject()) {
@@ -682,7 +682,7 @@ void KeyMap::load_harness_updates(const QJsonValue& value) {
     }
 }
 
-void KeyMap::load_alerts(const QJsonObject& root) {
+void Config::load_alerts(const QJsonObject& root) {
     const auto alerts = root.value(QStringLiteral("alerts")).toObject();
     // "sound" and "repeat" belonged to a retired repeating request chime, and
     // "notify", "awayAfter", "remindAfter" and "judge" to the retired
@@ -731,7 +731,7 @@ bool visual_name(const QString& name) {
 bool visual_size(int size) { return size == 0 || (size >= 10 && size <= 40); }
 } // namespace
 
-void KeyMap::load_visual(const QJsonObject& root) {
+void Config::load_visual(const QJsonObject& root) {
     const auto visual = root.value(QStringLiteral("visual")).toObject();
     const auto name = [&visual](const char* key, const char* fallback) {
         const auto value = visual.value(QLatin1String(key)).toString();
@@ -746,7 +746,7 @@ void KeyMap::load_visual(const QJsonObject& root) {
     visual_editor_ = name("editor", "auto");
 }
 
-QVariantMap KeyMap::visual() const {
+QVariantMap Config::visual() const {
     return {{QStringLiteral("theme"), visual_theme_},
             {QStringLiteral("font"), visual_font_},
             {QStringLiteral("codeFont"), visual_code_font_},
@@ -755,7 +755,7 @@ QVariantMap KeyMap::visual() const {
             {QStringLiteral("editor"), visual_editor_}};
 }
 
-bool KeyMap::setVisual(const QString& key, const QVariant& value) {
+bool Config::setVisual(const QString& key, const QVariant& value) {
     QString* name = key == QLatin1String("theme")      ? &visual_theme_
                     : key == QLatin1String("font")     ? &visual_font_
                     : key == QLatin1String("codeFont") ? &visual_code_font_
@@ -788,7 +788,7 @@ bool KeyMap::setVisual(const QString& key, const QVariant& value) {
 
 // Paths are kept as written (~ is the machine's home); the new-agent forms
 // check them where they are used.
-void KeyMap::load_agent_defaults(const QJsonValue& value) {
+void Config::load_agent_defaults(const QJsonValue& value) {
     const auto section = value.toObject();
     const auto text = [](const QJsonValue& item) {
         const auto string = item.toString().trimmed();
@@ -818,7 +818,7 @@ void KeyMap::load_agent_defaults(const QJsonValue& value) {
     }
 }
 
-void KeyMap::load_terminal_font(const QJsonValue& value) {
+void Config::load_terminal_font(const QJsonValue& value) {
     if (value.isUndefined() || value.isNull())
         return;
     if (!value.isObject()) {
@@ -851,9 +851,9 @@ void KeyMap::load_terminal_font(const QJsonValue& value) {
     }
 }
 
-QString KeyMap::densityName() const { return density_name(density_); }
+QString Config::densityName() const { return density_name(density_); }
 
-QVariantList KeyMap::themes() const {
+QVariantList Config::themes() const {
     QVariantList list;
     for (const Theme& theme : kThemes) {
         list.append(QVariantMap{
@@ -882,27 +882,27 @@ QVariantList KeyMap::themes() const {
     return list;
 }
 
-QStringList KeyMap::densities() const {
+QStringList Config::densities() const {
     return {QStringLiteral("comfortable"), QStringLiteral("compact"), QStringLiteral("minimal")};
 }
 
-QStringList KeyMap::sequences(const QString& action) const { return bindings_.value(action); }
+QStringList Config::sequences(const QString& action) const { return bindings_.value(action); }
 
-QVariantMap KeyMap::shortcutBindings() const {
+QVariantMap Config::shortcutBindings() const {
     QVariantMap result;
     for (auto it = bindings_.begin(); it != bindings_.end(); ++it)
         result.insert(it.key(), it.value());
     return result;
 }
 
-bool KeyMap::reload() {
+bool Config::reload() {
     const bool ok = load();
-    qInfo().noquote() << "lapis keymap reloaded:" << (ok ? "ok" : "failed")
+    qInfo().noquote() << "lapis config reloaded:" << (ok ? "ok" : "failed")
                       << (diagnostic_.isEmpty() ? QString() : diagnostic_);
     return ok;
 }
 
-bool KeyMap::setTheme(const QString& name) {
+bool Config::setTheme(const QString& name) {
     if (!theme_exists(name)) {
         diagnostic_ = QStringLiteral("Unknown theme '%1'").arg(name);
         emit changed();
@@ -917,7 +917,7 @@ bool KeyMap::setTheme(const QString& name) {
     return save();
 }
 
-bool KeyMap::setDensity(const QString& name) {
+bool Config::setDensity(const QString& name) {
     CardDensity requested = density_;
     if (!parse_density(name, &requested)) {
         diagnostic_ = QStringLiteral("Unknown density '%1'").arg(name);
@@ -933,7 +933,7 @@ bool KeyMap::setDensity(const QString& name) {
     return save();
 }
 
-bool KeyMap::setSidebarVisible(bool visible) {
+bool Config::setSidebarVisible(bool visible) {
     if (sidebar_visible_ == visible)
         return true;
     const bool previous = sidebar_visible_;
@@ -947,7 +947,7 @@ bool KeyMap::setSidebarVisible(bool visible) {
     return true;
 }
 
-bool KeyMap::setScrollToBottomOnTyping(bool on) {
+bool Config::setScrollToBottomOnTyping(bool on) {
     if (scroll_to_bottom_on_typing_ == on)
         return true;
     const bool previous = scroll_to_bottom_on_typing_;
@@ -961,7 +961,7 @@ bool KeyMap::setScrollToBottomOnTyping(bool on) {
     return true;
 }
 
-bool KeyMap::setPreviewsVisible(bool visible) {
+bool Config::setPreviewsVisible(bool visible) {
     if (previews_visible_ == visible)
         return true;
     const bool previous = previews_visible_;
@@ -975,7 +975,7 @@ bool KeyMap::setPreviewsVisible(bool visible) {
     return true;
 }
 
-bool KeyMap::setTerminalFontFamily(const QString& family) {
+bool Config::setTerminalFontFamily(const QString& family) {
     const QString requested = family.trimmed();
     if (!valid_font_family(requested)) {
         diagnostic_ = QStringLiteral("Font family is not a usable name");
@@ -997,7 +997,7 @@ bool KeyMap::setTerminalFontFamily(const QString& family) {
     return true;
 }
 
-bool KeyMap::setTerminalFontSize(int pixels) {
+bool Config::setTerminalFontSize(int pixels) {
     if (!valid_font_size(pixels)) {
         diagnostic_ = QStringLiteral("Font size must be %1–%2 pixels")
                           .arg(kTerminalFontSizeMinimum)
@@ -1020,12 +1020,12 @@ bool KeyMap::setTerminalFontSize(int pixels) {
 
 // Observers must not apply a value that is about to be rolled back: a font
 // change resizes the live terminal, so the caller emits once with the outcome.
-bool KeyMap::save_without_tentative_change() {
+bool Config::save_without_tentative_change() {
     const QSignalBlocker blocker(this);
     return persist();
 }
 
-bool KeyMap::save() { return persist(); }
+bool Config::save() { return persist(); }
 
 namespace {
 QString config_lock_path(const QString& path) {
@@ -1064,7 +1064,7 @@ bool read_config_for_update(const QString& path, QJsonObject& root, QString* rea
 }
 } // namespace
 
-bool KeyMap::persist() {
+bool Config::persist() {
     const auto fail = [this](const QString& reason) {
         diagnostic_ = QStringLiteral("Could not save %1: %2").arg(source_path_, reason);
         qWarning().noquote() << "lapis config:" << diagnostic_;
@@ -1127,20 +1127,20 @@ bool KeyMap::persist() {
     return true;
 }
 
-bool KeyMap::setFinishSound(bool on) {
+bool Config::setFinishSound(bool on) {
     finish_sound_ = on;
     return save();
 }
-bool KeyMap::setKeepAwake(bool on) {
+bool Config::setKeepAwake(bool on) {
     keep_awake_ = on;
     return save();
 }
 
-KeyMap::RemoteSettings KeyMap::remoteSettings() const {
+Config::RemoteSettings Config::remoteSettings() const {
     return {.keepAwake = keep_awake_, .finishSound = finish_sound_};
 }
 
-bool KeyMap::applyRemoteSettings(const RemoteSettingsPatch& changes, QString* diagnostic) {
+bool Config::applyRemoteSettings(const RemoteSettingsPatch& changes, QString* diagnostic) {
     const bool has_change = changes.keepAwake || changes.finishSound;
     if (!has_change)
         return true;

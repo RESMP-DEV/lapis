@@ -1,5 +1,5 @@
-#ifndef LAPIS_DESKTOP_KEYMAP_HPP
-#define LAPIS_DESKTOP_KEYMAP_HPP
+#ifndef LAPIS_DESKTOP_CONFIG_HPP
+#define LAPIS_DESKTOP_CONFIG_HPP
 
 #include "interaction_log.hpp"
 #include "next_prompt.hpp"
@@ -88,7 +88,7 @@ struct AgentDefaults {
 // built-in defaults, so a bad edit degrades rather than bricking the window.
 // Every action maps to a list of Qt key sequences, which QML binds through
 // Shortcut.
-class KeyMap final : public QObject {
+class Config final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString themeName READ themeName NOTIFY changed)
     Q_PROPERTY(QString densityName READ densityName NOTIFY changed)
@@ -120,7 +120,7 @@ class KeyMap final : public QObject {
     // pixels (0 follows the terminal's), and whether every agent shows it.
     Q_PROPERTY(QVariantMap visual READ visual NOTIFY changed)
   public:
-    explicit KeyMap(QObject* parent = nullptr);
+    explicit Config(QObject* parent = nullptr);
 
     // Re-read the file, keeping defaults for anything missing or invalid.
     // Returns true when the file parsed and was applied.
@@ -183,7 +183,7 @@ class KeyMap final : public QObject {
     Q_INVOKABLE bool setKeepAwake(bool on);
     Q_INVOKABLE bool setScrollToBottomOnTyping(bool on);
     [[nodiscard]] bool scrollToBottomOnTyping() const { return scroll_to_bottom_on_typing_; }
-    // The values remote control may read. KeyMap owns their storage and their
+    // The values remote control may read. Config owns their storage and their
     // relationship to lapis.json.
     struct RemoteSettings {
         bool keepAwake{};
@@ -282,4 +282,4 @@ class KeyMap final : public QObject {
     QByteArray known_contents_;
 };
 } // namespace lapis::desktop
-#endif // LAPIS_DESKTOP_KEYMAP_HPP
+#endif // LAPIS_DESKTOP_CONFIG_HPP

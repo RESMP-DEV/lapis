@@ -31,7 +31,7 @@ add_library(lapis_desktop_core STATIC
     src/agent_state.cpp src/agent_state.hpp
     src/harness_models.cpp src/harness_models.hpp
     src/attention_view.cpp
-    src/keymap.cpp src/keymap.hpp
+    src/config.cpp src/config.hpp
     src/interaction_log.cpp src/interaction_log.hpp
     src/interaction_recorder.cpp src/interaction_recorder.hpp
     src/live_connection.cpp src/live_connection.hpp

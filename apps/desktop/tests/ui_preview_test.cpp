@@ -1,7 +1,7 @@
 #include "app_window.hpp"
 #include "conversation_index.hpp"
 #include "gui_state.hpp"
-#include "keymap.hpp"
+#include "config.hpp"
 #include "model_change_recorder.hpp"
 #include "next_prompt.hpp"
 #include "platform/window_activation.hpp"
@@ -364,7 +364,7 @@ void wait_input_ready(QQuickWindow& window, lapis::desktop::TerminalSurface& ter
     CHECK(wait_for(ready, 5000));
 }
 
-void wait_sidebar(QQuickWindow& window, lapis::desktop::KeyMap& keymap, bool visible) {
+void wait_sidebar(QQuickWindow& window, lapis::desktop::Config& keymap, bool visible) {
     CHECK(wait_for([&] { return keymap.sidebarVisible() == visible; }, 5000));
     CHECK(find_visual(window.contentItem(), QStringLiteral("categoryRail"))->isVisible() ==
           visible);
@@ -390,7 +390,7 @@ void click_setting(QQuickWindow& window, const QString& name) {
     QCoreApplication::sendEvent(&window, &press);
     QCoreApplication::sendEvent(&window, &release);
     pump(50);
-    // Appearance buttons are not checkable; callers verify the actual KeyMap selection.
+    // Appearance buttons are not checkable; callers verify the actual Config selection.
 }
 
 [[nodiscard]] QString read_text(const QString& path) {
@@ -495,7 +495,7 @@ int run_attention_dialog_tests() {
 
 // Appearance font controls apply to the live surface immediately, change the
 // requested cell grid once per step, persist, and roll back on a failed save.
-void check_terminal_font_controls(QQuickWindow& window, lapis::desktop::KeyMap& keymap,
+void check_terminal_font_controls(QQuickWindow& window, lapis::desktop::Config& keymap,
                                   lapis::desktop::TerminalSurface& terminal,
                                   const QStringList& families, const QTemporaryDir& directory) {
     using lapis::desktop::kTerminalFontSizeDefault;
@@ -568,7 +568,7 @@ void check_terminal_font_controls(QQuickWindow& window, lapis::desktop::KeyMap& 
     CHECK(fontSizeField->property("text").toString() == QString::number(enteredSize));
     CHECK(keymap.terminalFontSize() == enteredSize);
     CHECK(terminal.fontPixelSize() == enteredSize);
-    lapis::desktop::KeyMap directEntryPersisted;
+    lapis::desktop::Config directEntryPersisted;
     directEntryPersisted.setSourcePathForTesting(directory.filePath(QStringLiteral("lapis.json")));
     CHECK(directEntryPersisted.load());
     CHECK(directEntryPersisted.terminalFontSize() == enteredSize);
@@ -772,14 +772,14 @@ int run_shortcut_focus_tests() {
     CHECK(directory.isValid());
     write_config(directory, QStringLiteral(R"({"version":1,"layout":"focus","theme":"lapis",)"
                                            R"("keybindings":{"openSettings":["Ctrl+Alt+T"]}})"));
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(directory.filePath(QStringLiteral("lapis.json")));
     CHECK(keymap.load());
 
     AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = true,
                                   .screen = QString(),
-                                  .keymap = &keymap});
+                                  .config = &keymap});
     CHECK(preview.load());
     auto* window = preview.window();
     window->show();
@@ -798,7 +798,7 @@ int run_shortcut_focus_tests() {
     const QString config_at_modal = read_text(directory.filePath(QStringLiteral("lapis.json")));
     int changes_during_modal = 0;
     const auto changed_connection = QObject::connect(
-        &keymap, &KeyMap::changed, [&changes_during_modal] { ++changes_during_modal; });
+        &keymap, &Config::changed, [&changes_during_modal] { ++changes_during_modal; });
     for (const auto* action :
          {"nextWindow", "previousWindow", "nextCategory", "previousCategory", "category1",
           "category2", "newAgent", "newCategory", "reloadConfig"}) {
@@ -878,7 +878,7 @@ int run_shortcut_focus_tests() {
     click_setting(*window, QStringLiteral("theme-lapis"));
     check_terminal_font_controls(*window, keymap, *qobject_cast<TerminalSurface*>(terminal),
                                  preview.monospaceFamilies(), directory);
-    KeyMap persisted;
+    Config persisted;
     persisted.setSourcePathForTesting(directory.filePath(QStringLiteral("lapis.json")));
     CHECK(persisted.load());
     CHECK(persisted.themeName() == keymap.themeName());
@@ -1232,7 +1232,7 @@ QStringList strip_ids(const lapis::desktop::Workspace& workspace) {
 // The stage and strip drags, through the window as a person would use them.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void check_stage_and_drags(QQuickWindow& window, lapis::desktop::Workspace& workspace,
-                           lapis::desktop::KeyMap& keymap) {
+                           lapis::desktop::Config& keymap) {
     const auto item = [&window](const QString& name) {
         auto* found = find_visual(window.contentItem(), name);
         if (found == nullptr)
@@ -1341,7 +1341,7 @@ void check_stage_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
 }
 // Command-plus and zero change the text size; categories reorder.
 void check_text_size(QQuickWindow& window, lapis::desktop::Workspace& workspace,
-                     lapis::desktop::KeyMap& keymap) {
+                     lapis::desktop::Config& keymap) {
     const auto item = [&window](const QString& name) {
         auto* found = find_visual(window.contentItem(), name);
         if (found == nullptr)
@@ -1399,7 +1399,7 @@ void check_composition_navigation(lapis::desktop::Workspace& workspace,
     // Snapshot the old value: a reference would hide a forbidden category change.
     // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
     const auto category = workspace.activeCategoryId();
-    KeyMap defaults;
+    Config defaults;
     for (const auto* action :
          {"nextWindow", "previousWindow", "nextCategory", "previousCategory", "category1",
           "category2", "newAgent", "newCategory", "openCommands", "toggleSidebar"})
@@ -1595,12 +1595,12 @@ int run_attention_ui_tests() {
     Workspace workspace(WorkspaceMode::fixture);
     QTemporaryDir palette_config;
     CHECK(palette_config.isValid());
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(palette_config.filePath(QStringLiteral("palette.json")));
     AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
-                                  .keymap = &keymap});
+                                  .config = &keymap});
     CHECK(preview.load());
     auto* window = preview.window();
     wait_active(*window);
@@ -1942,7 +1942,7 @@ QQuickItem* required_visual(QQuickWindow& window, const QString& name) {
         throw std::runtime_error("missing item " + name.toStdString());
     return found;
 }
-void press_action(QQuickWindow& window, const lapis::desktop::KeyMap& keymap, const char* action) {
+void press_action(QQuickWindow& window, const lapis::desktop::Config& keymap, const char* action) {
     send_binding(window, keymap.sequences(QString::fromLatin1(action)).front());
     pump(260); // Longer than the strip's scroll animation.
 }
@@ -1955,7 +1955,7 @@ void capture_step(QQuickWindow& window, const char* name) {
 // up and down move, Return runs the entry. Command-O finds a past conversation
 // by typing and resumes it with Return.
 void check_home_and_resume(QQuickWindow& window, lapis::desktop::Workspace& workspace,
-                           const lapis::desktop::KeyMap& keymap) {
+                           const lapis::desktop::Config& keymap) {
     const auto before = workspace.activeCategoryId();
     CHECK(workspace.addCategory(QStringLiteral("Empty")));
     pump(60);
@@ -2006,7 +2006,7 @@ void check_home_and_resume(QQuickWindow& window, lapis::desktop::Workspace& work
 // Command-1 to Command-9 (Control-Shift on Linux) pick the first nine
 // categories.
 void check_nine_categories(QQuickWindow& window, lapis::desktop::Workspace& workspace,
-                           const lapis::desktop::KeyMap& keymap) {
+                           const lapis::desktop::Config& keymap) {
     const auto before = workspace.activeCategoryId();
     QStringList added;
     for (int number = 1; workspace.categories().size() < 9; ++number) {
@@ -2031,7 +2031,7 @@ void check_nine_categories(QQuickWindow& window, lapis::desktop::Workspace& work
 // The new-agent form offers this Mac and the ssh config's hosts: right and
 // left change the machine while up and down choose the CLI, and another
 // machine's folder starts at its home with no local suggestions.
-void check_new_agent_machine(QQuickWindow& window, const lapis::desktop::KeyMap& keymap) {
+void check_new_agent_machine(QQuickWindow& window, const lapis::desktop::Config& keymap) {
     press_action(window, keymap, "newAgent");
     auto* form = window.findChild<QObject*>(QStringLiteral("agentDialog"));
     CHECK(form != nullptr);
@@ -2095,7 +2095,7 @@ bool pump_until(const std::function<bool()>& condition, int milliseconds) {
 // runs in it, and the same key hides it and gives the agent the keys back.
 // Command-~ lists the machines by keyboard and Return opens that terminal.
 void check_side_terminal(QQuickWindow& window, lapis::desktop::Terminals& terminals,
-                         const lapis::desktop::KeyMap& keymap,
+                         const lapis::desktop::Config& keymap,
                          lapis::desktop::TerminalSurface& stage) {
     press_action(window, keymap, "toggleTerminal");
     auto* panel = required_visual(window, QStringLiteral("sideTerminal"));
@@ -2281,7 +2281,7 @@ int run_strip_ui_tests() {
     // Leave room for terminal IDs inside the POSIX local-socket path limit.
     QTemporaryDir config(QStringLiteral("/tmp/lapis-ui-XXXXXX"));
     CHECK(config.isValid());
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(config.filePath(QStringLiteral("strip.json")));
     ConversationIndex conversations(config.filePath(QStringLiteral("history/claude")),
                                     config.filePath(QStringLiteral("history/codex")),
@@ -2294,7 +2294,7 @@ int run_strip_ui_tests() {
     AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
-                                  .keymap = &keymap,
+                                  .config = &keymap,
                                   .conversations = &conversations,
                                   .terminals = &terminals});
     CHECK(preview.load());
@@ -2590,12 +2590,12 @@ int run_history_ui_tests() {
     WorkspaceOptions options;
     options.storagePath = root.filePath(QStringLiteral("workspace.json"));
     Workspace workspace(WorkspaceMode::live, options);
-    KeyMap keymap;
+    Config keymap;
     keymap.setSourcePathForTesting(root.filePath(QStringLiteral("lapis.json")));
     AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
-                                  .keymap = &keymap});
+                                  .config = &keymap});
     CHECK(preview.load());
     auto* window = preview.window();
     window->resize(1200, 800);

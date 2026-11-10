@@ -177,8 +177,8 @@ constexpr int kMaximumDiagnosticsLength = 4096;
 AppWindow::AppWindow(Workspace& workspace, AppWindowOptions options, QObject* parent)
     : QObject(parent), workspace_(workspace), options_(std::move(options)) {
     refreshSettingsShortcuts();
-    if (options_.keymap != nullptr)
-        connect(options_.keymap, &KeyMap::changed, this, [this] {
+    if (options_.config != nullptr)
+        connect(options_.config, &Config::changed, this, [this] {
             refreshSettingsShortcuts();
             deferTerminalFocus();
         });
@@ -201,8 +201,8 @@ QStringList AppWindow::monospaceFamilies() const {
 }
 
 void AppWindow::refreshSettingsShortcuts() {
-    settings_shortcuts_ = options_.keymap != nullptr
-                              ? options_.keymap->sequences(QStringLiteral("openSettings"))
+    settings_shortcuts_ = options_.config != nullptr
+                              ? options_.config->sequences(QStringLiteral("openSettings"))
                               : default_settings_shortcuts();
     parsed_settings_shortcuts_.clear();
     for (const auto& text : settings_shortcuts_) {
@@ -487,9 +487,9 @@ void AppWindow::publishWarnings(const QList<QQmlError>& warnings) {
 void AppWindow::exposeObjects(QQmlContext& context) {
     context.setContextProperty(QStringLiteral("workspace"), &workspace_);
     context.setContextProperty(QStringLiteral("app"), this);
-    // QML reads `keymap.actionSequences(...)`. Absent keymap keeps the literals.
+    // QML reads `config.actionSequences(...)`. Absent config keeps the literals.
     const std::array<std::pair<const char*, QObject*>, 8> optional{{
-        {"keymap", options_.keymap},
+        {"config", options_.config},
         {"alerts", options_.alerts},
         {"tools", options_.tools},
         {"desktop", options_.desktop},

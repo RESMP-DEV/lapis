@@ -1,6 +1,6 @@
 #include "agent_checkpoint.hpp"
 #include "alerts.hpp"
-#include "keymap.hpp"
+#include "config.hpp"
 #include "launch_spec.hpp"
 #include "session_descriptor.hpp"
 #include "terminals.hpp"
@@ -4000,10 +4000,10 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
     QFile file(root.filePath(QStringLiteral("lapis.json")));
     require(file.open(QIODevice::WriteOnly) && file.write("{}\n") == 3, "write a config");
     file.close();
-    lapis::desktop::KeyMap keymap;
+    lapis::desktop::Config keymap;
     keymap.setSourcePathForTesting(file.fileName());
     require(keymap.load(), "the config loads");
-    control.setKeyMap(&keymap);
+    control.setConfig(&keymap);
     const auto shown =
         askVersioned(workspace, {{QStringLiteral("request"), QStringLiteral("settings")}})
             .value(QStringLiteral("settings"))
@@ -4093,7 +4093,7 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
     QFile damaged(malformed_path);
     require(damaged.open(QIODevice::ReadOnly), "read the failed-save config");
     require(damaged.readAll() == malformed, "a failed save preserves disk bytes");
-    control.setKeyMap(nullptr);
+    control.setConfig(nullptr);
 }
 
 // The phone gateway starts an agent through the window: it opens as a new tab
@@ -4361,7 +4361,7 @@ void alertsChimeWhileAnAgentWaits() {
         "notify": true, "awayAfter": 5, "remindAfter": 9999, "judge": true},
         "tabAway": {"rank": "learned"}})");
     config.close();
-    lapis::desktop::KeyMap keymap;
+    lapis::desktop::Config keymap;
     keymap.setSourcePathForTesting(config.fileName());
     require(keymap.load() && keymap.diagnostic().isEmpty(),
             "alerts config with the retired keys loads cleanly");
@@ -4619,7 +4619,7 @@ void chimesPlayChosenFiles() {
     };
     write(QStringLiteral("ding.wav"), "RIFF-ding");
     write(QStringLiteral("lapis.json"), R"({"version":1,"alerts":{"soundFile":"ding.wav"}})");
-    lapis::desktop::KeyMap keymap;
+    lapis::desktop::Config keymap;
     keymap.setSourcePathForTesting(root.filePath(QStringLiteral("lapis.json")));
     lapis::desktop::ChimeSounds sounds;
     const auto ready = [&](Chime chime, const QByteArray& bytes) {

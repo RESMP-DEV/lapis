@@ -1,4 +1,4 @@
-#include "keymap.hpp"
+#include "config.hpp"
 #include "terminal_surface.hpp"
 #include "workspace.hpp"
 

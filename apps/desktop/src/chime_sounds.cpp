@@ -1,5 +1,5 @@
 #include "chime_sounds.hpp"
-#include "keymap.hpp"
+#include "config.hpp"
 #include "platform/chime_file.hpp"
 #include "platform/published_task.hpp"
 #include <QDataStream>
@@ -95,7 +95,7 @@ struct ChimeSounds::State {
     std::mutex mutex;
     QHash<QString, File> files;
     QStringList paths;
-    QPointer<KeyMap> owner;
+    QPointer<Config> owner;
     QObject* dispatcher{}; // ChimeSounds owns it until active is cleared under the mutex.
     bool active{true};
     QString outputError;
@@ -142,7 +142,7 @@ void ChimeSounds::reportLocked(const std::shared_ptr<State>& state) {
     // The mutex keeps dispatcher alive throughout enqueue; destruction marks
     // active=false before the QObject member can disappear.
     QMetaObject::invokeMethod(state->dispatcher, platform::PublishedTask([state, text, generation] {
-                                  QPointer<KeyMap> owner;
+                                  QPointer<Config> owner;
                                   {
                                       const std::lock_guard lock(state->mutex);
                                       if (!state->active || state->generation != generation)
@@ -154,7 +154,7 @@ void ChimeSounds::reportLocked(const std::shared_ptr<State>& state) {
                               }),
                               Qt::QueuedConnection);
 }
-void ChimeSounds::configure(KeyMap& config) {
+void ChimeSounds::configure(Config& config) {
     QStringList paths;
     for (const auto& path : {config.alertSoundFile(), config.finishSoundFile()})
         if (!path.isEmpty() && !paths.contains(path))
@@ -223,7 +223,7 @@ void ChimeSounds::pump(const std::shared_ptr<State>& state) {
             pump(state);
         }));
 }
-ChimeSound ChimeSounds::sound(Chime chime, KeyMap& config) {
+ChimeSound ChimeSounds::sound(Chime chime, Config& config) {
     configure(config);
     const bool finished = chime == Chime::finished;
     const QString& own = finished ? config.finishSoundFile() : config.alertSoundFile();
@@ -239,7 +239,7 @@ ChimeSound ChimeSounds::sound(Chime chime, KeyMap& config) {
     static const QByteArray ended = chime_wav(Chime::finished);
     return {finished ? ended : needs, 1.0F, {}, {}};
 }
-void ChimeSounds::play(Chime chime, KeyMap& config, const Player& player) {
+void ChimeSounds::play(Chime chime, Config& config, const Player& player) {
     const auto selected = sound(chime, config);
     const bool played = player(selected);
     if (!selected.path.isEmpty()) {

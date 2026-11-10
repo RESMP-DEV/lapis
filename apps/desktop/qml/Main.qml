@@ -18,13 +18,13 @@ ApplicationWindow {
     color: backgroundColor
     title: windowTitle
 
-    // Theme colors come from the keymap. Without one, the stage uses a dark
+    // Theme colors come from the config. Without one, the stage uses a dark
     // command-deck palette. Selection is a thin accent edge, not a second surface.
     // focusedBorderColor only marks where keyboard input goes; activity,
     // attention (pending requests) and fault (lost connection, errors) are
     // separate meanings and are always paired with a shape or text cue.
-    readonly property var appearance: (typeof keymap !== "undefined" && keymap !== null) ?
-                                          keymap.themes.find(function(theme) { return theme.name === keymap.themeName }) : null
+    readonly property var appearance: (typeof config !== "undefined" && config !== null) ?
+                                          config.themes.find(function(theme) { return theme.name === config.themeName }) : null
     readonly property color backgroundColor: appearance ? appearance.background : "#070b10"
     readonly property color surfaceColor: appearance ? appearance.surface : "#101820"
     readonly property color cardColor: appearance ? appearance.card : "#15202b"
@@ -45,7 +45,7 @@ ApplicationWindow {
     // One fixed-width family for the terminal and every machine readout (paths,
     // shortcut hints, states, counts). Human names and prose use the UI face.
     readonly property string monoFamily: liveTerminal.resolvedFontFamily
-    readonly property int terminalFontSize: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSize : 14
+    readonly property int terminalFontSize: (typeof config !== "undefined" && config !== null) ? config.terminalFontSize : 14
     // Composition and paste own the keyboard until they finish.
     readonly property bool terminalBusy: liveTerminal.composing || liveTerminal.pasting ||
                                         sideSurface.composing || sideSurface.pasting
@@ -59,21 +59,21 @@ ApplicationWindow {
             return Math.max(12, Math.round(font.pointSize * 96 / 72))
         return 13
     }
-    readonly property string densityMode: (typeof keymap !== "undefined" && keymap !== null) ?
-                                              keymap.densityName : "comfortable"
+    readonly property string densityMode: (typeof config !== "undefined" && config !== null) ?
+                                              config.densityName : "comfortable"
     readonly property int chromeFont: densityMode === "minimal" ? Math.max(12, uiFont - 1) : uiFont
     readonly property int readoutFont: Math.max(11, chromeFont - 1)
     readonly property int railWidth: densityMode === "minimal" ? 148 : densityMode === "compact" ? 168 : 196
     readonly property int tabHeight: Math.max(32, chromeFont + (densityMode === "minimal" ? 16 : densityMode === "compact" ? 20 : 24))
     property bool transientSidebarVisible: true
     property bool transientPreviewsVisible: true
-    readonly property bool previewsEnabled: typeof keymap !== "undefined" && keymap !== null ? keymap.previewsVisible : transientPreviewsVisible
+    readonly property bool previewsEnabled: typeof config !== "undefined" && config !== null ? config.previewsVisible : transientPreviewsVisible
     // The agent strip under the stage is the category's navigation: live
     // previews in tab order. Short windows get shorter cards, not fewer.
     readonly property int stripHeight: height < 640 ? 96 :
                                        densityMode === "minimal" ? 112 : densityMode === "compact" ? 128 : 144
     readonly property bool stripShown: previewsEnabled && workspace.categorySessions.length > 0
-    readonly property bool sidebarExpanded: typeof keymap !== "undefined" && keymap !== null ? keymap.sidebarVisible : transientSidebarVisible
+    readonly property bool sidebarExpanded: typeof config !== "undefined" && config !== null ? config.sidebarVisible : transientSidebarVisible
     readonly property bool narrow: width < 860
     // Zero-duration themes and reduced motion change state instantly.
     readonly property bool motionEnabled: !app.reducedMotion && active && visible && motionDuration > 0
@@ -132,8 +132,8 @@ ApplicationWindow {
     signal keyboardOwnershipReady()
 
     function bindings(action) {
-        if (typeof keymap !== "undefined" && keymap !== null) {
-            const configured = keymap.shortcutBindings[action]
+        if (typeof config !== "undefined" && config !== null) {
+            const configured = config.shortcutBindings[action]
             if (configured && configured.length > 0)
                 return configured
         }
@@ -232,15 +232,15 @@ ApplicationWindow {
     }
     function toggleSidebar() {
         if (!interactionArmed) return
-        if (typeof keymap !== "undefined" && keymap !== null)
-            keymap.setSidebarVisible(!sidebarExpanded)
+        if (typeof config !== "undefined" && config !== null)
+            config.setSidebarVisible(!sidebarExpanded)
         else
             transientSidebarVisible = !transientSidebarVisible
     }
     function togglePreviews() {
         if (!interactionArmed) return
-        if (typeof keymap !== "undefined" && keymap !== null)
-            keymap.setPreviewsVisible(!previewsEnabled)
+        if (typeof config !== "undefined" && config !== null)
+            config.setPreviewsVisible(!previewsEnabled)
         else
             transientPreviewsVisible = !transientPreviewsVisible
     }
@@ -406,7 +406,7 @@ ApplicationWindow {
             hasAgent ? qsTr("Only for a Claude Code agent on this Mac, once its conversation is saved") : needAgent,
             () => window.toggleVisual())
         add("toggleVisualAll", window.visualAll ? qsTr("Show terminals for all agents") : qsTr("Show visual view for all agents"), "",
-            typeof keymap !== "undefined" && keymap !== null, qsTr("Not available here"),
+            typeof config !== "undefined" && config !== null, qsTr("Not available here"),
             () => window.toggleVisualAll())
         add("textBigger", qsTr("Bigger text"), "textBigger", true, "", () => window.changeTextSize(1))
         add("textSmaller", qsTr("Smaller text"), "textSmaller", true, "", () => window.changeTextSize(-1))
@@ -441,7 +441,7 @@ ApplicationWindow {
         // session that cannot be joined; nothing else reclaims a replaced view.
         add("reconnect", qsTr("Reconnect agent"), "", window.recoveryAvailable(), qsTr("The selected agent is already connected or opening"), () => agent.reconnect())
         add("appearance", qsTr("Appearance"), "openSettings", true, "", () => window.openSettingsDialog())
-        add("reloadConfig", qsTr("Reload configuration"), "reloadConfig", typeof keymap !== "undefined" && keymap !== null, qsTr("No configuration in this fixture"), () => keymap.reload())
+        add("reloadConfig", qsTr("Reload configuration"), "reloadConfig", typeof config !== "undefined" && config !== null, qsTr("No configuration in this fixture"), () => config.reload())
         const mac = Qt.platform.os === "osx"
         add("closeWindow", qsTr("Close window (lapis keeps running)"), "closeWindow", mac, qsTr("Only on the Mac"), () => window.close())
         add("minimizeWindow", qsTr("Minimize window"), "minimizeWindow", true, "", () => window.showMinimized())
@@ -854,7 +854,7 @@ ApplicationWindow {
     // this Mac as a thread; visualAgents holds this run's per-agent choices,
     // which win over it until lapis restarts or "all" is switched again.
     property var visualAgents: ({})
-    readonly property var visualSettings: (typeof keymap !== "undefined" && keymap !== null) ? keymap.visual : ({})
+    readonly property var visualSettings: (typeof config !== "undefined" && config !== null) ? config.visual : ({})
     readonly property bool visualAll: visualSettings.all === true
     readonly property bool visualWanted: {
         const agent = workspace.focusedSession
@@ -933,10 +933,10 @@ ApplicationWindow {
         visualFocus()
     }
     function toggleVisualAll() {
-        if (typeof keymap === "undefined" || keymap === null)
+        if (typeof config === "undefined" || config === null)
             return
         visualAgents = ({})
-        keymap.setVisual("all", !visualAll)
+        config.setVisual("all", !visualAll)
         visualFocus()
     }
     // Each CLI's commands for the visual view's model and effort pickers. A
@@ -1096,11 +1096,11 @@ ApplicationWindow {
     readonly property bool desktopAvailable: typeof desktop !== "undefined" && desktop !== null
     // Command-plus, minus and zero: the terminal text size, saved to the config.
     function changeTextSize(delta) {
-        if (typeof keymap === "undefined" || keymap === null)
+        if (typeof config === "undefined" || config === null)
             return
-        const next = delta === 0 ? keymap.terminalFontSizeDefault : keymap.terminalFontSize + delta
-        keymap.setTerminalFontSize(Math.max(keymap.terminalFontSizeMinimum,
-                                            Math.min(keymap.terminalFontSizeMaximum, next)))
+        const next = delta === 0 ? config.terminalFontSizeDefault : config.terminalFontSize + delta
+        config.setTerminalFontSize(Math.max(config.terminalFontSizeMinimum,
+                                            Math.min(config.terminalFontSizeMaximum, next)))
     }
     function reopenAgent() {
         if (interactionArmed && workspace.reopenAgent())
@@ -1457,8 +1457,8 @@ ApplicationWindow {
         enabled: window.shortcutsArmed
         autoRepeat: false
         onActivated: {
-            if (typeof keymap !== "undefined" && keymap !== null)
-                keymap.reload()
+            if (typeof config !== "undefined" && config !== null)
+                config.reload()
         }
     }
 
@@ -1691,25 +1691,25 @@ ApplicationWindow {
 
     Settings {
         id: settingsDialog
-        themeModel: (typeof keymap !== "undefined" && keymap !== null) ? keymap.themes : []
-        densityModel: (typeof keymap !== "undefined" && keymap !== null) ? keymap.densities :
+        themeModel: (typeof config !== "undefined" && config !== null) ? config.themes : []
+        densityModel: (typeof config !== "undefined" && config !== null) ? config.densities :
                                                                             ["comfortable", "compact", "minimal"]
-        currentTheme: (typeof keymap !== "undefined" && keymap !== null) ? keymap.themeName : "lapis"
+        currentTheme: (typeof config !== "undefined" && config !== null) ? config.themeName : "lapis"
         currentDensity: window.densityMode
-        configPath: (typeof keymap !== "undefined" && keymap !== null) ? keymap.sourcePath : ""
-        configDiagnostic: (typeof keymap !== "undefined" && keymap !== null) ? keymap.diagnostic : ""
+        configPath: (typeof config !== "undefined" && config !== null) ? config.sourcePath : ""
+        configDiagnostic: (typeof config !== "undefined" && config !== null) ? config.diagnostic : ""
         shortcutHint: window.shortcutText("openSettings")
         fontFamilies: app.monospaceFamilies
-        fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
+        fontFamily: (typeof config !== "undefined" && config !== null) ? config.terminalFontFamily : ""
         resolvedFontFamily: window.monoFamily
         fontSize: liveTerminal.fontPixelSize
-        fontSizeMinimum: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeMinimum : 14
-        fontSizeMaximum: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeMaximum : 14
-        fontSizeDefault: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeDefault : 14
+        fontSizeMinimum: (typeof config !== "undefined" && config !== null) ? config.terminalFontSizeMinimum : 14
+        fontSizeMaximum: (typeof config !== "undefined" && config !== null) ? config.terminalFontSizeMaximum : 14
+        fontSizeDefault: (typeof config !== "undefined" && config !== null) ? config.terminalFontSizeDefault : 14
         motionDuration: window.motionDuration
         motionEnabled: window.motionEnabled
-        finishSound: (typeof keymap !== "undefined" && keymap !== null) ? keymap.finishSound : true
-        keepAwake: (typeof keymap !== "undefined" && keymap !== null) ? keymap.keepAwake : true
+        finishSound: (typeof config !== "undefined" && config !== null) ? config.finishSound : true
+        keepAwake: (typeof config !== "undefined" && config !== null) ? config.keepAwake : true
         loginAvailable: window.desktopAvailable && desktop.launchAtLoginAvailable
         launchAtLogin: window.desktopAvailable && desktop.launchAtLogin
         updatesAvailable: window.desktopAvailable && desktop.updatesAvailable
@@ -1724,30 +1724,30 @@ ApplicationWindow {
         visual: window.visualSettings
         visualSize: visualView.fontSize
         onVisualChosen: function(key, value) {
-            if (typeof keymap !== "undefined" && keymap !== null)
-                keymap.setVisual(key, value)
+            if (typeof config !== "undefined" && config !== null)
+                config.setVisual(key, value)
         }
         onLaunchAtLoginChosen: function(on) { if (window.desktopAvailable) desktop.setLaunchAtLogin(on) }
         onCheckUpdates: if (window.desktopAvailable) desktop.checkForUpdates()
-        onFinishSoundChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setFinishSound(on) }
-        onKeepAwakeChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setKeepAwake(on) }
+        onFinishSoundChosen: function(on) { if (typeof config !== "undefined" && config !== null) config.setFinishSound(on) }
+        onKeepAwakeChosen: function(on) { if (typeof config !== "undefined" && config !== null) config.setKeepAwake(on) }
         onChimePlayed: function(needsYou) { if (typeof alerts !== "undefined" && alerts !== null) alerts.preview(needsYou) }
         onClosed: app.deferTerminalFocus()
         onFontFamilyChosen: function(name) {
-            if (typeof keymap !== "undefined" && keymap !== null)
-                keymap.setTerminalFontFamily(name)
+            if (typeof config !== "undefined" && config !== null)
+                config.setTerminalFontFamily(name)
         }
         onFontSizeChosen: function(pixels) {
-            if (typeof keymap !== "undefined" && keymap !== null)
-                keymap.setTerminalFontSize(pixels)
+            if (typeof config !== "undefined" && config !== null)
+                config.setTerminalFontSize(pixels)
         }
         onThemeChosen: function(name) {
-            if (typeof keymap !== "undefined" && keymap !== null)
-                keymap.setTheme(name)
+            if (typeof config !== "undefined" && config !== null)
+                config.setTheme(name)
         }
         onDensityChosen: function(name) {
-            if (typeof keymap !== "undefined" && keymap !== null)
-                keymap.setDensity(name)
+            if (typeof config !== "undefined" && config !== null)
+                config.setDensity(name)
         }
     }
 
@@ -2806,7 +2806,7 @@ ApplicationWindow {
                         objectName: "visualAllAgents"
                         text: qsTr("All agents")
                         selected: window.visualAll
-                        enabled: window.interactionArmed && typeof keymap !== "undefined" && keymap !== null
+                        enabled: window.interactionArmed && typeof config !== "undefined" && config !== null
                         Layout.fillWidth: true
                         Layout.preferredWidth: 1
                         onClicked: window.toggleVisualAll()
@@ -3118,9 +3118,9 @@ ApplicationWindow {
                     width: Math.max(0, stage.width - 2 * stage.inset)
                     height: Math.max(0, stage.height - 2 * stage.inset)
                     document: workspace.focusedSession
-                    fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
+                    fontFamily: (typeof config !== "undefined" && config !== null) ? config.terminalFontFamily : ""
                     fontPixelSize: window.terminalFontSize
-                    scrollToBottomOnTyping: (typeof keymap !== "undefined" && keymap !== null) ? keymap.scrollToBottomOnTyping : true
+                    scrollToBottomOnTyping: (typeof config !== "undefined" && config !== null) ? config.scrollToBottomOnTyping : true
                     visible: document !== null
                     enabled: visible
                     // A history page stays interactive for the wheel, selection and
@@ -3784,7 +3784,7 @@ ApplicationWindow {
                         width: parent.width - 12
                         height: parent.height - y - 6
                         document: agentTab.modelData
-                        fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
+                        fontFamily: (typeof config !== "undefined" && config !== null) ? config.terminalFontFamily : ""
                         fontPixelSize: window.terminalFontSize
                         interactive: false
                         enabled: false
@@ -3882,7 +3882,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 document: window.terminalsAvailable ? terminals.current : null
-                fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
+                fontFamily: (typeof config !== "undefined" && config !== null) ? config.terminalFontFamily : ""
                 fontPixelSize: window.terminalFontSize
                 visible: sidePanel.visible && document !== null
                 enabled: visible

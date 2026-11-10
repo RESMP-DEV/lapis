@@ -13,7 +13,7 @@
 // frameSwapped. Offscreen/software rendering is not GPU presentation; compare
 // runs of this tool with each other.
 #include "app_window.hpp"
-#include "keymap.hpp"
+#include "config.hpp"
 #include "terminal_surface.hpp"
 #include "workspace.hpp"
 #if __has_include("interaction_recorder.hpp")
@@ -213,7 +213,7 @@ std::vector<std::vector<QString>> start_agents(Workspace& workspace, const Optio
 
 class Bench : public QObject {
   public:
-    Bench(Workspace& workspace, const lapis::desktop::KeyMap& keymap, QQuickWindow& window,
+    Bench(Workspace& workspace, const lapis::desktop::Config& keymap, QQuickWindow& window,
           const Options& options)
         : QObject(nullptr), workspace_(workspace), keymap_(keymap), window_(window),
           options_(options) {
@@ -393,7 +393,7 @@ class Bench : public QObject {
     }
 
     Workspace& workspace_;
-    const lapis::desktop::KeyMap& keymap_;
+    const lapis::desktop::Config& keymap_;
     QQuickWindow& window_;
     Options options_;
     std::atomic<int> swaps_{0};
@@ -462,7 +462,7 @@ QJsonObject measure(const Options& options, const QTemporaryDir& home) {
     workspace_options.storagePath = home.filePath(QStringLiteral("workspace.json"));
     Workspace workspace(lapis::desktop::WorkspaceMode::live, workspace_options);
     require(workspace.workspaceError().isEmpty(), "workspace loads");
-    lapis::desktop::KeyMap keymap;
+    lapis::desktop::Config keymap;
     keymap.setSourcePathForTesting(home.filePath(QStringLiteral("lapis.json")));
     workspace.setLaunchSize(QSize(160, 48));
     const auto folder = home.filePath(QStringLiteral("work"));
@@ -483,7 +483,7 @@ QJsonObject measure(const Options& options, const QTemporaryDir& home) {
         workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                     .compact = false,
                     .screen = QString(),
-                    .keymap = &keymap});
+                    .config = &keymap});
     require(preview.load(), "load Main.qml");
     auto* window = preview.window();
     window->resize(1600, 1000);
