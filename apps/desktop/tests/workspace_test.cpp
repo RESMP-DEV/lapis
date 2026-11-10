@@ -3770,13 +3770,12 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
                 shown.value(QStringLiteral("notify")) == QJsonValue(false),
             "the answer keeps the retired settings an older phone requires");
     const auto changed = askVersioned(
-        workspace,
-        {{QStringLiteral("request"), QStringLiteral("changeSettings")},
-         {QStringLiteral("settings"), QJsonObject{{QStringLiteral("keepAwake"), false},
-                                                  {QStringLiteral("alertSound"), true},
-                                                  {QStringLiteral("alertRepeat"), 11},
-                                                  {QStringLiteral("showUsage"), true},
-                                                  {QStringLiteral("notify"), true}}}});
+        workspace, {{QStringLiteral("request"), QStringLiteral("changeSettings")},
+                    {QStringLiteral("settings"), QJsonObject{{QStringLiteral("keepAwake"), false},
+                                                             {QStringLiteral("alertSound"), true},
+                                                             {QStringLiteral("alertRepeat"), 11},
+                                                             {QStringLiteral("showUsage"), true},
+                                                             {QStringLiteral("notify"), true}}}});
     const auto changed_settings = changed.value(QStringLiteral("settings")).toObject();
     require(answeredOk(changed) && !keymap.keepAwake() &&
                 !changed_settings.value(QStringLiteral("keepAwake")).toBool() &&
