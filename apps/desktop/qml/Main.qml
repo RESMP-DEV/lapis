@@ -418,7 +418,7 @@ ApplicationWindow {
         const conversationFile = hasAgent && !window.visualActive ? workspace.conversationFile(agent.agentId) : ""
         add("toggleVisual", window.visualActive ? qsTr("Show terminal") : qsTr("Show visual view"), "",
             window.visualActive || conversationFile.length > 0,
-            hasAgent ? qsTr("Only for a Claude Code agent on this Mac, once its conversation is saved") : needAgent,
+            hasAgent ? qsTr("Only for a Claude Code, Codex or Antigravity agent on this Mac, once its conversation is saved") : needAgent,
             () => window.toggleVisual())
         add("toggleVisualAll", window.visualAll ? qsTr("Show terminals for all agents") : qsTr("Show visual view for all agents"), "",
             true, "", () => window.toggleVisualAll())
@@ -899,8 +899,8 @@ ApplicationWindow {
     // Agents shown as a readable thread (the visual view) instead of their
     // terminal, by id. The terminal keeps running under it, takes no input
     // while it is covered, and gets the keyboard back on Escape.
-    // "All agents" (saved in lapis.json) shows every Claude Code agent on
-    // this Mac as a thread; visualAgents holds this run's per-agent choices,
+    // "All agents" (saved in lapis.json) shows every Claude Code, Codex and
+    // Antigravity agent on this Mac as a thread; visualAgents holds this run's per-agent choices,
     // which win over it until lapis restarts or "all" is switched again.
     property var visualAgents: ({})
     readonly property var visualSettings: config.visual
@@ -990,6 +990,13 @@ ApplicationWindow {
     // CLI without an entry shows what it reports but offers no choices.
     readonly property var visualCommands: ({
         claude: {
+            model: id => "/model " + id,
+            effort: level => "/effort " + level,
+            efforts: ["low", "medium", "high", "xhigh", "max"]
+        },
+        // Antigravity's /model and /effort take the choice directly (agy
+        // 1.5); Codex's /model opens a picker, so Codex offers no choices.
+        agy: {
             model: id => "/model " + id,
             effort: level => "/effort " + level,
             efforts: ["low", "medium", "high", "xhigh", "max"]
@@ -2991,7 +2998,7 @@ ApplicationWindow {
                         ToolTip.visible: hovered
                         ToolTip.delay: 600
                         ToolTip.text: enabled ? qsTr("Switch this agent between its terminal and the thread")
-                                              : qsTr("Only for a Claude Code agent on this Mac, once its conversation is saved")
+                                              : qsTr("Only for a Claude Code, Codex or Antigravity agent on this Mac, once its conversation is saved")
                     }
                     CommandButton {
                         objectName: "visualAllAgents"
@@ -3003,7 +3010,7 @@ ApplicationWindow {
                         onClicked: window.toggleVisualAll()
                         ToolTip.visible: hovered
                         ToolTip.delay: 600
-                        ToolTip.text: qsTr("Show every Claude Code agent on this Mac as a thread")
+                        ToolTip.text: qsTr("Show every Claude Code, Codex and Antigravity agent on this Mac as a thread")
                     }
                 }
                 CommandsButton {
@@ -3244,6 +3251,7 @@ ApplicationWindow {
                     onEffortChosen: function(level) { window.visualCommand("effort", level) }
                     onCommandSent: window.watchVisualDialog(false)
                     onDialogFound: window.watchVisualDialog(true)
+                    onTerminalNeeded: window.toggleVisual()
                     onDismissed: window.toggleVisual()
                     onEditRequested: function(record, text) { window.forkVisual(record, true, text) }
                 }

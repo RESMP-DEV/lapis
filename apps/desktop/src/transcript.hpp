@@ -369,7 +369,7 @@ class TranscriptModel final : public QAbstractListModel {
     // editor takes one; folders open in the Finder.
     Q_INVOKABLE bool openPath(const QString& path, const QString& editor) const;
     // The text rows the terminal screen shows above the agent's input box,
-    // trailing blanks trimmed: the turn as it streams, harness agnostic.
+    // trailing blanks trimmed: the turn as it streams.
     Q_INVOKABLE [[nodiscard]] QStringList liveLines(const QStringList& screen) const;
     // Whether the terminal shows a dialog in place of the input box (see
     // transcript::dialog_showing). Both are Claude Code's layout: for other

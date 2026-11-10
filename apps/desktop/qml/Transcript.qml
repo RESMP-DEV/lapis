@@ -67,6 +67,9 @@ FocusScope {
     signal commandSent(string text)
     // A dialog already fills the terminal, so nothing was sent.
     signal dialogFound()
+    // The bar sent a slash command to a CLI whose dialogs the view cannot
+    // see; the window shows that agent's terminal.
+    signal terminalNeeded()
     Timer {
         interval: 150
         repeat: true
@@ -1009,7 +1012,9 @@ FocusScope {
                                 onTriggered: { root.copy(prompt.entry.body); flash() }
                             }
                             Action {
+                                // Only Claude Code conversations fork from a prompt.
                                 visible: prompt.entry && prompt.entry.record.length > 0
+                                         && root.model !== null && root.model.forkable
                                 label: qsTr("Edit")
                                 onTriggered: root.editRequested(prompt.entry.record, prompt.entry.body)
                             }
@@ -1568,7 +1573,13 @@ FocusScope {
             return
         }
         const command = root.slashCommands && /^\/[^\s\/]+/.test(text.trim()) ? text.trim().split(/\s/)[0] : ""
+        // A CLI whose screen the view cannot read (any but Claude Code) may
+        // answer a slash command with a picker the thread would hide, so
+        // its terminal shows instead.
+        const uncovers = root.model && !root.model.screenKnown && /^\/[^\s\/]+/.test(text.trim())
         if (root.submit(text)) {
+            if (uncovers)
+                root.terminalNeeded()
             if (command.length > 0) {
                 root.pendingCommand = command
                 root.pendingSince = Date.now()
