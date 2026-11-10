@@ -2,6 +2,7 @@
 #include "app_paths.hpp"
 #include "category_colors.hpp"
 
+#include <QColor>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -873,12 +874,24 @@ QVariantList Config::themes() const {
     QVariantList list;
     for (const Theme& theme : kThemes) {
         // The sidebar's category hues by name, for this theme's surfaces.
+        // "categoryQuietColors" holds the quieter names of the groups not shown.
         QVariantMap category_colors;
+        QVariantMap category_quiet_colors;
+        const QColor muted(QString::fromLatin1(theme.muted_text));
         for (const auto& color : kCategoryColors) {
             const auto hex = theme.light ? color.light : color.dark;
-            category_colors.insert(
-                QString::fromLatin1(color.name.data(), static_cast<qsizetype>(color.name.size())),
-                QString::fromLatin1(hex.data(), static_cast<qsizetype>(hex.size())));
+            const auto name =
+                QString::fromLatin1(color.name.data(), static_cast<qsizetype>(color.name.size()));
+            const QColor full(QString::fromLatin1(hex.data(), static_cast<qsizetype>(hex.size())));
+            const auto mix = [&](float hue, float ink) {
+                return (hue * static_cast<float>(1.0 - kCategoryQuietMix)) +
+                       (ink * static_cast<float>(kCategoryQuietMix));
+            };
+            const auto quiet =
+                QColor::fromRgbF(mix(full.redF(), muted.redF()), mix(full.greenF(), muted.greenF()),
+                                 mix(full.blueF(), muted.blueF()));
+            category_colors.insert(name, full.name());
+            category_quiet_colors.insert(name, quiet.name());
         }
         list.append(QVariantMap{
             {QStringLiteral("name"), QString::fromLatin1(theme.name)},
@@ -902,6 +915,7 @@ QVariantList Config::themes() const {
             {QStringLiteral("monoChrome"), theme.mono_chrome},
             {QStringLiteral("headingTracking"), theme.heading_tracking},
             {QStringLiteral("categoryColors"), category_colors},
+            {QStringLiteral("categoryQuietColors"), category_quiet_colors},
         });
     }
     return list;

@@ -495,6 +495,11 @@ ApplicationWindow {
         const table = appearance && appearance.categoryColors ? appearance.categoryColors : null
         return table && table[name] ? table[name] : focusedBorderColor
     }
+    // The quieter name colour of a group that is not shown.
+    function categoryQuietHex(name) {
+        const table = appearance && appearance.categoryQuietColors ? appearance.categoryQuietColors : null
+        return table && table[name] ? table[name] : mutedTextColor
+    }
     function categoryColorLabel(name) {
         return {grey: qsTr("Grey"), blue: qsTr("Blue"), red: qsTr("Red"), yellow: qsTr("Yellow"),
                 green: qsTr("Green"), pink: qsTr("Pink"), purple: qsTr("Purple"), cyan: qsTr("Cyan")}[name] || name
@@ -520,7 +525,9 @@ ApplicationWindow {
         }
         return ids
     }
-    // Mono recall number for categories reachable by a category1-9 shortcut.
+    // Recall number for categories reachable by a category1-9 shortcut: shown in
+    // the narrow window's category selector; the sidebar's names show the
+    // shortcut on hover.
     function categoryRecall(index) {
         return index < 9 && bindings("category" + (index + 1)).length > 0 ? String(index + 1) : ""
     }
@@ -2662,6 +2669,7 @@ ApplicationWindow {
                                 readonly property var agents: modelData.agents
                                 readonly property bool active: modelData.id === workspace.activeCategoryId
                                 readonly property color hue: window.categoryHex(modelData.color)
+                                readonly property color quietHue: window.categoryQuietHex(modelData.color)
                                 readonly property alias header: categoryButton
                                 width: sidebarColumn.width
                                 spacing: 0
@@ -2675,10 +2683,10 @@ ApplicationWindow {
                                     return null
                                 }
 
-                                // Categories are group labels: a colour mark, a mono recall
-                                // number for the first nine and the name; the active group's
-                                // name in full ink with a leading edge in its colour. No
-                                // resting fill.
+                                // Categories are group labels: the name in the group's
+                                // colour, the active group's in full strength and bold with a
+                                // leading edge in that colour. No resting fill. The tooltip
+                                // gives the Command-1 to 9 shortcut that recalls it.
                                 Button {
                                     id: categoryButton
                                     readonly property var modelData: group.modelData
@@ -2729,30 +2737,19 @@ ApplicationWindow {
                                     contentItem: Item {
                                         RowLayout {
                                             anchors.fill: parent
+                                            // With the button's own inset the name starts
+                                            // above its rows' status marks.
                                             anchors.leftMargin: 10
                                             anchors.rightMargin: 8
                                             spacing: 8
-                                            Rectangle {
-                                                objectName: "categorySwatch_" + categoryButton.modelData.id
-                                                Layout.preferredWidth: 10
-                                                Layout.preferredHeight: 10
-                                                Layout.alignment: Qt.AlignVCenter
-                                                radius: 3
-                                                color: group.hue
-                                                opacity: categoryButton.marked ? 1 : 0.8
-                                            }
+                                            // The name carries the group's colour: full for the
+                                            // shown group (and under the pointer), quieter for
+                                            // the rest.
                                             PlainText {
-                                                text: categoryButton.recall
-                                                visible: text.length > 0
-                                                color: categoryButton.marked ? window.textColor : window.mutedTextColor
-                                                font.family: window.monoFamily
-                                                font.pixelSize: window.sidebarReadout
-                                                Layout.alignment: Qt.AlignVCenter
-                                            }
-                                            PlainText {
+                                                objectName: "categoryName_" + categoryButton.modelData.id
                                                 text: categoryButton.modelData.name
-                                                color: categoryButton.marked || categoryButton.hovered ? window.textColor :
-                                                                                                         window.mutedTextColor
+                                                color: categoryButton.marked || categoryButton.hovered ? group.hue :
+                                                                                                         group.quietHue
                                                 font.pixelSize: window.sidebarFont
                                                 font.weight: categoryButton.marked ? Font.DemiBold : Font.Medium
                                                 elide: Text.ElideRight
@@ -2877,7 +2874,8 @@ ApplicationWindow {
                                         }
                                         RowLayout {
                                             anchors.fill: parent
-                                            anchors.leftMargin: 11
+                                            // The status mark starts under the group's name.
+                                            anchors.leftMargin: 12
                                             anchors.rightMargin: 8
                                             spacing: 9
                                             StatusMark {
@@ -2942,8 +2940,8 @@ ApplicationWindow {
                             }
                         }
 
-                        // A quiet plus right under the last category, in the recall
-                        // column, with its shortcut as a readout.
+                        // A quiet plus right under the last category, lined up with
+                        // the names, with its shortcut as a readout.
                         Button {
                             id: newCategoryButton
                             objectName: "newCategoryButton"

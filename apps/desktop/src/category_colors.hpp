@@ -12,22 +12,28 @@ namespace lapis::desktop {
 struct CategoryColor {
     std::string_view name;
     // On a dark surface (every built-in theme but Daylight) and on a light
-    // one. Each keeps at least 4:1 contrast with its themes' surfaces.
+    // one. Category names are written in these, so each keeps text contrast
+    // (4.5:1) with its themes' surfaces, as does its quieter mix with the
+    // theme's muted text (kCategoryQuietMix).
     std::string_view dark;
     std::string_view light;
 };
 
 // Swatch order, as the category menu lists them.
 inline constexpr std::array<CategoryColor, 8> kCategoryColors{{
-    {"grey", "#9ba5b2", "#6a7280"},
-    {"blue", "#6fa6ff", "#2563c9"},
-    {"red", "#f2777e", "#c4323c"},
-    {"yellow", "#e6c36a", "#946200"},
-    {"green", "#71cf8a", "#237a44"},
-    {"pink", "#f29ac6", "#bd3a7c"},
+    {"grey", "#9ba5b2", "#5f6774"},
+    {"blue", "#6fa6ff", "#2360c4"},
+    {"red", "#f2777e", "#bb2f39"},
+    {"yellow", "#e6c36a", "#875a00"},
+    {"green", "#71cf8a", "#1f7340"},
+    {"pink", "#f29ac6", "#b03374"},
     {"purple", "#b69cff", "#7347c9"},
-    {"cyan", "#56d0e0", "#06768a"},
+    {"cyan", "#56d0e0", "#056f82"},
 }};
+
+// A category other than the shown one writes its name in its colour mixed
+// half and half with the theme's muted text: quieter, still its hue.
+inline constexpr double kCategoryQuietMix = 0.5;
 
 // A category without a chosen colour takes one by its position: neighbours
 // differ in hue, red (close to the fault colour) comes late and grey last.

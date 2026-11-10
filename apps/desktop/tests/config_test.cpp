@@ -671,11 +671,15 @@ void advertised_names_are_accepted() {
         const QString name = entry.toMap().value(QStringLiteral("name")).toString();
         require(!name.isEmpty(), "each advertised theme needs a name");
         require(config.setTheme(name), "every advertised theme must be accepted");
-        // Each category colour stands out from the theme's surfaces (3:1, the
-        // contrast a non-text mark needs).
+        // Category names are written in their colour, full for the shown
+        // group and quieter for the rest: both keep text contrast (4.5:1)
+        // on the sidebar's surface and the window background, and the full
+        // colour's lines and edges keep a mark's 3:1 on cards too.
         const auto map = entry.toMap();
         const auto colors = map.value(QStringLiteral("categoryColors")).toMap();
-        require(colors.size() == 8, "every theme resolves the eight category colours");
+        const auto quiet = map.value(QStringLiteral("categoryQuietColors")).toMap();
+        require(colors.size() == 8 && quiet.keys() == colors.keys(),
+                "every theme resolves the eight category colours and their quiet names");
         const auto luminance = [](const QColor& color) {
             const auto channel = [](double value) {
                 return value <= 0.03928 ? value / 12.92 : std::pow((value + 0.055) / 1.055, 2.4);
@@ -683,15 +687,23 @@ void advertised_names_are_accepted() {
             return 0.2126 * channel(color.redF()) + 0.7152 * channel(color.greenF()) +
                    0.0722 * channel(color.blueF());
         };
-        for (const auto* surface : {"surface", "background", "card"}) {
+        const auto contrast = [&](const QVariant& color, const char* surface) {
             const auto ground =
                 luminance(QColor(map.value(QString::fromLatin1(surface)).toString()));
-            for (auto hue = colors.cbegin(); hue != colors.cend(); ++hue) {
-                const auto mark = luminance(QColor(hue.value().toString()));
-                const auto ratio =
-                    (std::max(mark, ground) + 0.05) / (std::min(mark, ground) + 0.05);
-                require(ratio >= 3.0, "category colours keep 3:1 contrast on every theme");
+            const auto ink = luminance(QColor(color.toString()));
+            return (std::max(ink, ground) + 0.05) / (std::min(ink, ground) + 0.05);
+        };
+        for (auto hue = colors.cbegin(); hue != colors.cend(); ++hue) {
+            for (const auto* surface : {"surface", "background"}) {
+                require(contrast(hue.value(), surface) >= 4.5,
+                        "category names keep text contrast on every theme");
+                require(contrast(quiet.value(hue.key()), surface) >= 4.5,
+                        "quiet category names keep text contrast on every theme");
             }
+            require(contrast(hue.value(), "card") >= 3.0,
+                    "category colours keep 3:1 contrast on cards");
+            require(quiet.value(hue.key()) != hue.value(),
+                    "a quiet name differs from the full one");
         }
     }
     // The final iteration leaves the last advertised name selected, and the

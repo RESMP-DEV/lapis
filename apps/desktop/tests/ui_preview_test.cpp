@@ -2733,11 +2733,26 @@ int run_sidebar_ui_tests() {
     wait_popup(*category_menu, false);
     CHECK(workspace.categories().at(1).toMap().value(QStringLiteral("color")).toString() ==
           QStringLiteral("cyan"));
-    CHECK(
-        QQmlProperty::read(item(QStringLiteral("categorySwatch_") + build), QStringLiteral("color"))
-            .value<QColor>() ==
-        call_window(*window, "categoryHex", QStringLiteral("cyan")).value<QColor>());
+    // The colour shows in the group's name: full for the shown group, the
+    // quieter mix for the others. No number or square precedes the name.
+    const auto name_color = [&](const QString& category) {
+        return QQmlProperty::read(item(QStringLiteral("categoryName_") + category),
+                                  QStringLiteral("color"))
+            .value<QColor>();
+    };
+    CHECK(name_color(build) ==
+          call_window(*window, "categoryHex", QStringLiteral("cyan")).value<QColor>());
+    CHECK(name_color(research) ==
+          call_window(*window, "categoryQuietHex", QStringLiteral("pink")).value<QColor>());
+    CHECK(name_color(research) != hex(research));
     CHECK(edge(QStringLiteral("renderer")).rgb() == hex(build).rgb());
+    {
+        auto* header = item(QStringLiteral("category_") + build);
+        auto* name = item(QStringLiteral("categoryName_") + build);
+        auto* mark = item(QStringLiteral("sidebarStatus_renderer"));
+        CHECK(name->mapToItem(header, QPointF()).x() <= 13);
+        CHECK(qAbs(name->mapToScene(QPointF()).x() - mark->mapToScene(QPointF()).x()) <= 1);
+    }
 
     // A row dragged onto another category's header moves the agent there.
     wait_input_ready(*window, *terminal);

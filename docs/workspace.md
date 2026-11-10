@@ -4,12 +4,14 @@
 
 One terminal stage shows the selected agent. The sidebar beside it is the
 navigation, as Chrome's vertical tabs are with tab groups: every category is a
-colour-coded group, its name under a colour mark and its recall number, with its
-agents listed under it, each with its status mark and title. A click on an agent
-shows it and its category; Command-Shift-] and [ walk the list in order, on from
-a category's last agent into the next category's first. The agent on the stage
-has a leading edge in its category's colour and a faint fill of it, and the
-shown category's name is in full ink. Larger terminal text makes the sidebar's
+colour-coded group: its name in its colour, with its agents listed under it,
+each with its status mark and title, and a line in the colour down their rows. A
+click on an agent shows it and its category; Command-Shift-] and [ walk the list
+in order, on from a category's last agent into the next category's first, and
+Command-1 to 9 still go to the first nine categories (a category's name shows
+its shortcut on hover). The agent on the stage has a leading edge in its
+category's colour and a faint fill of it, and the shown category's name is bold
+in its full colour while the others' are quieter. Larger terminal text makes the sidebar's
 names larger too. With nothing open, the stage lists what to do next (new
 agent, resume, terminal, reopen, the latest conversations and the categories
 that have agents), moved with up and down and run with Return, so nothing needs

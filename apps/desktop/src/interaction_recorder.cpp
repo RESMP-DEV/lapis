@@ -141,11 +141,8 @@ struct NamedArea {
     const char* area;
 };
 constexpr NamedArea kSessionAreas[] = {
-    {"agentTab_", "strip"},
-    {"cardPress_", "strip"},
-    {"previewTerminal_", "strip"},
-    {"sidebarAgent_", "sidebar"},
-    {"sidebarPress_", "sidebar"},
+    {"agentTab_", "strip"},       {"cardPress_", "strip"},      {"previewTerminal_", "strip"},
+    {"sidebarAgent_", "sidebar"}, {"sidebarPress_", "sidebar"},
 };
 
 // The part of the workspace a named item belongs to, and the agent its
