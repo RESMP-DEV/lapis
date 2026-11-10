@@ -2866,192 +2866,18 @@ void restoredAgentsStartAtTheStageSize() {
     }
 }
 
-// Claude Code plans: a session takes its machine's own sign-in, a new one
-// takes a plan with room when that is full, a remote session moves once its
-// plan fills and its output is quiet, reading the kept token on that machine,
-// and a switch can be asked for. Stand-ins say which plan they run on.
-void plansFollowTheirLoad() {
-    using lapis::desktop::account_home_name;
-    using lapis::desktop::account_load_key;
-    QTemporaryDir directory(QStringLiteral("/tmp/lapis-plans-XXXXXX"));
-    require(directory.isValid(), "plans directory");
-    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
-    const auto path = installStandInGrok(root);
-    writeExecutable(root.filePath(QStringLiteral("bin/claude")),
-                    "#!/bin/sh\necho \"plan ${CLAUDE_CODE_OAUTH_TOKEN:-own}\"\nexec sleep 600\n");
-    writeExecutable(root.filePath(QStringLiteral("bin/ssh")), R"(#!/bin/sh
-d=$(dirname "$0"); host=$(printf '%s\n' "$@" | sed -n '/^-t$/{n;p;q;}')
-n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1))
-printf '%s\n' "$@" > "$d/$host.call$n"
-echo $n > "$d/$host.count"
-for i in 1 2 3 4 5 6 7 8; do echo "connected $i"; sleep 0.05; done
-exec sleep 600
-)");
-    QFile config(root.filePath(QStringLiteral("ssh_config")));
-    require(config.open(QIODevice::WriteOnly), "write an ssh config");
-    config.write("Host devbox\n");
-    config.close();
-    require(root.mkpath(QStringLiteral("accounts/claude")), "a credentials folder");
-    QFile token(root.filePath(QStringLiteral("accounts/claude/spare.token")));
-    require(token.open(QIODevice::WriteOnly), "write a token");
-    token.write("token-for-spare\n");
-    token.close();
-    const auto calls = [&root](const QString& host) {
-        QFile count(root.filePath(QStringLiteral("bin/%1.count").arg(host)));
-        return count.open(QIODevice::ReadOnly) ? count.readAll().trimmed().toInt() : 0;
-    };
-    const auto call = [&root](const QString& host, int number) {
-        QFile file(root.filePath(QStringLiteral("bin/%1.call%2").arg(host).arg(number)));
-        return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
-    };
-    const auto shows = [](lapis::desktop::SessionPreview* item, const char* text) {
-        return waitFor(
-            [item, text] {
-                return screenText(item->snapshot()).contains(QString::fromLatin1(text));
-            },
-            10000);
-    };
-    WorkspaceOptions options;
-    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
-    options.accounts = lapis::desktop::parse_accounts(QJsonDocument::fromJson(R"({"claude": [
-            {"name": "mine", "email": "me@example.com", "home": "local"},
-            {"name": "dev", "email": "dev@example.com", "home": "devbox"},
-            {"name": "spare", "email": "spare@example.com", "machines": ["local", "devbox"]}]})")
-                                                          .object());
-    const auto claude = QStringLiteral("claude");
-    const auto mine_full = std::pair{account_load_key(claude, QStringLiteral("me@example.com")),
-                                     lapis::desktop::AccountLoad{97, 40}};
-    {
-        Workspace workspace(WorkspaceMode::live, options);
-        workspace.setSshConfigForTesting(config.fileName());
-        workspace.setAccountsRootForTesting(root.filePath(QStringLiteral("accounts")));
-        const auto project = root.filePath(QStringLiteral("project"));
-        require(workspace.createAgent(project, QStringLiteral("here"), claude), "a Claude agent");
-        auto* here = workspace.focusedSession();
-        require(here != nullptr && shows(here, "plan own") &&
-                    workspace.agentAccount(here->sessionId()) == QStringLiteral("mine"),
-                "it runs on this Mac's own sign-in");
-        require(workspace.agentPlanCredential(here->sessionId()).isEmpty(),
-                "an own sign-in has no visiting credential override");
-        require(workspace.createAgent(QStringLiteral("~/far"), QStringLiteral("far"), claude, {},
-                                      {}, QStringLiteral("devbox")),
-                "a Claude agent on another machine");
-        auto* far = workspace.focusedSession();
-        require(far != nullptr, "remote agent exists");
-        far->setOutputTimingForTesting({.settle_ms = 0, .burst_ms = 1500, .quiet_ms = 100});
-        const auto far_id = far->sessionId();
-        require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 1; }, 10000) &&
-                    !call(QStringLiteral("devbox"), 1).contains(QStringLiteral("{ a=")) &&
-                    workspace.agentAccount(far_id) == QStringLiteral("dev"),
-                "it runs on that machine's own sign-in");
-
-        require(QFile::rename(token.fileName(), token.fileName() + ".saved"), "hide kept token");
-        require(!workspace.switchAccount(here->sessionId()) && !here->closing() &&
-                    here->inputReady() &&
-                    workspace.agentAccount(here->sessionId()) == QStringLiteral("mine") &&
-                    workspace.workspaceError().contains(QStringLiteral("no usable token")),
-                "failed account preparation leaves the running agent on its original plan");
-        require(QFile::rename(token.fileName() + ".saved", token.fileName()), "restore kept token");
-        workspace.setAccountLoads({mine_full});
-        require(workspace.createAgent(project, QStringLiteral("next"), claude),
-                "another Claude agent");
-        auto* next = workspace.focusedSession();
-        require(next != nullptr && shows(next, "plan token-for-spare") &&
-                    workspace.agentAccount(next->sessionId()) == QStringLiteral("spare"),
-                "a new session takes the plan with room, its token in the environment");
-        require(workspace.agentPlanCredential(next->sessionId()) == token.fileName(),
-                "reset and launch use the same configured credential root");
-
-        require(waitFor([&] { return far->inputReady(); }, 10000), "remote input is ready");
-        // Drive the output estimate explicitly: instrumented transports may
-        // coalesce the stand-in's startup frames into fewer than three updates.
-        const auto output = far->snapshot();
-        for (int frame = 0; frame < 3; ++frame)
-            far->applySnapshot(output);
-        require(waitFor([&] { return far->statusLabel() == QStringLiteral("Quiet"); }, 10000),
-                "the remote stand-in becomes output-quiet without an observer");
-        const QHash<QString, lapis::desktop::AccountLoad> full = {
-            mine_full,
-            {account_load_key(claude, account_home_name(QStringLiteral("devbox"))), {99, 99}}};
-        workspace.setAccountLoads(full);
-        require(!far->closing() && workspace.agentAccount(far_id) == QStringLiteral("dev"),
-                "output quiet is not permission to interrupt a remote turn");
-        // Synthetic observer snapshots exercise the account policy; they do not
-        // claim that the SSH transport supplies an observer.
-        lapis::session::wire::AttentionSnapshot observed;
-        observed.available = true;
-        observed.connected = true;
-        observed.ready = true;
-        for (const auto activity : {lapis::session::attention::Activity::unknown,
-                                    lapis::session::attention::Activity::working}) {
-            observed.activity = activity;
-            far->applyAttention(observed);
-            workspace.setAccountLoads(full);
-            require(!far->closing() && workspace.agentAccount(far_id) == QStringLiteral("dev"),
-                    "unknown and working observers retain the running plan");
-        }
-        observed.activity = lapis::session::attention::Activity::idle;
-        observed.ready = false;
-        far->applyAttention(observed);
-        workspace.setAccountLoads(full);
-        require(!far->closing(), "an unreconciled idle observation cannot switch plans");
-        observed.ready = true;
-        far->applyAttention(observed);
-        workspace.setAccountLoads(full);
-        require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 2; }, 10000),
-                "a reconciled idle observation permits switching a full plan");
-        const auto first = call(QStringLiteral("devbox"), 1);
-        const auto second = call(QStringLiteral("devbox"), 2);
-        static const QRegularExpression conversation(
-            QStringLiteral(R"( && s=([0-9a-f-]{36}) && )"));
-        require(second.contains(
-                    QStringLiteral(R"({ a=spare; t="$HOME/.lapis/accounts/claude/$a.token"; )")) &&
-                    !second.contains(QStringLiteral("token-for-spare")) &&
-                    conversation.match(second).captured(1) ==
-                        conversation.match(first).captured(1) &&
-                    workspace.agentAccount(far_id) == QStringLiteral("spare"),
-                "it reads the kept token there and resumes the same conversation");
-        require(workspace.agentPlanCredential(far_id) ==
-                    QStringLiteral("~/.lapis/accounts/claude/spare.token"),
-                "remote credential lookup retains the remote user's home");
-
-        workspace.setAccountLoads({});
-        require(
-            workspace.canSwitchAccount(next->sessionId()) &&
-                workspace.switchAccount(next->sessionId()) &&
-                waitFor(
-                    [&] {
-                        return workspace.agentAccount(next->sessionId()) ==
-                                   QStringLiteral("mine") &&
-                               screenText(next->snapshot()).contains(QStringLiteral("plan own"));
-                    },
-                    10000),
-            "a switch asked for moves the agent to the next plan with room");
-        for (const auto* item : {here, far, next})
-            require(waitFor([item] { return item->inputReady(); }, 10000),
-                    "the terminate handshake is ready");
-        for (const auto& closing : {here->sessionId(), far_id, next->sessionId()})
-            require(workspace.closeSession(closing, true), "close the stand-in agents");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
-                "the stand-in agents close");
-    }
-    qputenv("PATH", path);
-}
-
-// A selected visiting plan is fail-closed on a remote route before lapis
-// launches or replaces anything. Saved-agent registries and explicit restart
-// exercise the apply seam, and a conservative running-service endpoint
-// exercises reload; a real healthy transport kept alive through termination
-// remains parent-owned.
-void remoteAccountsDropPreambleWithoutConfiguration() {
-    // Reuses the saved-record restart seam from remote-account refusals while
-    // avoiding the later live reload listener.
+// Agents saved while lapis managed Claude Code and Codex plans still load and
+// start. Their retired "account" field is ignored and dropped on the next
+// save; a remote command saved with a plan preamble loses it at its next
+// start, and a local one gets no plan credential, so both use the machine's
+// own sign-in.
+void retiredPlansLeaveSavedAgentsStartable() {
     QTemporaryDir directory(QCoreApplication::applicationDirPath() +
                             QStringLiteral("/../../ra-XXXXXX"));
-    require(directory.isValid(), "remote account registry directory");
+    require(directory.isValid(), "retired plan registry directory");
     const QDir root(QFileInfo(directory.path()).canonicalFilePath());
     require(root.mkpath(QStringLiteral("project")) && root.mkpath(QStringLiteral("bin")),
-            "create the stale-plan fixture");
+            "create the retired-plan fixture");
     const auto ssh = root.filePath(QStringLiteral("bin/ssh"));
     writeExecutable(ssh, "#!/bin/sh\nexit 0\n");
     const auto project = root.filePath(QStringLiteral("project"));
@@ -3070,273 +2896,55 @@ void remoteAccountsDropPreambleWithoutConfiguration() {
     record.insert(QStringLiteral("account"), QStringLiteral("spare"));
     record.insert(QStringLiteral("arguments"),
                   QJsonArray{QStringLiteral("-t"), QStringLiteral("box"), saved_command});
+    const auto local_id = uuid();
+    auto local = agentRecord(root.path(), local_id, "general");
+    local.insert(QStringLiteral("harness"), QStringLiteral("claude"));
+    local.insert(QStringLiteral("account"), QStringLiteral("spare"));
     writeRegistry(root.filePath(QStringLiteral("workspace.json")),
                   {{"version", 2},
                    {"activeCategory", "general"},
                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
-                   {"agents", QJsonArray{record}}});
+                   {"agents", QJsonArray{record, local}}});
+    // A local agent's environment also carries the visual view's chart style
+    // once one is written under HOME, unless MATPLOTLIBRC is set. Point both
+    // at the fixture so the developer's own home cannot change the result.
+    const auto original_home = qgetenv("HOME");
+    const auto original_matplotlibrc = qgetenv("MATPLOTLIBRC");
+    const bool had_matplotlibrc = qEnvironmentVariableIsSet("MATPLOTLIBRC");
+    const auto restore_environment = qScopeGuard([&] {
+        qputenv("HOME", original_home);
+        if (had_matplotlibrc)
+            qputenv("MATPLOTLIBRC", original_matplotlibrc);
+        else
+            qunsetenv("MATPLOTLIBRC");
+    });
+    qputenv("HOME", QFile::encodeName(project));
+    qunsetenv("MATPLOTLIBRC");
     WorkspaceOptions options;
     options.storagePath = root.filePath(QStringLiteral("workspace.json"));
-    options.accounts = {};
     Workspace workspace(WorkspaceMode::live, options);
-    auto* item = workspace.focusedSession();
-    require(item != nullptr && !item->closing(), "the unconfigured workspace loads its agent");
-    require(workspace.restartAgent(id), "restart proceeds with no plan configured");
-    const auto saved_record = QJsonDocument::fromJson(readRegistry(options.storagePath))
-                                  .object()
-                                  .value(QStringLiteral("agents"))
-                                  .toArray()
-                                  .first()
-                                  .toObject();
-    require(workspace.agentAccount(id).isEmpty() &&
-                saved_record.value(QStringLiteral("account")).toString().isEmpty() &&
-                saved_record.value(QStringLiteral("arguments")).toArray().last().toString() ==
+    require(workspace.sessions().size() == 2 && workspace.workspaceError().isEmpty(),
+            "agents saved with a plan load without an error");
+    require(workspace.restartAgent(id) && workspace.restartAgent(local_id),
+            "agents saved with a plan restart");
+    auto* local_item = workspace.session(local_id);
+    require(local_item != nullptr && local_item->serviceEnvironment().isEmpty(),
+            "a local agent saved with a plan starts with no plan credential");
+    const auto saved = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                           .object()
+                           .value(QStringLiteral("agents"))
+                           .toArray();
+    QJsonObject saved_remote;
+    for (const auto& value : saved) {
+        require(!value.toObject().contains(QStringLiteral("account")),
+                "saving drops the retired plan field");
+        if (value.toObject().value(QStringLiteral("id")).toString() == id)
+            saved_remote = value.toObject();
+    }
+    require(saved_remote.value(QStringLiteral("arguments")).toArray().last().toString() ==
                     base_command &&
-                !QJsonDocument(saved_record).toJson(QJsonDocument::Compact).contains("{ a=spare"),
-            "a restart without configured plans drops the saved remote preamble and plan");
-}
-
-void remoteAccountsRefuseBeforeReplacement() {
-    QJsonArray claude_names{
-        QJsonObject{{"name", "safe.name-1"},
-                    {"email", "safe@example.test"},
-                    {"machines", QJsonArray{"box-1"}}},
-        QJsonObject{{"name", "; rm -rf ~"}, {"email", "semicolon@example.test"}},
-        QJsonObject{{"name", "$(danger)"}, {"email", "substitution@example.test"}},
-        QJsonObject{{"name", "`danger`"}, {"email", "backtick@example.test"}},
-        QJsonObject{{"name", "danger\nexit"}, {"email", "newline@example.test"}},
-        QJsonObject{{"name", "*"}, {"email", "glob@example.test"}},
-        QJsonObject{{"name", ".."}, {"email", "parent@example.test"}}};
-    QJsonArray codex_names{QJsonObject{{"name", "quote"}, {"email", "quoted@example.test"}},
-                           QJsonObject{{"name", "\"quote"}, {"email", "broken@example.test"}}};
-    const auto configured = lapis::desktop::parse_accounts(
-        QJsonObject{{"claude", claude_names}, {"codex", codex_names}});
-    static const QRegularExpression safe_name(QStringLiteral(R"(^[A-Za-z0-9._-]{1,64}$)"));
-    require(configured.accounts.size() == 2 &&
-                configured.accounts.front().name == QStringLiteral("safe.name-1") &&
-                configured.accounts.back().name == QStringLiteral("quote") &&
-                std::all_of(configured.accounts.cbegin(), configured.accounts.cend(),
-                            [](const lapis::desktop::Account& account) {
-                                return safe_name.match(account.name).hasMatch();
-                            }),
-            "configured plan names reject shell metacharacters, traversal, and length abuse");
-
-    QTemporaryDir directory;
-    require(directory.isValid(), "remote account registry directory");
-    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
-    require(root.mkpath(QStringLiteral("project")) && root.mkpath(QStringLiteral("bin")) &&
-                root.mkpath(QStringLiteral("accounts/claude")) &&
-                root.mkpath(QStringLiteral("accounts/codex/spare")),
-            "create the remote-account fixture");
-    const auto ssh = root.filePath(QStringLiteral("bin/ssh"));
-    writeExecutable(ssh, "#!/bin/sh\nexit 0\n");
-    const auto token = root.filePath(QStringLiteral("accounts/claude/spare.token"));
-    const auto auth = root.filePath(QStringLiteral("accounts/codex/spare/auth.json"));
-    const auto writeToken = [&](const QByteArray& value) {
-        QFile file(token);
-        require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "write Claude token");
-        require(file.write(value) == value.size(), "write the Claude token body");
-    };
-    const auto writeAuth = [&](const QByteArray& value) {
-        QFile file(auth);
-        require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "write Codex login");
-        require(file.write(value) == value.size(), "write the Codex login body");
-    };
-    writeToken("token-for-spare\n");
-    writeAuth("{}\n");
-    WorkspaceOptions options;
-    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
-    options.accounts = lapis::desktop::parse_accounts(QJsonDocument::fromJson(R"({"claude": [
-        {"name": "dev", "email": "claude-dev@example.test", "home": "box"},
-        {"name": "spare", "email": "claude-spare@example.test", "machines": ["box"]}],
-        "codex": [{"name": "dev", "email": "codex-dev@example.test", "home": "box"},
-        {"name": "spare", "email": "codex-spare@example.test", "machines": ["box"]}]})")
-                                                          .object());
-    const auto reload_id = uuid();
-    // Keep this filename short: QLocalServer rejects Unix paths over the
-    // platform sockaddr limit, while a saved agent ID remains a UUID.
-    const auto reload_endpoint = root.filePath(QStringLiteral("reload.sock"));
-    // Fixture-local builder with one call site; argument order is the record's
-    // own field order, and distinct wrapper types add no safety here.
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-    const auto remoteAgent = [&](const QString& harness, const QString& command,
-                                 const QString& id) {
-        auto record = agentRecord(root.path(), id, "general");
-        record.insert(QStringLiteral("endpoint"), root.filePath(id + QStringLiteral(".sock")));
-        record.insert(QStringLiteral("program"), ssh);
-        record.insert(QStringLiteral("harness"), harness);
-        record.insert(QStringLiteral("account"), QStringLiteral("spare"));
-        record.insert(QStringLiteral("arguments"),
-                      QJsonArray{QStringLiteral("-t"), QStringLiteral("box"), command});
-        return record;
-    };
-    const auto registry = [&](const QString& name, const QJsonObject& agent) {
-        writeRegistry(
-            root.filePath(name),
-            {{"version", 2},
-             {"activeCategory", "general"},
-             {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
-             {"agents", QJsonArray{agent}}});
-    };
-    const auto claude_command = QStringLiteral("cd %1 && s=%2 && exec claude")
-                                    .arg(root.filePath(QStringLiteral("project")), uuid());
-    const auto codex_command =
-        QStringLiteral("cd %1 && exec codex").arg(root.filePath(QStringLiteral("project")));
-    require(QFile::remove(token), "hide the Claude credential");
-    auto claude_registry = options;
-    claude_registry.storagePath = root.filePath(QStringLiteral("claude-workspace.json"));
-    registry(QStringLiteral("claude-workspace.json"),
-             remoteAgent(QStringLiteral("claude"), claude_command, uuid()));
-    {
-        Workspace workspace(WorkspaceMode::live, claude_registry);
-        workspace.setAccountsRootForTesting(root.filePath(QStringLiteral("accounts")));
-        auto* item = workspace.focusedSession();
-        const bool restarted = item == nullptr ? false : workspace.restartAgent(item->sessionId());
-        require(item != nullptr && !restarted && !item->closing() &&
-                    workspace.agentAccount(item->sessionId()) == QStringLiteral("spare") &&
-                    workspace.workspaceError() ==
-                        QStringLiteral("Claude Code plan spare has no usable token."),
-                "restart refuses a missing selected Claude credential before launch");
-    }
-
-    writeToken("token-for-spare\n");
-    require(QFile::remove(auth), "hide the Codex credential");
-    auto codex_registry = options;
-    codex_registry.storagePath = root.filePath(QStringLiteral("codex-workspace.json"));
-    registry(QStringLiteral("codex-workspace.json"),
-             remoteAgent(QStringLiteral("codex"), codex_command, uuid()));
-    {
-        Workspace workspace(WorkspaceMode::live, codex_registry);
-        workspace.setAccountsRootForTesting(root.filePath(QStringLiteral("accounts")));
-        auto* item = workspace.focusedSession();
-        require(item != nullptr && !workspace.restartAgent(item->sessionId()) && !item->closing() &&
-                    workspace.agentAccount(item->sessionId()) == QStringLiteral("spare") &&
-                    workspace.workspaceError() ==
-                        QStringLiteral("Codex plan spare has no usable login."),
-                "restart refuses a missing selected Codex credential before launch");
-    }
-
-    writeAuth("{}\n");
-    auto reload_registry = claude_registry;
-    reload_registry.storagePath = root.filePath(QStringLiteral("reload-workspace.json"));
-    registry(QStringLiteral("reload-workspace.json"),
-             remoteAgent(QStringLiteral("claude"), claude_command, reload_id));
-    QLocalServer::removeServer(reload_endpoint);
-    QLocalServer reload_peer;
-    reload_peer.setSocketOptions(QLocalServer::UserAccessOption);
-    require(reload_peer.listen(reload_endpoint), "reload endpoint listens as a service");
-    {
-        Workspace workspace(WorkspaceMode::live, reload_registry);
-        workspace.setAccountsRootForTesting(root.filePath(QStringLiteral("accounts")));
-        auto* item = workspace.focusedSession();
-        require(item != nullptr && !item->closing() &&
-                    workspace.agentAccount(item->sessionId()) == QStringLiteral("spare"),
-                "the remote reload fixture loads");
-        for (const auto& token_body : {
-                 QByteArrayLiteral("\ntoken-for-spare\n"),
-                 QByteArrayLiteral(" token-for-spare\n"),
-                 QByteArrayLiteral("token-for-spare\nsecond\n"),
-                 QByteArrayLiteral("token-for-spare\nsecond\nthird"),
-                 QByteArray(8192, 'a') + '\n',
-                 QByteArray(8193, 'a'),
-             }) {
-            writeToken(token_body);
-            require(workspace.reloadAgent(item->sessionId()) == 0 && !item->closing() &&
-                        workspace.workspaceError() ==
-                            QStringLiteral("Claude Code plan spare has no usable token."),
-                    "reload rejects a token the remote shell would reject");
-            require(!reload_peer.hasPendingConnections(),
-                    "credential preflight contacted the healthy session");
-        }
-    }
-}
-
-void localAccountsRefuseBeforeReplacingAHealthySession() {
-    QTemporaryDir directory(QStringLiteral("/private/tmp/lapis-local-account-XXXXXX"));
-    require(directory.isValid(), "local account fixture directory");
-    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
-    require(root.mkpath(QStringLiteral("project")) &&
-                root.mkpath(QStringLiteral("accounts/claude")),
-            "create local-account fixture");
-    const auto id = uuid();
-    const auto endpoint = root.filePath(id + QStringLiteral(".sock"));
-    QLocalServer::removeServer(endpoint);
-    QLocalServer service;
-    service.setSocketOptions(QLocalServer::UserAccessOption);
-    require(service.listen(endpoint), "the local service endpoint listens");
-    auto record = agentRecord(root.path(), id, "general");
-    record.insert(QStringLiteral("endpoint"), endpoint);
-    record.insert(QStringLiteral("program"), QStringLiteral("/bin/true"));
-    record.insert(QStringLiteral("harness"), QStringLiteral("claude"));
-    record.insert(QStringLiteral("account"), QStringLiteral("spare"));
-    WorkspaceOptions options;
-    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
-    options.headless = true;
-    options.accounts = lapis::desktop::parse_accounts(QJsonDocument::fromJson(R"({"claude": [
-        {"name": "spare", "email": "spare@example.test", "machines": ["local"]}]})")
-                                                          .object());
-    writeRegistry(options.storagePath,
-                  {{"version", 2},
-                   {"activeCategory", "general"},
-                   {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
-                   {"agents", QJsonArray{record}}});
-    Workspace workspace(WorkspaceMode::live, options);
-    workspace.setAccountsRootForTesting(root.filePath(QStringLiteral("accounts")));
-    auto* item = workspace.focusedSession();
-    require(item != nullptr && !item->closing(), "the healthy local fixture loads");
-    const auto token = root.filePath(QStringLiteral("accounts/claude/spare.token"));
-    for (const auto& body : std::array<QByteArray, 4>{
-             QByteArray{},
-             QByteArrayLiteral(" leading\n"),
-             QByteArrayLiteral("one\ntwo\n"),
-             QByteArray(8193, 'a'),
-         }) {
-        QFile credential(token);
-        require(credential.open(QIODevice::WriteOnly | QIODevice::Truncate),
-                "write the local Claude fixture");
-        require(credential.write(body) == body.size(), "complete the local Claude fixture");
-        credential.close();
-        require(workspace.reloadAgent(id) == 0 && !item->closing() &&
-                    workspace.workspaceError() ==
-                        QStringLiteral("Claude Code plan spare has no usable token on this Mac."),
-                "reload rejects a bad local credential before ending the healthy session");
-        while (auto* connection = service.nextPendingConnection()) {
-            require(!connection->waitForReadyRead(50) || connection->readAll().isEmpty(),
-                    "local credential preflight sent a control frame to the healthy session");
-            connection->deleteLater();
-        }
-        QCoreApplication::processEvents();
-    }
-}
-
-void incompleteCodexHomeNeverStartsAnAgent() {
-    UpdaterFixture fixture("#!/bin/sh\necho started > \"${0%/*}/started\"\nexec sleep 600\n",
-                           QStringLiteral("codex"));
-    fixture.options.updateHarnesses = false;
-    fixture.options.accounts = lapis::desktop::parse_accounts(QJsonDocument::fromJson(R"({
-        "codex": [{"name":"mine", "email":"mine@example.com", "home":"local"},
-                  {"name":"spare", "machines":["local"]}]
-    })")
-                                                                  .object());
-    require(fixture.root.mkpath("accounts/codex/spare"), "create kept account home");
-    QFile auth(fixture.root.filePath("accounts/codex/spare/auth.json"));
-    require(auth.open(QIODevice::WriteOnly), "write fixture credential");
-    auth.write("{}\n");
-    auth.close();
-    const ScopedCodexHome shared(QFile::encodeName(fixture.root.filePath("missing-shared-home")));
-    Workspace workspace(WorkspaceMode::live, fixture.options);
-    workspace.setAccountsRootForTesting(fixture.root.filePath("accounts"));
-    workspace.setAccountLoads({{lapis::desktop::account_load_key(
-                                    QStringLiteral("codex"), QStringLiteral("mine@example.com")),
-                                {99, 99}}});
-    require(!workspace.createAgent(fixture.root.filePath("project"), QStringLiteral("blocked"),
-                                   QStringLiteral("codex")) &&
-                workspace.sessions().isEmpty() &&
-                workspace.workspaceError().contains(QStringLiteral("Cannot prepare Codex plan")),
-            "a failed shared-home preparation refuses activation with its cause");
-    require(!QFileInfo::exists(fixture.root.filePath("bin/started")) &&
-                auth.open(QIODevice::ReadOnly) && auth.readAll() == "{}\n",
-            "failed activation starts no child and preserves the kept credential");
+                !QJsonDocument(saved_remote).toJson(QJsonDocument::Compact).contains("{ a=spare"),
+            "a restart drops the saved remote plan preamble");
 }
 
 // An attached peer can lose the terminate handshake, report replacement, or
@@ -4534,20 +4142,22 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
         askVersioned(workspace, {{QStringLiteral("request"), QStringLiteral("settings")}})
             .value(QStringLiteral("settings"))
             .toObject();
-    require(shown.value(QStringLiteral("keepAwake")).toBool() &&
-                shown.contains(QStringLiteral("showUsage")),
+    require(shown.value(QStringLiteral("keepAwake")).toBool(),
             "the phone reads the Mac's settings");
     // Older phone builds decode the retired request chime's two settings and
-    // still send them: the answer carries them as off, and changes are ignored.
+    // the retired usage meter's, and still send them: the answer carries them
+    // as off, and changes are ignored.
     require(shown.value(QStringLiteral("alertSound")) == QJsonValue(false) &&
-                shown.value(QStringLiteral("alertRepeat")) == QJsonValue(1),
+                shown.value(QStringLiteral("alertRepeat")) == QJsonValue(1) &&
+                shown.value(QStringLiteral("showUsage")) == QJsonValue(false),
             "the answer keeps the retired settings an older phone requires");
     const auto changed = askVersioned(
         workspace,
         {{QStringLiteral("request"), QStringLiteral("changeSettings")},
          {QStringLiteral("settings"), QJsonObject{{QStringLiteral("keepAwake"), false},
                                                   {QStringLiteral("alertSound"), true},
-                                                  {QStringLiteral("alertRepeat"), 11}}}});
+                                                  {QStringLiteral("alertRepeat"), 11},
+                                                  {QStringLiteral("showUsage"), true}}}});
     require(answeredOk(changed) && !keymap.keepAwake() &&
                 !changed.value(QStringLiteral("settings"))
                      .toObject()
@@ -4555,7 +4165,10 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
                      .toBool() &&
                 changed.value(QStringLiteral("settings"))
                         .toObject()
-                        .value(QStringLiteral("alertSound")) == QJsonValue(false),
+                        .value(QStringLiteral("alertSound")) == QJsonValue(false) &&
+                changed.value(QStringLiteral("settings"))
+                        .toObject()
+                        .value(QStringLiteral("showUsage")) == QJsonValue(false),
             "the phone changes them, and the retired settings are ignored");
     require(file.open(QIODevice::ReadOnly) && !QJsonDocument::fromJson(file.readAll())
                                                    .object()
@@ -4607,7 +4220,7 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
                                                  {QStringLiteral("finishSound"), true},
                                                  {QStringLiteral("alertRepeat"), 1},
                                                  {QStringLiteral("notify"), true},
-                                                 {QStringLiteral("showUsage"), true}}) &&
+                                                 {QStringLiteral("showUsage"), false}}) &&
                 keymap.remoteSettings() == before_failure,
             "a failed save echoes unchanged settings and preserves memory");
     require(save_failed.value(QStringLiteral("error"))
@@ -7103,33 +6716,24 @@ int main(int argc, char** argv) {
     QCoreApplication::setApplicationName(QStringLiteral("lapis"));
     try {
         if (argc > 1) {
-            require(
-                argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--case") &&
-                    (QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options") ||
-                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("accounts") ||
-                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-accounts") ||
-                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-hooks") ||
-                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-account-reset") ||
-                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
-                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("launch-policy") ||
-                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload") ||
-                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater") ||
-                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("updates-off") ||
-                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("omp-overlay") ||
-                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes") ||
-                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("stage-size")),
-                "Usage: lapis_workspace_tests [--case "
-                "remote-options|remote-hooks|accounts|remote-account-reset|reload|updater|"
-                "updates-off|startup-defaults|launch-policy|omp-overlay|chimes|stage-size]");
+            require(argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--case") &&
+                        (QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-hooks") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("retired-plans") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("launch-policy") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("updates-off") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("omp-overlay") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("stage-size")),
+                    "Usage: lapis_workspace_tests [--case "
+                    "remote-options|remote-hooks|retired-plans|reload|updater|"
+                    "updates-off|startup-defaults|launch-policy|omp-overlay|chimes|stage-size]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
-            if (selected == QStringLiteral("accounts")) {
-                incompleteCodexHomeNeverStartsAnAgent();
-                plansFollowTheirLoad();
-            } else if (selected == QStringLiteral("remote-accounts")) {
-                remoteAccountsRefuseBeforeReplacement();
-                localAccountsRefuseBeforeReplacingAHealthySession();
-            } else if (selected == QStringLiteral("remote-account-reset")) {
-                remoteAccountsDropPreambleWithoutConfiguration();
+            if (selected == QStringLiteral("retired-plans")) {
+                retiredPlansLeaveSavedAgentsStartable();
             } else if (selected == QStringLiteral("remote-options")) {
                 remoteOptionsRespectTheArgumentLimit();
                 remoteClaudeReconnectsToItsConversation();
@@ -7236,10 +6840,7 @@ int main(int argc, char** argv) {
         remoteClaudeReconnectsToItsConversation();
         staleDescriptorReattachesTheRunningService();
         remoteAgentsReportTurnsThroughTheirTerminal();
-        localAccountsRefuseBeforeReplacingAHealthySession();
         reloadStartsAgentsAgain();
-        incompleteCodexHomeNeverStartsAnAgent();
-        plansFollowTheirLoad();
         agentsStartAtTheStageSize();
         restoredAgentsStartAtTheStageSize();
         reloadFailuresRemainRetryable();

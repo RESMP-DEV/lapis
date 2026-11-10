@@ -39,7 +39,6 @@ ApplicationWindow {
     readonly property color activityColor: appearance ? appearance.activity : "#74a8ff"
     readonly property color faultColor: appearance ? appearance.fault : "#ee7a8a"
     readonly property color plentyColor: appearance && appearance.plenty ? appearance.plenty : "#6fdc8c"
-    readonly property color scarceColor: appearance && appearance.scarce ? appearance.scarce : "#ff5f6d"
     readonly property color paneColor: backgroundColor
     readonly property int chromeRadius: appearance ? appearance.cornerRadius : 2
     readonly property int motionDuration: appearance ? appearance.motionDuration : 100
@@ -83,10 +82,8 @@ ApplicationWindow {
             || searchDialog.visible
             || resumeDialog.visible
             || terminalPicker.visible
-            || usageDialog.visible
             || toolsDialog.visible
             || settingsDialog.visible
-            || planSignInDialog.visible
             || attentionDialog.visible
             || agentDialog.visible
             || closeAgentDialog.visible
@@ -275,11 +272,6 @@ ApplicationWindow {
         searchDialog.open()
     }
     readonly property bool conversationsAvailable: typeof conversations !== "undefined" && conversations !== null
-    readonly property bool planSignInAvailable: typeof planSignIn !== "undefined" && planSignIn !== null
-    function openPlanSignIn() {
-        if (!interactionArmed || dialogsVisible() || !planSignInAvailable) return
-        planSignInDialog.open()
-    }
     function openResumeDialog() {
         if (!interactionArmed || dialogsVisible() || !conversationsAvailable) return
         resumeDialog.open()
@@ -400,31 +392,14 @@ ApplicationWindow {
         workspace.resumeAgent(conversation.directory, projectTitle(conversation.directory),
                               conversation.harness, conversation.id, mode)
     }
-    function openUsageDialog() {
-        if (!interactionArmed || dialogsVisible() || !usageAvailable) return
-        usageDialog.open()
-    }
     function openToolsDialog() {
         if (!interactionArmed || dialogsVisible() || !toolsAvailable) return
         toolsDialog.open()
     }
-    readonly property bool usageAvailable: typeof usage !== "undefined" && usage !== null
     // A named window property prevents the pane's own `tools` model from
     // resolving as the context object and forming an engine binding loop.
     readonly property var toolStatus: typeof tools !== "undefined" ? tools : null
     readonly property bool toolsAvailable: toolStatus !== null
-    readonly property bool usageShown: usageAvailable && typeof keymap !== "undefined" && keymap !== null
-                                       && keymap.showUsage
-    // Each signed-in plan at its tightest window, for the meter under the
-    // categories; the config picks which and in what order.
-    function usageRows() {
-        return usageShown ? usage.meter : []
-    }
-    // A usage gauge reads what is left: green with plenty, the attention
-    // colour under 30%, red under 10%.
-    function gaugeColor(left) {
-        return left < 10 ? scarceColor : left < 30 ? attentionColor : plentyColor
-    }
     // Built when a dialog that lists them is open: as a property it would be
     // rebuilt, and the closed lists' delegates with it, on every switch.
     function commandEntries() {
@@ -439,7 +414,6 @@ ApplicationWindow {
         add("newAgent", qsTr("New agent"), "newAgent", true, "", () => window.openNewAgentDialog())
         add("newCategory", qsTr("New category"), "newCategory", true, "", () => window.openCategoryDialog("add"))
         add("searchAgents", qsTr("Find an agent"), "searchAgents", true, "", () => window.openSearchDialog())
-        add("openUsage", qsTr("Usage"), "", usageAvailable, qsTr("Usage is not available here"), () => window.openUsageDialog())
         add("openTools", qsTr("Tools"), "", toolsAvailable, qsTr("The tools pane is not available here"), () => window.openToolsDialog())
         add("toggleSidebar", sidebarExpanded ? qsTr("Hide sidebar") : qsTr("Show sidebar"), "toggleSidebar", true, "", () => window.toggleSidebar())
         add("togglePreviews", previewsEnabled ? qsTr("Hide agent previews") : qsTr("Show agent previews"), "togglePreviews", true, "", () => window.togglePreviews())
@@ -483,17 +457,9 @@ ApplicationWindow {
         add("reloadTab", qsTr("Reload tab"), "", hasAgent && agent.live, needAgent, () => workspace.reloadAgent(agent.sessionId))
         add("reloadCategory", qsTr("Reload category"), "", workspace.categorySessions.length > 0, qsTr("This category has no agents"), () => workspace.reloadCategory())
         add("reloadWindow", qsTr("Reload window"), "", workspace.sessions.length > 0, qsTr("No agents are open"), () => workspace.reloadAll())
-        // Claude Code and Codex plans (accounts in lapis.json): which one this
-        // agent runs on, and a move to the one with the most room.
-        const plan = hasAgent ? workspace.agentAccount(agent.sessionId) : ""
-        add("addPlan", qsTr("Add a Claude Code plan (sign in any account)"), "", planSignInAvailable, qsTr("Not available here"), () => window.openPlanSignIn())
-        add("switchPlan", plan.length > 0 ? qsTr("Switch plan (on %1)").arg(plan) : qsTr("Switch plan"), "", hasAgent && workspace.canSwitchAccount(agent.sessionId), qsTr("No other Claude Code or Codex plan has room for this agent"), () => workspace.switchAccount(agent.sessionId))
         // A running CLI keeps the version it started with.
         add("updateTab", qsTr("Update this tab's CLI and reload it"), "", hasAgent && agent.live && workspace.canUpdateAgent(agent.sessionId), hasAgent ? qsTr("lapis cannot update this agent's CLI") : needAgent, () => workspace.updateAndReloadAgent(agent.sessionId))
         add("updateClaude", qsTr("Update Claude Code and reload its tabs"), "", workspace.sessions.some(session => session.harnessId === "claude"), qsTr("No Claude Code agent is open"), () => workspace.updateClaudeAndReload())
-        // The claude.ai "Reset for free" for Claude Code and Codex: spends the
-        // saved limit reset of this agent's plan, on its machine.
-        add("useLimitReset", qsTr("Use a saved limit reset for this agent's plan"), "", hasAgent && typeof limitResets !== "undefined" && limitResets !== null && limitResets.canUseNow(agent.sessionId), qsTr("Only for a Claude Code or Codex agent"), () => limitResets.useNow(agent.sessionId))
         add("nextCategory", qsTr("Next category"), "nextCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory())
         add("previousCategory", qsTr("Previous category"), "previousCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory(-1))
         for (let i = 0; i < Math.min(9, workspace.categories.length); ++i) {
@@ -616,7 +582,7 @@ ApplicationWindow {
     }
 
     function dialogsVisible() {
-        return commandsDialog.visible || searchDialog.visible || resumeDialog.visible || planSignInDialog.visible || terminalPicker.visible || usageDialog.visible || toolsDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
+        return commandsDialog.visible || searchDialog.visible || resumeDialog.visible || terminalPicker.visible || toolsDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
                 || closeAgentDialog.visible || categoryDialog.visible || renameAgentDialog.visible
     }
 
@@ -1327,29 +1293,6 @@ ApplicationWindow {
         onChosen: function(conversation) { Qt.callLater(function() { window.resumeConversation(conversation) }) }
         onClosed: preview.deferTerminalFocus()
     }
-    Usage {
-        id: usageDialog
-        engine: window.usageAvailable ? usage : null
-        surfaceColor: window.surfaceColor
-        cardColor: window.cardColor
-        textColor: window.textColor
-        mutedColor: window.mutedTextColor
-        accentColor: window.focusedBorderColor
-        faultColor: window.faultColor
-        plentyColor: window.plentyColor
-        scarceColor: window.scarceColor
-        attentionColor: window.attentionColor
-        borderColor: window.borderColor
-        selectionColor: window.focusedColor
-        monoFamily: window.monoFamily
-        uiFont: window.chromeFont
-        readoutFont: window.readoutFont
-        chromeRadius: window.chromeRadius
-        motionDuration: window.motionDuration
-        motionEnabled: window.motionEnabled
-        onClosed: preview.deferTerminalFocus()
-    }
-
     Tools {
         id: toolsDialog
         engine: window.toolStatus
@@ -1917,7 +1860,6 @@ ApplicationWindow {
         motionEnabled: window.motionEnabled
         finishSound: (typeof keymap !== "undefined" && keymap !== null) ? keymap.finishSound : true
         keepAwake: (typeof keymap !== "undefined" && keymap !== null) ? keymap.keepAwake : true
-        showUsage: (typeof keymap !== "undefined" && keymap !== null) ? keymap.showUsage : true
         notify: (typeof keymap !== "undefined" && keymap !== null) ? keymap.notify : true
         loginAvailable: window.desktopAvailable && desktop.launchAtLoginAvailable
         launchAtLogin: window.desktopAvailable && desktop.launchAtLogin
@@ -1941,7 +1883,6 @@ ApplicationWindow {
         onCheckUpdates: if (window.desktopAvailable) desktop.checkForUpdates()
         onFinishSoundChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setFinishSound(on) }
         onKeepAwakeChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setKeepAwake(on) }
-        onShowUsageChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setShowUsage(on) }
         onChimePlayed: function(needsYou) { if (typeof alerts !== "undefined" && alerts !== null) alerts.preview(needsYou) }
         onClosed: preview.deferTerminalFocus()
         onFontFamilyChosen: function(name) {
@@ -2351,126 +2292,6 @@ ApplicationWindow {
                         selected: true
                         onClicked: window.commitNewAgent()
                     }
-                }
-            }
-        }
-    }
-
-    // Commands > "Add a Claude Code plan": Claude Code's sign-in link, opened in
-    // the default browser, copied and kept here until an account signs in with
-    // it, and that account's email (Return records it). The plan then goes to
-    // its configured machines. Escape ends a sign-in that has not finished.
-    StageDialog {
-        id: planSignInDialog
-        objectName: "planSignInDialog"
-        width: Math.min(620, Math.max(288, window.width - 28))
-        height: Math.min(window.height - 32, signInForm.implicitHeight + topPadding + bottomPadding)
-        readonly property var engine: window.planSignInAvailable ? planSignIn : null
-        readonly property string state: engine ? engine.state : "idle"
-        readonly property bool working: state === "starting" || state === "waiting" || state === "signedIn"
-        onOpened: {
-            signInEmail.text = ""
-            if (engine)
-                engine.start()
-            Qt.callLater(function() { signInEmail.forceActiveFocus() })
-        }
-        onClosed: {
-            if (engine && working)
-                engine.cancel()
-            preview.deferTerminalFocus()
-        }
-
-        contentItem: ColumnLayout {
-            id: signInForm
-            spacing: 12
-            PlainLabel {
-                Layout.fillWidth: true
-                text: qsTr("Add a Claude Code plan")
-                color: window.textColor
-                font.pixelSize: window.chromeFont + 1
-                font.bold: true
-            }
-            PlainLabel {
-                Layout.fillWidth: true
-                wrapMode: Text.Wrap
-                color: planSignInDialog.state === "failed" ? window.faultColor : window.mutedTextColor
-                text: {
-                    const engine = planSignInDialog.engine
-                    switch (planSignInDialog.state) {
-                    case "starting": return qsTr("Starting Claude Code's sign-in…")
-                    case "waiting": return qsTr("Opened in your browser and copied. Sign in with the account to add, then type its email here and press Return. The link stays here for another try.")
-                    case "signedIn": return engine.message.length > 0 ? engine.message : qsTr("Signed in. Type the account's email and press Return.")
-                    case "done": return engine.message + (engine.spreading ? "" : " " + qsTr("Claude Code agents there can use it when their plans are full."))
-                    case "failed": return qsTr("Sign-in failed: %1").arg(engine.message)
-                    default: return ""
-                    }
-                }
-            }
-            TextArea {
-                objectName: "planSignInLink"
-                Layout.fillWidth: true
-                visible: planSignInDialog.engine !== null && planSignInDialog.engine.link.length > 0
-                         && planSignInDialog.state !== "done"
-                readOnly: true
-                selectByMouse: true
-                wrapMode: TextEdit.WrapAnywhere
-                textFormat: TextEdit.PlainText
-                text: planSignInDialog.engine ? planSignInDialog.engine.link : ""
-                color: window.mutedTextColor
-                font.family: window.monoFamily
-                font.pixelSize: window.readoutFont
-                background: Rectangle {
-                    color: window.backgroundColor
-                    radius: window.chromeRadius
-                    border.color: window.borderColor
-                }
-            }
-            TextField {
-                id: signInEmail
-                objectName: "planSignInEmail"
-                Layout.fillWidth: true
-                visible: planSignInDialog.state !== "done" && planSignInDialog.state !== "failed"
-                placeholderText: qsTr("Email of the account you sign in with")
-                color: window.textColor
-                placeholderTextColor: window.mutedTextColor
-                selectByMouse: true
-                maximumLength: 254
-                font.pixelSize: window.chromeFont
-                inputMethodHints: Qt.ImhEmailCharactersOnly | Qt.ImhNoAutoUppercase
-                background: Rectangle {
-                    color: window.backgroundColor
-                    radius: window.chromeRadius
-                    border.color: signInEmail.activeFocus ? window.focusedBorderColor : window.borderColor
-                }
-                onAccepted: if (planSignInDialog.engine) planSignInDialog.engine.setEmail(text)
-            }
-            RowLayout {
-                Layout.alignment: Qt.AlignRight
-                spacing: 8
-                CommandButton {
-                    objectName: "planSignInOpen"
-                    visible: planSignInDialog.working
-                    enabled: planSignInDialog.engine !== null && planSignInDialog.engine.link.length > 0
-                    text: qsTr("Open again")
-                    onClicked: planSignInDialog.engine.openLink()
-                }
-                CommandButton {
-                    objectName: "planSignInCopy"
-                    visible: planSignInDialog.working
-                    enabled: planSignInDialog.engine !== null && planSignInDialog.engine.link.length > 0
-                    text: qsTr("Copy link")
-                    onClicked: planSignInDialog.engine.copyLink()
-                }
-                CommandButton {
-                    visible: planSignInDialog.state === "failed"
-                    text: qsTr("Try again")
-                    onClicked: planSignInDialog.engine.start()
-                }
-                CommandButton {
-                    objectName: "planSignInClose"
-                    text: planSignInDialog.working ? qsTr("Cancel") : qsTr("Close")
-                    hint: "Esc"
-                    onClicked: planSignInDialog.close()
                 }
             }
         }
@@ -3149,91 +2970,6 @@ ApplicationWindow {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
                                         Layout.alignment: Qt.AlignVCenter
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                // Plan usage: each CLI's tightest window, opening the details.
-                Button {
-                    id: usageMeter
-                    objectName: "usageMeter"
-                    readonly property var rows: window.usageRows()
-                    visible: rows.length > 0
-                    Layout.fillWidth: true
-                    implicitHeight: meterRows.implicitHeight + 14
-                    padding: 0
-                    focusPolicy: Qt.NoFocus
-                    hoverEnabled: true
-                    enabled: window.interactionArmed
-                    onClicked: window.openUsageDialog()
-                    Accessible.name: qsTr("Usage: %1").arg(rows.map(row => qsTr("%1 %2% left").arg(row.name).arg(Math.round(Math.max(0, 100 - row.percent)))).join(", "))
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 600
-                    ToolTip.text: qsTr("Plan usage")
-
-                    background: Rectangle {
-                        radius: window.chromeRadius
-                        color: usageMeter.hovered ? window.hoveredCardColor : window.surfaceColor
-                        Behavior on color {
-                            enabled: window.motionEnabled
-                            ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
-                        }
-                    }
-                    contentItem: Item {
-                        ColumnLayout {
-                            id: meterRows
-                            anchors.fill: parent
-                            anchors.topMargin: 7
-                            anchors.bottomMargin: 7
-                            anchors.leftMargin: 10
-                            anchors.rightMargin: 6
-                            spacing: 6
-                            Repeater {
-                                model: usageMeter.rows
-                                delegate: ColumnLayout {
-                                    id: meterRow
-                                    required property var modelData
-                                    // What is left of the tightest window.
-                                    readonly property real remaining: Math.max(0, Math.min(100, 100 - modelData.percent))
-                                    readonly property color tone: window.gaugeColor(remaining)
-                                    objectName: "usageMeter_" + modelData.id
-                                    Layout.fillWidth: true
-                                    spacing: 3
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 6
-                                        PlainText {
-                                            text: meterRow.modelData.name
-                                            color: usageMeter.hovered ? window.textColor : window.mutedTextColor
-                                            font.pixelSize: window.readoutFont
-                                            elide: Text.ElideRight
-                                            Layout.fillWidth: true
-                                            Layout.minimumWidth: 0
-                                        }
-                                        PlainText {
-                                            objectName: "usageLeft_" + meterRow.modelData.id
-                                            text: qsTr("%1% left %2").arg(Math.round(meterRow.remaining)).arg(meterRow.modelData.label)
-                                            color: meterRow.tone
-                                            font.family: window.monoFamily
-                                            font.pixelSize: window.readoutFont
-                                        }
-                                    }
-                                    Rectangle {
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: 2
-                                        color: window.borderColor
-                                        Rectangle {
-                                            objectName: "usageBar_" + meterRow.modelData.id
-                                            width: parent.width * meterRow.remaining / 100
-                                            height: parent.height
-                                            color: meterRow.tone
-                                            Behavior on width {
-                                                enabled: window.motionEnabled
-                                                NumberAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
-                                            }
-                                        }
                                     }
                                 }
                             }

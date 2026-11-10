@@ -74,7 +74,7 @@ is valuable only when its exact source and artifact can pass the named gate.
 | Order | Executable slice | Observable exit |
 | --- | --- | --- |
 | 1 | Package the pinned service, then exercise a live signed update transition | Manifest, appcast, app, DMG, and six candidate-gate receipts bind one immutable source/artifact pair; rollback preserves or explicitly disposes of live work |
-| 2 | Close candidate account and input gates in parallel | Missing selected credentials refuse before replacing a healthy session; large paste, bracketed-mode changes, cancellation, reconnect, and focus/IME transitions preserve exact destination and PTY bytes |
+| 2 | Close candidate input gates in parallel | Large paste, bracketed-mode changes, cancellation, reconnect, and focus/IME transitions preserve exact destination and PTY bytes |
 | 3 | Run the declared eight-session support workload | Bursty output, history paging, reconnect, diagnostics, warm/idle transitions, resource bounds, Codex/Claude continuity, and input/switch/frame tails have one candidate-scoped receipt |
 | 4 | Publish only the qualified local slice, then schedule controlled 32-session scale | Early-access reports identify exact source/artifact; wider capacity claims wait for the separate 32-session result |
 
@@ -179,10 +179,10 @@ acceptance compares actual PTY bytes and bracket markers under a full queue,
 slow reader, focus/IME transition, and disconnect. Background Qt evidence does
 not replace native macOS presentation.
 
-**R3, account identity.** A missing, unreadable, or malformed selected
-credential must refuse before changing a healthy session or acting as another
-account. Uncertain reset and approval operations never replay automatically.
-Real provider/account qualification is separate from fixture refusal tests.
+**R3, account identity.** lapis neither chooses nor holds CLI credentials:
+each CLI starts with the sign-in its machine or ssh host already has, and a
+remote command saved with a retired plan preamble loses it at its next start.
+Uncertain approval operations never replay automatically.
 
 **R4, package and update provenance.** The manifest binds source, version,
 dependency inventory, notices, app, DMG, appcast, and six external candidate
@@ -218,7 +218,7 @@ fill or Touch ID, Linux UI, and broader OS/CLI support claims. Existing
 prototype code and receipts remain valid dated observations, but no prototype
 becomes an advertised capability through this plan.
 
-Optional prediction and saved-reset features remain off the critical path.
+Optional prediction features remain off the critical path.
 Their provider calls, account identity, logs, and input behavior need separate
 reviewed contracts before they are enabled by default.
 

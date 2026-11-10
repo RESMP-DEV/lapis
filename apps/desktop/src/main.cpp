@@ -7,10 +7,8 @@
 #include "gui_state.hpp"
 #include "interaction_recorder.hpp"
 #include "keymap.hpp"
-#include "limit_resets.hpp"
 #include "next_prompt.hpp"
 #include "open_request.hpp"
-#include "plan_sign_in.hpp"
 #include "platform_desktop.hpp"
 #include "platform_preferences.hpp"
 #include "shell_environment.hpp"
@@ -19,7 +17,6 @@
 #include "tool_status.hpp"
 #include "ui_capture.hpp"
 #include "ui_preview.hpp"
-#include "usage.hpp"
 #include "workspace.hpp"
 #include "workspace_control.hpp"
 
@@ -423,10 +420,6 @@ QString cli_home(const char* variable, const QString& fallback) {
     const auto set = qEnvironmentVariable(variable);
     return set.isEmpty() ? QDir::home().filePath(fallback) : set;
 }
-lapis::desktop::TokenLedger::Roots transcript_roots() {
-    return {cli_home("CODEX_HOME", QStringLiteral(".codex")) + QStringLiteral("/sessions"),
-            cli_home("CLAUDE_CONFIG_DIR", QStringLiteral(".claude")) + QStringLiteral("/projects")};
-}
 // Past Claude and Codex conversations, to resume one and to put the folders
 // with the most recent work first in folder pickers; the running agents'
 // folders count too.
@@ -600,161 +593,9 @@ QString target_screen(const QCommandLineParser& parser) {
     return parser.isSet(QStringLiteral("screen")) ? parser.value(QStringLiteral("screen"))
                                                   : qEnvironmentVariable("LAPIS_SCREEN");
 }
-// A CLI usage asks, or ssh, as found on this Mac.
-QString usage_program(const QString& id) {
-    return id == QLatin1String("ssh") ? QStandardPaths::findExecutable(id)
-                                      : lapis::desktop::harness_program(id);
-}
-// Usage asks the CLIs only while its setting is on, on the machines and in
-// the order the config names.
-// Saved Claude Code and Codex limit resets, spent as OMP does, with each
-// machine's own sign-in; lapis says when it spends one or cannot.
-// Only the real workspace spends resets; the object QML sees, or null.
-lapis::desktop::LimitResets::AgentTarget reset_target(const lapis::desktop::Workspace& workspace,
-                                                      const lapis::desktop::KeyMap& keymap,
-                                                      const QString& id) {
-    lapis::desktop::LimitResets::AgentTarget result;
-    const auto* item = workspace.session(id);
-    if (item == nullptr)
-        return result;
-    result.machine = workspace.agentPlace(id).value(QStringLiteral("machine")).toString();
-    result.cli = item->harnessId();
-    result.account = workspace.agentAccount(id);
-    result.credential = workspace.agentPlanCredential(id);
-    if (!result.account.isEmpty()) {
-        result.refusal = QStringLiteral("the selected plan is no longer configured");
-        for (const auto& account : keymap.accounts().accounts)
-            if (account.cli == result.cli && account.name == result.account) {
-                result.home = account.home;
-                result.hasHome = account.hasHome;
-                result.email = account.email;
-                result.refusal.clear();
-                break;
-            }
-    }
-    return result;
-}
-
-QObject* keep_limit_resets(std::optional<lapis::desktop::LimitResets>& kept,
-                           const lapis::desktop::Workspace& workspace,
-                           const lapis::desktop::KeyMap& keymap, bool isolated) {
-    using lapis::desktop::LimitResets;
-    if (isolated)
-        return nullptr;
-    const auto target = [&workspace, &keymap](const QString& id) {
-        return reset_target(workspace, keymap, id);
-    };
-    auto& resets = kept.emplace(
-        [&workspace, target] {
-            QVector<LimitResets::AgentTarget> result;
-            for (const auto& entry : workspace.sessions())
-                if (const auto* item = entry.value<lapis::desktop::SessionPreview*>())
-                    result.append(target(item->sessionId()));
-            return result;
-        },
-        target, [](const QString& id) { return QStandardPaths::findExecutable(id); },
-#ifdef Q_OS_MACOS
-        [] { return lapis::desktop::platform::claude_code_credentials(); },
-#else
-        LimitResets::Credentials{},
-#endif
-        QDir(lapis::desktop::data_directory()).filePath(QStringLiteral("runtime")));
-    const auto follow = [&resets, &keymap] { resets.setSettings(keymap.limitResets()); };
-    follow();
-    QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &resets, follow);
-    const auto cli = [](const QString& id) {
-        return id == QLatin1String("claude") ? QStringLiteral("Claude Code")
-                                             : QStringLiteral("Codex");
-    };
-    const auto place = [](const QString& machine) {
-        return machine.isEmpty() ? QStringLiteral("this Mac") : machine;
-    };
-    // The lambdas take the signals' own parameters.
-    // NOLINTBEGIN(bugprone-easily-swappable-parameters)
-    QObject::connect(&resets, &lapis::desktop::LimitResets::spent, &resets,
-                     [cli, place](const QString& machine, const QString& id, const QString& email,
-                                  const QString& title, const QString& why) {
-                         const QString reason = why == QLatin1String("blocked")
-                                                    ? QStringLiteral(" It was at its limit.")
-                                                : why == QLatin1String("expiring")
-                                                    ? QStringLiteral(" It was about to expire.")
-                                                    : QString();
-                         lapis::desktop::platform::post_notification(
-                             {}, QStringLiteral("Limit reset used"),
-                             QStringLiteral("%1 on %2 (%3): %4.%5")
-                                 .arg(cli(id), place(machine), email, title, reason));
-                     });
-    QObject::connect(
-        &resets, &lapis::desktop::LimitResets::declined, &resets,
-        [cli, place](const QString& machine, const QString& id, const QString& reason) {
-            lapis::desktop::platform::post_notification(
-                {}, QStringLiteral("No limit reset used"),
-                QStringLiteral("%1 on %2: %3").arg(cli(id), place(machine), reason));
-        });
-    QObject::connect(
-        &resets, &lapis::desktop::LimitResets::uncertain, &resets,
-        [cli, place](const QString& machine, const QString& id, const QString& reason) {
-            lapis::desktop::platform::post_notification(
-                {}, QStringLiteral("Limit reset outcome unknown"),
-                QStringLiteral("%1 on %2: %3").arg(cli(id), place(machine), reason));
-        });
-    // NOLINTEND(bugprone-easily-swappable-parameters)
-    return &resets;
-}
-void follow_usage_setting(lapis::desktop::Usage& usage, const lapis::desktop::KeyMap& keymap) {
-    const auto show = [&usage, &keymap] {
-        // Plans lapis hands out need their home machines' limits, even with
-        // the dashboard hidden.
-        auto machines = keymap.usageMachines();
-        for (const auto& account : keymap.accounts().accounts)
-            if (account.hasHome && !account.home.isEmpty() && !machines.contains(account.home))
-                machines << account.home;
-        usage.setMachines(machines);
-        usage.setMeterOrder(keymap.usageMeter());
-        usage.setActive(keymap.showUsage() || !keymap.accounts().accounts.empty());
-    };
-    show();
-    QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &usage, show);
-}
 
 // Predicts what the person will type next to an agent that finished a turn,
 // while the setting is on and only in the real workspace (see NextPrompt).
-// Command+Shift+P "Add a Claude Code plan": signs in any account and keeps
-// its token for sessions on this Mac.
-QObject* keep_plan_sign_in(std::optional<lapis::desktop::PlanSignIn>& kept,
-                           lapis::desktop::KeyMap& keymap, bool isolated) {
-    if (isolated)
-        return nullptr;
-    return &kept.emplace(
-        lapis::desktop::PlanSignIn::Hooks{
-            .program =
-                [](const QString& name) {
-                    return name == QLatin1String("claude") ? lapis::desktop::harness_program(name)
-                                                           : QStandardPaths::findExecutable(name);
-                },
-            .copy = [](const QString& text) { QGuiApplication::clipboard()->setText(text); },
-            .open = [](const QString& link) { QDesktopServices::openUrl(QUrl(link)); },
-            .record =
-                [&keymap](const QString& email, const QString& machine, const QString& expected,
-                          const lapis::desktop::PlanSignIn::Prepare& prepare, QString* reason) {
-                    return keymap.addPlanMachine({.cli = QStringLiteral("claude"),
-                                                  .email = email,
-                                                  .machine = machine,
-                                                  .expectedName = expected},
-                                                 reason, prepare);
-                },
-            .machines =
-                [&keymap](const QString& email) {
-                    for (const auto& account : keymap.accounts().accounts)
-                        if (account.cli == QLatin1String("claude") && account.email == email)
-                            return account.machines;
-                    return QStringList{};
-                }},
-        lapis::desktop::PlanSignIn::Places{
-            .helper = QDir(lapis::desktop::data_directory())
-                          .filePath(QStringLiteral("runtime/plan_sign_in.py")),
-            .accounts = QDir::homePath() + QStringLiteral("/.lapis/accounts")});
-}
 QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
                           lapis::desktop::Workspace& workspace,
                           const lapis::desktop::KeyMap& keymap, bool isolated) {
@@ -1078,19 +919,16 @@ int main(int argc, char** argv) {
         using namespace lapis::desktop;
         const bool isolated = parser.isSet(QStringLiteral("ui-preview"));
         // The config file applies live: a change from the window or an agent
-        // reaches new agents at once, with or without a window. Its plans are
-        // known before restored agents start.
+        // reaches new agents at once, with or without a window.
         KeyMap keymap;
         keymap.load();
         auto options = workspace_options(parser, isolated);
-        options.accounts = keymap.accounts();
         options.harnessUpdatesOff = keymap.harnessUpdatesOff();
         Workspace workspace(isolated ? WorkspaceMode::preview : WorkspaceMode::live, options);
         const auto configure = [&] {
             workspace.setHarnessArguments(keymap.harnessArguments());
             workspace.setHarnessUpdatesOff(keymap.harnessUpdatesOff());
             workspace.setAgentDefaults(keymap.agentDefaults());
-            workspace.setAccounts(keymap.accounts());
             workspace.setTabAway(keymap.tabAway());
         };
         configure();
@@ -1126,22 +964,9 @@ int main(int argc, char** argv) {
         DesktopActions desktop(keymap);
         const bool hide_on_close = closes_to_dock(isolated, parser);
         AgentSearch agentSearch(&workspace);
-        // Plan limits and token totals, only while the setting is on and only
-        // in the real workspace. Each CLI keeps its transcripts where its own
-        // home variable says.
-        std::optional<Usage> usage;
-        if (!isolated) {
-            follow_usage_setting(usage.emplace(&usage_program, transcript_roots()), keymap);
-            // Plan loads decide which plan each Claude Code and Codex session uses.
-            QObject::connect(&*usage, &Usage::changed, &workspace, [&workspace, &usage] {
-                workspace.setAccountLoads(usage->accountLoads());
-            });
-        }
         // The canonical harness catalog's read-only status answers. It exists
         // in the isolated fixture too, so the pane is testable without config.
         ToolStatus toolStatus;
-        std::optional<LimitResets> limitResets;
-        QObject* const resetsForQml = keep_limit_resets(limitResets, workspace, keymap, isolated);
         std::optional<NextPrompt> nextPrompt;
         QObject* const nextForQml = keep_next_prompt(nextPrompt, workspace, keymap, isolated);
         // Finished turns ping only when the guessing model judged they need
@@ -1162,8 +987,6 @@ int main(int argc, char** argv) {
         keep_agent_state(agentState, workspace, nextPrompt, isolated);
         std::optional<lapis::desktop::OpenRequests> openRequests;
         follow_open_requests(openRequests, workspace, shown, isolated);
-        std::optional<lapis::desktop::PlanSignIn> planSignIn;
-        QObject* const signInForQml = keep_plan_sign_in(planSignIn, keymap, isolated);
         const auto conversations = conversation_index(workspace);
         if (!isolated) {
             follow_conversation_titles(workspace, *conversations);
@@ -1179,14 +1002,11 @@ int main(int argc, char** argv) {
                                    .keymap = &keymap,
                                    .alerts = alerts ? &*alerts : nullptr,
                                    .agentSearch = &agentSearch,
-                                   .usage = usage ? &*usage : nullptr,
                                    .tools = &toolStatus,
                                    .desktop = &desktop,
                                    .conversations = conversations.get(),
                                    .terminals = terminals.get(),
-                                   .limitResets = resetsForQml,
                                    .nextPrompt = nextForQml,
-                                   .planSignIn = signInForQml,
                                    .guiState = guiState.get(),
                                    .persistGeometry = !isolated && !options.launch &&
                                                       options.endpoint.isEmpty() &&

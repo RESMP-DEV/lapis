@@ -169,8 +169,7 @@ std::optional<Area> classify_area(const QString& name) {
 // Credential-holding dialogs: nothing is recorded while one is open.
 bool credential_dialog(const QString& name) {
     const auto lower = name.toLower();
-    return name == QLatin1String("planSignInDialog") || name == QLatin1String("usageDialog") ||
-           lower.contains(QLatin1String("signin")) || lower.contains(QLatin1String("account")) ||
+    return lower.contains(QLatin1String("signin")) || lower.contains(QLatin1String("account")) ||
            lower.contains(QLatin1String("credential")) || lower.contains(QLatin1String("password"));
 }
 

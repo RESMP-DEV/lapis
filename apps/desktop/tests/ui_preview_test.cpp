@@ -4,12 +4,10 @@
 #include "keymap.hpp"
 #include "model_change_recorder.hpp"
 #include "next_prompt.hpp"
-#include "plan_sign_in.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include "terminals.hpp"
 #include "ui_preview.hpp"
-#include "usage.hpp"
 #include "workspace.hpp"
 #include <QAccessible>
 #include <QElapsedTimer>
@@ -2080,33 +2078,6 @@ void capture_step(QQuickWindow& window, const char* name) {
         CHECK(window.grabWindow().save(path + QString::fromLatin1(name) + QStringLiteral(".png")));
 }
 
-// Commands > "Add a Claude Code plan" shows Claude Code's sign-in link, copied,
-// with a field for the account's email; closing it ends the sign-in.
-void check_plan_sign_in(QQuickWindow& window, lapis::desktop::PlanSignIn& signIn,
-                        const QStringList& copied) {
-    CHECK(QMetaObject::invokeMethod(&window, "openPlanSignIn"));
-    auto* dialog = window.findChild<QObject*>(QStringLiteral("planSignInDialog"));
-    CHECK(dialog != nullptr);
-    wait_popup(*dialog, true);
-    CHECK(window.property("inputBlocked").toBool());
-    QElapsedTimer waited;
-    waited.start();
-    while (signIn.state() != QLatin1String("waiting") && waited.elapsed() < 10000)
-        pump(20);
-    CHECK(signIn.state() == QLatin1String("waiting"));
-    pump(60);
-    auto* link = find_visual(window.contentItem(), QStringLiteral("planSignInLink"));
-    CHECK(link != nullptr && link->isVisible() &&
-          link->property("text").toString() == signIn.link() &&
-          copied == QStringList{signIn.link()});
-    auto* email = find_visual(window.contentItem(), QStringLiteral("planSignInEmail"));
-    CHECK(email != nullptr && email->hasActiveFocus());
-    capture_step(window, "plan-sign-in");
-    CHECK(QMetaObject::invokeMethod(dialog, "close"));
-    wait_popup(*dialog, false);
-    CHECK(signIn.state() == QLatin1String("idle"));
-}
-
 void check_agent_search(QQuickWindow& window, lapis::desktop::Workspace& workspace,
                         const lapis::desktop::KeyMap& keymap,
                         lapis::desktop::TerminalSurface& terminal) {
@@ -2400,114 +2371,6 @@ void check_side_terminal(QQuickWindow& window, lapis::desktop::Terminals& termin
     CHECK(pump_until([&terminals, &id] { return terminals.terminal(id) == nullptr; }, 10000));
 }
 
-void check_usage(QQuickWindow& window, lapis::desktop::Usage& usage, lapis::desktop::KeyMap& keymap,
-                 lapis::desktop::TerminalSurface& terminal) {
-    // Plan usage sits under the categories, each CLI at its tightest window,
-    // and opens the details; the setting hides it.
-    usage.refresh();
-    QElapsedTimer asked;
-    asked.start();
-    const auto remote_ready = [&usage] {
-        const auto machines = usage.machines();
-        return machines.size() == 2 &&
-               machines.back().toMap().value(QStringLiteral("providers")).toList().size() >= 2;
-    };
-    while ((usage.meter().size() < 2 || usage.counting() || !remote_ready()) &&
-           asked.elapsed() < 15000)
-        pump(20);
-    pump(60);
-    auto* meter = required_visual(window, QStringLiteral("usageMeter"));
-    CHECK(meter->isVisible());
-    CHECK(required_visual(window, QStringLiteral("usageMeter_codex")) != nullptr &&
-          required_visual(window, QStringLiteral("usageMeter_claude")) != nullptr);
-    CHECK(meter->mapToScene({0, 0}).y() >
-          required_visual(window, QStringLiteral("newCategoryButton"))->mapToScene({0, 0}).y());
-    // The meter reads what is left: 96% used is 4% left, red; 41% used is
-    // 59% left, green, with the longer bar.
-    auto* codex_left = required_visual(window, QStringLiteral("usageLeft_codex"));
-    auto* claude_left = required_visual(window, QStringLiteral("usageLeft_claude"));
-    CHECK(codex_left->property("text").toString() == QStringLiteral("4% left wk"));
-    CHECK(claude_left->property("text").toString() == QStringLiteral("59% left 5h"));
-    CHECK(codex_left->property("color").value<QColor>() ==
-          window.property("scarceColor").value<QColor>());
-    CHECK(claude_left->property("color").value<QColor>() ==
-          window.property("plentyColor").value<QColor>());
-    pump(260); // past the bars' motion
-    CHECK(required_visual(window, QStringLiteral("usageBar_codex"))->width() <
-          required_visual(window, QStringLiteral("usageBar_claude"))->width());
-    capture_step(window, "usage-meter");
-    click_visual(window, *meter);
-    auto* details = window.findChild<QObject*>(QStringLiteral("usageDialog"));
-    CHECK(details != nullptr);
-    wait_popup(*details, true);
-    CHECK(required_visual(window, QStringLiteral("usage_codex")) != nullptr &&
-          required_visual(window, QStringLiteral("usage_claude")) != nullptr);
-    CHECK(
-        required_visual(window, QStringLiteral("usageToday_claude"))->property("text").toString() ==
-        QStringLiteral("0"));
-    capture_step(window, "usage-details");
-    // Each configured machine has its own tab.
-    click_visual(window, *required_visual(window, QStringLiteral("usageMachine_devbox")));
-    pump(60);
-    CHECK(details->property("machineIndex").toInt() == 1);
-    CHECK(required_visual(window, QStringLiteral("usageAccount_codex_0")) != nullptr);
-    capture_step(window, "usage-devbox");
-    send_binding(window, QStringLiteral("Escape"));
-    wait_popup(*details, false);
-    CHECK(terminal.hasActiveFocus());
-    CHECK(keymap.setShowUsage(false));
-    pump(30);
-    CHECK(!meter->isVisible());
-}
-
-// Stand-ins for the two CLIs' usage answers; no transcripts.
-std::unique_ptr<lapis::desktop::Usage> fake_usage(const QTemporaryDir& config) {
-    const auto fake = [&config](const QString& name, const QByteArray& body) {
-        const auto path = config.filePath(name);
-        QFile file(path);
-        CHECK(file.open(QIODevice::WriteOnly) && file.write("#!/bin/sh\n" + body) > 0);
-        file.close();
-        CHECK(QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
-                                              QFileDevice::ExeOwner));
-        return path;
-    };
-    const auto codex_cli = fake(QStringLiteral("codex"), R"(read -r line
-echo '{"id":1,"result":{}}'
-read -r line
-read -r line
-echo '{"id":2,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":96,"windowDurationMins":10080,"resetsAt":4102444800},"planType":"pro"}}}'
-cat >/dev/null
-)");
-    const auto claude_cli = fake(QStringLiteral("claude"), R"(read -r line
-echo '{"type":"control_response","response":{"subtype":"success","request_id":"usage","response":{"subscription_type":"max","rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":41,"resets_at":"2099-01-01T00:00:00+00:00"},"seven_day":{"utilization":23,"resets_at":"2099-01-01T00:00:00+00:00"}}}}}'
-cat >/dev/null
-)");
-    // devbox: ssh runs the command here, where a login shell finds the same
-    // stand-ins.
-    const auto dir = config.path().toUtf8();
-    const auto shell =
-        fake(QStringLiteral("login-shell"), "for last; do :; done\nPATH='" + dir +
-                                                R"(:/usr/bin:/bin' exec /bin/sh -c "$last")"
-                                                "\n");
-    const auto ssh = fake(QStringLiteral("ssh"), R"(while [ $# -gt 0 ]; do
-  case "$1" in -T) shift ;; -o|-L) shift 2 ;; *) break ;; esac
-done
-shift
-HOME=')" + dir + R"(' SHELL=')" + shell.toUtf8() + R"(' exec /bin/sh -c "$1"
-)");
-    auto usage = std::make_unique<lapis::desktop::Usage>(
-        [codex_cli, claude_cli, ssh](const QString& id) {
-            return id == QLatin1String("codex")    ? codex_cli
-                   : id == QLatin1String("claude") ? claude_cli
-                   : id == QLatin1String("ssh")    ? ssh
-                                                   : QString();
-        },
-        lapis::desktop::TokenLedger::Roots{config.filePath(QStringLiteral("none")),
-                                           config.filePath(QStringLiteral("none"))});
-    usage->setMachines({QStringLiteral("devbox")});
-    return usage;
-}
-
 // One saved conversation of each CLI, as they write them, and a stand-in
 // shell that answers each line it reads.
 void write_history_and_shell(const QTemporaryDir& config) {
@@ -2577,7 +2440,6 @@ int run_strip_ui_tests() {
     KeyMap keymap;
     keymap.setSourcePathForTesting(config.filePath(QStringLiteral("strip.json")));
     AgentSearch search(&workspace);
-    const auto usage = fake_usage(config);
     ConversationIndex conversations(config.filePath(QStringLiteral("history/claude")),
                                     config.filePath(QStringLiteral("history/codex")),
                                     config.filePath(QStringLiteral("conversations.json")));
@@ -2586,40 +2448,13 @@ int run_strip_ui_tests() {
     Terminals terminals(config.filePath(QStringLiteral("runtime")),
                         config.filePath(QStringLiteral("ssh_config")));
     terminals.setShellForTesting(config.filePath(QStringLiteral("shell")));
-    // A stand-in `claude setup-token` that "opens" its sign-in link and waits.
-    const auto claude = config.filePath(QStringLiteral("setup-token-claude"));
-    {
-        QFile script(claude);
-        CHECK(script.open(QIODevice::WriteOnly));
-        script.write("#!/bin/sh\nopen 'https://claude.com/cai/oauth/authorize?code=true&"
-                     "client_id=lapis-test&redirect_uri=http%3A%2F%2Flocalhost%3A1%2Fcallback&"
-                     "scope=user%3Ainference&state=test'\nsleep 60\n");
-        CHECK(
-            QFile::setPermissions(claude, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
-    }
-    QStringList copied;
-    PlanSignIn signIn({.program =
-                           [&claude](const QString& name) {
-                               return name == QLatin1String("claude")
-                                          ? claude
-                                          : QStandardPaths::findExecutable(name);
-                           },
-                       .copy = [&copied](const QString& text) { copied << text; },
-                       .open = [](const QString&) {},
-                       .record = [](const QString&, const QString&, const QString&,
-                                    const PlanSignIn::Prepare&, QString*) { return QString(); },
-                       .machines = [](const QString&) { return QStringList(); }},
-                      {.helper = config.filePath(QStringLiteral("runtime/plan_sign_in.py")),
-                       .accounts = config.filePath(QStringLiteral("accounts"))});
     UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
                                   .keymap = &keymap,
                                   .agentSearch = &search,
-                                  .usage = usage.get(),
                                   .conversations = &conversations,
-                                  .terminals = &terminals,
-                                  .planSignIn = &signIn});
+                                  .terminals = &terminals});
     CHECK(preview.load());
     auto* window = preview.window();
     window->resize(1400, 960);
@@ -2845,8 +2680,6 @@ int run_strip_ui_tests() {
     check_side_terminal(*window, terminals, keymap, *terminal);
     workspace.setSshConfigForTesting(config.filePath(QStringLiteral("ssh_config")));
     check_new_agent_machine(*window, keymap);
-    check_usage(*window, *usage, keymap, *terminal);
-    check_plan_sign_in(*window, signIn, copied);
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;
 }

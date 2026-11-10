@@ -31,14 +31,11 @@ struct UiPreviewOptions {
     KeyMap* keymap{};
     QObject* alerts{};        // exposed to QML as `alerts`
     QObject* agentSearch{};   // exposed to QML as `agentSearch`
-    QObject* usage{};         // exposed to QML as `usage`
     QObject* tools{};         // exposed to QML as `tools`
     QObject* desktop{};       // exposed to QML as `desktop`
     QObject* conversations{}; // exposed to QML as `conversations`
     QObject* terminals{};     // exposed to QML as `terminals`
-    QObject* limitResets{};   // exposed to QML as `limitResets`
     QObject* nextPrompt{};    // exposed to QML as `nextPrompt`
-    QObject* planSignIn{};    // exposed to QML as `planSignIn`
     QObject* guiState{};      // exposed to QML as `guiState` (a restart keeps it)
     // Only the normal workspace restores user geometry; tests opt in with an isolated path.
     bool persistGeometry{};

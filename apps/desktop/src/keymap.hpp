@@ -1,9 +1,7 @@
 #ifndef LAPIS_DESKTOP_KEYMAP_HPP
 #define LAPIS_DESKTOP_KEYMAP_HPP
 
-#include "accounts.hpp"
 #include "interaction_log.hpp"
-#include "limit_resets.hpp"
 #include "next_prompt.hpp"
 #include "tab_ranker.hpp"
 #include <QFileSystemWatcher>
@@ -49,9 +47,8 @@ struct Theme {
     const char* attention_text{};
     const char* activity{};
     const char* fault{};
-    // A usage gauge: plenty left (green) and nearly none (red).
+    // A healthy state (green), such as a CLI the Tools pane found working.
     const char* plenty{};
-    const char* scarce{};
     int corner_radius{2};
     int motion_ms{100};
     bool mono_chrome{};
@@ -127,10 +124,6 @@ class KeyMap final : public QObject {
     // Typing over a scrolled-back full-screen program returns it to its
     // bottom before the key is delivered.
     Q_PROPERTY(bool scrollToBottomOnTyping READ scrollToBottomOnTyping NOTIFY changed)
-    // Plan usage under the categories, and the dashboard's machines.
-    Q_PROPERTY(bool showUsage READ showUsage NOTIFY changed)
-    Q_PROPERTY(QStringList usageMeter READ usageMeter NOTIFY changed)
-    Q_PROPERTY(QStringList usageMachines READ usageMachines NOTIFY changed)
     // The visual view (a conversation as a thread instead of a terminal):
     // its color theme and reading and code fonts by name, its text size in
     // pixels (0 follows the terminal's), and whether every agent shows it.
@@ -200,14 +193,12 @@ class KeyMap final : public QObject {
     Q_INVOKABLE bool setScrollToBottomOnTyping(bool on);
     [[nodiscard]] bool scrollToBottomOnTyping() const { return scroll_to_bottom_on_typing_; }
     Q_INVOKABLE bool setNotify(bool on);
-    Q_INVOKABLE bool setShowUsage(bool on);
     // The values remote control may read. KeyMap owns their storage and their
     // relationship to lapis.json.
     struct RemoteSettings {
         bool keepAwake{};
         bool finishSound{};
         bool notify{};
-        bool showUsage{};
         [[nodiscard]] bool operator==(const RemoteSettings&) const = default;
     };
     // Absent fields leave their settings alone. Present fields are applied
@@ -217,7 +208,6 @@ class KeyMap final : public QObject {
         std::optional<bool> keepAwake;
         std::optional<bool> finishSound;
         std::optional<bool> notify;
-        std::optional<bool> showUsage;
     };
     [[nodiscard]] RemoteSettings remoteSettings() const;
     [[nodiscard]] bool applyRemoteSettings(const RemoteSettingsPatch& changes,
@@ -241,33 +231,11 @@ class KeyMap final : public QObject {
     [[nodiscard]] bool judgePings() const { return judge_pings_; }
     [[nodiscard]] const QString& editor() const { return editor_; }
     [[nodiscard]] bool keepAwake() const { return keep_awake_; }
-    [[nodiscard]] bool showUsage() const { return show_usage_; }
     [[nodiscard]] QVariantMap visual() const;
     // Sets one visual-view key (theme, font, codeFont, size or all) and
     // saves; an invalid value is refused and nothing changes.
     Q_INVOKABLE bool setVisual(const QString& key, const QVariant& value);
-    // The meter's plans in order (empty: every signed-in plan), and the ssh
-    // hosts with a usage dashboard beside this Mac.
-    [[nodiscard]] const QStringList& usageMeter() const { return usage_meter_; }
-    [[nodiscard]] const QStringList& usageMachines() const { return usage_machines_; }
     [[nodiscard]] const AgentDefaults& agentDefaults() const { return agent_defaults_; }
-    // The Claude Code and Codex plans lapis may give sessions ("accounts").
-    [[nodiscard]] const AccountsConfig& accounts() const { return accounts_; }
-    // Records that lapis keeps a credential for `email`'s `cli` plan on
-    // `machine` ("" for this Mac): the plan with that email, else a new one
-    // named from it. Returns the plan's name, or empty with `reason`.
-    struct PlanCredential {
-        QString cli;
-        QString email;
-        QString machine;
-        QString expectedName{}; // optional identity pinned before asynchronous delivery
-    };
-    // Called with the freshly allocated name, after config validation and before
-    // publishing machine availability. A failed credential write leaves config intact.
-    using PreparePlan = std::function<bool(const QString& name, QString* reason)>;
-    QString addPlanMachine(const PlanCredential& credential, QString* reason = nullptr,
-                           PreparePlan prepare = {});
-    [[nodiscard]] const LimitResetSettings& limitResets() const { return limit_resets_; }
     // {"nextPrompt": {...}}: when and how lapis predicts the next prompt.
     [[nodiscard]] const NextPromptSettings& nextPrompt() const { return next_prompt_; }
     // {"interactionLog": {...}}: the local log of input in lapis's windows.
@@ -292,7 +260,6 @@ class KeyMap final : public QObject {
     void load_harness_arguments(const QJsonValue& value);
     void load_harness_updates(const QJsonValue& value);
     void load_alerts(const QJsonObject& root);
-    void load_usage(const QJsonObject& root);
     void load_visual(const QJsonObject& root);
     void load_agent_defaults(const QJsonValue& value);
     // The file is watched, so an edit from anywhere (an agent included)
@@ -327,7 +294,6 @@ class KeyMap final : public QObject {
     int remind_after_min_{kRemindAfterDefault};
     bool judge_pings_{true};
     QString editor_;
-    bool show_usage_{true};
     QString visual_theme_{QStringLiteral("terminal")};
     QString visual_font_{QStringLiteral("system")};
     QString visual_code_font_{QStringLiteral("system")};
@@ -336,20 +302,7 @@ class KeyMap final : public QObject {
     // What Command-click on a file path in the visual view opens it with:
     // vscode, cursor, zed, textedit, system, or auto (the first installed).
     QString visual_editor_{QStringLiteral("auto")};
-    QStringList usage_meter_;
-    QStringList usage_machines_;
     AgentDefaults agent_defaults_;
-    AccountsConfig accounts_;
-    struct PlanMachine {
-        QString cli;
-        QString name;
-        QString email;
-        QString machine;
-        QString expectedName{};
-    };
-    std::optional<PlanMachine> adding_plan_;
-    PreparePlan prepare_plan_;
-    LimitResetSettings limit_resets_;
     NextPromptSettings next_prompt_;
     InteractionLogSettings interaction_log_;
     TabAwaySettings tab_away_;

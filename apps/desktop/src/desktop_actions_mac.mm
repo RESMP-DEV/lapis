@@ -4,7 +4,6 @@
 #import <Carbon/Carbon.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <Foundation/Foundation.h>
-#import <Security/Security.h>
 #import <ServiceManagement/ServiceManagement.h>
 #import <UserNotifications/UserNotifications.h>
 #ifdef LAPIS_SPARKLE
@@ -112,31 +111,6 @@ double seconds_since_input() {
     // The HID state counts the person's own input, not events other apps post.
     return CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateHIDSystemState,
                                                   kCGAnyInputEventType);
-}
-
-QByteArray claude_code_credentials() {
-    CFMutableDictionaryRef query = CFDictionaryCreateMutable(
-        kCFAllocatorDefault, 4, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-    CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
-    CFDictionarySetValue(query, kSecAttrService, CFSTR("Claude Code-credentials"));
-    CFDictionarySetValue(query, kSecReturnData, kCFBooleanTrue);
-    CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitOne);
-    CFDictionarySetValue(query, kSecAttrSynchronizable, kCFBooleanFalse);
-    CFTypeRef found = nullptr;
-    const OSStatus status = SecItemCopyMatching(query, &found);
-    CFRelease(query);
-    if (status != errSecSuccess && status != errSecItemNotFound)
-        qWarning() << "Claude Code keychain lookup failed with status" << status;
-    if (status != errSecSuccess || found == nullptr || CFGetTypeID(found) != CFDataGetTypeID()) {
-        if (found != nullptr)
-            CFRelease(found);
-        return {};
-    }
-    const auto* data = static_cast<CFDataRef>(found);
-    QByteArray stored(reinterpret_cast<const char*>(CFDataGetBytePtr(data)),
-                      static_cast<qsizetype>(CFDataGetLength(data)));
-    CFRelease(found);
-    return stored;
 }
 
 bool on_latest_attention_key(const std::function<void()>& handler) {

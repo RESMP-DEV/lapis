@@ -27,15 +27,10 @@ add_library(lapis_desktop_view STATIC
     src/agent_search.cpp src/agent_search.hpp
     src/conversation_index.cpp src/conversation_index.hpp
     src/terminals.cpp src/terminals.hpp
-    src/accounts.cpp src/accounts.hpp
-    src/limit_resets.cpp src/limit_resets.hpp
-    src/usage.cpp src/usage.hpp
-    src/usage_limits.cpp src/usage_limits.hpp
     src/next_prompt.cpp src/next_prompt.hpp
     src/tab_ranker.cpp src/tab_ranker.hpp
     src/agent_state.cpp src/agent_state.hpp src/attention_order.hpp
     src/open_request.cpp src/open_request.hpp
-    src/plan_sign_in.cpp src/plan_sign_in.hpp
     src/harness_models.cpp src/harness_models.hpp
     src/attention_view.cpp
     src/keymap.cpp src/keymap.hpp
@@ -43,7 +38,6 @@ add_library(lapis_desktop_view STATIC
     src/interaction_recorder.cpp src/interaction_recorder.hpp
     src/live_connection.cpp src/live_connection.hpp
     src/platform/updater_process.cpp src/platform/updater_process.hpp
-    src/platform/reset_journal.cpp src/platform/reset_journal.hpp
     src/platform/published_task.hpp
     src/terminal_surface.cpp src/terminal_surface.hpp
     src/cell_shapes.cpp src/cell_shapes.hpp
@@ -64,7 +58,7 @@ if(APPLE)
     # downloaded app) Sparkle.
     target_sources(lapis_desktop_view PRIVATE src/desktop_actions_mac.mm)
     target_link_libraries(lapis_desktop_view PUBLIC "-framework AppKit" "-framework Carbon"
-        "-framework CoreGraphics" "-framework Foundation" "-framework Security"
+        "-framework CoreGraphics" "-framework Foundation"
         "-framework ServiceManagement" "-framework UserNotifications")
     if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
         get_filename_component(sparkle_directory "${LAPIS_SPARKLE_FRAMEWORK}" DIRECTORY)
@@ -73,23 +67,10 @@ if(APPLE)
         target_link_libraries(lapis_desktop_view PUBLIC "-F${sparkle_directory}" "-framework Sparkle")
     endif()
 endif()
-# The token counter another machine runs over ssh, compiled in as text.
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/count_tokens.py)
-file(READ src/count_tokens.py LAPIS_COUNT_TOKENS_SCRIPT)
-configure_file(src/count_tokens.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/count_tokens.hpp" @ONLY)
-# The limit reset helper each machine runs with python3, compiled in the same way.
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/limit_resets.py)
-file(READ src/limit_resets.py LAPIS_LIMIT_RESETS_SCRIPT)
-configure_file(src/limit_resets_script.hpp.in
-    "${CMAKE_CURRENT_BINARY_DIR}/generated/limit_resets_script.hpp" @ONLY)
 # The next-prompt helper, run here or sent to another machine, compiled in as text.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/next_prompt.py)
 file(READ src/next_prompt.py LAPIS_NEXT_PROMPT_SCRIPT)
 configure_file(src/next_prompt_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/next_prompt_script.hpp" @ONLY)
-# The plan sign-in helper, compiled in the same way.
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/plan_sign_in.py)
-file(READ src/plan_sign_in.py LAPIS_PLAN_SIGN_IN_SCRIPT)
-configure_file(src/plan_sign_in_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/plan_sign_in_script.hpp" @ONLY)
 # The hook relay a remote agent's python3 runs, compiled in the same way.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/remote_hook_relay.py)
 file(READ src/remote_hook_relay.py LAPIS_REMOTE_HOOK_RELAY)
@@ -116,7 +97,7 @@ if(APPLE)
     target_link_libraries(lapis_desktop PRIVATE "-framework AppKit")
 endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
-qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml)
+qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml)
 # A development bundle has its own identity, so macOS never mistakes it for
 # the installed app: `open` would otherwise bring the installed lapis forward,
 # and the two would share notification and preference state.
@@ -185,19 +166,6 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_terminal_find_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME terminal-find COMMAND lapis_terminal_find_tests)
     set_tests_properties(terminal-find PROPERTIES TIMEOUT 20)
-    add_executable(lapis_accounts_tests tests/accounts_test.cpp)
-    target_link_libraries(lapis_accounts_tests PRIVATE lapis_project_options lapis_desktop_view)
-    add_test(NAME accounts COMMAND lapis_accounts_tests)
-    set_tests_properties(accounts PROPERTIES TIMEOUT 20)
-    add_executable(lapis_limit_resets_tests tests/limit_resets_test.cpp)
-    target_link_libraries(lapis_limit_resets_tests PRIVATE lapis_project_options lapis_desktop_view)
-    add_test(NAME limit-resets COMMAND lapis_limit_resets_tests)
-    set_tests_properties(limit-resets PROPERTIES TIMEOUT 30)
-    if(LAPIS_SANITIZER STREQUAL "thread")
-        # Process/FS recovery cases take about 23 s under TSan on the reference
-        # Mac; leave headroom for concurrent builds without changing app deadlines.
-        set_tests_properties(limit-resets PROPERTIES TIMEOUT 60)
-    endif()
     add_executable(lapis_gui_state_tests tests/gui_state_test.cpp)
     target_link_libraries(lapis_gui_state_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME gui-state COMMAND lapis_gui_state_tests)
@@ -242,14 +210,6 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_agent_state_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME agent-state COMMAND lapis_agent_state_tests)
     set_tests_properties(agent-state PROPERTIES TIMEOUT 30)
-    add_executable(lapis_plan_sign_in_tests tests/plan_sign_in_test.cpp)
-    target_link_libraries(lapis_plan_sign_in_tests PRIVATE lapis_project_options lapis_desktop_view)
-    add_test(NAME plan-sign-in COMMAND lapis_plan_sign_in_tests)
-    set_tests_properties(plan-sign-in PROPERTIES TIMEOUT 60)
-    add_executable(lapis_usage_tests tests/usage_test.cpp)
-    target_link_libraries(lapis_usage_tests PRIVATE lapis_project_options lapis_desktop_view)
-    add_test(NAME usage COMMAND lapis_usage_tests)
-    set_tests_properties(usage PROPERTIES TIMEOUT 60)
     add_executable(lapis_workspace_tests tests/workspace_test.cpp)
     target_link_libraries(lapis_workspace_tests PRIVATE lapis_project_options lapis_desktop_view)
     # Closing an agent is exercised against the real session service, and the
@@ -258,23 +218,18 @@ if(BUILD_TESTING)
     target_compile_definitions(lapis_workspace_tests PRIVATE
         LAPIS_DESKTOP_PATH="$<TARGET_FILE:lapis_desktop>")
     add_test(NAME workspace COMMAND lapis_workspace_tests)
-    add_test(NAME workspace-remote-accounts COMMAND lapis_workspace_tests
-                                                   --case remote-accounts)
-    set_tests_properties(workspace-remote-accounts PROPERTIES TIMEOUT 60)
     add_test(NAME workspace-remote-hooks COMMAND lapis_workspace_tests --case remote-hooks)
     set_tests_properties(workspace-remote-hooks PROPERTIES TIMEOUT 90)
-    add_test(NAME workspace-remote-account-reset COMMAND lapis_workspace_tests
-                                                        --case remote-account-reset)
-    set_tests_properties(workspace-remote-account-reset PROPERTIES TIMEOUT 20)
+    add_test(NAME workspace-retired-plans COMMAND lapis_workspace_tests --case retired-plans)
+    set_tests_properties(workspace-retired-plans PROPERTIES TIMEOUT 20)
     add_test(NAME workspace-updates-off COMMAND lapis_workspace_tests --case updates-off)
     set_tests_properties(workspace-updates-off PROPERTIES TIMEOUT 60)
     add_test(NAME workspace-omp-overlay COMMAND lapis_workspace_tests --case omp-overlay)
     set_tests_properties(workspace-omp-overlay PROPERTIES TIMEOUT 60)
     # These launch the real desktop host or QML windows. On a Mac someone is
     # using they would show windows, so they run only on request.
-    set_tests_properties(workspace workspace-remote-accounts workspace-remote-hooks
-                         workspace-remote-account-reset workspace-updates-off
-                         PROPERTIES LABELS "screen")
+    set_tests_properties(workspace workspace-remote-hooks workspace-retired-plans
+                         workspace-updates-off PROPERTIES LABELS "screen")
     if(APPLE)
         add_executable(lapis_sound_decode_tests tests/sound_decode_test.mm)
         target_link_libraries(lapis_sound_decode_tests PRIVATE lapis_project_options lapis_desktop_view)
@@ -359,8 +314,7 @@ if(BUILD_TESTING)
         # NSApplication activation). Tests labeled "screen" open windows, the
         # desktop host or an NSApplication, so a Mac runs them only on request.
         if(NOT LAPIS_NATIVE_GUI_TESTS)
-            set_tests_properties(workspace workspace-remote-accounts
-                                 workspace-remote-hooks workspace-remote-account-reset
+            set_tests_properties(workspace workspace-remote-hooks workspace-retired-plans
                                  workspace-updates-off tools-ui ui-preview appearance-input
                                  terminal-keys-mac PROPERTIES DISABLED TRUE)
         endif()
@@ -416,4 +370,4 @@ target_link_libraries(lapis_attention_ui_probe PRIVATE lapis_project_options lap
     Qt6::QuickControls2)
 target_compile_definitions(lapis_attention_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
 qt_add_resources(lapis_attention_ui_probe attention_qml PREFIX "/" FILES
-    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml)
+    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml)

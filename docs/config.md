@@ -17,8 +17,7 @@ key bindings and appearance it holds these:
   "harnessArguments": {"claude": ["--dangerously-skip-permissions"]},
   "alerts": {"finished": true, "notify": true},
   "editor": "Cursor",
-  "keepAwake": true,
-  "usage": {"show": true, "meter": ["codex", "claude", "grok"], "machines": ["devbox"]}
+  "keepAwake": true
 }
 ```
 
@@ -193,9 +192,10 @@ PIN or OTP (also one-time and verification codes, any case, as whole words) or
 ends in `secret:`, `token:` or `key:`, typed characters, IME text and pastes are
 recorded as `redacted` with only their class or length; keys such as Return
 and Backspace keep their names. The rule reads the screen, so a prompt that
-mentions a password redacts your typing there too. While the plan sign-in or
-usage (accounts) dialog is open nothing at all is recorded; closing it leaves
-one `dialog` record with the unrecorded milliseconds.
+mentions a password redacts your typing there too. While a dialog whose name
+mentions a sign-in, account, credential or password is open nothing at all is
+recorded; closing it leaves one `dialog` record with the unrecorded
+milliseconds.
 
 Each file rotates before it would pass `maxFileMiB` (1 to 1024): the current file
 becomes `interaction.jsonl.1`, older ones move up, and only `maxFiles` files (1
@@ -239,7 +239,10 @@ both owner-only.
   Code, Zed, Windsurf and Sublime Text installed).
 - `keepAwake` keeps the Mac from sleeping while it is plugged in, so the phone
   can reach it.
-- `usage`, `accounts` and `limitResets` are described in [usage](usage.md).
+- `usage` (and the older top-level `showUsage`), `accounts` and `limitResets`
+  belonged to retired plan features (the usage meter, lapis-managed plans and
+  limit resets); a file that still has them loads, and lapis leaves them as
+  written. Each CLI uses the sign-in its machine already has.
 - `nextPrompt` turns on guessed next prompts; see [suggestions](suggestions.md).
 - Key bindings are listed in [keys](keys.md); Appearance shows and edits them.
 

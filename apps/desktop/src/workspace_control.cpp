@@ -256,8 +256,8 @@ QByteArray WorkspaceControl::terminal(const QString& kind, const QJsonObject& re
 
 namespace {
 // The Mac's settings that matter away from it, which its Settings window
-// also sets: staying awake for the phone, the Mac's alerts, and plan usage.
-// How the window looks stays the Mac's to choose.
+// also sets: staying awake for the phone and the Mac's alerts. How the window
+// looks stays the Mac's to choose.
 struct Switch {
     std::string_view name;
     std::optional<bool> KeyMap::RemoteSettingsPatch::* field{};
@@ -267,20 +267,30 @@ constexpr auto switches = std::to_array<Switch>({
     {"keepAwake", &KeyMap::RemoteSettingsPatch::keepAwake, &KeyMap::keepAwake},
     {"finishSound", &KeyMap::RemoteSettingsPatch::finishSound, &KeyMap::finishSound},
     {"notify", &KeyMap::RemoteSettingsPatch::notify, &KeyMap::notify},
-    {"showUsage", &KeyMap::RemoteSettingsPatch::showUsage, &KeyMap::showUsage},
 });
-// The retired repeating request chime's settings. Phone builds from before
-// its removal still send them and require them in the answer, so a change to
-// either is accepted and ignored, and the answer reports the chime as off.
-constexpr auto retired_switch = std::string_view{"alertSound"};
-constexpr auto retired_repeat = std::string_view{"alertRepeat"};
+// Settings of retired features: the repeating request chime (alertSound,
+// alertRepeat) and the plan usage meter (showUsage). Phone builds from before
+// their removal still send them and require them in the answer, so a change
+// to any is accepted and ignored, and the answer reports them as off.
+struct Retired {
+    std::string_view name;
+    bool is_switch{}; // reported as false; otherwise as `count`
+    int count{};
+};
+constexpr auto retired = std::to_array<Retired>({
+    {.name = "alertSound", .is_switch = true},
+    {.name = "alertRepeat", .count = 1},
+    {.name = "showUsage", .is_switch = true},
+});
 
 QString text(std::string_view name) {
     return QString::fromLatin1(name.data(), static_cast<qsizetype>(name.size()));
 }
 
 QJsonObject current_settings(const KeyMap& keymap) {
-    QJsonObject values{{text(retired_switch), false}, {text(retired_repeat), 1}};
+    QJsonObject values;
+    for (const auto& item : retired)
+        values.insert(text(item.name), item.is_switch ? QJsonValue(false) : QJsonValue(item.count));
     for (const auto& item : switches)
         values.insert(text(item.name), (keymap.*item.get)());
     return values;
@@ -290,7 +300,8 @@ QJsonObject current_settings(const KeyMap& keymap) {
 // present value has the type the Mac accepts.
 QString invalid_change(const QJsonObject& changes) {
     for (auto entry = changes.begin(); entry != changes.end(); ++entry) {
-        if (entry.key() == text(retired_switch) || entry.key() == text(retired_repeat))
+        if (std::any_of(retired.begin(), retired.end(),
+                        [&](const auto& item) { return entry.key() == text(item.name); }))
             continue;
         const bool is_switch = std::any_of(switches.begin(), switches.end(), [&](const auto& item) {
             return entry.key() == text(item.name);

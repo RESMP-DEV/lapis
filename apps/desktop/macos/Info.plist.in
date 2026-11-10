@@ -48,7 +48,7 @@
 	<key>NSNetworkVolumesUsageDescription</key>
 	<string>Agents you run in lapis can work with files on network drives.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Agents you run in lapis, and its usage view, can reach machines on your local network.</string>
+	<string>Agents you run in lapis can reach machines on your local network.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Agents you run in lapis can control other apps when you ask them to.</string>
 	${LAPIS_UPDATE_KEYS}

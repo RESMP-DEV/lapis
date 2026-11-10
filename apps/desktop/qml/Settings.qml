@@ -27,7 +27,6 @@ Dialog {
     required property bool motionEnabled
     required property bool finishSound
     required property bool keepAwake
-    required property bool showUsage
     // Notifications while lapis is in the background; the downloaded app's
     // login item and updates (absent in a developer build).
     property bool notify: true
@@ -53,7 +52,6 @@ Dialog {
     signal fontSizeChosen(int pixels)
     signal finishSoundChosen(bool on)
     signal keepAwakeChosen(bool on)
-    signal showUsageChosen(bool on)
     signal notifyChosen(bool on)
     signal launchAtLoginChosen(bool on)
     signal checkUpdates()
@@ -895,14 +893,6 @@ Dialog {
                     detail: qsTr("While it is plugged in, so the phone can reach your agents. The display still sleeps; closing the lid still sleeps.")
                     on: settings.keepAwake
                     onToggled: function(on) { settings.keepAwakeChosen(on) }
-                }
-
-                SwitchRow {
-                    objectName: "showUsageRow"
-                    label: qsTr("Show plan usage")
-                    detail: qsTr("Each signed-in plan under the categories (Codex, Claude, Grok, Kimi, and OMP's accounts), checked every five minutes, with a dashboard per machine. usage.meter and usage.machines in the config pick which. Off, lapis asks no CLI.")
-                    on: settings.showUsage
-                    onToggled: function(on) { settings.showUsageChosen(on) }
                 }
 
                 Rectangle {

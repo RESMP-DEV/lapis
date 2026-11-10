@@ -331,7 +331,7 @@ void credential_dialogs_pause_recording() {
 import QtQuick.Controls
 Window {
     width: 400; height: 300
-    Dialog { objectName: "planSignInDialog"; width: 100; height: 100 }
+    Dialog { objectName: "signInDialog"; width: 100; height: 100 }
     Dialog { objectName: "commandsDialog"; width: 100; height: 100
              signal requested(string commandId) }
 })",
@@ -340,7 +340,7 @@ Window {
     require(root != nullptr, component.errorString().toStdString());
     auto* window = qobject_cast<QQuickWindow*>(root.get());
     fixture.recorder->watchWindow(window);
-    auto* sign_in = root->findChild<QObject*>(QStringLiteral("planSignInDialog"));
+    auto* sign_in = root->findChild<QObject*>(QStringLiteral("signInDialog"));
     auto* commands = root->findChild<QObject*>(QStringLiteral("commandsDialog"));
     QMetaObject::invokeMethod(commands, "open");
     QMetaObject::invokeMethod(commands, "requested", Q_ARG(QString, QStringLiteral("newAgent")));
@@ -356,8 +356,7 @@ Window {
             "the palette's command is recorded");
     const auto dialogs = of_kind(lines, QStringLiteral("dialog"));
     require(dialogs.size() == 4 && dialogs[0].value("name") == "commandsDialog" &&
-                dialogs[0].value("open").toBool() &&
-                dialogs[2].value("name") == "planSignInDialog" &&
+                dialogs[0].value("open").toBool() && dialogs[2].value("name") == "signInDialog" &&
                 !dialogs[3].value("open").toBool() && dialogs[3].contains("unrecordedMs"),
             "dialogs open and close; a credential dialog leaves only a gap");
     const auto keys = of_kind(lines, QStringLiteral("key"));
@@ -375,14 +374,6 @@ void pump(int milliseconds) {
     }
 }
 
-void wait_for(const std::function<bool()>& condition, const std::string& message) {
-    QElapsedTimer clock;
-    clock.start();
-    while (!condition() && clock.elapsed() < 5000)
-        pump(10);
-    require(condition(), message);
-}
-
 QQuickItem* find_item(QQuickItem* root, const QString& name) {
     if (root == nullptr)
         return nullptr;
@@ -395,7 +386,7 @@ QQuickItem* find_item(QQuickItem* root, const QString& name) {
 }
 
 // The production window, offscreen: a click on a strip card names the card's
-// agent, and the real sign-in and usage dialogs hold recording.
+// agent.
 void production_window_is_described() {
     Fixture fixture;
     fixture.recorder->setSettings({.enabled = true});
@@ -422,17 +413,6 @@ void production_window_is_described() {
                         Qt::NoModifier);
     QCoreApplication::sendEvent(window, &release);
     pump(20);
-    for (const auto* name : {"planSignInDialog", "usageDialog"}) {
-        auto* dialog = window->findChild<QObject*>(QLatin1String(name));
-        require(dialog != nullptr, std::string("the window has ") + name);
-        QMetaObject::invokeMethod(dialog, "open");
-        wait_for([dialog] { return dialog->property("visible").toBool(); },
-                 std::string(name) + " opened");
-        fixture.key(QEvent::KeyPress, Qt::Key_Q, QStringLiteral("q"));
-        QMetaObject::invokeMethod(dialog, "close");
-        wait_for([dialog] { return !dialog->property("visible").toBool(); },
-                 std::string(name) + " closed");
-    }
     // Every move here is a recorded sample, so each pays the hit test.
     QElapsedTimer sampled;
     sampled.start();
@@ -454,12 +434,6 @@ void production_window_is_described() {
     require(target.value("area") == "strip" && target.value("session") == id &&
                 mouse[0].value("button") == "left",
             "the click names the strip and the card's agent");
-    require(of_kind(lines, QStringLiteral("key")).empty(),
-            "keys typed with a credential dialog open are not recorded");
-    int gaps = 0;
-    for (const auto& dialog : of_kind(lines, QStringLiteral("dialog")))
-        gaps += dialog.contains("unrecordedMs") ? 1 : 0;
-    require(gaps == 2, "each credential dialog leaves one gap record");
 }
 
 // Microseconds of GUI-thread time per key event, recording against not.

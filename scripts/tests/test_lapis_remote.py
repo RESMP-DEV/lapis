@@ -1118,15 +1118,15 @@ class StartAgentTests(unittest.TestCase):
             self.assertEqual(len(desktop.requests), asked, "bad requests reach nothing")
 
     def test_the_phone_reads_and_changes_the_macs_settings(self):
-        # The Mac still answers with the retired alertSound and alertRepeat,
-        # which older phone builds require.
+        # The Mac still answers with the retired alertSound, alertRepeat and
+        # showUsage, which older phone builds require.
         settings = {
             "keepAwake": True,
             "alertSound": False,
             "alertRepeat": 1,
             "finishSound": True,
             "notify": True,
-            "showUsage": True,
+            "showUsage": False,
         }
 
         def answer(request):
@@ -1147,11 +1147,17 @@ class StartAgentTests(unittest.TestCase):
             status, changed = server.request(
                 "POST",
                 "/api/settings",
-                {"keepAwake": False, "alertSound": True, "alertRepeat": 11},
+                {
+                    "keepAwake": False,
+                    "alertSound": True,
+                    "alertRepeat": 11,
+                    "showUsage": True,
+                },
             )
             self.assertEqual(status, 200)
             self.assertFalse(changed["settings"]["keepAwake"])
             self.assertEqual(changed["settings"]["alertRepeat"], 1)
+            self.assertFalse(changed["settings"]["showUsage"])
             self.assertEqual(
                 desktop.requests[-1],
                 {

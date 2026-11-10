@@ -27,27 +27,21 @@ updates. See
 ## A quick tour
 
 - **Early access starts local.** The supported first slice is a local Codex or
-  Claude Code workspace. Remote hosts, shared plans, the phone and next-prompt
-  suggestions remain implemented or prototype surfaces, but are outside that
+  Claude Code workspace. Remote hosts, the phone and next-prompt suggestions
+  remain implemented or prototype surfaces, but are outside that
   first support slice; [status](docs/status.md) separates implemented code from
   exercised, measured and unqualified behavior.
 - **Start an agent** with Command-T: pick a CLI, a folder, a model and how much it
   may do without asking, on this Mac. The machine picker also offers hosts from
   your ssh config, but remote sessions are outside the early-access support
-  slice until remote account, reconnect and fan-out qualification passes.
+  slice until remote reconnect and fan-out qualification passes. Each CLI uses
+  the sign-in its machine already has.
   [Agents](docs/agents.md)
 - **Categories** group agents. The strip under the stage shows each agent's
   latest lines; drag a card onto the stage to tile it beside another.
   [Workspace](docs/workspace.md)
 - **Jump to what needs you** with Command-J (the next) or Command-L (the latest),
   even from another app with Command-Option-L. Chimes and notifications say when.
-- **Plan usage** for every CLI you are signed in to, on this Mac and your other
-  machines, with several plans shared across sessions. Local usage is part of the
-  early-access workspace; shared plans and other-machine queries remain outside
-  its support slice. Saved-limit resets are implemented with helper and provider
-  stand-ins, but real provider spending is not qualified; automatic spending is
-  off by default and can be enabled with `{"limitResets": {"auto": true}}`.
-  [Usage](docs/usage.md)
 - **Your phone** can show and drive the same agents as a separately installed
   prototype over its gateway. It is outside the early-access support slice.
   [Phone](docs/phone.md)
@@ -81,7 +75,6 @@ uv run --no-project python scripts/lapis.py run
 | [workspace](docs/workspace.md) | Categories, the strip, tiles, finding, links, history |
 | [keys](docs/keys.md) | Every keyboard shortcut |
 | [config](docs/config.md) | `lapis.json`: defaults, alerts, editor, CLI flags |
-| [usage](docs/usage.md) | Plan usage and plans shared across sessions |
 | [phone](docs/phone.md) | The prototype iPhone app and its separately installed gateway |
 | [suggestions](docs/suggestions.md) | Optional next-prompt guesses, Tab, and their acceptance log |
 | [ultratab](https://github.com/RESMP-DEV/ultratab) | Ultra Tab, an overlay that deals waiting agents as cards, now its own repository |
