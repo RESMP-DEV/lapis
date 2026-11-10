@@ -662,7 +662,7 @@ class Workspace final : public QObject {
         QString name;
         QString selected;
     };
-    struct Agent {
+    struct AgentRecord {
         QString category;
         QString endpoint;
         session::LaunchSpec launch;
@@ -678,7 +678,7 @@ class Workspace final : public QObject {
         QString managed_resume_identity{};
     };
     std::vector<Category> categories_;
-    QMap<QString, Agent> agents_;
+    QMap<QString, AgentRecord> agents_;
     QString active_category_{QStringLiteral("general")};
     QString storage_path_;
     std::unique_ptr<QLockFile> registry_lock_;
@@ -714,7 +714,7 @@ class Workspace final : public QObject {
     }
     struct RegistryState {
         std::vector<Category> categories;
-        QMap<QString, Agent> agents;
+        QMap<QString, AgentRecord> agents;
         QString active;
         int focused{-1};
     };
@@ -723,19 +723,19 @@ class Workspace final : public QObject {
     bool mutableRegistry();
     bool commit(const RegistryState& previous);
     bool save(const QString& renamedId = {}, const QString& renamedTitle = {});
-    [[nodiscard]] static QJsonObject agentRecord(const Agent& agent, const QString& id,
+    [[nodiscard]] static QJsonObject agentRecord(const AgentRecord& agent, const QString& id,
                                                  const QString& title);
     void lockRegistry();
     void restore();
     void connectRestoredAgents();
     void loadCategories(const QJsonArray& groups);
-    static void loadManagedResume(const QJsonValue& value, Agent& agent);
+    static void loadManagedResume(const QJsonValue& value, AgentRecord& agent);
     void loadAgents(const QJsonArray& agents);
     void finishClosing(SessionPreview* item);
-    [[nodiscard]] static SessionPreview::StatusSource statusSource(const Agent& agent);
+    [[nodiscard]] static SessionPreview::StatusSource statusSource(const AgentRecord& agent);
     [[nodiscard]] static QStringList savedArguments(const QJsonValue& value);
-    static void applyStartupDefaults(const Agent& agent, ResumeLaunch& plan);
-    [[nodiscard]] static std::optional<ResumeLaunch> restoredLaunch(const Agent& agent,
+    static void applyStartupDefaults(const AgentRecord& agent, ResumeLaunch& plan);
+    [[nodiscard]] static std::optional<ResumeLaunch> restoredLaunch(const AgentRecord& agent,
                                                                     QString* diagnostic = nullptr);
     struct ClosedAgent {
         QString category;
@@ -746,7 +746,7 @@ class Workspace final : public QObject {
     };
     // Newest last; at most ten.
     std::vector<ClosedAgent> closed_;
-    void rememberClosed(const Agent& agent, const QString& title);
+    void rememberClosed(const AgentRecord& agent, const QString& title);
     // Marks an agent saved at work as finished if its first settled status
     // after the restart is not work.
     void watchFinishWhileAway(SessionPreview* item);
@@ -798,11 +798,11 @@ class Workspace final : public QObject {
     QHash<QString, Reconnect> reconnects_;
     QObject* transcript_{}; // a TranscriptModel this workspace owns
     // The ssh host a remote agent runs on; empty on this Mac.
-    [[nodiscard]] static QString agentMachine(const Agent& agent);
+    [[nodiscard]] static QString agentMachine(const AgentRecord& agent);
     // Sets what the agent's next start needs beyond its saved launch: OMP's
     // overlay in the card's service environment. A remote command saved with
     // a retired plan preamble loses it, so the machine's own sign-in is used.
-    void prepareStart(Agent& agent, SessionPreview& item);
+    void prepareStart(AgentRecord& agent, SessionPreview& item);
     // Agents asked to end so they can start again.
     QSet<QString> reloading_;
     enum class ReloadOutcome : std::uint8_t { requested, kept, failed };

@@ -783,7 +783,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
             add("Agent", launch.directory.toUtf8().constData(), "Connecting", "#87cbac", "");
             sessions_.front()->setSessionId(QStringLiteral("shell"));
             const auto harness = harness_id(launch.agent);
-            const Agent agent{active_category_, endpoint, launch, harness};
+            const AgentRecord agent{active_category_, endpoint, launch, harness};
             sessions_.front()->setHarnessId(harness);
             sessions_.front()->setStatusSource(statusSource(agent));
             agents_.insert(QStringLiteral("shell"), agent);
@@ -1892,7 +1892,7 @@ QString Workspace::launchAgent(const AgentRequest& request, const session::Launc
                                              QColor(QStringLiteral("#87cbac")), "");
         item->setSessionId(id);
         item->setHarnessId(request.harness);
-        Agent agent{request.category, endpoint, launch, request.harness};
+        AgentRecord agent{request.category, endpoint, launch, request.harness};
         agent.managed_resume_index = managed_resume_index;
         agent.managed_resume_identity = managed_resume_identity;
         agent.named = request.named;
@@ -1926,7 +1926,8 @@ QString Workspace::launchAgent(const AgentRequest& request, const session::Launc
         return failed(QString::fromUtf8(error.what()));
     }
 }
-QJsonObject Workspace::agentRecord(const Agent& agent, const QString& id, const QString& title) {
+QJsonObject Workspace::agentRecord(const AgentRecord& agent, const QString& id,
+                                   const QString& title) {
     const auto resume = agent.launch.arguments.size() == 2 &&
                                 agent.launch.arguments.front() == QStringLiteral("resume")
                             ? agent.launch.arguments.at(1)
@@ -2321,11 +2322,11 @@ void Workspace::finishReload(const QString& id, int waits) {
     reloading_.remove(id);
     restartAgent(id);
 }
-QString Workspace::agentMachine(const Agent& agent) {
+QString Workspace::agentMachine(const AgentRecord& agent) {
     const auto remote = remoteCommand(agent.launch);
     return remote ? remote->first : QString();
 }
-void Workspace::prepareStart(Agent& agent, SessionPreview& item) {
+void Workspace::prepareStart(AgentRecord& agent, SessionPreview& item) {
     QHash<QString, QString> environment;
     // Charts a local agent draws follow the visual view's theme: matplotlib
     // reads the style lapis writes, and other plotting code can read the
@@ -2533,7 +2534,7 @@ bool Workspace::serviceRunning(const QString& endpoint) {
     return probe.error() != QLocalSocket::ConnectionRefusedError &&
            probe.error() != QLocalSocket::ServerNotFoundError;
 }
-void Workspace::applyStartupDefaults(const Agent& agent, ResumeLaunch& plan) {
+void Workspace::applyStartupDefaults(const AgentRecord& agent, ResumeLaunch& plan) {
     // This function is used only after `serviceRunning()` proved the old
     // service is gone. Reattach keeps the recorded launch untouched.
     if (agent.harness == QLatin1String("grok") &&
@@ -2560,7 +2561,7 @@ void Workspace::applyStartupDefaults(const Agent& agent, ResumeLaunch& plan) {
     }
 }
 
-auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
+auto Workspace::restoredLaunch(const AgentRecord& agent, QString* diagnostic)
     -> std::optional<ResumeLaunch> {
     try {
         auto launch = agent.launch;
@@ -2646,7 +2647,7 @@ QStringList Workspace::savedArguments(const QJsonValue& value) {
     }
     return arguments;
 }
-void Workspace::loadManagedResume(const QJsonValue& value, Agent& agent) {
+void Workspace::loadManagedResume(const QJsonValue& value, AgentRecord& agent) {
     const auto managed = value.toObject();
     const auto index = managed.value(QStringLiteral("index")).toInt(-1);
     const auto identity = managed.value(QStringLiteral("identity")).toString();
@@ -2664,7 +2665,7 @@ void Workspace::loadManagedResume(const QJsonValue& value, Agent& agent) {
     agent.managed_resume_identity = identity;
 }
 void Workspace::loadAgents(const QJsonArray& agents) {
-    QMap<QString, Agent> metadata;
+    QMap<QString, AgentRecord> metadata;
     std::vector<std::unique_ptr<SessionPreview>> restored;
     const auto directory = QFileInfo(storage_path_).absolutePath();
     unreadable_agents_ = {};
@@ -2682,15 +2683,15 @@ void Workspace::loadAgents(const QJsonArray& agents) {
             if (!find_harness(harness) || (object.contains(QStringLiteral("harness")) &&
                                            !object.value(QStringLiteral("harness")).isString()))
                 throw std::runtime_error("Invalid agent harness");
-            Agent agent{object.value(QStringLiteral("category")).toString(),
-                        object.value(QStringLiteral("endpoint")).toString(),
-                        {object.value(QStringLiteral("program")).toString(),
-                         {},
-                         object.value(QStringLiteral("directory")).toString(),
-                         {100, 30},
-                         harness == QStringLiteral("codex") ? session::AgentMode::codex
-                                                            : session::AgentMode::terminal},
-                        harness};
+            AgentRecord agent{object.value(QStringLiteral("category")).toString(),
+                              object.value(QStringLiteral("endpoint")).toString(),
+                              {object.value(QStringLiteral("program")).toString(),
+                               {},
+                               object.value(QStringLiteral("directory")).toString(),
+                               {100, 30},
+                               harness == QStringLiteral("codex") ? session::AgentMode::codex
+                                                                  : session::AgentMode::terminal},
+                              harness};
             const auto resume = object.value(QStringLiteral("resumeThread")).toString();
             if ((object.contains(QStringLiteral("resumeThread")) &&
                  !object.value(QStringLiteral("resumeThread")).isString()) ||
@@ -3130,12 +3131,12 @@ void Workspace::noteStatus(SessionPreview* item) {
 // Claude Code's hooks report its whole turn. Codex's notify program reports
 // only finished turns, so between them its status is estimated from output,
 // as for a terminal agent.
-SessionPreview::StatusSource Workspace::statusSource(const Agent& agent) {
+SessionPreview::StatusSource Workspace::statusSource(const AgentRecord& agent) {
     return agent.launch.agent == session::AgentMode::claude ? SessionPreview::StatusSource::observer
                                                             : SessionPreview::StatusSource::output;
 }
 // Command-Shift-T brings it back, resuming its conversation where it can.
-void Workspace::rememberClosed(const Agent& agent, const QString& title) {
+void Workspace::rememberClosed(const AgentRecord& agent, const QString& title) {
     if (preview_mode_)
         return;
     auto plan = restoredLaunch(agent);
