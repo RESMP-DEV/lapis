@@ -9,6 +9,7 @@
 #include <QDir>
 
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QTemporaryDir>
 #include <QTextDocument>
@@ -843,6 +844,80 @@ void slash_commands_are_listed() {
             "the person's commands and skills are listed with their descriptions");
 }
 
+QVariantMap command_named(const QVariantList& list, const QString& name) {
+    for (const auto& entry : list)
+        if (entry.toMap().value(QStringLiteral("name")) == name)
+            return entry.toMap();
+    return {};
+}
+
+void write_file(const QString& path, const QByteArray& text) {
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly) && file.write(text) == text.size(), "fixture written");
+}
+
+// Codex's and Antigravity's own commands, the skills agy offers as commands,
+// and nothing for a CLI lapis does not know.
+void other_cli_slash_commands_are_listed() {
+    using lapis::desktop::slash_commands;
+    QTemporaryDir home;
+    QTemporaryDir repo;
+    // Codex 0.157.1 reads no prompt files: one left from an older Codex is
+    // not offered.
+    write_file(home.filePath(QStringLiteral(".codex/prompts/old.md")), "Old prompt\n");
+    const auto codex = slash_commands(QStringLiteral("codex"), home.path(), repo.path());
+    const auto status = command_named(codex, QStringLiteral("status"));
+    require(!status.isEmpty() && status.value(QStringLiteral("terminal")).toBool() &&
+                !command_named(codex, QStringLiteral("model")).isEmpty(),
+            "Codex's own commands are listed, a panel one marked for the terminal");
+    require(command_named(codex, QStringLiteral("compact")).value(QStringLiteral("terminal")) ==
+                QVariant(false),
+            "Codex's /compact runs as a turn in the thread");
+    require(command_named(codex, QStringLiteral("old")).isEmpty() &&
+                command_named(codex, QStringLiteral("prompts:old")).isEmpty() &&
+                command_named(codex, QStringLiteral("quit")).isEmpty() &&
+                command_named(codex, QStringLiteral("exit")).isEmpty(),
+            "Codex lists no prompt files and no command that ends the session");
+
+    // agy: the project's skills from the folder up to its repository root,
+    // then the person's, without those hidden from the slash menu.
+    QDir(repo.path()).mkpath(QStringLiteral(".git"));
+    const auto folder = repo.filePath(QStringLiteral("sub/dir"));
+    QDir().mkpath(folder);
+    write_file(repo.filePath(QStringLiteral(".agents/skills/ship/SKILL.md")),
+               "---\nname: ship\ndescription: >-\n  Ship the\n  release\n---\nDo it.\n");
+    write_file(repo.filePath(QStringLiteral(".agents/skills/quiet/SKILL.md")),
+               "---\nname: quiet\ndescription: Hidden\ndisable-slash-command: true\n---\n");
+    write_file(home.filePath(QStringLiteral(".gemini/config/skills/notes/SKILL.md")),
+               "---\nname: notes\ndescription: Keep notes\n---\n");
+    write_file(home.filePath(QStringLiteral(".gemini/config/skills/ship/SKILL.md")),
+               "---\nname: ship\ndescription: The person's ship\n---\n");
+    const auto agy = slash_commands(QStringLiteral("agy"), home.path(), folder);
+    require(command_named(agy, QStringLiteral("resume")).value(QStringLiteral("terminal")) ==
+                    QVariant(true) &&
+                !command_named(agy, QStringLiteral("compact")).isEmpty() &&
+                command_named(agy, QStringLiteral("exit")).isEmpty(),
+            "agy's own commands are listed, a picker marked for the terminal");
+    const auto ship = command_named(agy, QStringLiteral("ship"));
+    require(ship.value(QStringLiteral("description")) == QStringLiteral("Ship the release") &&
+                ship.value(QStringLiteral("source")) == QStringLiteral("project") &&
+                ship.value(QStringLiteral("terminal")) == QVariant(false),
+            "a project skill is listed with its folded description and wins over the person's");
+    require(command_named(agy, QStringLiteral("notes")).value(QStringLiteral("source")) ==
+                    QStringLiteral("user") &&
+                command_named(agy, QStringLiteral("quiet")).isEmpty(),
+            "the person's skills are listed, a hidden one is not");
+
+    require(slash_commands(QStringLiteral("omp"), home.path(), folder).isEmpty() &&
+                slash_commands(QString(), home.path(), folder).isEmpty(),
+            "a CLI lapis does not know gets no commands");
+    require(!command_named(slash_commands(QStringLiteral("claude"), home.path(), {}),
+                           QStringLiteral("compact"))
+                 .isEmpty(),
+            "Claude Code's list is chosen by its harness id");
+}
+
 // Charts follow the theme: the style lapis writes for matplotlib.
 void chart_style_is_written() {
     QTemporaryDir home;
@@ -891,6 +966,7 @@ int main(int argc, char** argv) {
     code_is_highlighted();
     media_is_found();
     slash_commands_are_listed();
+    other_cli_slash_commands_are_listed();
     chart_style_is_written();
     if (failures == 0)
         std::puts("transcript: all checks passed");
