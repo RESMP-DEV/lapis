@@ -3,6 +3,7 @@
 #include "app_paths.hpp"
 #include "category_colors.hpp"
 #include "conversation_index.hpp"
+#include "conversation_owner.hpp"
 #include "harness_catalog.hpp"
 #include "hook_relay.hpp"
 #include "live_connection.hpp"
@@ -786,6 +787,10 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
         tab_ranker_ = std::make_unique<TabRanker>(QFileInfo(storage_path_).absolutePath());
         restoreSelection();
         rememberInitialFocus();
+        // A few file and process lookups per unnamed agy or Codex agent.
+        conversation_pins_.setInterval(5000);
+        connect(&conversation_pins_, &QTimer::timeout, this, &Workspace::pinConversations);
+        conversation_pins_.start();
         return;
     }
     add("Codex", "lapis", "UI preview", "#87cbac", "~/lapis\r\n\r\n> Ready for the next step.\r\n");
@@ -1474,11 +1479,13 @@ QString Workspace::agentConversation(const QString& id) const {
     if (entry == agents_.cend())
         return {};
     // The observer's (or, for other CLIs, the hook's) record follows /new
-    // and /resume; a resumed agent without one yet has lapis's pair.
+    // and /resume; without one, the conversation lapis pinned to the agent
+    // from its own process (agy, Codex before its first turn ends), else the
+    // one lapis resumed.
     const auto record = session::read_resume_record(entry->endpoint);
     if (record && record->agent == entry->harness && resumable(*record, entry->harness))
         return record->session_id;
-    return entry->managed_resume_identity;
+    return entry->conversation.isEmpty() ? entry->managed_resume_identity : entry->conversation;
 }
 bool Workspace::moveAgent(const QString& id, const QString& categoryId) {
     if (!mutableRegistry())
@@ -1982,6 +1989,8 @@ QJsonObject Workspace::agentRecord(const AgentRecord& agent, const QString& id,
         serialized.insert(QStringLiteral("named"), true);
     if (agent.auto_title)
         serialized.insert(QStringLiteral("autoTitle"), true);
+    if (!agent.conversation.isEmpty())
+        serialized.insert(QStringLiteral("conversation"), agent.conversation);
     const auto resume_option = resumeOption(agent.harness);
     if (agent.managed_resume_index >= 0 &&
         agent.managed_resume_index + 1 < agent.launch.arguments.size() &&
@@ -2108,10 +2117,6 @@ QString claudeTranscript(const QString& conversation) {
     return {};
 }
 
-QString codexHome() {
-    return qEnvironmentVariable("CODEX_HOME", QDir::homePath() + QStringLiteral("/.codex"));
-}
-
 // The rollout Codex saved a thread in, under sessions/YYYY/MM/DD (newest
 // days first, no symlinks), or empty.
 QString codexRollout(const QDir& directory, const QString& conversation, int depth) {
@@ -2132,100 +2137,6 @@ QString codexRollout(const QDir& directory, const QString& conversation, int dep
     return {};
 }
 
-// The first line of a conversation file as JSON, read without the rest.
-QJsonObject firstRecord(const QString& path) {
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly))
-        return {};
-    return QJsonDocument::fromJson(file.readLine(qint64{1} << 20)).object();
-}
-
-// Is `folder` the folder `directory` names (both cleaned, links resolved)?
-bool sameFolder(const QString& folder, const QString& directory) {
-    if (folder.isEmpty() || directory.isEmpty())
-        return false;
-    const auto canonical = [](const QString& path) {
-        const auto resolved = QFileInfo(path).canonicalFilePath();
-        return resolved.isEmpty() ? QDir::cleanPath(path) : resolved;
-    };
-    return canonical(folder) == canonical(directory);
-}
-
-// A Codex TUI conversation started in `folder` since `since_ms`, not one of
-// `taken`, before Codex's notify names it (that comes when its first turn
-// ends): the newest such rollout in the days since. Codex writes a rollout's
-// session_meta, with its folder, source and start, when the thread starts.
-// Subagent and `codex exec` threads have another source and never count.
-QString codexStartedRollout(const QString& folder, qint64 since_ms, const QSet<QString>& taken) {
-    const QDir sessions(codexHome() + QStringLiteral("/sessions"));
-    const auto now = QDateTime::currentDateTime();
-    const auto first_day = QDateTime::fromMSecsSinceEpoch(since_ms).date();
-    QString best;
-    qint64 best_ms = 0;
-    for (auto day = now.date(); day >= first_day && first_day.daysTo(day) <= 7;
-         day = day.addDays(-1)) {
-        // Codex names day folders by local date; a thread started just after
-        // midnight UTC may sit in either neighbour, so the start day counts.
-        const QDir folder_of_day(sessions.filePath(day.toString(QStringLiteral("yyyy/MM/dd"))));
-        if (QFileInfo(folder_of_day.path()).isSymLink())
-            continue;
-        for (const auto& name : folder_of_day.entryList({QStringLiteral("rollout-*.jsonl")},
-                                                        QDir::Files | QDir::NoSymLinks)) {
-            const auto path = folder_of_day.filePath(name);
-            const auto meta = firstRecord(path).value(QStringLiteral("payload")).toObject();
-            const auto id = meta.value(QStringLiteral("id")).toString();
-            const auto started = QDateTime::fromString(
-                meta.value(QStringLiteral("timestamp")).toString(), Qt::ISODateWithMs);
-            const auto started_ms = started.isValid() ? started.toMSecsSinceEpoch() : 0;
-            if (meta.value(QStringLiteral("source")).toString() != QLatin1String("cli") ||
-                started_ms < since_ms || started_ms <= best_ms || taken.contains(id) ||
-                !sameFolder(meta.value(QStringLiteral("cwd")).toString(), folder))
-                continue;
-            best = path;
-            best_ms = started_ms;
-        }
-    }
-    return best;
-}
-
-QString antigravityHome() {
-    return QDir::home().filePath(QStringLiteral(".gemini/antigravity-cli"));
-}
-
-// Where agy 1.5 appends a conversation's steps, or empty before it has.
-QString antigravityTranscript(const QString& conversation) {
-    if (QUuid::fromString(conversation).isNull())
-        return {};
-    const auto path = QDir(antigravityHome())
-                          .filePath(QStringLiteral("brain/%1/.system_generated/logs/"
-                                                   "transcript_full.jsonl")
-                                        .arg(conversation));
-    return QFileInfo(path).isFile() ? path : QString();
-}
-
-// The conversation agy last used in `folder` (its cache maps each folder to
-// one), when it started since `since_ms` and is not one of `taken`: what a
-// fresh agy agent is writing before anything names it to lapis.
-QString antigravityStartedTranscript(const QString& folder, qint64 since_ms,
-                                     const QSet<QString>& taken) {
-    QFile cache(QDir(antigravityHome()).filePath(QStringLiteral("cache/last_conversations.json")));
-    if (!cache.open(QIODevice::ReadOnly) || cache.size() > qint64{4} << 20)
-        return {};
-    const auto folders = QJsonDocument::fromJson(cache.readAll()).object();
-    QString conversation;
-    for (auto entry = folders.begin(); entry != folders.end() && conversation.isEmpty(); ++entry)
-        if (sameFolder(entry.key(), folder))
-            conversation = entry.value().toString();
-    if (conversation.isEmpty() || taken.contains(conversation))
-        return {};
-    const auto path = antigravityTranscript(conversation);
-    if (path.isEmpty())
-        return {};
-    const auto started = QDateTime::fromString(
-        firstRecord(path).value(QStringLiteral("created_at")).toString(), Qt::ISODate);
-    return started.isValid() && started.toMSecsSinceEpoch() >= since_ms ? path : QString();
-}
-
 bool conversationSaved(const session::ResumeRecord& record) {
     const auto& conversation = record.session_id;
     if (record.agent == QLatin1String("claude"))
@@ -2238,60 +2149,91 @@ bool conversationSaved(const session::ResumeRecord& record) {
     }
     return true;
 }
+
+bool pinnedHarness(const QString& harness) {
+    return harness == QLatin1String("agy") || harness == QLatin1String("codex");
+}
 } // namespace
-QString Workspace::conversationFile(const QString& id) const {
+conversation_owner::Agent Workspace::conversationOwner(const QString& id) const {
+    const auto& entry = *agents_.constFind(id);
+    const auto record = session::read_resume_record(entry.endpoint);
+    const bool recorded =
+        record && record->agent == entry.harness && resumable(*record, entry.harness);
+    auto known = recorded ? record->session_id : agentConversation(id);
+    if (QUuid::fromString(known).isNull())
+        known.clear();
+    return {id, entry.harness, entry.launch.directory, entry.endpoint, known, recorded};
+}
+void Workspace::pinConversations() {
+    if (fixture_mode_)
+        return;
+    QList<conversation_owner::Agent> owners;
+    for (auto entry = agents_.cbegin(); entry != agents_.cend(); ++entry)
+        if (pinnedHarness(entry->harness) && agentMachine(*entry).isEmpty())
+            owners.append(conversationOwner(entry.key()));
+    applyPins(conversation_owner::pins(owners));
+}
+void Workspace::applyPins(const QHash<QString, QString>& pins) {
+    if (pins.isEmpty())
+        return;
+    for (auto pin = pins.cbegin(); pin != pins.cend(); ++pin)
+        if (const auto entry = agents_.find(pin.key()); entry != agents_.end())
+            entry->conversation = pin.value();
+    // Kept in memory regardless; the registry carries it across restarts.
+    if (storage_path_.isEmpty() || storage_failed_)
+        return;
+    const auto error = error_;
+    if (!save()) {
+        qWarning().noquote() << "Conversation pin not saved:" << error_;
+        error_ = error;
+    }
+}
+QString Workspace::conversationFile(const QString& id) {
     const auto entry = agents_.constFind(id);
     if (entry == agents_.cend() || !agentMachine(*entry).isEmpty())
         return {};
     const auto& harness = entry->harness;
     const bool codex = harness == QLatin1String("codex");
-    const bool agy = harness == QLatin1String("agy");
-    if (harness != QLatin1String("claude") && !codex && !agy)
+    if (harness != QLatin1String("claude") && !pinnedHarness(harness))
         return {};
+    if (pinnedHarness(harness)) {
+        // Codex names its conversation when its first turn ends; agy never
+        // does. Until then the agent's own process says which it writes, and
+        // that choice is pinned (conversation_owner.hpp). An agent with none
+        // yet is placed among all of them, so no two take one conversation.
+        if (const auto owner = conversationOwner(id); owner.known.isEmpty())
+            pinConversations();
+        else if (!owner.recorded)
+            if (const auto held =
+                    conversation_owner::held_conversation(harness, owner.endpoint, owner.known);
+                !held.isEmpty() && held != owner.known)
+                applyPins({{id, held}});
+    }
     const auto conversation = agentConversation(id);
     // A conversation id is a UUID; anything else never names a file.
-    const bool named = !QUuid::fromString(conversation).isNull();
-    if (harness == QLatin1String("claude"))
-        return named ? claudeTranscript(conversation) : QString();
-    if (named) {
-        QString path;
-        if (codex) {
-            // Rollouts never move, so a thread's path is looked up once.
-            path = rollout_paths_.value(conversation);
-            if (path.isEmpty() || !QFileInfo::exists(path)) {
-                path = codexRollout(QDir(codexHome() + QStringLiteral("/sessions")), conversation, 3);
-                if (!path.isEmpty())
-                    rollout_paths_.insert(conversation, path);
-            }
-        } else {
-            path = antigravityTranscript(conversation);
-        }
-        if (!path.isEmpty())
-            return path;
-    }
-    // Before the CLI names its conversation (Codex's notify comes when the
-    // first turn ends; agy reports none), the one this agent started: begun
-    // in its folder since its session service started, and not another
-    // agent's. The service's endpoint is made when it starts and lives with it.
-    const auto started = QFileInfo(entry->endpoint).birthTime();
-    if (!started.isValid())
+    if (QUuid::fromString(conversation).isNull())
         return {};
-    QSet<QString> taken;
-    for (auto other = agents_.cbegin(); other != agents_.cend(); ++other)
-        if (other.key() != id && other->harness == harness)
-            if (const auto theirs = agentConversation(other.key()); !theirs.isEmpty())
-                taken.insert(theirs);
-    // Times in the files are to the second (agy) and the clocks the same.
-    const auto since_ms = started.toMSecsSinceEpoch() - 2000;
-    return codex ? codexStartedRollout(entry->launch.directory, since_ms, taken)
-                 : antigravityStartedTranscript(entry->launch.directory, since_ms, taken);
+    if (harness == QLatin1String("claude"))
+        return claudeTranscript(conversation);
+    if (!codex)
+        return conversation_owner::antigravity_transcript(conversation);
+    // Rollouts never move, so a thread's path is looked up once.
+    auto path = rollout_paths_.value(conversation);
+    if (path.isEmpty() || !QFileInfo::exists(path)) {
+        path = codexRollout(QDir(conversation_owner::codex_home() + QStringLiteral("/sessions")),
+                            conversation, 3);
+        if (!path.isEmpty())
+            rollout_paths_.insert(conversation, path);
+    }
+    return path;
 }
 QString Workspace::forkConversation(const QString& id, const QString& record, bool before) const {
     // A fork copies Claude Code's own records; other CLIs' files differ.
     const auto entry = agents_.constFind(id);
-    if (entry == agents_.cend() || entry->harness != QLatin1String("claude"))
+    if (entry == agents_.cend() || entry->harness != QLatin1String("claude") ||
+        !agentMachine(*entry).isEmpty() || QUuid::fromString(agentConversation(id)).isNull())
         return {};
-    const auto source = conversationFile(id);
+    const auto source = claudeTranscript(agentConversation(id));
     if (source.isEmpty() || QUuid::fromString(record).isNull())
         return {};
     QFile in(source);
@@ -2776,7 +2718,12 @@ auto Workspace::restoredLaunch(const AgentRecord& agent, QString* diagnostic)
         const auto option = resumeOption(agent.harness);
         ResumeLaunch plan{std::move(launch), agent.managed_resume_index,
                           agent.managed_resume_identity};
-        const auto record = session::read_resume_record(agent.endpoint);
+        auto record = session::read_resume_record(agent.endpoint);
+        // With no record from the CLI, the conversation lapis pinned from the
+        // agent's own process (an agy agent's, always) is the one to resume.
+        if (!record && !agent.conversation.isEmpty())
+            record = session::ResumeRecord{agent.harness, agent.conversation,
+                                           session::ResumeSource::legacy};
         if (record && !resumable(*record, agent.harness)) {
             // Retire only a proven lapis-owned pair. Explicit user arguments stay
             // authoritative, including when old derived metadata no longer matches.
@@ -2906,6 +2853,10 @@ void Workspace::loadAgents(const QJsonArray& agents) {
                 loadManagedResume(object.value(QStringLiteral("managedResume")), agent);
             agent.named = object.value(QStringLiteral("named")).toBool();
             agent.auto_title = object.value(QStringLiteral("autoTitle")).toBool();
+            // A pin that is not a conversation id is dropped; it is found again.
+            if (const auto pinned = object.value(QStringLiteral("conversation")).toString();
+                !QUuid::fromString(pinned).isNull())
+                agent.conversation = pinned;
             // "account" named a retired lapis-managed plan; it is ignored and
             // dropped on the next save, and the agent uses its machine's own
             // sign-in from its next start (see prepareStart).

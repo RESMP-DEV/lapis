@@ -25,6 +25,8 @@ add_library(lapis_desktop_core STATIC
     src/chime_sounds.cpp src/chime_sounds.hpp
     src/platform/chime_file.cpp src/platform/chime_file.hpp
     src/conversation_index.cpp src/conversation_index.hpp
+    src/conversation_owner.cpp src/conversation_owner.hpp
+    src/platform/process_files.cpp src/platform/process_files.hpp
     src/terminals.cpp src/terminals.hpp
     src/next_prompt.cpp src/next_prompt.hpp
     src/tab_ranker.cpp src/tab_ranker.hpp
@@ -230,6 +232,11 @@ if(BUILD_TESTING)
     # The sidebar's walk and category colours; no process or window.
     add_test(NAME workspace-sidebar COMMAND lapis_workspace_tests --case sidebar)
     set_tests_properties(workspace-sidebar PROPERTIES TIMEOUT 20
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    # The visual view's files, with stand-in processes and a restore through
+    # the real session service; windowless.
+    add_test(NAME workspace-visual-files COMMAND lapis_workspace_tests --case visual-files)
+    set_tests_properties(workspace-visual-files PROPERTIES TIMEOUT 60
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     # These launch the real desktop host or QML windows. On a Mac someone is
     # using they would show windows, so they run only on request.

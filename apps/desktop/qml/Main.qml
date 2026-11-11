@@ -913,7 +913,8 @@ ApplicationWindow {
         return choice === undefined ? visualAll : choice
     }
     // The file appears once the CLI saves its first message; until then the
-    // check repeats while the thread is wanted.
+    // check repeats while the thread is wanted. A Codex or Antigravity
+    // agent's keeps being checked, so the thread follows its /clear or /new.
     property int visualProbe: 0
     readonly property string visualFile: visualProbe >= 0 && visualWanted
                                          ? workspace.conversationFile(workspace.focusedAgent.agentId) : ""
@@ -921,7 +922,9 @@ ApplicationWindow {
     Timer {
         interval: 2000
         repeat: true
-        running: window.visualWanted && window.visualFile.length === 0
+        running: window.visualWanted && (window.visualFile.length === 0
+                                         || workspace.focusedAgent.harnessId === "codex"
+                                         || workspace.focusedAgent.harnessId === "agy")
         onTriggered: window.visualProbe += 1
     }
     // Some slash commands open a dialog in the CLI's terminal (/model's

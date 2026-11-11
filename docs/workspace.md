@@ -119,9 +119,13 @@ What differs by CLI:
   the toolbar without choices, since Codex's `/model` is a picker. A message
   sent mid-turn shows inside that turn once Codex takes it. A new agent's
   thread appears with Codex's first saved message (before its first turn ends,
-  lapis takes the newest Codex conversation started in the agent's folder
-  since the agent started).
-- **Antigravity** records no turn times, so "Worked for" counts from the
+  lapis takes the conversation the agent's own Codex holds open, else the one
+  started in the agent's folder since the agent started when no other agent
+  there could have started it; see [after a reboot](agents.md#after-a-reboot)).
+- **Antigravity** never tells lapis its conversation, so the thread is the
+  one the agent's own agy holds open, pinned to the agent; it follows `/clear`
+  and never shows another agent's conversation from the same folder. agy
+  records no turn times, so "Worked for" counts from the
   prompt to the final reply. The toolbar's model and effort come from the
   setting agy notes in a prompt, so a change from the menus shows from the
   next prompt; the menus send `/model <id>` and `/effort <level>`. A turn

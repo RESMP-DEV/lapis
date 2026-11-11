@@ -2,6 +2,7 @@
 #define LAPIS_DESKTOP_WORKSPACE_HPP
 
 #include "config.hpp"
+#include "conversation_owner.hpp"
 #include "harness_catalog.hpp"
 #include "harness_models.hpp"
 #include "history_strip.hpp"
@@ -540,11 +541,12 @@ class Workspace final : public QObject {
     // The file an agent's CLI saves its current conversation in, on this Mac,
     // for the visual view: Claude Code's transcript, Codex's rollout or
     // Antigravity's transcript_full.jsonl. The conversation lapis knows
-    // (observer, notify or hook record, or the resumed one) names it; before
-    // that, the conversation the CLI started in the agent's folder since its
-    // service started (Codex and Antigravity). Empty for an agent on another
-    // machine, a CLI the view cannot read, or before the CLI saved anything.
-    Q_INVOKABLE [[nodiscard]] QString conversationFile(const QString& id) const;
+    // (observer, notify or hook record, the pinned one, or the resumed one)
+    // names it. For Codex and Antigravity this first finds and pins the one
+    // the agent's own process is writing (conversation_owner.hpp). Empty for
+    // an agent on another machine, a CLI the view cannot read, or before the
+    // CLI saved anything.
+    Q_INVOKABLE [[nodiscard]] QString conversationFile(const QString& id);
     // Copies an agent's conversation up to `record` (a saved record's uuid;
     // `before` stops just ahead of it) into a new conversation beside it and
     // returns the new id for resumeAgent, or empty.
@@ -718,11 +720,21 @@ class Workspace final : public QObject {
         // user-authored launch. Existing unmarked records stay user-owned.
         int managed_resume_index{-1};
         QString managed_resume_identity{};
+        // The conversation lapis found this agent's own CLI writing, when the
+        // CLI has not named it (agy never does; Codex before its first turn
+        // ends): kept, and resumed on restart, until the process holds another.
+        QString conversation{};
     };
     std::vector<Category> categories_;
     QMap<QString, AgentRecord> agents_;
     // Codex thread id -> its rollout, found once (conversationFile).
     mutable QHash<QString, QString> rollout_paths_;
+    // Pins what each local Codex and agy agent's CLI is writing, as the
+    // visual view does, so restore resumes it even for one never shown.
+    QTimer conversation_pins_;
+    [[nodiscard]] conversation_owner::Agent conversationOwner(const QString& id) const;
+    void pinConversations();
+    void applyPins(const QHash<QString, QString>& pins);
     QString active_category_{QStringLiteral("general")};
     QString storage_path_;
     std::unique_ptr<QLockFile> registry_lock_;

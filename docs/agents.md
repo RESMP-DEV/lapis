@@ -225,9 +225,18 @@ skipped), the Claude hook adapter, or the `agent_checkpoint` sequence that
 iTerm2 restore hooks print. A Codex conversation is known once its first turn
 finishes. Codex transcript lookup stays within the `sessions/YYYY/MM/DD`
 layout and does not follow symlinks. The [visual view](workspace.md#visual-view)
-reads the same conversation; until a Codex or Antigravity conversation is
-named this way, it takes the one that CLI started in the agent's folder since
-the agent's service started.
+reads the same conversation. Antigravity never names its conversation and
+Codex does so only after the first turn, so for them lapis looks at the
+agent's own process: agy holds its conversation's
+`presence/<conversation>.lock` open (Codex its rollout), so the agent gets the
+conversation its own process is writing, follows its `/clear`, and never gets
+another agent's, even with several in one folder. lapis pins that choice in
+the agent's record in `runtime/workspace.json` (`conversation`); it outlasts a
+window restart, an outside `agy` run in the folder and the process ending, and
+a restart after a reboot resumes it (`agy --conversation`). Before the process
+holds one, lapis takes the earliest conversation started in the agent's folder
+since its service started, only when no other running agent of that CLI in the
+folder, still without one, could have started it.
 
 To have agents come back at login without opening a window, install the login
 helper once:

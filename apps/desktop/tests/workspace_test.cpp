@@ -1,6 +1,7 @@
 #include "agent_checkpoint.hpp"
 #include "alerts.hpp"
 #include "config.hpp"
+#include "conversation_owner.hpp"
 #include "launch_spec.hpp"
 #include "session_descriptor.hpp"
 #include "terminals.hpp"
@@ -26,6 +27,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QScopeGuard>
+#include <QSysInfo>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUuid>
@@ -6761,8 +6763,8 @@ void visualConversationFiles() {
     const auto named_path =
         rollout(QDir(sessions).filePath(QStringLiteral("2026/11/09")), named_thread, now, "cli");
     require(file("codex-named") == named_path, "Codex: the thread notify named");
-    // Before the first turn ends: the newest TUI thread started in the folder
-    // since the service, not an older one, an exec run, or the named thread.
+    // Before the first turn ends: the TUI thread started in the folder since
+    // the service, not an older one, an exec run, or the named thread.
     (void)rollout(today, uuid(), now.addSecs(-3600), "cli");
     (void)rollout(today, uuid(), now.addSecs(2), "exec");
     require(file("codex-fresh").isEmpty(), "Codex: older and exec threads never count");
@@ -6802,6 +6804,275 @@ void visualConversationFiles() {
     require(workspace.forkConversation(ids.value(QStringLiteral("codex-named")), uuid(), true)
                 .isEmpty(),
             "only Claude Code conversations fork");
+}
+
+// Stand-ins for agents' session services: each runs a "CLI" child that
+// holds open the file its control file names, as agy holds its presence
+// lock and conversation, and the service's lock names its pid as the real
+// one's does. Writing another path to the control file is a /clear.
+class FakeServices {
+  public:
+    explicit FakeServices(const QString& root) : root_(root) {
+        writeExecutable(root_.filePath(QStringLiteral("cli.sh")),
+                        "#!/bin/sh\nwhile :; do exec 3<\"$(cat \"$1\")\"; sleep 0.1; done\n");
+        writeExecutable(root_.filePath(QStringLiteral("service.sh")),
+                        "#!/bin/sh\n\"$(dirname \"$0\")/cli.sh\" \"$1\"\n");
+    }
+    ~FakeServices() {
+        for (const auto& id : processes_.keys())
+            stop(id);
+    }
+    FakeServices(const FakeServices&) = delete;
+    FakeServices& operator=(const FakeServices&) = delete;
+
+    void start(const QString& id, const QString& endpoint) {
+        hold(id, QStringLiteral("/dev/null"));
+        auto process = std::make_unique<QProcess>();
+        // Its own group, so stop() ends the "CLI" with it.
+        process->setChildProcessModifier([] { ::setpgid(0, 0); });
+        process->start(root_.filePath(QStringLiteral("service.sh")), {control(id)});
+        require(process->waitForStarted(5000), "a stand-in service starts");
+        QFile lock(endpoint + QStringLiteral(".lock"));
+        require(lock.open(QIODevice::WriteOnly | QIODevice::Truncate), "write its lock");
+        lock.write(QByteArray::number(process->processId()) + "\nlapis_session_service\n" +
+                   QSysInfo::machineHostName().toUtf8() + '\n');
+        processes_.insert(id, std::shared_ptr<QProcess>(std::move(process)));
+    }
+    void hold(const QString& id, const QString& path) {
+        QSaveFile file(control(id));
+        require(file.open(QIODevice::WriteOnly) && file.write(QFile::encodeName(path)) > 0 &&
+                    file.commit(),
+                "name the file the stand-in CLI holds");
+    }
+    void stop(const QString& id) {
+        const auto process = processes_.take(id);
+        if (!process)
+            return;
+        ::kill(-static_cast<pid_t>(process->processId()), SIGKILL);
+        process->waitForFinished(5000);
+    }
+
+  private:
+    [[nodiscard]] QString control(const QString& id) const {
+        return root_.filePath(id + QStringLiteral(".holds"));
+    }
+    QDir root_;
+    QHash<QString, std::shared_ptr<QProcess>> processes_;
+};
+
+// Two agy agents in one folder each show only the conversation their own agy
+// is writing, whichever started first or wrote last, though agy's cache names
+// one conversation per folder. The choice is pinned in the registry: it holds
+// through a window restart, an outside agy run in the folder, and the
+// processes ending, follows the agent's own /clear, and is what a restore
+// resumes.
+void agyAgentsKeepTheirOwnConversations() {
+    using lapis::desktop::conversation_owner::held_conversation;
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-pins-XXXXXX"));
+    require(directory.isValid(), "pin directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const ScopedHome home{root.filePath(QStringLiteral("home")).toUtf8()};
+    const ScopedCodexHome codex_home{root.filePath(QStringLiteral("codex")).toUtf8()};
+    const auto work = root.filePath(QStringLiteral("work"));
+    require(QDir().mkpath(work), "agent folder");
+    const QDir agy(root.filePath(QStringLiteral("home/.gemini/antigravity-cli")));
+    require(QDir().mkpath(agy.filePath(QStringLiteral("presence"))), "agy presence folder");
+    const auto now = QDateTime::currentDateTimeUtc();
+    const auto transcript = [&agy](const QString& conversation) {
+        return agy.filePath(QStringLiteral("brain/%1/.system_generated/logs/transcript_full.jsonl")
+                                .arg(conversation));
+    };
+    // A conversation agy began at `at` (made-up steps), and its presence lock.
+    const auto begin = [&](const QString& conversation, int seconds) {
+        writeLines(transcript(conversation),
+                   {R"({"step_index":0,"type":"USER_INPUT","created_at":")" +
+                    now.addSecs(seconds).toString(Qt::ISODate).toUtf8() +
+                    R"(","content":"made up"})"});
+        const auto lock = agy.filePath(QStringLiteral("presence/%1.lock").arg(conversation));
+        QFile made(lock);
+        require(made.open(QIODevice::WriteOnly), "make a presence lock");
+        return lock;
+    };
+    const auto last = [&](const QString& conversation) {
+        writeLines(
+            agy.filePath(QStringLiteral("cache/last_conversations.json")),
+            {QJsonDocument(QJsonObject{{work, conversation}}).toJson(QJsonDocument::Compact)});
+    };
+    writeExecutable(root.filePath(QStringLiteral("agy")), "#!/bin/sh\nexit 0\n");
+
+    // A starts, then B, in the same folder.
+    FakeServices services(root.path());
+    const auto first = uuid();
+    const auto second = uuid();
+    const auto endpoint = [&root](const QString& id) {
+        return root.filePath(id + QStringLiteral(".sock"));
+    };
+    QJsonArray agents;
+    for (const auto& id : {first, second}) {
+        QFile made(endpoint(id));
+        require(made.open(QIODevice::WriteOnly), "make an endpoint");
+        services.start(id, endpoint(id));
+        auto record = agentRecord(work, id, "general");
+        record.insert(QStringLiteral("endpoint"), endpoint(id));
+        record.insert(QStringLiteral("program"), root.filePath(QStringLiteral("agy")));
+        record.insert(QStringLiteral("harness"), QStringLiteral("agy"));
+        agents.append(record);
+    }
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    writeRegistry(options.storagePath,
+                  {{"version", 2},
+                   {"activeCategory", "general"},
+                   {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                   {"agents", agents}});
+    const auto a = uuid();
+    const auto b = uuid();
+    services.hold(first, begin(a, 1));
+    services.hold(second, begin(b, 2));
+    last(b); // agy's cache now names B's conversation for the folder
+    require(waitFor(
+                [&] {
+                    return held_conversation(QStringLiteral("agy"), endpoint(first), {}) == a &&
+                           held_conversation(QStringLiteral("agy"), endpoint(second), {}) == b;
+                },
+                5000),
+            "each agent's process holds its own conversation");
+    const auto pinned = [&options](const QString& id) {
+        for (const auto& value : QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                     .object()
+                                     .value(QStringLiteral("agents"))
+                                     .toArray())
+            if (value.toObject().value(QStringLiteral("id")).toString() == id)
+                return value.toObject().value(QStringLiteral("conversation")).toString();
+        return QString();
+    };
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.workspaceError().isEmpty(), "agy agents restored");
+        require(workspace.conversationFile(second) == transcript(b), "B shows its conversation");
+        require(workspace.conversationFile(first) == transcript(a),
+                "A shows its own though agy's cache names B's");
+        require(workspace.agentConversation(first) == a && workspace.agentConversation(second) == b,
+                "each agent's conversation is the one its process holds");
+    }
+    require(pinned(first) == a && pinned(second) == b, "the registry keeps both pins");
+    {
+        // The window restarts; then agy runs outside lapis in the folder.
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.conversationFile(first) == transcript(a) &&
+                    workspace.conversationFile(second) == transcript(b),
+                "a restarted window shows each agent its own conversation");
+        const auto outside = uuid();
+        (void)begin(outside, 3);
+        last(outside);
+        require(workspace.conversationFile(first) == transcript(a) &&
+                    workspace.conversationFile(second) == transcript(b),
+                "an outside agy run in the folder takes neither");
+        // /clear in A: its agy now writes a new conversation.
+        const auto cleared = uuid();
+        services.hold(first, begin(cleared, 4));
+        last(cleared);
+        require(
+            waitFor([&] { return workspace.conversationFile(first) == transcript(cleared); }, 5000),
+            "A follows its own new conversation");
+        require(workspace.conversationFile(second) == transcript(b), "B keeps its own");
+        require(pinned(first) == cleared, "the new conversation is pinned");
+    }
+    // With both processes gone only the pins say which is whose.
+    services.stop(first);
+    services.stop(second);
+    const auto cleared = pinned(first);
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.conversationFile(first) == transcript(cleared) &&
+                    workspace.conversationFile(second) == transcript(b),
+                "the pins hold once the processes end");
+    }
+    // A full restore resumes each pinned conversation.
+    for (const auto& id : {first, second}) {
+        QFile::remove(endpoint(id));
+        QFile::remove(endpoint(id) + QStringLiteral(".lock"));
+    }
+    options.restoreAgents = true;
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "agy agents restart");
+    const auto arguments = [&options](const QString& id) {
+        for (const auto& value : QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                     .object()
+                                     .value(QStringLiteral("agents"))
+                                     .toArray())
+            if (value.toObject().value(QStringLiteral("id")).toString() == id)
+                return value.toObject().value(QStringLiteral("arguments")).toArray();
+        return QJsonArray();
+    };
+    require(arguments(first) == QJsonArray{QStringLiteral("--conversation"), cleared} &&
+                arguments(second) == QJsonArray{QStringLiteral("--conversation"), b},
+            "a restore resumes each agent's pinned conversation");
+    for (const auto& id : {first, second})
+        require(workspace.closeAgent(id, true), "close a restored agent");
+    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+            "restored agents close");
+}
+
+// Two Codex agents in one folder before either's first turn ends: a thread
+// either could have begun is shown for neither, until the agent's own
+// process is seen holding it.
+void codexAgentsNeverTakeEachOthersThread() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-pins-XXXXXX"));
+    require(directory.isValid(), "Codex pin directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const ScopedHome home{root.filePath(QStringLiteral("home")).toUtf8()};
+    const ScopedCodexHome codex_home{root.filePath(QStringLiteral("codex")).toUtf8()};
+    const auto work = root.filePath(QStringLiteral("work"));
+    require(QDir().mkpath(work), "Codex agent folder");
+    const auto today =
+        root.filePath(QStringLiteral("codex/sessions/") +
+                      QDateTime::currentDateTime().date().toString(QStringLiteral("yyyy/MM/dd")));
+    const auto now = QDateTime::currentDateTimeUtc();
+    const auto rollout = [&](const QString& thread, int seconds) {
+        const auto path = QDir(today).filePath(QStringLiteral("rollout-2026-11-10T10-00-00-") +
+                                               thread + QStringLiteral(".jsonl"));
+        writeLines(path, {R"({"type":"session_meta","payload":{"id":")" + thread.toUtf8() +
+                          R"(","timestamp":")" +
+                          now.addSecs(seconds).toString(Qt::ISODateWithMs).toUtf8() +
+                          R"(","cwd":")" + work.toUtf8() + R"(","source":"cli"}})"});
+        return path;
+    };
+    FakeServices services(root.path());
+    const auto first = uuid();
+    const auto second = uuid();
+    QJsonArray agents;
+    for (const auto& id : {first, second}) {
+        const auto endpoint = root.filePath(id + QStringLiteral(".sock"));
+        QFile made(endpoint);
+        require(made.open(QIODevice::WriteOnly), "make a Codex endpoint");
+        services.start(id, endpoint);
+        auto record = agentRecord(work, id, "general");
+        record.insert(QStringLiteral("endpoint"), endpoint);
+        record.insert(QStringLiteral("harness"), QStringLiteral("codex"));
+        agents.append(record);
+    }
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    writeRegistry(options.storagePath,
+                  {{"version", 2},
+                   {"activeCategory", "general"},
+                   {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                   {"agents", agents}});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "Codex agents restored");
+    // The second agent's thread starts first; either agent could own it.
+    const auto theirs = rollout(uuid(), 1);
+    require(workspace.conversationFile(first).isEmpty() &&
+                workspace.conversationFile(second).isEmpty(),
+            "a thread either agent could have begun is neither's");
+    services.hold(second, theirs);
+    require(waitFor([&] { return workspace.conversationFile(second) == theirs; }, 5000),
+            "the thread its own process writes is the second agent's");
+    require(workspace.conversationFile(first).isEmpty(), "and never the first agent's");
+    const auto mine = rollout(uuid(), 2);
+    require(workspace.conversationFile(first) == mine,
+            "with the other's thread known, the first agent's is its own");
 }
 } // namespace
 int main(int argc, char** argv) {
@@ -6865,6 +7136,8 @@ int main(int argc, char** argv) {
                 pinnedCliIsNotUpdated();
             } else if (selected == QStringLiteral("visual-files")) {
                 visualConversationFiles();
+                agyAgentsKeepTheirOwnConversations();
+                codexAgentsNeverTakeEachOthersThread();
             } else if (selected == QStringLiteral("omp-overlay")) {
                 ompGetsItsResizeOverlay();
             } else if (selected == QStringLiteral("chimes")) {
@@ -6901,6 +7174,8 @@ int main(int argc, char** argv) {
         persistence();
         restoreAgentIdentity();
         visualConversationFiles();
+        agyAgentsKeepTheirOwnConversations();
+        codexAgentsNeverTakeEachOthersThread();
         truthfulStatus();
         placeholderMatchesTerminalDefaults();
         discardOutsideActiveCategorySelectsNeighbor();
