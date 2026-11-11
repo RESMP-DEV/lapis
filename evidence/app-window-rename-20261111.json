@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-11T23:56:34Z",
+  "agent": "Codex triage parent with read-only rename audit",
+  "base_revision": "fd0a9114793cfea25dabaf4f9ffa3864f552b1fc",
+  "source_revision": "16ef39f52abfe544c52d20d549f2aa24afe5eb85",
+  "runtime_validation_revision": "16ef39f52abfe544c52d20d549f2aa24afe5eb85",
+  "original_pr_head": "0207059e759794235ddf39a34e9c0129650b0274",
+  "scope": "PR 204 UiPreview-to-AppWindow rename rebased and repaired over merged PRs 201, 202, and 203.",
+  "changed_source_manifest": {
+    "algorithm": "shasum -a 256 of: git diff --binary --full-index fd0a9114793cfea25dabaf4f9ffa3864f552b1fc..16ef39f52abfe544c52d20d549f2aa24afe5eb85 -- ':(exclude)evidence/*'",
+    "digest": "ae56f6897986fa78ebb676edea07d72aaeacb51f4d72efc2e5ebe19aef1339b7",
+    "changed_paths": 21
+  },
+  "validation": [
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py build",
+      "result": "configure/build passed and all 39 enabled desktop CTest cases passed; desktop static failures remain the recorded current-main baseline set",
+      "receipt": "build/reports/desktop/receipt.json"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "result": "passed; 493 Python tests plus repository, Ruff and diff checks",
+      "receipt": "build/reports/quality/receipt.json"
+    },
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py ui-review --json",
+      "result": "passed full background UI, shortcut and terminal-input checks",
+      "receipt": "build/reports/ui-review/20261111T235358Z-fp78nvrk/receipt.json"
+    },
+    {
+      "command": "rg -n 'clearPreviewRequests|UiPreview|ui_preview\\.hpp|lapis_desktop_view' apps/desktop",
+      "result": "passed for all identifiers retired by this PR; names documented as intentionally retained do not match"
+    }
+  ],
+  "review_followups": [
+    "Sort every renamed app_window.hpp include block.",
+    "Rename clearPreviewRequests to clearFixtureRequests across declaration, definition, reset replay and test caller.",
+    "Rebase over #201/#202 while retaining #201's configured model assertions and #204's fixture mode."
+  ],
+  "non_claims": [
+    "No native macOS GUI input or GPU presentation was exercised; ui-review ran offscreen with the software scene graph.",
+    "The current-main desktop static baseline remains defective; this receipt does not claim those unrelated partitions pass."
+  ]
+}
