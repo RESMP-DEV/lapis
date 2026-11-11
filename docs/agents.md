@@ -12,9 +12,10 @@
    native picker. Folder lists put the ten folders with the most recent and
    frequent agent work first (work in a folder below counts for it), then the
    rest by name, with `_folders` last.
-3. **The model and approval mode**, as chips under the folder. Models come from
-   the CLI itself for your account (its default first; Kimi, OpenCode and OMP
-   from their config, recent models and roles). The approval mode is **Accept
+3. **The model and approval mode**, as chips under the folder. Models are the
+   CLI's own list for your account (its default first; Kimi, OpenCode and OMP
+   from their config, recent models and roles), or the configured replacement
+   list in its written order with no implicit default. The approval mode is **Accept
    edits**, **Auto** or **Full access**, each passed as that CLI's own flag: Full
    access the first time, or `newAgent.mode` from [config](config.md). A CLI
    without the chosen mode (OMP, OpenCode and Antigravity have no Auto, Kimi and

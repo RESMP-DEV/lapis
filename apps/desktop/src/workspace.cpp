@@ -1659,25 +1659,25 @@ void SessionPreview::setHarnessId(const QString& id) {
     emit identityChanged();
     emit statusChanged();
 }
-// The models a CLI offers the person; a list in the config replaces the
-// rest, with the CLI's default kept first.
+// The models a CLI offers the person. A list in the config replaces the CLI's
+// as written, in its order and named as the CLI names them; none is the CLI's
+// default, so the form picks the first and passes it as the model.
 std::vector<ModelChoice> Workspace::modelChoices(const QString& harness) const {
     auto found = harness_models_ ? harness_models_->models(harness) : std::vector<ModelChoice>{};
     const auto configured = agent_defaults_.models.value(harness);
     if (configured.isEmpty())
         return found;
     std::vector<ModelChoice> picked;
-    const auto fallback = std::find_if(found.begin(), found.end(),
-                                       [](const ModelChoice& model) { return model.isDefault; });
-    if (fallback != found.end())
-        picked.push_back(*fallback);
+    picked.reserve(static_cast<std::size_t>(configured.size()));
     for (const auto& name : configured) {
+        // Model IDs are case-sensitive; the first spelling of a duplicate wins.
+        if (std::any_of(picked.begin(), picked.end(),
+                        [&](const ModelChoice& model) { return model.id == name; }))
+            continue;
         const auto known = std::find_if(found.begin(), found.end(),
                                         [&](const ModelChoice& model) { return model.id == name; });
-        if (fallback == found.end() || fallback->id != name)
-            picked.push_back({.id = name,
-                              .name = known == found.end() ? name : known->name,
-                              .isDefault = false});
+        picked.push_back(
+            {.id = name, .name = known == found.end() ? name : known->name, .isDefault = false});
     }
     return picked;
 }
@@ -1799,7 +1799,10 @@ std::optional<Workspace::ResumeLaunch> Workspace::agentLaunch(const AgentRequest
     if (directory.isEmpty() || directory.size() > 4096 || directory.contains(QChar::Null) ||
         directory.contains(QLatin1Char('\n')))
         return refuse(QStringLiteral("Choose a project directory (at most 4096 characters)."));
-    if (!validModel(request.model) ||
+    const auto& configured_models = agent_defaults_.models.value(request.harness);
+    const bool configured_model = std::find(configured_models.begin(), configured_models.end(),
+                                            request.model) != configured_models.end();
+    if ((!validModel(request.model) && !configured_model) ||
         harness->modelArguments(request.model).isEmpty() != request.model.isEmpty())
         return refuse(QStringLiteral("This agent cannot take that model."));
     if (!request.mode.isEmpty() && modeArguments(request.harness, request.mode).isEmpty())

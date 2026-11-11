@@ -73,7 +73,7 @@ inline constexpr int kTerminalFontSizeMaximum = 32;
 
 // Defaults for new agents, from the config's "newAgent" section: the CLI,
 // the folder to start in on this Mac and on each ssh machine, and the models
-// offered per CLI (the CLI's own default is always offered too).
+// offered per CLI; a configured list replaces the CLI's own list.
 struct AgentDefaults {
     QString harness;
     QString folder;

@@ -228,22 +228,33 @@ cat >/dev/null
                 models.models(QStringLiteral("agy")).empty(),
             "a CLI not installed offers nothing");
 
-    // The new-agent forms: the CLI's list, or the config's names with the
-    // CLI's default kept first.
+    // The new-agent forms: the CLI's list, or the config's names as written.
     lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::preview);
     workspace.setHarnessModels(&models);
     lapis::desktop::AgentDefaults defaults;
     defaults.models.insert(QStringLiteral("claude"),
-                           {QStringLiteral("claude-fable-5-1"), QStringLiteral("haiku")});
+                           {QStringLiteral("claude-fable-5-1"), QStringLiteral("haiku"),
+                            QStringLiteral("custom model [v2]"), QStringLiteral("haiku")});
     workspace.setAgentDefaults(defaults);
     require(ids(workspace.modelChoices(QStringLiteral("codex"))) ==
                 QStringList{QStringLiteral("gpt-6-astra*")},
             "the CLI's own list");
     require(ids(workspace.modelChoices(QStringLiteral("claude"))) ==
-                    QStringList({QStringLiteral("claude-fable-5-1"), QStringLiteral("haiku")}) &&
+                    QStringList({QStringLiteral("claude-fable-5-1"), QStringLiteral("haiku"),
+                                 QStringLiteral("custom model [v2]")}) &&
                 workspace.modelChoices(QStringLiteral("claude")).front().name ==
                     QStringLiteral("Fable 5.1"),
             "the config's names, named as the CLI names them");
+    // A configured list keeps its order even when it names the CLI's default
+    // second, and none is marked default, so the form picks the first.
+    defaults.models.insert(QStringLiteral("codex"),
+                           {QStringLiteral("gpt-6-sol"), QStringLiteral("gpt-6-astra")});
+    workspace.setAgentDefaults(defaults);
+    const auto codex = workspace.modelChoices(QStringLiteral("codex"));
+    require(ids(codex) ==
+                    QStringList({QStringLiteral("gpt-6-sol"), QStringLiteral("gpt-6-astra")}) &&
+                codex.back().name == QStringLiteral("GPT-6-Astra"),
+            "the config's order, without the CLI's default first or flagged");
     QStringList order;
     for (const auto& item : workspace.availableHarnesses())
         order << item.toMap().value(QStringLiteral("id")).toString();

@@ -215,7 +215,8 @@ struct NewAgentView: View {
         .accessibilityAddTraits(chosen ? .isSelected : [])
     }
 
-    // Every model the CLI lists, wrapped rather than scrolled.
+    // Every offered model, from the CLI or the configured replacement list,
+    // wrapped rather than scrolled.
     private func modelChips(_ models: [ModelChoice]) -> some View {
         let chosen = chosenModel(models)?.id
         return FlowLayout(spacing: 8) {

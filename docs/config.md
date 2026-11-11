@@ -24,7 +24,9 @@ key bindings and appearance it holds these:
 
 `newAgent` holds the defaults for the new-agent form: the CLI, the starting
 folder, the approval mode (`edits`, `auto` or `full`), models to offer, and, per
-machine in `machines`, a folder that differs. See [agents](agents.md).
+machine in `machines`, a folder that differs. See [agents](agents.md). A CLI's
+list in `models` is shown as written, in that order, and its first model is
+preselected and passed to the CLI as its model.
 
 `harnessArguments` adds your own flags to every new agent of a CLI, alongside
 lapis's selected model, approval mode and resume options. Configured approval
