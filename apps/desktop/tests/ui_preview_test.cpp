@@ -1519,8 +1519,8 @@ void reveal_card(QQuickWindow& window, const lapis::desktop::Workspace& workspac
 }
 
 // Keyboard focus, activity and lost connections stay visually distinct, and each
-// status class has a non-color shape cue on its tab. An agent waiting on an
-// answer looks like a finished turn: it pinged as one.
+// status class has a non-color shape cue on its tab: a filled dot at work, a
+// hollow ring once done, a diamond in the attention colour waiting on an answer.
 void check_status_semantics(QQuickWindow& window, lapis::desktop::Workspace& workspace) {
     const QStringList kinds{QStringLiteral("working"),    QStringLiteral("waiting"),
                             QStringLiteral("idle"),       QStringLiteral("finished"),
@@ -1534,17 +1534,20 @@ void check_status_semantics(QQuickWindow& window, lapis::desktop::Workspace& wor
     }
     const QSet<QString> classes{
         shapes.value(QStringLiteral("working")), shapes.value(QStringLiteral("idle")),
-        shapes.value(QStringLiteral("disconnected")), shapes.value(QStringLiteral("ended")),
-        shapes.value(QStringLiteral("unknown"))};
-    CHECK(classes.size() == 5);
+        shapes.value(QStringLiteral("waiting")), shapes.value(QStringLiteral("disconnected")),
+        shapes.value(QStringLiteral("ended")),   shapes.value(QStringLiteral("unknown"))};
+    CHECK(classes.size() == 6);
+    CHECK(shapes.value(QStringLiteral("working")) == QStringLiteral("dot"));
+    CHECK(shapes.value(QStringLiteral("finished")) == QStringLiteral("ring"));
     CHECK(shapes.value(QStringLiteral("idle")) == shapes.value(QStringLiteral("finished")));
-    CHECK(shapes.value(QStringLiteral("waiting")) == shapes.value(QStringLiteral("finished")));
+    CHECK(shapes.value(QStringLiteral("waiting")) == QStringLiteral("diamond"));
     CHECK(shapes.value(QStringLiteral("connecting")) == shapes.value(QStringLiteral("unknown")));
     const auto focus = window.property("focusedBorderColor").value<QColor>();
     const auto attention = window.property("attentionColor").value<QColor>();
     CHECK(focus.isValid() && attention.isValid());
     CHECK(colors.value(QStringLiteral("working")) != focus);
-    CHECK(colors.value(QStringLiteral("waiting")) == colors.value(QStringLiteral("finished")));
+    CHECK(colors.value(QStringLiteral("working")) != colors.value(QStringLiteral("finished")));
+    CHECK(colors.value(QStringLiteral("waiting")) == attention);
     for (const auto& kind : {QStringLiteral("disconnected"), QStringLiteral("ended")}) {
         CHECK(colors.value(kind) != attention);
         CHECK(colors.value(kind) != focus);
@@ -1572,9 +1575,11 @@ void check_status_semantics(QQuickWindow& window, lapis::desktop::Workspace& wor
         CHECK(mark->property("shape").toString() ==
               shapes.value(workspace.agent(id)->statusKind()));
     }
+    // The sample agent waits on an answer: its own mark, not a finished turn's.
+    CHECK(workspace.agent(QStringLiteral("agent"))->statusKind() == QStringLiteral("waiting"));
     CHECK(find_visual(window.contentItem(), QStringLiteral("statusMark_agent"))
               ->property("shape")
-              .toString() == QStringLiteral("ring"));
+              .toString() == QStringLiteral("diamond"));
 }
 
 void check_category_alignment(QQuickWindow& window) {
@@ -2390,7 +2395,8 @@ int run_strip_ui_tests() {
     CHECK(wait_for([&] { return focused_id(workspace) == QStringLiteral("shell"); }, 5000));
     capture("strip");
 
-    // A finished turn pulses an unselected card; the selected agent never does.
+    // A finished turn changes a card's status mark and nothing else: no cue
+    // says whether it was looked at, and a card looks the same either way.
     CHECK(workspace.selectAgent(QStringLiteral("renderer")));
     pump(260);
     finish_turn(*workspace.agent(QStringLiteral("agent")));
@@ -2398,12 +2404,16 @@ int run_strip_ui_tests() {
     pump(30);
     CHECK(workspace.agent(QStringLiteral("agent"))->unseen());
     CHECK(!workspace.agent(QStringLiteral("renderer"))->unseen());
-    auto* cue = item(QStringLiteral("unseenCue_agent"));
-    CHECK(cue->isVisible());
-    CHECK(QQmlProperty::read(cue, QStringLiteral("border.color")).value<QColor>() ==
-          window->property("textColor").value<QColor>());
-    CHECK(!item(QStringLiteral("unseenCue_renderer"))->isVisible());
-    // A pending request pulses in ink, as a finished turn does.
+    CHECK(find_visual(window->contentItem(), QStringLiteral("unseenCue_agent")) == nullptr);
+    const auto card_mark = [&](const QString& id) {
+        reveal_card(*window, workspace, id);
+        return item(QStringLiteral("statusMark_") + id);
+    };
+    CHECK(card_mark(QStringLiteral("agent"))->property("shape").toString() ==
+          QStringLiteral("ring"));
+    CHECK(card_mark(QStringLiteral("agent"))->property("tone") ==
+          card_mark(QStringLiteral("renderer"))->property("tone"));
+    // A pending request shows its own mark, in the attention colour.
     {
         namespace wire = lapis::session::wire;
         wire::AttentionSnapshot request;
@@ -2413,20 +2423,14 @@ int run_strip_ui_tests() {
         workspace.agent(QStringLiteral("agent"))->applyAttention(request);
     }
     pump(30);
-    CHECK(
-        QQmlProperty::read(item(QStringLiteral("unseenCue_agent")), QStringLiteral("border.color"))
-            .value<QColor>() == window->property("textColor").value<QColor>());
+    CHECK(card_mark(QStringLiteral("agent"))->property("shape").toString() ==
+          QStringLiteral("diamond"));
+    CHECK(card_mark(QStringLiteral("agent"))->property("tone").value<QColor>() ==
+          window->property("attentionColor").value<QColor>());
     capture("unseen");
-    const QPointer<QQuickItem> replaced_cue = item(QStringLiteral("unseenCue_agent"));
-    CHECK(replaced_cue != nullptr);
-    // Category changes reset the strip model. Drain deferred deletes without
-    // adding a sleep so the subsequent lookups prove they see fresh delegates.
+    // No category counts or marks agents nobody looked at.
     CHECK(workspace.addCategory(QStringLiteral("Other")));
-    QCoreApplication::processEvents();
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-    QCoreApplication::processEvents();
-    CHECK(replaced_cue.isNull());
-    // Unseen agents elsewhere mark their category.
+    pump(30);
     const auto other = workspace.activeCategoryId();
     CHECK(workspace.selectCategory(QStringLiteral("general")));
     CHECK(workspace.moveAgent(QStringLiteral("notes"), other));
@@ -2434,16 +2438,15 @@ int run_strip_ui_tests() {
     pump(30);
     finish_turn(*workspace.agent(QStringLiteral("notes")));
     pump(30);
-    CHECK(item(QStringLiteral("categoryUnseen_") + other)->isVisible());
-    CHECK(!item(QStringLiteral("categoryUnseen_general"))->isVisible());
+    CHECK(workspace.agent(QStringLiteral("notes"))->unseen());
+    CHECK(find_visual(window->contentItem(), QStringLiteral("categoryUnseen_") + other) == nullptr);
     // Selecting the agent is looking at it.
     click_visual(*window, *item(QStringLiteral("agentTab_agent")));
     pump(30);
-    CHECK(!workspace.agent(QStringLiteral("agent"))->unseen() &&
-          !item(QStringLiteral("unseenCue_agent"))->isVisible());
+    CHECK(!workspace.agent(QStringLiteral("agent"))->unseen());
     CHECK(workspace.selectAgent(QStringLiteral("notes")));
     pump(30);
-    CHECK(!item(QStringLiteral("categoryUnseen_") + other)->isVisible());
+    CHECK(!workspace.agent(QStringLiteral("notes"))->unseen());
     CHECK(workspace.selectCategory(QStringLiteral("general")));
     pump(30);
     // Assistive activation of a card selects its agent, as a click does.
@@ -2607,13 +2610,17 @@ int run_sidebar_ui_tests() {
     CHECK(workspace.setCategoryColor(research, QStringLiteral("pink")));
     CHECK(workspace.selectAgent(QStringLiteral("renderer")));
     pump(40);
-    // One agent at work, two finished and unseen.
+    // One agent at work, two finished (not yet looked at), one waiting on an
+    // answer; the rest have no status yet.
     {
         namespace wire = lapis::session::wire;
         wire::AttentionSnapshot working;
         working.available = working.connected = working.ready = true;
         working.activity = lapis::session::attention::Activity::working;
         workspace.agent(QStringLiteral("checks"))->applyAttention(working);
+        auto asking = working;
+        asking.requests.emplace_back();
+        workspace.agent(QStringLiteral("notes"))->applyAttention(asking);
     }
     finish_turn(*workspace.agent(QStringLiteral("agent")));
     finish_turn(*workspace.agent(QStringLiteral("service")));
@@ -2638,14 +2645,32 @@ int run_sidebar_ui_tests() {
           item(QStringLiteral("sidebarAgent_renderer"))->mapToScene(QPointF()).y());
     CHECK(item(QStringLiteral("sidebarAgent_notes"))->mapToScene(QPointF()).y() <
           item(QStringLiteral("category_") + build)->mapToScene(QPointF()).y());
-    // Unseen and working marks, and the unseen count on another category.
-    CHECK(item(QStringLiteral("sidebarUnseen_agent"))->isVisible());
-    CHECK(!item(QStringLiteral("sidebarUnseen_renderer"))->isVisible());
-    CHECK(item(QStringLiteral("sidebarStatus_checks"))->property("shape").toString() ==
-          QStringLiteral("dot"));
-    CHECK(item(QStringLiteral("categoryUnseen_") + research)->isVisible());
-    CHECK(item(QStringLiteral("categoryUnseen_") + research)->property("text").toString() ==
-          QStringLiteral("1"));
+    // Each row's mark says what its agent does: a filled dot at work, a hollow
+    // ring once done, a diamond waiting on an answer. Nothing says whether the
+    // person looked: no dot on a row, no count on a category.
+    const auto row_mark = [&](const QString& id) {
+        auto* mark = item(QStringLiteral("sidebarStatus_") + id);
+        return std::pair{mark->property("shape").toString(),
+                         mark->property("tone").value<QColor>()};
+    };
+    CHECK(row_mark(QStringLiteral("checks")).first == QStringLiteral("dot"));
+    CHECK(row_mark(QStringLiteral("checks")).second ==
+          window->property("activityColor").value<QColor>());
+    CHECK(row_mark(QStringLiteral("agent")).first == QStringLiteral("ring"));
+    CHECK(row_mark(QStringLiteral("notes")).first == QStringLiteral("diamond"));
+    CHECK(row_mark(QStringLiteral("notes")).second ==
+          window->property("attentionColor").value<QColor>());
+    CHECK(workspace.agent(QStringLiteral("agent"))->unseen() &&
+          workspace.agent(QStringLiteral("service"))->unseen());
+    for (const auto& id : sidebar_ids(workspace))
+        CHECK(find_visual(window->contentItem(), QStringLiteral("sidebarUnseen_") + id) == nullptr);
+    for (const auto& value : workspace.categories())
+        CHECK(find_visual(window->contentItem(),
+                          QStringLiteral("categoryUnseen_") +
+                              value.toMap().value(QStringLiteral("id")).toString()) == nullptr);
+    // The mark grows with the sidebar's text.
+    const auto default_mark = item(QStringLiteral("sidebarStatus_checks"))->width();
+    CHECK(default_mark >= 8);
     // The focused row is marked in its category's colour; the others are not.
     const auto hex = [&](const QString& category) {
         for (const auto& value : workspace.categories())
@@ -2681,6 +2706,10 @@ int run_sidebar_ui_tests() {
     CHECK(terminal->document() == workspace.agent(QStringLiteral("service")));
     CHECK(terminal->hasActiveFocus());
     CHECK(!workspace.agent(QStringLiteral("service"))->unseen());
+    // Looked at or not, a finished agent's mark is the same.
+    CHECK(workspace.agent(QStringLiteral("agent"))->unseen());
+    CHECK(row_mark(QStringLiteral("service")) == row_mark(QStringLiteral("agent")));
+    capture("seen-and-unseen");
     CHECK(marked(QStringLiteral("service")) && !marked(QStringLiteral("renderer")));
     CHECK(edge(QStringLiteral("service")) == hex(research));
     // A header click selects its category and the agent it remembers.
@@ -2784,7 +2813,14 @@ int run_sidebar_ui_tests() {
     CHECK(rail->width() > 196);
     // Larger terminal text makes the sidebar's rows and names larger too.
     CHECK(item(QStringLiteral("sidebarAgent_renderer"))->height() > default_row_height);
+    CHECK(item(QStringLiteral("sidebarStatus_checks"))->width() > default_mark);
     capture("comfortable-font21");
+    // The owner's setting: the oled theme at terminal font 21.
+    CHECK(config_model.setTheme(QStringLiteral("oled")));
+    settle();
+    capture("oled-font21");
+    CHECK(config_model.setTheme(QStringLiteral("lapis")));
+    settle();
     CHECK(config_model.setTerminalFontSize(kTerminalFontSizeDefault));
     CHECK(config_model.setPreviewsVisible(true));
     settle();

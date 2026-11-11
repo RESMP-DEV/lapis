@@ -71,6 +71,8 @@ ApplicationWindow {
     // it, never under the chrome's size), and its width grows with them.
     readonly property int sidebarFont: Math.max(chromeFont, Math.min(chromeFont + 8, Math.round(terminalFontSize * 0.75)))
     readonly property int sidebarReadout: Math.max(11, sidebarFont - 2)
+    // An agent's status mark, as large in the strip as in the sidebar.
+    readonly property int statusMarkSize: Math.max(8, Math.round(sidebarFont * 0.7))
     readonly property int railWidth: Math.min(360, Math.round((densityMode === "minimal" ? 148 : densityMode === "compact" ? 168 : 196)
                                                              * sidebarFont / chromeFont))
     readonly property int tabHeight: Math.max(32, chromeFont + (densityMode === "minimal" ? 16 : densityMode === "compact" ? 20 : 24))
@@ -81,7 +83,7 @@ ApplicationWindow {
     // a count or a mark updates rows in place instead of rebuilding them
     // (a rebuild would drop a drag, a hover and the scroll position).
     readonly property var sidebarGroups: workspace.categories
-    readonly property var emptyGroup: ({id: "", name: "", agents: [], unseenCount: 0, attentionCount: 0, color: "grey", colorChoice: ""})
+    readonly property var emptyGroup: ({id: "", name: "", agents: [], attentionCount: 0, color: "grey", colorChoice: ""})
     // The category palette's names in swatch order (category_colors.hpp);
     // the theme gives each its hex.
     readonly property var categoryColorNames: ["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan"]
@@ -466,15 +468,21 @@ ApplicationWindow {
         if (command && command.enabled) command.run()
     }
 
-    // Every status class has its own shape so no state depends on color alone:
-    // dot working, ring ready (an agent waiting on an answer reads as ready: it
-    // pinged as a finished turn does), square lost connection, dash ended,
-    // hollow box opening or unknown.
+    // The status mark says what the agent is doing, never whether you looked
+    // at it, and every class has its own shape so no state depends on colour
+    // alone: a filled dot in the activity colour while it works, a quiet
+    // hollow ring once its turn is done (finished or idle, looked at or not),
+    // a diamond in the attention colour while it waits on your answer, a
+    // square when its connection is lost, a dash once it ended, and a hollow
+    // box while it opens or its status is unknown. The sidebar and the strip
+    // draw the same mapping.
     function statusShape(kind) {
         if (kind === "working")
             return "dot"
-        if (kind === "idle" || kind === "finished" || kind === "waiting")
+        if (kind === "idle" || kind === "finished")
             return "ring"
+        if (kind === "waiting")
+            return "diamond"
         if (kind === "disconnected")
             return "square"
         if (kind === "ended")
@@ -484,10 +492,10 @@ ApplicationWindow {
     function statusColor(kind) {
         if (kind === "working")
             return activityColor
+        if (kind === "waiting")
+            return attentionColor
         if (kind === "disconnected")
             return faultColor
-        if (kind === "idle" || kind === "finished" || kind === "waiting")
-            return textColor
         return mutedTextColor
     }
     // A category colour's hex on this theme; the focus accent without one.
@@ -530,14 +538,6 @@ ApplicationWindow {
     // shortcut on hover.
     function categoryRecall(index) {
         return index < 9 && bindings("category" + (index + 1)).length > 0 ? String(index + 1) : ""
-    }
-    function categoryAttentionElsewhere() {
-        let total = 0
-        for (const category of workspace.categories) {
-            if (category.id !== workspace.activeCategoryId)
-                total += category.unseenCount
-        }
-        return total
     }
 
     function categoryIndex(id) {
@@ -1586,27 +1586,31 @@ ApplicationWindow {
         id: mark
 
         required property string kind
+        // Drawn this many pixels across; it grows with the text beside it.
+        property int size: 8
         readonly property string shape: window.statusShape(kind)
         readonly property color tone: window.statusColor(kind)
+        readonly property real stroke: Math.max(1.5, size / 6)
 
-        implicitWidth: 8
-        implicitHeight: 8
+        implicitWidth: size
+        implicitHeight: size
         Rectangle {
             anchors.centerIn: parent
             visible: mark.shape === "dot" || mark.shape === "ring" || mark.shape === "square"
                      || mark.shape === "box"
-            width: 8
-            height: 8
-            radius: mark.shape === "dot" || mark.shape === "ring" ? 4 : 0
+            width: mark.size
+            height: mark.size
+            radius: mark.shape === "dot" || mark.shape === "ring" ? mark.size / 2 : 0
+            antialiasing: true
             color: mark.shape === "dot" || mark.shape === "square" ? mark.tone : "transparent"
-            border.width: mark.shape === "ring" || mark.shape === "box" ? 1.5 : 0
+            border.width: mark.shape === "ring" || mark.shape === "box" ? mark.stroke : 0
             border.color: mark.tone
         }
         Rectangle {
             anchors.centerIn: parent
             visible: mark.shape === "diamond"
-            width: 7
-            height: 7
+            width: Math.round(mark.size * 0.82)
+            height: width
             rotation: 45
             antialiasing: true
             color: mark.tone
@@ -1614,33 +1618,9 @@ ApplicationWindow {
         Rectangle {
             anchors.centerIn: parent
             visible: mark.shape === "dash"
-            width: 8
-            height: 2
+            width: mark.size
+            height: Math.max(2, Math.round(mark.stroke))
             color: mark.tone
-        }
-    }
-
-    // Pending-request count. Outlined "+N" counts requests in other groups,
-    // so it cannot be read as the badge of the group it sits beside.
-    component CountBadge: Rectangle {
-        id: badge
-
-        required property int count
-        property bool elsewhere: false
-        visible: count > 0
-        radius: window.chromeRadius
-        color: elsewhere ? "transparent" : window.attentionColor
-        border.width: elsewhere ? 1 : 0
-        border.color: window.attentionColor
-        implicitWidth: badgeText.implicitWidth + 8
-        implicitHeight: Math.max(16, window.readoutFont + 4)
-        PlainText {
-            id: badgeText
-            anchors.centerIn: parent
-            text: badge.elsewhere ? "+" + badge.count : badge.count
-            color: badge.elsewhere ? window.attentionColor : window.attentionTextColor
-            font.family: window.monoFamily
-            font.pixelSize: Math.max(10, window.readoutFont - 1)
         }
     }
 
@@ -2701,9 +2681,7 @@ ApplicationWindow {
                                     hoverEnabled: true
                                     enabled: window.interactionArmed
                                     onClicked: workspace.selectCategory(modelData.id)
-                                    Accessible.name: modelData.unseenCount > 0 ?
-                                                         qsTr("%1, %2 waiting").arg(modelData.name).arg(modelData.unseenCount) :
-                                                         modelData.name
+                                    Accessible.name: modelData.name
                                     ToolTip.visible: hovered && recall.length > 0
                                     ToolTip.delay: 600
                                     ToolTip.text: window.shortcutText("category" + (index + 1))
@@ -2756,18 +2734,6 @@ ApplicationWindow {
                                                 Layout.fillWidth: true
                                                 Layout.minimumWidth: 0
                                                 verticalAlignment: Text.AlignVCenter
-                                            }
-                                            // How many agents here finished or need you and have
-                                            // not been looked at. The shown category's rows mark
-                                            // their own.
-                                            PlainText {
-                                                objectName: "categoryUnseen_" + categoryButton.modelData.id
-                                                visible: categoryButton.modelData.unseenCount > 0 && !categoryButton.marked
-                                                text: categoryButton.modelData.unseenCount
-                                                color: window.textColor
-                                                font.family: window.monoFamily
-                                                font.pixelSize: window.sidebarReadout
-                                                Layout.alignment: Qt.AlignVCenter
                                             }
                                         }
                                     }
@@ -2881,8 +2847,9 @@ ApplicationWindow {
                                             StatusMark {
                                                 objectName: "sidebarStatus_" + agentRow.agentId
                                                 kind: agentRow.agent ? agentRow.agent.statusKind : "unknown"
-                                                Layout.preferredWidth: 8
-                                                Layout.preferredHeight: 8
+                                                size: window.statusMarkSize
+                                                Layout.preferredWidth: size
+                                                Layout.preferredHeight: size
                                                 Layout.alignment: Qt.AlignVCenter
                                             }
                                             PlainText {
@@ -2896,16 +2863,6 @@ ApplicationWindow {
                                                 Layout.fillWidth: true
                                                 Layout.minimumWidth: 0
                                                 verticalAlignment: Text.AlignVCenter
-                                            }
-                                            // Finished or needs you, and not looked at yet.
-                                            Rectangle {
-                                                objectName: "sidebarUnseen_" + agentRow.agentId
-                                                visible: agentRow.agent !== null && agentRow.agent.unseen && !agentRow.marked
-                                                Layout.preferredWidth: 6
-                                                Layout.preferredHeight: 6
-                                                Layout.alignment: Qt.AlignVCenter
-                                                radius: 3
-                                                color: window.textColor
                                             }
                                         }
                                         HoverHandler { id: rowHover }
@@ -3113,15 +3070,6 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
                             }
-                            CountBadge {
-                                objectName: "otherCategoryRequests"
-                                count: window.categoryAttentionElsewhere()
-                                elsewhere: true
-                                Layout.alignment: Qt.AlignVCenter
-                                HoverHandler { id: elsewhereHover }
-                                ToolTip.visible: elsewhereHover.hovered
-                                ToolTip.text: qsTr("%n agent(s) waiting in other categories", "", count)
-                            }
                         }
                     }
                     indicator: PlainText {
@@ -3162,9 +3110,6 @@ ApplicationWindow {
                                 verticalAlignment: Text.AlignVCenter
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
-                            }
-                            CountBadge {
-                                count: categoryOption.modelData.unseenCount
                             }
                         }
                         background: Rectangle {
@@ -3938,26 +3883,6 @@ ApplicationWindow {
                             ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
                         }
                     }
-                    // Finished or needs you, and not looked at yet: a slow, quiet
-                    // pulse of the card edge in ink until the agent is selected.
-                    Rectangle {
-                        id: unseenCue
-                        objectName: "unseenCue_" + agentTab.modelData.agentId
-                        anchors.fill: parent
-                        visible: agentTab.modelData.unseen && !agentTab.marked
-                        color: "transparent"
-                        radius: window.chromeRadius
-                        border.width: 2
-                        border.color: window.textColor
-                        opacity: 0.85
-                        SequentialAnimation on opacity {
-                            running: unseenCue.visible && window.motionEnabled
-                            loops: Animation.Infinite
-                            alwaysRunToEnd: false
-                            NumberAnimation { from: 0.85; to: 0.2; duration: 900; easing.type: Easing.InOutSine }
-                            NumberAnimation { from: 0.2; to: 0.85; duration: 900; easing.type: Easing.InOutSine }
-                        }
-                    }
                     RowLayout {
                         id: agentHeader
                         x: 8
@@ -3975,8 +3900,9 @@ ApplicationWindow {
                         StatusMark {
                             objectName: "statusMark_" + agentTab.modelData.agentId
                             kind: agentTab.modelData.statusKind
-                            Layout.preferredWidth: 8
-                            Layout.preferredHeight: 8
+                            size: window.statusMarkSize
+                            Layout.preferredWidth: size
+                            Layout.preferredHeight: size
                             Layout.alignment: Qt.AlignVCenter
                         }
                         PlainText {

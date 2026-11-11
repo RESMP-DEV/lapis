@@ -82,7 +82,8 @@ class Agent final : public QObject {
     // service rejects the close and the agent remains attached.
     Q_PROPERTY(bool closing READ closing NOTIFY statusChanged)
     // Finished a turn or started needing a response while another agent was
-    // selected; cleared when this agent is selected.
+    // selected; cleared when this agent is selected. Bookkeeping for Tab, the
+    // chime and agent_state.json; the window does not draw it.
     Q_PROPERTY(bool unseen READ unseen NOTIFY unseenChanged)
   public:
     Agent(QString title, QString directory, QString activity, QColor accent,
@@ -419,8 +420,6 @@ class Workspace final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList agents READ agents NOTIFY agentsChanged)
     Q_PROPERTY(QVariantList categories READ categories NOTIFY categoriesChanged)
-    // Agents in any category that finished unseen or wait on a request.
-    Q_PROPERTY(int attentionAgents READ attentionAgents NOTIFY categoriesChanged)
     Q_PROPERTY(QVariantList categoryAgents READ categoryAgents NOTIFY agentsChanged)
     Q_PROPERTY(QString activeCategoryId READ activeCategoryId NOTIFY categoryChanged)
     Q_PROPERTY(QString workspaceError READ workspaceError NOTIFY errorChanged)
@@ -590,7 +589,6 @@ class Workspace final : public QObject {
     [[nodiscard]] QVariantList agents() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] Agent* focusedAgent() const;
-    [[nodiscard]] int attentionAgents() const;
     // Starts the most recently closed agent again, resuming its conversation
     // where its CLI can, in its category, and shows it.
     Q_INVOKABLE bool reopenAgent();
@@ -794,7 +792,6 @@ class Workspace final : public QObject {
     void settleChoice();
     void rememberInitialFocus();
     void noteStructuralFocus();
-    bool batching_categories_{};
     bool discardAgent(const QString& id);
     void changed();
     void restoreSelection();

@@ -776,18 +776,6 @@ void wire_window(QQuickWindow& window, lapis::desktop::AppWindow& view,
         if (window.isActive())
             view.assignTerminalFocus();
     });
-    if (!workspace.fixtureMode()) {
-        // The Dock badge counts agents waiting on you in any category, so it
-        // shows from another app.
-#ifdef Q_OS_MACOS
-        // Linux badges need an installed desktop file; the Dock needs nothing.
-        const auto badge = [&workspace] { qGuiApp->setBadgeNumber(workspace.attentionAgents()); };
-        QObject::connect(&workspace, &lapis::desktop::Workspace::categoriesChanged, &window, badge);
-        badge();
-        QObject::connect(qApp, &QCoreApplication::aboutToQuit, &window,
-                         [] { qGuiApp->setBadgeNumber(0); });
-#endif
-    }
     if (parser.isSet(QStringLiteral("capture")))
         capture_window(window, workspace, view,
                        {.image_path = parser.value(QStringLiteral("capture")),

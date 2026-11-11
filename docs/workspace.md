@@ -32,11 +32,22 @@ four times a second, in order; moving along it keeps part of the neighboring
 card in view, like Neovim's `sidescrolloff`, and the last card is **+** for a
 new agent. Previews never take input or resize a terminal.
 
-An agent that finished a turn or started needing you while another was selected
-shows a dot beside its name in the sidebar (and its card pulses) until you
-select it, and its category counts such agents beside its name. The Dock badge
-counts agents, in any category, that need you and have not been looked at.
-Attention never reorders categories or takes the keyboard.
+Each agent's row (and card) starts with a mark that says what the agent is
+doing, the same in the sidebar and the strip, and grows with the text size:
+
+| Mark | Meaning |
+| --- | --- |
+| Filled dot, activity colour | Working |
+| Hollow ring | Its turn is done (finished or idle) |
+| Diamond, attention colour | Waiting on your answer to a request |
+| Filled square, fault colour | Connection lost |
+| Hollow square | Opening, or status unknown |
+| Dash | Ended |
+
+The mark never says whether you have looked at an agent: a finished agent looks
+the same either way, and lapis draws no unseen dots, category counts or Dock
+badge. Look at an agent when you want to. Attention never reorders categories
+or takes the keyboard.
 
 Keyboard focus, activity, pending requests and lost connections each have their
 own color and shape. The Command theme uses dark opaque surfaces with restrained

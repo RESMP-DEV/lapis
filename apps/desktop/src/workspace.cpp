@@ -1184,40 +1184,28 @@ void Workspace::watch(Agent* item) {
     connect(item, &Agent::attentionArrived, this, [this, item] {
         waiting_since_.insert(item->agentId(), QDateTime::currentMSecsSinceEpoch());
     });
-    connect(item, &Agent::unseenChanged, this, [this] {
-        if (!batching_categories_)
-            emit categoriesChanged();
-    });
     // A new request marks an unselected agent; the category's request count
-    // and its unseen count change together, so publish them once.
+    // changes with it.
     connect(item, &Agent::attentionChanged, this,
             [this, item, count = item->attentionCount()]() mutable {
                 const int updated = item->attentionCount();
                 if (updated == count)
                     return;
-                batching_categories_ = true;
                 if (updated > count && item != focusedAgent())
                     item->setUnseen(true);
-                batching_categories_ = false;
                 count = updated;
                 emit categoriesChanged();
             });
-}
-int Workspace::attentionAgents() const {
-    return static_cast<int>(std::count_if(items_.begin(), items_.end(),
-                                          [](const auto& item) { return item->unseen(); }));
 }
 QVariantList Workspace::categories() const {
     QVariantList result;
     std::size_t position = 0;
     for (const auto& category : categories_) {
         int count = 0;
-        int unseen = 0;
         QVariantList agents;
         for (const auto& item : items_)
             if (agents_.value(item->agentId()).category == category.id) {
                 count += item->attentionCount();
-                unseen += item->unseen() ? 1 : 0;
                 agents.append(QVariant::fromValue(item.get()));
             }
         // The colour shown: the chosen one when this build knows it, else
@@ -1230,7 +1218,6 @@ QVariantList Workspace::categories() const {
             {"id", category.id},
             {"name", category.name},
             {"attentionCount", count},
-            {"unseenCount", unseen},
             {"agentCount", static_cast<int>(agents.size())},
             {"agents", agents},
             {"color", QString::fromLatin1(shown.data(), static_cast<qsizetype>(shown.size()))},

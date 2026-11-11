@@ -678,7 +678,9 @@ void truthfulStatus() {
     request.pending.request.reason = "Choose a value";
     attention.requests.push_back(request);
     item.applyAttention(attention);
-    require(item.statusKind() == QStringLiteral("waiting"), "pending request has its own state");
+    require(item.statusKind() == QStringLiteral("waiting") &&
+                item.statusLabel() == QStringLiteral("Needs your answer"),
+            "pending request has its own state and words");
     item.invalidateAttention();
     require(item.attentionCount() == 1, "stale requests remain visible for reconciliation");
     lapis::session::wire::AttentionSnapshot fresh;
@@ -853,7 +855,6 @@ void unseenFollowsTurnsAndSelection() {
     require(workspace.selectAgent(QStringLiteral("renderer")), "select renderer");
     int pings = 0;
     QObject::connect(&workspace, &Workspace::turnFinished, [&pings] { ++pings; });
-    const int waiting_before = workspace.attentionAgents();
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
     const auto turn = [&](const char* id) {
@@ -867,14 +868,8 @@ void unseenFollowsTurnsAndSelection() {
     auto* agent = turn("agent");
     require(agent->unseen(), "an unselected agent's finished turn is marked");
     require(!turn("renderer")->unseen(), "the selected agent is already in view");
-    const auto count = [&](const char* id) {
-        for (const auto& value : workspace.categories())
-            if (value.toMap().value(QStringLiteral("id")).toString() == QLatin1String(id))
-                return value.toMap().value(QStringLiteral("unseenCount")).toInt();
-        return -1;
-    };
-    require(count("general") == 1, "categories count unseen agents");
-    require(workspace.attentionAgents() > waiting_before, "the Dock badge counts unseen agents");
+    require(!workspace.categories().front().toMap().contains(QStringLiteral("unseenCount")),
+            "categories carry no unseen count: the window draws none");
     require(workspace.selectAgent(QStringLiteral("agent")) && !agent->unseen(),
             "selecting an agent clears its mark");
     require(workspace.selectAgent(QStringLiteral("renderer")), "select renderer again");
@@ -887,13 +882,11 @@ void unseenFollowsTurnsAndSelection() {
     checks->applyAttention(state);
     require(checks->unseen(), "a new request marks its agent");
     require(pings == pings_before + 1, "a new request pings once, as a finished turn does");
-    require(count("general") == 1, "one unseen agent after the earlier one was selected");
     // Selecting the waiting agent clears it as seen.
     require(workspace.selectAgent(QStringLiteral("checks")) && workspace.focusedAgent() == checks,
             "the waiting agent is selected");
-    require(!checks->unseen(), "selecting an agent is looking at it");
-    require(workspace.attentionAgents() == waiting_before,
-            "a request already looked at no longer counts, though it is still pending");
+    require(!checks->unseen() && checks->attentionPending(),
+            "selecting an agent is looking at it, though its request is still pending");
 }
 
 // An agent asked for without a mode starts in the forms' default, or the

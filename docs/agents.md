@@ -85,8 +85,9 @@ active** or **Quiet**, rather than guessing at turns. **Turn finished** means a
 turn ended, not that the task or the process did. Claude Code's idle reminder
 after a turn is not a request.
 
-A request (a permission prompt, a question) pings once and marks the agent just
-as a finished turn does. Answer it in the agent's terminal; lapis never changes
+A request (a permission prompt, a question) shows as **Needs your answer** with
+a diamond mark until it is resolved, and counts for Tab and the chime once, as a
+finished turn does. Answer it in the agent's terminal; lapis never changes
 a CLI's approval policy. **Requests** (and **Review requests** in Commands)
 lists what the agent is asking; opening or selecting one never approves it.
 
