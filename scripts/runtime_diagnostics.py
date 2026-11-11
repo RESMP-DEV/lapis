@@ -25,8 +25,11 @@ if __package__:
 else:
     import lapis
 
+# The wire protocol shared with the phone gateway (apps/remote/lapis_wire.py).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "remote"))
+from lapis_wire import WIRE_VERSION  # noqa: E402
+
 SCHEMA_VERSION = 1
-WIRE_VERSION = 6
 REGISTRY_VERSIONS = frozenset((1, 2))
 KNOWN_HARNESSES = frozenset(
     ("claude", "codex", "opencode", "grok", "omp", "agy", "kimi", "gemini")

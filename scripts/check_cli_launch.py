@@ -24,11 +24,38 @@ else:
     import lapis
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = 6
-HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
-HISTORY_REQUEST, HISTORY_PAGE = range(10, 12)
-ATTENTION_SNAPSHOT, ATTENTION_DECISION, ATTENTION_RETRY = range(12, 15)
-PASTE_REQUEST, PASTE_RESULT = 17, 18
+# The wire protocol shared with the phone gateway (apps/remote/lapis_wire.py).
+sys.path.insert(0, str(ROOT / "apps" / "remote"))
+import lapis_wire  # noqa: E402
+from lapis_wire import (  # noqa: E402
+    ATTACH,
+    ATTACH_PASTE_TRANSACTIONS,
+    ATTENTION_DECISION,
+    ATTENTION_RETRY,
+    ATTENTION_SNAPSHOT,
+    DISCOVER,
+    HELLO,
+    HISTORY_PAGE,
+    HISTORY_REQUEST,
+    JOIN,
+    KEY,
+    MAX_CELLS,
+    MAX_CODEPOINTS,
+    MAX_FRAME,
+    PASTE,
+    PASTE_REQUEST,
+    PASTE_RESULT,
+    POOL_OFFSET,
+    READY,
+    RECONNECT,
+    RESIZE,
+    SNAPSHOT,
+    STATUS,
+    TEXT,
+    frame,
+)
+
+VERSION = lapis_wire.WIRE_VERSION
 TURN_COMPLETED = 3  # attention::Activity::turn_completed
 # The notify program the session service gives a local Codex agent.
 CODEX_NOTIFY = (
@@ -51,25 +78,17 @@ def require(condition, message):
         raise CheckError(message)
 
 
-def qt_string(value):
-    encoded = str(value).encode("utf-16-be")
-    return struct.pack(">I", len(encoded)) + encoded
-
-
 def fingerprint(program, arguments, directory, *, codex=False, claude=False):
-    data = qt_string(os.path.abspath(program)) + struct.pack(">I", len(arguments))
-    data += b"".join(qt_string(argument) for argument in arguments)
-    data += qt_string(Path(directory).resolve())
+    """The service's fingerprint for a launch this check started.
+
+    The checks start agents with absolute programs, so abspath only cleans the
+    path (as validate_launch does); the directory is canonicalized as there.
+    """
     require(not (codex and claude), "Expected at most one agent mode")
-    if claude:
-        data = b"lapis-claude-v1\0" + data
-    if codex:
-        data = b"lapis-codex-v1\0" + data
-    return hashlib.sha256(data).digest()
-
-
-def frame(kind, payload=b""):
-    return struct.pack(">IB", len(payload) + 1, kind) + payload
+    mode = "codex" if codex else "claude" if claude else ""
+    return lapis_wire.fingerprint(
+        os.path.abspath(program), arguments, Path(directory).resolve(), mode
+    )
 
 
 def history_request_payload(request_id, direction=0, reference=0):
@@ -107,8 +126,8 @@ def attach_payload(
         + fingerprint(program, arguments, directory, codex=codex, claude=claude)
         + bytes(
             [
-                (3 if join else 1 if expected is not None else 0)
-                | (0x20 if paste_transactions else 0)
+                (JOIN if join else RECONNECT if expected is not None else DISCOVER)
+                | (ATTACH_PASTE_TRANSACTIONS if paste_transactions else 0)
             ]
         )
         + identity
@@ -118,20 +137,22 @@ def attach_payload(
 def decode_snapshot(payload):
     # Fixed prefix mirrors local_protocol.cpp: cursor RGB is always serialized,
     # including when its preceding presence flag is false. Each cell is 27 bytes.
-    require(len(payload) >= 1089, "Truncated snapshot prefix")
+    pool = POOL_OFFSET + 4
+    require(len(payload) >= pool, "Truncated snapshot prefix")
     revision, columns, rows = struct.unpack_from(">QHH", payload)
-    count = struct.unpack_from(">I", payload, 1085)[0]
-    require(count <= 65536, "Oversized grapheme pool")
-    offset = 1089 + 4 * count
+    count = struct.unpack_from(">I", payload, POOL_OFFSET)[0]
+    require(count <= MAX_CODEPOINTS, "Oversized grapheme pool")
+    offset = pool + 4 * count
     require(len(payload) >= offset + 4, "Truncated grapheme pool")
-    points = struct.unpack_from(f">{count}I", payload, 1089)
+    points = struct.unpack_from(f">{count}I", payload, pool)
     cells = struct.unpack_from(">I", payload, offset)[0]
     offset += 4
-    require(cells == columns * rows and cells <= 32768, "Invalid snapshot geometry")
-    require(len(payload) == offset + cells * 27, "Invalid cell payload size")
+    require(cells == columns * rows and cells <= MAX_CELLS, "Invalid snapshot geometry")
+    cell = lapis_wire.CELL.size
+    require(len(payload) == offset + cells * cell, "Invalid cell payload size")
     text = []
     for index in range(cells):
-        start, length = struct.unpack_from(">II", payload, offset + index * 27)
+        start, length = struct.unpack_from(">II", payload, offset + index * cell)
         require(start + length <= count, "Invalid grapheme reference")
         text.append(
             "".join(chr(point) for point in points[start : start + length]) or " "
@@ -256,7 +277,7 @@ class WireClient:
         while True:
             if len(self.buffer) >= 4:
                 size = struct.unpack_from(">I", self.buffer)[0]
-                require(1 <= size <= 8 * 1024 * 1024, "Invalid frame size")
+                require(1 <= size <= MAX_FRAME, "Invalid frame size")
                 if len(self.buffer) >= size + 4:
                     kind, payload = self.buffer[4], bytes(self.buffer[5 : size + 4])
                     del self.buffer[: size + 4]

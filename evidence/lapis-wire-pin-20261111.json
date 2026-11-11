@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-11T23:17:21Z",
+  "agent": "Codex triage parent with read-only PR audit",
+  "base_revision": "ecb397cfab1576b7aef75fb10a9e557110687b9a",
+  "source_revision": "d0521907342bcef25e9ce2d860ceb92f7e48b388",
+  "runtime_validation_revision": "d0521907342bcef25e9ce2d860ceb92f7e48b388",
+  "scope": "PR 203 follow-up for the shared Python wire protocol and its C++ source pin.",
+  "changed_source_manifest": {
+    "algorithm": "shasum -a 256 of: git diff --binary --full-index ecb397cfab1576b7aef75fb10a9e557110687b9a..d0521907342bcef25e9ce2d860ceb92f7e48b388 -- ':(exclude)evidence/*'",
+    "digest": "dab155e0ffbf0e847d8002dd7606f5d20712a94129b2198408f93735401322d8",
+    "changed_paths": 6
+  },
+  "validation": [
+    {
+      "command": "ruff format apps/remote/lapis_wire.py scripts/tests/test_lapis_wire.py && ruff check apps/remote/lapis_wire.py scripts/tests/test_lapis_wire.py && ruff format --check apps/remote/lapis_wire.py scripts/tests/test_lapis_wire.py",
+      "result": "passed"
+    },
+    {
+      "command": "python3 -m unittest scripts.tests.test_lapis_wire scripts.tests.test_lapis_remote -v",
+      "result": "passed; 73 tests, eight built-service/desktop-dependent skips"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "result": "passed; 493 Python tests plus repository, Ruff and diff checks",
+      "receipt": "build/reports/quality/receipt.json"
+    }
+  ],
+  "review_followups": [
+    "Document all attach modes and why Python mirrors the complete C++ enum.",
+    "Document TERMINATE=15 and the qt_string null/empty ambiguity.",
+    "Document cpp_enum and cpp_constant as deliberately strict source pins.",
+    "Parse the pinned launch initializer semantically instead of requiring one clang-format line layout."
+  ],
+  "non_claims": [
+    "No C++ protocol behavior changed and no live phone/service integration was launched.",
+    "The explicit lapis_remote import list was retained deliberately; no qualified-import rewrite was made.",
+    "Built-service and desktop-dependent remote tests remain skipped in the focused Python run."
+  ]
+}
