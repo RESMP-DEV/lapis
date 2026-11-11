@@ -227,6 +227,9 @@ void CodexReader::item(const QJsonObject& item, qint64 started_ms, qint64 comple
         const auto prompt = [this, starts](QString body) {
             auto entry = make(Kind::prompt, {}, std::move(body));
             entry.starts_turn = starts;
+            // Codex 0.157 reads a message sent mid-turn at its next step.
+            entry.steered = !starts;
+            taken(entry);
             push(std::move(entry));
         };
         if (!text.isEmpty())

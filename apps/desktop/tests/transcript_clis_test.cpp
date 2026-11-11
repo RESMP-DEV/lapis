@@ -120,8 +120,9 @@ void codex_items() {
                 items[16].body == "Does this screenshot match?",
             "Codex: text with an inline image is one prompt");
     require(items[17].kind == Kind::prompt && !items[17].starts_turn &&
-                items[17].body == "Also check the footer",
-            "Codex: a message sent mid-turn stays in that turn");
+                items[17].body == "Also check the footer" && items[17].steered &&
+                items[17].waited == -1,
+            "Codex: a message sent mid-turn steers that turn (its wait unknown)");
     require(items[18].kind == Kind::other && items[18].title == "FuturePlan",
             "Codex: an unknown item stays visible");
     require(items[19].kind == Kind::notice && items[19].title == "Interrupted",
@@ -331,11 +332,17 @@ void antigravity_file_is_followed() {
     require(model.format() == Format::antigravity && model.formatName() == "antigravity" &&
                 !model.forkable() && !model.screenKnown(),
             "model: Antigravity by the file's name");
-    // A running turn shows everything: the prompt and every step so far.
-    require(model.rowCount() == 8 && model.runningSince() > 0, "model: running turn shown whole");
-    const auto ran = model.index(7);
-    require(model.data(ran, TranscriptModel::TitleRole).toString() == "Ran" &&
-                !model.data(ran, TranscriptModel::AnsweredRole).toBool(),
+    // While the agent works, a running turn is its prompt and the live box,
+    // which lists every step so far.
+    model.setLive(true);
+    const auto& steps = *qobject_cast<lapis::desktop::LiveStepsModel*>(model.liveSteps());
+    require(model.rowCount() == 2 && model.runningSince() > 0 &&
+                model.data(model.index(1), TranscriptModel::KindRole).toString() == "live" &&
+                steps.rowCount() == 7,
+            "model: running turn is its prompt and the live box");
+    const auto ran = steps.index(6);
+    require(steps.data(ran, TranscriptModel::TitleRole).toString() == "Ran" &&
+                !steps.data(ran, TranscriptModel::AnsweredRole).toBool(),
             "model: the command waits for its half-written result");
     {
         QFile file(path);
@@ -353,6 +360,98 @@ void antigravity_file_is_followed() {
                     "Worked for 3m 12s",
             "model: the first turn folds to Worked for");
 }
+// The live work box follows a file the CLI writes line by line: while a
+// turn runs (the agent working) the thread holds no step rows, the box's
+// rows only grow (a steering prompt starts it again), and a prompt sent
+// through lapis waits as pending until the CLI records it.
+void live_box_grows(const char* name, const QString& file_name, const QString& sent) {
+    QTemporaryDir directory;
+    QDir(directory.path()).mkpath(QStringLiteral("logs"));
+    const auto path = directory.filePath(file_name);
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly), "live: fixture opens");
+    TranscriptModel model;
+    model.setLive(true);
+    model.setPath(path);
+    model.loadNow();
+    const auto& steps = *qobject_cast<lapis::desktop::LiveStepsModel*>(model.liveSteps());
+    int resets = 0;
+    QObject::connect(&steps, &QAbstractItemModel::modelReset, [&resets] { ++resets; });
+    int running_lines = 0, most = 0, step_rows = 0, shrank = 0, prompts_before = 0;
+    bool pending_seen = false, steered_seen = false;
+    for (const auto& line : lines_of(fixture(name))) {
+        const bool sends = !sent.isEmpty() && line.contains(sent.toUtf8()) &&
+                           (line.contains("UserMessage") || line.contains("USER_INPUT"));
+        if (sends) {
+            model.noteSent(sent);
+            pending_seen = model.pendingPrompts() == QStringList{sent};
+        }
+        const int before = steps.rowCount();
+        file.write(line + '\n');
+        file.flush();
+        model.readMore();
+        int prompts = 0;
+        for (int row = 0; row < model.rowCount(); ++row) {
+            const auto index = model.index(row);
+            const auto kind = model.data(index, TranscriptModel::KindRole).toString();
+            step_rows += kind == "tool" || kind == "thinking" ? 1 : 0;
+            prompts += kind == "prompt" ? 1 : 0;
+            if (sends && kind == "prompt" &&
+                model.data(index, TranscriptModel::BodyRole).toString() == sent)
+                steered_seen = model.data(index, TranscriptModel::SteeredRole).toBool() &&
+                               model.data(index, TranscriptModel::WaitedRole).toInt() == 0;
+        }
+        if (model.runningSince() > 0) {
+            ++running_lines;
+            most = std::max(most, steps.rowCount());
+            // Shrinking is allowed only when a new prompt came in.
+            if (steps.rowCount() < before && prompts == prompts_before)
+                ++shrank;
+        }
+        prompts_before = prompts;
+    }
+    const auto what = [name](const char* check) {
+        static QByteArray text;
+        text = QByteArray(name) + ": " + check;
+        return text.constData();
+    };
+    require(running_lines > 3 && most >= 3, what("the box filled while turns ran"));
+    require(step_rows == 0, what("the thread showed no step rows while folded or live"));
+    require(shrank == 0, what("the box only grew within a part"));
+    require(model.runningSince() == 0 && steps.rowCount() == 0, what("the box empties at the end"));
+    require(resets <= model.turnCount() * 2 + 2, what("the box resets only between parts"));
+    if (!sent.isEmpty())
+        require(pending_seen && steered_seen && model.pendingPrompts().isEmpty(),
+                what("a prompt sent mid-turn waits as pending, then steers, waiting no steps"));
+}
+
+// agy reads input sent while it works at its next step: right after a tool
+// step of a running turn it steers that turn; long after, it starts one.
+void antigravity_steering() {
+    AntigravityReader reader;
+    const char* const lines[] = {
+        R"({"step_index":0,"type":"USER_INPUT","created_at":"2026-11-10T16:00:00Z","content":"<USER_REQUEST>go</USER_REQUEST>"})",
+        R"({"step_index":1,"type":"PLANNER_RESPONSE","created_at":"2026-11-10T16:00:02Z","tool_calls":[{"name":"run_command","args":{"CommandLine":"make"}}]})",
+        R"({"step_index":2,"type":"GENERIC","created_at":"2026-11-10T16:00:03Z","content":"ok"})",
+        R"({"step_index":3,"type":"USER_INPUT","created_at":"2026-11-10T16:00:09Z","content":"<USER_REQUEST>use tabs</USER_REQUEST>"})",
+        R"({"step_index":4,"type":"PLANNER_RESPONSE","created_at":"2026-11-10T16:00:12Z","tool_calls":[{"name":"view_file","args":{"AbsolutePath":"/w/a.cpp"}}]})",
+        R"({"step_index":5,"type":"GENERIC","created_at":"2026-11-10T16:00:13Z","content":"x"})",
+        R"({"step_index":6,"type":"PLANNER_RESPONSE","created_at":"2026-11-10T16:00:20Z","tool_calls":[{"name":"run_command","args":{"CommandLine":"make"}}]})",
+        R"({"step_index":7,"type":"GENERIC","created_at":"2026-11-10T16:00:21Z","content":"ok"})",
+        R"({"step_index":8,"type":"USER_INPUT","created_at":"2026-11-10T17:00:00Z","content":"<USER_REQUEST>later</USER_REQUEST>"})",
+    };
+    for (const char* line : lines)
+        (void)reader.add(line);
+    const auto& items = reader.items();
+    require(items.size() == 6 && items[2].body == "use tabs" && items[2].steered &&
+                !items[2].starts_turn && items[5].body == "later" && items[5].starts_turn &&
+                !items[5].steered,
+            "agy: input after a tool step steers; an hour later it starts a turn");
+    const auto layout = lay_out(items, {});
+    require(layout.turns.size() == 2 && layout.turns[0].parts.size() == 2 &&
+                layout.turns[0].parts[1].steps == 2,
+            "agy: the steering prompt splits the turn's work");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -365,6 +464,10 @@ int main(int argc, char** argv) {
     antigravity_items();
     antigravity_bad_lines_are_ignored();
     antigravity_file_is_followed();
+    antigravity_steering();
+    live_box_grows(kCodex, QStringLiteral("rollout-2026-11-10T10-00-00-live.jsonl"),
+                   QStringLiteral("Also check the footer"));
+    live_box_grows(kAntigravity, QStringLiteral("logs/transcript_full.jsonl"), {});
     if (failures == 0)
         std::puts("transcript_clis_test: PASS");
     return failures == 0 ? 0 : 1;

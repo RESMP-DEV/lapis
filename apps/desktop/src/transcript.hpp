@@ -60,6 +60,11 @@ struct Item {
     bool queued{};
     // Withdrawn from the queue, or sent on as a turn of its own: not shown.
     bool dropped{};
+    // A prompt the CLI read inside a running turn (it steers that turn),
+    // placed where it was read; `waited` counts the steps the agent took
+    // between its sending and its reading, or -1 when the CLI does not say.
+    bool steered{};
+    int waited{-1};
     bool quiet{}; // starts a turn without a row of its own (a background task's wake-up)
     // Ends any turn still open and stays outside turns (a /compact the
     // person ran between turns), so it is never folded into a turn's work.
@@ -87,33 +92,54 @@ struct Status {
 // The window for a status: what the CLI reported, else the table above.
 [[nodiscard]] qint64 context_window(const Status& status);
 
-// The thread as shown: each finished turn folds to its prompt, one "Worked
-// for" row standing for its work (thinking, steps, notes between), and its
-// final reply. A turn still running shows everything as it happens.
+// The thread as shown: each turn folds to its prompt, one "Worked for" row
+// standing for its work (thinking, steps, notes between), and its final
+// reply. A prompt the CLI read mid-turn (steered) splits the work in parts,
+// each folded on its own: prompt, work, steering prompt, work, reply. While
+// the agent works, the running turn's last part is one live row (the live
+// work box) instead of a "Worked for" row.
+struct Part {
+    int lead{};  // the prompt it follows: the turn's or a steering one
+    int first{}; // its first and last items (first > last when empty)
+    int last{};
+    int steps{};          // items folded under its "Worked for" row
+    qint64 duration_ms{}; // from the CLI and the items' times, or 0
+    QString summary;      // what it did, once finished ("ran 4 commands, ...")
+};
 struct Turn {
     int start{};          // its first item (the prompt)
     int last{};           // its last item
     int final_reply{-1};  // the reply that ends it, or -1
-    int steps{};          // items folded under its "Worked for" row
+    int steps{};          // items folded under its "Worked for" rows
     qint64 duration_ms{}; // from the CLI, else from the items' times
     bool closed{};        // finished: by its duration record or the next turn
+    bool live{};          // still running while the agent works: a live row
     // What the folded work did, as the Codex app sums it up: "ran 4
     // commands, edited 2 files, read 3 files".
     QString summary;
+    std::vector<Part> parts; // at least one
 };
 // The summary for the work items in [first, last], skipping `except`.
 [[nodiscard]] QString work_summary(const std::vector<Item>& items, int first, int last, int except);
 struct Row {
-    int item{-1};   // the item shown, or -1 for a turn's "Worked for" row
+    int item{-1};   // the item shown, or -1 for a part's "Worked for" or live row
     int turn{-1};   // the turn it belongs to, or -1
-    bool in_work{}; // folded work, shown because its turn is open
+    int part{};     // the part of the turn a "Worked for" or live row stands for
+    bool in_work{}; // folded work, shown because its part is open
+    bool live{};    // the running turn's live work box
 };
 struct Layout {
     std::vector<Turn> turns;
     std::vector<Row> rows;
 };
-// `expanded` holds the first items of the turns whose work is shown.
-[[nodiscard]] Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded);
+// `expanded` holds the leads of the parts whose work is shown. `live`: the
+// agent is working, so the last turn, while open, ends in a live row.
+[[nodiscard]] Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded,
+                             bool live = false);
+// The items the live work box lists for the turn `turn` of `layout`: its
+// last part's steps, thinking, notes and replies, in order.
+[[nodiscard]] std::vector<int> live_items(const std::vector<Item>& items, const Layout& layout,
+                                          int turn);
 
 // Limits that keep one huge tool output or file write from costing the view.
 inline constexpr int result_preview_lines = 14;
@@ -169,7 +195,9 @@ struct Piece {
 [[nodiscard]] QString path_at(const QString& text, int position, const QString& folder);
 
 // The live tail: what a running turn shows on Claude Code's screen that the
-// thread does not show yet. Claude Code draws, above its input box (the last
+// thread does not show yet. The thread never draws it (the live work box
+// reads the transcript); the view watches it change to tell when a slash
+// command with no turn has gone quiet. Claude Code draws, above its input box (the last
 // box-rule pair from the bottom), the conversation so far: echoed prompts
 // ("❯ text" at column 0), each message or step as a block led by "●" (or
 // "⏺") at column 0 with its output under it, and status rows led by a
@@ -222,10 +250,27 @@ class Reader {
     [[nodiscard]] virtual Format format() const = 0;
     [[nodiscard]] const std::vector<Item>& items() const { return items_; }
     [[nodiscard]] const Status& status() const { return status_; }
+    // A prompt the person sent through lapis while the agent worked, for a
+    // CLI that records no queue of its own (Codex, agy): it waits, shown as
+    // queued, until the CLI records a prompt with its text. Then that prompt
+    // and any sent before it leave the list, and a steering prompt learns how
+    // many steps it waited.
+    void note_sent(const QString& text);
+    [[nodiscard]] QStringList sent() const;
 
   protected:
+    // Matches a prompt the CLI recorded (about to be pushed) against the
+    // prompts sent; see note_sent.
+    void taken(Item& prompt);
     std::vector<Item> items_;
     Status status_;
+
+  private:
+    struct Sent {
+        QString text; // simplified
+        int at{};     // items read when it was sent
+    };
+    std::vector<Sent> sent_;
 };
 [[nodiscard]] std::unique_ptr<Reader> make_reader(Format format);
 
@@ -303,9 +348,53 @@ class AntigravityReader final : public Reader {
     std::vector<int> waiting_; // tool items awaiting their result, in call order
     bool turn_open_{};
     qint64 turn_since_ms_{};
+    // When the running turn's last tool step was written, or 0: a person's
+    // input soon after one is read mid-turn and steers it.
+    qint64 step_at_ms_{};
     QSet<qint64> steps_; // step indexes read, so a step written twice counts once
 };
 } // namespace transcript
+
+class TranscriptModel;
+
+// The running turn's steps for the live work box: one row per item of its
+// last part, with the thread's roles, oldest first. Rows only append while
+// the turn runs; anything else resets.
+class LiveStepsModel final : public QAbstractListModel {
+    Q_OBJECT
+    Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
+    // The thread has a live row (a turn runs while the agent works).
+    Q_PROPERTY(bool active READ active NOTIFY activeChanged)
+  public:
+    explicit LiveStepsModel(TranscriptModel* owner);
+    [[nodiscard]] bool active() const { return active_; }
+    void setActive(bool active) {
+        if (active != active_) {
+            active_ = active;
+            emit activeChanged();
+        }
+    }
+    [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
+    [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
+    [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
+    // The row's roles by name, for the step opened under the box; empty
+    // when there is no such row.
+    Q_INVOKABLE [[nodiscard]] QVariantMap entry(int row) const;
+    // The row showing item `item`, or -1.
+    Q_INVOKABLE [[nodiscard]] int rowOf(int item) const;
+    // Shows `items`; rows whose item is `changed` or later are redrawn.
+    void show(std::vector<int> items, int changed);
+    void clear() { show({}, 0); }
+
+  signals:
+    void countChanged();
+    void activeChanged();
+
+  private:
+    TranscriptModel* owner_;
+    std::vector<int> items_;
+    bool active_{};
+};
 
 // The items of one conversation file for QML, following the file as the CLI
 // appends to it. Loading runs off the GUI thread.
@@ -330,9 +419,17 @@ class TranscriptModel final : public QAbstractListModel {
     // others cannot yet.
     Q_PROPERTY(bool forkable READ forkable NOTIFY pathChanged)
     // Whether liveLines and dialogShowing know this CLI's terminal layout
-    // (Claude Code's input box); for the others the view shows no live tail
-    // and never peeks at a dialog.
+    // (Claude Code's input box); for the others liveLines is empty and the
+    // view never peeks at a dialog.
     Q_PROPERTY(bool screenKnown READ screenKnown NOTIFY pathChanged)
+    // The agent is working (from its terminal): the running turn ends in
+    // the live work box rather than folding.
+    Q_PROPERTY(bool live READ live WRITE setLive NOTIFY liveChanged)
+    // The live work box's steps (a LiveStepsModel).
+    Q_PROPERTY(QObject* liveSteps READ liveSteps CONSTANT)
+    // Prompts sent mid-turn that the CLI has not recorded yet, oldest first
+    // (Codex and agy; Claude Code's own queue shows as queued prompt rows).
+    Q_PROPERTY(QStringList pendingPrompts READ pendingPrompts NOTIFY pendingChanged)
   public:
     enum Role {
         KindRole = Qt::UserRole + 1,
@@ -354,7 +451,14 @@ class TranscriptModel final : public QAbstractListModel {
         QueuedRole,   // a prompt sent mid-turn, not yet taken in
         AtRole,       // when it was written (ms since the epoch), or 0
         DurationRole, // how long a step, thought or turn took, in ms, or 0
+        SteeredRole,  // a prompt the CLI read mid-turn
+        WaitedRole,   // steps it waited before being read, or -1
+        ItemRole,     // the item's index, or -1 for a "Worked for" or live row
     };
+    // An item's value for a role (not the layout's roles: expanded, inWork,
+    // steps), shared by the thread and the live work box.
+    [[nodiscard]] static QVariant item_data(const transcript::Item& item, int index, int role);
+    [[nodiscard]] static QHash<int, QByteArray> role_names();
     explicit TranscriptModel(QObject* parent = nullptr);
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
@@ -439,6 +543,14 @@ class TranscriptModel final : public QAbstractListModel {
     Q_INVOKABLE void copySelection(QQuickTextDocument* source, int start, int end) const;
     // Opens or folds the work of the turn a "Worked for" row stands for.
     Q_INVOKABLE void toggleWork(int row);
+    // A prompt the bar sent while the agent worked (see pendingPrompts);
+    // ignored for Claude Code, whose queue its file records.
+    Q_INVOKABLE void noteSent(const QString& text);
+    [[nodiscard]] bool live() const { return live_; }
+    void setLive(bool live);
+    [[nodiscard]] QObject* liveSteps() { return &live_steps_; }
+    [[nodiscard]] const LiveStepsModel& liveStepsModel() const { return live_steps_; }
+    [[nodiscard]] QStringList pendingPrompts() const { return reader_->sent(); }
     // What a paste attaches: files copied in the Finder as their paths, or
     // an image (a screenshot) saved as a PNG; empty when the clipboard holds
     // neither, so the paste stays text.
@@ -474,8 +586,16 @@ class TranscriptModel final : public QAbstractListModel {
     void loadingChanged();
     void countChanged();
     void statusChanged();
+    void liveChanged();
+    void pendingChanged();
 
   private:
+    // Shows the live turn's items in the live work box, or none.
+    void showLive(int changed);
+    void notePending();
+    bool live_{};
+    LiveStepsModel live_steps_{this};
+    QStringList shown_pending_;
     [[nodiscard]] transcript::Format format_for(const QString& path) const;
     void apply(std::unique_ptr<transcript::Reader> reader, qint64 offset, QByteArray pending);
     // Lays the thread out again and tells the view only what moved: rows

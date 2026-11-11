@@ -212,13 +212,24 @@ int AntigravityReader::add(const QByteArray& line) {
 
     if (type == QLatin1String("USER_INPUT")) {
         read_selection(content, status_);
-        waiting_.clear(); // results never written for calls before this
+        // agy reads input sent while it works at its next step, inside the
+        // running turn: input right after a tool step of an open turn
+        // steers it. Long after one, the turn was left (interrupted).
+        constexpr qint64 steer_window_ms = 10 * 60 * 1000;
+        const bool steers = turn_open_ && step_at_ms_ > 0 && at_ms_ >= step_at_ms_ &&
+                            at_ms_ - step_at_ms_ <= steer_window_ms;
+        step_at_ms_ = 0;
+        if (!steers) {
+            waiting_.clear(); // results never written for calls before this
+            turn_since_ms_ = at_ms_;
+        }
         turn_open_ = true;
-        turn_since_ms_ = at_ms_;
         bool shown = false;
         if (const auto text = request_text(content); !text.isEmpty()) {
             auto prompt = make(Kind::prompt, {}, clip(text, body_chars));
-            prompt.starts_turn = true;
+            prompt.starts_turn = !steers;
+            prompt.steered = steers;
+            taken(prompt);
             push(std::move(prompt));
             shown = true;
         }
@@ -232,7 +243,8 @@ int AntigravityReader::add(const QByteArray& line) {
                 make(Kind::prompt, {},
                      QStringLiteral("%1 %2").arg(
                          image ? QStringLiteral("[image]") : QStringLiteral("[file]"), path));
-            prompt.starts_turn = !shown;
+            prompt.starts_turn = !shown && !steers;
+            prompt.steered = steers;
             shown = true;
             push(std::move(prompt));
         }
@@ -254,6 +266,7 @@ int AntigravityReader::add(const QByteArray& line) {
             waiting_.push_back(static_cast<int>(items_.size()));
             push(tool_item(call.toObject()));
         }
+        step_at_ms_ = calls.isEmpty() ? 0 : at_ms_;
         if (!reply.isEmpty() && calls.isEmpty()) {
             // Text with nothing left to do ends the turn.
             const auto ms =
@@ -271,6 +284,8 @@ int AntigravityReader::add(const QByteArray& line) {
         waiting_.erase(waiting_.begin());
         attach(items_[static_cast<size_t>(at)], record);
         changed = at;
+        if (turn_open_)
+            step_at_ms_ = at_ms_;
     } else if (type == QLatin1String("SYSTEM_MESSAGE")) {
         // Notes for the model; one after the turn ended wakes the agent.
         if (!turn_open_) {

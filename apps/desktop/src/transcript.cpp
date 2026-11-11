@@ -565,6 +565,40 @@ std::unique_ptr<Reader> make_reader(Format format) {
     return std::make_unique<ClaudeReader>();
 }
 
+void Reader::note_sent(const QString& text) {
+    const auto simple = text.simplified();
+    if (!simple.isEmpty())
+        sent_.push_back({simple, static_cast<int>(items_.size())});
+}
+
+QStringList Reader::sent() const {
+    QStringList out;
+    for (const auto& sent : sent_)
+        out << sent.text;
+    return out;
+}
+
+void Reader::taken(Item& prompt) {
+    if (sent_.empty())
+        return;
+    // The CLI may clip or wrap what it saves, so a prompt's start will do.
+    const auto simple = prompt.body.simplified();
+    const auto same = [&simple](const Sent& sent) {
+        const auto n = std::min<qsizetype>({simple.size(), sent.text.size(), 200});
+        return simple == sent.text ||
+               (n >= 40 && QStringView(simple).left(n) == QStringView(sent.text).left(n));
+    };
+    const auto match = std::find_if(sent_.begin(), sent_.end(), same);
+    if (match == sent_.end())
+        return;
+    if (prompt.steered)
+        prompt.waited = static_cast<int>(
+            std::count_if(items_.begin() + std::min(match->at, static_cast<int>(items_.size())),
+                          items_.end(), [](const Item& item) { return item.kind == Kind::tool; }));
+    // Prompts are read in order: any sent before it are not coming.
+    sent_.erase(sent_.begin(), match + 1);
+}
+
 QString chart_style_folder() { return QDir::home().filePath(QStringLiteral(".lapis/visual")); }
 
 std::vector<Media> find_media(const QString& text, const QSet<QString>& skip, bool* missing) {
@@ -838,7 +872,7 @@ QString work_summary(const std::vector<Item>& items, int first, int last, int ex
     return parts.join(QStringLiteral(", "));
 }
 
-Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded) {
+Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded, bool live) {
     Layout out;
     const int count = static_cast<int>(items.size());
     std::vector<int> turn_of(items.size(), -1);
@@ -885,36 +919,79 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded) {
         }
     }
 
-    // Each turn's prompt, its final reply, and how much folds between.
+    // The end of the prompt that starts at `at`: text and an image sent
+    // together are one prompt in several items of one record.
+    const auto prompt_end = [&items](int at, int last) {
+        int end = at;
+        while (end + 1 <= last && items[static_cast<size_t>(end + 1)].kind == Kind::prompt &&
+               items[static_cast<size_t>(end + 1)].record == items[static_cast<size_t>(at)].record)
+            ++end;
+        return end;
+    };
+    const auto at_of = [&items](int i) { return items[static_cast<size_t>(i)].at_ms; };
+    // Each turn's prompt, its parts (split at the prompts it read mid-turn),
+    // its final reply, and how much folds between.
     std::vector<int> header_end(out.turns.size());
     for (size_t t = 0; t < out.turns.size(); ++t) {
         auto& turn = out.turns[t];
-        int end = turn.start;
-        while (end + 1 <= turn.last && items[static_cast<size_t>(end + 1)].kind == Kind::prompt &&
-               items[static_cast<size_t>(end + 1)].record ==
-                   items[static_cast<size_t>(turn.start)].record)
-            ++end;
+        const int end = prompt_end(turn.start, turn.last);
         header_end[t] = end;
-        for (int i = turn.last; i > end; --i)
-            if (items[static_cast<size_t>(i)].kind == Kind::reply) {
+        turn.live = live && t + 1 == out.turns.size() && !turn.closed;
+        turn.parts.push_back({.lead = turn.start, .first = end + 1});
+        for (int i = end + 1; i <= turn.last; ++i) {
+            const auto& item = items[static_cast<size_t>(i)];
+            if (item.kind != Kind::prompt || item.queued || item.dropped)
+                continue;
+            // A steering prompt (its first item) leads the next part.
+            const int lead = i;
+            turn.parts.back().last = i - 1;
+            i = prompt_end(i, turn.last);
+            turn.parts.push_back({.lead = lead, .first = i + 1});
+        }
+        turn.parts.back().last = turn.last;
+        // The final reply is the last part's last reply; a running turn's
+        // replies so far are interim, listed in the live box.
+        for (int i = turn.last; !turn.live && i >= turn.parts.back().first; --i)
+            if (items[static_cast<size_t>(i)].kind == Kind::reply &&
+                !items[static_cast<size_t>(i)].dropped) {
                 turn.final_reply = i;
                 break;
             }
-        for (int i = end + 1; i <= turn.last; ++i) {
-            const auto& item = items[static_cast<size_t>(i)];
-            // A prompt sent mid-turn stays in view, not folded with the work.
-            if (i != turn.final_reply && item.kind != Kind::turn && item.kind != Kind::prompt &&
-                !item.dropped)
-                ++turn.steps;
-        }
-        if (turn.closed && turn.steps > 0)
-            turn.summary = work_summary(items, end + 1, turn.last, turn.final_reply);
         if (turn.duration_ms <= 0) {
-            const auto first = items[static_cast<size_t>(turn.start)].at_ms;
-            const auto last = items[static_cast<size_t>(turn.last)].at_ms;
+            const auto first = at_of(turn.start);
+            const auto last = at_of(turn.last);
             if (first > 0 && last > first)
                 turn.duration_ms = last - first;
         }
+        for (size_t p = 0; p < turn.parts.size(); ++p) {
+            auto& part = turn.parts[p];
+            for (int i = part.first; i <= part.last; ++i) {
+                const auto& item = items[static_cast<size_t>(i)];
+                // A prompt sent mid-turn stays in view, not folded with the work.
+                if (i != turn.final_reply && item.kind != Kind::turn && item.kind != Kind::prompt &&
+                    !item.dropped)
+                    ++part.steps;
+            }
+            turn.steps += part.steps;
+            const bool running = turn.live && p + 1 == turn.parts.size();
+            if (part.steps > 0 && !running)
+                part.summary = work_summary(items, part.first, part.last, turn.final_reply);
+            // A part lasts from its prompt to the next one; the last, to the
+            // turn's end.
+            if (turn.parts.size() == 1) {
+                part.duration_ms = turn.duration_ms;
+            } else if (p + 1 < turn.parts.size()) {
+                const auto from = at_of(part.lead), to = at_of(turn.parts[p + 1].lead);
+                part.duration_ms = from > 0 && to > from ? to - from : 0;
+            } else {
+                const auto start = at_of(turn.start), from = at_of(part.lead);
+                part.duration_ms = start > 0 && from >= start && turn.duration_ms > from - start
+                                       ? turn.duration_ms - (from - start)
+                                       : 0;
+            }
+        }
+        if (turn.closed && turn.steps > 0)
+            turn.summary = work_summary(items, end + 1, turn.last, turn.final_reply);
     }
 
     out.rows.reserve(items.size());
@@ -925,31 +1002,64 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded) {
             continue;
         if (t < 0) {
             if (kind != Kind::turn)
-                out.rows.push_back({.item = i, .turn = -1, .in_work = false});
+                out.rows.push_back({.item = i, .turn = -1});
             continue;
         }
+        if (i != out.turns[static_cast<size_t>(t)].start)
+            continue; // a turn's rows are made at its start, below
         const auto& turn = out.turns[static_cast<size_t>(t)];
-        // A turn still running, or one with nothing to fold, shows as it is.
-        // A background task's wake-up starts a turn but is not worth a line.
-        const bool quiet = items[static_cast<size_t>(i)].quiet;
-        if (!turn.closed || turn.steps == 0) {
-            if (kind != Kind::turn && !quiet)
-                out.rows.push_back({.item = i, .turn = t, .in_work = false});
-            continue;
-        }
-        if (i <= header_end[static_cast<size_t>(t)]) {
-            if (!quiet)
-                out.rows.push_back({.item = i, .turn = t, .in_work = false});
-            if (i == header_end[static_cast<size_t>(t)])
-                out.rows.push_back({.item = -1, .turn = t, .in_work = false});
-        } else if (kind == Kind::prompt) {
-            out.rows.push_back({.item = i, .turn = t, .in_work = false});
-        } else if (i != turn.final_reply && kind != Kind::turn && expanded.contains(turn.start)) {
-            out.rows.push_back({.item = i, .turn = t, .in_work = true});
+        const auto shown = [&items](int at) {
+            const auto& item = items[static_cast<size_t>(at)];
+            // A background task's wake-up starts a turn but is not worth a line.
+            return !item.dropped && !item.quiet && item.kind != Kind::turn;
+        };
+        for (int at = turn.start; at <= header_end[static_cast<size_t>(t)]; ++at)
+            if (shown(at))
+                out.rows.push_back({.item = at, .turn = t});
+        for (size_t p = 0; p < turn.parts.size(); ++p) {
+            const auto& part = turn.parts[p];
+            const int number = static_cast<int>(p);
+            if (p > 0)
+                for (int at = part.lead; at < part.first; ++at)
+                    if (shown(at))
+                        out.rows.push_back({.item = at, .turn = t});
+            if (turn.live && p + 1 == turn.parts.size()) {
+                out.rows.push_back({.item = -1, .turn = t, .part = number, .live = true});
+                continue;
+            }
+            if (part.steps == 0)
+                continue;
+            out.rows.push_back({.item = -1, .turn = t, .part = number});
+            if (!expanded.contains(part.lead))
+                continue;
+            for (int at = part.first; at <= part.last; ++at) {
+                const auto& item = items[static_cast<size_t>(at)];
+                if (at != turn.final_reply && item.kind != Kind::prompt && shown(at))
+                    out.rows.push_back({.item = at, .turn = t, .in_work = true});
+            }
         }
         // The final reply closes the turn, after any work shown above it.
-        if (i == turn.last && turn.final_reply >= 0)
-            out.rows.push_back({.item = turn.final_reply, .turn = t, .in_work = false});
+        if (turn.final_reply >= 0 && !turn.live)
+            out.rows.push_back({.item = turn.final_reply, .turn = t});
+        // Prompts still waiting in the CLI's queue come last, in order.
+        for (int at = header_end[static_cast<size_t>(t)] + 1; at <= turn.last; ++at) {
+            const auto& item = items[static_cast<size_t>(at)];
+            if (item.kind == Kind::prompt && item.queued && !item.dropped)
+                out.rows.push_back({.item = at, .turn = t});
+        }
+    }
+    return out;
+}
+
+std::vector<int> live_items(const std::vector<Item>& items, const Layout& layout, int turn) {
+    std::vector<int> out;
+    if (turn < 0 || std::cmp_greater_equal(turn, layout.turns.size()))
+        return out;
+    const auto& part = layout.turns[static_cast<size_t>(turn)].parts.back();
+    for (int at = part.first; at <= part.last; ++at) {
+        const auto& item = items[static_cast<size_t>(at)];
+        if (!item.dropped && !item.quiet && item.kind != Kind::turn && item.kind != Kind::prompt)
+            out.push_back(at);
     }
     return out;
 }
@@ -1122,8 +1232,20 @@ int ClaudeReader::add(const QByteArray& line) {
             return -1;
         auto& item = items_[static_cast<size_t>(at)];
         item.queued = false;
-        if (record.value(QLatin1String("reason")).toString() != QLatin1String("absorbed_mid_turn"))
-            item.dropped = true;
+        item.dropped = true;
+        if (record.value(QLatin1String("reason")).toString() ==
+            QLatin1String("absorbed_mid_turn")) {
+            // Read by the running turn between two steps: it moves to where
+            // it was read (Claude Code then records it as a queued_command
+            // attachment), counting the steps it waited.
+            auto steered = item;
+            steered.dropped = false;
+            steered.steered = true;
+            steered.waited = static_cast<int>(
+                std::count_if(items_.begin() + at + 1, items_.end(),
+                              [](const Item& step) { return step.kind == Kind::tool; }));
+            push(std::move(steered));
+        }
         return at;
     }
     // Records without a message (titles, modes, file snapshots, attachments)
@@ -1350,43 +1472,49 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
         return {};
     const auto& row = layout_.rows[static_cast<size_t>(index.row())];
     if (row.item < 0) {
-        // A turn's "Worked for" row, standing for its folded work.
+        // A part's "Worked for" row, standing for its folded work, or the
+        // running turn's live work box.
         const auto& turn = layout_.turns[static_cast<size_t>(row.turn)];
+        const auto& part = turn.parts[static_cast<size_t>(row.part)];
         switch (role) {
         case KindRole:
-            return QStringLiteral("work");
+            return row.live ? QStringLiteral("live") : QStringLiteral("work");
         case TitleRole:
-            return turn.duration_ms > 0 ? QStringLiteral("Worked for %1")
-                                              .arg(transcript::duration_text(turn.duration_ms))
+            if (row.live)
+                return QStringLiteral("Working");
+            return part.duration_ms > 0 ? QStringLiteral("Worked for %1")
+                                              .arg(transcript::duration_text(part.duration_ms))
                                         : QStringLiteral("Worked");
         case StepsRole:
-            return turn.steps;
+            return part.steps;
         case DetailRole:
-            return turn.summary;
+            return part.summary;
         case AtRole:
-            return reader_->items()[static_cast<size_t>(turn.start)].at_ms;
+            return reader_->items()[static_cast<size_t>(row.live ? turn.start : part.lead)].at_ms;
         case DurationRole:
-            return turn.duration_ms;
-        case QueuedRole:
-            return false;
+            return part.duration_ms;
         case ExpandedRole:
-            return expanded_.contains(turn.start);
+            return !row.live && expanded_.contains(part.lead);
         case DiffRole:
             return QVariantList{};
         case AddedRole:
         case RemovedRole:
         case ResultLinesRole:
             return 0;
+        case WaitedRole:
+        case ItemRole:
+            return -1;
+        case QueuedRole:
         case FailedRole:
         case AnsweredRole:
         case AfterStepRole:
         case InWorkRole:
+        case SteeredRole:
             return false;
         default:
             return QString();
         }
     }
-    const auto& item = reader_->items()[static_cast<size_t>(row.item)];
     switch (role) {
     case InWorkRole:
         return row.in_work;
@@ -1394,6 +1522,24 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
         return false;
     case StepsRole:
         return 0;
+    default:
+        return item_data(reader_->items()[static_cast<size_t>(row.item)], row.item, role);
+    }
+}
+
+QVariant TranscriptModel::item_data(const transcript::Item& item, int index, int role) {
+    switch (role) {
+    case InWorkRole:
+    case ExpandedRole:
+        return false;
+    case StepsRole:
+        return 0;
+    case ItemRole:
+        return index;
+    case SteeredRole:
+        return item.steered;
+    case WaitedRole:
+        return item.waited;
     case KindRole:
         return transcript::kind_name(item.kind);
     case TitleRole:
@@ -1431,42 +1577,109 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
     }
 }
 
-QHash<int, QByteArray> TranscriptModel::roleNames() const {
-    return {{KindRole, "kind"},        {TitleRole, "title"},       {BodyRole, "body"},
-            {DetailRole, "detail"},    {ResultRole, "result"},     {DiffRole, "diff"},
-            {AddedRole, "added"},      {RemovedRole, "removed"},   {ResultLinesRole, "resultLines"},
-            {FailedRole, "failed"},    {AnsweredRole, "answered"}, {AfterStepRole, "afterStep"},
-            {RecordRole, "record"},    {ExpandedRole, "expanded"}, {InWorkRole, "inWork"},
-            {StepsRole, "steps"},      {QueuedRole, "queued"},     {AtRole, "at"},
-            {DurationRole, "duration"}};
+QHash<int, QByteArray> TranscriptModel::roleNames() const { return role_names(); }
+
+QHash<int, QByteArray> TranscriptModel::role_names() {
+    return {
+        {KindRole, "kind"},         {TitleRole, "title"},       {BodyRole, "body"},
+        {DetailRole, "detail"},     {ResultRole, "result"},     {DiffRole, "diff"},
+        {AddedRole, "added"},       {RemovedRole, "removed"},   {ResultLinesRole, "resultLines"},
+        {FailedRole, "failed"},     {AnsweredRole, "answered"}, {AfterStepRole, "afterStep"},
+        {RecordRole, "record"},     {ExpandedRole, "expanded"}, {InWorkRole, "inWork"},
+        {StepsRole, "steps"},       {QueuedRole, "queued"},     {AtRole, "at"},
+        {DurationRole, "duration"}, {SteeredRole, "steered"},   {WaitedRole, "waited"},
+        {ItemRole, "item"}};
+}
+
+LiveStepsModel::LiveStepsModel(TranscriptModel* owner) : owner_(owner) {}
+
+int LiveStepsModel::rowCount(const QModelIndex& parent) const {
+    return parent.isValid() ? 0 : static_cast<int>(items_.size());
+}
+
+QVariant LiveStepsModel::data(const QModelIndex& index, int role) const {
+    if (!index.isValid() || std::cmp_greater_equal(index.row(), items_.size()))
+        return {};
+    const int at = items_[static_cast<size_t>(index.row())];
+    return TranscriptModel::item_data(owner_->items()[static_cast<size_t>(at)], at, role);
+}
+
+QHash<int, QByteArray> LiveStepsModel::roleNames() const { return TranscriptModel::role_names(); }
+
+QVariantMap LiveStepsModel::entry(int row) const {
+    QVariantMap out;
+    if (row < 0 || std::cmp_greater_equal(row, items_.size()))
+        return out;
+    const auto names = roleNames();
+    for (auto name = names.cbegin(); name != names.cend(); ++name)
+        out.insert(QString::fromUtf8(name.value()), data(index(row), name.key()));
+    return out;
+}
+
+int LiveStepsModel::rowOf(int item) const {
+    const auto at = std::ranges::find(items_, item);
+    return at == items_.end() ? -1 : static_cast<int>(at - items_.begin());
+}
+
+void LiveStepsModel::show(std::vector<int> items, int changed) {
+    const auto old_size = items_.size();
+    if (items.size() > old_size && std::equal(items_.begin(), items_.end(), items.begin())) {
+        // The running turn wrote more: new rows at the end.
+        beginInsertRows({}, static_cast<int>(old_size), static_cast<int>(items.size() - 1));
+        items_ = std::move(items);
+        endInsertRows();
+        emit countChanged();
+    } else if (items != items_) {
+        beginResetModel();
+        items_ = std::move(items);
+        endResetModel();
+        emit countChanged();
+        return;
+    }
+    // Rows kept whose item changed (a result came in) are redrawn.
+    int first = -1, last = -1;
+    for (size_t i = 0; i < std::min(old_size, items_.size()); ++i)
+        if (items_[i] >= changed) {
+            if (first < 0)
+                first = static_cast<int>(i);
+            last = static_cast<int>(i);
+        }
+    if (first >= 0)
+        emit dataChanged(index(first), index(last));
 }
 
 namespace {
-// A row's identity across layouts: its item, or minus (its turn's first item
-// + 1) for a turn's "Worked for" row.
+// A row's identity across layouts: its item; for a part's "Worked for" row,
+// minus (its lead + 1); for the live row, that less 2^40.
 qint64 row_key(const transcript::Layout& layout, const transcript::Row& row) {
-    return row.item >= 0 ? row.item : -(layout.turns[static_cast<size_t>(row.turn)].start + 1);
+    if (row.item >= 0)
+        return row.item;
+    const auto& turn = layout.turns[static_cast<size_t>(row.turn)];
+    const qint64 key = -(turn.parts[static_cast<size_t>(row.part)].lead + 1);
+    return row.live ? key - (qint64{1} << 40) : key;
 }
 // The last item a row's look depends on.
 int row_depends_on(const transcript::Layout& layout, const transcript::Row& row) {
     return row.item >= 0 ? row.item : layout.turns[static_cast<size_t>(row.turn)].last;
 }
+bool same_row(const transcript::Layout& a, const transcript::Row& x, const transcript::Layout& b,
+              const transcript::Row& y) {
+    return row_key(a, x) == row_key(b, y) && x.in_work == y.in_work;
+}
 } // namespace
 
 void TranscriptModel::relayout(int changed) {
-    auto next = transcript::lay_out(reader_->items(), expanded_);
+    auto next = transcript::lay_out(reader_->items(), expanded_, live_);
     const auto old_size = layout_.rows.size();
     const auto new_size = next.rows.size();
     size_t prefix = 0;
     while (prefix < old_size && prefix < new_size &&
-           row_key(layout_, layout_.rows[prefix]) == row_key(next, next.rows[prefix]) &&
-           layout_.rows[prefix].in_work == next.rows[prefix].in_work)
+           same_row(layout_, layout_.rows[prefix], next, next.rows[prefix]))
         ++prefix;
     size_t suffix = 0;
     while (suffix < old_size - prefix && suffix < new_size - prefix &&
-           row_key(layout_, layout_.rows[old_size - 1 - suffix]) ==
-               row_key(next, next.rows[new_size - 1 - suffix]) &&
-           layout_.rows[old_size - 1 - suffix].in_work == next.rows[new_size - 1 - suffix].in_work)
+           same_row(layout_, layout_.rows[old_size - 1 - suffix], next,
+                    next.rows[new_size - 1 - suffix]))
         ++suffix;
     // Rows that left go first (the old layout still answers for the rest),
     // then rows that arrived, so the view keeps every row that stayed.
@@ -1496,16 +1709,53 @@ void TranscriptModel::relayout(int changed) {
         emit dataChanged(index(first), index(last));
     if (old_size != new_size)
         emit countChanged();
+    showLive(changed);
+}
+
+void TranscriptModel::showLive(int changed) {
+    const bool running = !layout_.turns.empty() && layout_.turns.back().live;
+    if (!running)
+        live_steps_.clear();
+    else
+        live_steps_.show(transcript::live_items(reader_->items(), layout_,
+                                                static_cast<int>(layout_.turns.size()) - 1),
+                         changed);
+    live_steps_.setActive(running);
+}
+
+void TranscriptModel::setLive(bool live) {
+    if (live == live_)
+        return;
+    live_ = live;
+    relayout(std::numeric_limits<int>::max());
+    emit liveChanged();
+}
+
+void TranscriptModel::noteSent(const QString& text) {
+    if (format() == transcript::Format::claude || path_.isEmpty())
+        return;
+    reader_->note_sent(text);
+    notePending();
+}
+
+void TranscriptModel::notePending() {
+    const auto pending = reader_->sent();
+    if (pending == shown_pending_)
+        return;
+    shown_pending_ = pending;
+    emit pendingChanged();
 }
 
 void TranscriptModel::toggleWork(int row) {
-    if (row < 0 || std::cmp_greater_equal(row, layout_.rows.size()) ||
-        layout_.rows[static_cast<size_t>(row)].item >= 0)
+    if (row < 0 || std::cmp_greater_equal(row, layout_.rows.size()))
         return;
-    const int start =
-        layout_.turns[static_cast<size_t>(layout_.rows[static_cast<size_t>(row)].turn)].start;
-    if (!expanded_.remove(start))
-        expanded_.insert(start);
+    const auto& shown = layout_.rows[static_cast<size_t>(row)];
+    if (shown.item >= 0 || shown.live)
+        return;
+    const int lead =
+        layout_.turns[static_cast<size_t>(shown.turn)].parts[static_cast<size_t>(shown.part)].lead;
+    if (!expanded_.remove(lead))
+        expanded_.insert(lead);
     relayout(std::numeric_limits<int>::max());
     emit dataChanged(index(row), index(row), {ExpandedRole});
 }
@@ -2156,13 +2406,15 @@ void TranscriptModel::setPath(const QString& path) {
         pending_.clear();
     }
     expanded_.clear();
-    layout_ = transcript::lay_out(reader_->items(), expanded_);
+    layout_ = transcript::lay_out(reader_->items(), expanded_, live_);
     endResetModel();
     emit pathChanged();
     if (was_loading)
         emit loadingChanged();
     emit countChanged();
     noteStatus();
+    showLive(0);
+    notePending();
     const bool warm = !reader_->items().empty() || offset_ > 0;
     auto* watcher = findChild<QFileSystemWatcher*>();
     if (watcher == nullptr) {
@@ -2208,7 +2460,7 @@ void TranscriptModel::apply(std::unique_ptr<transcript::Reader> reader, qint64 o
     const bool format_changed = reader->format() != reader_->format();
     beginResetModel();
     reader_ = std::move(reader);
-    layout_ = transcript::lay_out(reader_->items(), expanded_);
+    layout_ = transcript::lay_out(reader_->items(), expanded_, live_);
     offset_ = offset;
     pending_ = std::move(pending);
     endResetModel();
@@ -2216,6 +2468,8 @@ void TranscriptModel::apply(std::unique_ptr<transcript::Reader> reader, qint64 o
         emit pathChanged(); // the format and what depends on it
     emit countChanged();
     noteStatus();
+    showLive(0);
+    notePending();
     if (loading_) {
         loading_ = false;
         emit loadingChanged();
@@ -2239,6 +2493,7 @@ void TranscriptModel::readMore() {
     noteStatus();
     if (changed >= 0)
         relayout(changed);
+    notePending();
 }
 
 void TranscriptModel::noteStatus() {

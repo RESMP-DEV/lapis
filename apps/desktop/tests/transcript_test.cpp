@@ -361,29 +361,85 @@ void queued_prompts_show() {
     // takes in "also add tests"; "and docs" goes on as the next turn.
     (void)reader.add(R"({"type":"queue-operation","operation":"dequeue"})");
     require(reader.items()[2].queued, "a dequeue takes the oldest entry, the hidden task notice");
+    // Two more steps before the turn reads it.
+    (void)reader.add(
+        R"({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Read","input":{"file_path":"/x/a.cpp"}}]}})");
+    (void)reader.add(
+        R"({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t3","name":"Bash","input":{"command":"ctest"}}]}})");
     (void)reader.add(
         R"({"type":"queue-operation","operation":"remove","content":"also add tests","reason":"absorbed_mid_turn"})");
-    require(!reader.items()[2].queued && !reader.items()[2].dropped,
-            "taken in by the running turn");
+    (void)reader.add(
+        R"({"type":"attachment","attachment":{"type":"queued_command","prompt":"also add tests","commandMode":"prompt"}})");
+    const auto& items = reader.items();
+    require(items.size() == 7 && items[2].dropped && !items[2].queued && items[6].steered &&
+                items[6].body == "also add tests" && items[6].waited == 2 &&
+                !items[6].starts_turn && !items[6].queued,
+            "read by the running turn: it moves to where it was read, after 2 more steps");
+    // Still running: the prompt, a "Worked for" row for the steps before
+    // the steering prompt, the steering prompt, the live box, then the
+    // prompt still queued.
+    using lapis::desktop::transcript::lay_out;
+    const auto running = lay_out(items, {}, true);
+    const auto shape = [&items](const lapis::desktop::transcript::Layout& layout) {
+        QStringList out;
+        for (const auto& row : layout.rows)
+            out << (row.live       ? QStringLiteral("live")
+                    : row.item < 0 ? QStringLiteral("work")
+                                   : items[static_cast<size_t>(row.item)].body);
+        return out.join(QLatin1Char('|'));
+    };
+    require(shape(running) == "Build it|work|also add tests|live|and docs",
+            "running: prompt, work so far, steering prompt, live box, queued prompt last");
+    require(running.turns.size() == 1 && running.turns[0].parts.size() == 2 &&
+                running.turns[0].parts[0].steps == 3 && running.turns[0].parts[1].steps == 0,
+            "the steering prompt splits the turn's work in two parts");
     (void)reader.add(R"({"type":"queue-operation","operation":"dequeue"})");
     (void)reader.add(R"({"type":"user","uuid":"u2","message":{"content":"and docs"}})");
-    require(reader.items()[3].dropped, "sent on as a turn: its queued copy goes");
-    const auto layout = lapis::desktop::transcript::lay_out(reader.items(), {});
+    require(items[3].dropped, "sent on as a turn: its queued copy goes");
+    const auto layout = lay_out(items, {});
     int docs = 0;
     for (const auto& row : layout.rows)
-        if (row.item >= 0 && reader.items()[static_cast<size_t>(row.item)].body == "and docs")
+        if (row.item >= 0 && items[static_cast<size_t>(row.item)].body == "and docs")
             ++docs;
     require(docs == 1 && layout.turns.size() == 2, "shown once, as the next turn's prompt");
-    // Folded, the turn still shows the prompt sent into it.
+    // Folded, each prompt shows once: the steered turn keeps its steering
+    // prompt after its work, and the next turn folds on its own.
+    (void)reader.add(
+        R"({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t4","name":"Edit","input":{"file_path":"/x/t.cpp","old_string":"a","new_string":"b"}}]}})");
     (void)reader.add(
         R"({"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}})");
     (void)reader.add(R"({"type":"system","subtype":"turn_duration","durationMs":90061000})");
-    const auto folded = lapis::desktop::transcript::lay_out(reader.items(), {});
-    bool kept = false;
-    for (const auto& row : folded.rows)
-        kept = kept || row.item == 2;
-    require(kept, "a folded turn keeps the prompt sent into it in view");
+    const auto folded = lay_out(items, {});
+    require(shape(folded) == "Build it|work|also add tests|and docs|work|done",
+            "folded turns show every prompt once, in order");
     require(lapis::desktop::transcript::duration_text(90061000) == "1d 1h", "days for long turns");
+}
+
+// Several prompts queued while the agent works keep their order, below the
+// live box, and each moves into the thread where the turn reads it.
+void several_queued_prompts() {
+    ClaudeReader reader;
+    const char* const lines[] = {
+        R"({"type":"user","uuid":"u1","message":{"content":"Go"}})",
+        R"({"type":"queue-operation","operation":"enqueue","content":"first"})",
+        R"({"type":"queue-operation","operation":"enqueue","content":"second"})",
+        R"({"type":"queue-operation","operation":"enqueue","content":"third"})",
+        R"({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"make"}}]}})",
+        R"({"type":"queue-operation","operation":"remove","content":"first","reason":"absorbed_mid_turn"})",
+    };
+    for (const char* line : lines)
+        (void)reader.add(line);
+    const auto& items = reader.items();
+    const auto layout = lapis::desktop::transcript::lay_out(items, {}, true);
+    QStringList shown;
+    for (const auto& row : layout.rows)
+        shown << (row.live       ? QStringLiteral("live")
+                  : row.item < 0 ? QStringLiteral("work")
+                                 : items[static_cast<size_t>(row.item)].body +
+                                       (items[static_cast<size_t>(row.item)].queued ? "?" : ""));
+    require(shown.join('|') == "Go|work|first|live|second?|third?",
+            "queued prompts keep their order under the live box");
+    require(items.back().waited == 1, "the first was read after one step");
 }
 
 // Command-click finds the path under the pointer, and the live tail cuts the
@@ -582,7 +638,7 @@ void model_follows_file() {
     model.readMore();
     require(changed == 1 && inserted == 1 && model.rowCount() == 3,
             "result updates the card, reply appends");
-    require(model.data(model.index(1), TranscriptModel::FailedRole).toBool(), "card shows failure");
+    require(model.items()[1].failed, "card shows failure");
     file.resize(0);
     file.seek(0);
     file.write(QByteArray(kConversation[12]) + '\n');
@@ -700,8 +756,12 @@ void turns_fold() {
     };
     require(model.rowCount() == 5 && kind(0) == QStringLiteral("prompt") &&
                 kind(1) == QStringLiteral("work") && kind(2) == QStringLiteral("reply") &&
-                kind(3) == QStringLiteral("prompt") && kind(4) == QStringLiteral("tool"),
-            "finished turn folds; running turn shows its step");
+                kind(3) == QStringLiteral("prompt") && kind(4) == QStringLiteral("work"),
+            "finished turn folds; an open turn with the agent idle folds too");
+    model.setLive(true);
+    const auto& steps = *qobject_cast<lapis::desktop::LiveStepsModel*>(model.liveSteps());
+    require(model.rowCount() == 5 && kind(4) == QStringLiteral("live") && steps.rowCount() == 1,
+            "while the agent works, the open turn ends in the live box with its step");
     require(model.data(model.index(1), TranscriptModel::TitleRole).toString() ==
                     QStringLiteral("Worked for 1m 5s") &&
                 model.data(model.index(1), TranscriptModel::StepsRole).toInt() == 2 &&
@@ -735,14 +795,101 @@ void turns_fold() {
     file.flush();
     model.readMore();
     require(model.rowCount() == 6 && kind(4) == QStringLiteral("work") &&
-                kind(5) == QStringLiteral("reply") && removed == 1,
-            "a turn that finishes folds in place");
+                kind(5) == QStringLiteral("reply") && removed == 1 && steps.rowCount() == 0,
+            "a turn that finishes folds in place and the live box empties");
     require(lapis::desktop::transcript::context_window(QStringLiteral("claude-opus-4-5"), 1000) ==
                     200000 &&
                 lapis::desktop::transcript::context_window(QStringLiteral("claude-opus-4-5[1m]"),
                                                            0) == 1000000,
             "context windows follow the model");
 }
+// The live work box follows a Claude Code file as it grows: one row per
+// step, appended (never reset) while the turn runs, a result redrawing its
+// row; a prompt read mid-turn lands in the thread above the box; the thread
+// itself gains no step rows, and an edit's diff stays out of it.
+void live_box_follows_claude() {
+    QTemporaryDir directory;
+    const auto path = directory.filePath(QStringLiteral("live.jsonl"));
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly), "live fixture opens");
+    const auto append = [&file](const char* line) {
+        file.write(QByteArray(line) + '\n');
+        file.flush();
+    };
+    append(
+        R"({"type":"user","uuid":"p1","timestamp":"2026-11-07T10:00:00.000Z","message":{"content":"Go"}})");
+    TranscriptModel model;
+    model.setLive(true);
+    model.setPath(path);
+    model.loadNow();
+    const auto& steps = *qobject_cast<lapis::desktop::LiveStepsModel*>(model.liveSteps());
+    const auto kinds = [&model] {
+        QStringList out;
+        for (int row = 0; row < model.rowCount(); ++row)
+            out << model.data(model.index(row), TranscriptModel::KindRole).toString();
+        return out.join('|');
+    };
+    require(kinds() == "prompt|live" && steps.rowCount() == 0, "a new turn: prompt and live box");
+    int resets = 0, inserted = 0, redrawn = 0;
+    QObject::connect(&steps, &QAbstractItemModel::modelReset, [&resets] { ++resets; });
+    QObject::connect(&steps, &QAbstractItemModel::rowsInserted, [&inserted] { ++inserted; });
+    QObject::connect(&steps, &QAbstractItemModel::dataChanged, [&redrawn] { ++redrawn; });
+    const char* const work[] = {
+        R"({"type":"assistant","uuid":"a1","timestamp":"2026-11-07T10:00:02.000Z","message":{"content":[{"type":"thinking","thinking":"plan"}]}})",
+        R"({"type":"assistant","uuid":"a2","timestamp":"2026-11-07T10:00:03.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"/x/a.cpp","old_string":"a","new_string":"b\nc"}}]}})",
+        R"({"type":"user","uuid":"r1","timestamp":"2026-11-07T10:00:04.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}})",
+        R"({"type":"queue-operation","operation":"enqueue","timestamp":"2026-11-07T10:00:05.000Z","content":"use tabs"})",
+        R"({"type":"assistant","uuid":"a3","timestamp":"2026-11-07T10:00:06.000Z","message":{"content":[{"type":"text","text":"Building now."}]}})",
+        R"({"type":"assistant","uuid":"a4","timestamp":"2026-11-07T10:00:07.000Z","message":{"content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"make"}}]}})",
+    };
+    for (const char* line : work) {
+        append(line);
+        model.readMore();
+    }
+    require(steps.rowCount() == 4 && resets == 0 && inserted == 4 && redrawn >= 1,
+            "each step appends a row; a result redraws its row");
+    require(kinds() == "prompt|live|prompt", "no step rows in the thread; the queued prompt below");
+    const auto edit = steps.entry(1);
+    require(edit.value("title").toString() == "Edited" && edit.value("added").toInt() == 2 &&
+                edit.value("diff").toList().size() == 3 && edit.value("answered").toBool(),
+            "the box's edit row carries its counts and diff for when it is opened");
+    require(steps.rowOf(4) == 2 && model.items()[4].kind == Kind::reply,
+            "the interim reply is a row of the box, found by its item");
+    append(
+        R"({"type":"queue-operation","operation":"remove","timestamp":"2026-11-07T10:00:20.000Z","content":"use tabs","reason":"absorbed_mid_turn"})");
+    model.readMore();
+    require(kinds() == "prompt|work|prompt|live" && steps.rowCount() == 0,
+            "read mid-turn: the steps before fold, the prompt lands, the box starts again");
+    const int steered = 2;
+    require(model.data(model.index(steered), TranscriptModel::SteeredRole).toBool() &&
+                model.data(model.index(steered), TranscriptModel::WaitedRole).toInt() == 1 &&
+                !model.data(model.index(steered), TranscriptModel::QueuedRole).toBool(),
+            "the steering prompt is marked and counts the step it waited");
+    append(
+        R"({"type":"user","uuid":"r2","timestamp":"2026-11-07T10:00:30.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]}})");
+    append(
+        R"({"type":"assistant","uuid":"a5","timestamp":"2026-11-07T10:00:31.000Z","message":{"content":[{"type":"tool_use","id":"t3","name":"Read","input":{"file_path":"/x/a.cpp"}}]}})");
+    model.readMore();
+    require(steps.rowCount() == 1, "the box lists the steps after the steering prompt");
+    append(
+        R"({"type":"assistant","uuid":"a6","timestamp":"2026-11-07T10:00:40.000Z","message":{"content":[{"type":"text","text":"Done with tabs."}]}})");
+    append(R"({"type":"system","subtype":"turn_duration","durationMs":40000})");
+    model.readMore();
+    require(kinds() == "prompt|work|prompt|work|reply" && steps.rowCount() == 0,
+            "finished: prompt, work, steering prompt, work, reply");
+    require(model.data(model.index(1), TranscriptModel::TitleRole).toString() == "Worked for 20s" &&
+                model.data(model.index(3), TranscriptModel::TitleRole).toString() ==
+                    "Worked for 20s",
+            "each part is timed from its prompt");
+    model.toggleWork(3);
+    require(kinds() == "prompt|work|prompt|work|tool|reply",
+            "the second part opens on its own, one row per step");
+    model.toggleWork(3);
+    model.toggleWork(1);
+    require(kinds() == "prompt|work|thinking|tool|reply|tool|prompt|work|reply",
+            "the first part opens to its steps and interim reply; the diff stays in the step");
+}
+
 // Code colors by its language: the role at a column of a line.
 void code_is_highlighted() {
     namespace code = lapis::desktop::code;
@@ -1303,6 +1450,7 @@ int main(int argc, char** argv) {
     notices_and_attachments();
     dialogs_are_seen();
     queued_prompts_show();
+    several_queued_prompts();
     paths_and_live_lines();
     compact_runs_between_turns();
     results_are_clean();
@@ -1312,6 +1460,7 @@ int main(int argc, char** argv) {
     copies_are_clean();
     switching_back_is_warm();
     turns_fold();
+    live_box_follows_claude();
     code_is_highlighted();
     media_is_found();
     media_shows_in_place();
