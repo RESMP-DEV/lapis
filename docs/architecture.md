@@ -306,6 +306,16 @@ request never approves it. No current adapter routes a response: every agent
 takes its answers in its own terminal, and the service refuses a decision an
 older desktop sends.
 
+The window draws status, not attention: an agent's mark shows what it is doing
+(working, done, waiting on an answer, lost, unknown, ended) and never whether
+the person looked at it (decided Nov 11, 2026, after unseen dots and counts
+re-flagged agents the owner had already read). The desktop still keeps one
+unseen mark per agent for Tab, the chime and `agent_state.json`, owned by
+`Workspace` (the rule is written above `Workspace::looking` in `workspace.cpp`):
+a finished turn or new request marks it once unless the person is looking
+(stage agent, window active, input within two minutes); looking by any path
+clears it for good; transient statuses and reconnects never re-mark a seen turn.
+
 ### Terminal rendering and pacing
 
 The service screen is authoritative; desktop snapshots are replaceable caches.

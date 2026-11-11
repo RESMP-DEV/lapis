@@ -81,9 +81,10 @@ class Agent final : public QObject {
     // True while a close request waits for the process to end; cleared if the
     // service rejects the close and the agent remains attached.
     Q_PROPERTY(bool closing READ closing NOTIFY statusChanged)
-    // Finished a turn or started needing a response while another agent was
-    // selected; cleared when this agent is selected. Bookkeeping for Tab, the
-    // chime and agent_state.json; the window does not draw it.
+    // Finished a turn or started needing a response while the person was not
+    // looking at it; cleared for good once they look (Workspace::looking).
+    // Bookkeeping for Tab, the chime and agent_state.json; the window does not
+    // draw it.
     Q_PROPERTY(bool unseen READ unseen NOTIFY unseenChanged)
   public:
     Agent(QString title, QString directory, QString activity, QColor accent,
@@ -223,6 +224,9 @@ class Agent final : public QObject {
     [[nodiscard]] QString attentionReason() const;
     [[nodiscard]] quint32 attentionSerial() const { return attention_serial_; }
     [[nodiscard]] int attentionCount() const;
+    // The source ids of the requests pending now ("n" + number or "s" + hex),
+    // stable across a reconnect, so a request already marked is not again.
+    [[nodiscard]] QStringList attentionRequestIds() const;
     bool addFixtureRequest(const QString& id, const QString& reason);
     bool resolveFixtureRequest(const QString& id);
     void clearFixtureRequests();
@@ -563,7 +567,8 @@ class Workspace final : public QObject {
     Q_INVOKABLE void nextAgentAcrossCategories(int delta = 1);
     // Tab's next agent, in any category, of those truly waiting on you: a
     // request, or a finished turn (no background work in flight) that is
-    // unseen or has a guessed next prompt. Agents at work, paused on their own
+    // unseen or has a guessed next prompt not yet seen: a turn the person
+    // has looked at, guess and all, waits no longer. Agents at work, paused on their own
     // background work, or without a status never qualify. The TabRanker
     // orders them (anything overdue first, then work, requests, unseen,
     // newest). `ready` maps agents
@@ -589,6 +594,23 @@ class Workspace final : public QObject {
     [[nodiscard]] QVariantList agents() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] Agent* focusedAgent() const;
+    // Whether the person is looking at `item` now: it is on the stage, the
+    // window is active and someone is at the Mac (main sets the test).
+    // Without one, the stage agent counts, as in fixtures and tests.
+    using Looking = std::function<bool(const Agent*)>;
+    void setLooking(Looking looking) { looking_ = std::move(looking); }
+    [[nodiscard]] bool looking(const Agent* item) const;
+    // Whether `item` shows nothing new since the person last looked at it
+    // (SeenScreens): such a finished turn marks nothing.
+    void setUnchanged(Looking unchanged) { unchanged_ = std::move(unchanged); }
+    // The person is looking at the stage agent if looking() says so: its
+    // unseen mark clears for good. Runs on every focus change; the window
+    // calls it when it becomes active and each second while it is (`how`
+    // says which, for the log).
+    void noteLooking(const QString& how);
+    // Every unseen mark set or cleared, one JSON object each, for
+    // attention.jsonl: {"event": "unseen"|"seen", "id", "why"}. Ids only.
+    void setMarkLog(std::function<void(const QJsonObject&)> log) { mark_log_ = std::move(log); }
     // Starts the most recently closed agent again, resuming its conversation
     // where its CLI can, in its category, and shows it.
     Q_INVOKABLE bool reopenAgent();
@@ -596,9 +618,11 @@ class Workspace final : public QObject {
     // The window's own marks on each agent, for GuiState: unseen, when it
     // began to need you, whether it was at work, and the conversation they
     // belong to. Restoring skips agents that are gone or now in another
-    // conversation (as after /clear) and never pings. An agent that was at
-    // work and is found idle finished while no window watched: it is marked
-    // unseen and finishedWhileAway() says so, without a chime.
+    // conversation (as after /clear) and never pings. A restored mark stays
+    // until the person looks, the stage agent's included. An agent that was
+    // at work and is found idle finished while no window watched: it is
+    // marked unseen once, however long the window was gone, and
+    // finishedWhileAway() says so (only within ten minutes), without a chime.
     [[nodiscard]] QJsonObject saveMarks() const;
     void restoreMarks(const QJsonObject& marks);
     // The agents Command-Shift-T can bring back, for GuiState.
@@ -618,6 +642,11 @@ class Workspace final : public QObject {
     // A Codex or Claude turn ended; terminal agents' output pauses do not count.
     // A new request for you arrives here too, once its attention is applied.
     void turnFinished(lapis::desktop::Agent* item);
+    // The same moment, after the agent's mark: `outcome` is "marked" (newly
+    // unseen: the one moment that may chime), "looking" (seen as it
+    // happened), "waiting" (already unseen), "unchanged" (nothing new since
+    // the person looked) or "repeat" (a request already marked once).
+    void needsYou(lapis::desktop::Agent* item, const QString& outcome);
     void agentsChanged();
     void categoriesChanged();
     void categoryChanged();
@@ -757,11 +786,22 @@ class Workspace final : public QObject {
     std::vector<ClosedAgent> closed_;
     void rememberClosed(const AgentRecord& agent, const QString& title);
     // Marks an agent saved at work as finished if its first settled status
-    // after the restart is not work.
-    void watchFinishWhileAway(Agent* item);
+    // after the restart is not work; `recent` also reports finishedWhileAway.
+    void watchFinishWhileAway(Agent* item, bool recent);
     [[nodiscard]] static bool serviceRunning(const QString& endpoint);
     void noteStatus(Agent* item);
+    // The last settled status of each agent: reconnecting, unknown and
+    // unreachable states leave it, so a republished status is no new turn.
     QHash<const Agent*, QString> last_kind_;
+    // Why an agent may need the person; the one rule that marks it unseen.
+    enum class Need { finished, quiet, request, away };
+    QString markNeedsYou(Agent* item, Need need);
+    void logMark(const Agent* item, const char* event, const QString& why) const;
+    Looking looking_;
+    Looking unchanged_;
+    std::function<void(const QJsonObject&)> mark_log_;
+    // Request ids each agent was already marked for, by agent id (bounded).
+    QHash<QString, QSet<QString>> known_requests_;
     // Tab's ranking, and the choices it records: the agents waiting when
     // the person left one, kept until they settle on another (or Tab moved
     // them), then recorded with the one they settled on.

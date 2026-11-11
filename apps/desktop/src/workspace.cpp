@@ -742,11 +742,9 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
     // Only intent-driven selection and navigation below call noteFocusMove;
     // structural changes may reassign focus without a person's move.
     harness_updates_off_ = options.harnessUpdatesOff;
-    // Selecting an agent is looking at it.
-    connect(this, &Workspace::focusChanged, this, [this] {
-        if (auto* focused = focusedAgent())
-            focused->setUnseen(false);
-    });
+    // Showing an agent on the stage, by any path, is looking at it while the
+    // person is at the window.
+    connect(this, &Workspace::focusChanged, this, [this] { noteLooking(QStringLiteral("focus")); });
     const auto add = [this](const char* title, const char* directory, const char* activity,
                             const char* accent, std::string_view content) {
         items_.push_back(std::make_unique<Agent>(
@@ -917,7 +915,8 @@ void Workspace::nextAgentAcrossCategories(int delta) {
 // Truly waiting on the person: a request, or a turn its observer saw finish
 // with no background work in flight (a turn paused on its own background work
 // reads as working until it ends or its deadline passes) that is unseen or has
-// a guess. An agent at work, unknown, ended or closing never is, and neither
+// a guess not yet seen. A turn the person looked at, with any guess it shows,
+// waits no longer. An agent at work, unknown, ended or closing never is, and neither
 // is one whose quiet is only an output estimate: silence is not a finished turn.
 std::vector<TabCandidate> Workspace::waitingCandidates(const QVariantMap& ready,
                                                        const Agent* exclude) const {
@@ -933,7 +932,8 @@ std::vector<TabCandidate> Workspace::waitingCandidates(const QVariantMap& ready,
         const bool request = item->attentionPending();
         const bool finished = kind == QLatin1String("finished") ||
                               (kind == QLatin1String("idle") && item->hasAttentionSource());
-        if (!request && !(finished && (item->unseen() || guess != ready.end())))
+        const bool fresh_guess = guess != ready.end() && !guess->toBool();
+        if (!request && !(finished && (item->unseen() || fresh_guess)))
             continue;
         if (!request && parked(item.get()))
             continue;
@@ -1154,9 +1154,21 @@ void Workspace::watch(Agent* item) {
             reattachIfDisconnected(id);
         });
     });
-    // A request pings as a finished turn does, and marks the agent the same way
-    // (below); lapis shows no separate request state.
-    connect(item, &Agent::attentionArrived, this, [this, item] { emit turnFinished(item); });
+    // A request pings as a finished turn does and marks the agent the same
+    // way, once per request: one that comes back after a reconnect or with a
+    // new revision is the request already marked.
+    connect(item, &Agent::attentionArrived, this, [this, item] {
+        auto& known = known_requests_[item->agentId()];
+        const auto ids = item->attentionRequestIds();
+        const bool fresh = std::any_of(ids.begin(), ids.end(),
+                                       [&known](const QString& id) { return !known.contains(id); });
+        if (known.size() > 256)
+            known.clear();
+        for (const auto& id : ids)
+            known.insert(id);
+        emit needsYou(item, fresh ? markNeedsYou(item, Need::request) : QStringLiteral("repeat"));
+        emit turnFinished(item);
+    });
     last_kind_.insert(item, item->statusKind());
     connect(item, &Agent::statusChanged, this, [this, item] { noteStatus(item); });
     // For Tab's ranking: when it began waiting, and when its turns started.
@@ -1184,15 +1196,13 @@ void Workspace::watch(Agent* item) {
     connect(item, &Agent::attentionArrived, this, [this, item] {
         waiting_since_.insert(item->agentId(), QDateTime::currentMSecsSinceEpoch());
     });
-    // A new request marks an unselected agent; the category's request count
-    // changes with it.
+    // The category's request count follows the agent's (the mark follows
+    // attentionArrived above).
     connect(item, &Agent::attentionChanged, this,
             [this, item, count = item->attentionCount()]() mutable {
                 const int updated = item->attentionCount();
                 if (updated == count)
                     return;
-                if (updated > count && item != focusedAgent())
-                    item->setUnseen(true);
                 count = updated;
                 emit categoriesChanged();
             });
@@ -1655,6 +1665,7 @@ bool Workspace::discardAgent(const QString& id) {
     worked_remotely_.remove(id);
     reloading_.remove(id);
     last_kind_.remove(item);
+    known_requests_.remove(id);
     waiting_since_.remove(id);
     parked_at_.remove(id);
     turn_starts_.remove(id);
@@ -3133,28 +3144,97 @@ void Agent::noteOutput() {
         quiet_timer_.start(output_timing_.quiet_ms);
 }
 
-// A turn ending marks an unselected agent; new requests are marked where the
-// request count changes.
+// The attention marks, in one place:
+//
+// - A finished turn (a status that settles from working, or a turn the
+//   observer reports) or a new request marks the agent unseen exactly once,
+//   unless the person is looking at it then (looking()): then it is seen as it
+//   happens. A turn ending on a screen the person already saw marks nothing.
+// - Looking clears the mark for good: the agent comes onto the stage by any
+//   path while the window is active, or the window becomes active (or the
+//   person returns to it) with the agent on the stage (noteLooking()). Only a
+//   new finished turn or request marks it again.
+// - Reconnecting, an unknown status and a lost connection are not settled
+//   statuses: a republished status after them is no new turn, and a turn that
+//   ended meanwhile counts once. A request back after a reconnect is the one
+//   already marked.
+// - Restarts keep marks (restoreMarks); a turn that ended while no window ran
+//   is marked once (watchFinishWhileAway).
+// - Tab, the chime and agent_state.json read this mark; the window does not
+//   draw it. The status mark shows only what the agent is doing.
+namespace {
+bool transient_kind(const QString& kind) {
+    return kind == QLatin1String("connecting") || kind == QLatin1String("unknown") ||
+           kind == QLatin1String("disconnected");
+}
+} // namespace
+bool Workspace::looking(const Agent* item) const {
+    if (item == nullptr)
+        return false;
+    return looking_ ? looking_(item) : item == focusedAgent();
+}
+void Workspace::logMark(const Agent* item, const char* event, const QString& why) const {
+    if (!mark_log_ || item == nullptr)
+        return;
+    mark_log_({{QStringLiteral("at"), QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
+               {QStringLiteral("event"), QLatin1String(event)},
+               {QStringLiteral("kind"), QStringLiteral("mark")},
+               {QStringLiteral("id"), item->agentId()},
+               {QStringLiteral("status"), item->statusKind()},
+               {QStringLiteral("why"), why}});
+}
+QString Workspace::markNeedsYou(Agent* item, Need need) {
+    const auto why = need == Need::finished  ? QStringLiteral("finished")
+                     : need == Need::quiet   ? QStringLiteral("quiet")
+                     : need == Need::request ? QStringLiteral("request")
+                                             : QStringLiteral("away");
+    if (looking(item)) {
+        logMark(item, "seen", QStringLiteral("looking: ") + why);
+        return QStringLiteral("looking");
+    }
+    if (item->unseen())
+        return QStringLiteral("waiting");
+    if (need != Need::request && unchanged_ && unchanged_(item)) {
+        logMark(item, "seen", QStringLiteral("unchanged: ") + why);
+        return QStringLiteral("unchanged");
+    }
+    item->setUnseen(true);
+    logMark(item, "unseen", why);
+    return QStringLiteral("marked");
+}
+void Workspace::noteLooking(const QString& how) {
+    auto* item = focusedAgent();
+    if (item == nullptr || !item->unseen() || !looking(item))
+        return;
+    item->setUnseen(false);
+    logMark(item, "seen", how);
+}
 void Workspace::noteStatus(Agent* item) {
     const auto now = item->statusKind();
+    if (transient_kind(now))
+        return;
     const auto previous = last_kind_.value(item);
     last_kind_.insert(item, now);
     if (previous == now)
         return;
-    const bool finished = previous == QStringLiteral("working") &&
-                          (now == QStringLiteral("finished") || now == QStringLiteral("idle"));
+    // A turn waiting on a request is still the turn.
+    const bool in_turn =
+        previous == QLatin1String("working") || previous == QLatin1String("waiting");
+    const bool finished =
+        in_turn && (now == QLatin1String("finished") || now == QLatin1String("idle"));
     // Quiet output is not proof a turn ended. A finished turn the service
     // observed is, even after an agent on another machine had gone quiet:
     // only an observer reports "finished" for an output-estimated agent.
     const bool observed =
         item->statusSource() != Agent::StatusSource::output
             ? finished
-            : now == QStringLiteral("finished") &&
-                  (previous == QStringLiteral("working") || previous == QStringLiteral("idle"));
-    if (observed)
+            : now == QLatin1String("finished") && (in_turn || previous == QLatin1String("idle"));
+    if (observed) {
+        emit needsYou(item, markNeedsYou(item, Need::finished));
         emit turnFinished(item);
-    if ((finished || observed) && item != focusedAgent())
-        item->setUnseen(true);
+    } else if (finished) {
+        markNeedsYou(item, Need::quiet);
+    }
 }
 // Claude Code's hooks report its whole turn. Codex's notify program reports
 // only finished turns, so between them its status is estimated from output,
@@ -3217,9 +3297,9 @@ Workspace::Category* Workspace::category(const QString& id) {
 // Window state a restart keeps -------------------------------------------------
 
 namespace {
-// A turn found finished after a restart counts as one that ended unwatched
-// only when the window saved it at work this recently (an install's restart);
-// after a longer absence the agent is simply idle.
+// A turn found finished after a restart is marked unseen however long the
+// window was gone; it is also guessed for (finishedWhileAway) only when the
+// window saved it at work this recently (an install's restart).
 constexpr qint64 kFinishedWhileAwayMs = qint64{10} * 60 * 1000;
 bool settledKind(const QString& kind) {
     return kind == QLatin1String("working") || kind == QLatin1String("idle") ||
@@ -3263,22 +3343,26 @@ void Workspace::restoreMarks(const QJsonObject& marks) {
             continue;
         const auto needed =
             static_cast<qint64>(mark.value(QStringLiteral("neededAtMs")).toDouble());
-        const bool unseen = mark.value(QStringLiteral("unseen")).toBool() &&
-                            item != focusedAgent() && !item->unseen();
+        // The stage agent's mark comes back too: the window may not be in
+        // front yet. noteLooking() clears it once the person looks.
+        const bool unseen = mark.value(QStringLiteral("unseen")).toBool() && !item->unseen();
         // An already-unseen agent keeps its newer timestamp: a second restore
         // or a status that marked it must not turn Tab's ordering backward.
         if (unseen || item->neededAtMs() == 0)
             item->restoreUnseen(unseen || item->unseen(), item->neededAtMs() == 0
                                                               ? std::min(needed, now)
                                                               : item->neededAtMs());
-        if (recent && mark.value(QStringLiteral("working")).toBool())
-            watchFinishWhileAway(item);
+        if (unseen)
+            logMark(item, "unseen", QStringLiteral("restored"));
+        if (mark.value(QStringLiteral("working")).toBool())
+            watchFinishWhileAway(item, recent);
     }
+    noteLooking(QStringLiteral("restored"));
 }
 
-void Workspace::watchFinishWhileAway(Agent* item) {
+void Workspace::watchFinishWhileAway(Agent* item, bool recent) {
     auto connection = std::make_shared<QMetaObject::Connection>();
-    const auto check = [this, item, connection] {
+    const auto check = [this, item, connection, recent] {
         const auto kind = item->statusKind();
         if (!settledKind(kind))
             return;
@@ -3290,9 +3374,8 @@ void Workspace::watchFinishWhileAway(Agent* item) {
             (kind == QLatin1String("idle") && item->statusSource() != Agent::StatusSource::output);
         if (kind != QLatin1String("finished") && kind != QLatin1String("idle"))
             return;
-        if (item != focusedAgent())
-            item->setUnseen(true);
-        if (observed)
+        markNeedsYou(item, Need::away);
+        if (observed && recent)
             emit finishedWhileAway(item);
     };
     *connection = connect(item, &Agent::statusChanged, this, check);

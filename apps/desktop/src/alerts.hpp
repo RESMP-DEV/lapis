@@ -17,7 +17,8 @@ class Workspace;
 
 // What the person last saw of each agent: while the window is active and
 // someone is at the Mac (`looking`), the screen of the agent shown is sampled
-// every second. A finished turn whose
+// every second, and that look clears its unseen mark (Workspace::noteLooking),
+// so returning to the Mac counts as looking. A finished turn whose
 // screen is still what was seen there says nothing new, so it does not
 // chime. Claude Code's input box and status line (below its last
 // box-drawing rule) are left out, since a status line can tick on its own.
@@ -61,20 +62,19 @@ using AttentionLog = std::function<void(const QJsonObject&)>;
 // the log cannot be made private or the old file cannot move aside.
 [[nodiscard]] AttentionLog attention_log(const QString& path);
 
-// Open requests and completed turns share one finished cue: a request arrives
-// on turnFinished once its attention has been applied, and chimes once.
+// Open requests and completed turns share one finished cue. It plays only when
+// the workspace newly marks an agent unseen (Workspace::needsYou "marked"):
+// once per turn or request, never while the person looks at it, never for a
+// screen already seen, never again for a turn already looked at.
 class Alerts final : public QObject {
     Q_OBJECT
   public:
     using Player = std::function<void(Chime)>;
-    // Whether the person is looking at this agent right now.
-    using Looking = std::function<bool(const Agent*)>;
     static constexpr int kQuietMs = 1500;
 
-    Alerts(Workspace& workspace, const Config& config, Player play, Looking looking,
-           QObject* parent = nullptr);
-    // A finished turn showing what was already seen stays quiet; every
-    // decision is logged.
+    Alerts(Workspace& workspace, const Config& config, Player play, QObject* parent = nullptr);
+    // The screen the person is looking at as a turn ends is recorded as seen;
+    // every decision is logged.
     void setSeen(SeenScreens* seen) { seen_ = seen; }
     void setLog(AttentionLog log) { log_ = std::move(log); }
 
@@ -84,12 +84,11 @@ class Alerts final : public QObject {
     void setQuietForTesting(int ms) { quiet_ms_ = ms; }
 
   private:
-    void finished(Agent* item);
+    void finished(Agent* item, const QString& outcome);
     bool ring(Chime chime);
-    void record(const Agent* item, const char* event, const char* decision) const;
+    void record(const Agent* item, const QString& outcome, const char* decision) const;
     const Config& config_;
     Player play_;
-    Looking looking_;
     SeenScreens* seen_{};
     AttentionLog log_;
     QElapsedTimer last_;

@@ -79,8 +79,13 @@ of those installed). An unknown name falls back to the first choice.
 
 ## Alerts
 
-An unseen completed turn or request plays one quiet cue when `alerts.finished`
-is enabled. Requests use the same cue, and the cue does not repeat. Appearance
+A completed turn or request you were not looking at plays one quiet cue when
+`alerts.finished` is enabled. Requests use the same cue, and the cue does not
+repeat: it plays once per turn or request, when the agent becomes unseen, and
+never again for a turn you have looked at. You are looking at an agent while it
+is on the stage, lapis is in front and you are at the Mac (some keyboard, mouse
+or trackpad input within two minutes); showing it by any path, bringing lapis
+to the front or coming back to the Mac with it on the stage counts. Appearance
 has one switch and Play button for it. lapis posts no macOS notifications.
 Keys of retired alerts are ignored, and older files may keep
 them: `alerts.sound` and `alerts.repeat` (the repeating request chime),
@@ -96,9 +101,14 @@ unchanged does not chime.
 
 Every decision, a chime or its quiet reason, is logged, one JSON line each, to
 `runtime/attention.jsonl` in the lapis folder: the moment, the agent's
-conversation title, its CLI, the event (`finished`), a `kind` of chime, and the
-`decision` (chimed, or the quiet reason). The log is owner-only, and the title can be the
-conversation's first prompt, so the file is not for sharing. Before a line
+conversation title and id, its CLI, the event (`finished`), a `kind` of chime,
+what the turn did to the agent's `mark` (`marked`, `looking`, `waiting`,
+`unchanged` or `repeat`) and the `decision` (chimed, or the quiet reason). Each
+unseen mark set or cleared adds a line of `kind` `mark` with the agent's id
+only, its status, the event (`unseen` or `seen`) and `why` (`finished`,
+`request`, `quiet`, `away`, `restored`; `focus`, `window`, `present`, or
+`looking: …` for a turn seen as it ended). The log is owner-only, and the title
+can be the conversation's first prompt, so the file is not for sharing. Before a line
 would cross 2 MiB the log rotates to `attention.jsonl.1` (one predecessor, the
 older one removed) and the fresh file opens with a `rotated` marker line.
 
@@ -204,7 +214,8 @@ which agent needed you. Older files may keep `rank`; it is ignored and left as
 written.
 
 Only agents truly waiting on you qualify: a request, or a turn that finished
-with no background work in flight, unseen or with a guess, and not parked. Looking at a
+with no background work in flight, unseen or with a guess you have not seen, and
+not parked; a turn you looked at, its guess included, waits no longer. Looking at a
 finished turn for 2.5 seconds or more and moving on without a prompt parks the
 agent: Tab passes it over until it next begins to wait. A request
 is never parked. Choices and Tab moves are kept in `runtime/tab_away.jsonl`,
@@ -233,8 +244,10 @@ The agents run in their session services, so a restart of the window (an
 install swaps the app and opens it again) leaves them running. What only the
 window knew is kept in `runtime/gui_state.json` in the lapis folder and comes
 back with it: the guessed next prompts at each agent's cursor (whether you saw
-them, a guess Tab typed in, a guess still being made), the unseen marks on
-cards and categories and when each agent began to need you (Tab's order),
+them, a guess Tab typed in, a guess still being made), which agents have a turn
+or request you have not looked at (for Tab and the chime; not drawn) and when
+each began to need you (Tab's order); a turn that ended while no window ran is
+marked once,
 what you last saw of each agent (so a turn ending on it
 stays quiet), the agents Command-Shift-T can reopen, and the new-agent form's
 last choices and the side terminal.

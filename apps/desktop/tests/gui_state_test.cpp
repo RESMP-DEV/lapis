@@ -274,7 +274,8 @@ void marksComeBack() {
     require(agent->neededAtMs() == needed + 1,
             "an already-unseen agent keeps its newer ordering time");
 
-    // Saved long ago: an idle agent is just idle.
+    // Saved long ago: the turn that ended meanwhile is still one nobody saw,
+    // so it is marked once, but no late guess is made for it.
     marks.insert(QStringLiteral("savedAtMs"),
                  QDateTime::currentMSecsSinceEpoch() - qint64{24} * 3600 * 1000);
     Workspace later(WorkspaceMode::fixture);
@@ -283,9 +284,9 @@ void marksComeBack() {
     QObject::connect(&later, &Workspace::finishedWhileAway, [&later_away] { ++later_away; });
     later.restoreMarks(marks);
     setActivity(*later.agent(QStringLiteral("checks")), lapis::session::attention::Activity::idle);
-    require(later_away == 0 && !later.agent(QStringLiteral("checks"))->unseen(),
-            "after a long absence nothing is inferred");
-    require(later.agent(QStringLiteral("agent"))->unseen(), "though unseen marks remain");
+    require(later_away == 0 && later.agent(QStringLiteral("checks"))->unseen(),
+            "after a long absence the finished turn is marked, without a guess");
+    require(later.agent(QStringLiteral("agent"))->unseen(), "and unseen marks remain");
 }
 
 // In a live workspace marks belong to a conversation: after /clear (a new

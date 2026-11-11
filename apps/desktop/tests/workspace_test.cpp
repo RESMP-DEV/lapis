@@ -889,6 +889,341 @@ void unseenFollowsTurnsAndSelection() {
             "selecting an agent is looking at it, though its request is still pending");
 }
 
+// The attention mark's state machine (Workspace::noteStatus): one mark per
+// finished turn or request unless the person is looking then; looking by any
+// path clears it for good; republished, reconnected and restored states never
+// mark a turn already seen. `window` stands for the window being active with
+// someone at the Mac.
+struct MarkProbe {
+    explicit MarkProbe(Workspace& workspace) : workspace_(workspace) {
+        workspace.setLooking([this](const lapis::desktop::Agent* item) {
+            return window && item == workspace_.focusedAgent();
+        });
+        workspace.setMarkLog([this](const QJsonObject& line) { log.push_back(line); });
+        QObject::connect(&workspace, &Workspace::needsYou, &context_,
+                         [this](lapis::desktop::Agent* item, const QString& outcome) {
+                             outcomes.push_back(item->agentId() + ':' + outcome);
+                         });
+    }
+    ~MarkProbe() {
+        workspace_.setLooking({});
+        workspace_.setMarkLog({});
+    }
+    MarkProbe(const MarkProbe&) = delete;
+    MarkProbe& operator=(const MarkProbe&) = delete;
+    // A service restart: the connection drops, and its requests come back
+    // under a new source epoch.
+    void reconnect(const char* id) {
+        workspace_.agent(QString::fromLatin1(id))->invalidateAttention();
+        ++snapshot.source_epoch;
+        for (auto& item : snapshot.requests)
+            item.pending.source_epoch = snapshot.source_epoch;
+        state(id, snapshot.activity);
+    }
+    void state(const char* id, lapis::session::attention::Activity activity) {
+        snapshot.activity = activity;
+        workspace_.agent(QString::fromLatin1(id))->applyAttention(snapshot);
+    }
+    void finish(const char* id) {
+        state(id, lapis::session::attention::Activity::working);
+        state(id, lapis::session::attention::Activity::turn_completed);
+    }
+    [[nodiscard]] int marked(const char* id) const {
+        return static_cast<int>(std::count(outcomes.begin(), outcomes.end(),
+                                           QString::fromLatin1(id) + QStringLiteral(":marked")));
+    }
+    [[nodiscard]] bool unseen(const char* id) const {
+        return workspace_.agent(QString::fromLatin1(id))->unseen();
+    }
+    Workspace& workspace_;
+    QObject context_;
+    bool window{true};
+    QStringList outcomes;
+    std::vector<QJsonObject> log;
+    lapis::session::wire::AttentionSnapshot snapshot{[] {
+        lapis::session::wire::AttentionSnapshot value;
+        value.available = value.connected = value.ready = true;
+        value.source_epoch = 1;
+        return value;
+    }()};
+};
+
+void attentionMarksFollowLooking() {
+    using lapis::session::attention::Activity;
+    Workspace workspace(WorkspaceMode::fixture);
+    MarkProbe probe(workspace);
+    require(workspace.selectAgent(QStringLiteral("renderer")), "renderer on the stage");
+
+    // Off the stage: marked once; republished and repeated states add nothing.
+    probe.finish("agent");
+    require(probe.unseen("agent") && probe.marked("agent") == 1, "a turn off the stage marks once");
+    probe.state("agent", Activity::turn_completed);
+    probe.state("agent", Activity::idle);
+    require(probe.marked("agent") == 1, "a republished or idle status is no new turn");
+
+    // On the stage with the window in front: seen as it happens, no chime.
+    probe.finish("renderer");
+    require(!probe.unseen("renderer") &&
+                probe.outcomes.back() == QStringLiteral("renderer:looking"),
+            "the agent being looked at is seen at once");
+
+    // On the stage with the window behind another app: nobody looked.
+    probe.window = false;
+    probe.finish("renderer");
+    require(probe.unseen("renderer") && probe.marked("renderer") == 1,
+            "the stage agent is marked while the window is not in front");
+    // Moving by hand while away (the phone) is not looking either.
+    require(workspace.selectAgent(QStringLiteral("agent")) && probe.unseen("agent"),
+            "a selection nobody sees clears nothing");
+    // Back at the window: the agent on the stage is seen, the other is not.
+    probe.window = true;
+    workspace.noteLooking(QStringLiteral("window"));
+    require(!probe.unseen("agent") && probe.unseen("renderer"),
+            "returning to the window sees the stage agent only");
+    // A sidebar click is selectAgent; it clears the mark for good.
+    require(workspace.selectAgent(QStringLiteral("renderer")) && !probe.unseen("renderer"),
+            "showing the agent clears its mark");
+    require(workspace.selectAgent(QStringLiteral("shell")), "leave it");
+    probe.state("renderer", Activity::turn_completed);
+    require(!probe.unseen("renderer"), "a republished finished turn does not come back");
+
+    // A reconnect: unknown in between is not settled; the same turn stays seen,
+    // and a turn that ended while unreachable counts once.
+    auto* renderer = workspace.agent(QStringLiteral("renderer"));
+    renderer->invalidateAttention();
+    probe.state("renderer", Activity::turn_completed);
+    require(!probe.unseen("renderer") && probe.marked("renderer") == 1,
+            "a reconnect republishing a seen turn marks nothing");
+    probe.state("renderer", Activity::working);
+    renderer->invalidateAttention();
+    probe.state("renderer", Activity::turn_completed);
+    require(probe.unseen("renderer") && probe.marked("renderer") == 2,
+            "a turn that ended while unreachable marks once");
+    renderer->invalidateAttention();
+    probe.state("renderer", Activity::turn_completed);
+    require(probe.marked("renderer") == 2, "and only once");
+
+    // The cross-category walk shows an agent in another category: seen.
+    const auto other = workspace.createCategory(QStringLiteral("Other"));
+    require(!other.isEmpty() && workspace.moveAgent(QStringLiteral("notes"), other), "notes moved");
+    require(workspace.selectAgent(QStringLiteral("checks")), "checks on the stage");
+    probe.finish("notes");
+    require(probe.unseen("notes"), "an agent in another category is not being looked at");
+    workspace.nextAgentAcrossCategories(1);
+    require(workspace.focusedAgent() == workspace.agent(QStringLiteral("notes")) &&
+                workspace.activeCategoryId() == other && !probe.unseen("notes"),
+            "the walk across categories is looking too");
+
+    // Requests: once per request; one already marked and back after a
+    // reconnect or with a new revision marks nothing; one arriving while the
+    // person looks is seen.
+    require(workspace.selectAgent(QStringLiteral("shell")), "shell on the stage");
+    lapis::session::wire::AttentionItem asked;
+    asked.pending.request.id = std::int64_t{7};
+    asked.pending.request.reason = "approval";
+    asked.pending.source_epoch = asked.pending.revision = 1;
+    probe.snapshot.requests = {asked};
+    probe.state("checks", Activity::working);
+    require(probe.unseen("checks") && probe.marked("checks") == 1, "a request marks once");
+    require(workspace.selectAgent(QStringLiteral("checks")) && !probe.unseen("checks"),
+            "looking at it clears the mark though the request is still open");
+    require(workspace.selectAgent(QStringLiteral("shell")), "leave it");
+    auto* checks = workspace.agent(QStringLiteral("checks"));
+    checks->invalidateAttention();
+    probe.snapshot.source_epoch = 2;
+    probe.snapshot.requests.front().pending.source_epoch = 2;
+    probe.snapshot.requests.front().pending.revision = 2;
+    probe.state("checks", Activity::working);
+    require(!probe.unseen("checks") && probe.outcomes.back() == QStringLiteral("checks:repeat"),
+            "a request back after a reconnect is the one already seen");
+    probe.snapshot.requests.clear();
+    probe.state("checks", Activity::working);
+    asked.pending.request.id = std::int64_t{8};
+    probe.snapshot.requests = {asked};
+    require(workspace.selectAgent(QStringLiteral("checks")), "checks on the stage");
+    probe.state("checks", Activity::working);
+    require(!probe.unseen("checks") && probe.outcomes.back() == QStringLiteral("checks:looking"),
+            "a request that arrives while the person looks is seen");
+    probe.snapshot.requests.clear();
+    probe.snapshot.source_epoch = 1;
+
+    // Nothing new on the screen since the person looked: no mark.
+    workspace.setUnchanged([](const lapis::desktop::Agent*) { return true; });
+    require(workspace.selectAgent(QStringLiteral("shell")), "shell on the stage");
+    probe.finish("checks");
+    require(!probe.unseen("checks") && probe.outcomes.back() == QStringLiteral("checks:unchanged"),
+            "a turn ending on a screen already seen marks nothing");
+    workspace.setUnchanged({});
+
+    // The log names agents by id only, with why each mark came and went.
+    const auto logged = [&](const char* event, const char* why) {
+        return std::any_of(probe.log.begin(), probe.log.end(), [&](const QJsonObject& line) {
+            return line.value(QStringLiteral("event")).toString() == QLatin1String(event) &&
+                   line.value(QStringLiteral("why")).toString() == QLatin1String(why) &&
+                   line.value(QStringLiteral("kind")).toString() == QStringLiteral("mark") &&
+                   !line.value(QStringLiteral("id")).toString().isEmpty() &&
+                   !line.contains(QStringLiteral("agent")) &&
+                   !line.contains(QStringLiteral("title"));
+        });
+    };
+    require(logged("unseen", "finished") && logged("unseen", "request") &&
+                logged("seen", "focus") && logged("seen", "window") &&
+                logged("seen", "looking: finished"),
+            "each mark set and cleared is logged with why, by id only");
+}
+
+// Tab follows the same mark: a turn the person looked at, its guess seen too,
+// waits no longer; an unseen turn or a guess not yet seen does.
+void tabSkipsTurnsAlreadySeen() {
+    using lapis::session::attention::Activity;
+    Workspace workspace(WorkspaceMode::fixture);
+    workspace.setTabAway({});
+    MarkProbe probe(workspace);
+    require(workspace.selectAgent(QStringLiteral("renderer")), "renderer on the stage");
+    probe.finish("agent");
+    require(workspace.nextPriorityAttention({}) &&
+                workspace.focusedAgent() == workspace.agent(QStringLiteral("agent")),
+            "an unseen turn is waiting");
+    require(workspace.selectAgent(QStringLiteral("renderer")), "back");
+    require(!workspace.nextPriorityAttention({{QStringLiteral("agent"), true}}),
+            "a turn looked at with its guess seen is not waiting");
+    require(workspace.nextPriorityAttention({{QStringLiteral("agent"), false}}),
+            "a guess not yet seen is");
+}
+
+// Marks survive a restart: a turn seen before stays seen, an unseen one stays
+// unseen (the stage agent's too, until the person looks), and a turn that
+// ended while no window ran is marked once, however long ago it was saved.
+void attentionMarksSurviveARestart() {
+    using lapis::session::attention::Activity;
+    QJsonObject marks;
+    {
+        Workspace before(WorkspaceMode::fixture);
+        MarkProbe probe(before);
+        require(before.selectAgent(QStringLiteral("renderer")), "renderer on the stage");
+        probe.finish("agent");   // unseen
+        probe.finish("checks");  // seen below
+        probe.finish("service"); // the stage agent's, while away
+        require(before.selectAgent(QStringLiteral("checks")), "look at checks");
+        probe.window = false;
+        require(before.selectAgent(QStringLiteral("service")), "service on the stage, away");
+        probe.state("notes", Activity::working); // at work when the window closed
+        marks = before.saveMarks();
+    }
+    // Saved an hour ago: an absence longer than an install's restart.
+    marks.insert(QStringLiteral("savedAtMs"),
+                 QDateTime::currentMSecsSinceEpoch() - qint64{60} * 60 * 1000);
+    Workspace after(WorkspaceMode::fixture);
+    MarkProbe probe(after);
+    probe.window = false; // the window is not in front yet
+    int away = 0;
+    QObject::connect(&after, &Workspace::finishedWhileAway, [&away] { ++away; });
+    require(after.selectAgent(QStringLiteral("service")), "service on the stage again");
+    after.restoreMarks(marks);
+    require(probe.unseen("agent") && !probe.unseen("checks") && probe.unseen("service"),
+            "seen stays seen, unseen stays unseen, the stage agent's included");
+    // The services report the turns they still hold: nothing new.
+    probe.state("agent", Activity::turn_completed);
+    probe.state("checks", Activity::turn_completed);
+    require(!probe.unseen("checks") && probe.outcomes.isEmpty(), "republished turns mark nothing");
+    // The agent that was at work finished while the window was closed.
+    probe.state("notes", Activity::turn_completed);
+    require(probe.unseen("notes") && away == 0,
+            "a turn that ended while no window ran is marked, without a late guess");
+    probe.state("notes", Activity::turn_completed);
+    require(std::count_if(probe.log.begin(), probe.log.end(),
+                          [](const QJsonObject& line) {
+                              return line.value(QStringLiteral("id")).toString() ==
+                                         QStringLiteral("notes") &&
+                                     line.value(QStringLiteral("event")).toString() ==
+                                         QStringLiteral("unseen");
+                          }) == 1,
+            "once");
+    probe.window = true;
+    after.noteLooking(QStringLiteral("window"));
+    require(!probe.unseen("service"), "the window in front sees the stage agent's restored mark");
+}
+
+// A replay shaped like the worst sequence in the owner's logs (counts and
+// order, no content): an agent finishing on the stage while lapis is behind
+// another app, the person returning, statuses republished and reconnected,
+// the cross-category walk and a sidebar click onto finished agents, the same
+// request delivered again after a reconnect, the agent waking itself after a
+// look, and an install's restart. Each turn or request marks at most once and
+// nothing seen is marked again.
+void attentionReplayMarksEachTurnOnce() {
+    using lapis::session::attention::Activity;
+    QJsonObject marks;
+    QStringList outcomes;
+    {
+        Workspace workspace(WorkspaceMode::fixture);
+        MarkProbe probe(workspace);
+        const auto other = workspace.createCategory(QStringLiteral("Research"));
+        require(workspace.moveAgent(QStringLiteral("service"), other) &&
+                    workspace.moveAgent(QStringLiteral("notes"), other),
+                "two agents in another category");
+        require(workspace.selectAgent(QStringLiteral("agent")), "agent on the stage");
+        // Behind another app: the stage agent and two others finish.
+        probe.window = false;
+        probe.finish("agent");
+        probe.finish("service");
+        probe.finish("checks");
+        // Back: the stage agent is seen.
+        probe.window = true;
+        workspace.noteLooking(QStringLiteral("window"));
+        // Status republished five times, a reconnect, republished again.
+        for (int i = 0; i < 5; ++i)
+            probe.state("service", Activity::turn_completed);
+        workspace.agent(QStringLiteral("service"))->invalidateAttention();
+        probe.state("service", Activity::turn_completed);
+        // The walk reaches the other category's agents; a click shows checks.
+        while (workspace.focusedAgent() != workspace.agent(QStringLiteral("service")))
+            workspace.nextAgentAcrossCategories(1);
+        require(workspace.selectAgent(QStringLiteral("checks")), "click checks");
+        // A request on notes, then the same request again after a reconnect.
+        lapis::session::wire::AttentionItem asked;
+        asked.pending.request.id = std::string("permission:1");
+        asked.pending.request.reason = "approval";
+        asked.pending.source_epoch = asked.pending.revision = 1;
+        probe.snapshot.requests = {asked};
+        probe.state("notes", Activity::working);
+        probe.reconnect("notes");
+        require(workspace.selectAgent(QStringLiteral("notes")), "look at notes");
+        probe.reconnect("notes");
+        probe.snapshot.requests.clear();
+        probe.snapshot.source_epoch = 1;
+        // Agent wakes itself after the look: a new turn, marked once.
+        require(workspace.selectAgent(QStringLiteral("checks")), "away from agent");
+        probe.finish("agent");
+        probe.state("agent", Activity::turn_completed);
+        probe.state("agent", Activity::working); // at work as the window restarts
+        marks = workspace.saveMarks();
+        outcomes = probe.outcomes;
+        require(probe.marked("agent") == 2 && probe.marked("service") == 1 &&
+                    probe.marked("checks") == 1 && probe.marked("notes") == 1,
+                "each turn and request marked once");
+        require(!probe.unseen("service") && !probe.unseen("checks") && !probe.unseen("notes"),
+                "everything looked at is seen");
+        require(std::count(outcomes.begin(), outcomes.end(), QStringLiteral("notes:repeat")) == 2,
+                "the request back after reconnects is a repeat");
+    }
+    Workspace after(WorkspaceMode::fixture);
+    MarkProbe probe(after);
+    const auto other = after.createCategory(QStringLiteral("Research"));
+    require(after.moveAgent(QStringLiteral("service"), other) &&
+                after.moveAgent(QStringLiteral("notes"), other),
+            "the same places after the restart");
+    require(after.selectAgent(QStringLiteral("checks")), "checks on the stage");
+    after.restoreMarks(marks);
+    for (const auto* id : {"service", "checks", "notes"})
+        probe.state(id, Activity::turn_completed);
+    require(!probe.unseen("service") && !probe.unseen("checks") && !probe.unseen("notes") &&
+                probe.outcomes.isEmpty(),
+            "after the restart nothing seen comes back");
+    probe.state("agent", Activity::turn_completed);
+    require(probe.unseen("agent"), "the turn that ended during the restart is marked");
+}
+
 // An agent asked for without a mode starts in the forms' default, or the
 // nearest mode its CLI offers, unless its configured arguments choose one.
 void modelessAgentsGetTheDefaultMode() {
@@ -952,9 +1287,9 @@ void modelessAgentsGetTheDefaultMode() {
     require(launch_mode(asked("shell"), {}, {}).isEmpty(), "a CLI without modes gets none");
 }
 
-// Tab's next agent: a guess not yet seen or a turn finished unseen first, then
-// a guess already seen, so Tab cannot bounce between guesses while another
-// agent waits; an agent at work is not waiting even with a guess.
+// Tab's next agent: a guess not yet seen or a turn finished unseen. A turn
+// looked at whose guess was seen too waits no longer, so Tab cannot bounce
+// between guesses; an agent at work is not waiting even with a guess.
 void tabGoesToTheReadyThenTheOldest() {
     Workspace workspace(WorkspaceMode::fixture);
     workspace.setTabAway({});
@@ -978,15 +1313,16 @@ void tabGoesToTheReadyThenTheOldest() {
     const QVariantMap seen{{newer->agentId(), true}};
     require(workspace.nextPriorityAttention(seen) && workspace.focusedAgent() == older,
             "then the one whose turn finished unseen");
-    require(workspace.nextPriorityAttention(seen) && workspace.focusedAgent() == newer,
-            "a guess already seen and not used keeps its agent in the rotation, last");
+    require(!workspace.nextPriorityAttention(seen),
+            "a turn looked at with its guess seen is out of the rotation");
     auto* third = finish("renderer");
     require(workspace.nextPriorityAttention(seen) && workspace.focusedAgent() == third,
-            "an unseen turn goes before a guess already seen");
+            "a new unseen turn is waiting");
     require(workspace.selectAgent(older->agentId()), "back to the older one");
+    const QVariantMap fresh{{newer->agentId(), false}};
     state.activity = lapis::session::attention::Activity::working;
     newer->applyAttention(state);
-    require(!workspace.nextPriorityAttention(seen),
+    require(!workspace.nextPriorityAttention(fresh),
             "nothing is waiting once the one with a guess is at work");
 }
 
@@ -4501,8 +4837,9 @@ void windowTakesTheWorkspaceFromTheHost() {
     qputenv("PATH", path);
 }
 
-// A finished turn out of view chimes once, an open request included; looking,
-// a screen already seen or turning the sound off keeps it quiet.
+// Only the moment an agent becomes unseen chimes, an open request included;
+// looking, a mark already set, a screen already seen or turning the sound off
+// keeps it quiet. The workspace's mark decides (Workspace::needsYou).
 void alertsChimeWhileAnAgentWaits() {
     namespace wire = lapis::session::wire;
     QTemporaryDir directory;
@@ -4528,11 +4865,13 @@ void alertsChimeWhileAnAgentWaits() {
     lapis::desktop::Agent agent(QStringLiteral("agent"), root.path(), {}, QColor(), "");
     std::vector<lapis::desktop::Chime> played;
     bool looking = false;
-    lapis::desktop::Alerts alerts(
-        workspace, config_model,
-        [&played](lapis::desktop::Chime chime) { played.push_back(chime); },
-        [&looking](const lapis::desktop::Agent*) { return looking; });
+    lapis::desktop::Alerts alerts(workspace, config_model, [&played](lapis::desktop::Chime chime) {
+        played.push_back(chime);
+    });
     alerts.setQuietForTesting(40);
+    const auto ping = [&workspace, &agent](const char* outcome) {
+        emit workspace.needsYou(&agent, QString::fromLatin1(outcome));
+    };
     const auto request = [&agent](bool pending) {
         wire::AttentionSnapshot state;
         state.available = state.connected = state.ready = true;
@@ -4553,27 +4892,33 @@ void alertsChimeWhileAnAgentWaits() {
     };
     request(true);
     // Requests share the one finished-turn cue, and it does not repeat.
-    emit workspace.turnFinished(&agent);
+    ping("marked");
     waitFor([] { return false; }, 300);
     require(played == std::vector<lapis::desktop::Chime>{lapis::desktop::Chime::finished},
             "a request chimes once with the finished-turn cue");
+    for (const auto* again : {"waiting", "repeat"}) {
+        played.clear();
+        waitFor([] { return false; }, 60);
+        ping(again);
+        require(played.empty(), "an agent already unseen, or a request already marked, is quiet");
+    }
 
     played.clear();
-    looking = true;
     waitFor([] { return false; }, 60);
-    emit workspace.turnFinished(&agent);
+    ping("looking");
     require(played.empty(), "nothing plays for the agent being looked at");
-    looking = false;
     request(false);
 
     played.clear();
     waitFor([] { return false; }, 60);
-    emit workspace.turnFinished(&agent);
+    ping("marked");
     require(played == std::vector{lapis::desktop::Chime::finished}, "a finished turn chimes once");
 
     // A turn that ends on what the person already saw there says nothing new:
-    // no chime, whatever Claude Code's status line below its input box does.
-    // New output above the box chimes again. Every decision is logged.
+    // no mark and no chime, whatever Claude Code's status line below its input
+    // box does. New output above the box chimes again. Every decision is
+    // logged. The workspace asks SeenScreens (setUnchanged); `finish` stands
+    // in for that question here.
     {
         lapis::session::Terminal screen({40, 8});
         const auto show = [&screen, &agent](std::string_view text) {
@@ -4587,13 +4932,14 @@ void alertsChimeWhileAnAgentWaits() {
         alerts.setSeen(&seen);
         alerts.setLog([&lines](const QJsonObject& entry) { lines.push_back(entry); });
         seen.see(&agent);
+        const auto finish = [&] { ping(seen.unchanged(&agent) ? "unchanged" : "marked"); };
         // The null tolerance see() already documents: never on screen means
         // changed, so the chime path can never dereference a null item.
         require(!seen.unchanged(nullptr), "an item never on screen counts as changed");
         played.clear();
         waitFor([] { return false; }, 60);
         show("\x1b[5;1H5h 54%"); // the status line ticks
-        emit workspace.turnFinished(&agent);
+        finish();
         require(
             played.empty() && !lines.empty() &&
                 lines.back().value(QStringLiteral("kind")).toString() == QStringLiteral("chime") &&
@@ -4603,25 +4949,27 @@ void alertsChimeWhileAnAgentWaits() {
                     QStringLiteral("quiet: nothing new since you looked"),
             "a turn ending on a screen already seen stays quiet, logged in the shared shape");
         show("\x1b[1;1Hnew: build failed");
-        emit workspace.turnFinished(&agent);
-        require(played == std::vector{lapis::desktop::Chime::finished} &&
-                    lines.back().value(QStringLiteral("decision")).toString() ==
-                        QStringLiteral("chimed") &&
-                    lines.back().value(QStringLiteral("agent")).toString() ==
-                        QStringLiteral("agent"),
-                "new output chimes, and the decision names the agent");
-        // The quiet path for the agent being looked at reaches the log too.
+        finish();
+        require(
+            played == std::vector{lapis::desktop::Chime::finished} &&
+                lines.back().value(QStringLiteral("decision")).toString() ==
+                    QStringLiteral("chimed") &&
+                lines.back().value(QStringLiteral("mark")).toString() == QStringLiteral("marked") &&
+                lines.back().value(QStringLiteral("agent")).toString() == QStringLiteral("agent"),
+            "new output chimes, and the decision names the agent and its mark");
+        // The quiet path for the agent being looked at reaches the log too,
+        // and what is on its screen then counts as seen.
         waitFor([] { return false; }, 60);
-        looking = true;
+        show("\x1b[2;1Hwatched as it ended");
         played.clear();
-        emit workspace.turnFinished(&agent);
+        ping("looking");
         require(played.empty() &&
                     lines.back().value(QStringLiteral("event")).toString() ==
                         QStringLiteral("finished") &&
                     lines.back().value(QStringLiteral("decision")).toString() ==
-                        QStringLiteral("quiet: you are looking at it"),
-                "a turn for the agent being looked at stays quiet, and says so");
-        looking = false;
+                        QStringLiteral("quiet: you are looking at it") &&
+                    seen.unchanged(&agent),
+                "a turn for the agent being looked at stays quiet, says so, and is seen");
         // A lone rule is a divider in the agent's output, not Claude Code's
         // box: nothing is truncated, so output below it still counts as new.
         show("\x1b[2J\x1b[Hnote\r\n" + line + "\r\nstill watching\r\n");
@@ -4629,7 +4977,7 @@ void alertsChimeWhileAnAgentWaits() {
         show("\x1b[3;1Hchanged below the lone rule");
         played.clear();
         waitFor([] { return false; }, 60);
-        emit workspace.turnFinished(&agent);
+        finish();
         require(played == std::vector{lapis::desktop::Chime::finished},
                 "a lone rule truncates nothing: output below it still chimes");
         // Claude Code's box may open with corner glyphs and heavier strokes;
@@ -4641,7 +4989,7 @@ void alertsChimeWhileAnAgentWaits() {
         show("\x1b[5;1H5h 54%");
         played.clear();
         waitFor([] { return false; }, 60);
-        emit workspace.turnFinished(&agent);
+        finish();
         require(played.empty() && lines.back().value(QStringLiteral("decision")).toString() ==
                                       QStringLiteral("quiet: nothing new since you looked"),
                 "a box drawn with corners truncates, and a status line below it is not new");
@@ -4671,7 +5019,7 @@ void alertsChimeWhileAnAgentWaits() {
     alerts.setLog([&quiet_lines](const QJsonObject& entry) { quiet_lines.push_back(entry); });
     request(true);
     waitFor([] { return false; }, 60);
-    emit workspace.turnFinished(&agent);
+    ping("marked");
     waitFor([] { return false; }, 300);
     require(played.empty() && !quiet_lines.empty() &&
                 quiet_lines.back().value(QStringLiteral("kind")).toString() ==
@@ -6336,12 +6684,14 @@ int main(int argc, char** argv) {
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("updates-off") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("omp-overlay") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("attention") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("sidebar") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("stage-size")),
                     "Usage: lapis_workspace_tests [--case "
                     "adapter-status|remote-options|remote-hooks|local-codex|retired-plans|reload|"
                     "updater|"
-                    "updates-off|startup-defaults|launch-policy|omp-overlay|chimes|sidebar|"
+                    "updates-off|startup-defaults|launch-policy|omp-overlay|chimes|attention|"
+                    "sidebar|"
                     "stage-size]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("adapter-status")) {
@@ -6380,6 +6730,15 @@ int main(int argc, char** argv) {
                 alertsChimeWhileAnAgentWaits();
                 chimesPlayChosenFiles();
                 attentionLogStaysPrivateAndRotates();
+            } else if (selected == QStringLiteral("attention")) {
+                truthfulStatus();
+                categoryCountsChangeOnlyWhenNeeded();
+                tabGoesToTheReadyThenTheOldest();
+                unseenFollowsTurnsAndSelection();
+                attentionMarksFollowLooking();
+                tabSkipsTurnsAlreadySeen();
+                attentionMarksSurviveARestart();
+                attentionReplayMarksEachTurnOnce();
             } else if (selected == QStringLiteral("sidebar")) {
                 nextAgentWalksTheSidebar();
                 categoryColorsPersist();
@@ -6407,6 +6766,10 @@ int main(int argc, char** argv) {
         malformedAgentRegistry();
         unknownRegistryVersionsAreRejected();
         unseenFollowsTurnsAndSelection();
+        attentionMarksFollowLooking();
+        tabSkipsTurnsAlreadySeen();
+        attentionMarksSurviveARestart();
+        attentionReplayMarksEachTurnOnce();
         tabGoesToTheReadyThenTheOldest();
         tabAttributionFollowsTheNextHandMove();
         oneBadAgentDoesNotEmptyTheWorkspace();

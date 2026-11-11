@@ -117,6 +117,20 @@ int Agent::attentionCount() const {
     return attention_ ? static_cast<int>(attention_->requests.size())
                       : static_cast<int>(requests_.size());
 }
+QStringList Agent::attentionRequestIds() const {
+    if (!attention_)
+        return requests_.keys();
+    QStringList ids;
+    for (const auto& item : attention_->requests) {
+        const auto& id = item.pending.request.id;
+        const auto* number = std::get_if<std::int64_t>(&id);
+        ids.append(number ? QStringLiteral("n") + QString::number(*number)
+                          : QStringLiteral("s") +
+                                QString::fromLatin1(
+                                    QByteArray::fromStdString(std::get<std::string>(id)).toHex()));
+    }
+    return ids;
+}
 QString Agent::attentionReason() const {
     if (!attention_)
         return requests_.isEmpty() ? QString{} : requests_.first();
