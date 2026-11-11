@@ -32,8 +32,10 @@ four times a second, in order; moving along it keeps part of the neighboring
 card in view, like Neovim's `sidescrolloff`, and the last card is **+** for a
 new agent. Previews never take input or resize a terminal.
 
-Each agent's row (and card) starts with a mark that says what the agent is
-doing, the same in the sidebar and the strip, and grows with the text size:
+Each card on the strip starts with a mark that says what the agent is doing,
+and the mark grows with the text size. The sidebar shows only the rare marks
+(diamond, filled square, dash), after the agent's title; a working, done or
+opening agent's row is its title alone.
 
 | Mark | Meaning |
 | --- | --- |

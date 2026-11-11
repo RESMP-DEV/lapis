@@ -2840,20 +2840,16 @@ ApplicationWindow {
                                         }
                                         RowLayout {
                                             anchors.fill: parent
-                                            // The status mark starts under the group's name.
+                                            // The title starts under the group's name. Only the
+                                            // rare marks (an answer wanted, a lost connection, an
+                                            // ended agent) show, after the title; working, done and
+                                            // opening agents show the title alone.
                                             anchors.leftMargin: 12
                                             anchors.rightMargin: 8
                                             spacing: 9
-                                            StatusMark {
-                                                objectName: "sidebarStatus_" + agentRow.agentId
-                                                kind: agentRow.agent ? agentRow.agent.statusKind : "unknown"
-                                                size: window.statusMarkSize
-                                                Layout.preferredWidth: size
-                                                Layout.preferredHeight: size
-                                                Layout.alignment: Qt.AlignVCenter
-                                            }
                                             PlainText {
                                                 id: rowTitle
+                                                objectName: "sidebarTitle_" + agentRow.agentId
                                                 text: agentRow.title
                                                 color: agentRow.marked || rowHover.hovered || group.active ? window.textColor :
                                                                                                              window.mutedTextColor
@@ -2863,6 +2859,15 @@ ApplicationWindow {
                                                 Layout.fillWidth: true
                                                 Layout.minimumWidth: 0
                                                 verticalAlignment: Text.AlignVCenter
+                                            }
+                                            StatusMark {
+                                                objectName: "sidebarStatus_" + agentRow.agentId
+                                                kind: agentRow.agent ? agentRow.agent.statusKind : "unknown"
+                                                size: window.statusMarkSize
+                                                visible: shape !== "dot" && shape !== "ring" && shape !== "box"
+                                                Layout.preferredWidth: size
+                                                Layout.preferredHeight: size
+                                                Layout.alignment: Qt.AlignVCenter
                                             }
                                         }
                                         HoverHandler { id: rowHover }

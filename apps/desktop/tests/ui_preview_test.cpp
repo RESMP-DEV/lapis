@@ -2645,9 +2645,10 @@ int run_sidebar_ui_tests() {
           item(QStringLiteral("sidebarAgent_renderer"))->mapToScene(QPointF()).y());
     CHECK(item(QStringLiteral("sidebarAgent_notes"))->mapToScene(QPointF()).y() <
           item(QStringLiteral("category_") + build)->mapToScene(QPointF()).y());
-    // Each row's mark says what its agent does: a filled dot at work, a hollow
-    // ring once done, a diamond waiting on an answer. Nothing says whether the
-    // person looked: no dot on a row, no count on a category.
+    // Each row's mark says what its agent does, but only the rare ones show: a
+    // working or done agent's row is its title alone, and a diamond waiting on
+    // an answer sits after the title. Nothing says whether the person looked:
+    // no dot on a row, no count on a category.
     const auto row_mark = [&](const QString& id) {
         auto* mark = item(QStringLiteral("sidebarStatus_") + id);
         return std::pair{mark->property("shape").toString(),
@@ -2660,6 +2661,14 @@ int run_sidebar_ui_tests() {
     CHECK(row_mark(QStringLiteral("notes")).first == QStringLiteral("diamond"));
     CHECK(row_mark(QStringLiteral("notes")).second ==
           window->property("attentionColor").value<QColor>());
+    CHECK(!item(QStringLiteral("sidebarStatus_checks"))->isVisible());
+    CHECK(!item(QStringLiteral("sidebarStatus_agent"))->isVisible());
+    {
+        auto* mark = item(QStringLiteral("sidebarStatus_notes"));
+        auto* title = item(QStringLiteral("sidebarTitle_notes"));
+        CHECK(mark->isVisible());
+        CHECK(mark->mapToScene(QPointF()).x() >= title->mapToScene(QPointF(title->width(), 0)).x());
+    }
     CHECK(workspace.agent(QStringLiteral("agent"))->unseen() &&
           workspace.agent(QStringLiteral("service"))->unseen());
     for (const auto& id : sidebar_ids(workspace))
@@ -2669,7 +2678,7 @@ int run_sidebar_ui_tests() {
                           QStringLiteral("categoryUnseen_") +
                               value.toMap().value(QStringLiteral("id")).toString()) == nullptr);
     // The mark grows with the sidebar's text.
-    const auto default_mark = item(QStringLiteral("sidebarStatus_checks"))->width();
+    const auto default_mark = item(QStringLiteral("sidebarStatus_notes"))->width();
     CHECK(default_mark >= 8);
     // The focused row is marked in its category's colour; the others are not.
     const auto hex = [&](const QString& category) {
@@ -2778,9 +2787,9 @@ int run_sidebar_ui_tests() {
     {
         auto* header = item(QStringLiteral("category_") + build);
         auto* name = item(QStringLiteral("categoryName_") + build);
-        auto* mark = item(QStringLiteral("sidebarStatus_renderer"));
+        auto* title = item(QStringLiteral("sidebarTitle_renderer"));
         CHECK(name->mapToItem(header, QPointF()).x() <= 13);
-        CHECK(qAbs(name->mapToScene(QPointF()).x() - mark->mapToScene(QPointF()).x()) <= 1);
+        CHECK(qAbs(name->mapToScene(QPointF()).x() - title->mapToScene(QPointF()).x()) <= 1);
     }
 
     // A row dragged onto another category's header moves the agent there.
@@ -2813,7 +2822,7 @@ int run_sidebar_ui_tests() {
     CHECK(rail->width() > 196);
     // Larger terminal text makes the sidebar's rows and names larger too.
     CHECK(item(QStringLiteral("sidebarAgent_renderer"))->height() > default_row_height);
-    CHECK(item(QStringLiteral("sidebarStatus_checks"))->width() > default_mark);
+    CHECK(item(QStringLiteral("sidebarStatus_notes"))->width() > default_mark);
     capture("comfortable-font21");
     // The owner's setting: the oled theme at terminal font 21.
     CHECK(config_model.setTheme(QStringLiteral("oled")));
