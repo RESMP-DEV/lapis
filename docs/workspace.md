@@ -77,7 +77,8 @@ actions and **Show agent previews**.
 The visual view shows a Claude Code, Codex or Antigravity agent as a readable
 thread instead of its terminal: your prompts as bubbles, its replies as prose,
 and its work as one-line steps ("Ran", "Read", "Edited +4 −10", "Thought for
-6s") that open on click, with each edit's diff shown under it. It reads the
+6s") that open on click; an edit's diff and a command's output show only once
+its step is opened. It reads the
 conversation the CLI saves on this Mac (Claude Code's transcript, Codex's
 rollout under `~/.codex/sessions`, Antigravity's
 `~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs/transcript_full.jsonl`)
@@ -88,20 +89,34 @@ As in the Codex app, a finished turn folds to your prompt, one **Worked for
 3m 12s** line, and the final reply. A turn a background task or subagent woke
 shows only that line and the reply, with no "finished" notice. Clicking the
 line opens the thinking and steps between, indented, under a summary of the
-work ("ran 4 commands, edited 2 files, read 3 files"); each step then opens on its own to show its command output
+work ("ran 4 commands, edited 2 files, read 3 files") as one-line steps; each step then opens on its own to show its command output
 or diff, and a step that took a second or more shows how long ("12s", "3m
-4s", "1h 2m", "2d 3h"). A turn still running shows every step as it happens,
-then **Working for 1m 12s** and, under it, the part of the agent's screen
-still in progress (the step running, the reply being written, the spinner
-line), dim and slightly soft; click it to read it all sharp. The CLI saves
-each block only once it is complete, so this live part comes from the
-terminal and gives way to the saved steps as they land. It never repeats
-what the thread already shows: earlier replies, tables and steps still on
-the screen stay out of it. While the conversation compacts (a `/compact`, or
+4s", "1h 2m", "2d 3h").
+
+While the agent works, the running turn is your prompt, a line such as
+**Working · 2m 10s · 14 steps**, and under it one small box four lines tall:
+the turn's steps as the CLI records them, one line each ("Read greet.cpp",
+"Edited greet_test.cpp +12 −3", "Ran ctest 14s", "Thought for 6s", the
+model's short notes between steps), the newest at the bottom and earlier ones
+rolling up and out. The wheel or trackpad over the box scrolls back through
+the turn without the box growing (past either end it scrolls the thread).
+Clicking a step opens it under the box, as an opened "Worked for" step does,
+and clicking it again closes it. The box shows only what the conversation
+file holds, never the terminal's screen; for Claude Code a last line reads
+"Thinking…" once the newest step is done. When the turn ends the box goes and
+the turn folds as above. While the conversation compacts (a `/compact`, or
 Claude Code's own when the context fills) the line reads **Compacting
-conversation for 1m 3s** with nothing under it. A prompt you send while the agent
-works shows at once, marked queued until the agent takes it in, and stays in
-view when its turn folds.
+conversation for 1m 3s** with nothing under it.
+
+A prompt you send while the agent works shows at once under the box, marked
+**Queued · the agent reads it at its next step**; several keep their order.
+When the agent reads it mid-turn it moves into the thread where it was read,
+above the box, marked **Steered · read after 3 more steps** (or just
+**Steered** where the CLI does not say how long it waited), and the box
+starts again under it with the steps that follow. The steps before it fold
+into their own **Worked for** line, so a finished turn reads: prompt, Worked
+for, steering prompt, Worked for, reply, each prompt shown once. A prompt the
+CLI holds until the turn ends becomes the next turn's prompt, with no mark.
 
 Above **Commands** in the sidebar, **This agent** switches the selected agent
 between its terminal and the thread, and **All agents** shows every Claude
@@ -113,11 +128,17 @@ brings it back.
 
 What differs by CLI:
 
-- **Codex** saves each step when it is done, so a running turn shows steps as
-  they finish, with no live tail. Its reasoning shows only when Codex saves a
+- **Claude Code** saves a step when it is called and its result when it is
+  done, so the box shows a running step (with a dot) until its result lands.
+  Its own queue is in the file: a prompt sent mid-turn shows queued from
+  that record, and its "read after N more steps" counts the tool calls
+  between its sending and its reading.
+- **Codex** saves each step when it is done, so the box gains a step as each
+  one finishes (within milliseconds of it, in rollouts on this Mac). A message
+  sent mid-turn is read at Codex's next step; lapis shows it queued until
+  Codex records it and counts the steps between. Its reasoning shows only when Codex saves a
   summary (`model_reasoning_summary` not `none`). Its model and effort show in
-  the toolbar without choices, since Codex's `/model` is a picker. A message
-  sent mid-turn shows inside that turn once Codex takes it. A new agent's
+  the toolbar without choices, since Codex's `/model` is a picker. A new agent's
   thread appears with Codex's first saved message (before its first turn ends,
   lapis takes the conversation the agent's own Codex holds open, else the one
   started in the agent's folder since the agent started when no other agent
@@ -126,14 +147,18 @@ What differs by CLI:
   one the agent's own agy holds open, pinned to the agent; it follows `/clear`
   and never shows another agent's conversation from the same folder. agy
   records no turn times, so "Worked for" counts from the
-  prompt to the final reply. The toolbar's model and effort come from the
+  prompt to the final reply. agy writes each step to its file as it
+  completes, and reads a message sent mid-turn at its next step: input
+  written within ten minutes of a tool step in a running turn counts as
+  steering it (later input starts a new turn). As for Codex, lapis shows it
+  queued until agy records it. The toolbar's model and effort come from the
   setting agy notes in a prompt, so a change from the menus shows from the
   next prompt; the menus send `/model <id>` and `/effort <level>`. A turn
   woken by a timer or a finished background task folds like one Claude Code's
   task notification woke. agy's checkpoint, which summarizes the steps before
   it, shows as a divider.
-- For both, the live tail and the dialog peek are off (they read Claude
-  Code's screen layout), a slash command sent from the bar that opens a
+- For both, the dialog peek is off (it reads Claude Code's screen layout),
+  a slash command sent from the bar that opens a
   picker or panel, or that lapis does not know, shows the terminal, and
   **Edit** on a prompt is not offered.
 
@@ -178,7 +203,7 @@ Up and Down pick, Return runs the command, Tab fills it in to add to, and
 Escape closes the list. What a command prints shows under it in the thread
 ("/model", then "Set model to …"), as does a `!` shell command's output. One
 that runs for a while with no turn of its own shows **Running /review for
-40s** with the agent's screen under it until it is done; `/compact` shows as
+40s** until it is done; `/compact` shows as
 one row between turns, with **Compacting conversation** while it runs. A command that opens a dialog of the CLI's own (the pickers of `/model`
 and `/effort` with nothing after them, `/config`, `/resume`, `/permissions`,
 `/mcp` and the like) shows the terminal, with the keyboard, for as long as the
