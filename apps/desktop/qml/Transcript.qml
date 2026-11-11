@@ -63,6 +63,12 @@ FocusScope {
     property double pendingSince: 0
     property int quietTicks: 0
     readonly property bool busy: working || pendingCommand.length > 0
+    // Compacting the conversation (a /compact, or Claude Code's own when the
+    // context fills): a quiet state of its own, never the screen, which
+    // still shows the turns before it.
+    property bool screenCompacting: false
+    readonly property bool compacting: busy && (screenCompacting
+                                                || (model !== null && model.compactingSince > 0))
     // The bar sent a slash command; it may open a dialog in the terminal.
     signal commandSent(string text)
     // A dialog already fills the terminal, so nothing was sent.
@@ -76,15 +82,18 @@ FocusScope {
         running: root.busy && root.visible && !!root.screen && root.model !== null
         triggeredOnStart: true
         onTriggered: {
-            const rows = root.model.liveLines(root.screen())
+            const screen = root.screen()
+            root.screenCompacting = root.model.compactingShown(screen)
+            const rows = root.model.liveLines(screen)
             if (rows.join("\n") !== root.liveRows.join("\n")) {
                 root.liveRows = rows
                 root.quietTicks = 0
-            } else if (!root.working && root.pendingCommand.length > 0 && ++root.quietTicks >= 20) {
+            } else if (!root.working && !root.screenCompacting && root.pendingCommand.length > 0
+                       && ++root.quietTicks >= 20) {
                 root.pendingCommand = "" // three quiet seconds: it finished unrecorded
             }
         }
-        onRunningChanged: if (!running) { root.liveRows = []; root.liveOpen = false }
+        onRunningChanged: if (!running) { root.liveRows = []; root.liveOpen = false; root.screenCompacting = false }
     }
     Connections {
         target: root.pendingCommand.length > 0 ? root.model : null
@@ -1279,7 +1288,8 @@ FocusScope {
         Item {
             id: live
             readonly property int column: Math.min(root.columnWidth, width - 56)
-            readonly property double since: root.turnSince
+            readonly property double since: root.compacting && root.model && root.model.compactingSince > 0
+                                            ? root.model.compactingSince : root.turnSince
             readonly property var shown: root.liveOpen ? root.liveRows : root.liveRows.slice(-8)
             width: ListView.view ? ListView.view.width : 0
             height: (root.busy ? liveHeader.height + liveTail.height + 22 : 0) + 40
@@ -1294,7 +1304,7 @@ FocusScope {
                     id: liveHover
                     anchors.fill: parent
                     hoverEnabled: true
-                    enabled: root.liveRows.length > 0
+                    enabled: root.liveRows.length > 0 && !root.compacting
                     cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                     onClicked: root.liveOpen = !root.liveOpen
                 }
@@ -1316,7 +1326,10 @@ FocusScope {
                         anchors.verticalCenter: parent.verticalCenter
                         readonly property string elapsed: live.since > 0 && root.now - live.since >= 1000
                                                           ? root.durationLabel(root.now - live.since) : ""
-                        text: !root.working && root.pendingCommand.length > 0
+                        text: root.compacting
+                              ? (elapsed.length > 0 ? qsTr("Compacting conversation for %1").arg(elapsed)
+                                                    : qsTr("Compacting conversation"))
+                              : !root.working && root.pendingCommand.length > 0
                               ? (elapsed.length > 0 ? qsTr("Running %1 for %2").arg(root.pendingCommand).arg(elapsed)
                                                     : qsTr("Running %1").arg(root.pendingCommand))
                               : elapsed.length > 0 ? qsTr("Working for %1").arg(elapsed) : qsTr("Working")
@@ -1327,7 +1340,7 @@ FocusScope {
                     }
                     Chevron {
                         anchors.verticalCenter: parent.verticalCenter
-                        visible: root.liveRows.length > 0
+                        visible: root.liveRows.length > 0 && !root.compacting
                         turned: root.liveOpen
                         color: liveHover.containsMouse ? root.textColor : root.mutedTextColor
                     }
@@ -1335,7 +1348,7 @@ FocusScope {
             }
             Item {
                 id: liveTail
-                visible: root.busy && root.liveRows.length > 0
+                visible: root.busy && !root.compacting && root.liveRows.length > 0
                 x: liveHeader.x + Math.round(root.fontSize * 0.9)
                 anchors.top: liveHeader.bottom
                 anchors.topMargin: 6

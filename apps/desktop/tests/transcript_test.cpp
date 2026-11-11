@@ -411,6 +411,92 @@ void paths_and_live_lines() {
     require(live.size() == 4 && live.front().startsWith(QStringLiteral("⏺")) &&
                 live.back().startsWith(QStringLiteral("✻")),
             "the screen above the input box, the status line kept");
+
+    // The screen still shows the turns before this one: a finished reply
+    // with a table, its steps, the prompt that started this turn.
+    const QString rule(60, QChar(0x2500));
+    const QStringList earlier{
+        QStringLiteral("● Bash(make check)"),
+        QStringLiteral("  ⎿  ok"),
+        QStringLiteral("● The fix works: builds are faster."),
+        QStringLiteral("  ┌───────┬────────┐"),
+        QStringLiteral("  │ Model │ Before │"),
+        QStringLiteral("  └───────┴────────┘"),
+        QStringLiteral("  TL;DR: faster."),
+        QStringLiteral("✻ Waiting for 3 background agents to finish"),
+    };
+    const QStringList box{rule, QStringLiteral("❯ "), rule, QStringLiteral("  ⏵⏵ auto mode")};
+    const auto compacting = earlier +
+                            QStringList{QStringLiteral("❯ /compact"), QString(),
+                                        QStringLiteral("✻ Compacting conversation… "
+                                                       "(2m 16s · ↓ 9.0k tokens)")} +
+                            box;
+    require(lapis::desktop::transcript::compacting_shown(compacting) &&
+                live_lines(compacting).isEmpty(),
+            "while compacting the tail is empty, never the screen");
+    require(!lapis::desktop::transcript::compacting_shown(screen), "thinking is not compacting");
+    const auto running = earlier +
+                         QStringList{QStringLiteral("❯ run the tests"),
+                                     QString(),
+                                     QStringLiteral("● Running the tests now."),
+                                     QStringLiteral("● Bash(ctest)"),
+                                     QStringLiteral("  ⎿  Running…"),
+                                     QStringLiteral("✶ Working… (12s)")} +
+                         box;
+    const auto tail = live_lines(running);
+    require(tail.size() == 3 && tail.front() == QStringLiteral("● Bash(ctest)") &&
+                !tail.join(QLatin1Char('\n')).contains(QStringLiteral("Before")),
+            "only the step in progress after this turn's prompt, no earlier reply");
+    // A turn woken by a background task has no prompt on screen; the reply
+    // the thread already shows is not repeated, only the status under it.
+    const auto woken = earlier + QStringList{QStringLiteral("✻ Working… (3s)")} + box;
+    const auto quiet = live_lines(woken, {QStringLiteral("The **fix** works: builds are faster.")});
+    require(quiet == QStringList{QStringLiteral("✻ Working… (3s)")},
+            "a reply already in the thread stays out of the tail");
+}
+
+// Claude Code writes a /compact as the person's text when it starts and its
+// command record (with the output) after the compaction: one command row
+// between turns, no turn of its own, and "compacting" while it runs.
+void compact_runs_between_turns() {
+    const char* const lines[] = {
+        R"({"type":"user","uuid":"a1","timestamp":"2026-01-01T10:00:00.000Z","message":{"content":"Build it"}})",
+        R"({"type":"assistant","uuid":"a2","timestamp":"2026-01-01T10:00:05.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"make"}}]}})",
+        R"({"type":"assistant","uuid":"a3","timestamp":"2026-01-01T10:00:09.000Z","message":{"content":[{"type":"text","text":"Built."}]}})",
+        R"({"type":"user","uuid":"a4","timestamp":"2026-01-01T10:05:00.000Z","message":{"content":"/compact"}})",
+    };
+    const char* const after[] = {
+        R"({"type":"system","subtype":"compact_boundary","uuid":"a5","timestamp":"2026-01-01T10:07:00.000Z","compactMetadata":{"postTokens":9000}})",
+        R"({"type":"user","uuid":"a6","isCompactSummary":true,"timestamp":"2026-01-01T10:07:00.000Z","message":{"content":"This session is being continued from a previous conversation."}})",
+        R"({"type":"user","uuid":"a7","isMeta":true,"timestamp":"2026-01-01T10:05:00.000Z","message":{"content":"<local-command-caveat>x</local-command-caveat>"}})",
+        R"({"type":"user","uuid":"a8","timestamp":"2026-01-01T10:05:00.000Z","message":{"content":"<command-name>/compact</command-name><command-args></command-args>"}})",
+        R"({"type":"user","uuid":"a9","timestamp":"2026-01-01T10:07:00.000Z","message":{"content":"<local-command-stdout>\u001b[2mCompacted\u001b[22m</local-command-stdout>"}})",
+        R"({"type":"user","uuid":"b1","timestamp":"2026-01-01T10:08:00.000Z","message":{"content":"Next"}})",
+    };
+    ClaudeReader reader;
+    for (const char* line : lines)
+        (void)reader.add(line);
+    const auto& items = reader.items();
+    require(items.back().kind == Kind::command && items.back().title == "/compact",
+            "a started /compact is a command, not a prompt");
+    require(reader.status().compacting_since > 0, "compacting while it runs");
+    auto layout = lapis::desktop::transcript::lay_out(items, {});
+    require(layout.turns.size() == 1 && layout.turns.front().closed,
+            "the compaction closes the turn before it and starts none");
+    for (const char* line : after)
+        (void)reader.add(line);
+    require(reader.status().compacting_since == 0, "compacting ends with its records");
+    int commands = 0, dividers = 0;
+    for (const auto& item : items) {
+        commands += item.kind == Kind::command ? 1 : 0;
+        dividers += item.kind == Kind::divider ? 1 : 0;
+    }
+    require(commands == 1 && dividers == 1, "one /compact row and one divider");
+    require(items[3].kind == Kind::command && items[3].result == "Compacted",
+            "its output joins the row it started");
+    layout = lapis::desktop::transcript::lay_out(items, {});
+    require(layout.turns.size() == 2 && layout.turns.back().start == 5,
+            "the next prompt starts the next turn");
 }
 
 void model_follows_file() {
@@ -745,6 +831,7 @@ int main(int argc, char** argv) {
     dialogs_are_seen();
     queued_prompts_show();
     paths_and_live_lines();
+    compact_runs_between_turns();
     model_follows_file();
     reply_splits_at_code();
     items_keep_their_record();

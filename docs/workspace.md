@@ -91,11 +91,15 @@ line opens the thinking and steps between, indented, under a summary of the
 work ("ran 4 commands, edited 2 files, read 3 files"); each step then opens on its own to show its command output
 or diff, and a step that took a second or more shows how long ("12s", "3m
 4s", "1h 2m", "2d 3h"). A turn still running shows every step as it happens,
-then **Working for 1m 12s** and, under it, the agent's own screen above its
-input box as it streams (thinking, tool output, the reply being written),
-dim and slightly soft; click it to read it all sharp. The CLI saves each
-block only once it is complete, so this live part comes from the terminal and
-gives way to the saved steps as they land. A prompt you send while the agent
+then **Working for 1m 12s** and, under it, the part of the agent's screen
+still in progress (the step running, the reply being written, the spinner
+line), dim and slightly soft; click it to read it all sharp. The CLI saves
+each block only once it is complete, so this live part comes from the
+terminal and gives way to the saved steps as they land. It never repeats
+what the thread already shows: earlier replies, tables and steps still on
+the screen stay out of it. While the conversation compacts (a `/compact`, or
+Claude Code's own when the context fills) the line reads **Compacting
+conversation for 1m 3s** with nothing under it. A prompt you send while the agent
 works shows at once, marked queued until the agent takes it in, and stays in
 view when its turn folds.
 
@@ -160,9 +164,9 @@ closest slash commands (letters in order match, so `/rp` finds
 Up and Down pick, Return runs the command, Tab fills it in to add to, and
 Escape closes the list. What a command prints shows under it in the thread
 ("/model", then "Set model to …"), as does a `!` shell command's output. One
-that runs for a while with no turn of its own, such as `/compact`, shows
-**Running /compact for 40s** with the agent's screen under it until it is
-done. A command that opens a dialog of the CLI's own (the pickers of `/model`
+that runs for a while with no turn of its own shows **Running /review for
+40s** with the agent's screen under it until it is done; `/compact` shows as
+one row between turns, with **Compacting conversation** while it runs. A command that opens a dialog of the CLI's own (the pickers of `/model`
 and `/effort` with nothing after them, `/config`, `/resume`, `/permissions`,
 `/mcp` and the like) shows the terminal, with the keyboard, for as long as the
 dialog is up, and the thread returns when it closes. The bar never types into

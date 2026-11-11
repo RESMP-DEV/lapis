@@ -544,7 +544,9 @@ QString path_at(const QString& text, int position, const QString& folder) {
     return QDir::cleanPath(info.absoluteFilePath()) + suffix;
 }
 
-QStringList live_lines(const QStringList& screen) {
+namespace {
+// The rows above Claude Code's input box, trailing spaces trimmed.
+QStringList above_input_box(const QStringList& screen) {
     // A row that is mostly a horizontal box rule: an input box's edge.
     const auto rule = [](const QString& row) {
         const auto trimmed = row.trimmed();
@@ -570,6 +572,91 @@ QStringList live_lines(const QStringList& screen) {
         while (!row.isEmpty() && row.back().isSpace())
             row.chop(1);
     }
+    return out;
+}
+
+// An echoed prompt: "❯ text" (or the older "> text") at column 0.
+bool prompt_row(const QString& row) {
+    return (row.startsWith(QChar(0x276F)) || row.startsWith(QLatin1Char('>'))) &&
+           (row.size() == 1 || row.at(1).isSpace());
+}
+
+// A message or step: led by "●" or "⏺" at column 0.
+bool block_row(const QString& row) {
+    return row.startsWith(QChar(0x25CF)) || row.startsWith(QChar(0x23FA));
+}
+
+// A status row: a spinner glyph at column 0, then a space ("✻ Thinking…").
+bool status_row(const QString& row) {
+    if (row.size() < 3 || !row.at(1).isSpace())
+        return false;
+    static const QString glyphs = QStringLiteral("✻✶✳✢✽✺✹✸✷·*∗");
+    return glyphs.contains(row.at(0));
+}
+
+// Letters and digits only, lowercased: text as the screen and the markdown
+// both show it, whatever the markup.
+QString letters(QStringView text, qsizetype limit) {
+    QString out;
+    for (const auto c : text) {
+        if (c.isLetterOrNumber())
+            out += c.toLower();
+        if (out.size() >= limit)
+            break;
+    }
+    return out;
+}
+} // namespace
+
+bool compacting_shown(const QStringList& screen) {
+    const auto rows = above_input_box(screen);
+    for (auto row = rows.size() - 1; row >= 0; --row) {
+        if (rows.at(row).trimmed().isEmpty())
+            continue;
+        if (status_row(rows.at(row)))
+            return rows.at(row).contains(QLatin1String("Compacting conversation"));
+        // Claude Code draws hints under its spinner; look a few rows up.
+        if (rows.size() - row > 4)
+            break;
+    }
+    return false;
+}
+
+QStringList live_lines(const QStringList& screen, const QStringList& shown) {
+    if (compacting_shown(screen))
+        return {};
+    QStringList out = above_input_box(screen);
+    // What came before the last echoed prompt is earlier turns'.
+    qsizetype start = 0;
+    for (auto row = out.size() - 1; row >= 0; --row)
+        if (prompt_row(out.at(row))) {
+            start = row + 1;
+            break;
+        }
+    // Of this turn's, only the last block is still being written; the
+    // blocks above it are finished and already in the thread.
+    qsizetype block = -1;
+    for (auto row = out.size() - 1; row >= start && block < 0; --row)
+        if (block_row(out.at(row)))
+            block = row;
+    if (block >= 0) {
+        start = block;
+        // A reply the thread already shows in full: keep only what follows.
+        const auto head = letters(QStringView(out.at(block)).mid(1), 24);
+        const bool rendered =
+            head.size() >= 8 && std::any_of(shown.begin(), shown.end(), [&head](const auto& text) {
+                return letters(text, head.size()) == head;
+            });
+        if (rendered) {
+            // Only the live status row: earlier ones ("Waiting for 3
+            // background agents") ended with the reply.
+            for (auto row = out.size() - 1; row >= block; --row)
+                if (status_row(out.at(row)))
+                    return {out.at(row)};
+            return {};
+        }
+    }
+    out = out.mid(start);
     while (!out.isEmpty() && out.front().trimmed().isEmpty())
         out.removeFirst();
     while (!out.isEmpty() && out.back().trimmed().isEmpty())
@@ -682,6 +769,10 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded) {
             }
             continue;
         }
+        if (item.between_turns && open >= 0) {
+            out.turns[static_cast<size_t>(open)].closed = true;
+            open = -1;
+        }
         // Text and an image sent together are one prompt in two items.
         const bool same_prompt = open >= 0 && item.kind == Kind::prompt && i > 0 &&
                                  items[static_cast<size_t>(i - 1)].kind == Kind::prompt &&
@@ -780,6 +871,18 @@ void ClaudeReader::push(Item item) {
     items_.push_back(std::move(item));
 }
 
+void ClaudeReader::command(const QString& raw) {
+    const auto name = tagged(raw, u"command-name");
+    status_.compacting_since = 0;
+    // The record a started /compact gets when it ends: already shown.
+    if (compact_item_ >= 0 && name == QLatin1String("/compact"))
+        return;
+    compact_item_ = -1;
+    auto item = make(Kind::command, name, tagged(raw, u"command-args"));
+    item.between_turns = name == QLatin1String("/compact");
+    push(std::move(item));
+}
+
 int ClaudeReader::command_output(const QString& raw) {
     // /model and /effort take effect now, before the next answer reports them.
     const auto said = without_escapes(tagged(raw, u"local-command-stdout")).trimmed();
@@ -800,10 +903,17 @@ int ClaudeReader::command_output(const QString& raw) {
             parts << text;
     }
     // Output belongs to the command just run; with anything else between
-    // (a compaction, a reply) there is no telling which command it answers.
-    if (parts.isEmpty() || items_.empty() || items_.back().kind != Kind::command)
+    // (a compaction, a reply) there is no telling which command it answers,
+    // except a /compact's, which comes after the compaction it ran.
+    int at = -1;
+    if (!items_.empty() && items_.back().kind == Kind::command)
+        at = static_cast<int>(items_.size()) - 1;
+    else if (compact_item_ >= 0)
+        at = compact_item_;
+    compact_item_ = -1;
+    if (parts.isEmpty() || at < 0)
         return -1;
-    auto& item = items_.back();
+    auto& item = items_[static_cast<size_t>(at)];
     // stdout and stderr can arrive as separate records for one command.
     const auto text = item.result.isEmpty()
                           ? parts.join(QLatin1Char('\n'))
@@ -811,7 +921,7 @@ int ClaudeReader::command_output(const QString& raw) {
     item.result_lines = static_cast<int>(text.count(QLatin1Char('\n'))) + 1;
     // A table (/context) reads whole, so only its size is bounded, not its lines.
     item.result = clip(text, result_preview_chars);
-    return static_cast<int>(items_.size()) - 1;
+    return at;
 }
 
 int ClaudeReader::add(const QByteArray& line) {
@@ -840,6 +950,7 @@ int ClaudeReader::add(const QByteArray& line) {
                                         .toObject()
                                         .value(QLatin1String("postTokens"))
                                         .toDouble());
+            status_.compacting_since = 0;
             push(make(Kind::divider, QStringLiteral("Conversation compacted")));
         } else if (subtype == QLatin1String("turn_duration")) {
             const auto ms =
@@ -861,8 +972,7 @@ int ClaudeReader::add(const QByteArray& line) {
             // A command run while a dialog was involved is recorded here
             // rather than as the person's message; it reads the same.
             if (content.contains(QLatin1String("<command-name>")))
-                push(make(Kind::command, tagged(content, u"command-name"),
-                          tagged(content, u"command-args")));
+                command(content);
             else
                 changed = command_output(content);
         } else if (subtype == QLatin1String("informational") ||
@@ -954,14 +1064,31 @@ int ClaudeReader::add(const QByteArray& line) {
             return;
         }
         if (raw.startsWith(QLatin1String("This session is being continued"))) {
-            push(make(Kind::divider, QStringLiteral("Continued from an earlier conversation")));
+            // Right after the compaction's own divider it is the same event.
+            if (items_.empty() || items_.back().kind != Kind::divider)
+                push(make(Kind::divider, QStringLiteral("Continued from an earlier conversation")));
             return;
         }
         if (raw.contains(QLatin1String("<command-name>"))) {
-            push(make(Kind::command, tagged(raw, u"command-name"), tagged(raw, u"command-args")));
+            command(raw);
             return;
         }
-        auto item = make(Kind::prompt, {}, clip(raw.trimmed(), body_chars));
+        const auto text = raw.trimmed();
+        if (text == QLatin1String("/compact") || text.startsWith(QLatin1String("/compact "))) {
+            // Claude Code writes a /compact as the person's text when the
+            // compaction starts, and its command record when it ends. It
+            // runs between turns: it starts none and joins none.
+            auto item = make(Kind::command, QStringLiteral("/compact"),
+                             text.mid(QLatin1String("/compact").size()).trimmed());
+            item.between_turns = true;
+            compact_item_ = static_cast<int>(items_.size());
+            status_.compacting_since = at_ms_;
+            push(std::move(item));
+            return;
+        }
+        status_.compacting_since = 0;
+        compact_item_ = -1;
+        auto item = make(Kind::prompt, {}, clip(text, body_chars));
         item.starts_turn = true;
         push(std::move(item));
         prompted = true;
@@ -1684,7 +1811,20 @@ double TranscriptModel::runningSince() const {
 QStringList TranscriptModel::liveLines(const QStringList& screen) const {
     // Cut at Claude Code's input box; another CLI's screen would stream its
     // own prompt and footer, so it shows no tail rather than a wrong one.
-    return screenKnown() ? transcript::live_lines(screen) : QStringList{};
+    if (!screenKnown())
+        return {};
+    // The latest replies the thread shows, so a finished one still on the
+    // screen is not repeated under "Working for".
+    QStringList shown;
+    const auto& items = reader_->items();
+    for (auto item = items.rbegin(); item != items.rend() && shown.size() < 3; ++item)
+        if (item->kind == transcript::Kind::reply && !item->body.isEmpty())
+            shown << item->body.left(400);
+    return transcript::live_lines(screen, shown);
+}
+
+bool TranscriptModel::compactingShown(const QStringList& screen) const {
+    return screenKnown() && transcript::compacting_shown(screen);
 }
 
 bool TranscriptModel::dialogShowing(const QStringList& screen) const {

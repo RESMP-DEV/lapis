@@ -311,11 +311,13 @@ int main(int argc, char** argv) {
         const auto rows = QString::fromUtf8(screen.readAll()).split(QLatin1Char('\n'));
         root->setProperty("interrupt", QVariant::fromValue(view.engine()->evaluate(
                                            QStringLiteral("(function () {})"))));
+        // The screen goes in as the app gives it, so the view's own timer
+        // reads the tail from it.
+        auto screen_of = view.engine()->evaluate(
+            QStringLiteral("(function (rows) { return function () { return rows } })"));
+        root->setProperty(
+            "screen", QVariant::fromValue(screen_of.call({view.engine()->toScriptValue(rows)})));
         root->setProperty("working", true);
-        root->setProperty("liveRows", model.liveLines(rows));
-        root->setProperty("turnSince",
-                          static_cast<double>(QDateTime::currentMSecsSinceEpoch() - 83'000));
-        root->setProperty("now", static_cast<double>(QDateTime::currentMSecsSinceEpoch()));
     }
     view.show(); // offscreen: nothing reaches the screen
     settle();
@@ -334,6 +336,12 @@ int main(int argc, char** argv) {
     }
     if (keys)
         return check_keys(view, root);
+    if (parser.isSet("live")) {
+        // What the running turn's footer shows: its rows, and compacting.
+        std::printf("live: %lld tail rows, compacting %d\n",
+                    static_cast<long long>(root->property("liveRows").toStringList().size()),
+                    root->property("compacting").toBool() ? 1 : 0);
+    }
     // What the system player found in each audio or video file shown.
     // Delegates hang off the view's items, not its QObject children.
     std::vector<QQuickItem*> players;

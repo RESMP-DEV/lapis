@@ -59,7 +59,10 @@ struct Item {
     bool queued{};
     // Withdrawn from the queue, or sent on as a turn of its own: not shown.
     bool dropped{};
-    bool quiet{};         // starts a turn without a row of its own (a background task's wake-up)
+    bool quiet{}; // starts a turn without a row of its own (a background task's wake-up)
+    // Ends any turn still open and stays outside turns (a /compact the
+    // person ran between turns), so it is never folded into a turn's work.
+    bool between_turns{};
     qint64 duration_ms{}; // a turn item: how long the turn took
 };
 
@@ -71,6 +74,9 @@ struct Status {
     qint64 context_tokens{}; // what the last request sent and got back
     // The window the CLI itself reported (Codex does), or 0 to look it up.
     qint64 window_tokens{};
+    // When a /compact the person ran started (ms since the epoch) while its
+    // compaction is still under way, else 0.
+    qint64 compacting_since{};
     bool operator==(const Status&) const = default;
 };
 // The model's context window in tokens, from Claude Code's own table: 1M for
@@ -153,9 +159,24 @@ struct Media {
 // file or folder exists; else empty.
 [[nodiscard]] QString path_at(const QString& text, int position, const QString& folder);
 
-// The rows of an agent's terminal screen above its input box (the last
-// box-rule pair from the bottom), blank rows at either end dropped.
-[[nodiscard]] QStringList live_lines(const QStringList& screen);
+// The live tail: what a running turn shows on Claude Code's screen that the
+// thread does not show yet. Claude Code draws, above its input box (the last
+// box-rule pair from the bottom), the conversation so far: echoed prompts
+// ("❯ text" at column 0), each message or step as a block led by "●" (or
+// "⏺") at column 0 with its output under it, and status rows led by a
+// spinner glyph ("✻ Thinking…"). The tail is only the part in progress: the
+// rows after the last echoed prompt, from the last block on, so earlier
+// replies, tables and steps the thread already renders never repeat in it.
+// A last block that is a reply the thread already shows (its first row
+// starts like one of `shown`, compared by letters and digits) is dropped,
+// keeping only the status rows after it. While Claude Code compacts the
+// conversation (see compacting_shown) the tail is empty. Blank rows at
+// either end are dropped.
+[[nodiscard]] QStringList live_lines(const QStringList& screen, const QStringList& shown = {});
+// Whether the lowest status row above Claude Code's input box says it is
+// compacting the conversation ("✻ Compacting conversation… (1m 3s)"), as a
+// /compact or an automatic compaction does.
+[[nodiscard]] bool compacting_shown(const QStringList& screen);
 
 // Whether Claude Code's screen shows a dialog (a picker, settings, a search)
 // in place of its input box: a full-width rule (a row of at least 20 U+2500
@@ -213,6 +234,8 @@ class ClaudeReader final : public Reader {
     // <bash-stdout> and their stderr), attached to the command it answers
     // when nothing else came between. Returns the item changed, or -1.
     int command_output(const QString& raw);
+    // A slash command's record (<command-name>, <command-args>).
+    void command(const QString& raw);
     qint64 at_ms_{};            // time of the record being read
     QString record_;            // uuid of the record being read
     QHash<QString, int> tools_; // tool_use id -> item index
@@ -220,6 +243,10 @@ class ClaudeReader final : public Reader {
     // not shown (background task notices). A dequeue names no text and
     // takes the oldest.
     std::vector<std::pair<QString, int>> queued_;
+    // The /compact item Claude Code writes as the person's text when the
+    // compaction starts, until its command record (written once it ends)
+    // and output come in; -1 when none is waiting.
+    int compact_item_{-1};
 };
 
 // Folds a Codex rollout (sessions/YYYY/MM/DD/rollout-*.jsonl, as Codex
@@ -284,6 +311,9 @@ class TranscriptModel final : public QAbstractListModel {
     Q_PROPERTY(QString effort READ effort NOTIFY statusChanged)
     Q_PROPERTY(qint64 contextTokens READ contextTokens NOTIFY statusChanged)
     Q_PROPERTY(qint64 contextWindow READ contextWindow NOTIFY statusChanged)
+    // When a /compact the person ran started (ms since the epoch) while it
+    // is still compacting, else 0.
+    Q_PROPERTY(double compactingSince READ compactingSince NOTIFY statusChanged)
     // Which CLI's file this is ("claude", "codex", "antigravity"), from its
     // name unless a tool chose one (setFormat).
     Q_PROPERTY(QString format READ formatName NOTIFY pathChanged)
@@ -368,9 +398,12 @@ class TranscriptModel final : public QAbstractListModel {
     // editors(), or auto for the first installed), at its line where the
     // editor takes one; folders open in the Finder.
     Q_INVOKABLE bool openPath(const QString& path, const QString& editor) const;
-    // The text rows the terminal screen shows above the agent's input box,
-    // trailing blanks trimmed: the turn as it streams.
+    // The part of a running turn the terminal screen shows and the thread
+    // does not yet (see transcript::live_lines): never an earlier reply,
+    // and nothing while the conversation compacts.
     Q_INVOKABLE [[nodiscard]] QStringList liveLines(const QStringList& screen) const;
+    // Whether the screen shows Claude Code compacting the conversation.
+    Q_INVOKABLE [[nodiscard]] bool compactingShown(const QStringList& screen) const;
     // Whether the terminal shows a dialog in place of the input box (see
     // transcript::dialog_showing). Both are Claude Code's layout: for other
     // CLIs (screenKnown false) liveLines is empty and dialogShowing false.
@@ -401,6 +434,9 @@ class TranscriptModel final : public QAbstractListModel {
     [[nodiscard]] const QString& model() const { return reader_->status().model; }
     [[nodiscard]] const QString& effort() const { return reader_->status().effort; }
     [[nodiscard]] qint64 contextTokens() const { return reader_->status().context_tokens; }
+    [[nodiscard]] double compactingSince() const {
+        return static_cast<double>(reader_->status().compacting_since);
+    }
     [[nodiscard]] qint64 contextWindow() const {
         return transcript::context_window(reader_->status());
     }
