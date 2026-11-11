@@ -20,7 +20,11 @@ PROTOCOL = ROOT / "services/session/src/transport/local_protocol.hpp"
 
 
 def cpp_enum(source, name):
-    """The enumerator names of `enum class <name>`, comments removed."""
+    """The enumerator names of `enum class <name>`, comments removed.
+
+    Deliberately strict: this is a source pin, not a C++ parser. Protocol
+    syntax or formatting changes must update this function and the pin test.
+    """
     body = re.search(rf"enum class {name}\b[^{{]*\{{(.*?)\}};", source, re.S)
     assert body, f"enum class {name} not found"
     text = re.sub(r"//[^\n]*", "", body.group(1))
@@ -35,6 +39,11 @@ def cpp_enum(source, name):
 
 
 def cpp_constant(source, name):
+    """Read one supported integer constexpr from the C++ source.
+
+    Deliberately strict: this is a source pin, not a C++ parser. Formatting
+    or expression changes must update this function and the pin test.
+    """
     match = re.search(rf"constexpr \w+ {name} = ([^;]+);", source)
     assert match, f"{name} not found"
     value = re.sub(r"qsizetype\{(\d+)\}", r"\1", match.group(1))
@@ -52,9 +61,20 @@ class FingerprintTests(unittest.TestCase):
     def pinned(self):
         source = LAUNCH_TEST.read_text(encoding="utf-8")
         block = source[source.index("const LaunchSpec pinned{") :]
-        self.assertIn('.program = QStringLiteral("/bin/sh")', block)
-        self.assertIn('{QStringLiteral("resume"), QStringLiteral("abc")}', block)
-        self.assertIn('.directory = QStringLiteral("/")', block)
+        spec = re.search(
+            r'\.program\s*=\s*QStringLiteral\("([^"]*)"\),\s*'
+            r"\.arguments\s*=\s*\{(.*?)\},\s*"
+            r'\.directory\s*=\s*QStringLiteral\("([^"]*)"\)',
+            block,
+            re.S,
+        )
+        self.assertIsNotNone(spec)
+        program, arguments, directory = spec.groups()
+        self.assertEqual(program, self.PROGRAM)
+        self.assertEqual(
+            re.findall(r'QStringLiteral\("([^"]*)"\)', arguments), self.ARGUMENTS
+        )
+        self.assertEqual(directory, self.DIRECTORY)
         found = dict(re.findall(r'AgentMode::(\w+),\s*"([0-9a-f]{64})"', block[:2000]))
         self.assertEqual(set(found), {"terminal", "codex", "claude"})
         return found

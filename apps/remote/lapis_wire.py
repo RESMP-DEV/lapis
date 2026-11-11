@@ -18,6 +18,7 @@ WIRE_VERSION = 6
 HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
 HISTORY_REQUEST, HISTORY_PAGE = 10, 11
 ATTENTION_SNAPSHOT, ATTENTION_DECISION, ATTENTION_RETRY = 12, 13, 14
+# Client request to end the agent; the service answers with `ended`.
 TERMINATE = 15
 # A turn of the wheel for a full-screen program (added within v6). Only a
 # service whose snapshots set ACCEPTS_WHEEL in the alternate-screen byte takes
@@ -29,8 +30,9 @@ WHEEL = 16
 PASTE_REQUEST, PASTE_RESULT = 17, 18
 
 # Attach modes (wire::AttachMode): discover takes the agent from its current
-# client; join (added within v6) shows it beside the desktop. Services started
-# before join reject it.
+# client; reconnect resumes one identity; create starts a new epoch; join
+# (added within v6) shows it beside the desktop. Python exposes every C++ mode
+# so the exhaustive pin catches drift even when this client never sends it.
 DISCOVER, RECONNECT, CREATE, JOIN = 0, 1, 2, 3
 ATTACH_PASTE_TRANSACTIONS = 0x20
 
@@ -72,7 +74,12 @@ def _require(condition, message):
 
 
 def qt_string(value):
-    """A QString as QDataStream (Qt 6, big-endian) writes a non-null one."""
+    """A QString as QDataStream (Qt 6, big-endian) writes a non-null one.
+
+    An empty Python string and a hypothetical null QString encode the same
+    zero byte length. Callers must not use this helper where null and empty
+    strings have different meanings.
+    """
     encoded = str(value).encode("utf-16-be")
     return struct.pack(">I", len(encoded)) + encoded
 
