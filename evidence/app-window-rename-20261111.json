@@ -24,6 +24,11 @@
       "receipt": "build/reports/quality/receipt.json"
     },
     {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py check",
+      "result": "passed; dev build, all 17 dev CTest cases, clang-format, Cppcheck and all clang-tidy partitions",
+      "receipt": "build/reports/dev/receipt.json"
+    },
+    {
       "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py ui-review --json",
       "result": "passed full background UI, shortcut and terminal-input checks",
       "receipt": "build/reports/ui-review/20261111T235358Z-fp78nvrk/receipt.json"
