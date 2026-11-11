@@ -1003,7 +1003,9 @@ FocusScope {
             MediaList {
                 anchors.right: parent.right
                 width: parent.width * 0.6
-                items: prompt.entry && root.model ? root.model.media(prompt.entry.body) : []
+                // Paths written in the prompt, then the images pasted into it.
+                items: prompt.entry && root.model
+                       ? root.model.media(prompt.entry.body + "\n" + prompt.entry.detail) : []
             }
             // The row's room is kept so hovering never moves the thread; its
             // buttons are made only while the pointer is over the message.

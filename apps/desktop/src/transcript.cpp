@@ -93,8 +93,20 @@ QString homeless(QString path) {
 }
 
 QString without_escapes(QString text) {
-    static const QRegularExpression escapes(QStringLiteral(R"(\x1b\[[0-9;?]*[ -/]*[@-~])"));
-    return text.remove(escapes);
+    if (!std::any_of(text.cbegin(), text.cend(), [](QChar c) {
+            return c.unicode() < 0x20 && c != QLatin1Char('\n') && c != QLatin1Char('\t');
+        }))
+        return text;
+    // Control sequences (CSI with any private marker), operating system
+    // commands (titles, colors, OSC 8 links) ended by BEL or ST, and other
+    // two-byte escapes; then any control character left (binary output),
+    // except tabs and newlines.
+    static const QRegularExpression escapes(QStringLiteral(
+        R"(\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[P_^X][^\x1b]*(?:\x1b\\)?|\x1b[ -~]?)"));
+    static const QRegularExpression controls(QStringLiteral(R"([\x00-\x08\x0b-\x1f\x7f])"));
+    text.remove(escapes);
+    text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    return text.remove(controls);
 }
 
 QString compact_json(const QJsonValue& value, qsizetype limit) {
@@ -296,11 +308,11 @@ void attach_result(Item& item, const QJsonObject& block) {
     // A file change that worked says so in a sentence the diff already shows.
     if (!item.failed && !item.diff.empty())
         return;
-    const auto text = without_escapes(result_text(block.value(QLatin1String("content")))).trimmed();
-    const auto lines = text.isEmpty() ? QStringList{} : text.split(QLatin1Char('\n'));
-    item.result_lines = static_cast<int>(lines.size());
-    item.result =
-        clip(lines.mid(0, result_preview_lines).join(QLatin1Char('\n')), result_preview_chars);
+    // Claude Code appends notes for the model to some results ("This file
+    // is already in your context"); the terminal never shows them.
+    static const QRegularExpression reminder(
+        QStringLiteral(R"((?:^|\n)<system-reminder>[\s\S]*</system-reminder>\s*$)"));
+    set_result(item, result_text(block.value(QLatin1String("content"))).remove(reminder));
 }
 } // namespace
 
@@ -1039,6 +1051,23 @@ int ClaudeReader::add(const QByteArray& line) {
             raw.startsWith(QLatin1String("<bash-std"))) {
             if (const int at = command_output(raw); at >= 0)
                 changed = changed < 0 ? at : std::min(changed, at);
+            return;
+        }
+        if (meta && raw.startsWith(QLatin1String("[Image: source: "))) {
+            // Where a pasted image was saved, written after the prompt that
+            // names it ("[Image #1]"): the prompt shows it when it exists.
+            const auto end = raw.lastIndexOf(QLatin1Char(']'));
+            const auto path = raw.mid(16, end < 16 ? -1 : end - 16).trimmed();
+            for (auto at = static_cast<int>(items_.size()) - 1; at >= 0; --at) {
+                auto& item = items_[static_cast<size_t>(at)];
+                if (item.kind != Kind::prompt)
+                    continue;
+                if (!path.isEmpty() && !item.detail.contains(path))
+                    item.detail +=
+                        (item.detail.isEmpty() ? QString() : QStringLiteral("\n")) + path;
+                changed = changed < 0 ? at : std::min(changed, at);
+                break;
+            }
             return;
         }
         if (meta || raw.startsWith(QLatin1String("<local-command-")))

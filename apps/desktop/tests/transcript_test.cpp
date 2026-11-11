@@ -455,6 +455,37 @@ void paths_and_live_lines() {
             "a reply already in the thread stays out of the tail");
 }
 
+// Tool output reads as the terminal shows it: no notes Claude Code appends
+// for the model, no escape sequences of any kind, no binary control bytes.
+void results_are_clean() {
+    ClaudeReader reader;
+    for (
+        const char* line : {
+            R"({"type":"assistant","message":{"content":[{"type":"tool_use","id":"r1","name":"Read","input":{"file_path":"/x/a.txt"}},{"type":"tool_use","id":"r2","name":"Bash","input":{"command":"probe"}},{"type":"tool_use","id":"r3","name":"Bash","input":{"command":"grep"}}]}})",
+            R"({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"r1","content":"<system-reminder>Already in context.</system-reminder>"}]}})",
+            R"({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"r2","content":"\u001b]10;?\u001b\\\u001b[>4;0mready\u0000\u0001 now\r\nok\n<system-reminder>Rate limited.</system-reminder>"}]}})",
+            R"({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"r3","content":"a.py: \"<system-reminder>\",\nb.py: done"}]}})",
+        })
+        (void)reader.add(line);
+    const auto& items = reader.items();
+    require(items.size() == 3, "three steps");
+    if (items.size() != 3)
+        return;
+    require(items[0].result.isEmpty(), "a result that is only a note for the model is empty");
+    require(items[1].result == "ready now\nok", "escapes, controls and the appended note go");
+    require(items[2].result.contains("<system-reminder>"), "a tag inside real output stays");
+
+    // A pasted image: the prompt names it, then a note gives where it was saved.
+    ClaudeReader pasted;
+    (void)pasted.add(
+        R"({"type":"user","message":{"content":[{"type":"text","text":"[Image #1] is this right?"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}]}})");
+    const int changed = pasted.add(
+        R"({"type":"user","isMeta":true,"message":{"content":[{"type":"text","text":"[Image: source: /tmp/shots/1.png]"}]}})");
+    require(pasted.items().size() == 1 && changed == 0 &&
+                pasted.items()[0].detail == QStringLiteral("/tmp/shots/1.png"),
+            "a pasted image's saved path joins its prompt");
+}
+
 // Claude Code writes a /compact as the person's text when it starts and its
 // command record (with the output) after the compaction: one command row
 // between turns, no turn of its own, and "compacting" while it runs.
@@ -832,6 +863,7 @@ int main(int argc, char** argv) {
     queued_prompts_show();
     paths_and_live_lines();
     compact_runs_between_turns();
+    results_are_clean();
     model_follows_file();
     reply_splits_at_code();
     items_keep_their_record();

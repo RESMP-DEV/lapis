@@ -40,7 +40,8 @@ struct Item {
     QString title;
     // A step's target (the command, the file), or a message's text.
     QString body;
-    // A step's description, or an other block's raw JSON.
+    // A step's description, an other block's raw JSON, or the paths of the
+    // images a prompt attached, one per line.
     QString detail;
     QString result; // a tool's or a command's output, shortened
     std::vector<DiffLine> diff;
