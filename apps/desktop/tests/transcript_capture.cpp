@@ -310,7 +310,8 @@ int check_structure(const QString& path, const TranscriptModel& model, Check& ch
                            QStringLiteral("<bash-input>"),
                            QStringLiteral("<bash-stdout>"),
                            QStringLiteral("<user-prompt-submit-hook>"),
-                           QStringLiteral("<tool-use-error>")};
+                           QStringLiteral("<tool-use-error>"),
+                           QStringLiteral("<pasted_content")};
     for (const auto& item : items) {
         const auto kind = lapis::desktop::transcript::kind_name(item.kind);
         kinds[kind] += 1;

@@ -484,6 +484,18 @@ void results_are_clean() {
     require(pasted.items().size() == 1 && changed == 0 &&
                 pasted.items()[0].detail == QStringLiteral("/tmp/shots/1.png"),
             "a pasted image's saved path joins its prompt");
+
+    // Pasted text: the prompt shows it without Claude Code's tags, and a
+    // queued prompt that starts with a paste is still the person's.
+    ClaudeReader text;
+    (void)text.add(
+        R"({"type":"user","message":{"content":"Look at this:\n<pasted_content id=\"ab12\">\nline one\nline two\n</pasted_content>\nwhy?"}})");
+    (void)text.add(
+        R"({"type":"queue-operation","operation":"enqueue","content":"<pasted_content id=\"cd34\">\nerror: x\n</pasted_content> fix it"})");
+    require(text.items().size() == 2 &&
+                text.items()[0].body == QStringLiteral("Look at this:\nline one\nline two\nwhy?") &&
+                text.items()[1].queued && text.items()[1].body == QStringLiteral("error: x fix it"),
+            "pastes show as their text, queued ones too");
 }
 
 // Claude Code writes a /compact as the person's text when it starts and its

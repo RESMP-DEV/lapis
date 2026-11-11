@@ -196,6 +196,16 @@ QString tagged(const QString& text, QStringView tag) {
     return text.mid(from, end < 0 ? -1 : end - from).trimmed();
 }
 
+// Claude Code saves pasted text inside <pasted_content id="..."> tags (its
+// terminal shows "[Pasted text #1]"); the prompt shows what was pasted.
+QString unwrap_pastes(QString text) {
+    if (!text.contains(QLatin1String("pasted_content")))
+        return text;
+    static const QRegularExpression tags(
+        QStringLiteral(R"(<pasted_content(?: [^>\n]*)?>\n?|\n?</pasted_content>)"));
+    return text.remove(tags);
+}
+
 QString result_text(const QJsonValue& content) {
     if (content.isString())
         return content.toString();
@@ -1020,11 +1030,13 @@ int ClaudeReader::add(const QByteArray& line) {
         const auto text = record.value(QLatin1String("content")).toString();
         if (operation == QLatin1String("enqueue")) {
             // Background task notices are not the person's words.
-            if (text.trimmed().isEmpty() || text.startsWith(QLatin1Char('<'))) {
+            // A prompt that starts with a paste is still the person's.
+            if (text.trimmed().isEmpty() || (text.startsWith(QLatin1Char('<')) &&
+                                             !text.startsWith(QLatin1String("<pasted_content")))) {
                 queued_.emplace_back(text, -1);
                 return -1;
             }
-            auto item = make(Kind::prompt, {}, clip(text.trimmed(), body_chars));
+            auto item = make(Kind::prompt, {}, clip(unwrap_pastes(text).trimmed(), body_chars));
             item.queued = true;
             queued_.emplace_back(text, first);
             push(std::move(item));
@@ -1128,7 +1140,7 @@ int ClaudeReader::add(const QByteArray& line) {
         }
         status_.compacting_since = 0;
         compact_item_ = -1;
-        auto item = make(Kind::prompt, {}, clip(text, body_chars));
+        auto item = make(Kind::prompt, {}, clip(unwrap_pastes(text).trimmed(), body_chars));
         item.starts_turn = true;
         push(std::move(item));
         prompted = true;
