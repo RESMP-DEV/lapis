@@ -445,11 +445,16 @@ int main(int argc, char** argv) {
                       "middle screens laid out; exits 1 on a problem"});
     parser.addOption(
         {"out-dir", "With --check, save the five screens as PNGs in this folder", "folder"});
+    parser.addOption({"list", "Print each row's index, kind and shape (no text), then exit"});
+    parser.addOption({"rows",
+                      "Shoot only these rows (indexes from --list, comma separated; N+ opens "
+                      "the \"Worked for\" row N)",
+                      "list"});
     parser.process(app);
     const bool keys = parser.isSet("keys");
     const bool checking = parser.isSet("check");
-    if (!keys && (!parser.isSet("jsonl") ||
-                  (!parser.isSet("out") && !parser.isSet("census") && !checking))) {
+    if (!keys && (!parser.isSet("jsonl") || (!parser.isSet("out") && !parser.isSet("census") &&
+                                             !parser.isSet("list") && !checking))) {
         std::fputs("--jsonl and --out are required\n", stderr);
         return 2;
     }
@@ -484,6 +489,31 @@ int main(int argc, char** argv) {
                     static_cast<long long>(load_ms), "memory after load MB", footprint_mb());
         if (const int failed = check_structure(parser.value("jsonl"), model, check); failed != 0)
             return failed;
+    }
+    if (parser.isSet("list")) {
+        // Rows by shape: a step's verb, a divider's or command's fixed name,
+        // and marks for tables, code, pasted images and folded steps.
+        for (int row = 0; row < model.rowCount(); ++row) {
+            const auto index = model.index(row);
+            const auto kind = model.data(index, TranscriptModel::KindRole).toString();
+            const auto body = model.data(index, TranscriptModel::BodyRole).toString();
+            QStringList marks;
+            if (kind == QLatin1String("work"))
+                marks << QStringLiteral("%1 steps")
+                             .arg(model.data(index, TranscriptModel::StepsRole).toInt());
+            if (kind == QLatin1String("tool") || kind == QLatin1String("divider") ||
+                kind == QLatin1String("command"))
+                marks << model.data(index, TranscriptModel::TitleRole).toString().left(40);
+            if (body.contains(QLatin1String("|---")) || body.contains(QLatin1String("| ---")))
+                marks << QStringLiteral("table");
+            if (body.contains(QLatin1String("```")))
+                marks << QStringLiteral("code");
+            if (kind == QLatin1String("prompt") &&
+                !model.data(index, TranscriptModel::DetailRole).toString().isEmpty())
+                marks << QStringLiteral("pasted image");
+            std::printf("%6d %-8s %s\n", row, qPrintable(kind), qPrintable(marks.join(", ")));
+        }
+        return 0;
     }
     if (parser.isSet("census")) {
         // What the reader made of a file, without any of its text: kinds,
@@ -705,7 +735,23 @@ int main(int argc, char** argv) {
         QImage image;
     };
     std::vector<Panel> panels{{QStringLiteral("Latest"), shot(view, list, -1)}};
-    if (parser.isSet("live")) {
+    if (parser.isSet("rows")) {
+        // Only the rows asked for (from --list), each centred; "N+" opens
+        // the turn of the "Worked for" row N first.
+        root->setProperty("following", false);
+        panels.clear();
+        for (const auto& wanted : parser.value("rows").split(QLatin1Char(','))) {
+            const bool open = wanted.endsWith(QLatin1Char('+'));
+            const int row = QStringView(wanted).left(wanted.size() - (open ? 1 : 0)).toInt();
+            if (open)
+                model.toggleWork(row);
+            panels.push_back({QStringLiteral("Row %1%2").arg(row).arg(open ? " opened" : ""),
+                              shot(view, list, open ? row + 1 : row)});
+            if (open)
+                model.toggleWork(row);
+        }
+        edit = failure = -1;
+    } else if (parser.isSet("live")) {
         // Opened, the tail reads sharp (the software renderer draws no blur,
         // so the folded tail shows only in the app).
         root->setProperty("liveOpen", true);
@@ -726,7 +772,7 @@ int main(int argc, char** argv) {
         if (model.data(model.index(row), TranscriptModel::KindRole).toString() ==
             QLatin1String("work"))
             work_rows.push_back(row);
-    if (!work_rows.empty()) {
+    if (!work_rows.empty() && !parser.isSet("rows")) {
         const int wanted = parser.value("work").toInt();
         work = wanted >= 1 && std::cmp_less_equal(wanted, work_rows.size())
                    ? work_rows[static_cast<size_t>(wanted - 1)]
