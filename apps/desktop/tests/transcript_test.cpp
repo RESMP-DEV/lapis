@@ -474,6 +474,12 @@ void results_are_clean() {
     require(items[0].result.isEmpty(), "a result that is only a note for the model is empty");
     require(items[1].result == "ready now\nok", "escapes, controls and the appended note go");
     require(items[2].result.contains("<system-reminder>"), "a tag inside real output stays");
+    (void)reader.add(
+        R"({"type":"assistant","message":{"content":[{"type":"tool_use","id":"r4","name":"Read","input":{"file_path":"/x/note.md"}}]}})");
+    (void)reader.add(
+        R"({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"r4","content":"<system-reminder>This file is 3 days old.</system-reminder>\n1\t---\n2\tname: note"}]}})");
+    require(items.size() == 4 && items[3].result == "1\t---\n2\tname: note",
+            "a note before the output goes too");
 
     // A pasted image: the prompt names it, then a note gives where it was saved.
     ClaudeReader pasted;

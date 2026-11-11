@@ -318,11 +318,15 @@ void attach_result(Item& item, const QJsonObject& block) {
     // A file change that worked says so in a sentence the diff already shows.
     if (!item.failed && !item.diff.empty())
         return;
-    // Claude Code appends notes for the model to some results ("This file
-    // is already in your context"); the terminal never shows them.
-    static const QRegularExpression reminder(
+    // Claude Code adds notes for the model before or after some results
+    // ("This file is already in your context", how old a memory file is);
+    // the terminal never shows them.
+    static const QRegularExpression trailing(
         QStringLiteral(R"((?:^|\n)<system-reminder>[\s\S]*</system-reminder>\s*$)"));
-    set_result(item, result_text(block.value(QLatin1String("content"))).remove(reminder));
+    static const QRegularExpression leading(
+        QStringLiteral(R"(^\s*<system-reminder>[\s\S]*?</system-reminder>\n?)"));
+    set_result(item,
+               result_text(block.value(QLatin1String("content"))).remove(leading).remove(trailing));
 }
 } // namespace
 
