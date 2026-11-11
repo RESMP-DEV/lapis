@@ -12,12 +12,14 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QImage>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickTextDocument>
 #include <QTemporaryDir>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -829,6 +831,89 @@ void media_is_found() {
             "a video macOS cannot play is a card for its app");
 }
 
+// A path standing alone as a paragraph shows as its picture in that place;
+// one inside a sentence, a list item or a fence stays text and its picture
+// goes under the reply, once.
+void media_shows_in_place() {
+    using lapis::desktop::transcript::pieces;
+    QTemporaryDir directory;
+    const auto picture = [&](const QString& name, bool clear) {
+        QImage image(40, 20, clear ? QImage::Format_ARGB32 : QImage::Format_RGB32);
+        image.fill(clear ? Qt::transparent : Qt::darkBlue);
+        const auto path = directory.filePath(name);
+        require(image.save(path), "picture fixture");
+        return path;
+    };
+    const auto first = picture(QStringLiteral("first.png"), false);
+    const auto second = picture(QStringLiteral("second one.png"), true);
+    const auto is_media = [](const auto& piece, const QString& path) {
+        return piece.media.path == path && piece.media.kind == QStringLiteral("image");
+    };
+
+    // Prose, picture, prose; the raw path is not prose any more.
+    bool missing = false;
+    auto parts = pieces(QStringLiteral("Before it:\n\n%1\n\n**After**").arg(first), &missing);
+    require(parts.size() == 3 && parts[0].text == QStringLiteral("Before it:") &&
+                is_media(parts[1], first) && parts[1].text == first &&
+                parts[2].text == QStringLiteral("**After**") && !missing,
+            "a lone path is its picture between the paragraphs around it");
+
+    // Backticks, a Markdown image (spaces inside <>), a bare link, two in one reply.
+    parts = pieces(
+        QStringLiteral("`%1`\n\nmiddle\n\n![a diagram](<%2>)\n\n[it](%1)").arg(first, second));
+    require(parts.size() == 4 && is_media(parts[0], first) && parts[1].text == "middle" &&
+                is_media(parts[2], second) && is_media(parts[3], first),
+            "backticked, image and link forms each show in place, in order");
+
+    // In a sentence, in a list item, indented, in a fence, or wrapped into a
+    // paragraph: text, not a picture.
+    const auto text_only = QStringLiteral("See %1 for it.\n\n- %1\n\n   %1\n\n```\n%1\n```\n\n"
+                                          "Lines run on\n%1")
+                               .arg(first);
+    parts = pieces(text_only);
+    require(std::none_of(parts.begin(), parts.end(),
+                         [](const auto& piece) { return !piece.media.path.isEmpty(); }),
+            "a path that is not its own paragraph stays text");
+    require(parts.size() == 3 && parts[1].code && parts[1].text == first,
+            "the fenced path stays in its code piece");
+
+    // A file not there yet stays text, and says so, so it is looked for again.
+    missing = false;
+    const auto later = directory.filePath(QStringLiteral("later.png"));
+    parts = pieces(QStringLiteral("Soon:\n\n%1").arg(later), &missing);
+    require(parts.size() == 1 && parts[0].text.endsWith(later) && missing,
+            "a missing file stays text and is marked missing");
+
+    // The model: in-place pieces, and only the rest under the reply.
+    TranscriptModel model;
+    const auto reply =
+        QStringLiteral("Look:\n\n%1\n\nAs %1 and [this](<%2>) show.").arg(first, second);
+    const auto shown = model.pieces(reply);
+    require(shown.size() == 3 && shown[1].toMap().value("media").toMap().value("path") == first &&
+                shown[0].toMap().value("media").isNull(),
+            "the model's pieces carry the media");
+    const auto under = model.replyMedia(reply);
+    require(under.size() == 1 && under[0].toMap().value("path") == second,
+            "under the reply only what is not shown in place");
+    require(under[0].toMap().value("alpha").toBool(), "alpha marks a clear picture");
+    require(!shown[1].toMap().value("media").toMap().value("alpha").toBool(),
+            "an opaque picture has no alpha");
+    // The missing file appears; the next layout of that reply finds it.
+    const auto pending = QStringLiteral("Now:\n\n%1").arg(later);
+    require(model.pieces(pending).size() == 1, "missing at first");
+    QImage(4, 4, QImage::Format_RGB32).save(later);
+    require(model.pieces(pending).size() == 2, "found when the reply is laid out again");
+
+    // More than 8: every lone path shows in place, and nothing repeats under it.
+    QStringList many;
+    for (int i = 0; i < 10; ++i)
+        many << picture(QStringLiteral("many%1.png").arg(i), false);
+    const auto lots = many.join(QStringLiteral("\n\n"));
+    parts = pieces(lots);
+    require(parts.size() == 10 && is_media(parts[9], many[9]), "ten lone paths, ten pictures");
+    require(model.replyMedia(lots).isEmpty(), "none repeat under the reply");
+}
+
 // Claude Code's own commands plus the person's commands and skills.
 void slash_commands_are_listed() {
     QTemporaryDir home;
@@ -1229,6 +1314,7 @@ int main(int argc, char** argv) {
     turns_fold();
     code_is_highlighted();
     media_is_found();
+    media_shows_in_place();
     slash_commands_are_listed();
     other_cli_slash_commands_are_listed();
     chart_style_is_written();

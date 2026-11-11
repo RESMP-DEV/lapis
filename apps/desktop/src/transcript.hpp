@@ -124,14 +124,31 @@ inline constexpr qsizetype body_chars = 24000;
 // "12s", "3m 12s", "1h 4m".
 [[nodiscard]] QString duration_text(qint64 ms);
 
+// Paths in a message to local media the view can show, in order, at most 8:
+// Markdown image and link targets, then bare absolute or ~ paths with a media
+// extension. Only files that exist count; `skip` holds paths left out (shown
+// elsewhere), and `missing`, when given, is set if a path with a media
+// extension named no file (yet), so a caller knows the answer may change.
+struct Media {
+    QString path;
+    QString kind; // image, animation, svg, audio, video, html, pdf, file
+};
+[[nodiscard]] std::vector<Media> find_media(const QString& text, const QSet<QString>& skip = {},
+                                            bool* missing = nullptr);
+
 // A reply split at its fenced code blocks: prose stays markdown, and each
-// block is its own piece so it can be copied whole.
+// block is its own piece so it can be copied whole. A paragraph that is only
+// a path to media that exists (bare, in backticks, or a Markdown image or
+// link to it, starting at the line's first column) is a media piece in its
+// place, so a picture shows where the reply names it; `text` keeps the
+// paragraph as written. `missing` is set as for find_media.
 struct Piece {
     bool code{};
     QString language;
     QString text;
+    Media media; // set (path not empty) for a media piece
 };
-[[nodiscard]] std::vector<Piece> pieces(const QString& markdown);
+[[nodiscard]] std::vector<Piece> pieces(const QString& markdown, bool* missing = nullptr);
 
 // Text fit to paste anywhere: Qt's paragraph and line separators become
 // newlines, no-break spaces plain spaces, invisible characters go, and
@@ -145,15 +162,6 @@ struct Piece {
 // The folder agents' chart styles live in (~/.lapis/visual); lapis points
 // local agents' MATPLOTLIBRC there once a style is written.
 [[nodiscard]] QString chart_style_folder();
-
-// Paths in a message to local media the view can show, in order, at most 8:
-// Markdown image and link targets, then bare absolute or ~ paths with a media
-// extension. Only files that exist count.
-struct Media {
-    QString path;
-    QString kind; // image, animation, svg, audio, video, html, pdf, file
-};
-[[nodiscard]] std::vector<Media> find_media(const QString& text);
 
 // The path written around `position` in `text` (absolute, ~, or relative to
 // `folder`), resolved, with any ":line[:column]" after it kept, when that
@@ -359,8 +367,12 @@ class TranscriptModel final : public QAbstractListModel {
     Q_INVOKABLE void readMore();
     // Reads the whole file on this thread; for tools that capture once.
     void loadNow();
-    // A reply's prose and code pieces: [{code, language, text}].
+    // A reply's prose, code and media pieces: [{code, language, text,
+    // media}], media being null or a map as media() gives.
     Q_INVOKABLE [[nodiscard]] QVariantList pieces(const QString& markdown) const;
+    // The media a reply names that its pieces do not already show in place,
+    // for the list under it (as media()).
+    Q_INVOKABLE [[nodiscard]] QVariantList replyMedia(const QString& markdown) const;
     // Lays markdown into a TextEdit's document with the view's fonts and
     // sizes, so headings, lists and inline code keep one scale and the text
     // stays selectable. `style` holds sans, mono, size, codeSize, codeColor
@@ -382,8 +394,9 @@ class TranscriptModel final : public QAbstractListModel {
                                                          const QString& folder) const;
     // Local files a message names that the view can show inline: Markdown
     // images and links, and absolute or ~ paths to images, audio, video,
-    // HTML and PDF that exist. Each {path, url, kind, name, size}; kind is
-    // image, animation (GIF), svg, audio, video, html or pdf.
+    // HTML and PDF that exist. Each {path, url, kind, name, type, width,
+    // height, alpha, size}; kind is image, animation (GIF), svg, audio,
+    // video, html or pdf; alpha marks a picture that can be see-through.
     Q_INVOKABLE [[nodiscard]] QVariantList media(const QString& text) const;
     // Writes the chart style agents' plots follow (a matplotlibrc and a
     // palette.json under ~/.lapis/visual) from the view's colors: background,
@@ -491,6 +504,18 @@ class TranscriptModel final : public QAbstractListModel {
     QByteArray pending_; // a line the CLI has not finished writing
     bool loading_{};
     quint64 generation_{};
+    // A reply's pieces and the media under it, worked out (with their disk
+    // checks and picture headers) once per text rather than each time its
+    // row is made while scrolling. An answer that named a missing file is
+    // not kept, so the file is looked for again when the row is next made.
+    struct ReplyParts {
+        QVariantList pieces;
+        QVariantList media;
+    };
+    [[nodiscard]] const ReplyParts& reply_parts(const QString& markdown) const;
+    static constexpr qsizetype kept_replies = 256;
+    mutable QHash<QString, ReplyParts> replies_;
+    mutable ReplyParts unsettled_;
 };
 } // namespace lapis::desktop
 #endif

@@ -198,8 +198,15 @@ equations centred on their own line. Dollar amounts and shell variables such as
 (matrices, aligned equations, fractions three deep, unfamiliar commands)
 shows its LaTeX source in the code style instead. Your own prompts show as you
 typed them. Images, SVGs, GIFs
-and charts a message names show inline at the column's width, under the reply
-(or under your prompt, for what you attached); click one to open it full size.
+and charts a message names show inline at the column's width. A path that
+stands alone as its own paragraph of a reply (bare, in backticks, or as a
+Markdown image or link) is replaced by its picture, player or card right there,
+between the paragraphs around it; a path inside a sentence, a list item or a
+code block stays text, and its file shows under the reply instead (under your
+prompt, for what you attached), never twice. A picture with transparency sits
+on the thread's own background with no frame. A path to a file that does not
+exist yet stays text until the reply is next drawn. Copying a reply still gives
+the path as written. Click a picture to open it full size.
 Audio (MP3, WAV, M4A, AAC, FLAC, AIFF) and video (MP4, MOV, M4V) play in place
 through macOS's own player: a video shows its first frame with a play button,
 and its controls (time, a line to seek along, ↗ to open it in its app) appear

@@ -331,16 +331,119 @@ void attach_result(Item& item, const QJsonObject& block) {
 }
 } // namespace
 
-std::vector<Piece> pieces(const QString& markdown) {
+namespace {
+// The file a media path names, when it exists and the view can show it.
+// `missing` is set when the path has a media extension but no file is there.
+std::optional<Media> media_file(QString path, bool* missing) {
+    static const QHash<QString, QString> kinds = {
+        {QStringLiteral("png"), QStringLiteral("image")},
+        {QStringLiteral("jpg"), QStringLiteral("image")},
+        {QStringLiteral("jpeg"), QStringLiteral("image")},
+        {QStringLiteral("bmp"), QStringLiteral("image")},
+        {QStringLiteral("webp"), QStringLiteral("image")},
+        {QStringLiteral("gif"), QStringLiteral("animation")},
+        {QStringLiteral("svg"), QStringLiteral("svg")},
+        {QStringLiteral("mp3"), QStringLiteral("audio")},
+        {QStringLiteral("wav"), QStringLiteral("audio")},
+        {QStringLiteral("m4a"), QStringLiteral("audio")},
+        {QStringLiteral("aac"), QStringLiteral("audio")},
+        {QStringLiteral("flac"), QStringLiteral("audio")},
+        {QStringLiteral("aiff"), QStringLiteral("audio")},
+        {QStringLiteral("caf"), QStringLiteral("audio")},
+        {QStringLiteral("mp4"), QStringLiteral("video")},
+        {QStringLiteral("mov"), QStringLiteral("video")},
+        {QStringLiteral("m4v"), QStringLiteral("video")},
+        // macOS's player cannot open these; they are cards for their app.
+        {QStringLiteral("ogg"), QStringLiteral("file")},
+        {QStringLiteral("opus"), QStringLiteral("file")},
+        {QStringLiteral("webm"), QStringLiteral("file")},
+        {QStringLiteral("mkv"), QStringLiteral("file")},
+        {QStringLiteral("html"), QStringLiteral("html")},
+        {QStringLiteral("htm"), QStringLiteral("html")},
+        {QStringLiteral("pdf"), QStringLiteral("pdf")},
+    };
+    if (path.startsWith(QLatin1String("file://")))
+        path = QUrl(path).toLocalFile();
+    if (path.startsWith(QLatin1String("~/")))
+        path = QDir::home().filePath(path.mid(2));
+    if (!path.startsWith(QLatin1Char('/')))
+        return std::nullopt;
+    const auto suffix = QFileInfo(path).suffix().toLower();
+    auto kind = kinds.value(suffix);
+    if (kind.isEmpty())
+        return std::nullopt;
+    if (!QFileInfo(path).isFile()) {
+        if (missing != nullptr)
+            *missing = true;
+        return std::nullopt;
+    }
+    // An image this build cannot decode (WebP without its plugin) is a card
+    // that opens it, not an empty frame.
+    static const auto readable = QImageReader::supportedImageFormats();
+    if ((kind == QLatin1String("image") || kind == QLatin1String("svg")) &&
+        !readable.contains(suffix.toLatin1()))
+        kind = QStringLiteral("file");
+    return Media{path, kind};
+}
+
+// The path a paragraph line is made of alone: a bare path, one in
+// backticks, or a Markdown image or link to it. Indented lines (list items'
+// continuations, indented code) and anything with other words are not.
+QString lone_path(const QString& line) {
+    if (line.isEmpty() || line.front().isSpace())
+        return {};
+    const auto text = line.trimmed();
+    static const QRegularExpression markdown(
+        QStringLiteral(R"(^!?\[[^\]]*\]\((?:<([^>\n]+)>|([^)\s]+))\)$)"));
+    if (const auto match = markdown.match(text); match.hasMatch())
+        return match.captured(1).isEmpty() ? match.captured(2) : match.captured(1);
+    auto path = text;
+    if (path.size() > 2 && path.startsWith(QLatin1Char('`')) && path.endsWith(QLatin1Char('`')))
+        path = path.mid(1, path.size() - 2);
+    const bool spaced = std::any_of(path.begin(), path.end(),
+                                    [](QChar c) { return c.isSpace() || c == QLatin1Char('`'); });
+    if (spaced || !(path.startsWith(QLatin1Char('/')) || path.startsWith(QLatin1String("~/")) ||
+                    path.startsWith(QLatin1String("file://"))))
+        return {};
+    return path;
+}
+
+// At most this many pictures a reply shows in place; later lone paths stay text.
+constexpr int inline_media_limit = 32;
+} // namespace
+
+std::vector<Piece> pieces(const QString& markdown, bool* missing) {
     std::vector<Piece> out;
     QStringList prose;
     QStringList code;
     QString fence;
     QString language;
-    const auto flush_prose = [&] {
-        const auto text = prose.join(QLatin1Char('\n')).trimmed();
+    int shown = 0;
+    const auto add_prose = [&out](const QStringList& lines) {
+        const auto text = lines.join(QLatin1Char('\n')).trimmed();
         if (!text.isEmpty())
-            out.push_back({false, {}, text});
+            out.push_back({false, {}, text, {}});
+    };
+    // A paragraph that is only a media path becomes that media, in place.
+    const auto flush_prose = [&] {
+        qsizetype from = 0;
+        for (qsizetype i = 0; i < prose.size() && shown < inline_media_limit; ++i) {
+            const bool alone = (i == 0 || prose[i - 1].trimmed().isEmpty()) &&
+                               (i + 1 == prose.size() || prose[i + 1].trimmed().isEmpty());
+            if (!alone)
+                continue;
+            const auto path = lone_path(prose[i]);
+            if (path.isEmpty())
+                continue;
+            const auto file = media_file(path, missing);
+            if (!file)
+                continue;
+            add_prose(prose.mid(from, i - from));
+            out.push_back({false, {}, prose[i].trimmed(), *file});
+            ++shown;
+            from = i + 1;
+        }
+        add_prose(prose.mid(from));
         prose.clear();
     };
     for (const auto& line : markdown.split(QLatin1Char('\n'))) {
@@ -359,7 +462,7 @@ std::vector<Piece> pieces(const QString& markdown) {
             }
             prose << line;
         } else if (trimmed.startsWith(fence) && trimmed.mid(fence.size()).trimmed().isEmpty()) {
-            out.push_back({true, language, code.join(QLatin1Char('\n'))});
+            out.push_back({true, language, code.join(QLatin1Char('\n')), {}});
             code.clear();
             fence.clear();
         } else {
@@ -367,7 +470,7 @@ std::vector<Piece> pieces(const QString& markdown) {
         }
     }
     if (!fence.isEmpty()) // an unclosed block still reads as code
-        out.push_back({true, language, code.join(QLatin1Char('\n'))});
+        out.push_back({true, language, code.join(QLatin1Char('\n')), {}});
     flush_prose();
     return out;
 }
@@ -464,34 +567,7 @@ std::unique_ptr<Reader> make_reader(Format format) {
 
 QString chart_style_folder() { return QDir::home().filePath(QStringLiteral(".lapis/visual")); }
 
-std::vector<Media> find_media(const QString& text) {
-    static const QHash<QString, QString> kinds = {
-        {QStringLiteral("png"), QStringLiteral("image")},
-        {QStringLiteral("jpg"), QStringLiteral("image")},
-        {QStringLiteral("jpeg"), QStringLiteral("image")},
-        {QStringLiteral("bmp"), QStringLiteral("image")},
-        {QStringLiteral("webp"), QStringLiteral("image")},
-        {QStringLiteral("gif"), QStringLiteral("animation")},
-        {QStringLiteral("svg"), QStringLiteral("svg")},
-        {QStringLiteral("mp3"), QStringLiteral("audio")},
-        {QStringLiteral("wav"), QStringLiteral("audio")},
-        {QStringLiteral("m4a"), QStringLiteral("audio")},
-        {QStringLiteral("aac"), QStringLiteral("audio")},
-        {QStringLiteral("flac"), QStringLiteral("audio")},
-        {QStringLiteral("aiff"), QStringLiteral("audio")},
-        {QStringLiteral("caf"), QStringLiteral("audio")},
-        {QStringLiteral("mp4"), QStringLiteral("video")},
-        {QStringLiteral("mov"), QStringLiteral("video")},
-        {QStringLiteral("m4v"), QStringLiteral("video")},
-        // macOS's player cannot open these; they are cards for their app.
-        {QStringLiteral("ogg"), QStringLiteral("file")},
-        {QStringLiteral("opus"), QStringLiteral("file")},
-        {QStringLiteral("webm"), QStringLiteral("file")},
-        {QStringLiteral("mkv"), QStringLiteral("file")},
-        {QStringLiteral("html"), QStringLiteral("html")},
-        {QStringLiteral("htm"), QStringLiteral("html")},
-        {QStringLiteral("pdf"), QStringLiteral("pdf")},
-    };
+std::vector<Media> find_media(const QString& text, const QSet<QString>& skip, bool* missing) {
     // Markdown targets first, then bare paths; quotes, brackets and
     // backticks end a path, as does trailing punctuation.
     static const QRegularExpression markdown(
@@ -500,27 +576,14 @@ std::vector<Media> find_media(const QString& text) {
         R"((?:^|[\s`'"(\[@])((?:~|/)[^\s`'"()<>\[\]]+\.([A-Za-z0-9]{2,5}))(?=$|[\s`'".,;:!?)\]]))"));
     std::vector<Media> found;
     QSet<QString> seen;
-    const auto consider = [&](QString path) {
+    const auto consider = [&](const QString& written) {
         if (found.size() >= 8)
             return;
-        if (path.startsWith(QLatin1String("file://")))
-            path = QUrl(path).toLocalFile();
-        if (path.startsWith(QLatin1String("~/")))
-            path = QDir::home().filePath(path.mid(2));
-        if (!path.startsWith(QLatin1Char('/')))
+        const auto file = media_file(written, missing);
+        if (!file || seen.contains(file->path) || skip.contains(file->path))
             return;
-        const auto suffix = QFileInfo(path).suffix().toLower();
-        auto kind = kinds.value(suffix);
-        if (kind.isEmpty() || seen.contains(path) || !QFileInfo(path).isFile())
-            return;
-        // An image this build cannot decode (WebP without its plugin) is a
-        // card that opens it, not an empty frame.
-        static const auto readable = QImageReader::supportedImageFormats();
-        if ((kind == QLatin1String("image") || kind == QLatin1String("svg")) &&
-            !readable.contains(suffix.toLatin1()))
-            kind = QStringLiteral("file");
-        seen.insert(path);
-        found.push_back({path, kind});
+        seen.insert(file->path);
+        found.push_back(*file);
     };
     for (auto it = markdown.globalMatch(text); it.hasNext();) {
         const auto match = it.next();
@@ -1491,13 +1554,69 @@ QString TranscriptModel::localPath(const QUrl& url) const {
     return url.isLocalFile() ? url.toLocalFile() : QString();
 }
 
+namespace {
+// A media file as the view takes it: {path, url, kind, name, type, width,
+// height, alpha, size}.
+QVariantMap media_map(const transcript::Media& item) {
+    const QFileInfo info(item.path);
+    // A picture's own size, read from its header (an SVG's from its width
+    // and height), so the view can lay it out before decoding; and whether
+    // it can be see-through, so it gets no frame drawn round it.
+    QSize pixels;
+    bool alpha = false;
+    if (item.kind == QLatin1String("image") || item.kind == QLatin1String("svg") ||
+        item.kind == QLatin1String("animation")) {
+        QImageReader reader(item.path);
+        pixels = reader.size();
+        alpha = item.kind == QLatin1String("svg") ||
+                QImage::toPixelFormat(reader.imageFormat()).alphaUsage() == QPixelFormat::UsesAlpha;
+    }
+    return QVariantMap{{QStringLiteral("path"), item.path},
+                       {QStringLiteral("url"), QUrl::fromLocalFile(item.path)},
+                       {QStringLiteral("kind"), item.kind},
+                       {QStringLiteral("name"), info.fileName()},
+                       {QStringLiteral("type"), info.suffix().toUpper()},
+                       {QStringLiteral("width"), pixels.width()},
+                       {QStringLiteral("height"), pixels.height()},
+                       {QStringLiteral("alpha"), alpha},
+                       {QStringLiteral("size"), info.size()}};
+}
+} // namespace
+
+const TranscriptModel::ReplyParts& TranscriptModel::reply_parts(const QString& markdown) const {
+    if (const auto kept = replies_.constFind(markdown); kept != replies_.cend())
+        return *kept;
+    bool missing = false;
+    ReplyParts parts;
+    QSet<QString> shown;
+    for (const auto& piece : transcript::pieces(markdown, &missing)) {
+        const bool media = !piece.media.path.isEmpty();
+        if (media)
+            shown.insert(piece.media.path);
+        parts.pieces.append(
+            QVariantMap{{QStringLiteral("code"), piece.code},
+                        {QStringLiteral("language"), piece.language},
+                        {QStringLiteral("text"), piece.text},
+                        {QStringLiteral("media"),
+                         media ? QVariant(media_map(piece.media)) : QVariant::fromValue(nullptr)}});
+    }
+    for (const auto& item : transcript::find_media(markdown, shown, &missing))
+        parts.media.append(media_map(item));
+    if (missing) {
+        unsettled_ = std::move(parts);
+        return unsettled_;
+    }
+    if (replies_.size() >= kept_replies)
+        replies_.clear();
+    return *replies_.insert(markdown, std::move(parts));
+}
+
 QVariantList TranscriptModel::pieces(const QString& markdown) const {
-    QVariantList out;
-    for (const auto& piece : transcript::pieces(markdown))
-        out.append(QVariantMap{{QStringLiteral("code"), piece.code},
-                               {QStringLiteral("language"), piece.language},
-                               {QStringLiteral("text"), piece.text}});
-    return out;
+    return reply_parts(markdown).pieces;
+}
+
+QVariantList TranscriptModel::replyMedia(const QString& markdown) const {
+    return reply_parts(markdown).media;
 }
 
 void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
@@ -1668,23 +1787,8 @@ QVariantList TranscriptModel::slashCommands(const QString& harness, const QStrin
 
 QVariantList TranscriptModel::media(const QString& text) const {
     QVariantList out;
-    for (const auto& item : transcript::find_media(text)) {
-        const QFileInfo info(item.path);
-        // A picture's own size, read from its header (an SVG's from its
-        // width and height), so the view can lay it out before decoding.
-        QSize pixels;
-        if (item.kind == QLatin1String("image") || item.kind == QLatin1String("svg") ||
-            item.kind == QLatin1String("animation"))
-            pixels = QImageReader(item.path).size();
-        out.append(QVariantMap{{QStringLiteral("path"), item.path},
-                               {QStringLiteral("url"), QUrl::fromLocalFile(item.path)},
-                               {QStringLiteral("kind"), item.kind},
-                               {QStringLiteral("name"), info.fileName()},
-                               {QStringLiteral("type"), info.suffix().toUpper()},
-                               {QStringLiteral("width"), pixels.width()},
-                               {QStringLiteral("height"), pixels.height()},
-                               {QStringLiteral("size"), info.size()}});
-    }
+    for (const auto& item : transcript::find_media(text))
+        out.append(media_map(item));
     return out;
 }
 

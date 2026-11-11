@@ -830,8 +830,11 @@ FocusScope {
                 cursorShape: Qt.PointingHandCursor
                 onClicked: if (parent.media) Qt.openUrlExternally(parent.media.url)
             }
+            // A frame round an opaque picture; a see-through one (a diagram
+            // of strokes) sits on the thread's own background, unframed.
             Rectangle {
                 anchors.fill: parent
+                visible: !(parent.media && parent.media.alpha)
                 color: "transparent"
                 border.color: root.borderColor
                 radius: 4
@@ -1074,13 +1077,15 @@ FocusScope {
                 delegate: Loader {
                     required property var modelData
                     width: reply.width
-                    sourceComponent: modelData.code ? codePiece : prosePiece
+                    sourceComponent: modelData.media ? mediaPiece : modelData.code ? codePiece : prosePiece
                     property var piece: modelData
                 }
             }
+            // Media the reply names in a sentence; a path standing alone
+            // already shows in its place above.
             MediaList {
                 width: parent.width
-                items: reply.entry && root.model ? root.model.media(reply.entry.body) : []
+                items: reply.entry && root.model ? root.model.replyMedia(reply.entry.body) : []
             }
             Item {
                 width: parent.width
@@ -1118,6 +1123,15 @@ FocusScope {
                 target: root
                 function onStyleKeyChanged() { prose.restyle() }
             }
+        }
+    }
+
+    // A path standing alone in a reply, shown as its picture (or player or
+    // card) where the reply names it.
+    Component {
+        id: mediaPiece
+        MediaList {
+            items: parent && parent.piece && parent.piece.media ? [parent.piece.media] : []
         }
     }
 
