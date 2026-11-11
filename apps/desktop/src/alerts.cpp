@@ -19,7 +19,7 @@ SeenScreens::SeenScreens(Workspace& workspace, Looking looking, QObject* parent)
     timer_.start();
 }
 
-size_t SeenScreens::fingerprint(const SessionPreview* item) {
+size_t SeenScreens::fingerprint(const Agent* item) {
     auto lines = terminal_screen_text(item->snapshot()).split(QLatin1Char('\n'));
     // Claude Code draws its input box between two rules of box-drawing
     // characters; keep what is above. A border may open with a corner or
@@ -53,7 +53,7 @@ size_t SeenScreens::fingerprint(const SessionPreview* item) {
     return static_cast<size_t>(hash);
 }
 
-void SeenScreens::see(const SessionPreview* item) {
+void SeenScreens::see(const Agent* item) {
     if (item == nullptr)
         return;
     if (!seen_.contains(item))
@@ -95,7 +95,7 @@ void SeenScreens::sample() {
         see(shown);
 }
 
-bool SeenScreens::unchanged(const SessionPreview* item) const {
+bool SeenScreens::unchanged(const Agent* item) const {
     // Null matches see()'s tolerance: an item that was never on screen has
     // nothing seen to compare against, so it counts as changed (the chime
     // plays), the same behavior the signal path had before this class
@@ -126,7 +126,7 @@ bool Alerts::ring(Chime chime) {
     return true;
 }
 
-void Alerts::finished(SessionPreview* item) {
+void Alerts::finished(Agent* item) {
     if (!config_.finishSound())
         return record(item, "finished", "chime off");
     if (looking_(item)) {
@@ -139,7 +139,7 @@ void Alerts::finished(SessionPreview* item) {
     record(item, "finished", ring(Chime::finished) ? "chimed" : "quiet: another chime just played");
 }
 
-void Alerts::record(const SessionPreview* item, const char* event, const char* decision) const {
+void Alerts::record(const Agent* item, const char* event, const char* decision) const {
     if (!log_ || item == nullptr)
         return;
     log_({{"at", QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},

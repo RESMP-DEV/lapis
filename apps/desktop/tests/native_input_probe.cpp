@@ -31,7 +31,7 @@
 #include <string>
 
 namespace {
-using lapis::desktop::SessionPreview;
+using lapis::desktop::Agent;
 using lapis::desktop::TerminalSurface;
 using lapis::desktop::test::NativeInputDriver;
 using lapis::desktop::test::NativeModifiers;
@@ -138,11 +138,11 @@ struct Fixture {
 };
 struct Qualification {
     Fixture fixture;
-    SessionPreview document{QStringLiteral("native input qualification"),
-                            fixture.directory.path(),
-                            {},
-                            QColor(Qt::white),
-                            ""};
+    Agent document{QStringLiteral("native input qualification"),
+                   fixture.directory.path(),
+                   {},
+                   QColor(Qt::white),
+                   ""};
     QQuickWindow window;
     TerminalSurface surface{window.contentItem()};
     NativeInputDriver driver;
@@ -226,8 +226,8 @@ struct Qualification {
     }
     void focus_transition() {
         Fixture other_fixture;
-        SessionPreview other_document(QStringLiteral("focus destination"),
-                                      other_fixture.directory.path(), {}, QColor(Qt::white), "");
+        Agent other_document(QStringLiteral("focus destination"), other_fixture.directory.path(),
+                             {}, QColor(Qt::white), "");
         QQuickWindow other;
         other.setTitle(QStringLiteral("lapis native focus destination"));
         other.setGeometry(150, 150, 600, 320);

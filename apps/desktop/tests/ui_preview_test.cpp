@@ -101,7 +101,7 @@ int run_workspace_tests() {
     CHECK(sessions.size() == static_cast<qsizetype>(expected_ids.size()));
     std::size_t session_index = 0;
     for (const auto& value : sessions) {
-        auto* session = qvariant_cast<lapis::desktop::SessionPreview*>(value);
+        auto* session = qvariant_cast<lapis::desktop::Agent*>(value);
         CHECK(session != nullptr);
         CHECK(session->sessionId() == expected_ids.at(session_index));
         CHECK(!session->live());
@@ -115,9 +115,9 @@ int run_workspace_tests() {
 
     auto* agent = workspace.session(QStringLiteral("agent"));
     AttentionRecorder recorder;
-    QObject::connect(agent, &lapis::desktop::SessionPreview::attentionChanged, &recorder,
+    QObject::connect(agent, &lapis::desktop::Agent::attentionChanged, &recorder,
                      [&recorder] { ++recorder.changed_count; });
-    QObject::connect(agent, &lapis::desktop::SessionPreview::attentionArrived, &recorder,
+    QObject::connect(agent, &lapis::desktop::Agent::attentionArrived, &recorder,
                      [&recorder] { ++recorder.arrived_count; });
 
     const quint32 initial_serial = agent->attentionSerial();
@@ -718,7 +718,7 @@ void check_lazy_command_models(QQuickWindow& window, lapis::desktop::Workspace& 
     CHECK(sessions.size() >= 2);
     QString alternate;
     for (const auto& value : sessions) {
-        auto* session = value.value<lapis::desktop::SessionPreview*>();
+        auto* session = value.value<lapis::desktop::Agent*>();
         if (session != nullptr && session->sessionId() != initial_id) {
             alternate = session->sessionId();
             break;
@@ -936,7 +936,7 @@ ColoredArea colored_area(const QImage& image, QRgb color) {
     }
     return area;
 }
-void check_cursor_rendering(lapis::desktop::SessionPreview& document, QQuickWindow& window) {
+void check_cursor_rendering(lapis::desktop::Agent& document, QQuickWindow& window) {
     using namespace lapis::session;
     TerminalSnapshot snapshot;
     snapshot.size = {4, 2};
@@ -1073,8 +1073,7 @@ int run_surface_tests(bool background) {
 int run_preview_frame_sync_tests() {
     using namespace lapis::desktop;
     using namespace lapis::session;
-    SessionPreview document{
-        QStringLiteral("frame-sync"), QStringLiteral("/tmp"), {}, QColor(Qt::white), ""};
+    Agent document{QStringLiteral("frame-sync"), QStringLiteral("/tmp"), {}, QColor(Qt::white), ""};
     QQuickWindow window;
     window.resize(440, 220);
     auto* stage = new TerminalSurface(window.contentItem()); // parent owns it
@@ -1227,7 +1226,7 @@ QRectF scene_rect(const QQuickItem& item) {
 QStringList strip_ids(const lapis::desktop::Workspace& workspace) {
     QStringList ids;
     for (const auto& value : workspace.categorySessions())
-        ids.append(value.value<lapis::desktop::SessionPreview*>()->sessionId());
+        ids.append(value.value<lapis::desktop::Agent*>()->sessionId());
     return ids;
 }
 
@@ -1357,7 +1356,7 @@ void check_text_size(QQuickWindow& window, lapis::desktop::Workspace& workspace,
     auto* terminal =
         qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
     for (const auto& value : workspace.categorySessions()) {
-        auto* session = value.value<lapis::desktop::SessionPreview*>();
+        auto* session = value.value<lapis::desktop::Agent*>();
         if (session->title() == QStringLiteral("Codex"))
             CHECK(workspace.selectSession(session->sessionId()));
     }
@@ -1500,7 +1499,7 @@ void reveal_card(QQuickWindow& window, const lapis::desktop::Workspace& workspac
     CHECK(strip != nullptr);
     const auto list = workspace.categorySessions();
     for (qsizetype i = 0; i < list.size(); ++i)
-        if (list[i].value<lapis::desktop::SessionPreview*>()->sessionId() == id)
+        if (list[i].value<lapis::desktop::Agent*>()->sessionId() == id)
             CHECK(QMetaObject::invokeMethod(strip, "positionViewAtIndex", Q_ARG(int, int(i)),
                                             Q_ARG(int, 2 /* ListView.Contain */)));
     pump(30);
@@ -1928,7 +1927,7 @@ int run_attention_ui_tests() {
 QString focused_id(const lapis::desktop::Workspace& workspace) {
     return workspace.focusedSession() ? workspace.focusedSession()->sessionId() : QString();
 }
-void finish_turn(lapis::desktop::SessionPreview& session) {
+void finish_turn(lapis::desktop::Agent& session) {
     namespace wire = lapis::session::wire;
     wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
@@ -2356,7 +2355,7 @@ int run_strip_ui_tests() {
         const auto right = left + card->width();
         if (!(left >= -1 && right <= strip->width() + 1))
             return false;
-        const bool first = list.front().value<SessionPreview*>() == workspace.focusedSession();
+        const bool first = list.front().value<Agent*>() == workspace.focusedSession();
         if (forward)
             return strip->width() - right >= card_width * 0.35;
         return first || left >= card_width * 0.35;
@@ -2480,8 +2479,8 @@ int run_strip_ui_tests() {
     const auto list = workspace.categorySessions();
     QString after;
     for (qsizetype i = 0; i + 1 < list.size(); ++i)
-        if (list[i].value<SessionPreview*>()->sessionId() == QStringLiteral("agent"))
-            after = list[i + 1].value<SessionPreview*>()->sessionId();
+        if (list[i].value<Agent*>()->sessionId() == QStringLiteral("agent"))
+            after = list[i + 1].value<Agent*>()->sessionId();
     press("closeAgent");
     CHECK(workspace.session(QStringLiteral("agent")) == nullptr);
     CHECK(focused_id(workspace) == after && terminal->hasActiveFocus());
@@ -2847,8 +2846,7 @@ int main(int argc, char** argv) {
     QCoreApplication::setApplicationName(QStringLiteral("lapis-ui-preview-tests"));
     QCoreApplication::setOrganizationName(QStringLiteral("lapis"));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
-    qmlRegisterUncreatableType<lapis::desktop::SessionPreview>("Lapis", 1, 0, "SessionPreview",
-                                                               "Owned by workspace");
+    qmlRegisterUncreatableType<lapis::desktop::Agent>("Lapis", 1, 0, "Agent", "Owned by workspace");
     qmlRegisterType<lapis::desktop::TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
     // Render-thread shutdown posts signal proxies to the GUI thread. Finish
     // their delivery and deferred deletion before destroying the application.

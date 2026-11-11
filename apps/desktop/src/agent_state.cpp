@@ -44,7 +44,7 @@ AgentStatePublisher::AgentStatePublisher(Workspace& workspace, NextPrompt* next,
     });
     connect(&workspace_, &Workspace::categoriesChanged, this, &AgentStatePublisher::changed);
     connect(&workspace_, &Workspace::parkedChanged, this, &AgentStatePublisher::changed);
-    connect(&workspace_, &Workspace::turnFinished, this, [this](SessionPreview* item) {
+    connect(&workspace_, &Workspace::turnFinished, this, [this](Agent* item) {
         if (item != nullptr)
             turn_at_ms_.insert(item->sessionId(), QDateTime::currentMSecsSinceEpoch());
         changed();
@@ -62,15 +62,15 @@ AgentStatePublisher::~AgentStatePublisher() { writer_.waitForDone(); }
 void AgentStatePublisher::watchSessions() {
     QSet<QString> live;
     for (const auto& value : workspace_.sessions()) {
-        auto* item = value.value<SessionPreview*>();
+        auto* item = value.value<Agent*>();
         if (item == nullptr)
             continue;
         live.insert(item->sessionId());
-        connect(item, &SessionPreview::statusChanged, this, &AgentStatePublisher::changed,
+        connect(item, &Agent::statusChanged, this, &AgentStatePublisher::changed,
                 Qt::UniqueConnection);
-        connect(item, &SessionPreview::attentionChanged, this, &AgentStatePublisher::changed,
+        connect(item, &Agent::attentionChanged, this, &AgentStatePublisher::changed,
                 Qt::UniqueConnection);
-        connect(item, &SessionPreview::unseenChanged, this, &AgentStatePublisher::changed,
+        connect(item, &Agent::unseenChanged, this, &AgentStatePublisher::changed,
                 Qt::UniqueConnection);
     }
     // Agents that were removed keep no turn time.
@@ -87,7 +87,7 @@ void AgentStatePublisher::changed() {
 QJsonObject AgentStatePublisher::state() const {
     QJsonArray agents;
     for (const auto& value : workspace_.sessions()) {
-        const auto* item = value.value<SessionPreview*>();
+        const auto* item = value.value<Agent*>();
         if (item == nullptr)
             continue;
         const auto& id = item->sessionId();

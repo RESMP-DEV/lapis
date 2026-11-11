@@ -54,7 +54,7 @@
 #include <vector>
 
 namespace {
-using lapis::desktop::SessionPreview;
+using lapis::desktop::Agent;
 using lapis::desktop::Workspace;
 
 double now_ms() {
@@ -98,7 +98,7 @@ QQuickItem* find_visual(QQuickItem* parent, const QString& name) {
             return match;
     return nullptr;
 }
-QString title(const SessionPreview* item) { return item != nullptr ? item->title() : QString(); }
+QString title(const Agent* item) { return item != nullptr ? item->title() : QString(); }
 
 // A stand-in CLI: a screen of distinct, colored text, then a quiet wait. It
 // remains this script process, so cleanup can identify it by the private home.
@@ -204,7 +204,7 @@ std::vector<std::vector<QString>> start_agents(Workspace& workspace, const Optio
         [&workspace] {
             const auto sessions = workspace.sessions();
             return std::all_of(sessions.cbegin(), sessions.cend(), [](const QVariant& value) {
-                return value.value<SessionPreview*>()->inputReady();
+                return value.value<Agent*>()->inputReady();
             });
         },
         30000, "agents ready");
@@ -320,7 +320,7 @@ class Bench : public QObject {
         pump(options_.gap);
         return true;
     }
-    void trace(const SessionPreview* was) const {
+    void trace(const Agent* was) const {
         std::cerr << "switch " << title(was).toStdString() << " -> "
                   << title(workspace_.focusedSession()).toStdString() << '\n';
     }
@@ -331,7 +331,7 @@ class Bench : public QObject {
         agent_keys_.unchanged += workspace_.focusedSession() == before ? 1 : 0;
     }
 
-    [[nodiscard]] bool cardOnScreen(const SessionPreview* item) const {
+    [[nodiscard]] bool cardOnScreen(const Agent* item) const {
         auto* card =
             find_visual(window_.contentItem(), QStringLiteral("cardPress_") + item->sessionId());
         if (card == nullptr)
@@ -343,13 +343,13 @@ class Bench : public QObject {
     // A click on an on-screen strip card of the active category, cycling.
     void clickCard(int index) {
         const auto list = workspace_.categorySessions();
-        const SessionPreview* target = nullptr;
+        const Agent* target = nullptr;
         until(
             [&] {
                 target = nullptr;
                 for (qsizetype step = 0; step < list.size() && target == nullptr; ++step) {
                     const auto* item =
-                        list.at((index * 3 + 1 + step) % list.size()).value<SessionPreview*>();
+                        list.at((index * 3 + 1 + step) % list.size()).value<Agent*>();
                     if (item != workspace_.focusedSession() && cardOnScreen(item))
                         target = item;
                 }
@@ -470,7 +470,7 @@ QJsonObject measure(const Options& options, const QTemporaryDir& home) {
     start_agents(workspace, options, folder);
     const auto close_agents = qScopeGuard([&workspace] {
         for (const auto& value : workspace.sessions())
-            workspace.closeSession(value.value<SessionPreview*>()->sessionId(), true);
+            workspace.closeSession(value.value<Agent*>()->sessionId(), true);
         pump(500);
     });
 #ifdef LAPIS_BENCH_INTERACTION_LOG
@@ -547,8 +547,7 @@ int run(int argc, char** argv) {
     QCoreApplication::setApplicationName(QStringLiteral("lapis-switch-benchmark"));
     QCoreApplication::setOrganizationName(QStringLiteral("lapis"));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
-    qmlRegisterUncreatableType<SessionPreview>("Lapis", 1, 0, "SessionPreview",
-                                               "Owned by workspace");
+    qmlRegisterUncreatableType<Agent>("Lapis", 1, 0, "Agent", "Owned by workspace");
     qmlRegisterType<lapis::desktop::TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
     const auto drain = qScopeGuard([] {
         QCoreApplication::sendPostedEvents();

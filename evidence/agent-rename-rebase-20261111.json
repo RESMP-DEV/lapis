@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-11T23:43:22Z",
+  "agent": "Codex triage parent with read-only rename audit",
+  "base_revision": "b5fa0c121741421ac1fbf9c3a986bef1f3aada3f",
+  "source_revision": "a6128fbf026a019c97be1489d6c22512e83e755c",
+  "runtime_validation_revision": "a6128fbf026a019c97be1489d6c22512e83e755c",
+  "original_pr_head": "51b01c2f4216c095cb9e67e4fc17192a37a59f69",
+  "scope": "PR 202 SessionPreview-to-Agent rename rebased over merged PRs 201 and 203.",
+  "changed_source_manifest": {
+    "algorithm": "shasum -a 256 of: git diff --binary --full-index b5fa0c121741421ac1fbf9c3a986bef1f3aada3f..a6128fbf026a019c97be1489d6c22512e83e755c -- ':(exclude)evidence/*'",
+    "digest": "a55207fb9b7de3496faf4a0c98b55ed682a576554e7f4b9a106a1257adef6c72",
+    "changed_paths": 31
+  },
+  "validation": [
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py build",
+      "result": "configure/build passed and all 39 enabled desktop CTest cases passed; the 14 desktop static failures are the identical current-main baseline set recorded on PR 201",
+      "receipt": "build/reports/desktop/receipt.json"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "result": "passed; 493 Python tests plus repository, Ruff and diff checks",
+      "receipt": "build/reports/quality/receipt.json"
+    },
+    {
+      "command": "rg -w SessionPreview apps/desktop",
+      "result": "passed; no live desktop reference remains"
+    }
+  ],
+  "review_followups": [
+    "Rebase both rename commits cleanly over merged PRs 201 and 203.",
+    "Confirm the QML type registration is internal/runtime-only and no shipped or in-tree QML names SessionPreview."
+  ],
+  "non_claims": [
+    "No native macOS GUI input or GPU presentation was exercised.",
+    "The current-main desktop static baseline remains defective; this receipt does not claim those 14 unrelated partitions pass."
+  ]
+}

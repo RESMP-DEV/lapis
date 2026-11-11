@@ -294,8 +294,7 @@ int main(int argc, char** argv) {
                         restored.focusedSession()->sessionId() == first &&
                         restored.categorySessions().size() == 2,
                     "Category membership and selected tab survive restart");
-            require(restored.categorySessions().front().value<SessionPreview*>()->sessionId() ==
-                        second,
+            require(restored.categorySessions().front().value<Agent*>()->sessionId() == second,
                     "Tab order survives restart");
         }
         owned.cleanup();

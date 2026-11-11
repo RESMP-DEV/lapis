@@ -88,7 +88,7 @@ QString shell_program() {
     return shell.isEmpty() ? session::login_shell() : shell;
 }
 
-bool ready(const SessionPreview& session) {
+bool ready(const Agent& session) {
     return session.connectionState() == QLatin1String("ready") && session.inputReady();
 }
 
@@ -158,14 +158,14 @@ QVariantList Terminals::machines() const {
     return list;
 }
 
-SessionPreview* Terminals::current() const {
+Agent* Terminals::current() const {
     for (const auto& entry : entries_)
         if (entry.machine == current_machine_)
             return entry.session.get();
     return nullptr;
 }
 
-SessionPreview* Terminals::terminal(const QString& id) const {
+Agent* Terminals::terminal(const QString& id) const {
     for (const auto& entry : entries_)
         if (entry.id == id)
             return entry.session.get();
@@ -226,11 +226,11 @@ Terminals::Entry* Terminals::entryFor(const QString& id) {
 
 void Terminals::attach(Entry& entry, bool create) {
     const auto title = entry.machine.isEmpty() ? QStringLiteral("This Mac") : entry.machine;
-    entry.session = std::make_unique<SessionPreview>(title, entry.launch.directory, QString{},
-                                                     QColor(QStringLiteral("#87cbac")), "");
+    entry.session = std::make_unique<Agent>(title, entry.launch.directory, QString{},
+                                            QColor(QStringLiteral("#87cbac")), "");
     entry.session->setSessionId(entry.id);
     entry.session->setHarnessId(QStringLiteral("shell"));
-    entry.session->setStatusSource(SessionPreview::StatusSource::output);
+    entry.session->setStatusSource(Agent::StatusSource::output);
     watch(entry);
     entry.session->startLive(entry.endpoint, entry.launch,
                              create ? session::wire::AttachMode::create
@@ -240,7 +240,7 @@ void Terminals::attach(Entry& entry, bool create) {
 void Terminals::watch(Entry& entry) {
     // A shell that exits leaves; the next show() starts a fresh one.
     const auto id = entry.id;
-    connect(entry.session.get(), &SessionPreview::connectionChanged, this, [this, id] {
+    connect(entry.session.get(), &Agent::connectionChanged, this, [this, id] {
         auto* session = terminal(id);
         if (session == nullptr)
             return;

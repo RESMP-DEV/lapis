@@ -24,9 +24,9 @@
 #include <iostream>
 #include <stdexcept>
 
+using lapis::desktop::Agent;
 using lapis::desktop::GuiState;
 using lapis::desktop::SeenScreens;
-using lapis::desktop::SessionPreview;
 using lapis::desktop::Workspace;
 using lapis::desktop::WorkspaceMode;
 using lapis::desktop::WorkspaceOptions;
@@ -54,7 +54,7 @@ void writeFile(const QString& path, const QByteArray& bytes) {
     require(file.write(bytes) == bytes.size(), "write the fixture bytes");
 }
 // A turn the observer saw start and end.
-void finishTurn(SessionPreview& item) {
+void finishTurn(Agent& item) {
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
     state.activity = lapis::session::attention::Activity::working;
@@ -62,7 +62,7 @@ void finishTurn(SessionPreview& item) {
     state.activity = lapis::session::attention::Activity::turn_completed;
     item.applyAttention(state);
 }
-void setActivity(SessionPreview& item, lapis::session::attention::Activity activity) {
+void setActivity(Agent& item, lapis::session::attention::Activity activity) {
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
     state.activity = activity;
@@ -399,7 +399,7 @@ void seenScreensComeBack() {
     QJsonObject saved;
     {
         Workspace before(WorkspaceMode::preview);
-        SeenScreens seen(before, [](const SessionPreview*) { return false; });
+        SeenScreens seen(before, [](const Agent*) { return false; });
         int changes = 0;
         QObject::connect(&seen, &SeenScreens::changed, [&changes] { ++changes; });
         seen.see(before.session(QStringLiteral("agent")));
@@ -409,7 +409,7 @@ void seenScreensComeBack() {
     }
     saved.insert(QStringLiteral("gone"), QStringLiteral("abc"));
     Workspace after(WorkspaceMode::preview);
-    SeenScreens seen(after, [](const SessionPreview*) { return false; });
+    SeenScreens seen(after, [](const Agent*) { return false; });
     int restored_changes = 0;
     QObject::connect(&seen, &SeenScreens::changed, [&restored_changes] { ++restored_changes; });
     seen.restoreState(saved);

@@ -20,7 +20,7 @@ class Workspace;
 // Read-only toward lapis: nothing in lapis reads the file back.
 //
 // Version 1: {"version": 1, "pid": <this window>, "publishedAtMs": ...,
-// "agents": [{"id", "status" (SessionPreview::statusKind), "unseen",
+// "agents": [{"id", "status" (Agent::statusKind), "unseen",
 // "requests" (pending count), "request" (the first one's reason),
 // "neededAtMs", "turnAtMs" (the last finished turn or request, this window's
 // clock; 0 before one), "offer": {"key", "text", "seen", "said"} when a

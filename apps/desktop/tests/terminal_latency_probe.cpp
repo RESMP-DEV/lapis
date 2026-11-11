@@ -33,7 +33,7 @@
 #include <vector>
 
 namespace {
-using lapis::desktop::SessionPreview;
+using lapis::desktop::Agent;
 using lapis::desktop::TerminalSurface;
 namespace session = lapis::session;
 quint64 now_ns() {
@@ -158,7 +158,7 @@ struct Connections {
             QObject::disconnect(connection);
     }
 };
-QJsonObject history_return_timing(SessionPreview& document, QQuickWindow& window) {
+QJsonObject history_return_timing(Agent& document, QQuickWindow& window) {
     std::atomic_bool requested{}, synchronized{};
     std::atomic<quint64> submitted{};
     Connections connections{{QObject::connect(
@@ -206,8 +206,8 @@ QString input_label(bool native) {
 }
 QJsonObject run_probe(int samples, bool native) {
     OwnedService service;
-    SessionPreview document(QStringLiteral("latency fixture"), service.directory.path(), {},
-                            QColor(Qt::white), "");
+    Agent document(QStringLiteral("latency fixture"), service.directory.path(), {},
+                   QColor(Qt::white), "");
     QQuickWindow window;
     window.setTitle(QStringLiteral("lapis controlled latency probe"));
     window.setGeometry(100, 100, 900, 540);
@@ -235,7 +235,7 @@ QJsonObject run_probe(int samples, bool native) {
     QString marker;
     QVariantMap timing;
     const auto snapshot_connection =
-        QObject::connect(&document, &SessionPreview::snapshotChanged, &window, [&] {
+        QObject::connect(&document, &Agent::snapshotChanged, &window, [&] {
             if (marker.isEmpty() || !screen_text(document.snapshot()).contains(marker))
                 return;
             const auto candidate = document.snapshotTiming();

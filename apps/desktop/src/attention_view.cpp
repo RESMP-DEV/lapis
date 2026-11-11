@@ -29,19 +29,19 @@ QString display_token(const session::wire::AttentionSnapshot& snapshot,
 }
 } // namespace
 // A connected agent without an observer reads from the output estimate.
-QString SessionPreview::unobservedStatusKind() const {
+QString Agent::unobservedStatusKind() const {
     if (status_source_ == StatusSource::output && (output_active_ || output_quiet_))
         return output_active_ ? QStringLiteral("working") : QStringLiteral("idle");
     return QStringLiteral("unknown");
 }
-bool SessionPreview::estimated() const {
+bool Agent::estimated() const {
     if (!attention_)
         return true;
     return status_source_ == StatusSource::output &&
            (!attention_->ready || !attention_->connected ||
             (attention_->activity == session::attention::Activity::unknown && !attentionPending()));
 }
-QString SessionPreview::statusKind() const {
+QString Agent::statusKind() const {
     if (live()) {
         if (connection_state_ == QStringLiteral("ended"))
             return QStringLiteral("ended");
@@ -73,7 +73,7 @@ QString SessionPreview::statusKind() const {
     }
     return QStringLiteral("unknown");
 }
-QString SessionPreview::statusLabel() const {
+QString Agent::statusLabel() const {
     if (!updating_.isEmpty())
         return updating_;
     const auto kind = statusKind();
@@ -105,25 +105,25 @@ QString SessionPreview::statusLabel() const {
         return QStringLiteral("Status pending");
     return QStringLiteral("Status unavailable");
 }
-bool SessionPreview::hasAttentionSource() const { return attention_ && attention_->available; }
-bool SessionPreview::attentionReady() const {
+bool Agent::hasAttentionSource() const { return attention_ && attention_->available; }
+bool Agent::attentionReady() const {
     return input_ready_ && attention_ && attention_->ready && attention_->connected;
 }
-QString SessionPreview::attentionDiagnostic() const {
+QString Agent::attentionDiagnostic() const {
     return attention_ ? attention_->diagnostic : QString{};
 }
-int SessionPreview::attentionCount() const {
+int Agent::attentionCount() const {
     return attention_ ? static_cast<int>(attention_->requests.size())
                       : static_cast<int>(requests_.size());
 }
-QString SessionPreview::attentionReason() const {
+QString Agent::attentionReason() const {
     if (!attention_)
         return requests_.isEmpty() ? QString{} : requests_.first();
     if (attention_->requests.empty())
         return {};
     return QString::fromStdString(attention_->requests.front().pending.request.reason);
 }
-QVariantList SessionPreview::attentionRequests() const {
+QVariantList Agent::attentionRequests() const {
     QVariantList values;
     if (!attention_)
         return values;
@@ -147,7 +147,7 @@ QVariantList SessionPreview::attentionRequests() const {
     }
     return values;
 }
-void SessionPreview::applyAttention(session::wire::AttentionSnapshot snapshot) {
+void Agent::applyAttention(session::wire::AttentionSnapshot snapshot) {
     // Claude Code's idle notice follows a finished turn and has no response;
     // the finished turn already marks the agent, so only actionable requests
     // count toward attention, the Requests list and the unseen mark.
@@ -202,7 +202,7 @@ void SessionPreview::applyAttention(session::wire::AttentionSnapshot snapshot) {
     if (arrived)
         emit attentionArrived();
 }
-void SessionPreview::invalidateAttention() {
+void Agent::invalidateAttention() {
     if (!attention_)
         return;
     attention_->ready = false;
@@ -213,7 +213,7 @@ void SessionPreview::invalidateAttention() {
         item.pending.status = session::attention::RequestStatus::stale;
     emit attentionChanged();
 }
-void SessionPreview::retryAttention(const session::wire::AttentionDecision& decision) {
+void Agent::retryAttention(const session::wire::AttentionDecision& decision) {
     if (!attention_ || attention_->source_epoch != decision.source_epoch)
         return;
     for (const auto& item : attention_->requests) {

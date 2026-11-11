@@ -19,7 +19,7 @@ struct LaunchSpec;
 } // namespace lapis::session
 
 namespace lapis::desktop {
-class SessionPreview;
+class Agent;
 
 struct ServiceLaunchRequest {
     QString program;
@@ -33,7 +33,7 @@ using ServiceLauncher = std::function<bool(const ServiceLaunchRequest&)>;
 
 class LiveConnection final : public QObject {
   public:
-    LiveConnection(SessionPreview& document, QString endpoint, const session::LaunchSpec& launch,
+    LiveConnection(Agent& document, QString endpoint, const session::LaunchSpec& launch,
                    session::wire::AttachMode mode,
                    std::shared_ptr<session::DescriptorStore> descriptor_store = {},
                    ServiceLauncher launcher = {});
@@ -76,7 +76,7 @@ class LiveConnection final : public QObject {
     void report(const QString& message);
     void fail(const QString& message,
               session::wire::StatusCode code = session::wire::StatusCode::rejected);
-    SessionPreview& document_;
+    Agent& document_;
     QString endpoint_;
     QStringList service_arguments_;
     std::shared_ptr<session::DescriptorStore> descriptor_store_;

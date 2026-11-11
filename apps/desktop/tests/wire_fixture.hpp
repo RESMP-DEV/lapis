@@ -25,7 +25,7 @@
 
 namespace lapis::desktop::tests {
 namespace wire = lapis::session::wire;
-using lapis::desktop::SessionPreview;
+using lapis::desktop::Agent;
 
 inline void require(bool value, const char* message) {
     if (!value)
@@ -82,8 +82,7 @@ struct WireFixture final {
     lapis::session::Terminal terminal{{4, 2}};
     QString endpoint;
     quint64 generation_{1};
-    SessionPreview document{
-        QStringLiteral("test"), QStringLiteral("/tmp"), {}, QColor(Qt::white), ""};
+    Agent document{QStringLiteral("test"), QStringLiteral("/tmp"), {}, QColor(Qt::white), ""};
     WireFixture() {
         require(directory.isValid(), "Temporary directory failed");
         const QString canonicalDirectory = QFileInfo(directory.path()).canonicalFilePath();
