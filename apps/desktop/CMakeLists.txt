@@ -50,6 +50,7 @@ add_library(lapis_desktop_core STATIC
     src/app_window.cpp src/app_window.hpp
     src/transcript.cpp src/transcript.hpp src/transcript_parts.hpp
     src/transcript_codex.cpp src/transcript_antigravity.cpp
+    src/transcript_math.cpp src/transcript_math.hpp
     src/code_highlight.cpp src/code_highlight.hpp
     src/slash_commands.cpp src/slash_commands.hpp)
 target_include_directories(lapis_desktop_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")

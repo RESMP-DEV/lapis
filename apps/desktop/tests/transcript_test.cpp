@@ -4,6 +4,7 @@
 #include "code_highlight.hpp"
 #include "slash_commands.hpp"
 #include "transcript.hpp"
+#include "transcript_math.hpp"
 
 #include <QColor>
 #include <QDir>
@@ -996,6 +997,212 @@ void inline_code_is_quiet() {
     require(block.background().color() != tint && block.foreground().color() != dim,
             "a code block left in prose does not take the inline colors");
 }
+
+// Math is found in prose and nowhere else: money, shell variables, code
+// spans, fences, link targets and escaped dollars stay text.
+void math_is_found() {
+    namespace math = lapis::desktop::transcript::math;
+    const auto sources = [](const QString& text) {
+        QStringList out;
+        for (const auto& span : math::find(text))
+            out << (span.display ? QStringLiteral("D:") : QStringLiteral("I:")) + span.source;
+        return out.join(QLatin1Char('|'));
+    };
+    const struct {
+        const char* text;
+        const char* spans;
+    } cases[] = {
+        {"plain text with no math", ""},
+        {"The model is $y = mx + b$ here.", "I:y = mx + b"},
+        {"a $x$ b $$y$$ c \\(z\\) d \\[w\\]", "I:x|D:y|I:z|D:w"},
+        {"$$\nE = mc^2\n$$", "D:\nE = mc^2\n"},
+        {"It costs $5 and $10 a month.", ""},
+        {"Between $5-$10 per run.", ""},
+        {"Add $HOME/bin and $PATH to it.", ""},
+        {"Use $HOME/bin:$PATH.", ""},
+        {"Set ${HOME}/x and $y$.", "I:y"},
+        {"Print $PATH$ now", ""},
+        {"US$5 and 4$ later", ""},
+        {"US$ 3 or so", ""},
+        {"That was $42.50 for the cables and more US$", ""},
+        {"An escaped \\$5 and \\$x$ stay", ""},
+        {"Code `$x$` then $y$", "I:y"},
+        {"Code ``a ` $x$`` then $y$", "I:y"},
+        {"> ```\n> $x$\n> ```\n$y$", "I:y"},
+        {"See [the $a$ page](https://example.com/$b$) for $c$", "I:a|I:c"},
+        {"Not across $a\n\nb$ a blank line", ""},
+        {"Across $a +\nb$ one line break", "I:a +\nb"},
+        {"The $x$-axis and $10^3$ runs", "I:x|I:10^3"},
+        {"A dollar $ alone", ""},
+        {"Empty $$ $$ display", ""},
+        {"Escaped inside $a \\$ b$", "I:a \\$ b"},
+    };
+    for (const auto& item : cases) {
+        const auto found = sources(QString::fromUtf8(item.text));
+        if (found != QString::fromUtf8(item.spans))
+            std::fprintf(stderr, "  %s -> %s\n", item.text, qPrintable(found));
+        require(found == QString::fromUtf8(item.spans), "math spans are found by the rule");
+    }
+    require(!math::may_contain(QStringLiteral("no math (here) [at all]")) &&
+                math::prepare(QStringLiteral("no math $5")).spans.empty() &&
+                math::prepare(QStringLiteral("no math $5")).markdown ==
+                    QStringLiteral("no math $5"),
+            "text without math is left as it is");
+}
+
+// LaTeX becomes readable text with super- and subscripts; what cannot be
+// set well falls back to its source.
+void math_is_rendered() {
+    namespace math = lapis::desktop::transcript::math;
+    const struct {
+        const char* latex;
+        const char* shown;
+    } cases[] = {
+        {"x^2", "x^{2}"},
+        {"x^{n+1}", "x^{n+1}"},
+        {"a_{ij}", "a_{ij}"},
+        {"x_i^2", "x_{i}^{2}"},
+        {"\\alpha + \\beta", "α + β"},
+        {"\\Omega \\varepsilon \\infty \\partial \\nabla", "Ωε∞∂∇"},
+        {"a \\pm b \\times c \\cdot d", "a ± b × c · d"},
+        {"x \\leq y \\ne z \\approx w", "x ≤ y ≠ z ≈ w"},
+        {"f: A \\to B", "f: A → B"},
+        {"x \\in \\mathbb{R}^n", "x ∈ ℝ^{n}"},
+        {"\\forall x \\exists y", "∀x∃y"},
+        {"\\frac{1}{2}", "1/2"},
+        {"\\frac{a+b}{c+d}", "(a + b)/(c + d)"},
+        {"\\frac{x^2}{2}", "x^{2}/2"},
+        {"\\sqrt{x}", "√x"},
+        {"\\sqrt{n+1}", "√(n + 1)"},
+        {"\\sqrt[3]{x}", "^{3}√x"},
+        {"\\binom{n}{k}", "C(n, k)"},
+        {"\\sum_{i=1}^{n} x_i", "∑_{i=1}^{n}\u2009x_{i}"},
+        {"e^{-x}", "e^{−x}"},
+        {"-1", "−1"},
+        {"\\sin\\theta + \\log(x)", "sin\u2009θ + log(x)"},
+        {"\\left( \\frac{a}{b} \\right)", "(a/b)"},
+        {"\\left. x \\right|", "x|"},
+        {"\\text{if } x > 0", "if x > 0"},
+        {"\\operatorname{softmax}(z)", "softmax(z)"},
+        {"\\mathbf{W}", "W"},
+        {"\\hat{y}", "y\u0302"},
+        {"\\langle u, v \\rangle", "⟨u, v⟩"},
+        {"\\lfloor x \\rfloor", "⌊x⌋"},
+        {"\\|x\\|_2", "‖x‖_{2}"},
+        {"1,157,600 \\times 3", "1,157,600 × 3"},
+        {"10\\% \\{a\\}", "10%{a}"},
+        {"a \\, b \\quad c", "a\u2009b\u2003c"},
+        {"x \\not= y", "x ≠ y"},
+        {"\\ldots \\cdots", "…⋯"},
+        {"\\ell \\hbar", "ℓℏ"},
+        {"\\foo x", "foo\u2009x"},
+        {"e^{x_i}", "e^{x_i}"},
+    };
+    for (const auto& item : cases) {
+        const auto rendered = math::render(QString::fromUtf8(item.latex));
+        const auto shown = math::plain(rendered);
+        if (!rendered.ok || shown != QString::fromUtf8(item.shown))
+            std::fprintf(stderr, "  %s -> %s (ok %d)\n", item.latex, qPrintable(shown),
+                         rendered.ok);
+        require(rendered.ok && shown == QString::fromUtf8(item.shown), "LaTeX is set as text");
+    }
+    for (const char* latex : {
+             "\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}",
+             "a &= b \\\\ c &= d",
+             "\\frac{\\frac{\\frac{a}{b}}{c}}{d}",
+             "\\overset{a}{b}",
+             "\\frac{a}",
+             "x^",
+             "{a",
+             "a}",
+         })
+        require(!math::render(QString::fromUtf8(latex)).ok, "what cannot be set shows as source");
+    const auto letters = math::render(QStringLiteral("x + 2\\sin y"));
+    require(letters.ok && letters.runs.size() >= 3 && letters.runs.front().italic,
+            "variables are italic");
+    bool upright_sin = false;
+    for (const auto& run : letters.runs)
+        upright_sin = upright_sin || (run.text.contains(QStringLiteral("sin")) && !run.italic);
+    require(upright_sin, "function names are upright");
+}
+
+// In a styled reply, markdown never touches math, scripts are real
+// super- and subscripts, display math is its own centred paragraph, and a
+// matrix shows as source in the inline code style. Copying a whole span
+// gives its source back.
+void math_is_styled() {
+    namespace math = lapis::desktop::transcript::math;
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData("import QtQuick\nTextEdit {}", QUrl());
+    std::unique_ptr<QObject> edit(component.create());
+    auto* target = edit ? edit->property("textDocument").value<QQuickTextDocument*>() : nullptr;
+    require(target != nullptr, "a TextEdit gives a document to style");
+    if (target == nullptr)
+        return;
+    const QColor tint("#202020"), dim("#cbcbcb");
+    const QVariantMap style{{QStringLiteral("sans"), QStringLiteral("Helvetica")},
+                            {QStringLiteral("mono"), QStringLiteral("Menlo")},
+                            {QStringLiteral("size"), 15},
+                            {QStringLiteral("codeSize"), 13},
+                            {QStringLiteral("inlineCodeColor"), tint},
+                            {QStringLiteral("inlineCodeTextColor"), dim}};
+    auto& document = *target->textDocument();
+    const auto format_at = [&](int position) {
+        QTextCursor at(&document);
+        at.setPosition(position + 1);
+        return at.charFormat();
+    };
+
+    TranscriptModel().style(target,
+                            QStringLiteral("Sum $x_i + y_i$ and $a*b*c$ and **bold $z^2$** here.\n"
+                                           "$$\n\\frac{a}{b} = c\n$$\nthen after.\n\n"
+                                           "$$\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$$"),
+                            style);
+    const auto text = document.toPlainText();
+    require(text.contains(QStringLiteral("Sum xi + yi and a ∗ b ∗ c and bold z2 here.")),
+            "markdown does not read math's underscores and asterisks");
+    const auto sub = format_at(static_cast<int>(text.indexOf(QStringLiteral("xi")) + 1));
+    require(sub.verticalAlignment() == QTextCharFormat::AlignSubScript,
+            "a subscript is a real subscript");
+    const auto x = format_at(static_cast<int>(text.indexOf(QStringLiteral("xi"))));
+    require(x.fontItalic() && x.verticalAlignment() == QTextCharFormat::AlignNormal,
+            "a variable is italic on the baseline");
+    const auto squared = format_at(static_cast<int>(text.indexOf(QStringLiteral("z2")) + 1));
+    require(squared.verticalAlignment() == QTextCharFormat::AlignSuperScript &&
+                squared.fontWeight() >= QFont::DemiBold,
+            "a superscript in bold text is raised and stays bold");
+    const auto equation = document.findBlock(static_cast<int>(text.indexOf(QStringLiteral("a/b"))));
+    require(equation.text() == QStringLiteral("a/b = c") &&
+                equation.blockFormat().alignment().testFlag(Qt::AlignHCenter) &&
+                equation.blockFormat().hasProperty(math::display_property),
+            "display math is a centred paragraph of its own");
+    require(equation.previous().text().endsWith(QStringLiteral("here.")) &&
+                equation.next().text() == QStringLiteral("then after."),
+            "the text around display math keeps its own paragraphs");
+    const auto matrix_at = static_cast<int>(text.indexOf(QStringLiteral("\\begin{pmatrix}")));
+    const auto matrix = format_at(matrix_at + 2);
+    require(matrix_at >= 0 && !text.contains(QStringLiteral("$$")) && matrix.fontFixedPitch() &&
+                matrix.background().color() == tint,
+            "a matrix shows as its source, without dollars, in the inline code style");
+
+    // A whole span copies as written; part of one as shown.
+    const auto start = static_cast<int>(text.indexOf(QStringLiteral("Sum")));
+    const auto whole = lapis::desktop::transcript::selection_text(
+        document, start, static_cast<int>(text.indexOf(QStringLiteral(" and a"))));
+    require(whole == QStringLiteral("Sum $x_i + y_i$"), "a whole span copies as its source");
+    const auto part = lapis::desktop::transcript::selection_text(document, start, start + 6);
+    require(part == QStringLiteral("Sum xi"), "part of a span copies as shown");
+    const auto display = lapis::desktop::transcript::selection_text(
+        document, equation.position(), equation.position() + equation.length() - 1);
+    require(display == QStringLiteral("$$\n\\frac{a}{b} = c\n$$"),
+            "display math copies as its source");
+
+    // Without math, styling is what it always was.
+    TranscriptModel().style(target, QStringLiteral("Costs $5 and $10, see `$x$`."), style);
+    require(document.toPlainText() == QStringLiteral("Costs $5 and $10, see $x$."),
+            "text without math is styled as before");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1026,6 +1233,9 @@ int main(int argc, char** argv) {
     other_cli_slash_commands_are_listed();
     chart_style_is_written();
     inline_code_is_quiet();
+    math_is_found();
+    math_is_rendered();
+    math_is_styled();
     if (failures == 0)
         std::puts("transcript: all checks passed");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

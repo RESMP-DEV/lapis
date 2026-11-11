@@ -189,7 +189,15 @@ the terminal as before.
 
 Code in replies is colored by its language with Tokyo Night's palette (its Day
 variant on light themes), as are the commands steps ran. Tables get a quiet
-grid and a bold header; quotes read quieter than the reply. Images, SVGs, GIFs
+grid and a bold header; quotes read quieter than the reply. Math in replies
+(`$...$` and `\(...\)` in a sentence, `$$...$$` and `\[...\]` on their own) is
+set as text: Greek letters and symbols, real superscripts and subscripts,
+fractions as `(a + b)/(c + d)`, roots, and italic variables, with display
+equations centred on their own line. Dollar amounts and shell variables such as
+`$HOME` stay as written, as does anything in code. Math lapis cannot set well
+(matrices, aligned equations, fractions three deep, unfamiliar commands)
+shows its LaTeX source in the code style instead. Your own prompts show as you
+typed them. Images, SVGs, GIFs
 and charts a message names show inline at the column's width, under the reply
 (or under your prompt, for what you attached); click one to open it full size.
 Audio (MP3, WAV, M4A, AAC, FLAC, AIFF) and video (MP4, MOV, M4V) play in place
@@ -205,7 +213,8 @@ Agents launched before the first style was written pick it up when reloaded.
 
 Text in the thread selects with the mouse and copies with Command-C as plain
 text that pastes cleanly anywhere: paragraphs, bullets and numbers are kept,
-and no colors or hidden characters come along. Links underline under the
+and no colors or hidden characters come along. A selection that covers a whole
+equation copies its LaTeX source; part of one copies what is shown. Links underline under the
 pointer. Command-click a file path anywhere in the thread (absolute, `~`, or
 relative to the agent's folder, with any `:line` after it) to open it in your
 editor at that line, or a folder in the Finder; Appearance's **Open files in**

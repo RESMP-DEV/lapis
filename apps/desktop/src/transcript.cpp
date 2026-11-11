@@ -2,6 +2,7 @@
 
 #include "code_highlight.hpp"
 #include "slash_commands.hpp"
+#include "transcript_math.hpp"
 #include "transcript_parts.hpp"
 #include <QClipboard>
 #include <QColor>
@@ -1519,8 +1520,12 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
     // Images show under the reply at the column's width, not inside the
     // text at their pixel size: an image becomes a link to itself here.
     static const QRegularExpression image(QStringLiteral(R"(!(\[[^\]]*\]\())"));
-    document.setMarkdown(QString(markdown).replace(image, QStringLiteral("\\1")),
-                         QTextDocument::MarkdownDialectGitHub);
+    // Math is taken out before the import, so markdown never reads LaTeX's
+    // underscores, asterisks and backslashes, and set back in after it.
+    const auto prepared =
+        transcript::math::prepare(QString(markdown).replace(image, QStringLiteral("\\1")));
+    document.setMarkdown(prepared.markdown, QTextDocument::MarkdownDialectGitHub);
+    transcript::math::fill(document, prepared.spans);
 
     // Qt's importer sizes headings and code on its own scale; put them on
     // the view's, relative to the body text.
@@ -1543,7 +1548,8 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
         auto block_format = block.blockFormat();
         const int level = std::clamp(block_format.headingLevel(), 0, 6);
         block_format.setLineHeight(level > 0 ? 120 : 140, QTextBlockFormat::ProportionalHeight);
-        block_format.setTopMargin(first ? 0 : level > 0 ? size * 0.8 : 0);
+        const bool equation = block_format.hasProperty(transcript::math::display_property);
+        block_format.setTopMargin(first ? 0 : level > 0 ? size * 0.8 : equation ? size * 0.15 : 0);
         // The last block adds nothing: the view spaces pieces itself.
         block_format.setBottomMargin(!block.next().isValid()       ? 0
                                      : level > 0                   ? size * 0.3
@@ -1927,6 +1933,59 @@ void TranscriptModel::copySelection(QQuickTextDocument* source, int start, int e
     copy(transcript::selection_text(*source->textDocument(), start, end));
 }
 
+namespace {
+// The text of a block in [from, to), with each math span the range covers
+// whole given back as written ($x^2$), so a copy pastes as its source; part
+// of a span copies as shown.
+QString selected_text(const QTextBlock& block, int from, int to) {
+    namespace math = transcript::math;
+    if (to <= from)
+        return {};
+    // Where each span starts and ends in this block.
+    QHash<int, std::pair<int, int>> spans;
+    for (auto it = block.begin(); !it.atEnd(); ++it) {
+        const auto part = it.fragment();
+        if (!part.isValid() || !part.charFormat().hasProperty(math::span_property))
+            continue;
+        const int id = part.charFormat().intProperty(math::span_property);
+        const int part_end = part.position() + part.length();
+        auto found = spans.find(id);
+        if (found == spans.end())
+            spans.insert(id, {part.position(), part_end});
+        else
+            found->second = part_end;
+    }
+    if (spans.isEmpty())
+        return block.text().mid(from - block.position(), to - from);
+    QString out;
+    int copied_span = -1;
+    for (auto it = block.begin(); !it.atEnd(); ++it) {
+        const auto part = it.fragment();
+        if (!part.isValid())
+            continue;
+        const int part_start = part.position();
+        const int part_end = part_start + part.length();
+        const int a = std::max(from, part_start);
+        const int b = std::min(to, part_end);
+        if (a >= b)
+            continue;
+        const auto format = part.charFormat();
+        if (format.hasProperty(math::span_property)) {
+            const int id = format.intProperty(math::span_property);
+            const auto extent = spans.value(id);
+            if (from <= extent.first && to >= extent.second) {
+                if (id != copied_span)
+                    out += format.stringProperty(math::source_property);
+                copied_span = id;
+                continue;
+            }
+        }
+        out += part.text().mid(a - part_start, b - a);
+    }
+    return out;
+}
+} // namespace
+
 QString transcript::selection_text(const QTextDocument& document, int start, int end) {
     QString out;
     const QTextList* previous_list = nullptr;
@@ -1934,7 +1993,7 @@ QString transcript::selection_text(const QTextDocument& document, int start, int
          block = block.next()) {
         const int from = std::max(start, block.position());
         const int to = std::min(end, block.position() + block.length() - 1);
-        const auto text = block.text().mid(from - block.position(), std::max(0, to - from));
+        const auto text = selected_text(block, from, to);
         const auto* list = block.textList();
         QString marker;
         // A list item keeps its bullet or number when it is copied from its start.
