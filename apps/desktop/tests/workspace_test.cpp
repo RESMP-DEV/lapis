@@ -3663,6 +3663,11 @@ void askedEffortReachesTheCli() {
     options.storagePath = root.filePath(QStringLiteral("workspace.json"));
     Workspace workspace(WorkspaceMode::live, options);
     workspace.setSshConfigForTesting(config.fileName());
+    const QString configured_model = QStringLiteral("custom model [v2]");
+    lapis::desktop::AgentDefaults defaults;
+    defaults.models.insert(QStringLiteral("claude"), {configured_model});
+    defaults.models.insert(QStringLiteral("codex"), {configured_model});
+    workspace.setAgentDefaults(defaults);
     const auto close_owned = qScopeGuard([&] {
         for (const auto& value : workspace.sessions())
             if (auto* item = value.value<lapis::desktop::SessionPreview*>())
@@ -3670,8 +3675,10 @@ void askedEffortReachesTheCli() {
         static_cast<void>(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000));
     });
     lapis::desktop::WorkspaceControl control(workspace, false);
+    require(!workspace.createAgent(project, QStringLiteral("invalid model"),
+                                   QStringLiteral("claude"), QStringLiteral("not configured *")),
+            "an arbitrary model outside the strict launch grammar is refused");
     auto request = createRequest(workspace.activeCategoryId(), QStringLiteral("claude"), project);
-    const QString configured_model = QStringLiteral("custom model [v2]");
     request.insert(QStringLiteral("model"), configured_model);
     request.insert(QStringLiteral("effort"), QStringLiteral("medium"));
     const auto started = askWorkspace(workspace.storagePath(), request);

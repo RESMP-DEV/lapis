@@ -350,11 +350,9 @@ QVariantList harnessModes(const QString& harness) {
     return modes;
 }
 bool validModel(const QString& model) {
-    // Configured names are explicit choices, and every harness passes a model as
-    // a direct argv element (or inside one `--model=` argument), never through a
-    // shell. Match the config loader's bounded, non-option grammar.
-    return model.isEmpty() || (model.size() <= 4096 && !model.startsWith(QLatin1Char('-')) &&
-                               !model.contains(QChar::Null) && !model.trimmed().isEmpty());
+    static const QRegularExpression name(
+        QStringLiteral(R"(^[A-Za-z0-9][A-Za-z0-9._:/\[\]@+-]{0,127}$)"));
+    return model.isEmpty() || name.match(model).hasMatch();
 }
 // A conversation id a CLI's resume option takes; never an option itself.
 bool validConversation(const QString& id) {
@@ -1672,6 +1670,7 @@ std::vector<ModelChoice> Workspace::modelChoices(const QString& harness) const {
     std::vector<ModelChoice> picked;
     picked.reserve(static_cast<std::size_t>(configured.size()));
     for (const auto& name : configured) {
+        // Model IDs are case-sensitive; the first spelling of a duplicate wins.
         if (std::any_of(picked.begin(), picked.end(),
                         [&](const ModelChoice& model) { return model.id == name; }))
             continue;
@@ -1800,7 +1799,10 @@ std::optional<Workspace::ResumeLaunch> Workspace::agentLaunch(const AgentRequest
     if (directory.isEmpty() || directory.size() > 4096 || directory.contains(QChar::Null) ||
         directory.contains(QLatin1Char('\n')))
         return refuse(QStringLiteral("Choose a project directory (at most 4096 characters)."));
-    if (!validModel(request.model) ||
+    const auto& configured_models = agent_defaults_.models.value(request.harness);
+    const bool configured_model = std::find(configured_models.begin(), configured_models.end(),
+                                            request.model) != configured_models.end();
+    if ((!validModel(request.model) && !configured_model) ||
         harness->modelArguments(request.model).isEmpty() != request.model.isEmpty())
         return refuse(QStringLiteral("This agent cannot take that model."));
     if (!request.mode.isEmpty() && modeArguments(request.harness, request.mode).isEmpty())
