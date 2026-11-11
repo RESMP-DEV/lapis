@@ -128,9 +128,9 @@ What differs by CLI:
   woken by a timer or a finished background task folds like one Claude Code's
   task notification woke. agy's checkpoint, which summarizes the steps before
   it, shows as a divider.
-- For both, slash commands are not listed as you type, the live tail and
-  the dialog peek are off (they read Claude Code's screen layout), a slash
-  command sent from the bar shows the terminal for whatever it opens, and
+- For both, the live tail and the dialog peek are off (they read Claude
+  Code's screen layout), a slash command sent from the bar that opens a
+  picker or panel, or that lapis does not know, shows the terminal, and
   **Edit** on a prompt is not offered.
 
 The bar at the bottom types to the agent: Return (or Command-Return) sends and
@@ -161,6 +161,15 @@ Typing `/` and a few letters in a Claude Code agent's bar lists the three
 closest slash commands (letters in order match, so `/rp` finds
 `/reload-plugins`): Claude Code's own, then your commands and skills from
 `~/.claude/commands`, `~/.claude/skills` and the agent folder's `.claude/`.
+A Codex agent's bar lists Codex's own commands (Codex 0.157 reads no custom
+prompt files; its skills are `$name` mentions, not commands). An Antigravity
+agent's bar lists agy's own commands, then the skills it offers as commands:
+the project's `.agents/skills` (from the agent's folder up to its repository
+root) and your `~/.gemini/config/skills`. Neither list offers `/exit`, nor
+Codex's `/archive` and `/delete`, which end the session. For these two CLIs a
+command that opens a picker or panel (`/model`, `/resume`, `/status`) shows
+the terminal in place of the thread, since the view cannot draw their dialogs;
+one that runs as a turn (`/compact`, a skill) stays in the thread.
 Up and Down pick, Return runs the command, Tab fills it in to add to, and
 Escape closes the list. What a command prints shows under it in the thread
 ("/model", then "Set model to …"), as does a `!` shell command's output. One
