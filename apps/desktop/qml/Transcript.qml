@@ -1172,8 +1172,9 @@ FocusScope {
                     // How long the step took, once it took a second or more.
                     Text {
                         id: took
+                        // Hidden it has no text, so no width: a Row skips it,
+                        // and the target's width can count it either way.
                         visible: step.entry !== null && !step.thinking && step.entry.duration >= 1000
-                        width: visible ? implicitWidth : 0
                         anchors.verticalCenter: parent.verticalCenter
                         text: visible ? root.durationLabel(step.entry.duration) : ""
                         color: root.tint(root.mutedTextColor, 0.75)

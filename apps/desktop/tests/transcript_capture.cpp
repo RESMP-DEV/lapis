@@ -10,6 +10,7 @@
 #include <QColor>
 #include <QCommandLineParser>
 #include <QDateTime>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFont>
@@ -17,17 +18,24 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QJSValue>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QMap>
 #include <QPainter>
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickView>
+#include <QRegularExpression>
 #include <QSGRendererInterface>
+#include <QSet>
 #include <QTemporaryDir>
+#include <QThreadPool>
 #include <algorithm>
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
+#include <mach/mach.h>
 #endif
 #include <cstdio>
 #include <vector>
@@ -165,6 +173,222 @@ int check_keys(QQuickView& view, QQuickItem* root) {
     return failures == 0 ? 0 : 1;
 }
 
+// Messages Qt and QML log while the view is checked.
+QStringList& logged() {
+    static QStringList messages;
+    return messages;
+}
+
+// This process's memory footprint now, in MB, as Activity Monitor counts it.
+double footprint_mb() {
+#ifdef __APPLE__
+    task_vm_info_data_t info{};
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info), &count) ==
+        KERN_SUCCESS)
+        return static_cast<double>(info.phys_footprint) / (1024.0 * 1024.0);
+#endif
+    return 0;
+}
+
+// A record's type for counting, never its text: "type", or "type/subtype"
+// with the CLI's own subtype field (subtype, operation, payload type,
+// attachment type).
+QString record_type(const QJsonObject& record) {
+    auto type = record.value(QLatin1String("type")).toString();
+    if (type.isEmpty())
+        type = record.value(QLatin1String("source")).toString(); // agy steps
+    if (record.value(QLatin1String("isSidechain")).toBool())
+        type.prepend(QStringLiteral("subagent "));
+    for (const char* field : {"subtype", "operation"})
+        if (const auto sub = record.value(QLatin1String(field)).toString(); !sub.isEmpty())
+            return type + QLatin1Char('/') + sub;
+    for (const char* field : {"payload", "attachment"})
+        if (const auto sub = record.value(QLatin1String(field))
+                                 .toObject()
+                                 .value(QLatin1String("type"))
+                                 .toString();
+            !sub.isEmpty())
+            return type + QLatin1Char('/') + sub;
+    // A message by its shape: its blocks' types, or a leading tag's name.
+    const auto content = record.value(QLatin1String("message")).toObject().value("content");
+    if (content.isString()) {
+        const auto text = content.toString();
+        static const QRegularExpression tag(QStringLiteral(R"(^<([a-z_-]{1,40})>)"));
+        const auto match = tag.match(text);
+        return type +
+               (record.value(QLatin1String("isMeta")).toBool() ? QStringLiteral(" meta")
+                                                               : QString()) +
+               (match.hasMatch()           ? QStringLiteral(" <%1>").arg(match.captured(1))
+                : text.trimmed().isEmpty() ? QStringLiteral(" empty text")
+                                           : QStringLiteral(" text"));
+    }
+    if (content.isArray()) {
+        QStringList blocks;
+        for (const auto& block : content.toArray())
+            blocks << block.toObject().value(QLatin1String("type")).toString();
+        blocks.removeDuplicates();
+        return type + QStringLiteral(" [") + blocks.join(QLatin1Char(',')) + QLatin1Char(']');
+    }
+    return type.isEmpty() ? QStringLiteral("(no type)") : type;
+}
+
+// Structural checks over a conversation: numbers and type names only,
+// never its text. Reads the file read-only.
+struct Check {
+    int problems{};
+    void line(const char* name, qint64 value, bool problem = false) {
+        std::printf("  %-34s %lld%s\n", name, static_cast<long long>(value),
+                    problem && value > 0 ? "   <-- problem" : "");
+        if (problem && value > 0)
+            ++problems;
+    }
+};
+
+int check_structure(const QString& path, const TranscriptModel& model, Check& check) {
+    using lapis::desktop::transcript::make_reader;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        std::fprintf(stderr, "could not read the file\n");
+        return 2;
+    }
+    check.line("file bytes", file.size());
+    // A reader of its own, fed line by line, to see which records it took
+    // nothing from; timed on the reading alone.
+    auto reader = make_reader(model.format());
+    qint64 records = 0, parse_errors = 0, duplicates = 0;
+    QSet<QString> ids;
+    QMap<QString, int> ignored;
+    double parse_ns = 0;
+    while (!file.atEnd()) {
+        const auto line = file.readLine();
+        if (line.trimmed().isEmpty())
+            continue;
+        ++records;
+        QElapsedTimer timer;
+        timer.start();
+        const int changed = reader->add(line);
+        parse_ns += static_cast<double>(timer.nsecsElapsed());
+        const auto document = QJsonDocument::fromJson(line);
+        if (!document.isObject()) {
+            ++parse_errors;
+            continue;
+        }
+        const auto record = document.object();
+        const auto id = record.value(QLatin1String("uuid")).toString();
+        if (!id.isEmpty()) {
+            if (ids.contains(id))
+                ++duplicates;
+            ids.insert(id);
+        }
+        if (changed < 0)
+            ignored[record_type(record)] += 1;
+    }
+    check.line("records", records);
+    check.line("unparsable lines", parse_errors, true);
+    check.line("duplicate record ids", duplicates);
+    std::printf("  %-34s %.0f\n", "reader ms (parse + fold)", parse_ns / 1e6);
+    std::printf("  records that made no item, by type:\n");
+    for (auto entry = ignored.cbegin(); entry != ignored.cend(); ++entry)
+        std::printf("    %7d %s\n", entry.value(), qPrintable(entry.key()));
+
+    // What the items say.
+    const auto& items = model.items();
+    QMap<QString, int> kinds;
+    qint64 empty = 0, open_fences = 0, image_refs = 0, images_gone = 0, other = 0;
+    QMap<QString, int> markup;
+    static const QRegularExpression image_ref(QStringLiteral(R"(\[Image #\d+\])"));
+    static const QRegularExpression box_row(QStringLiteral("^\\s*[┌├└│╭╰║╔╚].*[┐┤┘│╮╯║╗╝]\\s*$"));
+    const QStringList tags{QStringLiteral("<system-reminder>"),
+                           QStringLiteral("<task-notification>"),
+                           QStringLiteral("<local-command-stdout>"),
+                           QStringLiteral("<local-command-stderr>"),
+                           QStringLiteral("<local-command-caveat>"),
+                           QStringLiteral("<command-name>"),
+                           QStringLiteral("<command-message>"),
+                           QStringLiteral("<command-args>"),
+                           QStringLiteral("<bash-input>"),
+                           QStringLiteral("<bash-stdout>"),
+                           QStringLiteral("<user-prompt-submit-hook>"),
+                           QStringLiteral("<tool-use-error>")};
+    for (const auto& item : items) {
+        const auto kind = lapis::desktop::transcript::kind_name(item.kind);
+        kinds[kind] += 1;
+        if (item.kind == Kind::other)
+            ++other;
+        const bool text_kind = item.kind == Kind::prompt || item.kind == Kind::reply ||
+                               item.kind == Kind::notice || item.kind == Kind::command ||
+                               item.kind == Kind::divider;
+        if (text_kind && item.body.trimmed().isEmpty() && item.title.trimmed().isEmpty())
+            ++empty;
+        for (const auto* text : {&item.title, &item.body, &item.result}) {
+            if (item.kind == Kind::tool && text != &item.result)
+                continue; // a command or path the agent wrote
+            // A step's command or output can hold any text (a grep of these
+            // very files); only what the CLI itself adds counts there.
+            for (const auto& tag : tags)
+                if ((item.kind != Kind::tool || tag == QLatin1String("<system-reminder>")) &&
+                    text->contains(tag))
+                    markup[kind + QStringLiteral(" ") + tag] += 1;
+            if (text->contains(QChar(0x1b)))
+                markup[kind + QStringLiteral(" escape character")] += 1;
+        }
+        if (item.kind == Kind::reply || item.kind == Kind::prompt) {
+            bool fenced = false;
+            int box = 0;
+            for (const auto& row : item.body.split(QLatin1Char('\n'))) {
+                if (row.trimmed().startsWith(QLatin1String("```")))
+                    fenced = !fenced;
+                else if (!fenced && box_row.match(row).hasMatch())
+                    ++box;
+            }
+            if (fenced)
+                ++open_fences;
+            if (box >= 2)
+                markup[kind + QStringLiteral(" box-drawn rows outside code")] += 1;
+        }
+        if (item.kind == Kind::prompt && image_ref.match(item.body).hasMatch()) {
+            ++image_refs;
+            if (model.media(item.body + QLatin1Char('\n') + item.detail).isEmpty())
+                ++images_gone;
+        }
+    }
+    std::printf("  items by kind:");
+    for (auto entry = kinds.cbegin(); entry != kinds.cend(); ++entry)
+        std::printf(" %s %d", qPrintable(entry.key()), entry.value());
+    std::printf("\n");
+    check.line("turns", model.turnCount());
+    check.line("rows", model.rowCount());
+    check.line("other (unknown) blocks", other);
+    check.line("items with empty text", empty, true);
+    check.line("replies with an unclosed fence", open_fences);
+    check.line("prompts naming [Image #N]", image_refs);
+    check.line("  of which no image file to show", images_gone);
+    for (auto entry = markup.cbegin(); entry != markup.cend(); ++entry) {
+        std::printf("  raw markup: %s %d   <-- problem\n", qPrintable(entry.key()), entry.value());
+        ++check.problems;
+    }
+    // Turns the CLI never ended with a duration record (closed only by the
+    // next turn), and turns with no final reply; the last may be running.
+    const auto layout = lapis::desktop::transcript::lay_out(items, {});
+    qint64 unended = 0, replyless = 0, last_open = 0;
+    for (size_t t = 0; t < layout.turns.size(); ++t) {
+        const auto& turn = layout.turns[t];
+        if (t + 1 == layout.turns.size()) {
+            last_open = turn.closed ? 0 : 1;
+            continue;
+        }
+        if (items[static_cast<size_t>(turn.last)].kind != Kind::turn)
+            ++unended;
+        if (turn.final_reply < 0)
+            ++replyless;
+    }
+    check.line("turns ended by no duration record", unended);
+    check.line("turns with no final reply", replyless);
+    check.line("last turn open", last_open);
+    return 0;
+}
+
 double percentile(std::vector<double> values, double p) {
     if (values.empty())
         return 0;
@@ -214,12 +438,26 @@ int main(int argc, char** argv) {
         {"play", "Press play on the audio and video shown (it plays aloud) and report progress"});
     parser.addOption({"wait", "Milliseconds to let the view settle (media to open) before shooting",
                       "ms", "400"});
+    parser.addOption({"check",
+                      "Check the conversation without its text: structure, raw markup the view "
+                      "left, load time and memory, QML warnings, and the first, last and three "
+                      "middle screens laid out; exits 1 on a problem"});
+    parser.addOption(
+        {"out-dir", "With --check, save the five screens as PNGs in this folder", "folder"});
     parser.process(app);
     const bool keys = parser.isSet("keys");
-    if (!keys && (!parser.isSet("jsonl") || (!parser.isSet("out") && !parser.isSet("census")))) {
+    const bool checking = parser.isSet("check");
+    if (!keys && (!parser.isSet("jsonl") ||
+                  (!parser.isSet("out") && !parser.isSet("census") && !checking))) {
         std::fputs("--jsonl and --out are required\n", stderr);
         return 2;
     }
+    if (checking)
+        qInstallMessageHandler([](QtMsgType type, const QMessageLogContext&, const QString& text) {
+            if (type != QtDebugMsg && type != QtInfoMsg &&
+                !text.startsWith(QLatin1String("Populating font family aliases")))
+                logged() << text;
+        });
 
     QElapsedTimer load_timer;
     load_timer.start();
@@ -236,6 +474,16 @@ int main(int argc, char** argv) {
     model.loadNow();
     const auto load_ms = load_timer.elapsed();
     std::printf("format %s\n", qPrintable(model.formatName()));
+    Check check;
+    if (checking) {
+        // setPath also starts the app's own background read; let it end.
+        QThreadPool::globalInstance()->waitForDone();
+        QCoreApplication::processEvents();
+        std::printf("check\n  %-34s %lld\n  %-34s %.0f\n", "model load ms (read + lay out)",
+                    static_cast<long long>(load_ms), "memory after load MB", footprint_mb());
+        if (const int failed = check_structure(parser.value("jsonl"), model, check); failed != 0)
+            return failed;
+    }
     if (parser.isSet("census")) {
         // What the reader made of a file, without any of its text: kinds,
         // and for steps, dividers and unknown blocks their fixed names.
@@ -336,6 +584,59 @@ int main(int argc, char** argv) {
     }
     if (keys)
         return check_keys(view, root);
+    if (checking) {
+        // The first screen, three evenly spaced, and the last, each timed
+        // from the jump to the frame drawn.
+        root->setProperty("following", false);
+        const int rows = model.rowCount();
+        const std::vector<std::pair<const char*, int>> positions{{"first", 0},
+                                                                 {"quarter", rows / 4},
+                                                                 {"half", rows / 2},
+                                                                 {"three quarters", rows * 3 / 4},
+                                                                 {"last", -1}};
+        const auto folder = parser.value("out-dir");
+        for (const auto& [name, row] : positions) {
+            QElapsedTimer timer;
+            timer.start();
+            const auto image = rows == 0 ? view.grabWindow() : shot(view, list, row);
+            std::printf("  screen %-15s row %6d  %5lld ms\n", name, row < 0 ? rows - 1 : row,
+                        static_cast<long long>(timer.elapsed()));
+            if (!folder.isEmpty())
+                (void)image.save(QDir(folder).filePath(
+                    QStringLiteral("%1.png").arg(QString::fromUtf8(name).replace(' ', '-'))));
+        }
+        // Every "Worked for" row opened and folded again, a few spread out.
+        std::vector<int> work_rows;
+        for (int row = 0; row < model.rowCount(); ++row)
+            if (model.data(model.index(row), TranscriptModel::KindRole).toString() ==
+                QLatin1String("work"))
+                work_rows.push_back(row);
+        QElapsedTimer opened;
+        opened.start();
+        int toggled = 0;
+        for (size_t i = 0; i < work_rows.size(); i += std::max<size_t>(1, work_rows.size() / 5)) {
+            const int at = work_rows[i];
+            model.toggleWork(at);
+            (void)shot(view, list, at + 1);
+            model.toggleWork(at);
+            ++toggled;
+        }
+        std::printf("  %-34s %d in %lld ms\n", "turns opened and folded", toggled,
+                    static_cast<long long>(opened.elapsed()));
+        std::printf("  %-34s %.0f\n", "memory after views MB", footprint_mb());
+        check.line("Qt/QML warnings", logged().size(), true);
+        // Warnings name QML files, lines and what failed there.
+        QSet<QString> seen;
+        for (const auto& message : logged()) {
+            const auto first = message.left(220);
+            if (!seen.contains(first)) {
+                seen.insert(first);
+                std::printf("    %s\n", qPrintable(first));
+            }
+        }
+        std::printf("problems %d\n", check.problems);
+        return check.problems == 0 ? 0 : 1;
+    }
     if (parser.isSet("live")) {
         // What the running turn's footer shows: its rows, and compacting.
         std::printf("live: %lld tail rows, compacting %d\n",
