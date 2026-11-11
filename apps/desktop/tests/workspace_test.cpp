@@ -3671,7 +3671,8 @@ void askedEffortReachesTheCli() {
     });
     lapis::desktop::WorkspaceControl control(workspace, false);
     auto request = createRequest(workspace.activeCategoryId(), QStringLiteral("claude"), project);
-    request.insert(QStringLiteral("model"), QStringLiteral("opus"));
+    const QString configured_model = QStringLiteral("custom model [v2]");
+    request.insert(QStringLiteral("model"), configured_model);
     request.insert(QStringLiteral("effort"), QStringLiteral("medium"));
     const auto started = askWorkspace(workspace.storagePath(), request);
     auto* agent = workspace.session(started.value(QStringLiteral("id")).toString());
@@ -3680,7 +3681,7 @@ void askedEffortReachesTheCli() {
                     [agent] {
                         return screenText(agent->snapshot())
                             .remove(QLatin1Char('\n'))
-                            .contains(QStringLiteral("--model opus --effort medium "
+                            .contains(QStringLiteral("--model custom model [v2] --effort medium "
                                                      "--permission-mode bypassPermissions"));
                     },
                     10000),
@@ -3689,6 +3690,7 @@ void askedEffortReachesTheCli() {
         createRequest(workspace.activeCategoryId(), QStringLiteral("codex"), project);
     codex_request.insert(QStringLiteral("machine"), QStringLiteral("devbox"));
     codex_request.insert(QStringLiteral("program"), root.filePath(QStringLiteral("bin/codex")));
+    codex_request.insert(QStringLiteral("model"), configured_model);
     codex_request.insert(QStringLiteral("effort"), QStringLiteral("max"));
     const auto codex_started = askWorkspace(workspace.storagePath(), codex_request);
     auto* codex_agent = workspace.session(codex_started.value(QStringLiteral("id")).toString());
@@ -3696,8 +3698,11 @@ void askedEffortReachesTheCli() {
                 waitFor(
                     [codex_agent] {
                         return screenText(codex_agent->snapshot())
-                            .remove(QLatin1Char('\n'))
-                            .contains(QStringLiteral("-c model_reasoning_effort=max"));
+                                   .remove(QLatin1Char('\n'))
+                                   .contains(QStringLiteral("-m custom model [v2]")) &&
+                               screenText(codex_agent->snapshot())
+                                   .remove(QLatin1Char('\n'))
+                                   .contains(QStringLiteral("-c model_reasoning_effort=max"));
                     },
                     10000),
             "Codex accepts the maximum effort");

@@ -233,13 +233,15 @@ cat >/dev/null
     workspace.setHarnessModels(&models);
     lapis::desktop::AgentDefaults defaults;
     defaults.models.insert(QStringLiteral("claude"),
-                           {QStringLiteral("claude-fable-5-1"), QStringLiteral("haiku")});
+                           {QStringLiteral("claude-fable-5-1"), QStringLiteral("haiku"),
+                            QStringLiteral("custom model [v2]")});
     workspace.setAgentDefaults(defaults);
     require(ids(workspace.modelChoices(QStringLiteral("codex"))) ==
                 QStringList{QStringLiteral("gpt-6-astra*")},
             "the CLI's own list");
     require(ids(workspace.modelChoices(QStringLiteral("claude"))) ==
-                    QStringList({QStringLiteral("claude-fable-5-1"), QStringLiteral("haiku")}) &&
+                    QStringList({QStringLiteral("claude-fable-5-1"), QStringLiteral("haiku"),
+                                 QStringLiteral("custom model [v2]")}) &&
                 workspace.modelChoices(QStringLiteral("claude")).front().name ==
                     QStringLiteral("Fable 5.1"),
             "the config's names, named as the CLI names them");
@@ -249,7 +251,8 @@ cat >/dev/null
                            {QStringLiteral("gpt-6-sol"), QStringLiteral("gpt-6-astra")});
     workspace.setAgentDefaults(defaults);
     const auto codex = workspace.modelChoices(QStringLiteral("codex"));
-    require(ids(codex) == QStringList({QStringLiteral("gpt-6-sol"), QStringLiteral("gpt-6-astra")}) &&
+    require(ids(codex) ==
+                    QStringList({QStringLiteral("gpt-6-sol"), QStringLiteral("gpt-6-astra")}) &&
                 codex.back().name == QStringLiteral("GPT-6-Astra"),
             "the config's order, without the CLI's default first or flagged");
     QStringList order;

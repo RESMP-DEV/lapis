@@ -350,9 +350,11 @@ QVariantList harnessModes(const QString& harness) {
     return modes;
 }
 bool validModel(const QString& model) {
-    static const QRegularExpression name(
-        QStringLiteral(R"(^[A-Za-z0-9][A-Za-z0-9._:/\[\]@+-]{0,127}$)"));
-    return model.isEmpty() || name.match(model).hasMatch();
+    // Configured names are explicit choices, and every harness passes a model as
+    // a direct argv element (or inside one `--model=` argument), never through a
+    // shell. Match the config loader's bounded, non-option grammar.
+    return model.isEmpty() || (model.size() <= 4096 && !model.startsWith(QLatin1Char('-')) &&
+                               !model.contains(QChar::Null) && !model.trimmed().isEmpty());
 }
 // A conversation id a CLI's resume option takes; never an option itself.
 bool validConversation(const QString& id) {
@@ -1672,9 +1674,8 @@ std::vector<ModelChoice> Workspace::modelChoices(const QString& harness) const {
     for (const auto& name : configured) {
         const auto known = std::find_if(found.begin(), found.end(),
                                         [&](const ModelChoice& model) { return model.id == name; });
-        picked.push_back({.id = name,
-                          .name = known == found.end() ? name : known->name,
-                          .isDefault = false});
+        picked.push_back(
+            {.id = name, .name = known == found.end() ? name : known->name, .isDefault = false});
     }
     return picked;
 }

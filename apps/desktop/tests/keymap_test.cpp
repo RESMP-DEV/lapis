@@ -947,7 +947,8 @@ void config_reloads_when_edited_elsewhere() {
                  "alerts": {"sound": false, "repeat": 5},
                  "newAgent": {"harness": "claude", "folder": "~/dev", "mode": "full",
                               "machines": {"devbox": {"folder": "~/work"}},
-                              "models": {"codex": ["gpt-6-sol"], "grok": ["-oBad", "grok-4.7"]}}})");
+                              "models": {"codex": ["gpt-6-sol", "custom model [v2]"],
+                                         "grok": ["-oBad", "grok-4.7"]}}})");
     KeyMap keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "config with defaults should load");
@@ -959,7 +960,7 @@ void config_reloads_when_edited_elsewhere() {
                 defaults.mode == QStringLiteral("full"),
             "new-agent defaults are read");
     require(defaults.models.value(QStringLiteral("codex")) ==
-                    QStringList{QStringLiteral("gpt-6-sol")} &&
+                    QStringList{QStringLiteral("gpt-6-sol"), QStringLiteral("custom model [v2]")} &&
                 defaults.models.value(QStringLiteral("grok")) ==
                     QStringList{QStringLiteral("grok-4.7")} &&
                 !defaults.models.contains(QStringLiteral("claude")),
