@@ -374,9 +374,11 @@ class TranscriptModel final : public QAbstractListModel {
     // Night palette (`light` for its Day variant). Replaces any earlier one.
     Q_INVOKABLE void highlight(QQuickTextDocument* target, const QString& language,
                                bool light) const;
-    // The slash commands for a Claude Code agent working in `folder`, as
-    // {name, description, source}.
-    Q_INVOKABLE [[nodiscard]] QVariantList slashCommands(const QString& folder) const;
+    // The slash commands for an agent of `harness` ("claude", "codex",
+    // "agy") working in `folder`, as {name, description, source} (Codex
+    // and agy add `terminal`); empty for another CLI.
+    Q_INVOKABLE [[nodiscard]] QVariantList slashCommands(const QString& harness,
+                                                         const QString& folder) const;
     // Local files a message names that the view can show inline: Markdown
     // images and links, and absolute or ~ paths to images, audio, video,
     // HTML and PDF that exist. Each {path, url, kind, name, size}; kind is

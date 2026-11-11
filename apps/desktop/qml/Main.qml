@@ -3234,7 +3234,8 @@ ApplicationWindow {
                     screen: () => liveTerminal.screenLines()
                     folder: window.visualActive && liveTerminal.document
                             ? workspace.agentFolder(liveTerminal.document.agentId) : ""
-                    slashCommands: liveTerminal.document !== null && liveTerminal.document.harnessId === "claude"
+                    harness: liveTerminal.document !== null ? liveTerminal.document.harnessId : ""
+                    slashCommands: ["claude", "codex", "agy"].indexOf(harness) >= 0
                     onSuggestionFilled: {
                         if (window.nextPromptAvailable && liveTerminal.document)
                             nextPrompt.used(liveTerminal.document.agentId, false, 0, liveTerminal.suggestionKey)

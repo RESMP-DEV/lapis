@@ -114,13 +114,15 @@ FocusScope {
             root.turnSince = root.working ? (root.model ? root.model.runningSince() : 0) : root.pendingSince
         }
     }
-    // The agent's folder, for its project's own slash commands, and whether
-    // its CLI takes the slash commands lapis knows (Claude Code's).
+    // The agent's folder, for its project's own slash commands, its CLI
+    // (a harness id), and whether lapis knows that CLI's slash commands
+    // (Claude Code's, Codex's and Antigravity's).
     property string folder: ""
+    property string harness: ""
     property bool slashCommands: false
 
     // Slash commands: typing "/" and a few letters lists the three best
-    // matches above the bar. The list is read once per agent folder.
+    // matches above the bar. The list is read once per CLI and agent folder.
     property var commandList: []
     property string commandFolder: "\u0000"
     property int slashIndex: 0
@@ -129,14 +131,29 @@ FocusScope {
         const text = input.text
         return slashCommands && text.startsWith("/") && !/\s/.test(text) ? text.slice(1).toLowerCase() : "\u0000"
     }
+    function loadSlashCommands() {
+        const key = harness + "\u0001" + folder
+        if (commandFolder !== key && model) {
+            commandList = model.slashCommands(harness, folder)
+            commandFolder = key
+        }
+    }
     onSlashQueryChanged: {
         slashIndex = 0
         if (slashQuery === "\u0000")
             slashDismissed = false
-        else if (commandFolder !== folder && model) {
-            commandList = model.slashCommands(folder)
-            commandFolder = folder
-        }
+        else
+            loadSlashCommands()
+    }
+    // Whether a command sent to a CLI whose screen the view cannot read
+    // shows its answer only in the terminal: one its list marks so, or one
+    // lapis does not know.
+    function answersInTerminal(name) {
+        if (!slashCommands)
+            return true
+        loadSlashCommands()
+        const known = commandList.find(c => c.name === name)
+        return !known || known.terminal !== false
     }
     readonly property var slashMatches: slashQuery === "\u0000" || slashDismissed ? [] : rankSlash(slashQuery)
     function slashScore(name, description, q) {
@@ -1590,13 +1607,15 @@ FocusScope {
         }
         const command = root.slashCommands && /^\/[^\s\/]+/.test(text.trim()) ? text.trim().split(/\s/)[0] : ""
         // A CLI whose screen the view cannot read (any but Claude Code) may
-        // answer a slash command with a picker the thread would hide, so
-        // its terminal shows instead.
+        // answer a slash command with a picker, panel or output the thread
+        // would hide, so its terminal shows instead; a command its list
+        // knows runs as a turn (/compact, a skill) stays in the thread.
         const uncovers = root.model && !root.model.screenKnown && /^\/[^\s\/]+/.test(text.trim())
+                         && root.answersInTerminal(text.trim().split(/\s/)[0].slice(1))
         if (root.submit(text)) {
             if (uncovers)
                 root.terminalNeeded()
-            if (command.length > 0) {
+            if (command.length > 0 && !uncovers) {
                 root.pendingCommand = command
                 root.pendingSince = Date.now()
                 root.quietTicks = 0

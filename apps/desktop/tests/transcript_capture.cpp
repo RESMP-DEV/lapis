@@ -135,6 +135,7 @@ int check_keys(QQuickView& view, QQuickItem* root) {
     key(Qt::Key_Return, Qt::MetaModifier, QStringLiteral("\r"));
     expect("Command-Return sends too", QString(), -1);
     // Typing a slash command lists the best matches; Return fills one in.
+    root->setProperty("harness", QStringLiteral("claude"));
     root->setProperty("slashCommands", true);
     for (const auto letter : QStringLiteral("/comp"))
         key(letter == QLatin1Char('/') ? Qt::Key_Slash : Qt::Key_A + (letter.unicode() - 'a'),
@@ -158,6 +159,34 @@ int check_keys(QQuickView& view, QQuickItem* root) {
         ++failures;
     }
     root->setProperty("pendingCommand", QString());
+    // A Codex agent's bar lists Codex's own commands.
+    root->setProperty("harness", QStringLiteral("codex"));
+    for (const auto letter : QStringLiteral("/stat"))
+        key(letter == QLatin1Char('/') ? Qt::Key_Slash : Qt::Key_A + (letter.unicode() - 'a'),
+            Qt::NoModifier, QString(letter));
+    const auto codex = root->property("slashMatches").toList();
+    if (codex.isEmpty() ||
+        codex.front().toMap().value(QStringLiteral("name")) != QStringLiteral("status") ||
+        !codex.front().toMap().value(QStringLiteral("terminal")).toBool()) {
+        std::fputs("keys FAIL a Codex agent's \"/stat\" lists /status for the terminal\n", stderr);
+        ++failures;
+    }
+    key(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    expect("Tab fills in Codex's command", QStringLiteral("/status "), 8);
+    // Sent to Codex, whose screen the view cannot read, a panel command or
+    // an unknown one shows the terminal; /compact stays in the thread.
+    const auto in_terminal = [root](const char* name) {
+        QVariant shown;
+        QMetaObject::invokeMethod(root, "answersInTerminal", Q_RETURN_ARG(QVariant, shown),
+                                  Q_ARG(QVariant, QString::fromLatin1(name)));
+        return shown.toBool();
+    };
+    if (!in_terminal("status") || in_terminal("compact") || !in_terminal("not-a-command")) {
+        std::fputs("keys FAIL Codex commands that answer in the terminal are marked\n", stderr);
+        ++failures;
+    }
+    set(QString());
+    root->setProperty("harness", QStringLiteral("claude"));
     // A dialog in the terminal would take the keys as its own: nothing is
     // sent and the message stays in the bar.
     QJSValue dialog = view.engine()->evaluate(QStringLiteral(

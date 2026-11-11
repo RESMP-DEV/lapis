@@ -1645,8 +1645,8 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
     cursor.endEditBlock();
 }
 
-QVariantList TranscriptModel::slashCommands(const QString& folder) const {
-    return claude_slash_commands(QDir::homePath(), folder);
+QVariantList TranscriptModel::slashCommands(const QString& harness, const QString& folder) const {
+    return slash_commands(harness, QDir::homePath(), folder);
 }
 
 QVariantList TranscriptModel::media(const QString& text) const {
