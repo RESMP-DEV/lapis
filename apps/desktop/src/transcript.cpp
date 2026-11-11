@@ -1508,6 +1508,9 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
     const auto code_size = std::max(8, style.value(QStringLiteral("codeSize")).toInt());
     const auto mono = style.value(QStringLiteral("mono")).toString();
     const auto code_color = style.value(QStringLiteral("codeColor")).value<QColor>();
+    const auto inline_code_color = style.value(QStringLiteral("inlineCodeColor")).value<QColor>();
+    const auto inline_code_text =
+        style.value(QStringLiteral("inlineCodeTextColor")).value<QColor>();
     const auto link_color = style.value(QStringLiteral("linkColor")).value<QColor>();
     QFont base(style.value(QStringLiteral("sans")).toString());
     base.setPixelSize(size);
@@ -1547,6 +1550,11 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
                                      : block.textList() != nullptr ? size * 0.25
                                                                    : size * 0.65);
         first = false;
+        // A code block the reply's pieces did not split out (indented, or
+        // fenced inside a quote) keeps the code well; code inside a sentence
+        // takes the quieter inline colors.
+        const bool code_block = block_format.hasProperty(QTextFormat::BlockCodeFence) ||
+                                block_format.hasProperty(QTextFormat::BlockCodeLanguage);
         blocks.push_back({block.position(), block_format});
         for (auto fragment = block.begin(); !fragment.atEnd(); ++fragment) {
             const auto part = fragment.fragment();
@@ -1566,8 +1574,11 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
                 font.setFamilies({mono});
                 font.setPixelSize(code_size);
                 format.setFont(font, QTextCharFormat::FontPropertiesSpecifiedOnly);
-                if (code_color.isValid())
-                    format.setBackground(code_color);
+                const auto& background = code_block ? code_color : inline_code_color;
+                if (background.isValid())
+                    format.setBackground(background);
+                if (!code_block && inline_code_text.isValid())
+                    format.setForeground(inline_code_text); // a link's color wins below
                 touched = true;
             }
             if (format.isAnchor() && link_color.isValid()) {

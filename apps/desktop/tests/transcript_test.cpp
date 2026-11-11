@@ -11,10 +11,15 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QQmlComponent>
+#include <QQmlEngine>
+#include <QQuickTextDocument>
 #include <QTemporaryDir>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 
 using lapis::desktop::TranscriptModel;
 using lapis::desktop::transcript::ClaudeReader;
@@ -939,6 +944,50 @@ void chart_style_is_written() {
             "matplotlib style and palette follow the colors");
     qputenv("HOME", saved);
 }
+
+// Code inside a sentence is quiet: a faint tint and dimmer text, not the
+// code well. A link keeps its color, and a code block the pieces leave in
+// prose (fenced inside a quote) does not turn into inline code.
+void inline_code_is_quiet() {
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData("import QtQuick\nTextEdit {}", QUrl());
+    std::unique_ptr<QObject> edit(component.create());
+    auto* document = edit ? edit->property("textDocument").value<QQuickTextDocument*>() : nullptr;
+    require(document != nullptr, "a TextEdit gives a document to style");
+    if (document == nullptr)
+        return;
+    const QColor well("#111111"), tint("#202020"), dim("#cbcbcb"), link("#339cff");
+    TranscriptModel().style(
+        document,
+        QStringLiteral("Call `load_settings` or see [the `Settings` "
+                       "struct](https://example.com).\n\n> ```\n> quoted();\n> ```"),
+        {{QStringLiteral("sans"), QStringLiteral("Helvetica")},
+         {QStringLiteral("mono"), QStringLiteral("Menlo")},
+         {QStringLiteral("size"), 15},
+         {QStringLiteral("codeSize"), 13},
+         {QStringLiteral("codeColor"), well},
+         {QStringLiteral("inlineCodeColor"), tint},
+         {QStringLiteral("inlineCodeTextColor"), dim},
+         {QStringLiteral("linkColor"), link}});
+    const auto format_of = [&](const QString& text) {
+        const auto found =
+            document->textDocument()->find(text, 0, QTextDocument::FindCaseSensitively);
+        QTextCursor at(document->textDocument());
+        at.setPosition(found.selectionStart() + 1);
+        return at.charFormat();
+    };
+    const auto plain = format_of(QStringLiteral("load_settings"));
+    require(plain.fontFixedPitch() && plain.background().color() == tint &&
+                plain.foreground().color() == dim,
+            "inline code takes the inline tint and text, not the code well");
+    const auto linked = format_of(QStringLiteral("Settings"));
+    require(linked.background().color() == tint && linked.foreground().color() == link,
+            "inline code in a link keeps the link color");
+    const auto block = format_of(QStringLiteral("quoted"));
+    require(block.background().color() != tint && block.foreground().color() != dim,
+            "a code block left in prose does not take the inline colors");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -968,6 +1017,7 @@ int main(int argc, char** argv) {
     slash_commands_are_listed();
     other_cli_slash_commands_are_listed();
     chart_style_is_written();
+    inline_code_is_quiet();
     if (failures == 0)
         std::puts("transcript: all checks passed");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

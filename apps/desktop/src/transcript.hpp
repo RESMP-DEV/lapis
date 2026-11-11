@@ -364,7 +364,8 @@ class TranscriptModel final : public QAbstractListModel {
     // Lays markdown into a TextEdit's document with the view's fonts and
     // sizes, so headings, lists and inline code keep one scale and the text
     // stays selectable. `style` holds sans, mono, size, codeSize, codeColor
-    // and linkColor.
+    // (code blocks), inlineCodeColor and inlineCodeTextColor (code inside a
+    // sentence), linkColor, borderColor and quoteColor.
     Q_INVOKABLE void style(QQuickTextDocument* target, const QString& markdown,
                            const QVariantMap& style) const;
     // Underlines the links to `link` in a styled document, and no others;

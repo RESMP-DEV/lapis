@@ -381,10 +381,19 @@ FocusScope {
     readonly property int actionHeight: Math.round(codeSize * 1.3) + 8
     // Changes whenever prose has to be laid out again.
     readonly property string styleKey: [sansFamily, monoFamily, fontSize, codeSize, codeColor, accentColor,
-                                        borderColor, raisedColor].join("|")
+                                        borderColor, raisedColor, mutedTextColor, inlineCodeColor,
+                                        inlineCodeTextColor].join("|")
     readonly property var proseStyle: ({ sans: sansFamily, mono: monoFamily, size: fontSize, codeSize: codeSize,
                                          codeColor: codeColor, linkColor: accentColor,
+                                         inlineCodeColor: inlineCodeColor, inlineCodeTextColor: inlineCodeTextColor,
                                          borderColor: borderColor, quoteColor: mutedTextColor })
+    // Code inside a sentence stays quiet, as it is read often: a faint step
+    // from the page toward the raised surface (never the darker code well)
+    // and text one step dimmer than the body's.
+    readonly property color inlineCodeColor: Qt.tint(backgroundColor,
+                                                     Qt.rgba(raisedColor.r, raisedColor.g, raisedColor.b, 0.45))
+    readonly property color inlineCodeTextColor: Qt.tint(textColor,
+                                                         Qt.rgba(mutedTextColor.r, mutedTextColor.g, mutedTextColor.b, 0.35))
     // Code takes Tokyo Night's colors, its Day variant on a light code card.
     readonly property bool lightCode: codeColor.r * 0.299 + codeColor.g * 0.587 + codeColor.b * 0.114 > 0.5
     readonly property color codeTextColor: lightCode ? "#3760bf" : "#c0caf5"
