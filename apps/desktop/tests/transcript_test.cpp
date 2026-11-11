@@ -786,9 +786,17 @@ void code_is_highlighted() {
     require(role_at(QStringLiteral("diff"), QStringLiteral("+added"), 2) == code::Role::added &&
                 role_at(QStringLiteral("diff"), QStringLiteral("-gone"), 2) == code::Role::removed,
             "diff lines");
-    require(role_at(QStringLiteral("unknown-lang"), QStringLiteral("x = \"s\" # note"), 5) ==
-                code::Role::string,
-            "an unknown language still gets strings");
+    // Text is never colored: an unlabelled, text, log or unknown fence.
+    const QString text = QStringLiteral("| run [ok] | 42 ms | x = \"s\" # note // {v1} 'q' -> 3.5");
+    for (const char* name : {"", "text", "txt", "plaintext", "log", "output", "unknown-lang"}) {
+        int plain_state = 0;
+        require(
+            code::tokenize(text, code::language(QString::fromLatin1(name)), plain_state).empty() &&
+                plain_state == 0,
+            "a plain fence has no colored spans");
+    }
+    require(role_at(QStringLiteral("py"), text, 13) == code::Role::number,
+            "a known language still colors the same line");
 }
 
 // A message's local media: Markdown targets and bare paths that exist.
