@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-11T23:10:53Z",
+  "recorded_at": "2026-11-11T23:23:58Z",
   "agent": "Codex triage parent with read-only PR audit",
   "base_revision": "ecb397cfab1576b7aef75fb10a9e557110687b9a",
-  "source_revision": "ae966681b7239285a4f128053dddff84a82a94e7",
-  "runtime_validation_revision": "ae966681b7239285a4f128053dddff84a82a94e7",
+  "source_revision": "9ca51bd1d9c053d87716f12ee7ed9259075567c1",
+  "runtime_validation_revision": "9ca51bd1d9c053d87716f12ee7ed9259075567c1",
   "scope": "PR 201 repair: a configured new-agent model list replaces the CLI list as written, and every offered configured name remains launchable locally and over ssh.",
   "changed_source_manifest": {
-    "algorithm": "shasum -a 256 of: git diff --binary --full-index ecb397cfab1576b7aef75fb10a9e557110687b9a..ae966681b7239285a4f128053dddff84a82a94e7 -- ':(exclude)evidence/*'",
-    "digest": "0897fb681eae87ef0eacdab36641f90f89bbc22433e103da07748e16115416a7",
+    "algorithm": "shasum -a 256 of: git diff --binary --full-index ecb397cfab1576b7aef75fb10a9e557110687b9a..9ca51bd1d9c053d87716f12ee7ed9259075567c1 -- ':(exclude)evidence/*'",
+    "digest": "b15ffbf640ba3f9a6cb8e06cff514cfbd19480dfa72918c65572c8edddf7d22d",
     "changed_paths": 10
   },
   "validation": [
@@ -43,9 +43,10 @@
   ],
   "review_followups": [
     "A configured list replaces the CLI list; update the AgentDefaults contract.",
-    "Align launch model validation with the config loader's bounded non-option names.",
+    "Keep arbitrary request models on the strict launch grammar; allow a broader name only when it exactly matches a configured model.",
     "Cover the configured name in config loading, model choices, local launch and remote shell quoting.",
-    "Deduplicate configured model IDs and distinguish configured replacement lists in desktop, phone and user documentation."
+    "Deduplicate configured model IDs and distinguish configured replacement lists in desktop, phone and user documentation.",
+    "Document case-sensitive model-ID deduplication."
   ],
   "non_claims": [
     "The desktop static-analysis batch has 14 failing partitions at this branch. Every reported diagnostic is outside the changed hunks; the shared dev static gate and all desktop behavioral tests passed. This receipt does not claim the unrelated desktop static baseline is clean.",
