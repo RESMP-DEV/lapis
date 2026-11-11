@@ -1672,6 +1672,9 @@ std::vector<ModelChoice> Workspace::modelChoices(const QString& harness) const {
     std::vector<ModelChoice> picked;
     picked.reserve(static_cast<std::size_t>(configured.size()));
     for (const auto& name : configured) {
+        if (std::any_of(picked.begin(), picked.end(),
+                        [&](const ModelChoice& model) { return model.id == name; }))
+            continue;
         const auto known = std::find_if(found.begin(), found.end(),
                                         [&](const ModelChoice& model) { return model.id == name; });
         picked.push_back(

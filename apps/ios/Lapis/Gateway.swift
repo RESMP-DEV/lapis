@@ -42,8 +42,8 @@ struct Harness: Codable, Identifiable, Hashable {
     let id: String
     let name: String
     let installed: Bool
-    // Models the CLI lists (its default first) and the approval modes it
-    // has; older Macs send none.
+    // Models from the CLI or the configured replacement list, plus the
+    // approval modes it has; older Macs send none.
     let models: [ModelChoice]?
     let modes: [AgentMode]?
 }

@@ -234,7 +234,7 @@ cat >/dev/null
     lapis::desktop::AgentDefaults defaults;
     defaults.models.insert(QStringLiteral("claude"),
                            {QStringLiteral("claude-fable-5-1"), QStringLiteral("haiku"),
-                            QStringLiteral("custom model [v2]")});
+                            QStringLiteral("custom model [v2]"), QStringLiteral("haiku")});
     workspace.setAgentDefaults(defaults);
     require(ids(workspace.modelChoices(QStringLiteral("codex"))) ==
                 QStringList{QStringLiteral("gpt-6-astra*")},

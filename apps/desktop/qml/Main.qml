@@ -1790,9 +1790,10 @@ ApplicationWindow {
                            defaults.folder || ""
             return (folder.length > 0 ? folder.replace(/\/+$/, "") : workspace.homeDirectory) + "/"
         }
-        // This agent's model (one the CLI lists) and approval mode. The mode
-        // stays across CLIs; a CLI without it uses its nearest, less access
-        // first, and the preference returns on a CLI that has it.
+        // This agent's offered model (from the CLI or the configured
+        // replacement list) and approval mode. The mode stays across CLIs; a
+        // CLI without it uses its nearest, less access first, and the
+        // preference returns on a CLI that has it.
         property string selectedModel: ""
         property string preferredMode: "full"
         readonly property var selectedItem: harnesses.find(h => h.id === selectedHarness)
