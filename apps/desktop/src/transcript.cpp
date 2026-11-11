@@ -937,6 +937,17 @@ int ClaudeReader::command_output(const QString& raw) {
 }
 
 int ClaudeReader::add(const QByteArray& line) {
+    // Claude Code's request logs and file snapshots are a quarter of a long
+    // conversation's bytes and never shown: skip them by the type they lead
+    // with, before parsing.
+    if (line.startsWith("{\"type\":\"")) {
+        const auto type = QByteArrayView(line).mid(9, 24);
+        for (const auto prefix : {QByteArrayView("api-request"), QByteArrayView("file-history-"),
+                                  QByteArrayView("ai-title\""), QByteArrayView("last-prompt\""),
+                                  QByteArrayView("pr-link\""), QByteArrayView("frame-link\"")})
+            if (type.startsWith(prefix))
+                return -1;
+    }
     QJsonParseError error{};
     const auto document = QJsonDocument::fromJson(line, &error);
     if (error.error != QJsonParseError::NoError || !document.isObject())
