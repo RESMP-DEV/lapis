@@ -1,6 +1,6 @@
 #include "ui_capture.hpp"
-#include "terminal_surface.hpp"
 #include "app_window.hpp"
+#include "terminal_surface.hpp"
 #include "workspace.hpp"
 
 #include <QCoreApplication>

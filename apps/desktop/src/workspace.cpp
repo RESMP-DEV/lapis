@@ -1043,7 +1043,7 @@ bool Agent::resolveFixtureRequest(const QString& id) {
     emit attentionChanged();
     return true;
 }
-void Agent::clearPreviewRequests() {
+void Agent::clearFixtureRequests() {
     if (requests_.isEmpty())
         return;
     requests_.clear();
@@ -1079,7 +1079,7 @@ bool Workspace::replayAttention(const QString& scenario) {
         return resolveAttention({QStringLiteral("agent"), QStringLiteral("request-1"), {}});
     if (scenario == QStringLiteral("reset")) {
         for (const auto& item : sessions_)
-            item->clearPreviewRequests();
+            item->clearFixtureRequests();
         return true;
     }
     return false;

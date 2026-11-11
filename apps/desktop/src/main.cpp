@@ -1,6 +1,7 @@
 #include "agent_state.hpp"
 #include "alerts.hpp"
 #include "app_paths.hpp"
+#include "app_window.hpp"
 #include "conversation_index.hpp"
 #include "desktop_actions.hpp"
 #include "gui_state.hpp"
@@ -14,7 +15,6 @@
 #include "terminals.hpp"
 #include "tool_status.hpp"
 #include "ui_capture.hpp"
-#include "app_window.hpp"
 #include "workspace.hpp"
 #include "workspace_control.hpp"
 

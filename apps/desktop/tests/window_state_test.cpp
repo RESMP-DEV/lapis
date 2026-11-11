@@ -1,6 +1,6 @@
+#include "app_window.hpp"
 #include "keymap.hpp"
 #include "terminal_surface.hpp"
-#include "app_window.hpp"
 #include "workspace.hpp"
 
 #include <QByteArray>

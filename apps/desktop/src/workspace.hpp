@@ -224,7 +224,7 @@ class Agent final : public QObject {
     [[nodiscard]] int attentionCount() const;
     bool addFixtureRequest(const QString& id, const QString& reason);
     bool resolveFixtureRequest(const QString& id);
-    void clearPreviewRequests();
+    void clearFixtureRequests();
     [[nodiscard]] bool liveSnapshotReady() const { return live_snapshot_ready_; }
     [[nodiscard]] bool historyActive() const { return history_active_; }
     [[nodiscard]] bool historyRequestPending() const { return history_request_pending_; }

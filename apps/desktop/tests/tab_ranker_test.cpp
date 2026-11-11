@@ -185,7 +185,7 @@ void tabAwayChoosesOnlyAgentsWaitingOnYou() {
                 workspace.focusedSession()->sessionId() == QLatin1String("checks"),
             "ended and unknown agents are not request candidates");
     require(workspace.selectSession(QStringLiteral("renderer")), "return to the start");
-    workspace.session(QStringLiteral("checks"))->clearPreviewRequests();
+    workspace.session(QStringLiteral("checks"))->clearFixtureRequests();
     require(!workspace.nextPriorityAttention(guesses), "only the still-unusable requests remain");
     require(workspace.session(QStringLiteral("checks"))
                 ->addFixtureRequest(QStringLiteral("r2"), QStringLiteral("approve")),

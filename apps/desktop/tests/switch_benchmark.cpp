@@ -12,9 +12,9 @@
 // to the end of the next frame's scene-graph sync and to that frame's
 // frameSwapped. Offscreen/software rendering is not GPU presentation; compare
 // runs of this tool with each other.
+#include "app_window.hpp"
 #include "keymap.hpp"
 #include "terminal_surface.hpp"
-#include "app_window.hpp"
 #include "workspace.hpp"
 #if __has_include("interaction_recorder.hpp")
 #include "interaction_log.hpp"

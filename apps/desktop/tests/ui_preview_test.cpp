@@ -1,3 +1,4 @@
+#include "app_window.hpp"
 #include "conversation_index.hpp"
 #include "gui_state.hpp"
 #include "keymap.hpp"
@@ -6,7 +7,6 @@
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include "terminals.hpp"
-#include "app_window.hpp"
 #include "workspace.hpp"
 #include <QAccessible>
 #include <QElapsedTimer>
@@ -275,10 +275,9 @@ int run_ui_tests() {
     CHECK(preview.window()->objectName() == QStringLiteral("preview-root"));
     CHECK(preview.window()->geometry() == preserved_geometry);
     write_qml(directory, QStringLiteral("valid.qml"),
-              QStringLiteral(
-                  "import QtQuick\nWindow { visible: false; "
-                  "property int invalidBinding: missingValue; "
-                  "function reloadTwice() { app.reload(); app.reload(); return 7; } }"));
+              QStringLiteral("import QtQuick\nWindow { visible: false; "
+                             "property int invalidBinding: missingValue; "
+                             "function reloadTwice() { app.reload(); app.reload(); return 7; } }"));
     CHECK(preview.reload());
     CHECK(!preview.diagnostics().isEmpty());
     QPointer<QQuickWindow> twice = preview.window();

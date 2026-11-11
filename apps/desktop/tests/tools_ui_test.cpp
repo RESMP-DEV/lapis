@@ -1,9 +1,9 @@
 // The Tools pane renders the status layer's real fixture answers, including
 // failure, timeout, missing, unprobed and stale states, without touching the
 // user's cursor, keyboard or OS focus.
+#include "app_window.hpp"
 #include "terminal_surface.hpp"
 #include "tool_status.hpp"
-#include "app_window.hpp"
 #include "workspace.hpp"
 
 #include <QCoreApplication>

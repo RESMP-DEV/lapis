@@ -1,9 +1,9 @@
+#include "app_window.hpp"
 #include "interaction_log.hpp"
 #include "interaction_recorder.hpp"
 #include "keymap.hpp"
 #include "platform_desktop.hpp"
 #include "terminal_surface.hpp"
-#include "app_window.hpp"
 #include "workspace.hpp"
 
 #include <QDir>
