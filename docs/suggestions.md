@@ -174,6 +174,12 @@ build has no extension loaded; reload it once.
 
 Tab keeps its usual meaning in shells and in CLIs lapis does not guess for.
 
+In the [visual view](workspace.md#visual-view)'s bar, where Tab has no other
+meaning, the same round runs as Tab, Tab, Tab: the guess into the bar, sent
+while unchanged, then on an empty bar the next agent that needs you, for every
+CLI, with its own guess ready for the next Tab. There the guess counts as seen
+once the bar shows it, and with nobody else waiting the bar says so.
+
 A guess outlives a restart of the window (an install, say): it comes back,
 seen or not and under the same offer, once lapis has read the agent's
 conversation and found no prompt sent since. A guess still being made when the

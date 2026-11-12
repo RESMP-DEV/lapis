@@ -304,10 +304,17 @@ selection. While the agent works, the send button is a stop button (■) that
 interrupts the turn, as Escape does in the terminal; Return still sends, and
 the message waits as its CLI keeps it. The line under the bar says what
 Return, Command-Return and Escape do for the agent's CLI at that moment. lapis's guess at your next prompt shows in the empty bar; Tab puts it
-in the bar to edit, and Tab again sends it. Tab with nothing typed or offered
-moves to the next agent that needs you, as in the terminal. While the agent is
-waiting on a request, the bar says so and sends nothing; answer it in the
-terminal (Escape). Typing while reading goes to the bar.
+in the bar to edit, and Tab again sends it while it is unchanged. Once you
+edit it at all, even back to the same words, only Return sends it. Tab on an
+empty bar (the guess sent, or none offered) moves to the next agent that needs
+you, in the order Tab uses in the terminal, for every CLI: the bar there has
+the keyboard and shows that agent's guess, so Tab, Tab, Tab goes on from agent
+to agent. When no other agent waits, Tab stays and the line under the bar says
+"Nothing else is waiting". A held Tab's repeats do nothing, and Tab does
+nothing while an input method is composing. While the agent is
+waiting on a request, the bar says so, offers no guess and sends nothing;
+answer it in the terminal (Escape), or Tab on to the next agent. Typing while
+reading goes to the bar.
 
 A prompt you send shows in the thread at once, in the same frame as Return,
 and the bar clears: at the thread's end with the turn shown starting
