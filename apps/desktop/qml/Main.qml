@@ -3775,8 +3775,11 @@ ApplicationWindow {
                 // Under a thread the stage is the thread's page, so its inset
                 // around the thread is the same surface.
                 color: window.chrome.stage
-                // The stage edge carries the focus accent only while it owns input.
-                border.color: liveTerminal.interactive ? window.chrome.accent : window.chrome.border
+                // The stage edge carries the focus accent only while a terminal
+                // shows and owns input. Under a thread (one stage, so the accent
+                // marks nothing) it is a hairline in the thread's border colour.
+                border.color: liveTerminal.interactive && !window.chrome.thread ? window.chrome.accent
+                                                                               : window.chrome.border
                 border.width: 1
                 radius: window.chromeRadius
                 clip: true

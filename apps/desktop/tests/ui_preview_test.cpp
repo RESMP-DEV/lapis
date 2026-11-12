@@ -3428,11 +3428,12 @@ void check_sidebar_theme(QQuickWindow& window, lapis::desktop::Workspace& worksp
         const char* panel; // the theme's code tone
         const char* page;
         const char* text;
+        const char* border;
         bool light;
     };
-    const Expected themes[] = {{"codex", "#111111", "#181818", "#ececec", false},
-                               {"tokyo-night", "#16161e", "#1a1b26", "#c0caf5", false},
-                               {"claude-light", "#f1efe7", "#faf9f5", "#29261b", true}};
+    const Expected themes[] = {{"codex", "#111111", "#181818", "#ececec", "#303030", false},
+                               {"tokyo-night", "#16161e", "#1a1b26", "#c0caf5", "#292e42", false},
+                               {"claude-light", "#f1efe7", "#faf9f5", "#29261b", "#e2dfd4", true}};
     view->setProperty("visible", true);
     for (const auto& expected : themes) {
         CHECK(config_model.setVisual(QStringLiteral("theme"), QString::fromLatin1(expected.theme)));
@@ -3440,6 +3441,9 @@ void check_sidebar_theme(QQuickWindow& window, lapis::desktop::Workspace& worksp
         CHECK(color(rail, "color") == QColor(QString::fromLatin1(expected.panel)));
         CHECK(color(&window, "color") == QColor(QString::fromLatin1(expected.panel)));
         CHECK(color(stage, "color") == QColor(QString::fromLatin1(expected.page)));
+        // A hairline in the thread's border colour, not the focus accent.
+        CHECK(QQmlProperty::read(stage, QStringLiteral("border.color")).value<QColor>() ==
+              QColor(QString::fromLatin1(expected.border)));
         CHECK(color(title, "color") == QColor(QString::fromLatin1(expected.text)));
         CHECK((color(rail, "color").lightnessF() > 0.5) == expected.light);
         // Readable: the names stand well apart from the panel.
@@ -3455,6 +3459,9 @@ void check_sidebar_theme(QQuickWindow& window, lapis::desktop::Workspace& worksp
     CHECK(config_model.setVisual(QStringLiteral("theme"), QStringLiteral("codex")));
     view->setProperty("visible", false);
     CHECK(color(rail, "color") == window.property("surfaceColor").value<QColor>());
+    // A terminal with the keyboard keeps the accent frame.
+    CHECK(QQmlProperty::read(stage, QStringLiteral("border.color")).value<QColor>() ==
+          window.property("focusedBorderColor").value<QColor>());
     CHECK(color(&window, "color") == window.property("backgroundColor").value<QColor>());
     CHECK(color(title, "color") == window.property("textColor").value<QColor>());
     pump(300);
