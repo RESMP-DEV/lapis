@@ -3879,9 +3879,9 @@ QVariantMap TranscriptModel::shown() const {
 void TranscriptModel::setShown(const QVariantMap& shown) {
     const auto agent = shown.value(QStringLiteral("agent")).toString();
     const auto path = shown.value(QStringLiteral("path")).toString();
-    const auto blank = path.isEmpty() && !agent.isEmpty()
-                           ? transcript::format_named(shown.value(QStringLiteral("harness")).toString())
-                           : std::nullopt;
+    const auto harness = shown.value(QStringLiteral("harness")).toString();
+    const auto blank = path.isEmpty() && !agent.isEmpty() ? transcript::format_named(harness)
+                                                          : std::nullopt;
     if (agent == shown_agent_ && path == path_ && blank == blank_format_)
         return;
     // Prompts sent before this agent's CLI saved anything wait for it, kept

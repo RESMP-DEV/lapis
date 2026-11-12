@@ -421,10 +421,11 @@ ApplicationWindow {
         add("resumeConversation", qsTr("Resume a conversation"), "resumeConversation", conversationsAvailable, qsTr("Not available here"), () => window.openResumeDialog())
         add("toggleTerminal", sideTerminalOpen ? qsTr("Hide terminal") : qsTr("Terminal"), "toggleTerminal", terminalsAvailable, qsTr("Not available here"), () => window.toggleTerminal())
         add("chooseTerminal", qsTr("Terminal on another machine"), "chooseTerminal", terminalsAvailable, qsTr("Not available here"), () => window.chooseTerminal())
-        const conversationFile = hasAgent && !window.visualActive ? workspace.conversationFile(agent.agentId) : ""
+        const conversationFile = hasAgent && !window.visualActive && !window.visualSupported
+                                 ? workspace.conversationFile(agent.agentId) : ""
         add("toggleVisual", window.visualActive ? qsTr("Show terminal") : qsTr("Show visual view"), "",
-            window.visualActive || conversationFile.length > 0,
-            hasAgent ? qsTr("Only for a Claude Code, Codex or Antigravity agent on this Mac, once its conversation is saved") : needAgent,
+            window.visualActive || window.visualSupported || conversationFile.length > 0,
+            hasAgent ? qsTr("Only for a Claude Code, Codex or Antigravity agent on this Mac") : needAgent,
             () => window.toggleVisual())
         add("toggleVisualAll", window.visualAll ? qsTr("Show terminals for all agents") : qsTr("Show visual view for all agents"), "",
             true, "", () => window.toggleVisualAll())
@@ -949,15 +950,24 @@ ApplicationWindow {
         const choice = visualAgents[agent.agentId]
         return choice === undefined ? visualAll : choice
     }
+    // A Claude Code, Codex or Antigravity agent on this Mac can show as a
+    // thread (Workspace::visualSupported), from the moment it opens.
+    readonly property bool visualSupported: workspace.focusedAgent !== null
+                                            && workspace.visualSupported(workspace.focusedAgent.agentId)
     // The file appears once the CLI saves its first message; until then the
-    // check repeats while the thread is wanted. A Codex or Antigravity
-    // agent's keeps being checked, so the thread follows its /clear or /new.
+    // check repeats while the thread is wanted, and the thread shows empty
+    // (visualBlank). A Codex or Antigravity agent's keeps being checked, so
+    // the thread follows its /clear or /new.
     property int visualProbe: 0
     readonly property string visualFile: visualProbe >= 0 && visualWanted
                                          ? workspace.conversationFile(workspace.focusedAgent.agentId) : ""
-    readonly property bool visualActive: visualWanted && visualFile.length > 0
+    readonly property bool visualActive: visualWanted && (visualFile.length > 0 || visualSupported)
+    readonly property bool visualBlank: visualActive && visualFile.length === 0
+    // A prompt sent before the file exists is looked for every half second,
+    // so the thread takes over as soon as the CLI saves it.
+    readonly property bool visualFirstSend: visualBlank && workspace.transcript.pendingPrompts.length > 0
     Timer {
-        interval: 2000
+        interval: window.visualFirstSend ? 500 : 2000
         repeat: true
         running: window.visualWanted && (window.visualFile.length === 0
                                          || workspace.focusedAgent.harnessId === "codex"
@@ -972,7 +982,7 @@ ApplicationWindow {
     // raises never uncovers the terminal or takes the keys.
     property bool visualDialog: false
     property int visualDialogTicks: -1 // -1: not watching
-    readonly property bool visualCovers: visualActive && !visualDialog
+    readonly property bool visualCovers: visualActive && !visualDialog && !visualStartScreen
     property string visualDialogAgent: ""
     function watchVisualDialog(found) {
         if (!visualActive || liveTerminal.document === null)
@@ -1004,6 +1014,65 @@ ApplicationWindow {
                 window.endVisualDialog() // closed, or none came in five seconds
             }
         }
+    }
+    // Before the CLI saved anything, its terminal can show a screen of its
+    // own in place of its input box: a trust-this-folder prompt, a login, an
+    // update menu. While there is no file the screen is read four times a
+    // second. No input box yet: the bar holds what is typed (visualStarting).
+    // A dialog in Claude Code's layout, or anything else drawn with no input
+    // box for a second, shows the terminal with the keyboard until the input
+    // box is back, unless the agent is at work or raised a request (those
+    // stay the agent's, as above), or the person typed in the bar in the
+    // last 1.5 s (the keys would land in the screen). lapis never answers it.
+    property bool visualStartScreen: false
+    property bool visualStarting: false
+    property int visualStartTicks: 0
+    property string visualStartAgent: ""
+    property double visualTypedAt: 0
+    Connections {
+        target: visualView.composer
+        function onTextChanged() { window.visualTypedAt = Date.now() }
+    }
+    function endStartScreen() {
+        visualStartScreen = false
+        visualStarting = false
+        visualStartTicks = 0
+        visualStartAgent = ""
+    }
+    function readStartScreen() {
+        const agent = liveTerminal.document
+        if (agent === null || !visualBlank) {
+            endStartScreen()
+            return
+        }
+        if (agent.agentId !== visualStartAgent) {
+            endStartScreen()
+            visualStartAgent = agent.agentId
+        }
+        const screen = liveTerminal.screenLines()
+        const known = workspace.transcript.dialogShowing(screen)
+        if (!known && workspace.transcript.inputBoxShowing(screen)) {
+            visualStartTicks = 0
+            visualStarting = false
+            visualStartScreen = false
+            return
+        }
+        visualStarting = true
+        if (visualStartScreen)
+            return
+        const drawn = screen.some(row => row.trim().length > 0)
+        const dialog = known || (drawn && ++visualStartTicks >= 4)
+        if (dialog && agent.statusKind !== "working" && !agent.attentionPending
+                && Date.now() - visualTypedAt > 1500)
+            visualStartScreen = true
+    }
+    Timer {
+        interval: 250
+        repeat: true
+        triggeredOnStart: true
+        running: window.visualBlank && window.visible
+        onTriggered: window.readStartScreen()
+        onRunningChanged: if (!running) window.endStartScreen()
     }
     // Selecting another agent can show or hide the thread on its own (All
     // agents); the keyboard follows whichever is shown.
@@ -3255,7 +3324,7 @@ ApplicationWindow {
                         text: qsTr("This agent")
                         selected: window.visualActive
                         enabled: window.interactionArmed && workspace.focusedAgent !== null
-                                 && (window.visualActive || window.visualProbe >= 0
+                                 && (window.visualActive || window.visualSupported || window.visualProbe >= 0
                                      && workspace.conversationFile(workspace.focusedAgent.agentId).length > 0)
                         Layout.fillWidth: true
                         Layout.preferredWidth: 1
@@ -3263,7 +3332,7 @@ ApplicationWindow {
                         ToolTip.visible: hovered
                         ToolTip.delay: 600
                         ToolTip.text: enabled ? qsTr("Switch this agent between its terminal and the thread")
-                                              : qsTr("Only for a Claude Code, Codex or Antigravity agent on this Mac, once its conversation is saved")
+                                              : qsTr("Only for a Claude Code, Codex or Antigravity agent on this Mac")
                     }
                     CommandButton {
                         objectName: "visualAllAgents"
@@ -3721,6 +3790,11 @@ ApplicationWindow {
                     waiting: liveTerminal.document !== null && liveTerminal.document.attentionPending
                     waitingReason: liveTerminal.document !== null ? liveTerminal.document.attentionReason : ""
                     canSend: liveTerminal.document !== null && liveTerminal.document.reachable
+                    // Before the CLI saved anything: its name and folder on
+                    // the empty thread, and the bar holds what is typed
+                    // until the CLI draws its input box.
+                    blank: window.visualBlank
+                    starting: window.visualBlank && window.visualStarting
                     editor: window.visualSettings.editor || "auto"
                     screen: () => liveTerminal.screenLines()
                     folder: window.visualActive && liveTerminal.document
@@ -3821,16 +3895,21 @@ ApplicationWindow {
                 }
                 Binding {
                     target: workspace.transcript
-                    property: "path"
-                    // Nothing is read or watched while no agent shows as a thread.
-                    value: window.visualActive ? window.visualFile : ""
+                    property: "shown"
+                    // Nothing is read or watched while no agent shows as a
+                    // thread; an agent with no file yet shows an empty one.
+                    value: window.visualActive
+                           ? ({ agent: workspace.focusedAgent.agentId,
+                                harness: workspace.focusedAgent.harnessId,
+                                path: window.visualFile })
+                           : ({})
                 }
 
                 // Why the terminal is showing in place of the thread.
                 Rectangle {
                     objectName: "visualDialogNote"
                     z: 4
-                    visible: window.visualDialog && window.visualActive
+                    visible: (window.visualDialog || window.visualStartScreen) && window.visualActive
                     x: liveTerminal.x + liveTerminal.width - width - 10
                     y: liveTerminal.y + 8
                     width: visualDialogText.implicitWidth + 20
@@ -3841,7 +3920,9 @@ ApplicationWindow {
                     Text {
                         id: visualDialogText
                         anchors.centerIn: parent
-                        text: qsTr("The agent's own dialog · the thread returns when it closes")
+                        text: window.visualStartScreen && !window.visualDialog
+                              ? qsTr("The agent's own screen · answer it here; the thread returns at its input box")
+                              : qsTr("The agent's own dialog · the thread returns when it closes")
                         color: window.mutedTextColor
                         font.pixelSize: 12
                     }

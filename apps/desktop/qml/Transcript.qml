@@ -56,6 +56,12 @@ FocusScope {
     property bool waiting: false        // a request waits in the terminal
     property string waitingReason: ""
     property bool canSend: true
+    // The agent's CLI has saved nothing yet: the thread is empty and shows
+    // which CLI it is and where it works.
+    property bool blank: false
+    // Its CLI has not drawn its input box yet (starting, or a screen of its
+    // own): what is typed stays in the bar, never sent to it.
+    property bool starting: false
     // What Command-click on a file path opens it with (an editors() id).
     property string editor: "auto"
     // The agent's terminal rows as text (screenLines()), null where there
@@ -2962,6 +2968,10 @@ FocusScope {
         const text = message()
         if (text.trim().length === 0 || !root.submit)
             return
+        if (root.starting) {
+            root.say(qsTr("Not sent: %1 is still starting · the message stays here").arg(root.cliName()))
+            return
+        }
         // A dialog in the terminal (a picker, settings) would take these
         // keys as its own, so show it instead and keep the message here.
         if (!root.waiting && root.slashCommands && root.screen && root.model
@@ -3488,7 +3498,7 @@ FocusScope {
                     Accessible.name: stops ? root.stopLabel : qsTr("Send")
                     readonly property bool ready: stops
                                                   || ((input.text.trim().length > 0 || root.attachments.length > 0)
-                                                      && root.canSend && !root.waiting)
+                                                      && root.canSend && !root.waiting && !root.starting)
                     anchors.right: parent.right
                     width: Math.round(root.fontSize * 1.75)
                     height: width
@@ -3545,13 +3555,60 @@ FocusScope {
         }
     }
 
+    // The CLI's name for a person: what the empty thread and notes call it.
+    function cliName() {
+        return harness === "codex" || cli === "codex" ? qsTr("Codex")
+             : harness === "agy" || cli === "antigravity" ? qsTr("Antigravity")
+             : qsTr("Claude Code")
+    }
     Text {
-        visible: root.model !== null && root.model.count === 0 && !root.model.loading
+        visible: root.model !== null && root.model.count === 0 && !root.model.loading && !root.blank
         anchors.centerIn: parent
         text: qsTr("Nothing saved in this conversation yet")
         color: root.mutedTextColor
         font.family: root.sansFamily
         font.pixelSize: root.stepSize
+    }
+    // A new session: which CLI, where, and whether it is ready, until the
+    // first prompt shows.
+    Column {
+        objectName: "visualBlankState"
+        visible: root.blank && root.model !== null && root.model.count === 0
+                 && root.model.pendingEntries.length === 0
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: Math.max(0, (composerArea.y - height) / 2)
+        width: Math.min(root.columnWidth, parent.width - 56)
+        spacing: Math.round(root.fontSize * 0.4)
+        Text {
+            objectName: "visualBlankTitle"
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: root.cliName()
+            color: root.textColor
+            font.family: root.sansFamily
+            font.pixelSize: Math.round(root.fontSize * 1.15)
+            font.weight: Font.DemiBold
+        }
+        Text {
+            objectName: "visualBlankFolder"
+            width: parent.width
+            visible: root.folder.length > 0
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideMiddle
+            text: root.folder
+            color: root.mutedTextColor
+            font.family: root.monoFamily
+            font.pixelSize: root.codeSize
+        }
+        Text {
+            objectName: "visualBlankStatus"
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: root.starting ? qsTr("Starting…") : qsTr("Ready for your first message")
+            color: root.tint(root.mutedTextColor, 0.75)
+            font.family: root.sansFamily
+            font.pixelSize: root.stepSize - 1
+        }
     }
 
     // Back to the newest item; the view follows from there.
