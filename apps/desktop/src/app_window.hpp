@@ -28,7 +28,7 @@ struct AppWindowOptions {
     QString screen;
     // User keybindings and layout, exposed to QML as `config`. Optional; a
     // null value uses the shared C++ settings defaults and QML navigation defaults.
-    Config* config{},
+    Config* config{};
     QObject* alerts{};        // exposed to QML as `alerts`
     QObject* tools{};         // exposed to QML as `tools`
     QObject* desktop{};       // exposed to QML as `desktop`

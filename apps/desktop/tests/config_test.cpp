@@ -1,7 +1,7 @@
 // Appearance configuration behavior: theme and density selection,
 // validation of unknown names, and persistence back to the config file.
 //
-// The keymap reads a real file rather than a stub, so these cases exercise the
+// The config reads a real file rather than a stub, so these cases exercise the
 // same path the settings dialog uses, including the write-back that makes a
 // choice survive a restart.
 #include "config.hpp"
@@ -107,17 +107,17 @@ void selection_persists() {
         dir,
         R"({"version": 1, "layout": "focus", "keybindings": {"quit": ["Ctrl+Q"], "cycleLayout": ["Ctrl+L"]}})");
 
-    Config keymap;
-    require(keymap.load(), "default config should load");
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "explicit config should load");
+    Config config;
+    require(config.load(), "default config should load");
+    config.setSourcePathForTesting(path);
+    require(config.load(), "explicit config should load");
     // "layout" is left from the retired session layouts; it loads silently.
-    require(keymap.diagnostic().isEmpty(), "a legacy layout key should load without complaint");
+    require(config.diagnostic().isEmpty(), "a legacy layout key should load without complaint");
 
-    require(keymap.setTheme(QStringLiteral("graphite")), "graphite theme should apply");
-    require(keymap.themeName() == QStringLiteral("graphite"), "theme should be remembered");
-    require(keymap.setDensity(QStringLiteral("compact")), "compact density should apply");
-    require(keymap.densityName() == QStringLiteral("compact"), "density should be remembered");
+    require(config.setTheme(QStringLiteral("graphite")), "graphite theme should apply");
+    require(config.themeName() == QStringLiteral("graphite"), "theme should be remembered");
+    require(config.setDensity(QStringLiteral("compact")), "compact density should apply");
+    require(config.densityName() == QStringLiteral("compact"), "density should be remembered");
 
     const QJsonObject written = read_config(path);
     require(written.value(QStringLiteral("theme")).toString() == QStringLiteral("graphite"),
@@ -159,10 +159,10 @@ void symbolic_link_config_updates_target() {
     const QString canonical_target = QFileInfo(target).canonicalFilePath();
     require(QFileInfo(chain).canonicalFilePath() == canonical_target,
             "fixture symlink does not refer to the temporary config");
-    Config keymap;
-    keymap.setSourcePathForTesting(chain);
-    require(keymap.load(), "linked config should load");
-    require(keymap.setTheme(QStringLiteral("graphite")), "linked config should save");
+    Config config;
+    config.setSourcePathForTesting(chain);
+    require(config.load(), "linked config should load");
+    require(config.setTheme(QStringLiteral("graphite")), "linked config should save");
     require(QFileInfo(link).isSymbolicLink() && QFileInfo(chain).isSymbolicLink(),
             "appearance save replaced a config symlink");
     require(QFileInfo(chain).canonicalFilePath() == canonical_target, "config link target changed");
@@ -170,7 +170,7 @@ void symbolic_link_config_updates_target() {
     require(saved.value(QStringLiteral("theme")).toString() == QStringLiteral("graphite") &&
                 saved.value(QStringLiteral("retained")).toBool(),
             "linked save did not preserve and update the actual target");
-    require(keymap.load() && keymap.themeName() == QStringLiteral("graphite"),
+    require(config.load() && config.themeName() == QStringLiteral("graphite"),
             "linked config did not reload");
 }
 
@@ -183,10 +183,10 @@ void appearance_preserves_json_and_bad_files() {
         R"({"keybindings":{"openSettings":["Ctrl+,"],"nextWindow":["Ctrl+Shift+]"],"custom":["a, b","quote\"[]", "space  space"]},"categories":[{"title":"[one],  two"}],"layout":"focus"})";
     const QString path = write_config(dir, original);
     const QJsonObject before = read_config(path);
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "load punctuation fixture");
-    require(keymap.setTheme(QStringLiteral("graphite")), "persist punctuation fixture");
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load(), "load punctuation fixture");
+    require(config.setTheme(QStringLiteral("graphite")), "persist punctuation fixture");
     const QJsonObject after = read_config(path);
     require(after.value(QStringLiteral("keybindings")) ==
                 before.value(QStringLiteral("keybindings")),
@@ -195,11 +195,11 @@ void appearance_preserves_json_and_bad_files() {
             "appearance save changed category text");
     const QByteArray malformed = "{unfinished user edit";
     static_cast<void>(write_config(dir, malformed));
-    require(!keymap.setDensity(QStringLiteral("compact")), "refuse to overwrite invalid JSON");
+    require(!config.setDensity(QStringLiteral("compact")), "refuse to overwrite invalid JSON");
     QFile raw(path);
     require(raw.open(QIODevice::ReadOnly), "read invalid config");
     require(raw.readAll() == malformed, "invalid config must be preserved exactly");
-    require(!keymap.diagnostic().isEmpty(), "failed save is visible");
+    require(!config.diagnostic().isEmpty(), "failed save is visible");
 }
 
 // Pretty whitespace must not make a valid deeply nested config grow beyond the
@@ -219,10 +219,10 @@ void deeply_nested_values_survive_persistence() {
     const QString path =
         write_config(dir, QJsonDocument(root).toJson(QJsonDocument::JsonFormat::Compact) + '\n');
 
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "768-level JSON is accepted by Qt and loaded");
-    require(keymap.setTheme(QStringLiteral("graphite")), "deep config should save");
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load(), "768-level JSON is accepted by Qt and loaded");
+    require(config.setTheme(QStringLiteral("graphite")), "deep config should save");
 
     const QJsonObject written = read_config(path);
     require(written.value(QStringLiteral("nested")) == nested,
@@ -242,10 +242,10 @@ void empty_objects_are_compact() {
     const QString path =
         write_config(dir, QByteArrayLiteral(R"({"empty":{},"nested":{"empty":{}},"version":1})"));
 
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "empty-object fixture should load");
-    require(keymap.setDensity(QStringLiteral("minimal")), "empty-object fixture should save");
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load(), "empty-object fixture should load");
+    require(config.setDensity(QStringLiteral("minimal")), "empty-object fixture should save");
 
     QFile raw(path);
     require(raw.open(QIODevice::ReadOnly), "compact config should be readable");
@@ -267,11 +267,11 @@ void expanded_config_remains_reloadable() {
     const auto contents = QJsonDocument(QJsonObject{{QStringLiteral("entries"), entries}})
                               .toJson(QJsonDocument::Compact);
     const auto path = write_config(QDir(directory.path()), contents);
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "compact array fixture loads");
-    require(keymap.setTheme(QStringLiteral("amber")), "large config saves within read cap");
-    require(keymap.reload(), "saved large config reloads");
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load(), "compact array fixture loads");
+    require(config.setTheme(QStringLiteral("amber")), "large config saves within read cap");
+    require(config.reload(), "saved large config reloads");
     require(read_config(path).value(QStringLiteral("entries")).toArray() == entries,
             "compaction preserves every array entry");
 }
@@ -284,10 +284,10 @@ void zero_byte_file_initializes() {
     const QDir dir(directory.path());
     const QString path = write_config(dir, QByteArray{});
 
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(!keymap.load(), "zero-byte file has no JSON object yet");
-    require(keymap.setTheme(QStringLiteral("daylight")), "zero-byte file should initialize");
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(!config.load(), "zero-byte file has no JSON object yet");
+    require(config.setTheme(QStringLiteral("daylight")), "zero-byte file should initialize");
     const QJsonObject written = read_config(path);
     require(written.value(QStringLiteral("theme")).toString() == QStringLiteral("daylight"),
             "initialized config should contain the first selection");
@@ -304,10 +304,10 @@ void nonregular_config_paths_are_rejected() {
     require(dir.mkdir(QStringLiteral("config")), "create directory config path");
     const QString path = dir.filePath(QStringLiteral("config"));
 
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(!keymap.load(), "load must reject a nonregular path");
-    require(!keymap.save(), "persist must reject a nonregular path");
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(!config.load(), "load must reject a nonregular path");
+    require(!config.save(), "persist must reject a nonregular path");
 }
 
 // The dialog must expose both platform spellings without changing custom
@@ -320,8 +320,8 @@ void default_settings_chords_are_shared() {
 #endif
     require(default_settings_shortcuts() == expected,
             "settings defaults must preserve terminal Control chords");
-    Config keymap;
-    require(keymap.actionSequences(QStringLiteral("openSettings")) == expected,
+    Config config;
+    require(config.actionSequences(QStringLiteral("openSettings")) == expected,
             "Config defaults must use the exported settings chords");
 
     QTemporaryDir directory;
@@ -329,9 +329,9 @@ void default_settings_chords_are_shared() {
     const QDir dir(directory.path());
     const QString path =
         write_config(dir, QByteArrayLiteral(R"({"keybindings":{"openSettings":[" Alt+F4 "]}})"));
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "custom settings fixture should load");
-    const QStringList custom = keymap.actionSequences(QStringLiteral("openSettings"));
+    config.setSourcePathForTesting(path);
+    require(config.load(), "custom settings fixture should load");
+    const QStringList custom = config.actionSequences(QStringLiteral("openSettings"));
     require(custom == QStringList{QStringLiteral("Alt+F4")},
             "custom bindings must replace defaults exactly, with only surrounding space trimmed");
     using lapis::desktop::shifted_punctuation;
@@ -362,79 +362,79 @@ void retired_actions_load_silently() {
         dir, QJsonDocument(QJsonObject{{QStringLiteral("keybindings"), bindings},
                                        {QStringLiteral("editor"), QStringLiteral("Zed")}})
                  .toJson());
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "a config binding retired actions loads");
-    require(keymap.diagnostic().isEmpty(), "retired names load without complaint");
-    require(keymap.setTheme(QStringLiteral("graphite")), "an appearance change saves");
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load(), "a config binding retired actions loads");
+    require(config.diagnostic().isEmpty(), "retired names load without complaint");
+    require(config.setTheme(QStringLiteral("graphite")), "an appearance change saves");
     require(read_config(path).value(QStringLiteral("editor")).toString() == QStringLiteral("Zed"),
             "saving leaves a retired setting as written");
-    require(keymap.sequences(QStringLiteral("quit")) == Config().sequences(QStringLiteral("quit")),
+    require(config.sequences(QStringLiteral("quit")) == Config().sequences(QStringLiteral("quit")),
             "the other defaults are unchanged");
 }
 
 void navigation_defaults_preserve_terminal_editing() {
-    Config keymap;
-    require(keymap.sequences(QStringLiteral("focusLeft")).isEmpty() &&
-                keymap.sequences(QStringLiteral("focusRight")).isEmpty(),
+    Config config;
+    require(config.sequences(QStringLiteral("focusLeft")).isEmpty() &&
+                config.sequences(QStringLiteral("focusRight")).isEmpty(),
             "line-editing arrows must not change the focused agent");
     const QStringList actions{QStringLiteral("nextCategory"), QStringLiteral("previousCategory"),
                               QStringLiteral("nextWindow"),   QStringLiteral("previousWindow"),
                               QStringLiteral("newAgent"),     QStringLiteral("newCategory"),
                               QStringLiteral("closeAgent"),   QStringLiteral("quit")};
-    require(keymap.sequences(QStringLiteral("detachWindow")).isEmpty(),
+    require(config.sequences(QStringLiteral("detachWindow")).isEmpty(),
             "the retired detach action stays unbound");
     for (const auto* removed : {"nextPane", "zoomPane", "paneLeft", "dividerLeft"})
-        require(keymap.sequences(QString::fromLatin1(removed)).isEmpty(),
+        require(config.sequences(QString::fromLatin1(removed)).isEmpty(),
                 "the old pane actions stay retired");
     for (const auto* removed : kRetiredActions)
-        require(keymap.sequences(QString::fromLatin1(removed)).isEmpty(),
+        require(config.sequences(QString::fromLatin1(removed)).isEmpty(),
                 "retired actions have no default keys");
 #ifdef Q_OS_MACOS
     require(
-        keymap.sequences(QStringLiteral("nextCategory")) ==
+        config.sequences(QStringLiteral("nextCategory")) ==
                 QStringList({QStringLiteral("Meta+]"), QStringLiteral("Meta+Alt+Right"),
                              QStringLiteral("Meta+Shift+Down"), QStringLiteral("Meta+Shift+J")}) &&
-            keymap.sequences(QStringLiteral("previousCategory")) ==
+            config.sequences(QStringLiteral("previousCategory")) ==
                 QStringList({QStringLiteral("Meta+["), QStringLiteral("Meta+Alt+Left"),
                              QStringLiteral("Meta+Shift+Up"), QStringLiteral("Meta+Shift+K")}),
         "categories take Command-[ and ], keep Command-Option-arrows and "
         "Command-Shift-arrows, and Command-Shift-J/K on the home row");
-    require(keymap.sequences(QStringLiteral("newAgent")) == QStringList{QStringLiteral("Meta+T")} &&
-                keymap.sequences(QStringLiteral("newCategory")) ==
+    require(config.sequences(QStringLiteral("newAgent")) == QStringList{QStringLiteral("Meta+T")} &&
+                config.sequences(QStringLiteral("newCategory")) ==
                     QStringList{QStringLiteral("Meta+N")},
             "as in a browser, Command-T opens an agent and Command-N a category");
     // As in a browser, Command-W closes what is in front (and the window once
     // nothing is left) and Command-Shift-W the window; Command-M minimizes.
-    require(keymap.sequences(QStringLiteral("closeAgent")) ==
+    require(config.sequences(QStringLiteral("closeAgent")) ==
                     QStringList{QStringLiteral("Meta+W")} &&
-                keymap.sequences(QStringLiteral("closeWindow")) ==
+                config.sequences(QStringLiteral("closeWindow")) ==
                     QStringList{QStringLiteral("Meta+Shift+W")} &&
-                keymap.sequences(QStringLiteral("minimizeWindow")) ==
+                config.sequences(QStringLiteral("minimizeWindow")) ==
                     QStringList{QStringLiteral("Meta+M")},
             "Command-W closes the agent, Command-Shift-W the window, Command-M minimizes");
-    require(keymap.sequences(QStringLiteral("toggleTerminal")) ==
+    require(config.sequences(QStringLiteral("toggleTerminal")) ==
                     QStringList({QStringLiteral("Meta+`"), QStringLiteral("Ctrl+`")}) &&
-                keymap.sequences(QStringLiteral("chooseTerminal")) ==
+                config.sequences(QStringLiteral("chooseTerminal")) ==
                     QStringList({QStringLiteral("Meta+Shift+`"), QStringLiteral("Meta+~")}) &&
-                keymap.sequences(QStringLiteral("resumeConversation")) ==
+                config.sequences(QStringLiteral("resumeConversation")) ==
                     QStringList{QStringLiteral("Meta+O")},
             "terminal defaults keep both grave spellings and tilde");
 #else
-    require(keymap.sequences(QStringLiteral("closeWindow")).isEmpty(),
+    require(config.sequences(QStringLiteral("closeWindow")).isEmpty(),
             "without a dock to reopen it, closing the window has no key");
-    require(keymap.sequences(QStringLiteral("minimizeWindow")).isEmpty(),
+    require(config.sequences(QStringLiteral("minimizeWindow")).isEmpty(),
             "without a Dock, minimizing the window has no key");
-    require(keymap.sequences(QStringLiteral("toggleTerminal")) ==
+    require(config.sequences(QStringLiteral("toggleTerminal")) ==
                     QStringList{QStringLiteral("Ctrl+`")} &&
-                keymap.sequences(QStringLiteral("chooseTerminal")) ==
+                config.sequences(QStringLiteral("chooseTerminal")) ==
                     QStringList({QStringLiteral("Ctrl+Shift+~"), QStringLiteral("Ctrl+~")}) &&
-                keymap.sequences(QStringLiteral("resumeConversation")) ==
+                config.sequences(QStringLiteral("resumeConversation")) ==
                     QStringList{QStringLiteral("Ctrl+Shift+O")},
             "terminal defaults preserve Control chords and the resume shortcut");
-    require(keymap.sequences(QStringLiteral("newAgent")) ==
+    require(config.sequences(QStringLiteral("newAgent")) ==
                     QStringList{QStringLiteral("Ctrl+Shift+T")} &&
-                keymap.sequences(QStringLiteral("newCategory")) ==
+                config.sequences(QStringLiteral("newCategory")) ==
                     QStringList{QStringLiteral("Ctrl+Shift+N")},
             "Control-Shift-T opens an agent and Control-Shift-N a category");
 #endif
@@ -447,12 +447,12 @@ void navigation_defaults_preserve_terminal_editing() {
     QStringList seen;
     for (int number = 1; number <= 9; ++number) {
         const auto expected = QStringList{category_modifier + QString::number(number)};
-        require(keymap.sequences(QStringLiteral("category%1").arg(number)) == expected,
+        require(config.sequences(QStringLiteral("category%1").arg(number)) == expected,
                 "the first nine number chords pick the first nine categories");
         seen.append(expected.constFirst());
     }
     for (const auto& action : actions) {
-        const auto sequences = keymap.sequences(action);
+        const auto sequences = config.sequences(action);
         require(!sequences.isEmpty(), "workspace actions need defaults");
         for (const auto& sequence : sequences) {
             require(!seen.contains(sequence), "workspace shortcuts must be distinct");
@@ -478,45 +478,45 @@ void configured_shortcuts_are_validated() {
     const QString path = write_config(
         dir, QByteArrayLiteral(R"({"keybindings":{"nextCategory":["Nonsense","Ctrl+Alt+N",""],)"
                                R"("openSettings":["Ctrl+X, Ctrl+Y"],"custom":["Nonsense"]}})"));
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "mixed shortcut fixture should load");
-    require(keymap.actionSequences(QStringLiteral("nextCategory")) ==
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load(), "mixed shortcut fixture should load");
+    require(config.actionSequences(QStringLiteral("nextCategory")) ==
                 QStringList{QStringLiteral("Ctrl+Alt+N")},
             "a known action should retain only valid mixed-list entries");
-    require(keymap.actionSequences(QStringLiteral("openSettings")) == default_settings_shortcuts(),
+    require(config.actionSequences(QStringLiteral("openSettings")) == default_settings_shortcuts(),
             "settings must fall back when only a multi-chord entry is configured");
-    require(keymap.actionSequences(QStringLiteral("custom")).isEmpty(),
+    require(config.actionSequences(QStringLiteral("custom")).isEmpty(),
             "an invalid unknown action should not expose a sequence");
-    require(keymap.diagnostic().contains(QStringLiteral("nextCategory: invalid key sequence")),
+    require(config.diagnostic().contains(QStringLiteral("nextCategory: invalid key sequence")),
             "invalid known actions need action-specific diagnostics");
-    require(keymap.diagnostic().contains(
+    require(config.diagnostic().contains(
                 QStringLiteral("openSettings: invalid key sequence 'Ctrl+X, Ctrl+Y'")),
             "multi-chord settings input needs a specific diagnostic");
 
     const QString mixed_settings_path =
         write_config(dir, QByteArrayLiteral(R"({"keybindings":{"openSettings":)"
                                             R"(["Ctrl+X, Ctrl+Y","Ctrl+Alt+S"]}})"));
-    keymap.setSourcePathForTesting(mixed_settings_path);
-    require(keymap.load(), "mixed settings fixture should load");
-    require(keymap.actionSequences(QStringLiteral("openSettings")) ==
+    config.setSourcePathForTesting(mixed_settings_path);
+    require(config.load(), "mixed settings fixture should load");
+    require(config.actionSequences(QStringLiteral("openSettings")) ==
                 QStringList{QStringLiteral("Ctrl+Alt+S")},
             "a valid mixed settings entry should be retained without its unusable sibling");
 
     const QString multi_path =
         write_config(dir, QByteArrayLiteral(R"({"keybindings":{"nextCategory":["Ctrl+X, Ctrl+Y",)"
                                             R"("Ctrl+X, Nonsense"]}})"));
-    keymap.setSourcePathForTesting(multi_path);
-    require(keymap.load(), "ordinary multi-chord fixture should load");
-    require(keymap.actionSequences(QStringLiteral("nextCategory")) ==
+    config.setSourcePathForTesting(multi_path);
+    require(config.load(), "ordinary multi-chord fixture should load");
+    require(config.actionSequences(QStringLiteral("nextCategory")) ==
                 QStringList{QStringLiteral("Ctrl+X, Ctrl+Y")},
             "ordinary shortcuts support multiple chords, each of which must be valid");
 
     const QString empty_path =
         write_config(dir, QByteArrayLiteral(R"({"keybindings":{"nextCategory":[]}})"));
-    keymap.setSourcePathForTesting(empty_path);
-    require(keymap.load(), "empty shortcut fixture should load");
-    require(!keymap.actionSequences(QStringLiteral("nextCategory")).isEmpty(),
+    config.setSourcePathForTesting(empty_path);
+    require(config.load(), "empty shortcut fixture should load");
+    require(!config.actionSequences(QStringLiteral("nextCategory")).isEmpty(),
             "explicit empty lists historically retain built-in bindings");
 }
 
@@ -528,17 +528,17 @@ void unknown_names_are_rejected() {
     const QDir dir(directory.path());
     const QString path = write_config(dir, R"({"version": 1})");
 
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "config should load");
-    const QString theme = keymap.themeName();
-    const QString density = keymap.densityName();
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load(), "config should load");
+    const QString theme = config.themeName();
+    const QString density = config.densityName();
 
-    require(!keymap.setTheme(QStringLiteral("chartreuse")), "unknown theme must be rejected");
-    require(!keymap.setDensity(QStringLiteral("enormous")), "unknown density must be rejected");
-    require(keymap.themeName() == theme, "a rejected theme must not change the selection");
-    require(keymap.densityName() == density, "a rejected density must not change the selection");
-    require(!keymap.diagnostic().isEmpty(), "a rejected name should explain itself");
+    require(!config.setTheme(QStringLiteral("chartreuse")), "unknown theme must be rejected");
+    require(!config.setDensity(QStringLiteral("enormous")), "unknown density must be rejected");
+    require(config.themeName() == theme, "a rejected theme must not change the selection");
+    require(config.densityName() == density, "a rejected density must not change the selection");
+    require(!config.diagnostic().isEmpty(), "a rejected name should explain itself");
 }
 
 // The loader tolerates a malformed file by keeping defaults, which is what makes
@@ -550,13 +550,13 @@ void malformed_values_fall_back() {
     const QString path =
         write_config(dir, R"({"layout": "diagonal", "theme": "vaporwave", "density": "gigantic"})");
 
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "a syntactically valid file should still load");
-    require(keymap.themeName() == QStringLiteral("lapis"), "unknown theme should fall back");
-    require(keymap.densityName() == QStringLiteral("comfortable"),
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load(), "a syntactically valid file should still load");
+    require(config.themeName() == QStringLiteral("lapis"), "unknown theme should fall back");
+    require(config.densityName() == QStringLiteral("comfortable"),
             "unknown density should fall back");
-    require(!keymap.diagnostic().isEmpty(), "falling back should be reported");
+    require(!config.diagnostic().isEmpty(), "falling back should be reported");
 }
 
 // harnessUpdates turns off updates for the CLIs set to false; true, absent
@@ -567,18 +567,18 @@ void harness_updates_can_be_turned_off() {
     const QString path = write_config(
         QDir(directory.path()),
         R"({"harnessUpdates": {"OMP": false, "claude": true, "grok": "no", "": false}})");
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "harness updates load with the rest of the file");
-    require(keymap.harnessUpdatesOff() == QSet<QString>{QStringLiteral("omp")},
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load(), "harness updates load with the rest of the file");
+    require(config.harnessUpdatesOff() == QSet<QString>{QStringLiteral("omp")},
             "only a CLI set to false is pinned");
-    require(keymap.diagnostic().contains(QStringLiteral("harnessUpdates for 'grok'")),
+    require(config.diagnostic().contains(QStringLiteral("harnessUpdates for 'grok'")),
             "a non-boolean entry is reported");
-    require(keymap.diagnostic().contains(QStringLiteral("at least one and at most 32 characters")),
+    require(config.diagnostic().contains(QStringLiteral("at least one and at most 32 characters")),
             "an empty harness name is reported");
     const QString defaults = write_config(QDir(directory.path()), R"({"theme": "oled"})");
-    keymap.setSourcePathForTesting(defaults);
-    require(keymap.load() && keymap.harnessUpdatesOff().isEmpty(), "every CLI updates by default");
+    config.setSourcePathForTesting(defaults);
+    require(config.load() && config.harnessUpdatesOff().isEmpty(), "every CLI updates by default");
 }
 
 // Per-harness launch arguments are literal lists; malformed entries are
@@ -591,19 +591,19 @@ void harness_arguments_are_literal_lists() {
         QDir(directory.path()),
         R"({"theme": "oled", "harnessArguments": {"claude": ["--dangerously-skip-permissions"],)"
         R"( "grok": "--yolo", "kimi": ["", 3]}})");
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "harness arguments load with the rest of the file");
-    require(keymap.harnessArguments().value(QStringLiteral("claude")) ==
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load(), "harness arguments load with the rest of the file");
+    require(config.harnessArguments().value(QStringLiteral("claude")) ==
                 QStringList{QStringLiteral("--dangerously-skip-permissions")},
             "a list of strings is kept literally");
-    require(!keymap.harnessArguments().contains(QStringLiteral("grok")) &&
-                !keymap.harnessArguments().contains(QStringLiteral("kimi")),
+    require(!config.harnessArguments().contains(QStringLiteral("grok")) &&
+                !config.harnessArguments().contains(QStringLiteral("kimi")),
             "a string or a list with empty or non-string items is dropped");
-    require(keymap.diagnostic().contains(QStringLiteral("harnessArguments")),
+    require(config.diagnostic().contains(QStringLiteral("harnessArguments")),
             "dropped entries are reported");
-    require(keymap.themeName() == QStringLiteral("oled"), "other settings still apply");
-    require(keymap.setTheme(QStringLiteral("graphite")), "persist an appearance change");
+    require(config.themeName() == QStringLiteral("oled"), "other settings still apply");
+    require(config.setTheme(QStringLiteral("graphite")), "persist an appearance change");
     require(read_config(path)
                     .value(QStringLiteral("harnessArguments"))
                     .toObject()
@@ -655,22 +655,22 @@ void advertised_names_are_accepted() {
     const QDir dir(directory.path());
     const QString path = write_config(dir, R"({"version": 1})");
 
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "config should load");
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load(), "config should load");
 
-    for (const QString& name : keymap.densities())
-        require(keymap.setDensity(name), "every advertised density must be accepted");
-    const QVariantList themes = keymap.themes();
+    for (const QString& name : config.densities())
+        require(config.setDensity(name), "every advertised density must be accepted");
+    const QVariantList themes = config.themes();
     require(!themes.isEmpty(), "the dialog needs at least one theme");
     for (const QVariant& entry : themes) {
         const QString name = entry.toMap().value(QStringLiteral("name")).toString();
         require(!name.isEmpty(), "each advertised theme needs a name");
-        require(keymap.setTheme(name), "every advertised theme must be accepted");
+        require(config.setTheme(name), "every advertised theme must be accepted");
     }
     // The final iteration leaves the last advertised name selected, and the
     // enumeration agrees with the string names written to the file.
-    require(keymap.densityName() == QStringLiteral("minimal"),
+    require(config.densityName() == QStringLiteral("minimal"),
             "last advertised density is minimal");
     require(static_cast<int>(CardDensity::Comfortable) == 0, "density order is part of the file");
 }
@@ -679,14 +679,14 @@ void sidebar_preference_and_commands() {
     QTemporaryDir directory;
     require(directory.isValid(), "sidebar fixture directory");
     const auto path = write_config(QDir(directory.path()), R"({"retained":true})");
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load() && keymap.sidebarVisible(), "sidebar defaults visible");
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load() && config.sidebarVisible(), "sidebar defaults visible");
     QList<QPair<bool, bool>> observed;
-    QObject::connect(&keymap, &Config::changed, &keymap,
-                     [&] { observed.append({keymap.sidebarVisible(), keymap.previewsVisible()}); });
-    require(keymap.setSidebarVisible(false), "hide sidebar persists");
-    require(keymap.setPreviewsVisible(false), "hide previews persists");
+    QObject::connect(&config, &Config::changed, &config,
+                     [&] { observed.append({config.sidebarVisible(), config.previewsVisible()}); });
+    require(config.setSidebarVisible(false), "hide sidebar persists");
+    require(config.setPreviewsVisible(false), "hide previews persists");
     require(observed == QList<QPair<bool, bool>>{{false, true}, {false, false}},
             "successful visibility saves emit each settled state once");
     Config restored;
@@ -700,7 +700,7 @@ void sidebar_preference_and_commands() {
     const auto paste = QKeySequence(QStringLiteral("Ctrl+Shift+V"))[0];
 #endif
     for (const auto& action : {QStringLiteral("toggleSidebar"), QStringLiteral("openCommands")}) {
-        const auto bindings = keymap.sequences(action);
+        const auto bindings = config.sequences(action);
         require(!bindings.isEmpty(), "new workspace actions have shortcuts");
         for (const auto& binding : bindings)
             require(QKeySequence(binding)[0] != paste, "workspace shortcuts must not steal paste");
@@ -723,11 +723,11 @@ void typing_scroll_preference_persists() {
     QTemporaryDir directory;
     require(directory.isValid(), "typing scroll fixture directory");
     const auto path = write_config(QDir(directory.path()), R"({})");
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load() && keymap.scrollToBottomOnTyping(),
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load() && config.scrollToBottomOnTyping(),
             "typing returns to the bottom by default");
-    require(keymap.setScrollToBottomOnTyping(false), "the typing return can be turned off");
+    require(config.setScrollToBottomOnTyping(false), "the typing return can be turned off");
     require(!read_config(path).value(QStringLiteral("scrollToBottomOnTyping")).toBool(true),
             "the typing return is not persisted");
     Config restored;
@@ -747,31 +747,31 @@ void visual_settings_persist() {
     QTemporaryDir directory;
     require(directory.isValid(), "visual fixture directory");
     const auto path = write_config(QDir(directory.path()), R"({})");
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load() &&
-                keymap.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal") &&
-                keymap.visual().value(QStringLiteral("size")).toInt() == 0 &&
-                !keymap.visual().value(QStringLiteral("all")).toBool() &&
-                keymap.visual().value(QStringLiteral("editor")) == QStringLiteral("auto"),
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load() &&
+                config.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal") &&
+                config.visual().value(QStringLiteral("size")).toInt() == 0 &&
+                !config.visual().value(QStringLiteral("all")).toBool() &&
+                config.visual().value(QStringLiteral("editor")) == QStringLiteral("auto"),
             "visual defaults follow the terminal; files open in the first editor installed");
-    require(keymap.setVisual(QStringLiteral("editor"), QStringLiteral("cursor")) &&
+    require(config.setVisual(QStringLiteral("editor"), QStringLiteral("cursor")) &&
                 read_config(path)
                         .value(QStringLiteral("visual"))
                         .toObject()
                         .value(QStringLiteral("editor")) == QStringLiteral("cursor") &&
-                !keymap.setVisual(QStringLiteral("editor"), QStringLiteral("Bad Name")) &&
-                !keymap.setVisual(QStringLiteral("sendOnReturn"), true) &&
-                keymap.setVisual(QStringLiteral("editor"), QStringLiteral("auto")),
+                !config.setVisual(QStringLiteral("editor"), QStringLiteral("Bad Name")) &&
+                !config.setVisual(QStringLiteral("sendOnReturn"), true) &&
+                config.setVisual(QStringLiteral("editor"), QStringLiteral("auto")),
             "the editor choice saves; Return-sends is gone");
-    require(keymap.setVisual(QStringLiteral("theme"), QStringLiteral("claude")) &&
-                keymap.setVisual(QStringLiteral("font"), QStringLiteral("serif")) &&
-                keymap.setVisual(QStringLiteral("size"), 18) &&
-                keymap.setVisual(QStringLiteral("all"), true),
+    require(config.setVisual(QStringLiteral("theme"), QStringLiteral("claude")) &&
+                config.setVisual(QStringLiteral("font"), QStringLiteral("serif")) &&
+                config.setVisual(QStringLiteral("size"), 18) &&
+                config.setVisual(QStringLiteral("all"), true),
             "visual choices save");
-    require(!keymap.setVisual(QStringLiteral("size"), 4) &&
-                !keymap.setVisual(QStringLiteral("theme"), QStringLiteral("Bad Name")) &&
-                !keymap.setVisual(QStringLiteral("unknown"), 1),
+    require(!config.setVisual(QStringLiteral("size"), 4) &&
+                !config.setVisual(QStringLiteral("theme"), QStringLiteral("Bad Name")) &&
+                !config.setVisual(QStringLiteral("unknown"), 1),
             "bad visual values are refused");
     const auto saved = read_config(path).value(QStringLiteral("visual")).toObject();
     require(saved.value(QStringLiteral("theme")).toString() == QStringLiteral("claude") &&
@@ -801,16 +801,16 @@ void terminal_font_persists_and_rolls_back() {
     const QDir dir(directory.path());
     const QString path =
         write_config(dir, R"({"retained":true,"terminalFont":{"size":20,"ligatures":false}})");
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "font fixture loads");
-    require(keymap.terminalFontFamily().isEmpty(), "font family defaults to the system font");
-    require(keymap.terminalFontSize() == 20, "the explicit non-default font size is loaded");
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load(), "font fixture loads");
+    require(config.terminalFontFamily().isEmpty(), "font family defaults to the system font");
+    require(config.terminalFontSize() == 20, "the explicit non-default font size is loaded");
 
-    require(keymap.setTerminalFontSize(22), "valid font size applies");
-    require(keymap.setTerminalFontFamily(QStringLiteral("  Test Mono  ")),
+    require(config.setTerminalFontSize(22), "valid font size applies");
+    require(config.setTerminalFontFamily(QStringLiteral("  Test Mono  ")),
             "font family applies with surrounding space trimmed");
-    require(keymap.terminalFontFamily() == QStringLiteral("Test Mono"), "trimmed family stored");
+    require(config.terminalFontFamily() == QStringLiteral("Test Mono"), "trimmed family stored");
     QJsonObject font = read_config(path).value(QStringLiteral("terminalFont")).toObject();
     require(font.value(QStringLiteral("size")).toInt() == 22, "font size written");
     require(font.value(QStringLiteral("family")).toString() == QStringLiteral("Test Mono"),
@@ -827,30 +827,30 @@ void terminal_font_persists_and_rolls_back() {
                 restored.terminalFontFamily() == QStringLiteral("Test Mono"),
             "font survives a restart");
 
-    require(!keymap.setTerminalFontSize(lapis::desktop::kTerminalFontSizeMinimum - 1),
+    require(!config.setTerminalFontSize(lapis::desktop::kTerminalFontSizeMinimum - 1),
             "below-minimum font sizes are rejected");
-    require(!keymap.setTerminalFontSize(lapis::desktop::kTerminalFontSizeMaximum + 1),
+    require(!config.setTerminalFontSize(lapis::desktop::kTerminalFontSizeMaximum + 1),
             "above-maximum font sizes are rejected");
-    require(!keymap.setTerminalFontFamily(QStringLiteral("Bad\nName")),
+    require(!config.setTerminalFontFamily(QStringLiteral("Bad\nName")),
             "control characters in a family name are rejected");
-    require(!keymap.setTerminalFontFamily(QString(129, QLatin1Char('M'))),
+    require(!config.setTerminalFontFamily(QString(129, QLatin1Char('M'))),
             "an over-length family name is rejected");
-    require(keymap.terminalFontSize() == 22 &&
-                keymap.terminalFontFamily() == QStringLiteral("Test Mono"),
+    require(config.terminalFontSize() == 22 &&
+                config.terminalFontFamily() == QStringLiteral("Test Mono"),
             "rejected font values do not change the selection");
 
-    require(keymap.setTerminalFontFamily(QString()), "empty family restores the system font");
+    require(config.setTerminalFontFamily(QString()), "empty family restores the system font");
     font = read_config(path).value(QStringLiteral("terminalFont")).toObject();
     require(!font.contains(QStringLiteral("family")), "the default family is not written");
 
     const QByteArray malformed = "{unfinished user edit";
     static_cast<void>(write_config(dir, malformed));
-    require(!keymap.setTerminalFontSize(24), "font size save fails on a malformed file");
-    require(keymap.terminalFontSize() == 22, "failed font size save rolls back");
-    require(!keymap.setTerminalFontFamily(QStringLiteral("Other Mono")),
+    require(!config.setTerminalFontSize(24), "font size save fails on a malformed file");
+    require(config.terminalFontSize() == 22, "failed font size save rolls back");
+    require(!config.setTerminalFontFamily(QStringLiteral("Other Mono")),
             "font family save fails on a malformed file");
-    require(keymap.terminalFontFamily().isEmpty(), "failed font family save rolls back");
-    require(keymap.diagnostic().contains(QStringLiteral("Could not save")),
+    require(config.terminalFontFamily().isEmpty(), "failed font family save rolls back");
+    require(config.diagnostic().contains(QStringLiteral("Could not save")),
             "failed font save is visible");
     QFile raw(path);
     require(raw.open(QIODevice::ReadOnly), "read malformed font config");
@@ -860,10 +860,10 @@ void terminal_font_persists_and_rolls_back() {
     for (const auto* value : {"null", "42", "[1,2,3]", "\"system mono\""}) {
         const QByteArray contents = QByteArray("{\"terminalFont\":") + value + "}";
         static_cast<void>(write_config(dir, contents));
-        const bool previous = keymap.sidebarVisible();
-        require(!keymap.setSidebarVisible(!previous) && keymap.sidebarVisible() == previous,
+        const bool previous = config.sidebarVisible();
+        require(!config.setSidebarVisible(!previous) && config.sidebarVisible() == previous,
                 "appearance save rolls back instead of replacing a malformed font value");
-        require(keymap.diagnostic().contains(QStringLiteral("terminalFont must be an object")),
+        require(config.diagnostic().contains(QStringLiteral("terminalFont must be an object")),
                 "malformed font save explains the rejected update");
         require(raw.open(QIODevice::ReadOnly), "read malformed font value");
         require(raw.readAll() == contents, "malformed font value remains byte-for-byte intact");
@@ -890,17 +890,17 @@ void remote_settings_are_transactional() {
     require(directory.isValid(), "remote-settings fixture directory");
     const QDir dir(directory.path());
     const QString path = write_config(dir, R"({"retained":true})");
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "remote-settings fixture loads");
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load(), "remote-settings fixture loads");
 
     int changes = 0;
-    QObject::connect(&keymap, &Config::changed, [&changes] { ++changes; });
+    QObject::connect(&config, &Config::changed, [&changes] { ++changes; });
     const Config::RemoteSettingsPatch batch{.keepAwake = std::optional(false),
                                             .finishSound = std::optional(false)};
-    require(keymap.applyRemoteSettings(batch), "a valid settings batch applies");
+    require(config.applyRemoteSettings(batch), "a valid settings batch applies");
     require(changes == 1, "one successful settings batch publishes once");
-    const auto saved = keymap.remoteSettings();
+    const auto saved = config.remoteSettings();
     require(!saved.keepAwake && !saved.finishSound,
             "every value in a valid settings batch is applied");
     const auto written = read_config(path);
@@ -913,18 +913,18 @@ void remote_settings_are_transactional() {
     require(written.value(QStringLiteral("retained")).toBool(),
             "settings persistence preserves unrelated config");
 
-    const auto before_failure = keymap.remoteSettings();
+    const auto before_failure = config.remoteSettings();
     const QByteArray malformed = "{unfinished remote-settings edit";
     static_cast<void>(write_config(dir, malformed));
-    keymap.setSourcePathForTesting(path); // Keep memory; watch the new bytes only.
+    config.setSourcePathForTesting(path); // Keep memory; watch the new bytes only.
     QString diagnostic;
     Config::RemoteSettingsPatch failed_batch;
     failed_batch.keepAwake = true;
     failed_batch.finishSound = true;
-    require(!keymap.applyRemoteSettings(failed_batch, &diagnostic),
+    require(!config.applyRemoteSettings(failed_batch, &diagnostic),
             "a failed settings save refuses the whole batch");
-    require(keymap.remoteSettings().keepAwake == before_failure.keepAwake &&
-                keymap.remoteSettings().finishSound == before_failure.finishSound,
+    require(config.remoteSettings().keepAwake == before_failure.keepAwake &&
+                config.remoteSettings().finishSound == before_failure.finishSound,
             "a failed settings save rolls back every field it touched");
     require(diagnostic.contains(QStringLiteral("Could not save")),
             "a failed settings save reports its diagnostic");
@@ -949,10 +949,10 @@ void config_reloads_when_edited_elsewhere() {
                               "machines": {"devbox": {"folder": "~/work"}},
                               "models": {"codex": ["gpt-6-sol", "custom model [v2]"],
                                          "grok": ["-oBad", "grok-4.7"]}}})");
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load(), "config with defaults should load");
-    const auto& defaults = keymap.agentDefaults();
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load(), "config with defaults should load");
+    const auto& defaults = config.agentDefaults();
     require(defaults.harness == QStringLiteral("claude") &&
                 defaults.folder == QStringLiteral("~/dev") &&
                 defaults.machineFolders.value(QStringLiteral("devbox")) ==
@@ -966,12 +966,12 @@ void config_reloads_when_edited_elsewhere() {
                 !defaults.models.contains(QStringLiteral("claude")),
             "configured models replace what a CLI lists; names that look like options are dropped");
     // "sound" and "repeat" are the retired request chime's: ignored, not reported.
-    require(keymap.finishSound() && !keymap.keepAwake() &&
-                !keymap.diagnostic().contains(QStringLiteral("alerts")),
+    require(config.finishSound() && !config.keepAwake() &&
+                !config.diagnostic().contains(QStringLiteral("alerts")),
             "alerts and keeping awake are read, with defaults for what is missing");
 
     int changes = 0;
-    QObject::connect(&keymap, &Config::changed, [&changes] { ++changes; });
+    QObject::connect(&config, &Config::changed, [&changes] { ++changes; });
     const auto settle = [](const std::function<bool()>& done, int milliseconds) {
         QElapsedTimer clock;
         clock.start();
@@ -986,17 +986,17 @@ void config_reloads_when_edited_elsewhere() {
     require(replacement.open(QIODevice::WriteOnly), "replace the config");
     replacement.write(R"({"version": 1, "theme": "amber"})");
     require(replacement.commit(), "commit the replacement");
-    require(settle([&keymap] { return keymap.themeName() == QStringLiteral("amber"); }, 3000),
+    require(settle([&config] { return config.themeName() == QStringLiteral("amber"); }, 3000),
             "an edit elsewhere applies without a restart");
-    require(keymap.agentDefaults().harness.isEmpty() && keymap.keepAwake(),
+    require(config.agentDefaults().harness.isEmpty() && config.keepAwake(),
             "settings removed from the file return to their defaults");
     settle([] { return false; }, 400); // let the replacement's events pass
     changes = 0;
-    require(keymap.setFinishSound(false) && keymap.setKeepAwake(false),
+    require(config.setFinishSound(false) && config.setKeepAwake(false),
             "save alert and keep-awake choices");
     const int saved = changes;
     settle([] { return false; }, 600);
-    require(changes == saved && !keymap.finishSound(), "the window's own save is not read back");
+    require(changes == saved && !config.finishSound(), "the window's own save is not read back");
     const QJsonObject written = read_config(path);
     require(!written.value(QStringLiteral("alerts"))
                     .toObject()
@@ -1023,11 +1023,11 @@ void retired_plan_settings_survive() {
             "usage": {"show": false, "meter": ["codex"], "machines": ["devbox"]},
             "showUsage": true})");
     const auto before = read_config(path);
-    Config keymap;
-    keymap.setSourcePathForTesting(path);
-    require(keymap.load() && keymap.diagnostic().isEmpty(),
+    Config config;
+    config.setSourcePathForTesting(path);
+    require(config.load() && config.diagnostic().isEmpty(),
             "retired settings load without a diagnostic");
-    require(keymap.setFinishSound(false), "another setting saves");
+    require(config.setFinishSound(false), "another setting saves");
     const auto after = read_config(path);
     for (const auto* key : {"limitResets", "accounts", "usage", "showUsage"})
         require(after.value(QLatin1String(key)) == before.value(QLatin1String(key)),
@@ -1064,9 +1064,9 @@ int main(int argc, char** argv) {
         config_reloads_when_edited_elsewhere();
         retired_plan_settings_survive();
     } catch (const std::exception& error) {
-        std::cerr << "keymap_test: " << error.what() << '\n';
+        std::cerr << "config_test: " << error.what() << '\n';
         return 1;
     }
-    std::cout << "keymap_test: all cases passed\n";
+    std::cout << "config_test: all cases passed\n";
     return 0;
 }

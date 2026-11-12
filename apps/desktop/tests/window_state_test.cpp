@@ -211,13 +211,13 @@ void unsafe_paths_are_preserved(Workspace& workspace, const QTemporaryDir& temp)
 
 void legacy_layout_still_focuses_single_stage(const QTemporaryDir& temp) {
     Workspace fixture(WorkspaceMode::fixture);
-    Config keymap;
+    Config config_model;
     const QString config = temp.filePath(QStringLiteral("legacy-appearance.json"));
     write(config, R"({"layout":"blocks"})");
-    keymap.setSourcePathForTesting(config);
-    require(keymap.load(), "legacy blocks appearance loads");
+    config_model.setSourcePathForTesting(config);
+    require(config_model.load(), "legacy blocks appearance loads");
     auto settings = options(temp.filePath(QStringLiteral("legacy-window.json")));
-    settings.config = &keymap;
+    settings.config = &config_model;
     AppWindow view(fixture, settings);
     show(view);
     view.window()->requestActivate();
@@ -231,13 +231,13 @@ void legacy_layout_still_focuses_single_stage(const QTemporaryDir& temp) {
 
 void modal_focus_remains_owned(const QTemporaryDir& temp) {
     Workspace workspace(WorkspaceMode::fixture);
-    Config keymap;
+    Config config_model;
     const QString config = temp.filePath(QStringLiteral("appearance.json"));
     write(config, R"({"layout":"blocks"})");
-    keymap.setSourcePathForTesting(config);
-    require(keymap.load(), "legacy layout fixture");
+    config_model.setSourcePathForTesting(config);
+    require(config_model.load(), "legacy layout fixture");
     auto settings = options(temp.filePath(QStringLiteral("focus.json")));
-    settings.config = &keymap;
+    settings.config = &config_model;
     settings.persistGeometry = false;
     AppWindow view(workspace, settings);
     show(view);

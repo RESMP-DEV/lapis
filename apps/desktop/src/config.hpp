@@ -101,7 +101,7 @@ class Config final : public QObject {
     Q_PROPERTY(QString sourcePath READ sourcePath NOTIFY changed)
     Q_PROPERTY(QVariantMap shortcutBindings READ shortcutBindings NOTIFY changed)
     // Empty means the platform's fixed-width system font. Availability is
-    // resolved by the GUI surface; the keymap only validates and persists.
+    // resolved by the GUI surface; the config only validates and persists.
     Q_PROPERTY(QString terminalFontFamily READ terminalFontFamily NOTIFY changed)
     Q_PROPERTY(int terminalFontSize READ terminalFontSize NOTIFY changed)
     Q_PROPERTY(int terminalFontSizeMinimum READ terminalFontSizeMinimum CONSTANT)

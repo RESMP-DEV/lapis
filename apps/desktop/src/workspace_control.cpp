@@ -288,12 +288,12 @@ QString text(std::string_view name) {
     return QString::fromLatin1(name.data(), static_cast<qsizetype>(name.size()));
 }
 
-QJsonObject current_settings(const Config& keymap) {
+QJsonObject current_settings(const Config& config) {
     QJsonObject values;
     for (const auto& item : retired)
         values.insert(text(item.name), item.is_switch ? QJsonValue(false) : QJsonValue(item.count));
     for (const auto& item : switches)
-        values.insert(text(item.name), (keymap.*item.get)());
+        values.insert(text(item.name), (config.*item.get)());
     return values;
 }
 

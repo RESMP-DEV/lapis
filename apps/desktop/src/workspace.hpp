@@ -1,9 +1,9 @@
 #ifndef LAPIS_DESKTOP_WORKSPACE_HPP
 #define LAPIS_DESKTOP_WORKSPACE_HPP
 
+#include "config.hpp"
 #include "harness_catalog.hpp"
 #include "harness_models.hpp"
-#include "config.hpp"
 #include "history_strip.hpp"
 #include "tab_ranker.hpp"
 #include <lapis/session/terminal.hpp>

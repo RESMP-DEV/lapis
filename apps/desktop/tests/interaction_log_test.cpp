@@ -1,7 +1,7 @@
 #include "app_window.hpp"
+#include "config.hpp"
 #include "interaction_log.hpp"
 #include "interaction_recorder.hpp"
-#include "config.hpp"
 #include "platform_desktop.hpp"
 #include "terminal_surface.hpp"
 #include "workspace.hpp"
