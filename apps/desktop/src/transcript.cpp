@@ -1073,6 +1073,15 @@ bool antigravity_sends_immediately(const QString& settings_path) {
     return value == QLatin1String("send-immediately");
 }
 
+QStringList efforts(const QString& harness) {
+    if (harness == QLatin1String("claude"))
+        return {QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high"),
+                QStringLiteral("xhigh"), QStringLiteral("max")};
+    if (harness == QLatin1String("agy"))
+        return {QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high")};
+    return {};
+}
+
 QString work_summary(const std::vector<Item>& items, int first, int last, int except) {
     int commands = 0, searches = 0, web = 0, agents = 0, tools = 0;
     QSet<QString> edited, read;
@@ -3346,6 +3355,10 @@ QString TranscriptModel::composerText(const QStringList& screen) const {
 
 bool TranscriptModel::steerWaiting(const QStringList& screen) const {
     return format() == transcript::Format::codex && transcript::steer_waiting(screen);
+}
+
+QStringList TranscriptModel::efforts(const QString& harness) const {
+    return transcript::efforts(harness);
 }
 
 void TranscriptModel::refreshQueueMode() {

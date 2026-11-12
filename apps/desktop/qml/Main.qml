@@ -1134,18 +1134,18 @@ ApplicationWindow {
     }
     // Each CLI's commands for the visual view's model and effort pickers. A
     // CLI without an entry shows what it reports but offers no choices.
+    // The effort levels come from the transcript model (agy 1.5's /effort
+    // takes only low, medium and high).
     readonly property var visualCommands: ({
         claude: {
             model: id => "/model " + id,
-            effort: level => "/effort " + level,
-            efforts: ["low", "medium", "high", "xhigh", "max"]
+            effort: level => "/effort " + level
         },
         // Antigravity's /model and /effort take the choice directly (agy
         // 1.5); Codex's /model opens a picker, so Codex offers no choices.
         agy: {
             model: id => "/model " + id,
-            effort: level => "/effort " + level,
-            efforts: ["low", "medium", "high", "xhigh", "max"]
+            effort: level => "/effort " + level
         }
     })
     function visualModels(agent) {
@@ -1156,7 +1156,7 @@ ApplicationWindow {
     }
     function visualEfforts(agent) {
         const commands = agent ? visualCommands[agent.harnessId] : null
-        return commands ? commands.efforts : []
+        return commands ? workspace.transcript.efforts(agent.harnessId) : []
     }
     function visualCommand(kind, value) {
         const agent = liveTerminal.document

@@ -503,9 +503,10 @@ void merged_records_take_every_prompt() {
 }
 
 // How each CLI takes a message sent mid-turn: agy's from its settings file,
-// read from a throwaway home.
+// read from a throwaway home; and the effort levels each CLI's bar offers.
 void queue_modes_follow_settings() {
     using lapis::desktop::transcript::antigravity_sends_immediately;
+    using lapis::desktop::transcript::efforts;
     using lapis::desktop::transcript::Format;
     using lapis::desktop::transcript::queue_mode;
     QTemporaryDir home;
@@ -552,6 +553,13 @@ void queue_modes_follow_settings() {
     model.setPath({});
     require(model.queueMode() == "queue", "no conversation: Claude Code's");
     qputenv("HOME", saved);
+
+    require(efforts(QStringLiteral("agy")) ==
+                    QStringList{QStringLiteral("low"), QStringLiteral("medium"),
+                                QStringLiteral("high")} &&
+                efforts(QStringLiteral("claude")).size() == 5 &&
+                efforts(QStringLiteral("codex")).isEmpty(),
+            "agy offers only low, medium and high; Codex offers none");
 }
 
 // What the bar sent waits until the CLI records it, matched across the

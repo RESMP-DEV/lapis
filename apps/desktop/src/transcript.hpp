@@ -299,6 +299,9 @@ enum class Format;
 // `queuedMessages` to "send-immediately"; absent, unreadable or any other
 // value is agy's default, Queue.
 [[nodiscard]] bool antigravity_sends_immediately(const QString& settings_path);
+// The effort levels the bar offers for a CLI by its id; empty for one whose
+// effort it does not change (agy 1.5 takes only low, medium and high).
+[[nodiscard]] QStringList efforts(const QString& harness);
 
 // The CLIs whose saved conversations lapis reads, each with its own reader.
 enum class Format { claude, codex, antigravity };
@@ -801,6 +804,8 @@ class TranscriptModel final : public QAbstractListModel {
     Q_INVOKABLE [[nodiscard]] QString composerText(const QStringList& screen) const;
     // Whether Codex shows a steering message waiting (transcript::steer_waiting).
     Q_INVOKABLE [[nodiscard]] bool steerWaiting(const QStringList& screen) const;
+    // The effort levels the bar offers for a CLI by its id (transcript::efforts).
+    Q_INVOKABLE [[nodiscard]] QStringList efforts(const QString& harness) const;
     // Reads agy's queued-message setting again; see queueMode.
     Q_INVOKABLE void refreshQueueMode();
     [[nodiscard]] const QString& queueMode() const { return queue_mode_; }
