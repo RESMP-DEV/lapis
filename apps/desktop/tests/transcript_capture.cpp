@@ -5,6 +5,7 @@
 // process exits when done.
 //
 //   lapis_transcript_capture --jsonl FILE --out SHEET.png [--bench]
+//   lapis_transcript_capture --jsonl FILE --send PROMPT --then RECORDS [--out PREFIX]
 #include "transcript.hpp"
 
 #include <QColor>
@@ -265,6 +266,8 @@ void click(QQuickView& view, QQuickItem* item) {
     settle();
 }
 
+int check_rows(QQuickItem* list, const QString& when, QStringList& what);
+
 // The live work box: a fixed height as steps arrive, scrolled by the wheel
 // without growing, a step opened and closed by clicks, and no diff drawn
 // until its step is opened, live or in an opened "Worked for".
@@ -277,11 +280,18 @@ int check_live(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile
         }
     };
     auto* list = root->property("list").value<QQuickItem*>();
+    // Each moment also checks that no row of the thread overlaps the next.
+    QStringList overlaps;
+    int moment = 0;
     const auto end = [&] {
         QMetaObject::invokeMethod(list, "positionViewAtEnd");
         settle();
         QMetaObject::invokeMethod(list, "positionViewAtEnd");
         settle();
+        // Rows and columns lay out when a frame is made; check what it draws.
+        (void)view.grabWindow();
+        check_rows(list, QStringLiteral("moment %1").arg(++moment), overlaps);
+        settle(); // what the frame's layout queued (the box following its end)
     };
     root->setProperty("working", true);
     end();
@@ -367,8 +377,308 @@ int check_live(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile
             step->setProperty("open", true);
     settle();
     expect(named(root, "diffCard").size() == 1, "an opened edit step shows its diff");
+    end();
+    for (const auto& overlap : overlaps)
+        std::fprintf(stderr, "live FAIL rows: %s\n", qPrintable(overlap));
+    expect(overlaps.empty(), "no row of the thread overlaps the next");
     std::puts(failures == 0 ? "live: all checks passed" : "live: failed");
     return failures == 0 ? 0 : 1;
+}
+
+// The highest top and deepest bottom edges, in `row`'s coordinates, of
+// anything visible drawn inside it (text laid out past its item's height
+// counts).
+std::pair<qreal, qreal> drawn_span(QQuickItem* row) {
+    qreal top = 0, bottom = 0;
+    const auto walk = [&top, &bottom, row](auto&& self, QQuickItem* item) -> void {
+        if (!item->isVisible() || item->opacity() <= 0)
+            return;
+        const qreal height = std::max(
+            item->height(), item->property("contentHeight").isValid() &&
+                                    item->metaObject()->indexOfProperty("textDocument") >= 0
+                                ? item->property("contentHeight").toReal()
+                                : 0.0);
+        if (item != row && item->width() > 0 && height > 0) {
+            top = std::min(top, item->mapToItem(row, QPointF(0, 0)).y());
+            bottom = std::max(bottom, item->mapToItem(row, QPointF(0, height)).y());
+        }
+        if (item->clip() && item != row)
+            return;
+        for (auto* child : item->childItems())
+            self(self, child);
+    };
+    walk(walk, row);
+    return {top, bottom};
+}
+
+// Rows of the thread the list holds, each above the next, nothing drawn
+// past a row's bottom, and the footer below the last. Problems go to
+// `what`, prefixed; returns their number.
+int check_rows(QQuickItem* list, const QString& when, QStringList& what) {
+    int problems = 0;
+    const auto add = [&](const QString& text) {
+        what << when + QStringLiteral(": ") + text;
+        ++problems;
+    };
+    const int count = list->property("count").toInt();
+    QQuickItem* above = nullptr;
+    int above_index = -1;
+    for (int index = 0; index < count; ++index) {
+        QQuickItem* item = nullptr;
+        QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, item),
+                                  Q_ARG(int, index));
+        if (item == nullptr || !item->isVisible())
+            continue;
+        const auto [drawn_top, drawn_bottom] = drawn_span(item);
+        if (drawn_top < -0.5 || drawn_bottom > item->height() + 0.5)
+            add(QStringLiteral("row %1 (%2) draws from %3 to %4, outside its height %5")
+                    .arg(index)
+                    .arg(item->property("kind").toString())
+                    .arg(drawn_top)
+                    .arg(drawn_bottom)
+                    .arg(item->height()));
+        if (above != nullptr && above_index == index - 1 &&
+            above->y() + above->height() > item->y() + 0.5)
+            add(QStringLiteral("row %1 ends at %2, below row %3's top %4")
+                    .arg(above_index)
+                    .arg(above->y() + above->height())
+                    .arg(index)
+                    .arg(item->y()));
+        above = item;
+        above_index = index;
+    }
+    auto* footer = list->property("footerItem").value<QQuickItem*>();
+    if (footer != nullptr && footer->isVisible()) {
+        const auto [top, bottom] = drawn_span(footer);
+        if (top < -0.5 || bottom > footer->height() + 0.5)
+            add(QStringLiteral("the footer draws from %1 to %2, outside its height %3")
+                    .arg(top)
+                    .arg(bottom)
+                    .arg(footer->height()));
+    }
+    if (footer != nullptr && above != nullptr && above_index == count - 1) {
+        const auto row_end = above->mapToScene(QPointF(0, above->height())).y();
+        const auto footer_top = footer->mapToScene(QPointF(0, drawn_span(footer).first)).y();
+        if (footer_top + 0.5 < row_end)
+            add(QStringLiteral("the footer's top %1 is above the last row's end %2")
+                    .arg(footer_top)
+                    .arg(row_end));
+    }
+    return problems;
+}
+
+// A prompt sent to a conversation already shown: the bar's send (working,
+// and for a CLI that records no queue the prompt noted as sent), then the
+// CLI's records appended. The thread's rows are checked right after each
+// change and once settled; `out`, when given, saves each moment's frame.
+int check_sent(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile& file,
+               const QList<QByteArray>& records, const QString& prompt, const QString& out) {
+    auto* list = root->property("list").value<QQuickItem*>();
+    QStringList problems;
+    int shot_number = 0;
+    // The next frame drawn: rows and columns lay out as it is made.
+    const auto look = [&](const char* when) {
+        const auto frame = view.grabWindow();
+        check_rows(list, QString::fromLatin1(when), problems);
+        if (!out.isEmpty())
+            (void)frame.save(
+                QStringLiteral("%1-%2.png").arg(out).arg(shot_number++, 2, 10, QLatin1Char('0')));
+    };
+    QMetaObject::invokeMethod(list, "positionViewAtEnd");
+    settle();
+    look("before sending");
+    // Lines of the records starting "#" are moments of their own: "#working
+    // 1" or "#working 0" as the terminal reports it; "#send" (working, the
+    // prompt noted as sent); "#type" (the prompt into the bar, "\n" for a
+    // line break) and "#submit" (the bar's Return); "#top" (scrolled back);
+    // "#hide" and "#show" (the terminal shown instead, then the thread);
+    // "#other FILE" (another agent's conversation); "#wait MS".
+    QList<QByteArray> lines = records;
+    if (!prompt.isEmpty() && !lines.contains("#send") && !lines.contains("#submit"))
+        lines.prepend("#send");
+    for (const auto& line : lines) {
+        if (line.startsWith("#working")) {
+            root->setProperty("working", line.endsWith('1'));
+        } else if (line == "#send") {
+            root->setProperty("working", true);
+            model.noteSent(prompt);
+        } else if (line.startsWith("#type")) {
+            // The prompt typed into the bar first, so the bar is tall.
+            if (auto* input = root->findChild<QQuickItem*>(QStringLiteral("visualComposer")))
+                input->setProperty("text", QString(prompt).replace(QStringLiteral("\\n"), "\n"));
+        } else if (line == "#submit") {
+            // Sent as Return in the bar sends it.
+            QJSValue sent =
+                view.engine()->evaluate(QStringLiteral("(function(t) { return true })"));
+            root->setProperty("submit", QVariant::fromValue(sent));
+            QMetaObject::invokeMethod(root, "send");
+        } else if (line == "#top") {
+            // Scrolled back to the conversation's start.
+            root->setProperty("following", false);
+            QMetaObject::invokeMethod(list, "positionViewAtBeginning");
+        } else if (line == "#hide") {
+            // The terminal shows instead: the view hides and reads nothing.
+            root->setVisible(false);
+            model.setPath(QString());
+        } else if (line.startsWith("#other ")) {
+            // Another agent's conversation shows in the same view.
+            model.setPath(QString::fromUtf8(line.mid(7)));
+        } else if (line == "#show") {
+            root->setVisible(true);
+            model.setPath(file.fileName());
+        } else if (line.startsWith("#wait")) {
+            QElapsedTimer waited;
+            waited.start();
+            while (waited.elapsed() < line.mid(6).toInt())
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        } else {
+            file.write(line + '\n');
+            file.flush();
+            model.readMore();
+        }
+        QCoreApplication::processEvents();
+        look(line.startsWith('#') ? line.constData() : "right after a record");
+        for (int i = 0; i < 20; ++i)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        look("settled");
+    }
+    for (const auto& problem : problems)
+        std::fprintf(stderr, "rows FAIL %s\n", qPrintable(problem));
+    return static_cast<int>(problems.size());
+}
+
+// A long made-up reply: a two-level list with bold lead-ins, inline code
+// and math (sub- and superscripts change line heights).
+QString nested_reply() {
+    QStringList lines{QStringLiteral("Here is the plan, in order:"), QString()};
+    for (int i = 1; i <= 6; ++i) {
+        lines << QStringLiteral(
+                     "- **Stage %1:** move `src/part%1.cpp` along at a cost of $x_%1^2 + "
+                     "y_%1$ per unit, with a sentence long enough to wrap the column.")
+                     .arg(i);
+        for (int j = 1; j <= 3; ++j)
+            lines << QStringLiteral("    - **Detail %1.%2:** keep `flag_%2` on; the bound is "
+                                    "$O(n^%2)$ and $\\frac{a_%2}{b}$ stays below one, as this "
+                                    "sentence explains at some length.")
+                         .arg(i)
+                         .arg(j);
+    }
+    lines << QString() << QStringLiteral("That is the whole plan.");
+    return lines.join(QLatin1Char('\n'));
+}
+
+QByteArray compact(const QJsonObject& object) {
+    return QJsonDocument(object).toJson(QJsonDocument::Compact);
+}
+
+// Each CLI's records for a finished turn ending in that reply, and for the
+// next prompt that starts a turn.
+struct SentFixture {
+    const char* format;
+    QList<QByteArray> before;
+    QList<QByteArray> prompt;
+};
+std::vector<SentFixture> sent_fixtures() {
+    const auto reply = nested_reply();
+    const auto text = [](const QString& value) {
+        return QJsonArray{QJsonObject{{"type", "text"}, {"text", value}}};
+    };
+    const auto codex_item = [](const char* at, const char* turn, const QJsonObject& item) {
+        return compact(
+            {{"timestamp", at},
+             {"type", "event_msg"},
+             {"payload",
+              QJsonObject{{"type", "item_completed"}, {"turn_id", turn}, {"item", item}}}});
+    };
+    const auto codex_event = [](const char* at, const QJsonObject& payload) {
+        return compact({{"timestamp", at}, {"type", "event_msg"}, {"payload", payload}});
+    };
+    return {
+        {"claude",
+         {compact({{"type", "user"},
+                   {"uuid", "u1"},
+                   {"timestamp", "2026-11-11T16:00:00.000Z"},
+                   {"message", QJsonObject{{"content", "Summarize the plan"}}}}),
+          compact({{"type", "assistant"},
+                   {"uuid", "a1"},
+                   {"timestamp", "2026-11-11T16:00:05.000Z"},
+                   {"message", QJsonObject{{"content", text(reply)}}}}),
+          compact({{"type", "system"}, {"subtype", "turn_duration"}, {"durationMs", 5000}})},
+         {compact({{"type", "user"},
+                   {"uuid", "u2"},
+                   {"timestamp", "2026-11-11T16:06:00.000Z"},
+                   {"message", QJsonObject{{"content", "Now do stage one"}}}})}},
+        {"codex",
+         {codex_event("2026-11-11T16:00:00.000Z", {{"type", "task_started"}, {"turn_id", "t1"}}),
+          codex_item(
+              "2026-11-11T16:00:00.100Z", "t1",
+              {{"type", "UserMessage"}, {"id", "u1"}, {"content", text("Summarize the plan")}}),
+          codex_item("2026-11-11T16:00:05.000Z", "t1",
+                     {{"type", "AgentMessage"},
+                      {"id", "a1"},
+                      {"phase", "final_answer"},
+                      {"content", QJsonArray{QJsonObject{{"type", "Text"}, {"text", reply}}}}}),
+          codex_event("2026-11-11T16:00:05.100Z",
+                      {{"type", "task_complete"}, {"turn_id", "t1"}, {"duration_ms", 5000}})},
+         {codex_event("2026-11-11T16:06:00.000Z", {{"type", "task_started"}, {"turn_id", "t2"}}),
+          codex_item(
+              "2026-11-11T16:06:00.100Z", "t2",
+              {{"type", "UserMessage"}, {"id", "u2"}, {"content", text("Now do stage one")}})}},
+        {"antigravity",
+         {compact({{"step_index", 0},
+                   {"type", "USER_INPUT"},
+                   {"created_at", "2026-11-11T16:00:00Z"},
+                   {"content", "<USER_REQUEST>Summarize the plan</USER_REQUEST>"}}),
+          compact({{"step_index", 1},
+                   {"type", "PLANNER_RESPONSE"},
+                   {"created_at", "2026-11-11T16:00:05Z"},
+                   {"content", reply}})},
+         {compact({{"step_index", 2},
+                   {"type", "USER_INPUT"},
+                   {"created_at", "2026-11-11T16:06:00Z"},
+                   {"content", "<USER_REQUEST>Now do stage one</USER_REQUEST>"}})}},
+    };
+}
+
+// A prompt sent after a long reply, for each CLI at two text sizes: the
+// running turn's line and box start below the reply, never over it, right
+// after the send and the CLI's record and once laid out.
+int check_sent_after_reply(QQuickView& view, QQuickItem* root, TranscriptModel& model,
+                           const QString& folder) {
+    int failures = 0;
+    for (const auto& fixture : sent_fixtures()) {
+        for (const int size : {14, 21}) {
+            QFile file(
+                QDir(folder).filePath(QStringLiteral("%1-%2.jsonl").arg(fixture.format).arg(size)));
+            if (!file.open(QIODevice::WriteOnly))
+                return 1;
+            for (const auto& line : fixture.before)
+                file.write(line + '\n');
+            file.flush();
+            root->setProperty("working", false);
+            root->setProperty("sizeSetting", size);
+            model.setFormat(
+                lapis::desktop::transcript::format_named(QString::fromLatin1(fixture.format)));
+            model.setPath(file.fileName());
+            model.loadNow();
+            QThreadPool::globalInstance()->waitForDone();
+            settle();
+            const auto rows = model.rowCount();
+            const int problems = check_sent(view, root, model, file, fixture.prompt,
+                                            QStringLiteral("Now do stage one"), {});
+            const bool live =
+                model.rowCount() > rows &&
+                model.data(model.index(model.rowCount() - 1), TranscriptModel::KindRole)
+                        .toString() == QLatin1String("live");
+            if (problems > 0 || !live) {
+                std::fprintf(stderr, "live FAIL %s at %d px: %d row problems%s\n", fixture.format,
+                             size, problems, live ? "" : ", no running turn shown");
+                ++failures;
+            }
+        }
+    }
+    root->setProperty("working", false);
+    return failures;
 }
 
 // Items named `name` shown in the thread's rows or its footer (where the
@@ -464,8 +774,18 @@ int check_work(QQuickView& view, QQuickItem* root, TranscriptModel& model, const
         QMetaObject::invokeMethod(list, "positionViewAtEnd");
         settle();
     };
+    // Each moment also checks the rows and the strip under them overlap
+    // nothing.
+    QStringList overlaps;
+    int moment = 0;
+    const auto look = [&] {
+        (void)view.grabWindow();
+        check_rows(list, QStringLiteral("work moment %1").arg(++moment), overlaps);
+        settle();
+    };
     root->setProperty("working", true);
     end();
+    look();
     expect(model.running().size() == 3, "two subagents and a command run");
     auto strips = shown_named(root, "runningStrip");
     expect(named(root, "liveBox").size() == 1 && strips.size() == 1 &&
@@ -484,6 +804,7 @@ int check_work(QQuickView& view, QQuickItem* root, TranscriptModel& model, const
     model.readMore();
     root->setProperty("working", false);
     end();
+    look();
     const auto busy = shown_named(root, "busyText");
     expect(busy.size() == 1 && busy.front()->property("text").toString().startsWith(
                                    QLatin1String("Waiting on 2 subagents and 1 background task")),
@@ -523,6 +844,7 @@ int check_work(QQuickView& view, QQuickItem* root, TranscriptModel& model, const
     file.flush();
     model.readMore();
     end();
+    look();
     const auto summary = shown_named(root, "runningSummary");
     expect(model.running().size() == 6 && summary.size() == 1 &&
                shown_named(root, "runningStrip").empty(),
@@ -550,6 +872,10 @@ int check_work(QQuickView& view, QQuickItem* root, TranscriptModel& model, const
                shown_named(root, "runningSummary").empty(),
            "all ended: the strip goes");
     expect(model.rowCount() == rows, "and leaves no finished rows behind");
+    look();
+    for (const auto& overlap : overlaps)
+        std::fprintf(stderr, "work FAIL rows: %s\n", qPrintable(overlap));
+    expect(overlaps.empty(), "no row or strip overlaps another");
     std::puts(failures == 0 ? "work: all checks passed" : "work: failed");
     return failures == 0 ? 0 : 1;
 }
@@ -905,6 +1231,11 @@ int main(int argc, char** argv) {
                       "Shoot only these rows (indexes from --list, comma separated; N+ opens "
                       "the \"Worked for\" row N)",
                       "list"});
+    parser.addOption({"send",
+                      "Send this prompt to the conversation shown, then append the records of "
+                      "--then to a copy of its file, checking the thread's rows at each moment",
+                      "text"});
+    parser.addOption({"then", "With --send, the CLI's records to append (a JSONL file)", "file"});
     parser.process(app);
     const bool keys = parser.isSet("keys");
     const bool live_checks = parser.isSet("live-checks");
@@ -920,9 +1251,27 @@ int main(int argc, char** argv) {
             live_file.write(QByteArray(line) + '\n');
         live_file.flush();
     }
+    const bool sending = parser.isSet("send");
+    QList<QByteArray> sent_records;
+    if (sending) {
+        // A copy of the conversation to append to; the file stays as it is.
+        QFile source(parser.value("jsonl"));
+        QFile then(parser.value("then"));
+        if (!source.open(QIODevice::ReadOnly) || !live_file.open(QIODevice::WriteOnly) ||
+            (parser.isSet("then") && !then.open(QIODevice::ReadOnly))) {
+            std::fputs("could not copy the conversation\n", stderr);
+            return 2;
+        }
+        live_file.write(source.readAll());
+        live_file.flush();
+        if (then.isOpen())
+            for (const auto& line : then.readAll().split('\n'))
+                if (!line.trimmed().isEmpty())
+                    sent_records << line;
+    }
     if (!keys && !live_checks &&
-        (!parser.isSet("jsonl") ||
-         (!parser.isSet("out") && !parser.isSet("census") && !parser.isSet("list") && !checking))) {
+        (!parser.isSet("jsonl") || (!parser.isSet("out") && !parser.isSet("census") &&
+                                    !parser.isSet("list") && !checking && !sending))) {
         std::fputs("--jsonl and --out are required\n", stderr);
         return 2;
     }
@@ -944,7 +1293,7 @@ int main(int argc, char** argv) {
         }
         model.setFormat(format);
     }
-    model.setPath(live_checks ? live_file.fileName() : parser.value("jsonl"));
+    model.setPath(live_checks || sending ? live_file.fileName() : parser.value("jsonl"));
     model.loadNow();
     const auto load_ms = load_timer.elapsed();
     std::printf("format %s\n", qPrintable(model.formatName()));
@@ -1090,7 +1439,17 @@ int main(int argc, char** argv) {
         return check_keys(view, root);
     if (live_checks) {
         const int live = check_live(view, root, model, live_file);
-        return check_work(view, root, model, home.path()) == 0 ? live : 1;
+        const int work = check_work(view, root, model, home.path());
+        const int overlaps = check_sent_after_reply(view, root, model, home.path());
+        std::puts(overlaps == 0 ? "sent after a reply: all checks passed"
+                                : "sent after a reply: failed");
+        return live == 0 && work == 0 && overlaps == 0 ? 0 : 1;
+    }
+    if (sending) {
+        const int problems = check_sent(view, root, model, live_file, sent_records,
+                                        parser.value("send"), parser.value("out"));
+        std::printf("send: %d row problems\n", problems);
+        return problems == 0 ? 0 : 1;
     }
     if (checking) {
         // The first screen, three evenly spaced, and the last, each timed
