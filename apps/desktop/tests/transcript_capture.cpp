@@ -1464,6 +1464,170 @@ int check_work(QQuickView& view, QQuickItem* root, TranscriptModel& model, const
     return failures == 0 ? 0 : 1;
 }
 
+// Earlier turns enough that a conversation opens as its end (a tail) and
+// the rest comes in from another thread.
+QList<QByteArray> long_history(const char* format) {
+    QList<QByteArray> out;
+    const auto filler =
+        QStringLiteral("An earlier answer, long enough to fill the file. ").repeated(80);
+    for (int i = 0; i < 500; ++i) {
+        const auto n = QString::number(i);
+        const auto at =
+            QStringLiteral("2026-11-11T15:%1:00.000Z").arg(i % 60, 2, 10, QLatin1Char('0'));
+        if (qstrcmp(format, "codex") == 0) {
+            const auto turn = QStringLiteral("p") + n;
+            const auto event = [&at](const QJsonObject& payload) {
+                return compact({{"timestamp", at}, {"type", "event_msg"}, {"payload", payload}});
+            };
+            const auto item = [&](const QJsonObject& value) {
+                return event({{"type", "item_completed"}, {"turn_id", turn}, {"item", value}});
+            };
+            out << event({{"type", "task_started"}, {"turn_id", turn}})
+                << item({{"type", "UserMessage"},
+                         {"id", QStringLiteral("pu") + n},
+                         {"content", QJsonArray{QJsonObject{{"type", "text"},
+                                                            {"text", "Earlier question " + n}}}}})
+                << item({{"type", "AgentMessage"},
+                         {"id", QStringLiteral("pa") + n},
+                         {"phase", "final_answer"},
+                         {"content", QJsonArray{QJsonObject{{"type", "Text"}, {"text", filler}}}}})
+                << event({{"type", "task_complete"}, {"turn_id", turn}, {"duration_ms", 1000}});
+        } else {
+            out << compact({{"type", "user"},
+                            {"uuid", QStringLiteral("pu") + n},
+                            {"timestamp", at},
+                            {"message", QJsonObject{{"content", "Earlier question " + n}}}})
+                << compact({{"type", "assistant"},
+                            {"uuid", QStringLiteral("pa") + n},
+                            {"timestamp", at},
+                            {"message",
+                             QJsonObject{{"content", QJsonArray{QJsonObject{{"type", "text"},
+                                                                            {"text", filler}}}}}}})
+                << compact(
+                       {{"type", "system"}, {"subtype", "turn_duration"}, {"durationMs", 1000}});
+        }
+    }
+    return out;
+}
+
+// A switch to a conversation not kept, then to one kept: a prompt sent
+// while only the end shows stays shown when the whole thread replaces the
+// end, and the bubble, the running turn's box, the running strip and a
+// picture in place lay out over nothing in the thread just swapped from its
+// end to the whole; then the same after switching away and back to it, now
+// kept.
+int check_swapped(QQuickView& view, QQuickItem* root, TranscriptModel& model,
+                  const QString& folder) {
+    int failures = 0;
+    const auto expect = [&failures](bool ok, const QString& what) {
+        if (!ok) {
+            std::fprintf(stderr, "swapped FAIL %s\n", qPrintable(what));
+            ++failures;
+        }
+    };
+    QImage picture(240, 120, QImage::Format_ARGB32);
+    picture.fill(QColor("#4a6fa5"));
+    const auto picture_path = QDir(folder).filePath(QStringLiteral("swapped.png"));
+    (void)picture.save(picture_path);
+    QFile other(QDir(folder).filePath(QStringLiteral("swapped-other.jsonl")));
+    if (!other.open(QIODevice::WriteOnly))
+        return 1;
+    other.write(R"({"type":"user","uuid":"o1","message":{"content":"Elsewhere"}})"
+                "\n");
+    other.close();
+    for (const auto& fixture : sent_fixtures()) {
+        const QString name = QString::fromLatin1(fixture.format);
+        if (name == QLatin1String("antigravity"))
+            continue; // its steps are numbered from the start; no history to add
+        const bool claude = name == QLatin1String("claude");
+        const auto what = [&name](const char* text) {
+            return QStringLiteral("%1: %2").arg(name, QString::fromLatin1(text));
+        };
+        QFile file(QDir(folder).filePath(QStringLiteral("swapped-%1.jsonl").arg(name)));
+        if (!file.open(QIODevice::WriteOnly))
+            return 1;
+        for (const auto& line : long_history(fixture.format))
+            file.write(line + '\n');
+        for (const auto& line : fixture.before)
+            file.write(line + '\n');
+        file.flush();
+        root->setProperty("working", false);
+        root->setProperty("sizeSetting", 15);
+        model.setFormat(lapis::desktop::transcript::format_named(name));
+        model.setPath(file.fileName());
+        expect(model.tailShown(), what("a cold thread opens at its end"));
+        // Sent before the rest of the thread comes in.
+        const auto prompt = QStringLiteral("Now do stage one");
+        root->setProperty("working", true);
+        model.noteSent(prompt);
+        QThreadPool::globalInstance()->waitForDone();
+        for (int i = 0; i < 5; ++i)
+            settle();
+        (void)view.grabWindow();
+        expect(!model.tailShown() && model.rowCount() > 1000,
+               what("the whole thread replaced its end"));
+        expect(pending_shown(root) == QStringList{prompt},
+               what("the prompt sent meanwhile still shows"));
+        // The CLI records it and works: the running turn's box, for Claude
+        // Code a subagent in the running strip, then a reply with a picture.
+        QList<QByteArray> records = fixture.prompt;
+        if (claude)
+            records << launch(QStringLiteral("sw1"), QStringLiteral("asw1"),
+                              QStringLiteral("Look around"), 5)
+                           .trimmed();
+        int problems = check_sent(view, root, model, file, records, {}, {});
+        expect(problems == 0, what("nothing overlaps while it is recorded"));
+        expect(pending_shown(root).isEmpty() && prompt_rows(model, prompt) == 1,
+               what("its record takes the bubble's place once"));
+        expect(model.rowCount() > 0 &&
+                   model.data(model.index(model.rowCount() - 1), TranscriptModel::KindRole)
+                           .toString() == QLatin1String("live"),
+               what("the running turn shows"));
+        if (claude) {
+            expect(named(root, "liveBox").size() == 1, what("the live work box shows"));
+            expect(shown_named(root, "runningStrip").size() == 1, what("the running strip shows"));
+            const QList<QByteArray> reply{
+                compact({{"type", "assistant"},
+                         {"uuid", "a2"},
+                         {"timestamp", stamp(1)},
+                         {"message",
+                          QJsonObject{{"content",
+                                       QJsonArray{QJsonObject{{"type", "text"},
+                                                              {"text", "Drawn:\n\n" + picture_path +
+                                                                           "\n\nDone."}}}}}}}),
+                compact({{"type", "system"}, {"subtype", "turn_duration"}, {"durationMs", 4000}}),
+                "#working 0"};
+            problems = check_sent(view, root, model, file, reply, {}, {});
+            expect(problems == 0, what("nothing overlaps once the reply lands"));
+            QMetaObject::invokeMethod(root->property("list").value<QQuickItem*>(),
+                                      "positionViewAtEnd");
+            settle();
+            expect(named(root, "mediaItem").size() == 1, what("the picture shows in place"));
+        }
+        // Away and back: it is kept now and shows at once, and a prompt sent
+        // there lays out the same.
+        root->setProperty("working", false);
+        model.setPath(other.fileName());
+        settle();
+        expect(model.kept(file.fileName()), what("the thread left is kept"));
+        QList<QByteArray> again{"#show", "#send"};
+        for (auto line : fixture.prompt)
+            again << line.replace("u2", "u3")
+                         .replace("\"t2\"", "\"t3\"")
+                         .replace("Now do stage one", "Now do stage two");
+        problems =
+            check_sent(view, root, model, file, again, QStringLiteral("Now do stage two"), {});
+        expect(!model.tailShown(), what("the kept thread shows whole at once"));
+        expect(problems == 0, what("nothing overlaps in the kept thread"));
+        expect(pending_shown(root).isEmpty() &&
+                   prompt_rows(model, QStringLiteral("Now do stage two")) == 1,
+               what("the kept thread's bubble is replaced once"));
+    }
+    root->setProperty("working", false);
+    std::puts(failures == 0 ? "swapped: all checks passed" : "swapped: failed");
+    return failures;
+}
+
 // --open: the newest step whose verb starts with `verb` opened (the oldest
 // in its "Worked for" with a leading ^), in the live box while it shows,
 // else in its opened "Worked for", and shot there.
@@ -1976,7 +2140,9 @@ int main(int argc, char** argv) {
     parser.addOption({"keys", "Check the bar's Mac line editing and send keys, then exit"});
     parser.addOption({"live-checks",
                       "Check the live work box against a made-up running turn (fixed height, "
-                      "steps opening, diffs only when opened), then exit"});
+                      "steps opening, diffs only when opened), the running strip, the sent "
+                      "prompt's bubble, and those again in a thread just swapped from its end "
+                      "to the whole and in a kept one, then exit"});
     parser.addOption({"media-checks",
                       "Check a made-up reply's picture and file: click, drag out, right-click "
                       "menu and its actions (with --out, a capture of the open menu), then exit"});
@@ -2262,7 +2428,10 @@ int main(int argc, char** argv) {
         const int ended = check_turn_ended(view, root, model, home.path(), parser.value("out"));
         std::puts(ended == 0 ? "working after the turn ended: all checks passed"
                              : "working after the turn ended: failed");
-        return live == 0 && work == 0 && bubbles == 0 && overlaps == 0 && ended == 0 ? 0 : 1;
+        const int swapped = check_swapped(view, root, model, home.path());
+        return live == 0 && work == 0 && bubbles == 0 && overlaps == 0 && ended == 0 && swapped == 0
+                   ? 0
+                   : 1;
     }
     if (sending) {
         const int problems = check_sent(view, root, model, live_file, sent_records,

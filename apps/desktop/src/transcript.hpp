@@ -324,6 +324,10 @@ class Reader {
     // sent while the agent worked.
     [[nodiscard]] QStringList sent_as_written() const;
     [[nodiscard]] std::vector<bool> sent_queued() const;
+    // Takes over the prompts `from`, an earlier reading of the same
+    // conversation (a tail this whole reading replaces), still waits for,
+    // less those this reading has recorded since.
+    void carry_sent(const Reader& from);
 
   protected:
     Reader(const Reader&) = default; // for clone()

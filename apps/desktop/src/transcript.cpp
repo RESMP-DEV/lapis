@@ -607,6 +607,35 @@ QStringList Reader::sent() const {
     return out;
 }
 
+void Reader::carry_sent(const Reader& from) {
+    if (from.sent_.empty())
+        return;
+    // Where each was sent, found again by the record of the item before it
+    // (the history above a tail moves every index); the end without one.
+    const auto size = static_cast<int>(items_.size());
+    const auto place = [this, &from, size](int at) {
+        if (at <= 0 || std::cmp_greater(at, from.items_.size()))
+            return size;
+        const auto& record = from.items_[static_cast<size_t>(at - 1)].record;
+        if (record.isEmpty())
+            return std::clamp(at + size - static_cast<int>(from.items_.size()), 0, size);
+        for (int i = size - 1; i >= 0; --i)
+            if (items_[static_cast<size_t>(i)].record == record)
+                return i + 1;
+        return size;
+    };
+    int first = size;
+    for (auto sent : from.sent_) {
+        sent.at = place(sent.at);
+        first = std::min(first, sent.at);
+        sent_.push_back(std::move(sent));
+    }
+    // A prompt this reading already holds is no longer waited for.
+    for (int i = first; i < size && !sent_.empty(); ++i)
+        if (items_[static_cast<size_t>(i)].kind == Kind::prompt)
+            taken(items_[static_cast<size_t>(i)]);
+}
+
 std::vector<bool> Reader::sent_queued() const {
     std::vector<bool> out;
     out.reserve(sent_.size());
@@ -3385,6 +3414,8 @@ void TranscriptModel::received(const QString& path, transcript::Read read, bool 
 }
 
 void TranscriptModel::adopt(transcript::Read read) {
+    // A prompt sent while only the tail showed stays shown until recorded.
+    read.reader->carry_sent(*reader_);
     const auto& old_items = reader_->items();
     const auto& new_items = read.reader->items();
     // Opened work stays open where its items line up at the end.
@@ -3574,6 +3605,8 @@ void TranscriptModel::loadNow() {
 void TranscriptModel::apply(std::unique_ptr<transcript::Reader> reader, qint64 offset,
                             QByteArray pending) {
     const bool format_changed = reader->format() != reader_->format();
+    if (!format_changed)
+        reader->carry_sent(*reader_);
     beginResetModel();
     reader_ = std::move(reader);
     live_tasks_.clear();
