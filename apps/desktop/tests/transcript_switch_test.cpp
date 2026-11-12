@@ -329,6 +329,63 @@ void kept_within_budget() {
             "a conversation read ahead goes before one the person showed");
 }
 
+// A model destroyed while its threads read: the shown conversation's
+// history (startLoad, on the global pool), a read-ahead and a kept one's
+// catch-up (its own low-priority thread), and readings already queued back
+// to it but not taken. Each is dropped, never handed to the gone model; the
+// sanitizer builds check that no thread touches it. Files are long enough
+// that the reads are still running when the model goes.
+void destroyed_while_reading() {
+    QTemporaryDir directory;
+    const auto big =
+        write(directory, QStringLiteral("big.jsonl"), claude_conversation("big", 60, 40000));
+    const auto ahead =
+        write(directory, QStringLiteral("ahead.jsonl"), claude_conversation("ahead", 60, 40000));
+    const auto grown = claude_conversation("grown", 60, 40000);
+    require(QFileInfo(big).size() > 2 * TranscriptModel::tail_bytes, "the shown one is long");
+    enum class Case { read_ahead, catch_up, queued };
+    int loading = 0, reading = 0, queued = 0;
+    constexpr int rounds = 36;
+    for (int round = 0; round < rounds; ++round) {
+        const auto which = static_cast<Case>(round % 3);
+        const auto kept =
+            write(directory, QStringLiteral("kept.jsonl"), claude_conversation("kept", 2));
+        auto* model = new TranscriptModel;
+        model->setBudget(qint64{1} << 30, 8);
+        if (which == Case::catch_up)
+            model->setPath(kept); // read at once, then kept
+        model->setPath(big);      // its end now, the rest on the global pool
+        loading += model->loading() ? 1 : 0;
+        if (which == Case::read_ahead) {
+            model->warm({ahead});
+            reading += model->readingAhead() ? 1 : 0;
+        } else if (which == Case::catch_up) {
+            append(kept, grown);
+            model->followKept();
+            reading += model->readingAhead() && model->kept(kept) ? 1 : 0;
+        } else {
+            // Let the reading finish and queue itself back, then destroy
+            // the model before the queue is taken.
+            QThreadPool::globalInstance()->waitForDone();
+            queued += model->loading() ? 1 : 0;
+        }
+        delete model;
+        // Whatever was queued back is delivered now, to nothing.
+        QCoreApplication::processEvents();
+    }
+    QThreadPool::globalInstance()->waitForDone();
+    QCoreApplication::processEvents();
+    require(loading == rounds, "each model was loading the shown conversation when destroyed");
+    require(reading == 2 * rounds / 3,
+            "each read-ahead or catch-up was running when its model was destroyed");
+    require(queued == rounds / 3, "each queued reading was not yet taken when destroyed");
+    // A model made afterwards still gets its readings.
+    TranscriptModel after;
+    after.setPath(big);
+    wait_for([&] { return !after.loading(); });
+    require(!after.loading() && !after.tailShown(), "a later model's reading arrives");
+}
+
 // A kept conversation follows its file: what its CLI wrote while another
 // was shown is read on (only the new lines; a result for an earlier call
 // still finds the call), in the background or when it is shown again.
@@ -493,6 +550,7 @@ int main(int argc, char** argv) {
     cold_conversation_shows_its_end();
     kept_within_budget();
     kept_ones_follow_their_files();
+    destroyed_while_reading();
     view_comes_back();
     view_switches();
     QThreadPool::globalInstance()->waitForDone();
