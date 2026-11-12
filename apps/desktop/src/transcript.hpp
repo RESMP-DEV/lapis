@@ -547,6 +547,10 @@ class TranscriptModel final : public QAbstractListModel {
     // The agent is working (from its terminal): the running turn ends in
     // the live work box rather than folding.
     Q_PROPERTY(bool live READ live WRITE setLive NOTIFY liveChanged)
+    // The last turn started and its CLI has recorded no end yet (its final
+    // reply, a turn-end record or a next prompt). A status estimated from
+    // output can say working after the record shows the turn over.
+    Q_PROPERTY(bool turnOpen READ turnOpen NOTIFY turnOpenChanged)
     // The live work box's steps (a LiveStepsModel).
     Q_PROPERTY(QObject* liveSteps READ liveSteps CONSTANT)
     // Prompts the bar sent that the CLI has not recorded yet, oldest first.
@@ -705,6 +709,7 @@ class TranscriptModel final : public QAbstractListModel {
     Q_INVOKABLE void noteSent(const QString& text, bool queued = true);
     [[nodiscard]] bool live() const { return live_; }
     void setLive(bool live);
+    [[nodiscard]] bool turnOpen() const { return turn_open_; }
     [[nodiscard]] QObject* liveSteps() { return &live_steps_; }
     [[nodiscard]] const LiveStepsModel& liveStepsModel() const { return live_steps_; }
     [[nodiscard]] QStringList pendingPrompts() const { return reader_->sent(); }
@@ -745,6 +750,7 @@ class TranscriptModel final : public QAbstractListModel {
     void countChanged();
     void statusChanged();
     void liveChanged();
+    void turnOpenChanged();
     void pendingChanged();
     void runningChanged();
 
@@ -796,6 +802,7 @@ class TranscriptModel final : public QAbstractListModel {
     void showLive(int changed);
     void notePending();
     bool live_{};
+    bool turn_open_{};
     LiveStepsModel live_steps_{this};
     QStringList shown_pending_;
     [[nodiscard]] transcript::Format format_for(const QString& path) const;

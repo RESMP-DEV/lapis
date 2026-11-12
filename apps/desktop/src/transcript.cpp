@@ -2407,6 +2407,12 @@ void TranscriptModel::showLive(int changed) {
                                                 static_cast<int>(layout_.turns.size()) - 1),
                          changed);
     live_steps_.setActive(running);
+    // Every layout change passes here.
+    const bool open = !layout_.turns.empty() && !layout_.turns.back().closed;
+    if (open != turn_open_) {
+        turn_open_ = open;
+        emit turnOpenChanged();
+    }
 }
 
 void TranscriptModel::setLive(bool live) {

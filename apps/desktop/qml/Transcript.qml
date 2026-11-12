@@ -79,7 +79,16 @@ FocusScope {
     // A prompt sent to an idle agent: the turn shows as starting at once,
     // until the agent works (or the prompt is found not sent).
     property double sentAt: 0
-    readonly property bool busy: working || pendingCommand.length > 0 || sentAt > 0
+    // The agent's status says working, yet its file shows the last turn
+    // ended (final reply, turn-end record) and nothing sent waits to be
+    // recorded: a status estimated from terminal output (agy, Codex) can
+    // lag the record by many seconds. Then the thread shows no running
+    // turn, unless the CLI is compacting.
+    readonly property bool turnEnded: model !== null && !model.turnOpen
+                                      && model.pendingEntries.length === 0
+    readonly property bool busy: (working && (!turnEnded || screenCompacting
+                                              || model.compactingSince > 0))
+                                 || pendingCommand.length > 0 || sentAt > 0
     // Compacting the conversation (a /compact, or Claude Code's own when the
     // context fills): a quiet state of its own, never the screen, which
     // still shows the turns before it.
@@ -96,7 +105,7 @@ FocusScope {
     Timer {
         interval: 150
         repeat: true
-        running: root.busy && root.visible && !!root.screen && root.model !== null
+        running: (root.busy || root.working) && root.visible && !!root.screen && root.model !== null
         triggeredOnStart: true
         onTriggered: {
             const screen = root.screen()
@@ -118,6 +127,8 @@ FocusScope {
         function onModelReset() { root.pendingCommand = "" }
     }
     onWorkingChanged: if (working) { pendingCommand = ""; sentAt = 0 }
+    // The turn a sent prompt started has ended in the file.
+    onTurnEndedChanged: if (turnEnded) sentAt = 0
     // The prompt last sent, checked once it should have been taken: an
     // input box still holding it gets one more Return (only then, so a
     // Return never lands in anything else); still there, its bubble says
@@ -708,6 +719,10 @@ FocusScope {
         readonly property int column: Math.min(root.columnWidth, row.width - 56)
         width: ListView.view ? ListView.view.width : 0
         height: loader.height + gapAbove
+        // A row the list let go of (index -1), or a live box with no running
+        // turn behind it, never draws: Qt can leave a released row where it
+        // was, over the rows that took its place.
+        visible: index >= 0 && (kind !== "live" || root.liveShown)
         // A reused row starts closed, whatever the last item opened.
         ListView.onReused: if (loader.item && loader.item.open !== undefined) loader.item.open = false
         Rectangle {
@@ -2060,9 +2075,10 @@ FocusScope {
             id: live
             readonly property var entry: parent ? parent.entry : null
             spacing: 6
+            // Counted from the box itself, so the line and the box agree.
             BusyLine {
                 width: parent.width
-                steps: live.entry ? live.entry.steps : -1
+                steps: liveList.count
             }
             Rectangle {
                 id: box
@@ -2594,7 +2610,8 @@ FocusScope {
         // knows runs as a turn (/compact, a skill) stays in the thread.
         const uncovers = root.model && !root.model.screenKnown && /^\/[^\s\/]+/.test(text.trim())
                          && root.answersInTerminal(text.trim().split(/\s/)[0].slice(1))
-        const working = root.working
+        // A turn the file shows ended is not working, whatever the status.
+        const working = root.working && !root.turnEnded
         if (root.submit(text)) {
             // The prompt shows at once, at the thread's end, until the CLI
             // records it (queued when the agent was working), and is then

@@ -447,6 +447,41 @@ int check_rows(QQuickItem* list, const QString& when, QStringList& what) {
         above = item;
         above_index = index;
     }
+    // A row the list no longer holds for any index must not draw: left in
+    // the list, it would sit over whatever took its place. (Rows waiting in
+    // the reuse pool stay "visible" but are culled, so only a row whose
+    // hiding changes the frame counts.)
+    QSet<QQuickItem*> held;
+    for (int index = 0; index < count; ++index) {
+        QQuickItem* item = nullptr;
+        QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, item),
+                                  Q_ARG(int, index));
+        held.insert(item);
+    }
+    auto* content = list->property("contentItem").value<QQuickItem*>();
+    for (auto* child : content != nullptr ? content->childItems() : QList<QQuickItem*>{}) {
+        if (!child->isVisible() || held.contains(child) || !child->property("kind").isValid())
+            continue;
+        // Its area of the frame with it, without it (opacity, so the row's
+        // own visible binding stays) and with it again; a pulsing dot
+        // nearby makes the first and last differ, which proves nothing.
+        auto* window = list->window();
+        const auto area = child->mapRectToScene(QRectF(0, 0, child->width(), child->height()))
+                              .toAlignedRect()
+                              .intersected(QRect(QPoint(0, 0), window->size()));
+        if (area.isEmpty())
+            continue;
+        const auto with = window->grabWindow().copy(area);
+        const qreal opacity = child->opacity();
+        child->setOpacity(0);
+        const auto without = window->grabWindow().copy(area);
+        child->setOpacity(opacity);
+        const bool drawn = with != without && window->grabWindow().copy(area) == with;
+        if (drawn)
+            add(QStringLiteral("a %1 row the list no longer holds draws at %2")
+                    .arg(child->property("kind").toString())
+                    .arg(child->y()));
+    }
     auto* footer = list->property("footerItem").value<QQuickItem*>();
     if (footer != nullptr && footer->isVisible()) {
         const auto [top, bottom] = drawn_span(footer);
@@ -571,12 +606,14 @@ QByteArray compact(const QJsonObject& object) {
     return QJsonDocument(object).toJson(QJsonDocument::Compact);
 }
 
-// Each CLI's records for a finished turn ending in that reply, and for the
-// next prompt that starts a turn.
+// Each CLI's records for a finished turn ending in that reply, for the
+// next prompt that starts a turn, and for that turn's step and final reply.
 struct SentFixture {
     const char* format;
     QList<QByteArray> before;
     QList<QByteArray> prompt;
+    QList<QByteArray> step;
+    QList<QByteArray> reply;
 };
 std::vector<SentFixture> sent_fixtures() {
     const auto reply = nested_reply();
@@ -607,7 +644,28 @@ std::vector<SentFixture> sent_fixtures() {
          {compact({{"type", "user"},
                    {"uuid", "u2"},
                    {"timestamp", "2026-11-11T16:06:00.000Z"},
-                   {"message", QJsonObject{{"content", "Now do stage one"}}}})}},
+                   {"message", QJsonObject{{"content", "Now do stage one"}}}})},
+         {compact({{"type", "assistant"},
+                   {"uuid", "a2"},
+                   {"timestamp", "2026-11-11T16:06:02.000Z"},
+                   {"message",
+                    QJsonObject{{"content", QJsonArray{QJsonObject{
+                                                {"type", "tool_use"},
+                                                {"id", "b1"},
+                                                {"name", "Bash"},
+                                                {"input", QJsonObject{{"command", "make"}}}}}}}}}),
+          compact({{"type", "user"},
+                   {"uuid", "r2"},
+                   {"timestamp", "2026-11-11T16:06:20.000Z"},
+                   {"message",
+                    QJsonObject{{"content", QJsonArray{QJsonObject{{"type", "tool_result"},
+                                                                   {"tool_use_id", "b1"},
+                                                                   {"content", "built"}}}}}}})},
+         {compact({{"type", "assistant"},
+                   {"uuid", "a3"},
+                   {"timestamp", "2026-11-11T16:06:23.000Z"},
+                   {"message", QJsonObject{{"content", text(reply)}}}}),
+          compact({{"type", "system"}, {"subtype", "turn_duration"}, {"durationMs", 23000}})}},
         {"codex",
          {codex_event("2026-11-11T16:00:00.000Z", {{"type", "task_started"}, {"turn_id", "t1"}}),
           codex_item(
@@ -623,7 +681,20 @@ std::vector<SentFixture> sent_fixtures() {
          {codex_event("2026-11-11T16:06:00.000Z", {{"type", "task_started"}, {"turn_id", "t2"}}),
           codex_item(
               "2026-11-11T16:06:00.100Z", "t2",
-              {{"type", "UserMessage"}, {"id", "u2"}, {"content", text("Now do stage one")}})}},
+              {{"type", "UserMessage"}, {"id", "u2"}, {"content", text("Now do stage one")}})},
+         {codex_item("2026-11-11T16:06:20.000Z", "t2",
+                     {{"type", "CommandExecution"},
+                      {"id", "c1"},
+                      {"command", "make"},
+                      {"exit_code", 0},
+                      {"aggregated_output", "built"}})},
+         {codex_item("2026-11-11T16:06:23.000Z", "t2",
+                     {{"type", "AgentMessage"},
+                      {"id", "a2"},
+                      {"phase", "final_answer"},
+                      {"content", QJsonArray{QJsonObject{{"type", "Text"}, {"text", reply}}}}}),
+          codex_event("2026-11-11T16:06:23.100Z",
+                      {{"type", "task_complete"}, {"turn_id", "t2"}, {"duration_ms", 23000}})}},
         {"antigravity",
          {compact({{"step_index", 0},
                    {"type", "USER_INPUT"},
@@ -636,7 +707,22 @@ std::vector<SentFixture> sent_fixtures() {
          {compact({{"step_index", 2},
                    {"type", "USER_INPUT"},
                    {"created_at", "2026-11-11T16:06:00Z"},
-                   {"content", "<USER_REQUEST>Now do stage one</USER_REQUEST>"}})}},
+                   {"content", "<USER_REQUEST>Now do stage one</USER_REQUEST>"}})},
+         {compact({{"step_index", 3},
+                   {"type", "PLANNER_RESPONSE"},
+                   {"created_at", "2026-11-11T16:06:02Z"},
+                   {"thinking", "Building first."},
+                   {"tool_calls",
+                    QJsonArray{QJsonObject{{"name", "run_command"},
+                                           {"args", QJsonObject{{"CommandLine", "make"}}}}}}}),
+          compact({{"step_index", 4},
+                   {"type", "GENERIC"},
+                   {"created_at", "2026-11-11T16:06:20Z"},
+                   {"content", "built"}})},
+         {compact({{"step_index", 5},
+                   {"type", "PLANNER_RESPONSE"},
+                   {"created_at", "2026-11-11T16:06:23Z"},
+                   {"content", reply}})}},
     };
 }
 
@@ -711,6 +797,102 @@ QStringList pending_shown(QQuickItem* root) {
     for (auto* item : items)
         out << item->property("modelData").toMap().value(QStringLiteral("text")).toString();
     return out;
+}
+
+// The agent's status says working while its file shows the last turn over
+// (an output estimate lagging agy's or Codex's final record), for each CLI
+// at two text sizes: the thread shows no running turn then, unless a prompt
+// sent from the bar waits to be recorded. Each moment's rows are checked
+// (each above the next, nothing drawn past its row or by a row the list let
+// go of, the footer below); `out`, when given, saves each moment's frame.
+int check_turn_ended(QQuickView& view, QQuickItem* root, TranscriptModel& model,
+                     const QString& folder, const QString& out) {
+    auto* list = root->property("list").value<QQuickItem*>();
+    int failures = 0;
+    for (const auto& fixture : sent_fixtures()) {
+        for (const int size : {14, 21}) {
+            QFile file(QDir(folder).filePath(
+                QStringLiteral("ended-%1-%2.jsonl").arg(fixture.format).arg(size)));
+            if (!file.open(QIODevice::WriteOnly))
+                return 1;
+            const auto append = [&](const QList<QByteArray>& records) {
+                for (const auto& line : records)
+                    file.write(line + '\n');
+                file.flush();
+                model.readMore();
+            };
+            root->setProperty("working", false);
+            root->setProperty("sizeSetting", size);
+            model.setFormat(
+                lapis::desktop::transcript::format_named(QString::fromLatin1(fixture.format)));
+            for (const auto& line : fixture.before)
+                file.write(line + '\n');
+            file.flush();
+            model.setPath(file.fileName());
+            model.loadNow();
+            QThreadPool::globalInstance()->waitForDone();
+            root->setProperty("following", true);
+            QMetaObject::invokeMethod(list, "positionViewAtEnd");
+            settle();
+            QStringList problems;
+            const auto look = [&](const QString& when, bool running) {
+                for (int i = 0; i < 20; ++i)
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                // At the end, as following leaves it once a frame has laid
+                // the footer out.
+                (void)view.grabWindow();
+                QMetaObject::invokeMethod(list, "positionViewAtEnd");
+                settle();
+                const auto frame = view.grabWindow();
+                check_rows(list, when, problems);
+                const auto lines = shown_named(root, "busyText").size();
+                const bool live =
+                    model.rowCount() > 0 &&
+                    model.data(model.index(model.rowCount() - 1), TranscriptModel::KindRole)
+                            .toString() == QLatin1String("live");
+                if ((lines > 0) != running)
+                    problems << QStringLiteral("%1: %2 working lines shown, expected %3")
+                                    .arg(when)
+                                    .arg(lines)
+                                    .arg(running ? "one" : "none");
+                if (live && !running)
+                    problems << when + QStringLiteral(": a running turn's box shown");
+                if (!out.isEmpty())
+                    (void)frame.save(QStringLiteral("%1-%2-%3-%4.png")
+                                         .arg(out, QString::fromLatin1(fixture.format))
+                                         .arg(size)
+                                         .arg(QString(when).replace(QLatin1Char(' '), '-')));
+            };
+            // The last turn ended; the status says working, stops, and
+            // says working again.
+            root->setProperty("working", true);
+            look(QStringLiteral("ended working"), false);
+            root->setProperty("working", false);
+            look(QStringLiteral("ended idle"), false);
+            root->setProperty("working", true);
+            look(QStringLiteral("ended working again"), false);
+            // A prompt sent from the bar, not recorded yet: the turn shows.
+            // (The bar sends it as to an idle agent: the turn ended.)
+            model.noteSent(QStringLiteral("Now do stage one"), false);
+            look(QStringLiteral("prompt pending"), true);
+            // Recorded, a step, then the final reply lands while the status
+            // still says working.
+            append(fixture.prompt);
+            look(QStringLiteral("prompt recorded"), true);
+            append(fixture.step);
+            look(QStringLiteral("step recorded"), true);
+            append(fixture.reply);
+            look(QStringLiteral("reply landed"), false);
+            root->setProperty("working", false);
+            look(QStringLiteral("reply landed idle"), false);
+            for (const auto& problem : problems)
+                std::fprintf(stderr, "ended FAIL %s at %d px: %s\n", fixture.format, size,
+                             qPrintable(problem));
+            failures += problems.isEmpty() ? 0 : 1;
+        }
+    }
+    root->setProperty("working", false);
+    return failures;
 }
 
 // Where each visible text item showing exactly `text` sits in the window.
@@ -1651,7 +1833,10 @@ int main(int argc, char** argv) {
         const int overlaps = check_sent_after_reply(view, root, model, home.path());
         std::puts(overlaps == 0 ? "sent after a reply: all checks passed"
                                 : "sent after a reply: failed");
-        return live == 0 && work == 0 && bubbles == 0 && overlaps == 0 ? 0 : 1;
+        const int ended = check_turn_ended(view, root, model, home.path(), parser.value("out"));
+        std::puts(ended == 0 ? "working after the turn ended: all checks passed"
+                             : "working after the turn ended: failed");
+        return live == 0 && work == 0 && bubbles == 0 && overlaps == 0 && ended == 0 ? 0 : 1;
     }
     if (sending) {
         const int problems = check_sent(view, root, model, live_file, sent_records,
