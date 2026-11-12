@@ -1195,7 +1195,22 @@ QString work_summary(const std::vector<Item>& items, int first, int last, int ex
     return parts.join(QStringLiteral(", "));
 }
 
-Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded, bool live) {
+int expand_from(const Layout& layout) {
+    int finished = 0;
+    for (auto t = layout.turns.size(); t-- > 0;) {
+        // A turn with no end recorded may still be running, whether or not
+        // the view knows the agent works yet.
+        // A turn with no steps (a plain answer) has nothing to show.
+        if (layout.turns[t].live || !layout.turns[t].closed || layout.turns[t].steps == 0)
+            continue;
+        if (++finished >= expanded_finished_turns)
+            return layout.turns[t].start;
+    }
+    return 0;
+}
+
+Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled, bool live,
+               int expand_from) {
     Layout out;
     const int count = static_cast<int>(items.size());
     std::vector<int> turn_of(items.size(), -1);
@@ -1273,7 +1288,7 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded, bool l
         }
         turn.parts.back().last = turn.last;
         // The final reply is the last part's last reply; a running turn's
-        // replies so far are interim, listed in the live box.
+        // replies so far are interim, listed with its steps.
         for (int i = turn.last; !turn.live && i >= turn.parts.back().first; --i)
             if (items[static_cast<size_t>(i)].kind == Kind::reply &&
                 !items[static_cast<size_t>(i)].dropped) {
@@ -1347,15 +1362,16 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded, bool l
                 for (int at = part.lead; at < part.first; ++at)
                     if (shown(at))
                         out.rows.push_back({.item = at, .turn = t});
-            if (turn.live && p + 1 == turn.parts.size()) {
-                out.rows.push_back({.item = -1, .turn = t, .part = number, .live = true});
+            const bool running = turn.live && p + 1 == turn.parts.size();
+            if (part.steps == 0 && !running)
                 continue;
-            }
-            if (part.steps == 0)
+            const bool expanded = (part.lead >= expand_from) != toggled.contains(part.lead);
+            out.rows.push_back(
+                {.item = -1, .turn = t, .part = number, .live = running, .expanded = expanded});
+            if (!expanded)
                 continue;
-            out.rows.push_back({.item = -1, .turn = t, .part = number});
-            if (!expanded.contains(part.lead))
-                continue;
+            // A running part's replies so far are interim: final_reply is
+            // -1, so they list with its steps.
             for (int at = part.first; at <= part.last; ++at) {
                 const auto& item = items[static_cast<size_t>(at)];
                 if (at != turn.final_reply && item.kind != Kind::prompt && shown(at))
@@ -2215,8 +2231,8 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
         return {};
     const auto& row = layout_.rows[static_cast<size_t>(index.row())];
     if (row.item < 0) {
-        // A part's "Worked for" row, standing for its folded work, or the
-        // running turn's live work box.
+        // A part's "Worked for" header over its steps, or the running
+        // turn's live header.
         const auto& turn = layout_.turns[static_cast<size_t>(row.turn)];
         const auto& part = turn.parts[static_cast<size_t>(row.part)];
         switch (role) {
@@ -2237,7 +2253,7 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
         case DurationRole:
             return part.duration_ms;
         case ExpandedRole:
-            return !row.live && expanded_.contains(part.lead);
+            return row.expanded;
         case DiffRole:
             return QVariantList{};
         case AddedRole:
@@ -2255,6 +2271,7 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
         case AfterStepRole:
         case InWorkRole:
         case SteeredRole:
+        case OpenedRole:
             return false;
         default:
             return QString();
@@ -2263,6 +2280,8 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
     switch (role) {
     case InWorkRole:
         return row.in_work;
+    case OpenedRole:
+        return opened_.contains(row.item);
     case ExpandedRole:
         return false;
     case StepsRole:
@@ -2625,6 +2644,7 @@ QVariant TranscriptModel::item_value(const transcript::Item& item, int index, in
         return {};
     case InWorkRole:
     case ExpandedRole:
+    case OpenedRole:
         return false;
     case StepsRole:
         return 0;
@@ -2682,7 +2702,7 @@ QHash<int, QByteArray> TranscriptModel::role_names() {
         {RecordRole, "record"},     {ExpandedRole, "expanded"}, {InWorkRole, "inWork"},
         {StepsRole, "steps"},       {QueuedRole, "queued"},     {AtRole, "at"},
         {DurationRole, "duration"}, {SteeredRole, "steered"},   {WaitedRole, "waited"},
-        {ItemRole, "item"},         {TaskRole, "task"}};
+        {ItemRole, "item"},         {TaskRole, "task"},         {OpenedRole, "opened"}};
 }
 
 QVariantMap TranscriptModel::itemEntry(int item) const {
@@ -2875,7 +2895,7 @@ void TranscriptModel::toggleWork(int row) {
     if (row < 0 || std::cmp_greater_equal(row, layout_.rows.size()))
         return;
     const auto& shown = layout_.rows[static_cast<size_t>(row)];
-    if (shown.item >= 0 || shown.live)
+    if (shown.item >= 0)
         return;
     const int lead =
         layout_.turns[static_cast<size_t>(shown.turn)].parts[static_cast<size_t>(shown.part)].lead;
@@ -2883,6 +2903,17 @@ void TranscriptModel::toggleWork(int row) {
         expanded_.insert(lead);
     relayout(std::numeric_limits<int>::max());
     emit dataChanged(index(row), index(row), {ExpandedRole});
+}
+
+void TranscriptModel::toggleStep(int row) {
+    if (row < 0 || std::cmp_greater_equal(row, layout_.rows.size()))
+        return;
+    const int item = layout_.rows[static_cast<size_t>(row)].item;
+    if (item < 0)
+        return;
+    if (!opened_.remove(item))
+        opened_.insert(item);
+    emit dataChanged(index(row), index(row), {OpenedRole});
 }
 
 QStringList TranscriptModel::pastedFiles() const {
@@ -3559,7 +3590,12 @@ QString transcript::selection_text(const QTextDocument& document, int start, int
 }
 
 transcript::Layout TranscriptModel::layoutNow() const {
-    auto layout = transcript::lay_out(reader_->items(), expanded_, live_);
+    if (expand_from_ < 0) {
+        // First laid out: fix where turns start open (the turns lay out the
+        // same whatever is open, so a folded layout finds them).
+        expand_from_ = transcript::expand_from(transcript::lay_out(reader_->items(), {}, live_));
+    }
+    auto layout = transcript::lay_out(reader_->items(), expanded_, live_, expand_from_);
     if (tail_)
         transcript::trim_to_turns(layout);
     return layout;
@@ -3600,8 +3636,10 @@ void TranscriptModel::setPath(const QString& path) {
     std::unique_ptr<transcript::Reader> outgoing = std::move(reader_);
     if (!path_.isEmpty() && !tail_ && !loading_)
         keep({path_, std::move(outgoing), offset_, std::move(pending_), expanded_, view_, 0,
-              ++shown_clock_});
+              ++shown_clock_, opened_, expand_from_});
     expanded_.clear();
+    opened_.clear();
+    expand_from_ = -1;
     view_.clear();
     tail_ = false;
     loading_ = false;
@@ -3618,6 +3656,8 @@ void TranscriptModel::setPath(const QString& path) {
         offset_ = hit->offset;
         pending_ = std::move(hit->pending);
         expanded_ = std::move(hit->expanded);
+        opened_ = std::move(hit->opened);
+        expand_from_ = hit->expand_from;
         view_ = std::move(hit->view);
         kept_.erase(hit);
         // What the CLI wrote since it was last shown, before the rows are
@@ -3628,6 +3668,8 @@ void TranscriptModel::setPath(const QString& path) {
             offset_ = 0;
             pending_.clear();
             expanded_.clear();
+            opened_.clear();
+            expand_from_ = -1;
             view_.clear();
         }
     }
@@ -3728,7 +3770,9 @@ void TranscriptModel::received(const QString& path, transcript::Read read, bool 
               {},
               {},
               0,
-              ahead ? 0 : ++shown_clock_});
+              ahead ? 0 : ++shown_clock_,
+              {},
+              -1});
     }
     if (!read.tail)
         warmNext();
@@ -3739,17 +3783,27 @@ void TranscriptModel::adopt(transcript::Read read) {
     read.reader->carry_sent(*reader_);
     const auto& old_items = reader_->items();
     const auto& new_items = read.reader->items();
-    // Opened work stays open where its items line up at the end.
-    QSet<int> expanded;
+    // Shown or folded work and opened steps stay so where their items line
+    // up at the end, and turns open by default from the same item.
     const auto shift = static_cast<int>(new_items.size()) - static_cast<int>(old_items.size());
-    for (const int lead : std::as_const(expanded_)) {
-        const int moved = lead + shift;
-        if (moved >= 0 && std::cmp_less(moved, new_items.size()) &&
-            new_items[static_cast<size_t>(moved)].record ==
-                old_items[static_cast<size_t>(lead)].record)
-            expanded.insert(moved);
-    }
-    auto next = transcript::lay_out(new_items, expanded, live_);
+    const auto moved = [&](const QSet<int>& marked) {
+        QSet<int> out;
+        for (const int at : marked) {
+            const int to = at + shift;
+            if (to >= 0 && std::cmp_less(to, new_items.size()) &&
+                std::cmp_less(at, old_items.size()) &&
+                new_items[static_cast<size_t>(to)].record ==
+                    old_items[static_cast<size_t>(at)].record)
+                out.insert(to);
+        }
+        return out;
+    };
+    auto expanded = moved(expanded_);
+    auto opened = moved(opened_);
+    expand_from_ = expand_from_ >= 0
+                       ? std::max(0, expand_from_ + shift)
+                       : transcript::expand_from(transcript::lay_out(new_items, {}, live_));
+    auto next = transcript::lay_out(new_items, expanded, live_, expand_from_);
     if (read.tail)
         transcript::trim_to_turns(next);
     // The view notes its place, the rows are replaced at once, and it goes
@@ -3764,6 +3818,7 @@ void TranscriptModel::adopt(transcript::Read read) {
     const auto old_reader = std::exchange(reader_, std::move(read.reader));
     layout_ = std::move(next);
     expanded_ = std::move(expanded);
+    opened_ = std::move(opened);
     offset_ = read.offset;
     pending_ = std::move(read.pending);
     tail_ = read.tail;
@@ -3919,6 +3974,7 @@ void TranscriptModel::apply(std::unique_ptr<transcript::Reader> reader, qint64 o
     reader_ = std::move(reader);
     live_tasks_.clear();
     tail_ = false;
+    expand_from_ = -1; // the whole file: its items may sit elsewhere than the tail's
     layout_ = layoutNow();
     offset_ = offset;
     pending_ = std::move(pending);

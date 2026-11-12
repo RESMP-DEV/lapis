@@ -43,6 +43,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach/mach.h>
 #endif
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <map>
@@ -275,9 +276,39 @@ void click(QQuickView& view, QQuickItem* item) {
 
 int check_rows(QQuickItem* list, const QString& when, QStringList& what);
 
-// The live work box: a fixed height as steps arrive, scrolled by the wheel
-// without growing, a step opened and closed by clicks, and no diff drawn
-// until its step is opened, live or in an opened "Worked for".
+// Scroll areas inside the thread's rows and footer (a list, a flickable):
+// the thread has one, its own, and nothing in it scrolls on its own.
+int nested_scrollers(QQuickItem* root) {
+    auto* list = root->property("list").value<QQuickItem*>();
+    auto* content = list->property("contentItem").value<QQuickItem*>();
+    int found = 0;
+    const auto walk = [&found](auto&& self, QQuickItem* item) -> void {
+        if (item->inherits("QQuickFlickable"))
+            ++found;
+        for (auto* child : item->childItems())
+            self(self, child);
+    };
+    for (auto* child : content->childItems())
+        walk(walk, child);
+    return found;
+}
+
+// A step row whose entry's title is `title`, or null.
+QQuickItem* step_titled(QQuickItem* root, const char* title) {
+    for (auto* row : named(root, "stepRow")) {
+        const auto entry = row->property("entry").value<QObject*>();
+        if (entry != nullptr && entry->property("title").toString() == QLatin1String(title))
+            return row;
+    }
+    return nullptr;
+}
+
+// A running turn's steps as thread rows: they grow with the turn, the view
+// follows its end, the wheel scrolls the thread (nothing scrolls inside it),
+// a step opens and closes in place by clicks without moving its row, no diff
+// is drawn until its step is opened, and the opened step stays opened as
+// the turn ends under its "Worked for" header, which folds and shows its
+// steps as a group.
 int check_live(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile& file) {
     int failures = 0;
     const auto expect = [&failures](bool ok, const char* what) {
@@ -302,88 +333,115 @@ int check_live(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile
     };
     root->setProperty("working", true);
     end();
-    auto boxes = named(root, "liveBox");
-    expect(boxes.size() == 1, "one live box while the turn runs");
-    if (boxes.size() != 1)
-        return 1;
-    const auto height = boxes.front()->height();
+    expect(named(root, "liveHeader").size() == 1, "one live header while the turn runs");
+    expect(named(root, "liveBox").empty() && nested_scrollers(root) == 0,
+           "no box and no scroll area inside the thread");
+    // Thinking, the search and the edit; the interim reply is a reply row.
+    expect(named(root, "stepRow").size() == 3, "the running turn's steps are thread rows");
     expect(named(root, "diffCard").empty(), "no diff drawn before a step is opened");
-    expect(named(root, "step").empty(), "no step rows in the thread while it runs");
+    const int rows_before = model.rowCount();
     for (const char* line : kLiveMore)
         file.write(QByteArray(line) + '\n');
     file.flush();
     model.readMore();
     end();
-    boxes = named(root, "liveBox");
-    auto* inner = boxes.empty() ? nullptr : boxes.front()->findChild<QQuickItem*>("liveList");
-    expect(boxes.size() == 1 && boxes.front()->height() == height,
-           "the box keeps its height as steps arrive");
-    expect(inner != nullptr && model.liveStepsModel().rowCount() == 8 &&
-               inner->property("atYEnd").toBool(),
-           "the box lists every step and follows the newest");
-    if (inner == nullptr)
-        return 1;
-    // The wheel scrolls back through the turn inside the box.
-    const auto before = inner->property("contentY").toReal();
-    const auto centre =
-        boxes.front()->mapToScene(QPointF(boxes.front()->width() / 2, boxes.front()->height() / 2));
+    expect(model.rowCount() == rows_before + 4 && model.liveStepsModel().rowCount() == 8 &&
+               named(root, "stepRow").size() == 7,
+           "the running turn grows by a row per step");
+    expect(root->property("following").toBool() && list->property("atYEnd").toBool(),
+           "the thread follows the newest step");
+    expect(nested_scrollers(root) == 0, "still no scroll area inside the thread");
+    // The wheel over a step scrolls the thread itself (in a short window,
+    // so the turn is taller than the view).
+    const auto full = view.size();
+    view.resize(full.width(), 400);
+    end();
+    auto* search = named(root, "stepRow").back();
+    const auto before = list->property("contentY").toReal();
+    const auto centre = search->mapToScene(QPointF(search->width() / 2, search->height() / 2));
     QWheelEvent wheel(centre, view.mapToGlobal(centre.toPoint()), QPoint(0, 60), QPoint(0, 120),
                       Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
     QCoreApplication::sendEvent(&view, &wheel);
     settle();
-    expect(inner->property("contentY").toReal() < before && !inner->property("follow").toBool() &&
-               boxes.front()->height() == height,
-           "the wheel scrolls back in the box, which does not grow");
-    // Clicking the edit opens it under the box with its diff; again closes.
-    QQuickItem* edit_line = nullptr;
-    const auto lines = [&] {
-        std::vector<QQuickItem*> out;
-        for (auto* child : inner->property("contentItem").value<QQuickItem*>()->childItems())
-            if (child->property("item").isValid())
-                out.push_back(child);
-        return out;
-    };
-    QMetaObject::invokeMethod(inner, "positionViewAtBeginning");
+    expect(list->property("contentY").toReal() < before && !root->property("following").toBool(),
+           "the wheel over a step scrolls the thread");
+    // At the end of a thread taller than the view, following it, the last
+    // step opens below itself: its row stays under the pointer.
+    root->setProperty("following", true);
+    end();
+    auto* last_step = named(root, "stepRow").back();
+    const auto last_at = last_step->mapToScene(QPointF(0, 0));
+    click(view, last_step);
+    (void)view.grabWindow();
     settle();
-    for (auto* line : lines())
-        if (line->property("title").toString() == QLatin1String("Edited"))
-            edit_line = line;
-    expect(edit_line != nullptr, "the edit is a line of the box");
+    // Within a pixel: the list may settle a fractional end offset.
+    const auto unmoved = [](QQuickItem* item, QPointF at) {
+        const auto now = item->mapToScene(QPointF(0, 0));
+        return std::abs(now.x() - at.x()) < 1 && std::abs(now.y() - at.y()) < 1;
+    };
+    expect(named(root, "detailRule").size() == 1 && unmoved(last_step, last_at) &&
+               !root->property("following").toBool(),
+           "the last step opens in place at the thread's end, its row unmoved");
+    click(view, last_step);
+    (void)view.grabWindow();
+    settle();
+    expect(named(root, "detailRule").empty() && unmoved(last_step, last_at),
+           "and closes in place");
+    view.resize(full);
+    // Clicking the edit opens it in place with its diff; again closes. The
+    // row under the pointer stays where it is.
+    end();
+    auto* edit_line = step_titled(root, "Edited");
+    expect(edit_line != nullptr, "the edit is a step row of the thread");
     if (edit_line == nullptr)
         return 1;
+    const auto edit_at = edit_line->mapToScene(QPointF(0, 0));
+    root->setProperty("following", true);
     click(view, edit_line);
-    expect(root->property("liveOpenItem").toInt() == edit_line->property("item").toInt() &&
-               named(root, "diffCard").size() == 1 && boxes.front()->height() == height,
-           "clicking a step opens its diff under the box");
+    (void)view.grabWindow();
+    settle();
+    expect(named(root, "diffCard").size() == 1, "clicking a step opens its diff under it");
+    expect(edit_line->mapToScene(QPointF(0, 0)) == edit_at && !root->property("following").toBool(),
+           "opening it leaves its row where it was, even from the thread's end");
     click(view, edit_line);
-    expect(root->property("liveOpenItem").toInt() == -1 && named(root, "diffCard").empty(),
-           "clicking it again closes it");
-    // The turn ends: the box goes, the work folds, its steps open one by one.
+    (void)view.grabWindow();
+    settle();
+    expect(named(root, "diffCard").empty() && edit_line->mapToScene(QPointF(0, 0)) == edit_at,
+           "clicking it again closes it in place");
+    // Opened again, it stays opened as the turn ends.
+    click(view, edit_line);
     for (const char* line : kLiveEnd)
         file.write(QByteArray(line) + '\n');
     file.flush();
     model.readMore();
     root->setProperty("working", false);
+    root->setProperty("following", true);
     end();
-    expect(named(root, "liveBox").empty(), "the box goes when the turn ends");
-    int work = -1;
-    for (int row = 0; row < model.rowCount(); ++row)
-        if (model.data(model.index(row), TranscriptModel::KindRole).toString() ==
-            QLatin1String("work"))
-            work = row;
-    expect(work >= 0, "the finished turn folds to Worked for");
-    if (work < 0)
+    expect(named(root, "liveHeader").empty() && named(root, "busyText").empty(),
+           "the live header goes when the turn ends");
+    const auto headers = named(root, "workHeader");
+    expect(headers.size() == 1 && headers.front()->property("expanded").toBool(),
+           "the finished turn keeps its steps shown under its Worked for header");
+    expect(named(root, "stepRow").size() == 7 && named(root, "diffCard").size() == 1,
+           "the edit opened while it ran is still opened");
+    if (headers.size() != 1)
         return 1;
-    model.toggleWork(work);
-    end();
-    const auto steps = named(root, "step");
-    expect(steps.size() >= 6 && named(root, "diffCard").empty(),
-           "an opened Worked for lists one-line steps, no diff");
-    for (auto* step : steps)
-        if (step->property("edit").toBool())
-            step->setProperty("open", true);
+    // The header folds and shows the turn's steps as a group, in place.
+    auto* header = headers.front();
+    QMetaObject::invokeMethod(list, "positionViewAtBeginning");
     settle();
-    expect(named(root, "diffCard").size() == 1, "an opened edit step shows its diff");
+    const auto header_at = header->mapToScene(QPointF(0, 0));
+    click(view, header);
+    (void)view.grabWindow();
+    settle();
+    expect(named(root, "stepRow").empty() && named(root, "diffCard").empty() &&
+               header->mapToScene(QPointF(0, 0)) == header_at,
+           "clicking the header folds its steps; the header stays put");
+    click(view, header);
+    (void)view.grabWindow();
+    settle();
+    expect(named(root, "stepRow").size() == 7 && named(root, "diffCard").size() == 1,
+           "clicking it again shows them, the opened edit still opened");
     end();
     for (const auto& overlap : overlaps)
         std::fprintf(stderr, "live FAIL rows: %s\n", qPrintable(overlap));
@@ -1714,9 +1772,9 @@ int check_work(QQuickView& view, QQuickItem* root, TranscriptModel& model, const
     look();
     expect(model.running().size() == 3, "two subagents and a command run");
     auto strips = shown_named(root, "runningStrip");
-    expect(named(root, "liveBox").size() == 1 && strips.size() == 1 &&
-               strips.front()->height() < 4 * root->property("liveLineHeight").toReal() + 12,
-           "while it works, one strip of three lines under the box");
+    expect(named(root, "liveHeader").size() == 1 && strips.size() == 1 &&
+               shown_named(root, "runningTask").size() == 3 && nested_scrollers(root) == 0,
+           "while it works, three step rows at the thread's end, no box or scroll area");
     // The turn ends; its work runs on.
     file.write(
         QStringLiteral(
@@ -1736,7 +1794,7 @@ int check_work(QQuickView& view, QQuickItem* root, TranscriptModel& model, const
                                    QLatin1String("Waiting on 2 subagents and 1 background task")),
            "idle, the agent shows it waits on its work");
     strips = shown_named(root, "runningStrip");
-    expect(named(root, "liveBox").empty() && strips.size() == 1, "the strip stays, under it");
+    expect(named(root, "liveHeader").empty() && strips.size() == 1, "the rows stay, under it");
     // A subagent's line opens to its own steps, once a frame has placed the
     // footer where the thread's end puts it (its items move when polished).
     (void)view.grabWindow();
@@ -1757,9 +1815,8 @@ int check_work(QQuickView& view, QQuickItem* root, TranscriptModel& model, const
             click(view, line);
             for (int i = 0; i < 5; ++i)
                 settle();
-            const auto boxes = shown_named(root, "subagentList");
-            expect(boxes.size() == 1 && boxes.front()->property("count").toInt() == 2,
-                   "opened, it lists its own two steps");
+            expect(shown_named(root, "subagentStep").size() == 2 && nested_scrollers(root) == 0,
+                   "opened in place, it lists its own two steps as rows");
             click(view, line);
         }
     }
@@ -1921,12 +1978,19 @@ int check_swapped(QQuickView& view, QQuickItem* root, TranscriptModel& model,
         expect(problems == 0, what("nothing overlaps while it is recorded"));
         expect(pending_shown(root).isEmpty() && prompt_rows(model, prompt) == 1,
                what("its record takes the bubble's place once"));
-        expect(model.rowCount() > 0 &&
-                   model.data(model.index(model.rowCount() - 1), TranscriptModel::KindRole)
-                           .toString() == QLatin1String("live"),
-               what("the running turn shows"));
+        // The running turn's live header, its steps (if any) after it.
+        int live_header = -1;
+        for (int row = 0; row < model.rowCount(); ++row)
+            if (model.data(model.index(row), TranscriptModel::KindRole).toString() ==
+                QLatin1String("live"))
+                live_header = row;
+        bool steps_after = live_header >= 0;
+        for (int row = live_header + 1; steps_after && row < model.rowCount(); ++row)
+            steps_after = model.data(model.index(row), TranscriptModel::InWorkRole).toBool();
+        expect(steps_after, what("the running turn shows"));
         if (claude) {
-            expect(named(root, "liveBox").size() == 1, what("the live work box shows"));
+            expect(named(root, "liveHeader").size() == 1 && nested_scrollers(root) == 0,
+                   what("the live header shows, its steps rows of the thread"));
             expect(shown_named(root, "runningStrip").size() == 1, what("the running strip shows"));
             const QList<QByteArray> reply{
                 compact({{"type", "assistant"},
@@ -1970,33 +2034,30 @@ int check_swapped(QQuickView& view, QQuickItem* root, TranscriptModel& model,
     return failures;
 }
 
-// --open: the newest step whose verb starts with `verb` opened (the oldest
-// in its "Worked for" with a leading ^), in the live box while it shows,
-// else in its opened "Worked for", and shot there.
+// --open: the newest step whose verb starts with `verb` opened in place
+// (the oldest under its header with a leading ^), its header's steps shown
+// first if they were folded, and shot there.
 QImage open_step(QQuickView& view, QQuickItem* root, TranscriptModel& model, QObject* list,
                  QString verb) {
     const bool oldest = verb.startsWith(QLatin1Char('^'));
     if (oldest)
         verb.remove(0, 1);
-    const auto& steps = model.liveStepsModel();
-    for (int row = steps.rowCount() - 1; row >= 0; --row)
-        if (steps.data(steps.index(row), TranscriptModel::TitleRole).toString().startsWith(verb)) {
-            root->setProperty("liveOpenItem",
-                              steps.data(steps.index(row), TranscriptModel::ItemRole).toInt());
-            settle();
-            return shot(view, list, -1);
-        }
     root->setProperty("following", false);
+    const auto kind = [&model](int row) {
+        return model.data(model.index(row), TranscriptModel::KindRole).toString();
+    };
     for (int work = model.rowCount() - 1; work >= 0; --work) {
-        if (model.data(model.index(work), TranscriptModel::KindRole).toString() !=
-            QLatin1String("work"))
+        if (kind(work) != QLatin1String("work") && kind(work) != QLatin1String("live"))
             continue;
-        model.toggleWork(work);
+        const bool folded = !model.data(model.index(work), TranscriptModel::ExpandedRole).toBool();
+        if (folded)
+            model.toggleWork(work);
         std::vector<int> matches;
         for (int row = work + 1; row < model.rowCount(); ++row) {
             const auto index = model.index(row);
-            if (model.data(index, TranscriptModel::InWorkRole).toBool() &&
-                model.data(index, TranscriptModel::TitleRole).toString().startsWith(verb))
+            if (!model.data(index, TranscriptModel::InWorkRole).toBool())
+                break;
+            if (model.data(index, TranscriptModel::TitleRole).toString().startsWith(verb))
                 matches.push_back(row);
         }
         if (!matches.empty()) {
@@ -2004,19 +2065,8 @@ QImage open_step(QQuickView& view, QQuickItem* root, TranscriptModel& model, QOb
             QMetaObject::invokeMethod(list, "positionViewAtIndex", Q_ARG(int, row),
                                       Q_ARG(int, 3 /* ListView.Center */));
             settle();
-            QQuickItem* delegate = nullptr;
-            QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, delegate),
-                                      Q_ARG(int, row));
-            const auto walk = [](auto&& self, QQuickItem* item) -> QQuickItem* {
-                if (item->objectName() == QLatin1String("step"))
-                    return item;
-                for (auto* child : item->childItems())
-                    if (auto* hit = self(self, child))
-                        return hit;
-                return nullptr;
-            };
-            if (auto* step = delegate != nullptr ? walk(walk, delegate) : nullptr)
-                step->setProperty("open", true);
+            if (!model.data(model.index(row), TranscriptModel::OpenedRole).toBool())
+                model.toggleStep(row);
             settle();
             // Long enough for the opened task to read its files.
             for (int i = 0; i < 10; ++i)
@@ -2028,7 +2078,8 @@ QImage open_step(QQuickView& view, QQuickItem* root, TranscriptModel& model, QOb
             root->setProperty("following", true);
             return image;
         }
-        model.toggleWork(work);
+        if (folded)
+            model.toggleWork(work);
     }
     std::fprintf(stderr, "no step \"%s\" to open\n", qPrintable(verb));
     root->setProperty("following", true);
@@ -2481,8 +2532,9 @@ int main(int argc, char** argv) {
     parser.addOption({"step", "Pixels scrolled per benchmark step", "px", "240"});
     parser.addOption({"keys", "Check the bar's Mac line editing and send keys, then exit"});
     parser.addOption({"live-checks",
-                      "Check the live work box against a made-up running turn (fixed height, "
-                      "steps opening, diffs only when opened), the running strip, the sent "
+                      "Check a made-up running turn's steps as thread rows (no inner scroll "
+                      "area, steps opening in place, diffs only when opened, headers folding), "
+                      "the running tasks' rows, the sent "
                       "prompt's bubble, and those again in a thread just swapped from its end "
                       "to the whole and in a kept one, then exit"});
     parser.addOption({"media-checks",
@@ -2490,10 +2542,10 @@ int main(int argc, char** argv) {
                       "menu and its actions (with --out, a capture of the open menu), then exit"});
     parser.addOption({"panel", "Save only the panel whose caption starts with this", "caption"});
     parser.addOption({"open",
-                      "Open the newest step whose verb starts with this (in the live box, else in "
-                      "its opened \"Worked for\") and shoot it as the \"Opened\" panel",
+                      "Open the newest step whose verb starts with this in place (showing its "
+                      "header's steps first) and shoot it as the \"Opened\" panel",
                       "verb"});
-    parser.addOption({"working", "Show the agent as working (the live box), with no screen"});
+    parser.addOption({"working", "Show the agent as working (a live header), with no screen"});
     parser.addOption(
         {"live", "Show a running turn whose terminal screen is this text file", "file"});
     parser.addOption(
@@ -2636,6 +2688,10 @@ int main(int argc, char** argv) {
             if (kind == QLatin1String("work"))
                 marks << QStringLiteral("%1 steps")
                              .arg(model.data(index, TranscriptModel::StepsRole).toInt());
+            if (model.data(index, TranscriptModel::ExpandedRole).toBool())
+                marks << QStringLiteral("steps shown");
+            if (model.data(index, TranscriptModel::InWorkRole).toBool())
+                marks << QStringLiteral("a step");
             if (kind == QLatin1String("tool") || kind == QLatin1String("divider") ||
                 kind == QLatin1String("command"))
                 marks << model.data(index, TranscriptModel::TitleRole).toString().left(40);
@@ -2906,35 +2962,42 @@ int main(int argc, char** argv) {
     };
     std::vector<Panel> panels{{QStringLiteral("Latest"), shot(view, list, -1)}};
     if (parser.isSet("rows")) {
-        // Only the rows asked for (from --list), each centred; "N+" opens
-        // the turn of the "Worked for" row N first.
+        // Only the rows asked for (from --list), each centred; "N+" shows
+        // the steps of the "Worked for" row N first (rows are listed as
+        // they lay out when read, older turns folded).
         root->setProperty("following", false);
         panels.clear();
         for (const auto& wanted : parser.value("rows").split(QLatin1Char(','))) {
             const bool open = wanted.endsWith(QLatin1Char('+'));
             const int row = QStringView(wanted).left(wanted.size() - (open ? 1 : 0)).toInt();
-            if (open)
+            const bool toggle =
+                open && !model.data(model.index(row), TranscriptModel::ExpandedRole).toBool();
+            if (toggle)
                 model.toggleWork(row);
             panels.push_back({QStringLiteral("Row %1%2").arg(row).arg(open ? " opened" : ""),
                               shot(view, list, open ? row + 1 : row)});
-            if (open)
+            if (toggle)
                 model.toggleWork(row);
         }
         edit = failure = -1;
     } else if (parser.isSet("live")) {
-        // The box's latest edit (else its latest step) opened under it.
-        const auto& steps = model.liveStepsModel();
-        int open = -1;
-        for (int row = steps.rowCount() - 1; row >= 0 && open < 0; --row)
-            if (steps.data(steps.index(row), TranscriptModel::TitleRole).toString() ==
-                QLatin1String("Edited"))
-                open = steps.data(steps.index(row), TranscriptModel::ItemRole).toInt();
-        if (open < 0 && steps.rowCount() > 0)
-            open = steps.data(steps.index(steps.rowCount() - 1), TranscriptModel::ItemRole).toInt();
+        // The running turn's latest edit (else its latest step) opened in place.
+        int open = -1, last = -1;
+        for (int row = model.rowCount() - 1; row >= 0 && open < 0; --row) {
+            const auto index = model.index(row);
+            if (!model.data(index, TranscriptModel::InWorkRole).toBool())
+                continue;
+            if (last < 0)
+                last = row;
+            if (model.data(index, TranscriptModel::TitleRole).toString() == QLatin1String("Edited"))
+                open = row;
+        }
+        if (open < 0)
+            open = last;
         if (open >= 0) {
-            root->setProperty("liveOpenItem", open);
+            model.toggleStep(open);
             panels.push_back({QStringLiteral("Live step opened"), shot(view, list, -1)});
-            root->setProperty("liveOpenItem", -1);
+            model.toggleStep(open);
         }
     }
     if (parser.isSet("open"))
@@ -2961,10 +3024,15 @@ int main(int argc, char** argv) {
                    : work_rows.back();
     }
     if (work >= 0) {
+        // Shot folded and with its steps shown, whichever it starts as.
+        const bool shown = model.data(model.index(work), TranscriptModel::ExpandedRole).toBool();
+        if (shown)
+            model.toggleWork(work);
         panels.push_back({QStringLiteral("Latest turn, folded"), shot(view, list, work)});
         model.toggleWork(work);
         panels.push_back({QStringLiteral("Latest turn, opened"), shot(view, list, work + 2)});
-        model.toggleWork(work);
+        if (!shown)
+            model.toggleWork(work);
     }
     root->setProperty("following", true);
     if (parser.isSet("panel")) {

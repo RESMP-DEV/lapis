@@ -71,7 +71,7 @@ FocusScope {
     // The terminal's rows above its input box, read a few times a second
     // while a command or turn runs, to see when the screen goes quiet.
     property var liveRows: []
-    // The running turn's work shows in the live work box, fed by the
+    // The running turn's work shows as step rows under its live header, fed by the
     // transcript's own records as they land; the model knows it is running
     // from here.
     Binding {
@@ -637,7 +637,7 @@ FocusScope {
                                            borderColor: borderColor, quoteColor: mutedTextColor })
     // Subagents and background tasks (a step's `task`): what follows the
     // step's target on its line, " · "-joined: its type and model (in the
-    // running strip), how long it ran or has run, its steps or how it ended.
+    // running tasks' rows), how long it ran or has run, its steps or how it ended.
     function taskParts(task, withKind) {
         if (!task)
             return []
@@ -990,37 +990,33 @@ FocusScope {
         required property int waited
         required property int item
         required property var task
+        required property bool opened
         property Component block
 
+        // A turn's steps sit one under another, each line carrying its own
+        // breathing room; its interim words and notes keep a gap.
+        readonly property bool stepRow: inWork && (kind === "tool" || kind === "thinking")
         readonly property int gapAbove: index === 0 ? 0
+                                      : stepRow ? 0
                                       : afterStep ? 2
-                                      : inWork ? Math.round(root.fontSize * 0.4)
+                                      : inWork ? Math.round(root.fontSize * 0.5)
                                       : kind === "prompt" ? (steered ? root.fontSize : root.fontSize * 2)
                                       : kind === "work" || kind === "live" ? Math.round(root.fontSize * 0.9)
                                       : kind === "turn" ? 10 : root.fontSize
-        // Opened work sits indented under its "Worked for" row, on a rule.
-        readonly property int indent: inWork ? Math.round(root.fontSize * 0.9) : 0
         readonly property int column: Math.min(root.columnWidth, row.width - 56)
         width: ListView.view ? ListView.view.width : 0
         height: loader.height + gapAbove
-        // A row the list let go of (index -1), or a live box with no running
-        // turn behind it, never draws: Qt can leave a released row where it
-        // was, over the rows that took its place.
+        // A row the list let go of (index -1), or a live header with no
+        // running turn behind it, never draws: Qt can leave a released row
+        // where it was, over the rows that took its place.
         visible: index >= 0 && (kind !== "live" || root.liveShown)
-        // A reused row starts closed, whatever the last item opened.
+        // A reused command row starts closed, whatever the last item opened.
         ListView.onReused: if (loader.item && loader.item.open !== undefined) loader.item.open = false
-        Rectangle {
-            visible: row.inWork
-            x: (row.width - row.column) / 2 + 3
-            width: 1
-            height: row.height
-            color: root.borderColor
-        }
         Loader {
             id: loader
             y: row.gapAbove
-            width: row.column - row.indent
-            x: (row.width - row.column) / 2 + row.indent
+            width: row.column
+            x: (row.width - row.column) / 2
             sourceComponent: row.block
             property var entry: row
         }
@@ -1859,129 +1855,214 @@ FocusScope {
         }
     }
 
-    // A tool call or a stretch of thinking: one quiet line that opens.
+    // A tool call or a stretch of thinking: one quiet line that opens in
+    // place. Whether it is opened is the model's (by item), so it stays
+    // opened while the row is scrolled out and reused, and across switches.
     Component {
         id: stepBlock
         Column {
             id: step
             objectName: "step"
             readonly property var entry: parent ? parent.entry : null
-            readonly property bool thinking: entry && entry.kind === "thinking"
-            // A thought folds to its first sentence, dimmed, in place of "Thought".
-            readonly property string thought: thinking ? root.thoughtLine(entry.body) : ""
-            readonly property bool edit: entry && entry.diff.length > 0
-            readonly property bool command: entry && entry.title === "Ran"
-            // A subagent or background task this step started.
-            readonly property var task: entry && entry.task ? entry.task : null
-            readonly property bool running: entry && !thinking && (task ? task.running : !entry.answered)
-            readonly property bool expandable: entry && (thinking ? entry.body.length > 0
-                                               : task !== null || entry.result.length > 0 || entry.detail.length > 0
-                                                 || edit || command || entry.body.indexOf("\n") >= 0)
-            property bool open: false
-            spacing: 6
+            readonly property bool stepOpened: entry !== null && entry.opened
 
-            Item {
+            StepRow {
+                objectName: "stepRow"
                 width: parent.width
-                height: Math.max(verb.implicitHeight, root.stepSize + 8)
-                MouseArea {
-                    id: hover
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    enabled: step.expandable
-                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    onClicked: step.open = !step.open
-                }
-                Row {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width
-                    spacing: 6
-                    Rectangle {
-                        visible: step.running
-                        width: 6; height: 6; radius: 3
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: root.activityColor
-                    }
-                    Text {
-                        id: verb
-                        visible: text.length > 0
-                        anchors.verticalCenter: parent.verticalCenter
-                        // "Subagent · <description>", "Started in background · <command>"
-                        text: !step.entry || step.thought.length > 0 ? ""
-                              : step.entry.title + (step.task ? " ·" : "")
-                        color: step.entry && step.entry.failed ? root.faultColor
-                             : hover.containsMouse ? root.textColor : root.mutedTextColor
-                        font.family: root.sansFamily
-                        font.pixelSize: root.stepSize
-                    }
-                    Text {
-                        id: target
-                        visible: text.length > 0
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: Math.min(implicitWidth, parent.width - verb.width - counts.width - took.width
-                                                       - taskInfo.width - chevron.width - 42)
-                        text: step.thinking ? step.thought
-                              : step.entry ? step.entry.body.split("\n")[0] : ""
-                        elide: Text.ElideRight
-                        color: step.thinking ? (hover.containsMouse ? root.textColor : root.tint(root.mutedTextColor, 0.9))
-                             : step.entry && step.entry.failed ? root.tint(root.faultColor, 0.85) : root.tint(root.textColor, 0.82)
-                        // A thought, a subagent's description and what a monitor
-                        // watches read as prose.
-                        readonly property bool prose: step.thinking
-                                                      || (!!step.task && step.task.type !== "background")
-                        font.family: prose ? root.sansFamily : root.monoFamily
-                        font.pixelSize: prose ? root.stepSize : root.codeSize
-                    }
-                    // A task's run: "· 4m 10s · 23 steps".
-                    Text {
-                        id: taskInfo
-                        visible: step.task !== null
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: visible ? root.taskLine(step.task, false).slice(1) : ""
-                        color: root.tint(root.mutedTextColor, 0.75)
-                        font.family: root.sansFamily
-                        font.pixelSize: root.stepSize - 2
-                        font.features: { "tnum": 1 }
-                    }
-                    Row {
-                        id: counts
-                        visible: step.edit
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 4
-                        Text { text: step.entry ? "+" + step.entry.added : ""; color: root.addedColor; font.pixelSize: root.codeSize; font.family: root.monoFamily; visible: step.entry && step.entry.added > 0 }
-                        Text { text: step.entry ? "−" + step.entry.removed : ""; color: root.removedColor; font.pixelSize: root.codeSize; font.family: root.monoFamily; visible: step.entry && step.entry.removed > 0 }
-                    }
-                    // How long the step took, once it took a second or more.
-                    Text {
-                        id: took
-                        // Hidden it has no text, so no width: a Row skips it,
-                        // and the target's width can count it either way.
-                        visible: step.entry !== null && (!step.thinking || step.thought.length > 0)
-                                 && !step.task && step.entry.duration >= 1000
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: visible ? root.durationLabel(step.entry.duration) : ""
-                        color: root.tint(root.mutedTextColor, 0.75)
-                        font.family: root.sansFamily
-                        font.pixelSize: root.stepSize - 2
-                        font.features: { "tnum": 1 }
-                    }
-                    Chevron {
-                        id: chevron
-                        visible: step.expandable && (hover.containsMouse || step.open)
-                        anchors.verticalCenter: parent.verticalCenter
-                        turned: step.open
-                    }
-                }
+                entry: step.entry
+                opened: step.stepOpened
+                onClicked: if (step.entry) root.toggleStep(step.entry.index)
             }
 
             // What opens on click is made on click: a collapsed step is one
             // line, an edit included (its diff shows only once opened).
             Loader {
                 width: parent.width
-                active: step.open
+                active: step.stepOpened
                 visible: active
                 sourceComponent: Component {
                     StepDetail { entry: step.entry }
                 }
+            }
+        }
+    }
+    // Opens or closes a step in place. The view stops following the end, so
+    // the row under the pointer stays where it is while its detail opens
+    // under it; scrolling back to the end follows again.
+    function toggleStep(row) {
+        if (!model)
+            return
+        following = false
+        model.toggleStep(row)
+    }
+    function toggleWork(row) {
+        if (!model)
+            return
+        following = false
+        model.toggleWork(row)
+        // Folded near the end, the thread can end above the view's bottom:
+        // bring the end back down to the view's.
+        Qt.callLater(() => {
+            const bottom = Math.max(list.originY, list.originY + list.contentHeight - list.height)
+            if (list.contentY > bottom)
+                list.contentY = bottom
+        })
+    }
+
+    // A step's one line: a small mark for its kind (a ring for thinking, a
+    // dot for a call, a square for an edit, a diamond for a subagent or
+    // background task, a gently pulsing accent dot while it runs), its verb
+    // and target ("Ran ctest", "Edited greet.cpp", a thought's first
+    // sentence), its counts or run, how long it took, and a chevron when it
+    // opens. Used for the thread's steps, the running tasks' rows, and a
+    // subagent's own steps.
+    readonly property int stepLineHeight: Math.round(stepSize * 1.6)
+    component StepRow: Item {
+        id: stepRow
+        property var entry: null
+        property bool opened: false
+        property bool withKind: false // a subagent's type and model too
+        signal clicked()
+        readonly property string kind: entry ? entry.kind : ""
+        readonly property bool thinking: kind === "thinking"
+        // A thought folds to its first sentence, dimmed, in place of "Thought".
+        readonly property string thought: thinking ? root.thoughtLine(entry.body) : ""
+        readonly property var task: entry && entry.task ? entry.task : null
+        readonly property bool edit: entry !== null && ((entry.diff && entry.diff.length > 0)
+                                                        || entry.added > 0 || entry.removed > 0)
+        readonly property bool running: kind === "tool" && (task ? task.running : !entry.answered)
+        readonly property bool failed: entry !== null && entry.failed
+        readonly property bool expandable: entry !== null
+                                           && (thinking ? entry.body.length > 0
+                                               : kind !== "tool" || task !== null || entry.result.length > 0
+                                                 || entry.detail.length > 0 || edit || entry.title === "Ran"
+                                                 || entry.body.indexOf("\n") >= 0)
+        // A thought, a reply, a subagent's description and what a monitor
+        // watches read as prose; commands, files and patterns as code.
+        readonly property bool prose: kind === "reply" || thought.length > 0
+                                      || (task !== null && task.type !== "background")
+        implicitHeight: root.stepLineHeight
+        height: implicitHeight
+        MouseArea {
+            id: stepHover
+            anchors.fill: parent
+            hoverEnabled: true
+            enabled: stepRow.expandable
+            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: stepRow.clicked()
+        }
+        Row {
+            anchors.verticalCenter: parent.verticalCenter
+            width: parent.width
+            spacing: Math.round(root.stepSize * 0.4)
+            KindMark {
+                id: mark
+                anchors.verticalCenter: parent.verticalCenter
+                kind: stepRow.thinking ? "thinking"
+                    : stepRow.task ? "task"
+                    : stepRow.edit ? "edit"
+                    : stepRow.kind === "reply" ? "reply" : "tool"
+                running: stepRow.running
+                failed: stepRow.failed
+            }
+            Text {
+                id: stepVerb
+                visible: text.length > 0
+                anchors.verticalCenter: parent.verticalCenter
+                // "Ran", "Subagent ·", "Started in background ·"
+                text: !stepRow.entry || stepRow.kind === "reply" || stepRow.thought.length > 0 ? ""
+                      : stepRow.entry.title + (stepRow.task ? " ·" : "")
+                color: stepRow.failed ? root.faultColor
+                     : stepHover.containsMouse ? root.textColor : root.mutedTextColor
+                font.family: root.sansFamily
+                font.pixelSize: root.stepSize - 1
+            }
+            Text {
+                id: stepTarget
+                visible: text.length > 0
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.min(implicitWidth, parent.width - mark.width - stepVerb.width - stepCounts.width
+                                               - stepInfo.width - stepChevron.width - 5 * parent.spacing)
+                text: stepRow.thought.length > 0 ? stepRow.thought : root.stepTarget(stepRow.entry)
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+                color: stepRow.thought.length > 0
+                       ? (stepHover.containsMouse ? root.textColor : root.tint(root.mutedTextColor, 0.9))
+                     : stepRow.failed ? root.tint(root.faultColor, 0.85)
+                     : root.tint(root.textColor, stepHover.containsMouse ? 0.95 : stepRow.prose ? 0.78 : 0.82)
+                font.family: stepRow.prose ? root.sansFamily : root.monoFamily
+                font.pixelSize: stepRow.prose ? root.stepSize - 1 : root.codeSize - 1
+            }
+            Row {
+                id: stepCounts
+                visible: stepRow.entry !== null && (stepRow.entry.added > 0 || stepRow.entry.removed > 0)
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 4
+                Text { text: stepRow.entry ? "+" + stepRow.entry.added : ""; visible: stepRow.entry !== null && stepRow.entry.added > 0; color: root.addedColor; font.pixelSize: root.codeSize - 1; font.family: root.monoFamily }
+                Text { text: stepRow.entry ? "−" + stepRow.entry.removed : ""; visible: stepRow.entry !== null && stepRow.entry.removed > 0; color: root.removedColor; font.pixelSize: root.codeSize - 1; font.family: root.monoFamily }
+            }
+            // A task's run ("4m 10s · 23 steps"), else how long the step
+            // took once it took a second or more.
+            Text {
+                id: stepInfo
+                visible: text.length > 0
+                anchors.verticalCenter: parent.verticalCenter
+                text: !stepRow.entry ? ""
+                      : stepRow.task ? root.taskLine(stepRow.task, stepRow.withKind).slice(1)
+                      : (stepRow.kind === "tool" || stepRow.thought.length > 0) && stepRow.entry.duration >= 1000
+                      ? root.durationLabel(stepRow.entry.duration) : ""
+                color: root.tint(root.mutedTextColor, 0.75)
+                font.family: root.sansFamily
+                font.pixelSize: root.stepSize - 2
+                font.features: { "tnum": 1 }
+            }
+            Text {
+                id: stepChevron
+                objectName: "stepChevron"
+                visible: stepRow.expandable
+                anchors.verticalCenter: parent.verticalCenter
+                text: "›"
+                rotation: stepRow.opened ? 90 : 0
+                Behavior on rotation { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                color: stepHover.containsMouse || stepRow.opened ? root.textColor
+                                                                 : root.tint(root.mutedTextColor, 0.6)
+                font.family: root.sansFamily
+                font.pixelSize: root.stepSize
+            }
+        }
+    }
+
+    // A step's kind as a small shape in the mark column.
+    component KindMark: Item {
+        id: kindMark
+        property string kind: "tool"
+        property bool running: false
+        property bool failed: false
+        readonly property color tone: failed ? root.faultColor : root.tint(root.mutedTextColor, 0.75)
+        width: Math.round(root.stepSize * 0.7)
+        height: width
+        Rectangle {
+            readonly property int size: kindMark.running ? 7
+                                      : kindMark.kind === "thinking" ? 8
+                                      : kindMark.kind === "edit" ? 6
+                                      : kindMark.kind === "task" ? 7
+                                      : kindMark.kind === "reply" ? 6 : 5
+            anchors.centerIn: parent
+            width: kindMark.kind === "reply" && !kindMark.running ? size + 3 : size
+            height: kindMark.kind === "reply" && !kindMark.running ? 2 : size
+            radius: kindMark.running || kindMark.kind === "thinking" || kindMark.kind === "tool" ? size / 2
+                  : kindMark.kind === "reply" ? 1 : 1.5
+            rotation: kindMark.kind === "task" && !kindMark.running ? 45 : 0
+            color: kindMark.running ? root.activityColor
+                 : kindMark.kind === "thinking" || kindMark.kind === "task" ? "transparent" : kindMark.tone
+            border.width: !kindMark.running && (kindMark.kind === "thinking" || kindMark.kind === "task") ? 1.3 : 0
+            border.color: kindMark.tone
+            SequentialAnimation on opacity {
+                running: kindMark.running && kindMark.visible
+                loops: Animation.Infinite
+                alwaysRunToEnd: true // stops at full opacity
+                NumberAnimation { to: 0.35; duration: 800; easing.type: Easing.InOutSine }
+                NumberAnimation { to: 1; duration: 800; easing.type: Easing.InOutSine }
             }
         }
     }
@@ -1999,9 +2080,11 @@ FocusScope {
         readonly property int gapBelow: Math.round(root.stepSize * 0.8)
         implicitHeight: detail.height + gapAbove + gapBelow
         height: implicitHeight
+        // The rule runs down from the step's mark; the detail lines up with
+        // its verb.
         Rectangle {
             objectName: "detailRule"
-            x: 3
+            x: Math.round(root.stepSize * 0.35)
             y: stepDetail.gapAbove
             width: 1
             height: detail.height
@@ -2009,7 +2092,7 @@ FocusScope {
         }
         Column {
         id: detail
-        x: Math.round(root.stepSize * 0.85)
+        x: Math.round(root.stepSize * 0.7) + Math.round(root.stepSize * 0.4)
         y: stepDetail.gapAbove
         width: stepDetail.width - x
         readonly property var entry: stepDetail.entry
@@ -2139,112 +2222,11 @@ FocusScope {
         }
     }
 
-    // A step as one line in a box (a subagent's own steps, the running
-    // strip): its verb and target, a task's run after them, a dot while it
-    // runs. Clicking it asks to open it.
-    component StepLine: Item {
-        id: stepLine
-        property var entry: null
-        property bool opened: false
-        property bool withKind: false // a subagent's type and model too
-        signal clicked()
-        readonly property var task: entry && entry.task ? entry.task : null
-        readonly property string thought: entry && entry.kind === "thinking" ? root.thoughtLine(entry.body) : ""
-        readonly property bool prose: entry !== null && (entry.kind === "reply" || thought.length > 0
-                                                         || (task !== null && task.type !== "background"))
-        height: root.liveLineHeight
-        Rectangle {
-            anchors.fill: parent
-            anchors.leftMargin: 4
-            anchors.rightMargin: 4
-            radius: 4
-            color: stepLine.opened ? root.tint(root.textColor, 0.07) : "transparent"
-        }
-        MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: stepLine.clicked()
-        }
-        Row {
-            anchors.verticalCenter: parent.verticalCenter
-            x: 12
-            width: parent.width - 24
-            spacing: 6
-            Rectangle {
-                visible: !!stepLine.entry && stepLine.entry.kind === "tool"
-                         && (stepLine.task ? stepLine.task.running : !stepLine.entry.answered)
-                width: 6; height: 6; radius: 3
-                anchors.verticalCenter: parent.verticalCenter
-                color: root.activityColor
-            }
-            Text {
-                id: stepLineVerb
-                visible: text.length > 0
-                anchors.verticalCenter: parent.verticalCenter
-                text: !stepLine.entry || stepLine.entry.kind === "reply" || stepLine.thought.length > 0 ? ""
-                      : stepLine.entry.title + (stepLine.task ? " ·" : "")
-                color: stepLine.entry && stepLine.entry.failed ? root.faultColor : root.mutedTextColor
-                font.family: root.sansFamily
-                font.pixelSize: root.stepSize - 1
-            }
-            Text {
-                visible: text.length > 0
-                anchors.verticalCenter: parent.verticalCenter
-                width: Math.min(implicitWidth, parent.width - stepLineVerb.width - stepLineInfo.width - 24)
-                text: stepLine.thought.length > 0 ? stepLine.thought : root.stepTarget(stepLine.entry)
-                elide: Text.ElideRight
-                textFormat: Text.PlainText
-                color: stepLine.thought.length > 0 ? root.tint(root.mutedTextColor, 0.85)
-                     : root.tint(root.textColor, stepLine.prose ? 0.78 : 0.82)
-                font.family: stepLine.prose ? root.sansFamily : root.monoFamily
-                font.pixelSize: stepLine.prose ? root.stepSize - 1 : root.codeSize - 1
-            }
-            Text {
-                id: stepLineInfo
-                visible: text.length > 0
-                anchors.verticalCenter: parent.verticalCenter
-                text: !stepLine.entry ? ""
-                      : stepLine.task ? root.taskLine(stepLine.task, stepLine.withKind).slice(1)
-                      : [stepLine.entry.added > 0 ? "+" + stepLine.entry.added : "",
-                         stepLine.entry.removed > 0 ? "−" + stepLine.entry.removed : "",
-                         stepLine.entry.kind === "tool" && stepLine.entry.duration >= 1000
-                         ? root.durationLabel(stepLine.entry.duration) : ""]
-                        .filter(s => s.length > 0).join(" ")
-                color: root.tint(root.mutedTextColor, 0.75)
-                font.family: root.sansFamily
-                font.pixelSize: root.stepSize - 2
-                font.features: { "tnum": 1 }
-            }
-        }
-    }
-
-    // The wheel over a box of lines scrolls it, past either end the thread.
-    component BoxWheel: WheelHandler {
-        property var view: null
-        target: null
-        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-        onWheel: function(event) {
-            const step = event.pixelDelta.y !== 0 ? event.pixelDelta.y
-                                                  : event.angleDelta.y / 120 * root.liveLineHeight * 2
-            const top = view.originY
-            const bottom = Math.max(top, view.originY + view.contentHeight - view.height)
-            const next = Math.max(top, Math.min(bottom, view.contentY - step))
-            if (next === view.contentY) {
-                event.accepted = false
-                return
-            }
-            view.contentY = next
-            if (view.follow !== undefined)
-                view.follow = next >= bottom - 2
-        }
-    }
-
     // What an opened subagent or background task shows: how it stands, what
-    // it was asked or runs, then a subagent's own steps as one-line rows in
-    // a box like the live work box (each opens under it; its own subagents
-    // stay lines) and its final report, or a background command's last
-    // lines of output. Read from its files when opened, and again every two
-    // seconds while it runs.
+    // it was asked or runs, then a subagent's own steps as step rows (each
+    // opens in place under it; its own subagents stay lines) and its final
+    // report, or a background command's last lines of output. Read from its
+    // files when opened, and again every two seconds while it runs.
     component TaskDetail: Column {
         id: taskDetail
         property var entry: null
@@ -2294,48 +2276,48 @@ FocusScope {
             highlighted: true
             textColor: root.codeTextColor
         }
-        Rectangle {
+        // Its newest steps only: the rows are remade each time it is read
+        // again while it runs.
+        readonly property int shownFrom: Math.max(0, steps.length - 150)
+        Text {
+            visible: taskDetail.subagent && taskDetail.shownFrom > 0
+            text: taskDetail.shownFrom === 1 ? qsTr("1 earlier step") : qsTr("%1 earlier steps").arg(taskDetail.shownFrom)
+            color: root.tint(root.mutedTextColor, 0.7)
+            font.family: root.sansFamily
+            font.pixelSize: root.stepSize - 2
+        }
+        Column {
             objectName: "subagentSteps"
             visible: taskDetail.subagent && taskDetail.steps.length > 0
             width: parent.width
-            height: Math.min(taskDetail.steps.length, root.liveBoxLines + 2) * root.liveLineHeight + 12
-            radius: root.radius
-            color: root.tint(root.raisedColor, 0.35)
-            border.color: root.borderColor
-            clip: true
-            ListView {
-                id: subList
-                objectName: "subagentList"
-                property bool follow: true
-                anchors.fill: parent
-                anchors.topMargin: 6
-                anchors.bottomMargin: 6
-                model: taskDetail.steps
-                interactive: false
-                boundsBehavior: Flickable.StopAtBounds
-                clip: true
-                // A running subagent's newest step stays in view; a finished
-                // one opens at its start.
-                function toEnd() { if (follow && taskDetail.task && taskDetail.task.running) positionViewAtEnd() }
-                onCountChanged: Qt.callLater(toEnd)
-                delegate: StepLine {
+            Repeater {
+                model: taskDetail.subagent ? taskDetail.steps.slice(taskDetail.shownFrom) : []
+                delegate: Column {
+                    id: subStep
                     required property var modelData
                     required property int index
-                    width: subList.width
-                    entry: modelData
-                    opened: taskDetail.openStep === index
-                    onClicked: taskDetail.openStep = opened ? -1 : index
+                    readonly property bool opened: taskDetail.openStep === taskDetail.shownFrom + index
+                    width: parent ? parent.width : 0
+                    StepRow {
+                        objectName: "subagentStep"
+                        width: parent.width
+                        entry: subStep.modelData
+                        opened: subStep.opened
+                        onClicked: {
+                            root.following = false
+                            taskDetail.openStep = subStep.opened ? -1 : taskDetail.shownFrom + subStep.index
+                        }
+                    }
+                    Loader {
+                        width: parent.width
+                        active: subStep.opened
+                        visible: active
+                        property var subEntry: subStep.modelData
+                        // By id, so StepDetail and TaskDetail do not hold each other.
+                        sourceComponent: nestedStepDetail
+                    }
                 }
             }
-            BoxWheel { view: subList }
-        }
-        Loader {
-            width: parent.width
-            active: taskDetail.openStep >= 0 && taskDetail.openStep < taskDetail.steps.length
-            visible: active
-            property var subEntry: active ? taskDetail.steps[taskDetail.openStep] : null
-            // By id, so StepDetail and TaskDetail do not hold each other.
-            sourceComponent: nestedStepDetail
         }
         Text {
             visible: taskDetail.subagent && taskDetail.loaded.found !== true
@@ -2383,12 +2365,12 @@ FocusScope {
         }
     }
 
-    // Subagents and background tasks still running, one quiet line each
+    // Subagents and background tasks still running, one step row each
     // ("Subagent · review the parser · general-purpose · 3m 12s · 14
-    // steps", "Background · npm test · 1m 05s"), at most four lines tall and
-    // scrolling past that. More than fit collapse to one line ("3 subagents
-    // and 2 background tasks running") that opens the list. A line opens
-    // its task under the strip; finished ones leave it.
+    // steps", "Background · npm test · 1m 05s") at the thread's end. More
+    // than four collapse to one line ("3 subagents and 2 background tasks
+    // running") that shows the rows. A row opens its task in place under
+    // it; finished ones leave.
     property int stripOpenItem: -1
     property var stripDetail: null
     function refreshStripDetail() {
@@ -2405,14 +2387,13 @@ FocusScope {
         id: strip
         readonly property var tasks: root.runningWork
         property bool expanded: false
-        readonly property bool many: tasks.length > root.liveBoxLines
+        readonly property bool many: tasks.length > 4
         visible: tasks.length > 0
-        spacing: 6
         Item {
             objectName: "runningSummary"
             visible: strip.many
             width: parent.width
-            height: root.liveLineHeight
+            height: root.stepLineHeight
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
@@ -2420,12 +2401,10 @@ FocusScope {
             }
             Row {
                 anchors.verticalCenter: parent.verticalCenter
-                x: 12
-                spacing: 8
-                Rectangle {
+                spacing: Math.round(root.stepSize * 0.4)
+                KindMark {
                     anchors.verticalCenter: parent.verticalCenter
-                    width: 6; height: 6; radius: 3
-                    color: root.activityColor
+                    running: true
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
@@ -2440,43 +2419,39 @@ FocusScope {
                 }
             }
         }
-        Rectangle {
+        Column {
             objectName: "runningStrip"
             visible: !strip.many || strip.expanded
             width: parent.width
-            height: Math.min(strip.tasks.length, root.liveBoxLines) * root.liveLineHeight + 8
-            radius: root.radius
-            color: "transparent"
-            border.color: root.borderColor
-            clip: true
-            ListView {
-                id: stripList
-                anchors.fill: parent
-                anchors.topMargin: 4
-                anchors.bottomMargin: 4
+            Repeater {
                 model: strip.tasks
-                interactive: false
-                boundsBehavior: Flickable.StopAtBounds
-                clip: true
-                delegate: StepLine {
+                delegate: Column {
+                    id: stripTask
                     required property var modelData
-                    width: stripList.width
-                    withKind: true
-                    entry: ({ kind: "tool", title: modelData.type === "subagent" ? qsTr("Subagent") : qsTr("Background"),
-                              body: modelData.description, task: modelData, answered: true, failed: false,
-                              added: 0, removed: 0, duration: 0 })
-                    opened: root.stripOpenItem === modelData.item
-                    onClicked: root.stripOpenItem = opened ? -1 : modelData.item
+                    readonly property bool opened: root.stripOpenItem === modelData.item
+                    width: parent ? parent.width : 0
+                    StepRow {
+                        objectName: "runningTask"
+                        width: parent.width
+                        withKind: true
+                        entry: ({ kind: "tool", title: stripTask.modelData.type === "subagent" ? qsTr("Subagent") : qsTr("Background"),
+                                  body: stripTask.modelData.description, task: stripTask.modelData, answered: true,
+                                  failed: false, added: 0, removed: 0, duration: 0, result: "", detail: "" })
+                        opened: stripTask.opened
+                        onClicked: {
+                            root.following = false
+                            root.stripOpenItem = stripTask.opened ? -1 : stripTask.modelData.item
+                        }
+                    }
+                    Loader {
+                        width: parent.width
+                        active: stripTask.opened && root.stripDetail !== null
+                        visible: active
+                        sourceComponent: Component {
+                            StepDetail { entry: root.stripDetail }
+                        }
+                    }
                 }
-            }
-            BoxWheel { view: stripList }
-        }
-        Loader {
-            width: parent.width
-            active: root.stripDetail !== null
-            visible: active
-            sourceComponent: Component {
-                StepDetail { entry: root.stripDetail }
             }
         }
     }
@@ -2494,7 +2469,9 @@ FocusScope {
         readonly property string elapsed: since > 0 && root.now - since >= 1000
                                           ? root.durationLabel(root.now - since) : ""
         height: root.stepSize + 10
+        implicitWidth: busyRow.implicitWidth
         Row {
+            id: busyRow
             anchors.verticalCenter: parent.verticalCenter
             spacing: 8
             Rectangle {
@@ -2534,259 +2511,42 @@ FocusScope {
         }
     }
 
-    // The step opened under the live work box: its item (stable while the
-    // turn runs) and its roles, refreshed as the step's record changes.
-    property int liveOpenItem: -1
-    property var liveDetail: null
-    function refreshLiveDetail() {
-        const row = liveOpenItem >= 0 && liveSteps ? liveSteps.rowOf(liveOpenItem) : -1
-        if (row < 0) {
-            liveOpenItem = -1
-            liveDetail = null
-        } else {
-            liveDetail = liveSteps.entry(row)
-        }
-    }
-    onLiveOpenItemChanged: refreshLiveDetail()
-    onLiveShownChanged: if (!liveShown) liveOpenItem = -1
-    Connections {
-        target: root.liveSteps
-        function onDataChanged() { if (root.liveOpenItem >= 0) root.refreshLiveDetail() }
-        function onModelReset() { if (root.liveOpenItem >= 0) root.refreshLiveDetail() }
-    }
-    // Lines the live work box shows at once; it never grows past them.
-    readonly property int liveBoxLines: 4
-    readonly property int liveLineHeight: Math.round(stepSize * 1.65)
-
-    // The running turn, while the agent works: its state line, then one
-    // compact box of its steps as the CLI records them ("Read greet.cpp",
-    // "Edited greet_test.cpp +12 −3", "Ran ctest 14s", the model's interim
-    // words), the newest at the bottom, earlier ones rolling up and out.
-    // The box scrolls back through the turn without growing; clicking a
-    // step opens it under the box, and clicking it again closes it. It is
-    // the transcript's own record, never the terminal's screen.
+    // The running turn's header, while the agent works: its state line
+    // ("Working · 2m 10s · 14 steps") over its steps, which are thread rows
+    // like a finished turn's, added as the CLI records them, the newest at
+    // the bottom. Clicking it folds or shows those rows. It is the
+    // transcript's own record, never the terminal's screen.
     Component {
         id: liveBlock
-        Column {
+        Item {
             id: live
+            objectName: "liveHeader"
             readonly property var entry: parent ? parent.entry : null
-            spacing: 6
-            // Counted from the box itself, so the line and the box agree.
-            BusyLine {
-                width: parent.width
-                steps: liveList.count
+            readonly property bool expanded: entry !== null && entry.expanded
+            height: liveLine.height
+            MouseArea {
+                id: liveHover
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: if (live.entry) root.toggleWork(live.entry.index)
             }
-            Rectangle {
-                id: box
-                objectName: "liveBox"
-                visible: !root.compacting
-                width: parent.width
-                height: root.liveBoxLines * root.liveLineHeight + 12
-                radius: root.radius
-                color: root.tint(root.raisedColor, 0.35)
-                border.color: root.borderColor
-                clip: true
-                ListView {
-                    id: liveList
-                    objectName: "liveList"
-                    property bool follow: true
-                    anchors.fill: parent
-                    anchors.topMargin: 6
-                    anchors.bottomMargin: 6
-                    model: root.liveSteps
-                    interactive: false
-                    boundsBehavior: Flickable.StopAtBounds
-                    clip: true
-                    function toEnd() { if (follow) positionViewAtEnd() }
-                    onCountChanged: Qt.callLater(toEnd)
-                    onContentHeightChanged: Qt.callLater(toEnd)
-                    Component.onCompleted: Qt.callLater(toEnd)
-                    // Claude Code writes a step as it is called and its
-                    // result when done, so after a finished step the model
-                    // is thinking; other CLIs write steps once done.
-                    footer: Text {
-                        readonly property bool shown: root.model !== null && root.model.format === "claude"
-                                                      && (liveList.count === 0 || root.liveLastAnswered)
-                                                      && !root.liveLastThought
-                        width: liveList.width
-                        height: shown || liveList.count === 0 ? root.liveLineHeight : 0
-                        leftPadding: 12
-                        verticalAlignment: Text.AlignVCenter
-                        text: shown ? qsTr("Thinking…") : liveList.count === 0 ? qsTr("Waiting for the first step…") : ""
-                        color: root.tint(root.mutedTextColor, 0.7)
-                        font.family: root.sansFamily
-                        font.pixelSize: root.stepSize - 1
-                    }
-                    delegate: Item {
-                        id: line
-                        required property int index
-                        required property string kind
-                        required property string title
-                        required property string body
-                        required property string detail
-                        required property string result
-                        required property var diff
-                        required property int added
-                        required property int removed
-                        required property bool failed
-                        required property bool answered
-                        required property double duration
-                        required property int item
-                        required property var task
-                        readonly property bool opened: root.liveOpenItem === item
-                        // A thought shows its own words, dimmed: the newest,
-                        // while it is the box's last line, flows over up to
-                        // all lines but one (its latest lines in view); an
-                        // older one is its first sentence.
-                        readonly property bool thinking: kind === "thinking"
-                        readonly property bool flowing: thinking && body.length > 0
-                                                        && index === liveList.count - 1
-                        readonly property bool openable: kind === "thinking" ? body.length > 0
-                                                         : kind !== "tool" || !!task || result.length > 0
-                                                         || detail.length > 0 || diff.length > 0
-                                                         || title === "Ran" || body.indexOf("\n") >= 0
-                                                         || body.indexOf("/") >= 0
-                        width: liveList.width
-                        height: flowing ? Math.min(Math.max(1, flow.lineCount), root.liveBoxLines - 1)
-                                          * root.liveLineHeight
-                                        : root.liveLineHeight
-                        clip: flowing
-                        Text {
-                            id: flow
-                            objectName: "thoughtFlow"
-                            visible: line.flowing
-                            x: 12
-                            width: parent.width - 24
-                            // Its newest lines at the bottom, earlier ones cut
-                            // at the top.
-                            y: parent.height - height
-                            text: line.flowing ? line.body.replace(/[*_`#>]+/g, "") : ""
-                            textFormat: Text.PlainText
-                            wrapMode: Text.Wrap
-                            lineHeightMode: Text.FixedHeight
-                            lineHeight: root.liveLineHeight
-                            verticalAlignment: Text.AlignVCenter
-                            color: root.tint(root.mutedTextColor, 0.85)
-                            font.family: root.sansFamily
-                            font.pixelSize: root.stepSize - 1
-                        }
-                        Rectangle {
-                            anchors.fill: parent
-                            anchors.leftMargin: 4
-                            anchors.rightMargin: 4
-                            radius: 4
-                            color: line.opened ? root.tint(root.textColor, 0.07) : "transparent"
-                        }
-                        MouseArea {
-                            anchors.fill: parent
-                            enabled: line.openable
-                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                            onClicked: root.liveOpenItem = line.opened ? -1 : line.item
-                        }
-                        Row {
-                            visible: !line.flowing
-                            anchors.verticalCenter: parent.verticalCenter
-                            x: 12
-                            width: parent.width - 24
-                            spacing: 6
-                            Rectangle {
-                                visible: line.kind === "tool" && (line.task ? line.task.running : !line.answered)
-                                width: 6; height: 6; radius: 3
-                                anchors.verticalCenter: parent.verticalCenter
-                                color: root.activityColor
-                            }
-                            Text {
-                                id: lineVerb
-                                visible: text.length > 0
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: line.kind === "reply" || (line.thinking && line.body.length > 0) ? ""
-                                      : line.title + (line.task ? " ·" : "")
-                                color: line.failed ? root.faultColor : root.mutedTextColor
-                                font.family: root.sansFamily
-                                font.pixelSize: root.stepSize - 1
-                            }
-                            Text {
-                                id: lineTarget
-                                visible: text.length > 0
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: Math.min(implicitWidth, parent.width - lineVerb.width - lineCounts.width
-                                                - lineTook.width - lineChevron.width - 46)
-                                text: line.thinking ? root.thoughtLine(line.body) : root.stepTarget(line)
-                                elide: Text.ElideRight
-                                textFormat: Text.PlainText
-                                color: line.thinking ? root.tint(root.mutedTextColor, 0.85)
-                                     : line.kind === "reply" ? root.tint(root.textColor, 0.78)
-                                     : root.tint(root.textColor, 0.82)
-                                readonly property bool prose: line.kind === "reply" || line.thinking
-                                                              || (!!line.task && line.task.type !== "background")
-                                font.family: prose ? root.sansFamily : root.monoFamily
-                                font.pixelSize: prose ? root.stepSize - 1 : root.codeSize - 1
-                            }
-                            Row {
-                                id: lineCounts
-                                visible: line.added > 0 || line.removed > 0
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 4
-                                Text { text: "+" + line.added; visible: line.added > 0; color: root.addedColor; font.pixelSize: root.codeSize - 1; font.family: root.monoFamily }
-                                Text { text: "−" + line.removed; visible: line.removed > 0; color: root.removedColor; font.pixelSize: root.codeSize - 1; font.family: root.monoFamily }
-                            }
-                            // How long it took; a task's run as its line says it.
-                            Text {
-                                id: lineTook
-                                visible: text.length > 0
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: line.task ? root.taskLine(line.task, false).slice(1)
-                                      : (line.kind === "tool" || (line.thinking && line.body.length > 0))
-                                        && line.duration >= 1000 ? root.durationLabel(line.duration) : ""
-                                color: root.tint(root.mutedTextColor, 0.75)
-                                font.family: root.sansFamily
-                                font.pixelSize: root.stepSize - 2
-                                font.features: { "tnum": 1 }
-                            }
-                            Chevron {
-                                id: lineChevron
-                                visible: line.opened
-                                anchors.verticalCenter: parent.verticalCenter
-                                turned: true
-                            }
-                        }
-                    }
+            Row {
+                spacing: 8
+                BusyLine {
+                    id: liveLine
+                    width: implicitWidth
+                    steps: live.entry ? live.entry.steps : -1
                 }
-                // The wheel or trackpad scrolls back through the turn inside
-                // the box; at either end it scrolls the thread instead.
-                WheelHandler {
-                    target: null
-                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-                    onWheel: function(event) {
-                        const step = event.pixelDelta.y !== 0 ? event.pixelDelta.y
-                                                              : event.angleDelta.y / 120 * root.liveLineHeight * 2
-                        const top = liveList.originY
-                        const bottom = Math.max(top, liveList.originY + liveList.contentHeight - liveList.height)
-                        const next = Math.max(top, Math.min(bottom, liveList.contentY - step))
-                        if (next === liveList.contentY) {
-                            event.accepted = false
-                            return
-                        }
-                        liveList.contentY = next
-                        liveList.follow = next >= bottom - 2
-                    }
+                Chevron {
+                    anchors.verticalCenter: parent.verticalCenter
+                    turned: live.expanded
+                    color: liveHover.containsMouse ? root.textColor : root.mutedTextColor
                 }
-            }
-            // The step opened from the box, as an opened "Worked for" step.
-            Loader {
-                width: parent.width
-                active: root.liveDetail !== null && !root.compacting
-                visible: active
-                sourceComponent: Component {
-                    StepDetail { entry: root.liveDetail }
-                }
-            }
-            RunningStrip {
-                width: parent.width
             }
         }
     }
-    // The newest step in the box is done (or is not a tool call).
+    // The running turn's newest step is done (or is not a tool call).
     property bool liveLastAnswered: false
     // ...and is a thought with words, already flowing in the box.
     property bool liveLastThought: false
@@ -2907,14 +2667,36 @@ FocusScope {
                     model: root.model ? root.model.pendingEntries.filter(p => !p.queued) : []
                     delegate: PendingPrompt {}
                 }
-                // With no live box: the agent busy, or idle while its
-                // subagents and background tasks run ("Waiting on ...").
+                // With no running turn's header: the agent busy, or idle
+                // while its subagents and background tasks run ("Waiting on ...").
                 BusyLine {
                     visible: (root.busy || root.waitingOnWork) && !root.liveShown
                     width: parent.width
                 }
+                // Under a running turn's steps: Claude Code writes a step as
+                // it is called and its result when done, so after a finished
+                // step the model is thinking; other CLIs write steps once done.
+                Row {
+                    objectName: "liveHint"
+                    readonly property bool thinking: root.model !== null && root.model.format === "claude"
+                                                     && root.liveLastAnswered && !root.liveLastThought
+                    readonly property bool none: root.liveSteps !== null && root.liveSteps.count === 0
+                    visible: root.liveShown && !root.compacting && (thinking || none)
+                    height: root.stepLineHeight
+                    spacing: Math.round(root.stepSize * 0.4)
+                    KindMark {
+                        anchors.verticalCenter: parent.verticalCenter
+                        running: true
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: parent.none ? qsTr("Waiting for the first step…") : qsTr("Thinking…")
+                        color: root.tint(root.mutedTextColor, 0.7)
+                        font.family: root.sansFamily
+                        font.pixelSize: root.stepSize - 1
+                    }
+                }
                 RunningStrip {
-                    visible: !root.liveShown && root.runningWork.length > 0
                     width: parent.width
                 }
                 Repeater {
@@ -2925,26 +2707,28 @@ FocusScope {
         }
     }
 
-    // A finished turn's work, folded: "Worked for 3m 12s · 14 steps". Click
-    // to show the thinking and steps between the prompt and the reply; each
-    // step then opens on its own.
+    // A finished turn's header: "Worked for 3m 12s", one plain line over its
+    // steps. Clicking it folds or shows them as a group; folded, it says
+    // what the work did, as the Codex app sums it up ("ran 4 commands,
+    // edited 2 files"; a turn of only thinking counts its steps).
     Component {
         id: workBlock
         Item {
             id: work
+            objectName: "workHeader"
             readonly property var entry: parent ? parent.entry : null
-            readonly property int line: Math.max(workText.implicitHeight, root.stepSize + 10)
-            height: line + (workSummary.visible ? workSummary.implicitHeight + 2 : 0)
+            readonly property bool expanded: entry !== null && entry.expanded
+            height: Math.max(workText.implicitHeight, root.stepSize + 10)
             MouseArea {
                 id: workHover
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: if (work.entry && root.model) root.model.toggleWork(work.entry.index)
+                onClicked: if (work.entry) root.toggleWork(work.entry.index)
             }
             Row {
                 id: workRow
-                y: (work.line - height) / 2
+                anchors.verticalCenter: parent.verticalCenter
                 spacing: 8
                 Text {
                     id: workText
@@ -2956,31 +2740,33 @@ FocusScope {
                 }
                 Chevron {
                     anchors.verticalCenter: parent.verticalCenter
-                    turned: work.entry !== null && work.entry.expanded
+                    turned: work.expanded
                     color: workHover.containsMouse ? root.textColor : root.mutedTextColor
                 }
             }
-            Rectangle {
-                y: work.line / 2
-                x: workRow.width + 14
-                width: parent.width - x
-                height: 1
-                color: root.borderColor
-            }
-            // What the work did, as the Codex app sums it up, shown only once
-            // the work is opened; a turn of only thinking counts its steps.
             Text {
                 id: workSummary
-                visible: work.entry !== null && work.entry.expanded && work.entry.steps > 0
-                y: work.line
-                width: parent.width
-                wrapMode: Text.Wrap
-                text: !work.entry ? ""
+                objectName: "workSummary"
+                visible: !work.expanded && text.length > 0
+                anchors.verticalCenter: parent.verticalCenter
+                x: workRow.width + 12
+                width: Math.max(0, parent.width - x)
+                elide: Text.ElideRight
+                text: !work.entry || work.entry.steps <= 0 ? ""
                       : work.entry.detail !== "" ? work.entry.detail
                       : work.entry.steps === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(work.entry.steps)
-                color: root.tint(root.mutedTextColor, 0.75)
+                color: root.tint(root.mutedTextColor, 0.7)
                 font.family: root.sansFamily
-                font.pixelSize: root.stepSize - 1
+                font.pixelSize: root.stepSize - 2
+            }
+            // Shown, a hairline runs on from the header.
+            Rectangle {
+                visible: work.expanded
+                anchors.verticalCenter: parent.verticalCenter
+                x: workRow.width + 14
+                width: Math.max(0, parent.width - x)
+                height: 1
+                color: root.borderColor
             }
         }
     }

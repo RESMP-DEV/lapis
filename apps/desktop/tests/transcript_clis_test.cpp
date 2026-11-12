@@ -199,8 +199,15 @@ void codex_file_is_followed() {
                     .isEmpty() &&
                 !model.dialogShowing({QString(30, QChar(0x2500)), QStringLiteral("Settings")}),
             "model: no live tail or dialog peek for Codex");
-    // The first turn is closed: prompt, its "Worked for" row, its reply.
-    require(model.rowCount() == 3, "model: the first turn folds to three rows");
+    // The first turn is closed and the latest finished: prompt, its "Worked
+    // for" header, its steps as rows, its reply.
+    const int first_steps = model.data(model.index(1), TranscriptModel::StepsRole).toInt();
+    require(first_steps > 0 && model.rowCount() == 3 + first_steps &&
+                model.data(model.index(1), TranscriptModel::ExpandedRole).toBool() &&
+                model.data(model.index(2), TranscriptModel::InWorkRole).toBool() &&
+                model.data(model.index(model.rowCount() - 1), TranscriptModel::KindRole)
+                        .toString() == "reply",
+            "model: the first turn shows its steps between prompt and reply");
     require(model.data(model.index(1), TranscriptModel::KindRole).toString() == "work" &&
                 model.data(model.index(1), TranscriptModel::TitleRole).toString() ==
                     "Worked for 3m 12s",
@@ -336,14 +343,16 @@ void antigravity_file_is_followed() {
     require(model.format() == Format::antigravity && model.formatName() == "antigravity" &&
                 !model.forkable() && !model.screenKnown(),
             "model: Antigravity by the file's name");
-    // While the agent works, a running turn is its prompt and the live box,
-    // which lists every step so far.
+    // While the agent works, a running turn is its prompt, its live header,
+    // and every step so far as a thread row.
     model.setLive(true);
     const auto& steps = *qobject_cast<lapis::desktop::LiveStepsModel*>(model.liveSteps());
-    require(model.rowCount() == 2 && model.runningSince() > 0 &&
+    require(model.rowCount() == 9 && model.runningSince() > 0 &&
                 model.data(model.index(1), TranscriptModel::KindRole).toString() == "live" &&
+                model.data(model.index(8), TranscriptModel::InWorkRole).toBool() &&
+                model.data(model.index(8), TranscriptModel::TitleRole).toString() == "Ran" &&
                 steps.rowCount() == 7,
-            "model: running turn is its prompt and the live box");
+            "model: running turn is its prompt, its live header and its steps");
     const auto ran = steps.index(6);
     require(steps.data(ran, TranscriptModel::TitleRole).toString() == "Ran" &&
                 !steps.data(ran, TranscriptModel::AnsweredRole).toBool(),
@@ -364,10 +373,11 @@ void antigravity_file_is_followed() {
                     "Worked for 3m 12s",
             "model: the first turn folds to Worked for");
 }
-// The live work box follows a file the CLI writes line by line: while a
-// turn runs (the agent working) the thread holds no step rows, the box's
-// rows only grow (a steering prompt starts it again), and a prompt sent
-// through lapis waits as pending until the CLI records it.
+// A running turn follows a file the CLI writes line by line: while it runs
+// (the agent working) its steps are thread rows under its live header, as
+// many as the live steps model holds, which only grows (a steering prompt
+// starts it again), and a prompt sent through lapis waits as pending until
+// the CLI records it.
 void live_box_grows(const char* name, const QString& file_name, const QString& sent) {
     QTemporaryDir directory;
     QDir(directory.path()).mkpath(QStringLiteral("logs"));
@@ -381,7 +391,8 @@ void live_box_grows(const char* name, const QString& file_name, const QString& s
     const auto& steps = *qobject_cast<lapis::desktop::LiveStepsModel*>(model.liveSteps());
     int resets = 0;
     QObject::connect(&steps, &QAbstractItemModel::modelReset, [&resets] { ++resets; });
-    int running_lines = 0, most = 0, step_rows = 0, shrank = 0, prompts_before = 0;
+    int running_lines = 0, most = 0, step_rows = 0, shrank = 0, prompts_before = 0,
+        live_mismatch = 0;
     bool pending_seen = false, steered_seen = false;
     for (const auto& line : lines_of(fixture(name))) {
         const bool sends = !sent.isEmpty() && line.contains(sent.toUtf8()) &&
@@ -395,16 +406,26 @@ void live_box_grows(const char* name, const QString& file_name, const QString& s
         file.flush();
         model.readMore();
         int prompts = 0;
+        // Rows under the live header, while it shows them.
+        int live_rows = -1;
         for (int row = 0; row < model.rowCount(); ++row) {
             const auto index = model.index(row);
             const auto kind = model.data(index, TranscriptModel::KindRole).toString();
             step_rows += kind == "tool" || kind == "thinking" ? 1 : 0;
             prompts += kind == "prompt" ? 1 : 0;
+            if (kind == "live" && model.data(index, TranscriptModel::ExpandedRole).toBool())
+                live_rows = 0;
+            else if (live_rows >= 0 && model.data(index, TranscriptModel::InWorkRole).toBool())
+                ++live_rows;
+            else if (live_rows >= 0 && kind != "prompt")
+                live_mismatch += 1; // only queued prompts follow a running turn's steps
             if (sends && kind == "prompt" &&
                 model.data(index, TranscriptModel::BodyRole).toString() == sent)
                 steered_seen = model.data(index, TranscriptModel::SteeredRole).toBool() &&
                                model.data(index, TranscriptModel::WaitedRole).toInt() == 0;
         }
+        if (live_rows >= 0 && live_rows != steps.rowCount())
+            ++live_mismatch;
         if (model.runningSince() > 0) {
             ++running_lines;
             most = std::max(most, steps.rowCount());
@@ -420,7 +441,8 @@ void live_box_grows(const char* name, const QString& file_name, const QString& s
         return text.constData();
     };
     require(running_lines > 3 && most >= 3, what("the box filled while turns ran"));
-    require(step_rows == 0, what("the thread showed no step rows while folded or live"));
+    require(step_rows > 0 && live_mismatch == 0,
+            what("the running turn's steps are thread rows under its live header"));
     require(shrank == 0, what("the box only grew within a part"));
     require(model.runningSince() == 0 && steps.rowCount() == 0, what("the box empties at the end"));
     require(resets <= model.turnCount() * 2 + 2, what("the box resets only between parts"));

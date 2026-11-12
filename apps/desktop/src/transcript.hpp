@@ -9,6 +9,7 @@
 #include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -135,12 +136,13 @@ struct Status {
 // The window for a status: what the CLI reported, else the table above.
 [[nodiscard]] qint64 context_window(const Status& status);
 
-// The thread as shown: each turn folds to its prompt, one "Worked for" row
-// standing for its work (thinking, steps, notes between), and its final
-// reply. A prompt the CLI read mid-turn (steered) splits the work in parts,
-// each folded on its own: prompt, work, steering prompt, work, reply. While
-// the agent works, the running turn's last part is one live row (the live
-// work box) instead of a "Worked for" row.
+// The thread as shown: each turn is its prompt, one "Worked for" header row
+// for its work (thinking, steps, notes between), the work's items as rows of
+// their own while that header is expanded, and its final reply. A prompt the
+// CLI read mid-turn (steered) splits the work in parts, each with its own
+// header: prompt, work, steering prompt, work, reply. While the agent works,
+// the running turn's last part has a live header ("Working") instead, its
+// items under it as they land.
 struct Part {
     int lead{};  // the prompt it follows: the turn's or a steering one
     int first{}; // its first and last items (first > last when empty)
@@ -165,21 +167,33 @@ struct Turn {
 // The summary for the work items in [first, last], skipping `except`.
 [[nodiscard]] QString work_summary(const std::vector<Item>& items, int first, int last, int except);
 struct Row {
-    int item{-1};   // the item shown, or -1 for a part's "Worked for" or live row
-    int turn{-1};   // the turn it belongs to, or -1
-    int part{};     // the part of the turn a "Worked for" or live row stands for
-    bool in_work{}; // folded work, shown because its part is open
-    bool live{};    // the running turn's live work box
+    int item{-1};    // the item shown, or -1 for a part's "Worked for" or live header
+    int turn{-1};    // the turn it belongs to, or -1
+    int part{};      // the part of the turn a "Worked for" or live header stands for
+    bool in_work{};  // a step of a part's work, shown because its header is expanded
+    bool live{};     // the running turn's live header
+    bool expanded{}; // a header whose work's rows follow it
 };
 struct Layout {
     std::vector<Turn> turns;
     std::vector<Row> rows;
 };
-// `expanded` holds the leads of the parts whose work is shown. `live`: the
-// agent is working, so the last turn, while open, ends in a live row.
-[[nodiscard]] Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded,
-                             bool live = false);
-// The items the live work box lists for the turn `turn` of `layout`: its
+// How many finished turns with steps, counted from the end, open with their steps shown
+// when a conversation is first laid out (the running turn always does, as do
+// turns that start after). Older turns start as their "Worked for" header
+// alone. std::numeric_limits<int>::max() opens every turn.
+inline constexpr int expanded_finished_turns = 1;
+// A part's work is shown when its lead is at or after `expand_from` (the
+// default above), flipped for the leads in `toggled` (the person's clicks).
+// The defaults leave every part folded. `live`: the agent is working, so the
+// last turn, while open, has a live header.
+[[nodiscard]] Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled,
+                             bool live = false,
+                             int expand_from = std::numeric_limits<int>::max());
+// The first item whose parts open by default (expanded_finished_turns): the
+// start of the oldest such finished turn, or 0 when there are fewer.
+[[nodiscard]] int expand_from(const Layout& layout);
+// The items the running turn `turn` of `layout` lists under its live header: its
 // last part's steps, thinking, notes and replies, in order.
 [[nodiscard]] std::vector<int> live_items(const std::vector<Item>& items, const Layout& layout,
                                           int turn);
@@ -238,8 +252,8 @@ struct Piece {
 [[nodiscard]] QString path_at(const QString& text, int position, const QString& folder);
 
 // The live tail: what a running turn shows on Claude Code's screen that the
-// thread does not show yet. The thread never draws it (the live work box
-// reads the transcript); the view watches it change to tell when a slash
+// thread does not show yet. The thread never draws it (the running turn's
+// steps come from the transcript); the view watches it change to tell when a slash
 // command with no turn has gone quiet. Claude Code draws, above its input box (the last
 // box-rule pair from the bottom), the conversation so far: echoed prompts
 // ("❯ text" at column 0), each message or step as a block led by "●" (or
@@ -586,7 +600,7 @@ class AntigravityReader final : public Reader {
 
 class TranscriptModel;
 
-// The running turn's steps for the live work box: one row per item of its
+// The running turn's steps (the view counts them and reads the newest): one row per item of its
 // last part, with the thread's roles, oldest first. Rows only append while
 // the turn runs; anything else resets.
 class LiveStepsModel final : public QAbstractListModel {
@@ -651,14 +665,14 @@ class TranscriptModel final : public QAbstractListModel {
     // (Claude Code's input box); for the others liveLines is empty and the
     // view never peeks at a dialog.
     Q_PROPERTY(bool screenKnown READ screenKnown NOTIFY pathChanged)
-    // The agent is working (from its terminal): the running turn ends in
-    // the live work box rather than folding.
+    // The agent is working (from its terminal): the running turn's last
+    // part has a live header rather than a "Worked for" one.
     Q_PROPERTY(bool live READ live WRITE setLive NOTIFY liveChanged)
     // The last turn started and its CLI has recorded no end yet (its final
     // reply, a turn-end record or a next prompt). A status estimated from
     // output can say working after the record shows the turn over.
     Q_PROPERTY(bool turnOpen READ turnOpen NOTIFY turnOpenChanged)
-    // The live work box's steps (a LiveStepsModel).
+    // The running turn's steps (a LiveStepsModel).
     Q_PROPERTY(QObject* liveSteps READ liveSteps CONSTANT)
     // Prompts the bar sent that the CLI has not recorded yet, oldest first.
     Q_PROPERTY(QStringList pendingPrompts READ pendingPrompts NOTIFY pendingChanged)
@@ -690,8 +704,8 @@ class TranscriptModel final : public QAbstractListModel {
         AnsweredRole,
         AfterStepRole,
         RecordRole,
-        ExpandedRole, // a "Worked for" row whose work is shown
-        InWorkRole,   // an item shown inside an opened "Worked for"
+        ExpandedRole, // a "Worked for" or live header whose work's rows follow it
+        InWorkRole,   // a step row under an expanded header
         StepsRole,    // a "Worked for" row: how many items it folds
         QueuedRole,   // a prompt sent mid-turn, not yet taken in
         AtRole,       // when it was written (ms since the epoch), or 0
@@ -705,9 +719,10 @@ class TranscriptModel final : public QAbstractListModel {
         // status, duration, steps, tokens, exit (-1 if none), checks,
         // lastCheck, report}; null for other items.
         TaskRole,
+        OpenedRole, // a step row opened to its detail (toggleStep)
     };
     // An item's value for a role (not the layout's roles: expanded, inWork,
-    // steps), shared by the thread and the live work box.
+    // steps, opened), shared by the thread and the running turn's steps.
     [[nodiscard]] QVariant item_data(int index, int role) const;
     // The same for any item, the task role aside (null).
     [[nodiscard]] static QVariant item_value(const transcript::Item& item, int index, int role);
@@ -830,8 +845,11 @@ class TranscriptModel final : public QAbstractListModel {
     // Copies part of a styled reply: paragraphs separated by a blank line,
     // list items as "- " or "1. " lines, everything else plain.
     Q_INVOKABLE void copySelection(QQuickTextDocument* source, int start, int end) const;
-    // Opens or folds the work of the turn a "Worked for" row stands for.
+    // Shows or folds the step rows under a "Worked for" or live header.
     Q_INVOKABLE void toggleWork(int row);
+    // Opens or closes a step row's detail in place. Kept by item, so it
+    // survives rows arriving, the row scrolling out, and switching away.
+    Q_INVOKABLE void toggleStep(int row);
     // A prompt the bar sent (see pendingPrompts), shown at once until the
     // CLI records it; `queued` when the agent was working.
     Q_INVOKABLE void noteSent(const QString& text, bool queued = true);
@@ -969,7 +987,7 @@ class TranscriptModel final : public QAbstractListModel {
     qint64 now_ms_{};
     // Task files found by search (Codex child rollouts), by task id.
     mutable QHash<QString, QString> found_files_;
-    // Shows the live turn's items in the live work box, or none.
+    // Lists the running turn's items in liveSteps, or none.
     void showLive(int changed);
     void notePending();
     bool live_{};
@@ -983,7 +1001,14 @@ class TranscriptModel final : public QAbstractListModel {
     void relayout(int changed);
     // Emits statusChanged when the model, effort or context use moved.
     void noteStatus();
-    QSet<int> expanded_; // first items of turns whose work is shown
+    // Leads of parts whose work the person showed or folded against the
+    // default (transcript::lay_out's `toggled`).
+    QSet<int> expanded_;
+    // Where parts start open by default (transcript::expand_from), fixed when
+    // the conversation is first laid out so later turns never fold earlier
+    // ones; -1 until then.
+    mutable int expand_from_{-1};
+    QSet<int> opened_; // items whose step rows are opened (toggleStep)
     transcript::Layout layout_;
     // Conversations read recently stay parsed, so switching back to an agent
     // shows its thread at once and reads only what it wrote since.
@@ -996,6 +1021,8 @@ class TranscriptModel final : public QAbstractListModel {
         QVariantMap view;
         qint64 bytes{};  // the reader's footprint when kept
         quint64 shown{}; // when it was last shown (shown_clock_), 0 if never
+        QSet<int> opened;
+        int expand_from{-1};
     };
     // Most recently shown first; read ahead and never shown last.
     std::vector<Parsed> kept_;

@@ -289,7 +289,11 @@ void cold_conversation_shows_its_end() {
     require(whole.size() > shown.size() && whole.mid(whole.size() - shown.size()) == shown,
             "the end shown first is the end of the whole thread");
     const auto all = read_file(big, Format::claude);
-    require(model.rowCount() == static_cast<int>(lay_out(all.reader->items(), {}).rows.size()) &&
+    // The latest finished turn shows its steps, as when read whole at once.
+    const int open_from =
+        lapis::desktop::transcript::expand_from(lay_out(all.reader->items(), {}));
+    const auto whole_rows = lay_out(all.reader->items(), {}, false, open_from).rows.size();
+    require(model.rowCount() == static_cast<int>(whole_rows) &&
                 model.items().size() == all.reader->items().size(),
             "all of it is read");
 }

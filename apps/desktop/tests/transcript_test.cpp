@@ -1050,7 +1050,8 @@ void model_follows_file() {
     TranscriptModel model;
     model.setPath(path);
     model.loadNow();
-    require(model.rowCount() == 2, "loaded two items");
+    // The only turn opens with its steps: prompt, "Worked" header, the step.
+    require(model.rowCount() == 3, "loaded two items, the step under its header");
     int changed = 0, inserted = 0;
     QObject::connect(&model, &QAbstractItemModel::dataChanged, [&changed] { ++changed; });
     QObject::connect(&model, &QAbstractItemModel::rowsInserted, [&inserted] { ++inserted; });
@@ -1063,7 +1064,7 @@ void model_follows_file() {
     file.write(result.mid(20) + kConversation[12] + '\n');
     file.flush();
     model.readMore();
-    require(changed == 1 && inserted == 1 && model.rowCount() == 3,
+    require(changed == 1 && inserted == 1 && model.rowCount() == 4,
             "result updates the card, reply appends");
     require(model.items()[1].failed, "card shows failure");
     file.resize(0);
@@ -1181,14 +1182,22 @@ void turns_fold() {
     const auto kind = [&model](int row) {
         return model.data(model.index(row), TranscriptModel::KindRole).toString();
     };
-    require(model.rowCount() == 5 && kind(0) == QStringLiteral("prompt") &&
-                kind(1) == QStringLiteral("work") && kind(2) == QStringLiteral("reply") &&
-                kind(3) == QStringLiteral("prompt") && kind(4) == QStringLiteral("work"),
-            "finished turn folds; an open turn with the agent idle folds too");
+    // The latest finished turn and the open one start with their steps shown.
+    require(model.rowCount() == 8 && kind(0) == QStringLiteral("prompt") &&
+                kind(1) == QStringLiteral("work") && kind(2) == QStringLiteral("thinking") &&
+                kind(3) == QStringLiteral("tool") && kind(4) == QStringLiteral("reply") &&
+                kind(5) == QStringLiteral("prompt") && kind(6) == QStringLiteral("work") &&
+                kind(7) == QStringLiteral("tool") &&
+                model.data(model.index(3), TranscriptModel::InWorkRole).toBool() &&
+                model.data(model.index(1), TranscriptModel::ExpandedRole).toBool(),
+            "the latest finished turn and the open one show their steps under their headers");
     model.setLive(true);
     const auto& steps = *qobject_cast<lapis::desktop::LiveStepsModel*>(model.liveSteps());
-    require(model.rowCount() == 5 && kind(4) == QStringLiteral("live") && steps.rowCount() == 1,
-            "while the agent works, the open turn ends in the live box with its step");
+    require(model.rowCount() == 8 && kind(6) == QStringLiteral("live") &&
+                kind(7) == QStringLiteral("tool") &&
+                model.data(model.index(6), TranscriptModel::ExpandedRole).toBool() &&
+                steps.rowCount() == 1,
+            "while the agent works, the open turn's header is live, its step a thread row");
     require(model.data(model.index(1), TranscriptModel::TitleRole).toString() ==
                     QStringLiteral("Worked for 1m 5s") &&
                 model.data(model.index(1), TranscriptModel::StepsRole).toInt() == 2 &&
@@ -1196,13 +1205,18 @@ void turns_fold() {
                     QStringLiteral("ran a command"),
             "work row says how long and what it did");
     model.toggleWork(1);
-    require(model.rowCount() == 7 && kind(2) == QStringLiteral("thinking") &&
-                kind(3) == QStringLiteral("tool") && kind(4) == QStringLiteral("reply") &&
-                model.data(model.index(3), TranscriptModel::InWorkRole).toBool() &&
-                model.data(model.index(1), TranscriptModel::ExpandedRole).toBool(),
-            "opening shows thinking and steps above the reply");
+    require(model.rowCount() == 6 && kind(2) == QStringLiteral("reply") &&
+                !model.data(model.index(1), TranscriptModel::ExpandedRole).toBool(),
+            "clicking the header folds its steps as a group");
     model.toggleWork(1);
-    require(model.rowCount() == 5, "folding hides them again");
+    require(model.rowCount() == 8 && kind(2) == QStringLiteral("thinking") &&
+                model.data(model.index(1), TranscriptModel::ExpandedRole).toBool(),
+            "clicking it again shows them");
+    model.toggleWork(6);
+    require(model.rowCount() == 7 && kind(6) == QStringLiteral("live") &&
+                !model.data(model.index(6), TranscriptModel::ExpandedRole).toBool(),
+            "the running turn's header folds its steps too");
+    model.toggleWork(6);
     require(model.model() == QStringLiteral("claude-opus-5-5") &&
                 model.effort() == QStringLiteral("high") && model.contextTokens() == 250120 &&
                 model.contextWindow() == 1000000,
@@ -1221,19 +1235,21 @@ void turns_fold() {
         "\n");
     file.flush();
     model.readMore();
-    require(model.rowCount() == 6 && kind(4) == QStringLiteral("work") &&
-                kind(5) == QStringLiteral("reply") && removed == 1 && steps.rowCount() == 0,
-            "a turn that finishes folds in place and the live box empties");
+    require(model.rowCount() == 9 && kind(6) == QStringLiteral("work") &&
+                kind(7) == QStringLiteral("tool") && kind(8) == QStringLiteral("reply") &&
+                model.data(model.index(6), TranscriptModel::ExpandedRole).toBool() &&
+                removed == 1 && steps.rowCount() == 0,
+            "a turn that finishes keeps its steps shown under a \"Worked for\" header");
     require(lapis::desktop::transcript::context_window(QStringLiteral("claude-opus-4-5"), 1000) ==
                     200000 &&
                 lapis::desktop::transcript::context_window(QStringLiteral("claude-opus-4-5[1m]"),
                                                            0) == 1000000,
             "context windows follow the model");
 }
-// The live work box follows a Claude Code file as it grows: one row per
-// step, appended (never reset) while the turn runs, a result redrawing its
-// row; a prompt read mid-turn lands in the thread above the box; the thread
-// itself gains no step rows, and an edit's diff stays out of it.
+// A running turn follows a Claude Code file as it grows: one thread row per
+// step under its live header (and in the live steps model, appended, never
+// reset), a result redrawing its row; a prompt read mid-turn lands in the
+// thread and a new live header starts under it.
 void live_box_follows_claude() {
     QTemporaryDir directory;
     const auto path = directory.filePath(QStringLiteral("live.jsonl"));
@@ -1275,7 +1291,8 @@ void live_box_follows_claude() {
     }
     require(steps.rowCount() == 4 && resets == 0 && inserted == 4 && redrawn >= 1,
             "each step appends a row; a result redraws its row");
-    require(kinds() == "prompt|live|prompt", "no step rows in the thread; the queued prompt below");
+    require(kinds() == "prompt|live|thinking|tool|reply|tool|prompt",
+            "each step is a thread row under the live header; the queued prompt below");
     const auto edit = steps.entry(1);
     require(edit.value("title").toString() == "Edited" && edit.value("added").toInt() == 2 &&
                 edit.value("diff").toList().size() == 3 && edit.value("answered").toBool(),
@@ -1285,9 +1302,10 @@ void live_box_follows_claude() {
     append(
         R"({"type":"queue-operation","operation":"remove","timestamp":"2026-11-07T10:00:20.000Z","content":"use tabs","reason":"absorbed_mid_turn"})");
     model.readMore();
-    require(kinds() == "prompt|work|prompt|live" && steps.rowCount() == 0,
-            "read mid-turn: the steps before fold, the prompt lands, the box starts again");
-    const int steered = 2;
+    require(kinds() == "prompt|work|thinking|tool|reply|tool|prompt|live" && steps.rowCount() == 0,
+            "read mid-turn: the steps before stay under their header, the prompt lands, a "
+            "live header starts");
+    const int steered = 6;
     require(model.data(model.index(steered), TranscriptModel::SteeredRole).toBool() &&
                 model.data(model.index(steered), TranscriptModel::WaitedRole).toInt() == 1 &&
                 !model.data(model.index(steered), TranscriptModel::QueuedRole).toBool(),
@@ -1297,24 +1315,106 @@ void live_box_follows_claude() {
     append(
         R"({"type":"assistant","uuid":"a5","timestamp":"2026-11-07T10:00:31.000Z","message":{"content":[{"type":"tool_use","id":"t3","name":"Read","input":{"file_path":"/x/a.cpp"}}]}})");
     model.readMore();
-    require(steps.rowCount() == 1, "the box lists the steps after the steering prompt");
+    require(steps.rowCount() == 1 &&
+                kinds() == "prompt|work|thinking|tool|reply|tool|prompt|live|tool",
+            "the live header lists the steps after the steering prompt");
     append(
         R"({"type":"assistant","uuid":"a6","timestamp":"2026-11-07T10:00:40.000Z","message":{"content":[{"type":"text","text":"Done with tabs."}]}})");
     append(R"({"type":"system","subtype":"turn_duration","durationMs":40000})");
     model.readMore();
-    require(kinds() == "prompt|work|prompt|work|reply" && steps.rowCount() == 0,
+    require(kinds() == "prompt|work|thinking|tool|reply|tool|prompt|work|tool|reply" &&
+                steps.rowCount() == 0,
             "finished: prompt, work, steering prompt, work, reply");
     require(model.data(model.index(1), TranscriptModel::TitleRole).toString() == "Worked for 20s" &&
-                model.data(model.index(3), TranscriptModel::TitleRole).toString() ==
+                model.data(model.index(7), TranscriptModel::TitleRole).toString() ==
                     "Worked for 20s",
             "each part is timed from its prompt");
-    model.toggleWork(3);
-    require(kinds() == "prompt|work|prompt|work|tool|reply",
-            "the second part opens on its own, one row per step");
-    model.toggleWork(3);
-    model.toggleWork(1);
+    model.toggleWork(7);
     require(kinds() == "prompt|work|thinking|tool|reply|tool|prompt|work|reply",
-            "the first part opens to its steps and interim reply; the diff stays in the step");
+            "the second part folds on its own");
+    model.toggleWork(7);
+    model.toggleWork(1);
+    require(kinds() == "prompt|work|prompt|work|tool|reply",
+            "the first part folds its steps and interim reply on its own");
+}
+
+// Older finished turns start as their header alone; the latest finished one
+// shows its steps. A new turn never folds the one before it. A step opened
+// stays opened while rows arrive and across a switch away and back.
+void older_turns_start_folded() {
+    QTemporaryDir directory;
+    const auto path = directory.filePath(QStringLiteral("older.jsonl"));
+    const auto other = directory.filePath(QStringLiteral("other.jsonl"));
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly), "older fixture opens");
+    const auto turn = [&file](int n) {
+        const auto id = QByteArray::number(n);
+        file.write(R"({"type":"user","uuid":"p)" + id +
+                   R"(","message":{"content":"Turn"}})"
+                   "\n"
+                   R"({"type":"assistant","uuid":"a)" +
+                   id +
+                   R"(","message":{"content":[{"type":"tool_use","id":"t)" + id +
+                   R"(","name":"Bash","input":{"command":"make"}}]}})"
+                   "\n"
+                   R"({"type":"user","uuid":"r)" +
+                   id +
+                   R"(","message":{"content":[{"type":"tool_result","tool_use_id":"t)" + id +
+                   R"(","content":"ok"}]}})"
+                   "\n"
+                   R"({"type":"assistant","uuid":"b)" +
+                   id +
+                   R"(","message":{"content":[{"type":"text","text":"Done."}]}})"
+                   "\n"
+                   R"({"type":"system","subtype":"turn_duration","durationMs":4000})"
+                   "\n");
+        file.flush();
+    };
+    turn(1);
+    turn(2);
+    turn(3);
+    {
+        QFile second(other);
+        require(second.open(QIODevice::WriteOnly), "other fixture opens");
+        second.write(R"({"type":"user","uuid":"o1","message":{"content":"Hi"}})"
+                     "\n");
+    }
+    TranscriptModel model;
+    model.setPath(path);
+    model.loadNow();
+    const auto kinds = [&model] {
+        QStringList out;
+        for (int row = 0; row < model.rowCount(); ++row)
+            out << model.data(model.index(row), TranscriptModel::KindRole).toString();
+        return out.join('|');
+    };
+    require(lapis::desktop::transcript::expanded_finished_turns == 1,
+            "one finished turn opens by default");
+    require(kinds() == "prompt|work|reply|prompt|work|reply|prompt|work|tool|reply",
+            "older turns start folded; the latest shows its step");
+    const int step = 8;
+    model.toggleStep(step);
+    require(model.data(model.index(step), TranscriptModel::OpenedRole).toBool(),
+            "a step opens in place");
+    turn(4);
+    model.readMore();
+    require(kinds() ==
+                "prompt|work|reply|prompt|work|reply|prompt|work|tool|reply|prompt|work|tool|reply",
+            "a new turn shows its step and leaves the one before it shown");
+    require(model.data(model.index(step), TranscriptModel::OpenedRole).toBool() &&
+                !model.data(model.index(12), TranscriptModel::OpenedRole).toBool(),
+            "the opened step stays opened as rows arrive; the new one starts closed");
+    model.setPath(other);
+    model.setPath(path);
+    require(model.rowCount() == 14 &&
+                model.data(model.index(step), TranscriptModel::OpenedRole).toBool(),
+            "switching away and back keeps the step opened");
+    model.toggleStep(step);
+    require(!model.data(model.index(step), TranscriptModel::OpenedRole).toBool(),
+            "a second click closes it");
+    model.toggleWork(1);
+    require(kinds().startsWith("prompt|work|tool|reply|prompt|work|reply"),
+            "an older turn's header shows its steps when clicked");
 }
 
 // Code colors by its language: the role at a column of a line.
@@ -2196,6 +2296,7 @@ int main(int argc, char** argv) {
     switching_back_is_warm();
     turns_fold();
     live_box_follows_claude();
+    older_turns_start_folded();
     code_is_highlighted();
     media_is_found();
     media_shows_in_place();

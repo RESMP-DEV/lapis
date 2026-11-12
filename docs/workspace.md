@@ -93,60 +93,67 @@ threads, lapis reads every local agent's thread ahead a few seconds after it
 opens. A thread not read yet shows its newest turns at once and the earlier
 history fills in above them a moment later without moving what is on screen.
 
-As in the Codex app, a finished turn folds to your prompt, one **Worked for
-3m 12s** line, and the final reply. A turn a background task or subagent woke
-shows only that line and the reply, with no "finished" notice. Clicking the
-line opens the thinking and steps between, indented, under a summary of the
-work ("ran 4 commands, edited 2 files, read 3 files") as one-line steps; each step then opens on its own to show its command output
-or diff, and a step that took a second or more shows how long ("12s", "3m
-4s", "1h 2m", "2d 3h").
+A turn reads as your prompt, a plain **Worked for 3m 12s** header, the parts
+of its work one by one, and the final reply. Each part is one dimmed line in
+the thread's own column, scrolled with the thread (there is no box and nothing
+scrolls on its own): a small mark for its kind (a ring for thinking, a dot for
+a call, a square for an edit, a diamond for a subagent or background task, a
+gently pulsing accent dot while it runs), what it did ("Read greet.cpp",
+"Edited greet_test.cpp +12 −3", "Ran ctest", a thought's first sentence), how
+long it took once that is a second or more ("12s", "3m 4s", "1h 2m", "2d 3h"),
+and a chevron when it has more to show. The model's short notes between steps
+show as replies among them. Clicking a line opens it in place to its whole
+thought, command and output, diff, or tool input and result; clicking it again
+closes it. The line clicked stays where it is (the thread stops following its
+end until you scroll back there), and an opened step stays opened as new rows
+arrive, after it scrolls out of view, and when you switch agents and back.
+An edit's diff shows only once its step is opened.
 
-While the agent works, the running turn is your prompt, a line such as
-**Working · 2m 10s · 14 steps**, and under it one small box four lines tall:
-the turn's steps as the CLI records them, one line each ("Read greet.cpp",
-"Edited greet_test.cpp +12 −3", "Ran ctest 14s", "Thought for 6s", the
-model's short notes between steps), the newest at the bottom and earlier ones
-rolling up and out. The wheel or trackpad over the box scrolls back through
-the turn without the box growing (past either end it scrolls the thread).
-Clicking a step opens it under the box, as an opened "Worked for" step does,
-and clicking it again closes it. The box shows only what the conversation
-file holds, never the terminal's screen; for Claude Code a last line reads
-"Thinking…" once the newest step is done. When the turn ends the box goes and
-the turn folds as above. While the conversation compacts (a `/compact`, or
-Claude Code's own when the context fills) the line reads **Compacting
-conversation for 1m 3s** with nothing under it.
+Clicking a **Worked for** header folds that turn's steps to the header alone,
+which then sums the work up as the Codex app does ("ran 4 commands, edited 2
+files, read 3 files"); clicking it again shows them. When a thread is first
+shown, the latest finished turn with steps and every turn after it show their
+steps; older turns start folded so long threads stay readable. A turn a
+background task or subagent woke shows only its header and the reply, with no
+"finished" notice.
 
-The model's thinking shows dimmed as it goes. While the newest step is a
-thought, it fills the rest of the box with its last lines (the box does not
-grow); an older thought is one dim line with its first sentence. In an opened
-"Worked for" a thought is the same one line with how long it took, and it opens
-to the whole thought as dim prose. A thought the CLI saved empty, or that is
-only agy's stock "I'm thinking through how to approach this.", is a plain
-**Thought** line that does not open; that stock line is also dropped from the
-front of a real thought, and runs of blank lines fold to one. An opened step
-(thought, command output, diff) sits a little in from the thread behind a thin
-rule, with more room below it than above.
+While the agent works, the running turn's header is a line such as **Working ·
+2m 10s · 14 steps**, and its steps appear under it as the CLI records them,
+the newest at the bottom; the thread follows its end unless you scrolled up.
+Its header folds and shows its steps like a finished turn's. The steps are
+only what the conversation file holds, never the terminal's screen; for Claude
+Code a last line reads "Thinking…" once the newest step is done. When the turn
+ends the header becomes **Worked for** and its steps stay as they were. While
+the conversation compacts (a `/compact`, or Claude Code's own when the context
+fills) the line reads **Compacting conversation for 1m 3s**.
+
+A thought shows as one dim line with its first sentence and how long it took,
+and opens to the whole thought as dim prose. A thought the CLI saved empty, or
+that is only agy's stock "I'm thinking through how to approach this.", is a
+plain **Thought** line that does not open; that stock line is also dropped from
+the front of a real thought, and runs of blank lines fold to one. An opened step
+(thought, command output, diff) sits under its line behind a thin rule from its
+mark, with more room below it than above.
 
 Subagents and background tasks are steps of their own. A subagent is one line,
-**Subagent · Map the lexer · 4m 10s · 23 steps**, running (with a dot) or done;
+**Subagent · Map the lexer · 4m 10s · 23 steps**, running (pulsing) or done;
 clicking it opens how it went (its type, model, tokens), what it was asked, its
-own steps as one-line rows in a box like the live box (each opens under it; a
-subagent's own subagents stay lines) and its final report. Its steps are read
+own steps as step lines (each opens in place; a subagent's own subagents stay
+lines; past 150 only the newest show) and its final report. Its steps are read
 from its own conversation file only when it is opened. A background command or
 monitor is one line too, **Started in background · npm test --watch**; the
 agent's later looks at its output and its end attach to that line, which opens
 to its status, exit code, run time, how often it was checked and its last lines
-of output, rather than adding rows. The turn a finished task wakes still folds
-to its own "Worked for" line with no "finished" row.
+of output, rather than adding rows. The turn a finished task wakes still has
+its own "Worked for" header with no "finished" row.
 
-While any run, a strip under the live box lists them, one quiet line each:
+While any run, the thread ends in one step line each:
 **Subagent · Map the lexer · Explore / Sonnet 5.5 · 3m 12s · 14 steps**,
-**Background · npm test --watch · 1m 5s**. It is at most four lines tall and
-scrolls past that; with more than four it is one line, **3 subagents and 2
-background tasks running**, that opens the list. A line opens its task under
-the strip, and finished ones leave it. When the agent's turn has ended but its
-work runs on, the thread ends in **Waiting on 2 subagents · 4m 2s** (counted
-from the turn's end) and the strip, instead of looking finished.
+**Background · npm test --watch · 1m 5s**. With more than four they are one
+line, **3 subagents and 2 background tasks running**, that shows them. A line
+opens its task in place, and finished ones leave. When the agent's turn has
+ended but its work runs on, the thread ends in **Waiting on 2 subagents · 4m
+2s** (counted from the turn's end) and those lines, instead of looking finished.
 
 A task counts as running until its end is recorded. One whose end never was
 (the CLI quit) counts as ended, with "no end recorded", once its last sign of
@@ -155,7 +162,7 @@ last write to its own file (a subagent's conversation, a command's output); a
 monitor also stops at its own expiry. All of this is read from the files, so it
 is the same after lapis restarts.
 
-A prompt you send while the agent works shows at once under the box, marked
+A prompt you send while the agent works shows at once under its steps, marked
 with what its CLI will do with it; several keep their order:
 
 | CLI | Return mid-turn | Mark under the prompt |
@@ -204,11 +211,12 @@ continuation, with faint text and Codex's and agy's placeholders left out
 CLI wraps comes back as several lines.
 
 When the agent reads it mid-turn it moves into the thread where it was read,
-above the box, marked **Steered · read after 3 more steps** (or just
-**Steered** where the CLI does not say how long it waited), and the box
-starts again under it with the steps that follow. The steps before it fold
-into their own **Worked for** line, so a finished turn reads: prompt, Worked
-for, steering prompt, Worked for, reply, each prompt shown once. A prompt the
+after the steps before it, marked **Steered · read after 3 more steps** (or
+just **Steered** where the CLI does not say how long it waited), and a new
+**Working** header starts under it with the steps that follow. The steps
+before it keep their own **Worked for** header, so a finished turn reads:
+prompt, Worked for and its steps, steering prompt, Worked for and its steps,
+reply, each prompt shown once. A prompt the
 CLI holds until the turn ends becomes the next turn's prompt, with no mark.
 
 Above **Commands** in the sidebar, **This agent** switches the selected agent
@@ -222,7 +230,7 @@ brings it back.
 What differs by CLI:
 
 - **Claude Code** saves a step when it is called and its result when it is
-  done, so the box shows a running step (with a dot) until its result lands.
+  done, so a running step shows its pulsing mark until its result lands.
   Its own queue is in the file: a prompt sent mid-turn shows queued at once
   and then as that record, and its "read after N more steps" counts the tool calls
   between its sending and its reading. A subagent's steps are in
@@ -232,7 +240,7 @@ What differs by CLI:
   (`run_in_background`, or one moved there when it ran long) ends with its own
   notification and exit code; BashOutput, TaskOutput, KillShell, TaskStop and
   reading its output file attach to it. A monitor's events count as its checks.
-- **Codex** saves each step when it is done, so the box gains a step as each
+- **Codex** saves each step when it is done, so the thread gains a step as each
   one finishes (within milliseconds of it, in rollouts on this Mac). A message
   sent mid-turn is read at Codex's next step; lapis shows it queued until
   Codex records it and counts the steps between. Its reasoning shows only when Codex saves a
@@ -396,7 +404,7 @@ Light mode reads the thread as dark text on an off-white page. The sun beside
 mode** in Commands, flips it; Settings' Appearance section also has **Match
 macOS**, which follows the Mac's appearance as it changes, and a preview. It
 switches the thread (its replies, code,
-the live work box, the bar and the menus) and the window around it (sidebar,
+its steps, the bar and the menus) and the window around it (sidebar,
 strip frames, dialogs) to your last light theme of each, and back to your last
 dark ones; terminals keep their own colors. A see-through picture drawn for
 the other kind of page (white strokes made for a dark thread) sits on a small
