@@ -169,8 +169,8 @@ What differs by CLI:
 
 - **Claude Code** saves a step when it is called and its result when it is
   done, so the box shows a running step (with a dot) until its result lands.
-  Its own queue is in the file: a prompt sent mid-turn shows queued from
-  that record, and its "read after N more steps" counts the tool calls
+  Its own queue is in the file: a prompt sent mid-turn shows queued at once
+  and then as that record, and its "read after N more steps" counts the tool calls
   between its sending and its reading. A subagent's steps are in
   `<session>/subagents/agent-<id>.jsonl` beside the conversation; its end,
   steps, tokens and report come in the task notification Claude Code writes
@@ -231,6 +231,17 @@ in the bar to edit, and Tab again sends it. Tab with nothing typed or offered
 moves to the next agent that needs you, as in the terminal. While the agent is
 waiting on a request, the bar says so and sends nothing; answer it in the
 terminal (Escape). Typing while reading goes to the bar.
+
+A prompt you send shows in the thread at once, in the same frame as Return,
+and the bar clears: at the thread's end with the turn shown starting
+(**Working**) when the agent was idle, or marked **Queued** under the box when
+it was working. When the CLI records the prompt, its own row takes the
+bubble's place. lapis sends the text and a Return together, then checks the
+agent's input box 1.5 seconds later: if the box still holds the text, it sends
+one more Return (never more, and only then, so a Return cannot land in a
+dialog); if that does not take it either, the bubble says **Not sent yet ·
+press Return in the terminal**. The note goes once the box no longer holds the
+text. Prompts sent from the bar are never written to disk by lapis.
 
 The bar's toolbar is the same for every CLI: **+** attaches files or a folder,
 then the model and the effort (Low, Medium, High, Extra High, Max) the agent

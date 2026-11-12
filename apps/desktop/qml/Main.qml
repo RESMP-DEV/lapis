@@ -3225,6 +3225,7 @@ ApplicationWindow {
                     // The bar types into the terminal underneath, which keeps
                     // the session, history and Tab's guesses it always had.
                     submit: text => liveTerminal.submitText(text)
+                    pressReturn: () => liveTerminal.pressReturn()
                     interrupt: () => liveTerminal.interrupt()
                     tabAway: () => liveTerminal.tabFlow && liveTerminal.tabAway()
                     suggestion: liveTerminal.suggestion

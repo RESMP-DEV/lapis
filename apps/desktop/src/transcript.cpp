@@ -584,10 +584,17 @@ std::unique_ptr<Reader> make_reader(Format format) {
     return std::make_unique<ClaudeReader>();
 }
 
-void Reader::note_sent(const QString& text) {
+void Reader::note_sent(const QString& text, bool queued) {
     const auto simple = text.simplified();
     if (!simple.isEmpty())
-        sent_.push_back({simple, static_cast<int>(items_.size())});
+        sent_.push_back({simple, static_cast<int>(items_.size()), queued, text.trimmed()});
+}
+
+QStringList Reader::sent_as_written() const {
+    QStringList out;
+    for (const auto& sent : sent_)
+        out << sent.written;
+    return out;
 }
 
 QStringList Reader::sent() const {
@@ -597,15 +604,36 @@ QStringList Reader::sent() const {
     return out;
 }
 
+std::vector<bool> Reader::sent_queued() const {
+    std::vector<bool> out;
+    out.reserve(sent_.size());
+    for (const auto& sent : sent_)
+        out.push_back(sent.queued);
+    return out;
+}
+
+namespace {
+// A prompt's words for matching what was sent against what the CLI saved:
+// spaces collapsed and @path mentions (attachments, which a CLI may move
+// or rewrite) left out.
+QString prompt_words(const QString& text) {
+    static const QRegularExpression mention(QStringLiteral(R"((^|\s)@("[^"]*"|\S+))"));
+    return QString(text).replace(mention, QStringLiteral(" ")).simplified();
+}
+} // namespace
+
 void Reader::taken(Item& prompt) {
     if (sent_.empty())
         return;
     // The CLI may clip or wrap what it saves, so a prompt's start will do.
-    const auto simple = prompt.body.simplified();
+    const auto simple = prompt_words(prompt.body);
     const auto same = [&simple](const Sent& sent) {
-        const auto n = std::min<qsizetype>({simple.size(), sent.text.size(), 200});
-        return simple == sent.text ||
-               (n >= 40 && QStringView(simple).left(n) == QStringView(sent.text).left(n));
+        const auto words = prompt_words(sent.text);
+        if (words.isEmpty()) // only attachments: the CLI's prompt of only them
+            return simple.isEmpty() || simple.startsWith(QLatin1String("[image]"));
+        const auto n = std::min<qsizetype>({simple.size(), words.size(), 200});
+        return simple == words ||
+               (n >= 40 && QStringView(simple).left(n) == QStringView(words).left(n));
     };
     const auto match = std::find_if(sent_.begin(), sent_.end(), same);
     if (match == sent_.end())
@@ -880,6 +908,27 @@ bool dialog_showing(const QStringList& screen) {
             return false;
     }
     return true;
+}
+
+bool composer_holds(const QStringList& screen, const QString& text, Format format) {
+    const QChar mark = format == Format::claude  ? QChar(0x276F) // ❯
+                       : format == Format::codex ? QChar(0x203A) // ›
+                                                 : QLatin1Char('>');
+    const auto first_line = text.trimmed().section(QLatin1Char('\n'), 0, 0).simplified();
+    if (first_line.isEmpty())
+        return false;
+    for (qsizetype row = screen.size() - 1; row >= std::max<qsizetype>(0, screen.size() - 16);
+         --row) {
+        const auto line = screen.at(row).trimmed();
+        if (!line.startsWith(mark))
+            continue;
+        // The box's row: what follows the mark, as typed.
+        const auto held = line.mid(1).simplified();
+        const auto n = std::min<qsizetype>({first_line.size(), held.size(), 40});
+        return n > 0 && (n == first_line.size() || n >= 8) &&
+               QStringView(held).left(n) == QStringView(first_line).left(n);
+    }
+    return false;
 }
 
 QString work_summary(const std::vector<Item>& items, int first, int last, int except) {
@@ -1419,6 +1468,7 @@ int ClaudeReader::add(const QByteArray& line) {
             }
             auto item = make(Kind::prompt, {}, clip(unwrap_pastes(text).trimmed(), body_chars));
             item.queued = true;
+            taken(item);
             queued_.emplace_back(text, first);
             push(std::move(item));
             return first;
@@ -1539,6 +1589,7 @@ int ClaudeReader::add(const QByteArray& line) {
         compact_item_ = -1;
         auto item = make(Kind::prompt, {}, clip(unwrap_pastes(text).trimmed(), body_chars));
         item.starts_turn = true;
+        taken(item);
         push(std::move(item));
         prompted = true;
     };
@@ -2366,11 +2417,24 @@ void TranscriptModel::setLive(bool live) {
     emit liveChanged();
 }
 
-void TranscriptModel::noteSent(const QString& text) {
-    if (format() == transcript::Format::claude || path_.isEmpty())
+void TranscriptModel::noteSent(const QString& text, bool queued) {
+    if (path_.isEmpty())
         return;
-    reader_->note_sent(text);
+    reader_->note_sent(text, queued);
     notePending();
+}
+
+QVariantList TranscriptModel::pendingEntries() const {
+    QVariantList out;
+    const auto keys = reader_->sent();
+    const auto texts = reader_->sent_as_written();
+    const auto queued = reader_->sent_queued();
+    for (qsizetype i = 0; i < texts.size(); ++i)
+        out.append(QVariantMap{
+            {QStringLiteral("text"), texts.at(i)},
+            {QStringLiteral("key"), keys.at(i)},
+            {QStringLiteral("queued"), static_cast<bool>(queued[static_cast<size_t>(i)])}});
+    return out;
 }
 
 void TranscriptModel::notePending() {
@@ -2891,6 +2955,10 @@ bool TranscriptModel::compactingShown(const QStringList& screen) const {
 
 bool TranscriptModel::dialogShowing(const QStringList& screen) const {
     return screenKnown() && transcript::dialog_showing(screen);
+}
+
+bool TranscriptModel::composerHolds(const QStringList& screen, const QString& text) const {
+    return transcript::composer_holds(screen, text, format());
 }
 
 QVariantMap TranscriptModel::fonts() const {

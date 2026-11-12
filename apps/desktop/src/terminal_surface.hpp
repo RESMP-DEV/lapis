@@ -140,6 +140,10 @@ class TerminalSurface : public QQuickItem {
     // keyboard instead of this surface (the visual view's bar). Refused while
     // the agent waits on a request, so typed text never answers a dialog.
     Q_INVOKABLE bool submitText(const QString& text);
+    // One Return for the agent, as the key sends it in the program's
+    // keyboard mode: the composer's second try when the agent's input box
+    // still holds what submitText sent. Refused as submitText refuses.
+    Q_INVOKABLE bool pressReturn();
     // The screen's rows as text, top to bottom: what the visual view streams
     // while a turn runs.
     Q_INVOKABLE [[nodiscard]] QStringList screenLines() const;

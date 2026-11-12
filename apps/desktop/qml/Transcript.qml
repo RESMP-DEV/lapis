@@ -39,6 +39,9 @@ FocusScope {
     property var submit: null
     property var interrupt: null
     property var tabAway: null
+    // pressReturn() sends the agent one Return, as the key would: the
+    // second try for a prompt its input box still holds.
+    property var pressReturn: null
     // lapis's predicted next prompt (Tab), shown in the empty bar.
     property string suggestion: ""
     property bool suggestionConfident: false
@@ -50,7 +53,8 @@ FocusScope {
     property string editor: "auto"
     // The agent's terminal rows as text (screenLines()), null where there
     // is no terminal. The thread never shows them: it reads them only to
-    // see Claude Code compacting and a command going quiet.
+    // see Claude Code compacting, a command going quiet, and whether a sent
+    // prompt left the agent's input box.
     property var screen: null
     // The terminal's rows above its input box, read a few times a second
     // while a command or turn runs, to see when the screen goes quiet.
@@ -72,7 +76,10 @@ FocusScope {
     property string pendingCommand: ""
     property double pendingSince: 0
     property int quietTicks: 0
-    readonly property bool busy: working || pendingCommand.length > 0
+    // A prompt sent to an idle agent: the turn shows as starting at once,
+    // until the agent works (or the prompt is found not sent).
+    property double sentAt: 0
+    readonly property bool busy: working || pendingCommand.length > 0 || sentAt > 0
     // Compacting the conversation (a /compact, or Claude Code's own when the
     // context fills): a quiet state of its own, never the screen, which
     // still shows the turns before it.
@@ -110,7 +117,56 @@ FocusScope {
         function onRowsInserted() { root.pendingCommand = "" }
         function onModelReset() { root.pendingCommand = "" }
     }
-    onWorkingChanged: if (working) pendingCommand = ""
+    onWorkingChanged: if (working) { pendingCommand = ""; sentAt = 0 }
+    // The prompt last sent, checked once it should have been taken: an
+    // input box still holding it gets one more Return (only then, so a
+    // Return never lands in anything else); still there, its bubble says
+    // so. The note goes quietly once the box no longer holds it.
+    property string checkingText: ""
+    property bool retried: false
+    property string unsentText: ""
+    function checkSent() {
+        const holds = root.checkingText.length > 0 && root.screen && root.model && !root.waiting
+                      && !root.model.dialogShowing(root.screen())
+                      && root.model.composerHolds(root.screen(), root.checkingText)
+        if (!holds) {
+            root.checkingText = ""
+            return
+        }
+        if (!root.retried && root.pressReturn) {
+            root.retried = true
+            root.pressReturn()
+            sendCheck.restart()
+            return
+        }
+        root.unsentText = root.checkingText
+        root.checkingText = ""
+        root.sentAt = 0
+        unsentCheck.restart()
+    }
+    property int sendCheckMs: 1500 // shorter in the scripted checks
+    Timer { id: sendCheck; interval: root.sendCheckMs; onTriggered: root.checkSent() }
+    // An agent that never reports working leaves the starting state.
+    Timer { interval: 20000; running: root.sentAt > 0; onTriggered: root.sentAt = 0 }
+    Timer {
+        id: unsentCheck
+        interval: 60000
+        onTriggered: {
+            if (root.unsentText.length > 0 && root.screen && root.model
+                    && root.model.composerHolds(root.screen(), root.unsentText))
+                restart()
+            else
+                root.unsentText = ""
+        }
+    }
+    Connections {
+        target: root.model
+        function onPendingChanged() {
+            if (root.unsentText.length > 0
+                    && root.model.pendingPrompts.indexOf(root.unsentText.replace(/\s+/g, " ").trim()) < 0)
+                root.unsentText = ""
+        }
+    }
     // Subagents and background tasks still running (model.running), and
     // whether they keep the agent's work going after its turn ended.
     readonly property var runningWork: model ? model.running : []
@@ -128,7 +184,8 @@ FocusScope {
             if (root.model)
                 root.model.tick()
             root.now = Date.now()
-            root.turnSince = root.working ? (root.model ? root.model.runningSince() : 0) : root.pendingSince
+            root.turnSince = root.working ? (root.model ? root.model.runningSince() : 0)
+                           : root.pendingCommand.length > 0 ? root.pendingSince : root.sentAt
         }
     }
     // The agent's folder, for its project's own slash commands, its CLI
@@ -2233,10 +2290,65 @@ FocusScope {
         function onModelReset() { root.checkLiveLast() }
     }
 
-    // The thread's end: while the agent works with no running turn recorded
-    // yet (a prompt just sent, a slash command, a compaction), only the
-    // state line; then the prompts sent mid-turn that the CLI has not
-    // recorded yet (Codex, agy), queued, in order.
+    // A prompt the bar sent that the CLI has not recorded yet, drawn as its
+    // row will draw it: "Queued" when sent while the agent worked, and a
+    // note when it was found still in the agent's input box.
+    component PendingPrompt: Column {
+        required property var modelData
+        required property int index
+        readonly property bool unsent: root.unsentText.length > 0
+                                       && root.unsentText.replace(/\s+/g, " ").trim() === modelData.key
+        objectName: "pendingPrompt"
+        width: parent ? parent.width : 0
+        spacing: 4
+        // Where its row will be: a prompt's gap above it (less the footer's
+        // own top margin), and its buttons' room under it (less the
+        // footer's spacing), so the row takes its place without a jump.
+        topPadding: !modelData.queued && index === 0 ? Math.max(0, root.fontSize * 2 - 12) : 0
+        bottomPadding: modelData.queued ? 0 : root.actionHeight + 6
+        Rectangle {
+            anchors.right: parent.right
+            width: Math.min(pendingMeasure.implicitWidth + 36, parent.width * 0.8)
+            height: pendingText.implicitHeight + 22
+            radius: Math.round(root.fontSize * 1.1)
+            color: root.raisedColor
+            opacity: modelData.queued ? 0.6 : 1
+            Text {
+                id: pendingMeasure
+                visible: false
+                text: modelData.text
+                font: pendingText.font
+                textFormat: Text.PlainText
+            }
+            Text {
+                id: pendingText
+                x: 18; y: 11
+                width: parent.width - 36
+                text: modelData.text
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                color: root.textColor
+                font.family: root.sansFamily
+                font.pixelSize: root.fontSize
+            }
+        }
+        Text {
+            anchors.right: parent.right
+            anchors.rightMargin: 6
+            visible: text.length > 0
+            text: parent.unsent ? qsTr("Not sent yet · press Return in the terminal")
+                : modelData.queued ? qsTr("Queued · the agent reads it at its next step") : ""
+            color: parent.unsent ? root.faultColor : root.mutedTextColor
+            font.family: root.sansFamily
+            font.pixelSize: root.codeSize - 1
+        }
+    }
+
+    // The thread's end: a prompt just sent to an idle agent until the CLI
+    // records it; while the agent works with no running turn recorded yet
+    // (a prompt just sent, a slash command, a compaction), only the state
+    // line; then the prompts sent mid-turn that the CLI has not recorded
+    // yet, queued, in order.
     Component {
         id: liveFooter
         Item {
@@ -2250,6 +2362,12 @@ FocusScope {
                 y: 12
                 width: footer.column
                 spacing: 10
+                // A prompt just sent to an idle agent, as its row will show
+                // it, until the CLI records it.
+                Repeater {
+                    model: root.model ? root.model.pendingEntries.filter(p => !p.queued) : []
+                    delegate: PendingPrompt {}
+                }
                 // With no live box: the agent busy, or idle while its
                 // subagents and background tasks run ("Waiting on ...").
                 BusyLine {
@@ -2261,46 +2379,8 @@ FocusScope {
                     width: parent.width
                 }
                 Repeater {
-                    model: root.model ? root.model.pendingPrompts : []
-                    delegate: Column {
-                        required property string modelData
-                        width: footerColumn.width
-                        spacing: 4
-                        Rectangle {
-                            anchors.right: parent.right
-                            width: Math.min(pendingMeasure.implicitWidth + 36, parent.width * 0.8)
-                            height: pendingText.implicitHeight + 22
-                            radius: Math.round(root.fontSize * 1.1)
-                            color: root.raisedColor
-                            opacity: 0.6
-                            Text {
-                                id: pendingMeasure
-                                visible: false
-                                text: modelData
-                                font: pendingText.font
-                                textFormat: Text.PlainText
-                            }
-                            Text {
-                                id: pendingText
-                                x: 18; y: 11
-                                width: parent.width - 36
-                                text: modelData
-                                textFormat: Text.PlainText
-                                wrapMode: Text.Wrap
-                                color: root.textColor
-                                font.family: root.sansFamily
-                                font.pixelSize: root.fontSize
-                            }
-                        }
-                        Text {
-                            anchors.right: parent.right
-                            anchors.rightMargin: 6
-                            text: qsTr("Queued · the agent reads it at its next step")
-                            color: root.mutedTextColor
-                            font.family: root.sansFamily
-                            font.pixelSize: root.codeSize - 1
-                        }
-                    }
+                    model: root.model ? root.model.pendingEntries.filter(p => p.queued) : []
+                    delegate: PendingPrompt {}
                 }
             }
         }
@@ -2516,10 +2596,18 @@ FocusScope {
                          && root.answersInTerminal(text.trim().split(/\s/)[0].slice(1))
         const working = root.working
         if (root.submit(text)) {
-            // Sent mid-turn to a CLI that records no queue: it shows as
-            // queued until the CLI records it.
-            if (working && command.length === 0 && root.model)
-                root.model.noteSent(text)
+            // The prompt shows at once, at the thread's end, until the CLI
+            // records it (queued when the agent was working), and is then
+            // checked for having been taken.
+            if (command.length === 0 && root.model) {
+                root.model.noteSent(text, working)
+                if (!working)
+                    root.sentAt = Date.now()
+                root.checkingText = text
+                root.retried = false
+                root.unsentText = ""
+                sendCheck.restart()
+            }
             if (uncovers)
                 root.terminalNeeded()
             if (command.length > 0 && !uncovers) {

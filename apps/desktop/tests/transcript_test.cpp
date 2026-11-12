@@ -340,6 +340,80 @@ void dialogs_are_seen() {
     require(dialog_showing(theme), "two rules around a non-prompt row are a dialog");
 }
 
+// Each CLI's input box, as their screens draw it, holding a prompt or not.
+void composers_are_read() {
+    using lapis::desktop::transcript::composer_holds;
+    using lapis::desktop::transcript::Format;
+    const QString rule(66, QChar(0x2500));
+    const auto prompt = QStringLiteral("say ok\nand nothing else");
+    // Claude Code: what was sent shows above the box; only the box counts.
+    const QStringList claude_taken{QStringLiteral("❯ say ok"),
+                                   QStringLiteral("  and nothing else"),
+                                   QStringLiteral("✢ Tinkering… (1s · thinking)"),
+                                   rule,
+                                   QStringLiteral("❯ "),
+                                   rule};
+    const QStringList claude_held{rule, QStringLiteral("❯ say ok"),
+                                  QStringLiteral("  and nothing else"), rule};
+    require(!composer_holds(claude_taken, prompt, Format::claude) &&
+                composer_holds(claude_held, prompt, Format::claude),
+            "Claude Code's box: empty once taken, holding it when not");
+    // Codex: the box's placeholder once taken.
+    const QStringList codex_taken{QStringLiteral("› say ok"), QStringLiteral("  and nothing else"),
+                                  QStringLiteral("• Working (1s • esc to interrupt)"),
+                                  QStringLiteral("› Ask Codex to do anything"),
+                                  QStringLiteral("  ? for shortcuts")};
+    const QStringList codex_held{QStringLiteral("› say ok"), QStringLiteral("  and nothing else"),
+                                 QStringLiteral("  ? for shortcuts")};
+    require(!composer_holds(codex_taken, prompt, Format::codex) &&
+                composer_holds(codex_held, prompt, Format::codex),
+            "Codex's box: its placeholder once taken");
+    // agy: a prompt it queues while working leaves the box (▸ marks it).
+    const QStringList agy_queued{QStringLiteral("> count to twenty"),
+                                 QStringLiteral("⡿  Generating..."),
+                                 QStringLiteral("▸ say ok (alt+m to send immediately)"),
+                                 rule,
+                                 QStringLiteral(">"),
+                                 rule};
+    const QStringList agy_held{rule, QStringLiteral("> say ok"),
+                               QStringLiteral("  and nothing else"), rule};
+    require(!composer_holds(agy_queued, prompt, Format::antigravity) &&
+                composer_holds(agy_held, prompt, Format::antigravity),
+            "agy's box: a queued prompt left it");
+    // A long first line wraps in the box; its start is enough.
+    const auto long_prompt = QStringLiteral("please read the whole file and tell me what it does");
+    require(composer_holds({QStringLiteral("❯ please read the whole"), QStringLiteral("  file")},
+                           long_prompt, Format::claude),
+            "a wrapped first line still counts");
+    require(!composer_holds({QStringLiteral("❯ say")}, long_prompt, Format::claude) &&
+                !composer_holds({}, prompt, Format::claude),
+            "a few letters or no screen do not");
+}
+
+// What the bar sent waits until the CLI records it, matched across the
+// CLI's own rewriting (spaces, @path mentions), in order.
+void sent_prompts_are_matched() {
+    ClaudeReader reader;
+    reader.note_sent(QStringLiteral("look at this\n\n@/tmp/shot.png"), false);
+    reader.note_sent(QStringLiteral("and then  this"), false);
+    require(reader.sent() == QStringList{QStringLiteral("look at this @/tmp/shot.png"),
+                                         QStringLiteral("and then this")} &&
+                reader.sent_queued() == std::vector<bool>{false, false},
+            "sent: in order, not queued when the agent was idle");
+    require(reader.sent_as_written().front() == QStringLiteral("look at this\n\n@/tmp/shot.png"),
+            "sent: kept as written for the bubble");
+    (void)reader.add(
+        R"({"type":"user","uuid":"x1","timestamp":"2026-11-11T16:00:00.000Z","message":{"content":"look at   this"}})");
+    require(reader.sent() == QStringList{QStringLiteral("and then this")},
+            "a recorded prompt without its mention takes the first");
+    (void)reader.add(
+        R"({"type":"user","uuid":"x2","timestamp":"2026-11-11T16:00:05.000Z","message":{"content":"something else"}})");
+    require(reader.sent().size() == 1, "a different prompt leaves the pending one waiting");
+    (void)reader.add(
+        R"({"type":"user","uuid":"x3","timestamp":"2026-11-11T16:00:09.000Z","message":{"content":"and then this"}})");
+    require(reader.sent().isEmpty(), "then its own record takes it");
+}
+
 // A prompt sent while the agent works shows at once, queued; the running
 // turn taking it in keeps it in place, and one sent on as the next turn is
 // shown once, as that turn's prompt.
@@ -1679,6 +1753,8 @@ int main(int argc, char** argv) {
     bash_mode_commands();
     notices_and_attachments();
     dialogs_are_seen();
+    composers_are_read();
+    sent_prompts_are_matched();
     queued_prompts_show();
     several_queued_prompts();
     paths_and_live_lines();

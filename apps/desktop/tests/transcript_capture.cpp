@@ -701,6 +701,213 @@ std::vector<QQuickItem*> shown_named(QQuickItem* root, const char* name) {
     return out;
 }
 
+// The pending prompts the footer shows, top to bottom, as their texts.
+QStringList pending_shown(QQuickItem* root) {
+    auto items = shown_named(root, "pendingPrompt");
+    std::ranges::sort(items, [](QQuickItem* a, QQuickItem* b) {
+        return a->mapToScene({0, 0}).y() < b->mapToScene({0, 0}).y();
+    });
+    QStringList out;
+    for (auto* item : items)
+        out << item->property("modelData").toMap().value(QStringLiteral("text")).toString();
+    return out;
+}
+
+// Where each visible text item showing exactly `text` sits in the window.
+std::vector<QPointF> text_at(QQuickItem* root, const QString& text) {
+    std::vector<QPointF> out;
+    const auto walk = [&out, &text](auto&& self, QQuickItem* item) -> void {
+        if (!item->isVisible())
+            return;
+        if (item->width() > 0 && item->property("text").toString() == text &&
+            item->property("font").isValid())
+            out.push_back(item->mapToScene({0, 0}));
+        for (auto* child : item->childItems())
+            self(self, child);
+    };
+    walk(walk, root->property("list").value<QQuickItem*>());
+    return out;
+}
+
+// Rows of the thread that are prompts with this text.
+int prompt_rows(TranscriptModel& model, const QString& text) {
+    int count = 0;
+    for (int row = 0; row < model.rowCount(); ++row) {
+        const auto index = model.index(row);
+        if (model.data(index, TranscriptModel::KindRole).toString() == QLatin1String("prompt") &&
+            model.data(index, TranscriptModel::BodyRole).toString().simplified() ==
+                text.simplified())
+            ++count;
+    }
+    return count;
+}
+
+// Return in the bar, for each CLI, idle and working: the prompt shows at the
+// thread's end in the first frame drawn after it, with the bar cleared and
+// the turn shown starting; the CLI's record then takes its place once, with
+// no copy left; two sent quickly keep their order. Then the check after
+// sending: a prompt the agent's input box still holds gets one more Return,
+// only then, and a bubble note when that does not take it either. The
+// agent's screen and Return are stand-ins with each CLI's input box.
+int check_bubble(QQuickView& view, QQuickItem* root, TranscriptModel& model,
+                 const QString& folder) {
+    int failures = 0;
+    const auto expect = [&failures](bool ok, const QString& what) {
+        if (!ok) {
+            std::fprintf(stderr, "bubble FAIL %s\n", qPrintable(what));
+            ++failures;
+        }
+    };
+    auto* input = root->findChild<QQuickItem*>(QStringLiteral("visualComposer"));
+    if (input == nullptr)
+        return 1;
+    // A stand-in terminal: its input box holds the last text sent until a
+    // Return takes it; `swallow` Returns are lost first (as a TUI that
+    // takes a Return arriving with a paste as part of the paste would).
+    auto terminal = view.engine()->evaluate(QStringLiteral(R"((function(mark) {
+        var t = { mark: mark, held: "", swallow: 0, presses: 0, sends: 0 };
+        t.submit = function(text) { t.sends++; if (t.swallow > 0) { t.swallow--; t.held = text } return true };
+        t.press = function() { t.presses++; if (t.swallow > 0) t.swallow--; else t.held = ""; return true };
+        t.screen = function() { return ["", t.mark + " " + t.held.split("\n")[0], ""] };
+        return t;
+    }))"));
+    const auto send = [&](const QString& text) {
+        input->setProperty("text", text);
+        QElapsedTimer timer;
+        timer.start();
+        QMetaObject::invokeMethod(root, "send");
+        (void)view.grabWindow(); // the next frame
+        return static_cast<double>(timer.nsecsElapsed()) / 1e6;
+    };
+    const auto wait = [](int ms) {
+        QElapsedTimer waited;
+        waited.start();
+        while (waited.elapsed() < ms)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    };
+    for (const auto& fixture : sent_fixtures()) {
+        const QString name = QString::fromLatin1(fixture.format);
+        const QString mark = name == QLatin1String("claude")  ? QStringLiteral("❯")
+                             : name == QLatin1String("codex") ? QStringLiteral("›")
+                                                              : QStringLiteral(">");
+        auto fake = terminal.call({QJSValue(mark)});
+        root->setProperty("submit", QVariant::fromValue(fake.property("submit")));
+        root->setProperty("pressReturn", QVariant::fromValue(fake.property("press")));
+        root->setProperty("screen", QVariant::fromValue(fake.property("screen")));
+        for (const bool working : {false, true}) {
+            const auto what = [&](const char* text) {
+                return QStringLiteral("%1 %2: %3")
+                    .arg(name, working ? QStringLiteral("working") : QStringLiteral("idle"),
+                         QString::fromLatin1(text));
+            };
+            QFile file(QDir(folder).filePath(
+                QStringLiteral("bubble-%1-%2.jsonl").arg(name).arg(working ? 1 : 0)));
+            if (!file.open(QIODevice::WriteOnly))
+                return 1;
+            for (const auto& line : fixture.before)
+                file.write(line + '\n');
+            file.flush();
+            root->setProperty("sizeSetting", 15);
+            model.setFormat(lapis::desktop::transcript::format_named(name));
+            model.setPath(file.fileName());
+            model.loadNow();
+            root->setProperty("working", working);
+            settle();
+            (void)view.grabWindow();
+            const auto prompt = QStringLiteral("Now do stage one");
+            const double ms = send(prompt);
+            const bool shown = pending_shown(root) == QStringList{prompt};
+            if (shown)
+                std::printf("bubble %s %s: shown in the first frame, %.1f ms after Return\n",
+                            fixture.format, working ? "working" : "idle", ms);
+            else
+                std::printf("bubble %s %s: not shown before the CLI records it\n", fixture.format,
+                            working ? "working" : "idle");
+            expect(shown, what("the prompt shows at once"));
+            expect(input->property("text").toString().isEmpty(), what("the bar clears"));
+            auto busy = shown_named(root, "busyText");
+            expect(working ||
+                       (busy.size() == 1 && busy.front()->property("text").toString().startsWith(
+                                                QLatin1String("Working"))),
+                   what("the turn shows starting"));
+            QStringList rows_problems;
+            check_rows(root->property("list").value<QQuickItem*>(), what("sent"), rows_problems);
+            expect(rows_problems.isEmpty(), what("the bubble overlaps nothing"));
+            if (working) {
+                root->setProperty("working", false);
+                continue;
+            }
+            // The CLI records it: one prompt row, no bubble left, its text
+            // drawn where the bubble's was.
+            settle();
+            (void)view.grabWindow();
+            const auto pending_at = text_at(root, prompt);
+            for (const auto& line : fixture.prompt)
+                file.write(line + '\n');
+            file.flush();
+            model.readMore();
+            settle();
+            (void)view.grabWindow();
+            const auto recorded_at = text_at(root, prompt);
+            expect(pending_shown(root).isEmpty() && prompt_rows(model, prompt) == 1,
+                   what("its record takes its place once"));
+            expect(pending_at.size() == 1 && recorded_at.size() == 1 &&
+                       std::abs(pending_at.front().y() - recorded_at.front().y()) <= 1 &&
+                       std::abs(pending_at.front().x() - recorded_at.front().x()) <= 1,
+                   what("the record replaces the bubble without a jump"));
+            root->setProperty("working", true);
+            (void)view.grabWindow();
+            root->setProperty("working", false);
+            // Two sent quickly keep their order until each is recorded.
+            const auto first = QStringLiteral("First of two");
+            const auto second = QStringLiteral("Second of two");
+            (void)send(first);
+            (void)send(second);
+            expect(pending_shown(root) == QStringList({first, second}),
+                   what("two keep their order"));
+            root->setProperty("working", false);
+        }
+        // The check after sending, with a stand-in input box, on a shorter
+        // clock than the app's 1.5 s.
+        constexpr int check_ms = 200;
+        root->setProperty("sendCheckMs", check_ms);
+        const auto prompt = QStringLiteral("check the build");
+        fake.setProperty("swallow", 1); // the Return sent with the text is lost
+        (void)send(prompt);
+        wait(check_ms + 120);
+        expect(fake.property("presses").toInt() == 1 && fake.property("held").toString().isEmpty(),
+               QStringLiteral("%1: a box still holding it gets one more Return").arg(name));
+        wait(check_ms + 120);
+        expect(fake.property("presses").toInt() == 1 &&
+                   root->property("unsentText").toString().isEmpty(),
+               QStringLiteral("%1: and once taken, nothing more").arg(name));
+        fake.setProperty("presses", 0);
+        fake.setProperty("swallow", 2); // that Return is lost too
+        (void)send(prompt);
+        wait(2 * check_ms + 200);
+        (void)view.grabWindow();
+        const auto notes = shown_named(root, "pendingPrompt");
+        bool noted = false;
+        for (auto* item : notes)
+            noted = noted || item->property("unsent").toBool();
+        expect(
+            fake.property("presses").toInt() == 1 && noted,
+            QStringLiteral("%1: never a second extra Return; the bubble says not sent").arg(name));
+        fake.setProperty("presses", 0);
+        fake.setProperty("swallow", 0);
+        fake.setProperty("held", QString());
+        (void)send(QStringLiteral("taken at once"));
+        wait(check_ms + 120);
+        expect(fake.property("presses").toInt() == 0,
+               QStringLiteral("%1: a prompt taken at once gets no extra Return").arg(name));
+    }
+    root->setProperty("working", false);
+    root->setProperty("screen", QVariant());
+    root->setProperty("sendCheckMs", 1500);
+    std::puts(failures == 0 ? "bubble: all checks passed" : "bubble: failed");
+    return failures;
+}
+
 // A made-up running Claude Code turn with subagents and a background
 // command, timed from now: `ago` seconds before it.
 QString stamp(int ago) {
@@ -1440,10 +1647,11 @@ int main(int argc, char** argv) {
     if (live_checks) {
         const int live = check_live(view, root, model, live_file);
         const int work = check_work(view, root, model, home.path());
+        const int bubbles = check_bubble(view, root, model, home.path());
         const int overlaps = check_sent_after_reply(view, root, model, home.path());
         std::puts(overlaps == 0 ? "sent after a reply: all checks passed"
                                 : "sent after a reply: failed");
-        return live == 0 && work == 0 && overlaps == 0 ? 0 : 1;
+        return live == 0 && work == 0 && bubbles == 0 && overlaps == 0 ? 0 : 1;
     }
     if (sending) {
         const int problems = check_sent(view, root, model, live_file, sent_records,

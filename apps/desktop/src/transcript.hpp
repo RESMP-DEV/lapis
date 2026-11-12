@@ -263,6 +263,15 @@ struct Piece {
 // A screen with no full rule (startup, a shell) shows none.
 [[nodiscard]] bool dialog_showing(const QStringList& screen);
 
+// Whether the CLI's input box still holds `text` after it was sent: the
+// lowest row led by the input box's mark (Claude Code ❯, Codex ›, agy >)
+// in the screen's last 16 rows starts with the text's first line (at most
+// its first 40 characters, spaces collapsed). A sent prompt the CLI took
+// leaves an empty box (or its placeholder) there; earlier copies of the
+// text above it, as the CLI shows what was sent, do not count.
+enum class Format;
+[[nodiscard]] bool composer_holds(const QStringList& screen, const QString& text, Format format);
+
 // The CLIs whose saved conversations lapis reads, each with its own reader.
 enum class Format { claude, codex, antigravity };
 [[nodiscard]] QString format_name(Format format);
@@ -292,13 +301,16 @@ class Reader {
     [[nodiscard]] const std::vector<Item>& items() const { return items_; }
     [[nodiscard]] const Status& status() const { return status_; }
     [[nodiscard]] const std::vector<Task>& tasks() const { return tasks_; }
-    // A prompt the person sent through lapis while the agent worked, for a
-    // CLI that records no queue of its own (Codex, agy): it waits, shown as
-    // queued, until the CLI records a prompt with its text. Then that prompt
-    // and any sent before it leave the list, and a steering prompt learns how
-    // many steps it waited.
-    void note_sent(const QString& text);
+    // A prompt the person sent through lapis: it waits, shown at once (as
+    // queued when the agent was working), until the CLI records a prompt
+    // with its text. Then that prompt and any sent before it leave the list,
+    // and a steering prompt learns how many steps it waited. Never written.
+    void note_sent(const QString& text, bool queued = true);
     [[nodiscard]] QStringList sent() const;
+    // Each prompt in sent() as written (its lines kept), and whether it was
+    // sent while the agent worked.
+    [[nodiscard]] QStringList sent_as_written() const;
+    [[nodiscard]] std::vector<bool> sent_queued() const;
 
   protected:
     // Matches a prompt the CLI recorded (about to be pushed) against the
@@ -323,6 +335,8 @@ class Reader {
     struct Sent {
         QString text; // simplified
         int at{};     // items read when it was sent
+        bool queued{};
+        QString written;
     };
     std::vector<Sent> sent_;
 };
@@ -535,9 +549,10 @@ class TranscriptModel final : public QAbstractListModel {
     Q_PROPERTY(bool live READ live WRITE setLive NOTIFY liveChanged)
     // The live work box's steps (a LiveStepsModel).
     Q_PROPERTY(QObject* liveSteps READ liveSteps CONSTANT)
-    // Prompts sent mid-turn that the CLI has not recorded yet, oldest first
-    // (Codex and agy; Claude Code's own queue shows as queued prompt rows).
+    // Prompts the bar sent that the CLI has not recorded yet, oldest first.
     Q_PROPERTY(QStringList pendingPrompts READ pendingPrompts NOTIFY pendingChanged)
+    // The same as {text, queued}: queued when sent while the agent worked.
+    Q_PROPERTY(QVariantList pendingEntries READ pendingEntries NOTIFY pendingChanged)
     // The subagents and background tasks still running, oldest first, each
     // as the task role describes it plus `item` (the step that started it).
     // Kept current by the file and by tick().
@@ -667,6 +682,10 @@ class TranscriptModel final : public QAbstractListModel {
     // transcript::dialog_showing). Both are Claude Code's layout: for other
     // CLIs (screenKnown false) liveLines is empty and dialogShowing false.
     Q_INVOKABLE [[nodiscard]] bool dialogShowing(const QStringList& screen) const;
+    // Whether this CLI's input box on the screen still holds `text` (see
+    // transcript::composer_holds): a prompt sent but not taken.
+    Q_INVOKABLE [[nodiscard]] bool composerHolds(const QStringList& screen,
+                                                 const QString& text) const;
     // When the last turn's prompt was written (ms since the epoch) while that
     // turn is still open, else 0: what "Working for" counts from.
     Q_INVOKABLE [[nodiscard]] double runningSince() const;
@@ -681,14 +700,15 @@ class TranscriptModel final : public QAbstractListModel {
     Q_INVOKABLE void copySelection(QQuickTextDocument* source, int start, int end) const;
     // Opens or folds the work of the turn a "Worked for" row stands for.
     Q_INVOKABLE void toggleWork(int row);
-    // A prompt the bar sent while the agent worked (see pendingPrompts);
-    // ignored for Claude Code, whose queue its file records.
-    Q_INVOKABLE void noteSent(const QString& text);
+    // A prompt the bar sent (see pendingPrompts), shown at once until the
+    // CLI records it; `queued` when the agent was working.
+    Q_INVOKABLE void noteSent(const QString& text, bool queued = true);
     [[nodiscard]] bool live() const { return live_; }
     void setLive(bool live);
     [[nodiscard]] QObject* liveSteps() { return &live_steps_; }
     [[nodiscard]] const LiveStepsModel& liveStepsModel() const { return live_steps_; }
     [[nodiscard]] QStringList pendingPrompts() const { return reader_->sent(); }
+    [[nodiscard]] QVariantList pendingEntries() const;
     // What a paste attaches: files copied in the Finder as their paths, or
     // an image (a screenshot) saved as a PNG; empty when the clipboard holds
     // neither, so the paste stays text.
