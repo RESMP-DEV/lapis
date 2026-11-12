@@ -15,7 +15,7 @@ ApplicationWindow {
     minimumWidth: 640
     minimumHeight: 480
     objectName: "workspaceWindow"
-    color: backgroundColor
+    color: chrome.base
     title: windowTitle
 
     // Context objects: workspace, app and config are always objects (a window
@@ -47,6 +47,67 @@ ApplicationWindow {
     readonly property color paneColor: backgroundColor
     readonly property int chromeRadius: appearance ? appearance.cornerRadius : 2
     readonly property int motionDuration: appearance ? appearance.motionDuration : 100
+    // Every eased colour change in the chrome (hover, press, selection, a drop
+    // target, a status) takes this one transition. It starts on the change
+    // and is retargeted by the next, so it never holds input back.
+    readonly property int colorDuration: 150
+    readonly property bool colorMotion: motionEnabled && !chromeSwapping
+
+    // The chrome's colours. While a thread (the visual view) covers the stage,
+    // the sidebar, the window around the stage, the stage's frame, the top bar
+    // and the strip take the thread's theme, so the side panel belongs to the
+    // page beside it, as an editor's does; with a terminal showing they keep
+    // the window theme. Terminals keep their own colours either way.
+    readonly property var windowTones: ({
+        thread: false,
+        base: backgroundColor, panel: surfaceColor, panelEdge: borderColor, stage: paneColor,
+        card: cardColor, hover: hoveredCardColor, press: focusedColor, border: borderColor,
+        text: textColor, muted: mutedTextColor, accent: focusedBorderColor,
+        activity: activityColor, attention: attentionColor, fault: faultColor, plenty: plentyColor,
+        categories: appearance && appearance.categoryColors ? appearance.categoryColors : ({}),
+        quietCategories: appearance && appearance.categoryQuietColors ? appearance.categoryQuietColors : ({})
+    })
+    // A thread theme's chrome, from its own roles: the panel is the theme's
+    // recessed tone (its code well, as Tokyo Night's side bar is), the gaps
+    // around the stage share it, and the stage's frame is the page. Category
+    // hues and the attention colour come from a window theme of the same kind
+    // (light or dark) as the thread, so a light page gets a light sidebar.
+    function threadTones(c) {
+        const light = c.dark === false
+        let kin = appearance
+        if (!appearance || (appearance.light === true) !== light) {
+            const name = visualSettings[light ? "lightWindowTheme" : "darkWindowTheme"]
+            kin = config.themes.find(theme => theme.name === name) || appearance
+        }
+        const panel = c.code
+        return {
+            thread: true,
+            base: panel, panel: panel, panelEdge: panel, stage: c.background,
+            card: c.background, hover: Qt.tint(panel, Qt.alpha(c.text, 0.07)),
+            press: Qt.tint(panel, Qt.alpha(c.text, 0.12)), border: c.border,
+            text: c.text, muted: c.muted, accent: c.accent,
+            activity: c.accent, attention: kin ? kin.attention : attentionColor, fault: c.fault, plenty: c.added,
+            categories: kin && kin.categoryColors ? kin.categoryColors : ({}),
+            quietCategories: kin && kin.categoryQuietColors ? kin.categoryQuietColors : ({})
+        }
+    }
+    readonly property var chromeTarget: visualView.visible ? threadTones(visualView.colors) : windowTones
+    // `chrome` (beside the stage) and `windowPalette` (dialogs and the rest)
+    // are written only by applyChrome, and every eased colour reads one of
+    // them: a change of palette (a theme, light or dark, a thread replacing a
+    // terminal) then lands everywhere in the same frame as the thread itself,
+    // with no eased half-way colour. Only state changes within a palette ease.
+    property var chrome: windowTones
+    property var windowPalette: windowTones
+    property bool chromeSwapping: false
+    onChromeTargetChanged: applyChrome()
+    onWindowTonesChanged: applyChrome()
+    function applyChrome() {
+        chromeSwapping = true
+        windowPalette = windowTones
+        chrome = chromeTarget
+        chromeSwapping = false
+    }
     // One fixed-width family for the terminal and every machine readout (paths,
     // shortcut hints, states, counts). Human names and prose use the UI face.
     readonly property string monoFamily: liveTerminal.resolvedFontFamily
@@ -67,17 +128,25 @@ ApplicationWindow {
     readonly property string densityMode: config.densityName
     readonly property int chromeFont: densityMode === "minimal" ? Math.max(12, uiFont - 1) : uiFont
     readonly property int readoutFont: Math.max(11, chromeFont - 1)
-    // The sidebar's names follow the terminal text size (three quarters of
-    // it, never under the chrome's size), and its width grows with them.
-    readonly property int sidebarFont: Math.max(chromeFont, Math.min(chromeFont + 8, Math.round(terminalFontSize * 0.75)))
+    // The sidebar is a side panel, not a rail: its names sit a step above
+    // the chrome's text and follow the terminal text size (0.85 of it, at
+    // most eight over the chrome's), and its width grows with them.
+    readonly property int sidebarFont: Math.max(chromeFont + 1, Math.min(chromeFont + 8, Math.round(terminalFontSize * 0.85)))
     readonly property int sidebarReadout: Math.max(11, sidebarFont - 2)
     // An agent's status mark, as large in the strip as in the sidebar.
-    readonly property int statusMarkSize: Math.max(8, Math.round(sidebarFont * 0.7))
-    readonly property int railWidth: Math.min(360, Math.round((densityMode === "minimal" ? 148 : densityMode === "compact" ? 168 : 196)
-                                                             * sidebarFont / chromeFont))
+    readonly property int statusMarkSize: Math.max(9, Math.round(sidebarFont * 0.72))
+    // 240, 260 or 288 at the default text size, wider with larger text; never
+    // over 420 or 30% of the window, so a narrow window keeps its stage. The
+    // factory view's three columns (sidebar, thread, board) take the 240.
+    readonly property int railWidth: Math.min(420, Math.round(width * 0.3),
+                                              Math.round((densityMode === "minimal" || factoryHomeShown ? 240
+                                                          : densityMode === "compact" ? 260 : 288)
+                                                         * sidebarFont / (chromeFont + 1)))
     readonly property int tabHeight: Math.max(32, chromeFont + (densityMode === "minimal" ? 16 : densityMode === "compact" ? 20 : 24))
-    readonly property int sidebarHeaderHeight: Math.max(tabHeight, sidebarFont + (densityMode === "minimal" ? 16 : densityMode === "compact" ? 20 : 24))
-    readonly property int sidebarRowHeight: Math.max(24, sidebarFont + (densityMode === "minimal" ? 8 : densityMode === "compact" ? 11 : 15))
+    readonly property int sidebarHeaderHeight: Math.max(tabHeight, sidebarFont + (densityMode === "minimal" ? 16 : densityMode === "compact" ? 20 : 26))
+    readonly property int sidebarRowHeight: Math.max(26, sidebarFont + (densityMode === "minimal" ? 10 : densityMode === "compact" ? 14 : 18))
+    // The sidebar's inner padding: names start this far in from its edge.
+    readonly property int sidebarInset: densityMode === "minimal" ? 10 : densityMode === "compact" ? 12 : 14
     // Every category with its agents, in the sidebar's order. The sidebar's
     // repeaters count these rather than take them as models, so a change in
     // a count or a mark updates rows in place instead of rebuilding them
@@ -272,6 +341,7 @@ ApplicationWindow {
     // conversations, then the other categories that have agents.
     ListModel { id: homeModel }
     Component.onCompleted: {
+        applyChrome()
         homeRebuild.restart()
         recallWindowMemory()
     }
@@ -503,24 +573,33 @@ ApplicationWindow {
             return "dash"
         return "box"
     }
+    // A status's colour in the chrome's palette.
     function statusColor(kind) {
+        return statusTone(kind, chrome)
+    }
+    function statusTone(kind, t) {
         if (kind === "working")
-            return activityColor
+            return t.activity
         if (kind === "waiting")
-            return attentionColor
+            return t.attention
         if (kind === "disconnected")
-            return faultColor
-        return mutedTextColor
+            return t.fault
+        return t.muted
     }
     // A category colour's hex on this theme; the focus accent without one.
     function categoryHex(name) {
-        const table = appearance && appearance.categoryColors ? appearance.categoryColors : null
-        return table && table[name] ? table[name] : focusedBorderColor
+        return categoryTone(name, windowPalette)
     }
     // The quieter name colour of a group that is not shown.
     function categoryQuietHex(name) {
-        const table = appearance && appearance.categoryQuietColors ? appearance.categoryQuietColors : null
-        return table && table[name] ? table[name] : mutedTextColor
+        return categoryQuietTone(name, windowPalette)
+    }
+    // The same in a palette (windowPalette or chrome).
+    function categoryTone(name, t) {
+        return t.categories[name] ? t.categories[name] : t.accent
+    }
+    function categoryQuietTone(name, t) {
+        return t.quietCategories[name] ? t.quietCategories[name] : t.muted
     }
     function categoryColorLabel(name) {
         return {grey: qsTr("Grey"), blue: qsTr("Blue"), red: qsTr("Red"), yellow: qsTr("Yellow"),
@@ -1409,19 +1488,20 @@ ApplicationWindow {
     Resume {
         id: resumeDialog
         engine: window.conversationsAvailable ? conversations : null
-        surfaceColor: window.surfaceColor
-        textColor: window.textColor
-        mutedColor: window.mutedTextColor
-        accentColor: window.focusedBorderColor
-        selectionColor: window.focusedColor
-        hoverColor: window.hoveredCardColor
-        borderColor: window.borderColor
+        // Eased colours read windowPalette, so a theme change lands at once.
+        surfaceColor: window.windowPalette.panel
+        textColor: window.windowPalette.text
+        mutedColor: window.windowPalette.muted
+        accentColor: window.windowPalette.accent
+        selectionColor: window.windowPalette.press
+        hoverColor: window.windowPalette.hover
+        borderColor: window.windowPalette.border
         monoFamily: window.monoFamily
         uiFont: window.chromeFont
         readoutFont: window.readoutFont
         chromeRadius: window.chromeRadius
-        motionDuration: window.motionDuration
-        motionEnabled: window.motionEnabled
+        motionDuration: window.colorDuration
+        motionEnabled: window.colorMotion
         onChosen: function(conversation) { Qt.callLater(function() { window.resumeConversation(conversation) }) }
         onClosed: app.deferTerminalFocus()
     }
@@ -1442,27 +1522,27 @@ ApplicationWindow {
         uiFont: window.chromeFont
         readoutFont: window.readoutFont
         chromeRadius: window.chromeRadius
-        motionDuration: window.motionDuration
-        motionEnabled: window.motionEnabled
+        motionDuration: window.colorDuration
+        motionEnabled: window.colorMotion
         onClosed: app.deferTerminalFocus()
     }
 
     Commands {
         id: commandsDialog
         commands: visible ? window.commandEntries() : []
-        surfaceColor: window.surfaceColor
-        textColor: window.textColor
-        mutedColor: window.mutedTextColor
-        accentColor: window.focusedBorderColor
-        selectionColor: window.focusedColor
-        hoverColor: window.hoveredCardColor
-        borderColor: window.borderColor
+        surfaceColor: window.windowPalette.panel
+        textColor: window.windowPalette.text
+        mutedColor: window.windowPalette.muted
+        accentColor: window.windowPalette.accent
+        selectionColor: window.windowPalette.press
+        hoverColor: window.windowPalette.hover
+        borderColor: window.windowPalette.border
         monoFamily: window.monoFamily
         uiFont: window.chromeFont
         readoutFont: window.readoutFont
         chromeRadius: window.chromeRadius
-        motionDuration: window.motionDuration
-        motionEnabled: window.motionEnabled
+        motionDuration: window.colorDuration
+        motionEnabled: window.colorMotion
         onRequested: function(commandId) { Qt.callLater(function() { window.runCommand(commandId) }) }
         onClosed: app.deferTerminalFocus()
     }
@@ -1708,7 +1788,9 @@ ApplicationWindow {
         property string hint: ""
         // Drop the readout rather than overflow a button with a fixed width.
         property bool hintWhenRoom: false
-        property color frameColor: selected ? window.focusedBorderColor : window.borderColor
+        // Its palette: the window theme's, or the chrome's beside a thread.
+        property var tones: window.windowPalette
+        property color frameColor: selected ? tones.accent : tones.border
 
         focusPolicy: Qt.NoFocus
         hoverEnabled: true
@@ -1730,7 +1812,7 @@ ApplicationWindow {
                     anchors.verticalCenter: parent.verticalCenter
                     text: control.text
                     font: control.font
-                    color: control.enabled ? window.textColor : window.mutedTextColor
+                    color: control.enabled ? control.tones.text : control.tones.muted
                 }
                 PlainText {
                     id: buttonHint
@@ -1741,26 +1823,28 @@ ApplicationWindow {
                     text: control.hint
                     font.family: window.monoFamily
                     font.pixelSize: window.readoutFont
-                    color: window.mutedTextColor
+                    color: control.tones.muted
                 }
             }
         }
 
         background: Rectangle {
             radius: window.chromeRadius
-            color: control.down ? window.focusedColor :
-                   control.hovered ? window.hoveredCardColor : window.cardColor
+            color: control.down ? control.tones.press :
+                   control.hovered ? control.tones.hover : control.tones.card
             border.width: control.selected ? 2 : 1
             border.color: control.frameColor
-            Behavior on color {
-                enabled: window.motionEnabled
-                ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
-            }
-            Behavior on border.color {
-                enabled: window.motionEnabled
-                ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
-            }
+            ColorEase on color {}
+            ColorEase on border.color {}
         }
+    }
+
+    // The one eased colour change (see colorDuration). A change of palette
+    // turns it off for that frame, so a theme or a thread replacing a
+    // terminal never passes through a half-way colour.
+    component ColorEase: Behavior {
+        enabled: window.colorMotion
+        ColorAnimation { duration: window.colorDuration; easing.type: Easing.OutCubic }
     }
 
     // Pending requests for the selected agent stay one click away.
@@ -1778,7 +1862,8 @@ ApplicationWindow {
         // Drawn this many pixels across; it grows with the text beside it.
         property int size: 8
         readonly property string shape: window.statusShape(kind)
-        readonly property color tone: window.statusColor(kind)
+        // Status marks live in the chrome beside the stage (sidebar, strip).
+        readonly property color tone: window.statusTone(kind, window.chrome)
         readonly property real stroke: Math.max(1.5, size / 6)
 
         implicitWidth: size
@@ -1794,6 +1879,8 @@ ApplicationWindow {
             color: mark.shape === "dot" || mark.shape === "square" ? mark.tone : "transparent"
             border.width: mark.shape === "ring" || mark.shape === "box" ? mark.stroke : 0
             border.color: mark.tone
+            ColorEase on color {}
+            ColorEase on border.color {}
         }
         Rectangle {
             anchors.centerIn: parent
@@ -1803,6 +1890,7 @@ ApplicationWindow {
             rotation: 45
             antialiasing: true
             color: mark.tone
+            ColorEase on color {}
         }
         Rectangle {
             anchors.centerIn: parent
@@ -1810,6 +1898,7 @@ ApplicationWindow {
             width: mark.size
             height: Math.max(2, Math.round(mark.stroke))
             color: mark.tone
+            ColorEase on color {}
         }
     }
 
@@ -1923,8 +2012,8 @@ ApplicationWindow {
         fontSizeMinimum: config.terminalFontSizeMinimum
         fontSizeMaximum: config.terminalFontSizeMaximum
         fontSizeDefault: config.terminalFontSizeDefault
-        motionDuration: window.motionDuration
-        motionEnabled: window.motionEnabled
+        motionDuration: window.colorDuration
+        motionEnabled: window.colorMotion
         finishSound: config.finishSound
         keepAwake: config.keepAwake
         loginAvailable: window.desktopAvailable && desktop.launchAtLoginAvailable
@@ -2793,14 +2882,16 @@ ApplicationWindow {
             Layout.preferredWidth: window.railWidth
             Layout.maximumWidth: window.railWidth
             Layout.fillHeight: true
-            color: window.surfaceColor
-            border.color: window.borderColor
+            // Beside a thread the panel is the thread theme's recessed tone,
+            // flush with the gaps around the stage (no divider of its own).
+            color: window.chrome.panel
+            border.color: window.chrome.panelEdge
             border.width: 1
             radius: window.chromeRadius
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 8
+                anchors.margins: Math.round(window.sidebarInset * 0.7)
                 anchors.topMargin: 0
                 spacing: 8
 
@@ -2852,8 +2943,8 @@ ApplicationWindow {
                                 readonly property var modelData: window.sidebarGroups[index] ?? window.emptyGroup
                                 readonly property var agents: modelData.agents
                                 readonly property bool active: modelData.id === workspace.activeCategoryId
-                                readonly property color hue: window.categoryHex(modelData.color)
-                                readonly property color quietHue: window.categoryQuietHex(modelData.color)
+                                readonly property color hue: window.categoryTone(modelData.color, window.chrome)
+                                readonly property color quietHue: window.categoryQuietTone(modelData.color, window.chrome)
                                 readonly property alias header: categoryButton
                                 width: sidebarColumn.width
                                 spacing: 0
@@ -2893,36 +2984,32 @@ ApplicationWindow {
                                     background: Rectangle {
                                         radius: window.chromeRadius
                                         color: categoryDrop.containsDrag && categoryDrop.acceptsAgents ?
-                                                   Qt.alpha(window.focusedBorderColor, 0.18) :
-                                               categoryButton.hovered && !categoryButton.marked ? window.hoveredCardColor :
-                                                                                                   window.surfaceColor
+                                                   Qt.alpha(window.chrome.accent, 0.18) :
+                                               categoryButton.hovered && !categoryButton.marked ? window.chrome.hover :
+                                                                                                   window.chrome.panel
                                         border.width: categoryDrop.containsDrag && categoryDrop.acceptsAgents ? 1 : 0
-                                        border.color: window.focusedBorderColor
-                                        Behavior on color {
-                                            enabled: window.motionEnabled
-                                            ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
-                                        }
+                                        border.color: window.chrome.accent
+                                        ColorEase on color {}
                                         Rectangle {
                                             objectName: "categoryMarker"
                                             x: 0
                                             width: 2
                                             height: parent.height - 10
                                             anchors.verticalCenter: parent.verticalCenter
-                                            color: categoryButton.marked ? group.hue : "transparent"
-                                            Behavior on color {
-                                                enabled: window.motionEnabled
-                                                ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
-                                            }
+                                            // Transparent in the hue's own colour, so the
+                                            // fade never passes through black.
+                                            color: categoryButton.marked ? group.hue : Qt.alpha(group.hue, 0)
+                                            ColorEase on color {}
                                         }
                                     }
 
                                     contentItem: Item {
                                         RowLayout {
                                             anchors.fill: parent
-                                            // With the button's own inset the name starts
-                                            // above its rows' status marks.
-                                            anchors.leftMargin: 10
-                                            anchors.rightMargin: 8
+                                            // The name starts a little in from the
+                                            // panel's edge, above its rows' titles.
+                                            anchors.leftMargin: window.sidebarInset - 2
+                                            anchors.rightMargin: window.sidebarInset - 2
                                             spacing: 8
                                             // The name carries the group's colour: full for the
                                             // shown group (and under the pointer), quieter for
@@ -2932,6 +3019,7 @@ ApplicationWindow {
                                                 text: categoryButton.modelData.name
                                                 color: categoryButton.marked || categoryButton.hovered ? group.hue :
                                                                                                          group.quietHue
+                                                ColorEase on color {}
                                                 font.pixelSize: window.sidebarFont
                                                 font.weight: categoryButton.marked ? Font.DemiBold : Font.Medium
                                                 elide: Text.ElideRight
@@ -2991,7 +3079,7 @@ ApplicationWindow {
                                         width: parent.width - 8
                                         height: 2
                                         y: categoryDrop.below ? parent.height - 1 : -1
-                                        color: window.focusedBorderColor
+                                        color: window.chrome.accent
                                     }
                                 }
 
@@ -3026,14 +3114,14 @@ ApplicationWindow {
                                             objectName: "sidebarAgentFill_" + agentRow.agentId
                                             anchors.fill: parent
                                             radius: window.chromeRadius
+                                            // At rest, the hover tone at no strength, so an
+                                            // eased change never dips through black.
                                             color: agentRow.marked ? Qt.alpha(group.hue, 0.16) :
-                                                   rowPress.pressed ? window.focusedColor :
-                                                   rowHover.hovered ? window.hoveredCardColor :
-                                                   agentRow.picked ? Qt.alpha(window.focusedBorderColor, 0.08) : "transparent"
-                                            Behavior on color {
-                                                enabled: window.motionEnabled
-                                                ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
-                                            }
+                                                   rowPress.pressed ? window.chrome.press :
+                                                   rowHover.hovered ? window.chrome.hover :
+                                                   agentRow.picked ? Qt.alpha(window.chrome.accent, 0.08) :
+                                                                     Qt.alpha(window.chrome.hover, 0)
+                                            ColorEase on color {}
                                         }
                                         Rectangle {
                                             objectName: "sidebarAgentEdge_" + agentRow.agentId
@@ -3041,6 +3129,7 @@ ApplicationWindow {
                                             width: 2
                                             height: parent.height
                                             color: agentRow.marked ? group.hue : Qt.alpha(group.hue, group.active ? 0.55 : 0.38)
+                                            ColorEase on color {}
                                         }
                                         RowLayout {
                                             anchors.fill: parent
@@ -3048,15 +3137,16 @@ ApplicationWindow {
                                             // rare marks (an answer wanted, a lost connection, an
                                             // ended agent) show, after the title; working, done and
                                             // opening agents show the title alone.
-                                            anchors.leftMargin: 12
-                                            anchors.rightMargin: 8
-                                            spacing: 9
+                                            anchors.leftMargin: window.sidebarInset
+                                            anchors.rightMargin: window.sidebarInset - 2
+                                            spacing: 10
                                             PlainText {
                                                 id: rowTitle
                                                 objectName: "sidebarTitle_" + agentRow.agentId
                                                 text: agentRow.title
-                                                color: agentRow.marked || rowHover.hovered || group.active ? window.textColor :
-                                                                                                             window.mutedTextColor
+                                                color: agentRow.marked || rowHover.hovered || group.active ? window.chrome.text :
+                                                                                                             window.chrome.muted
+                                                ColorEase on color {}
                                                 font.pixelSize: window.sidebarFont
                                                 font.weight: agentRow.marked ? Font.DemiBold : Font.Normal
                                                 elide: Text.ElideRight
@@ -3136,30 +3226,28 @@ ApplicationWindow {
                             background: Rectangle {
                                 radius: window.chromeRadius
                                 border.width: newCategoryDrop.containsDrag ? 1 : 0
-                                border.color: window.focusedBorderColor
-                                color: newCategoryDrop.containsDrag ? Qt.alpha(window.focusedBorderColor, 0.18) :
-                                       newCategoryButton.hovered ? window.hoveredCardColor : window.surfaceColor
-                                Behavior on color {
-                                    enabled: window.motionEnabled
-                                    ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
-                                }
+                                border.color: window.chrome.accent
+                                color: newCategoryDrop.containsDrag ? Qt.alpha(window.chrome.accent, 0.18) :
+                                       newCategoryButton.hovered ? window.chrome.hover : window.chrome.panel
+                                ColorEase on color {}
                             }
                             contentItem: Item {
                                 RowLayout {
                                     anchors.fill: parent
-                                    anchors.leftMargin: 10
+                                    anchors.leftMargin: window.sidebarInset - 2
                                     anchors.rightMargin: 6
                                     spacing: 8
                                     PlainText {
                                         text: "+"
-                                        color: newCategoryButton.hovered ? window.textColor : window.mutedTextColor
+                                        color: newCategoryButton.hovered ? window.chrome.text : window.chrome.muted
+                                        ColorEase on color {}
                                         font.pixelSize: window.sidebarFont
                                         Layout.alignment: Qt.AlignVCenter
                                     }
                                     PlainText {
                                         objectName: "newCategoryHint"
                                         text: window.shortcutText("newCategory")
-                                        color: window.mutedTextColor
+                                        color: window.chrome.muted
                                         font.family: window.monoFamily
                                         font.pixelSize: window.sidebarReadout
                                         elide: Text.ElideRight
@@ -3180,7 +3268,7 @@ ApplicationWindow {
                     spacing: 6
                     PlainText {
                         text: qsTr("Visual view")
-                        color: window.mutedTextColor
+                        color: window.chrome.muted
                         font.pixelSize: window.readoutFont
                         Layout.fillWidth: true
                     }
@@ -3191,9 +3279,11 @@ ApplicationWindow {
                         implicitWidth: Math.round(window.chromeFont * 1.9)
                         implicitHeight: implicitWidth
                         radius: window.chromeRadius
-                        color: appearanceHover.hovered ? window.hoveredCardColor : "transparent"
+                        color: appearanceHover.hovered ? window.chrome.hover : Qt.alpha(window.chrome.hover, 0)
                         border.width: 1
-                        border.color: appearanceHover.hovered ? window.mutedTextColor : window.borderColor
+                        border.color: appearanceHover.hovered ? window.chrome.muted : window.chrome.border
+                        ColorEase on color {}
+                        ColorEase on border.color {}
                         Accessible.role: Accessible.Button
                         Accessible.name: light ? qsTr("Switch to dark mode") : qsTr("Switch to light mode")
                         // The mode it switches to: a moon in light mode, a sun in dark.
@@ -3202,7 +3292,7 @@ ApplicationWindow {
                             anchors.centerIn: parent
                             width: Math.round(parent.width * 0.56)
                             height: width
-                            readonly property color ink: appearanceHover.hovered ? window.textColor : window.mutedTextColor
+                            readonly property color ink: appearanceHover.hovered ? window.chrome.text : window.chrome.muted
                             readonly property bool moon: appearanceToggle.light
                             onInkChanged: requestPaint()
                             onMoonChanged: requestPaint()
@@ -3252,6 +3342,7 @@ ApplicationWindow {
                     spacing: 6
                     CommandButton {
                         objectName: "visualThisAgent"
+                        tones: window.chrome
                         text: qsTr("This agent")
                         selected: window.visualActive
                         enabled: window.interactionArmed && workspace.focusedAgent !== null
@@ -3267,6 +3358,7 @@ ApplicationWindow {
                     }
                     CommandButton {
                         objectName: "visualAllAgents"
+                        tones: window.chrome
                         text: qsTr("All agents")
                         selected: window.visualAll
                         enabled: window.interactionArmed
@@ -3283,6 +3375,7 @@ ApplicationWindow {
                 // clips at the narrowest rail.
                 CommandButton {
                     objectName: "visualFactoryMode"
+                    tones: window.chrome
                     text: window.factoryMode ? qsTr("Factory · on") : qsTr("Factory")
                     hint: window.shortcutText("toggleFactory")
                     hintWhenRoom: true
@@ -3298,6 +3391,7 @@ ApplicationWindow {
                 }
                 CommandsButton {
                     objectName: categoryRail.visible ? "commandsButton" : "railCommands"
+                    tones: window.chrome
                     Layout.fillWidth: true
                     Layout.bottomMargin: 0
                 }
@@ -3336,17 +3430,19 @@ ApplicationWindow {
 
                     // Same group grammar as the rail: a leading edge for the active
                     // group, and a count of requests waiting in the hidden groups.
+                    // The top bar beside a thread takes its theme, as the sidebar does.
                     background: Rectangle {
                         radius: window.chromeRadius
-                        color: categorySelector.hovered ? window.hoveredCardColor : window.surfaceColor
+                        color: categorySelector.hovered ? window.chrome.hover : window.chrome.panel
                         border.width: 1
-                        border.color: window.borderColor
+                        border.color: window.chrome.border
+                        ColorEase on color {}
                         Rectangle {
                             x: 1
                             width: 2
                             height: parent.height - 10
                             anchors.verticalCenter: parent.verticalCenter
-                            color: window.focusedBorderColor
+                            color: window.chrome.accent
                         }
                     }
                     contentItem: Item {
@@ -3357,7 +3453,7 @@ ApplicationWindow {
                             spacing: 8
                             PlainText {
                                 text: window.activeCategoryName
-                                color: window.textColor
+                                color: window.chrome.text
                                 font.pixelSize: window.chromeFont
                                 font.weight: Font.DemiBold
                                 elide: Text.ElideRight
@@ -3371,7 +3467,7 @@ ApplicationWindow {
                         x: categorySelector.width - width - 8
                         y: (categorySelector.height - height) / 2
                         text: "▾"
-                        color: window.mutedTextColor
+                        color: window.chrome.muted
                         font.pixelSize: window.chromeFont
                     }
                     delegate: ItemDelegate {
@@ -3431,6 +3527,7 @@ ApplicationWindow {
                 }
                 CommandsButton {
                     objectName: categoryBar.visible ? "commandsButton" : "barCommands"
+                    tones: window.chrome
                 }
             }
 
@@ -3675,9 +3772,11 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.minimumHeight: 120
-                color: window.paneColor
+                // Under a thread the stage is the thread's page, so its inset
+                // around the thread is the same surface.
+                color: window.chrome.stage
                 // The stage edge carries the focus accent only while it owns input.
-                border.color: liveTerminal.interactive ? window.focusedBorderColor : window.borderColor
+                border.color: liveTerminal.interactive ? window.chrome.accent : window.chrome.border
                 border.width: 1
                 radius: window.chromeRadius
                 clip: true
@@ -3952,15 +4051,12 @@ ApplicationWindow {
                             height: historyScrubber.trackHeight
                             width: historyScrubber.engaged ? 16 : 12
                             radius: width / 2
-                            color: Qt.alpha(window.textColor, historyScrubber.engaged ? 0.14 : 0.07)
+                            color: Qt.alpha(window.windowPalette.text, historyScrubber.engaged ? 0.14 : 0.07)
                             Behavior on width {
                                 enabled: window.motionEnabled
                                 NumberAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
                             }
-                            Behavior on color {
-                                enabled: window.motionEnabled
-                                ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
-                            }
+                            ColorEase on color {}
                             Rectangle {
                                 id: historyThumb
                                 objectName: "historyThumb"
@@ -3970,12 +4066,9 @@ ApplicationWindow {
                                 y: scrubArea.pressed ? historyScrubber.dragged(scrubArea.mouseY)
                                                      : (historyScrubber.session ? historyScrubber.session.historyPosition : 1)
                                                        * historyScrubber.travel
-                                color: Qt.alpha(window.focusedBorderColor,
+                                color: Qt.alpha(window.windowPalette.accent,
                                                 scrubArea.pressed ? 0.9 : historyScrubber.engaged ? 0.7 : 0.45)
-                                Behavior on color {
-                                    enabled: window.motionEnabled
-                                    ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
-                                }
+                                ColorEase on color {}
                             }
                         }
                         MouseArea {
@@ -4450,15 +4543,15 @@ ApplicationWindow {
 
                     Rectangle {
                         anchors.fill: parent
-                        color: agentTab.marked ? window.focusedColor : window.paneColor
+                        // The cards' frames follow the chrome; the previews
+                        // inside keep their terminals' colours.
+                        color: agentTab.marked ? window.chrome.press : window.chrome.stage
                         radius: window.chromeRadius
                         border.width: agentTab.marked || agentTab.picked ? 2 : 1
-                        border.color: agentTab.marked || agentTab.picked ? window.focusedBorderColor :
-                                      agentHover.hovered ? window.mutedTextColor : window.borderColor
-                        Behavior on border.color {
-                            enabled: window.motionEnabled
-                            ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
-                        }
+                        border.color: agentTab.marked || agentTab.picked ? window.chrome.accent :
+                                      agentHover.hovered ? window.chrome.muted : window.chrome.border
+                        ColorEase on color {}
+                        ColorEase on border.color {}
                     }
                     RowLayout {
                         id: agentHeader
@@ -4470,7 +4563,7 @@ ApplicationWindow {
                         AgentMark {
                             harnessId: agentTab.modelData.harnessId
                             visible: !workspace.fixtureMode
-                            ink: agentTab.marked ? window.textColor : window.mutedTextColor
+                            ink: agentTab.marked ? window.chrome.text : window.chrome.muted
                             Layout.preferredWidth: 12
                             Layout.preferredHeight: 12
                         }
@@ -4484,7 +4577,7 @@ ApplicationWindow {
                         }
                         PlainText {
                             text: window.agentTabTitle(agentTab.modelData)
-                            color: agentTab.marked ? window.textColor : window.mutedTextColor
+                            color: agentTab.marked ? window.chrome.text : window.chrome.muted
                             font.family: window.monoFamily
                             font.pixelSize: window.readoutFont
                             font.weight: agentTab.marked ? Font.DemiBold : Font.Normal
@@ -4529,7 +4622,7 @@ ApplicationWindow {
                         anchors.fill: parent
                         visible: agentTab.picked && !agentTab.marked
                         radius: window.chromeRadius
-                        color: Qt.alpha(window.focusedBorderColor, 0.08)
+                        color: Qt.alpha(window.chrome.accent, 0.08)
                     }
                     HoverHandler { id: agentHover }
                     DragOrClick {
@@ -4559,6 +4652,7 @@ ApplicationWindow {
                     CommandButton {
                         id: newAgentButton
                         objectName: "newAgentButton"
+                        tones: window.chrome
                         x: agentTabs.spacing
                         width: parent.width - agentTabs.spacing
                         height: parent.height
