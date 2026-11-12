@@ -400,9 +400,9 @@ void production_window_is_described() {
     window->show();
     pump(60);
     fixture.recorder->watchWindow(window);
-    const auto sessions = fixture.workspace.categorySessions();
+    const auto sessions = fixture.workspace.categoryAgents();
     require(!sessions.isEmpty(), "the preview has agents");
-    const auto id = sessions.front().value<lapis::desktop::Agent*>()->sessionId();
+    const auto id = sessions.front().value<lapis::desktop::Agent*>()->agentId();
     auto* card = find_item(window->contentItem(), QStringLiteral("cardPress_") + id);
     require(card != nullptr, "the strip card exists");
     const auto at = card->mapToScene(QPointF(card->width() / 2, card->height() / 2));

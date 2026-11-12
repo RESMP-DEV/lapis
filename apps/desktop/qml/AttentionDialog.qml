@@ -12,7 +12,7 @@ Dialog {
     // The selected request as it was when chosen. A later snapshot may retire
     // it; the dialog then says so instead of switching to another request.
     property var selected: null
-    property string lastSessionId: ""
+    property string lastAgentId: ""
     property string lastToken: ""
     readonly property var requests: session ? session.attentionRequests : []
     readonly property var current: {
@@ -25,8 +25,8 @@ Dialog {
         return null
     }
 
-    function showSession(value, preferredToken) {
-        const restoreToken = value && lastSessionId === value.sessionId ? lastToken : ""
+    function showAgent(value, preferredToken) {
+        const restoreToken = value && lastAgentId === value.agentId ? lastToken : ""
         session = value
         selected = null
         open()
@@ -38,7 +38,7 @@ Dialog {
         if (!session || !value)
             return
         selected = value
-        lastSessionId = session.sessionId
+        lastAgentId = session.agentId
         lastToken = value.token
     }
     function selectExactRequest(token) {
@@ -76,7 +76,7 @@ Dialog {
     onRequestsChanged: {
         // Removing the entire session invalidates the dialog owner.
         if (session && typeof workspace !== "undefined" &&
-                !workspace.sessions.some(value => value === session))
+                !workspace.agents.some(value => value === session))
             close()
     }
 

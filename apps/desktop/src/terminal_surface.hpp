@@ -211,12 +211,11 @@ class TerminalSurface : public QQuickItem {
     void suggestionKeyChanged();
     void tabFlowChanged();
     // The suggestion is on screen in the active window, once per suggestion.
-    void suggestionSeen(const QString& sessionId, const QString& offerKey);
+    void suggestionSeen(const QString& agentId, const QString& offerKey);
     // The offered suggestion was typed into the agent (`sent` false), or a
     // second Tab right after sent it (`sent` true); `typedFirst` keys went to
     // the agent while it was offered.
-    void suggestionUsed(const QString& sessionId, const QString& offerKey, bool sent,
-                        int typedFirst);
+    void suggestionUsed(const QString& agentId, const QString& offerKey, bool sent, int typedFirst);
 
     void pasteRefused(const QString& reason);
 

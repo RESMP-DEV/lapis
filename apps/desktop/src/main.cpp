@@ -374,7 +374,7 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
         return idle < 0 || idle < kAwayAfterSeconds;
     };
     const auto looking = [&workspace, &shown, present](const lapis::desktop::Agent* item) {
-        return shown && shown->isActive() && workspace.focusedSession() == item && present();
+        return shown && shown->isActive() && workspace.focusedAgent() == item && present();
     };
     seen.emplace(workspace, looking);
     const auto log = attention_log();
@@ -412,7 +412,7 @@ conversation_index(const lapis::desktop::Workspace& workspace) {
             .filePath(QStringLiteral("runtime/conversations.json")));
     index->setOpenFolders([&workspace] {
         QStringList folders;
-        for (const auto& value : workspace.sessions())
+        for (const auto& value : workspace.agents())
             if (const auto* item = value.value<Agent*>(); item && item->live())
                 folders.append(item->directory());
         return folders;
@@ -531,8 +531,7 @@ struct TerminalKeyMonitorGuard {
 };
 void register_qml_types() {
     using namespace lapis::desktop;
-    qmlRegisterUncreatableType<Agent>("Lapis", 1, 0, "Agent",
-                                      "Sessions are owned by the workspace");
+    qmlRegisterUncreatableType<Agent>("Lapis", 1, 0, "Agent", "Agents are owned by the workspace");
     qmlRegisterType<TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
     qmlRegisterUncreatableType<Config>("Lapis", 1, 0, "Config",
                                        "The config is owned by the application");
@@ -570,7 +569,7 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
     }
     auto& next = kept.emplace(
         [&workspace](const QString& id) -> std::optional<NextPrompt::Agent> {
-            const auto* item = workspace.session(id);
+            const auto* item = workspace.agent(id);
             if (item == nullptr)
                 return std::nullopt;
             const auto place = workspace.agentPlace(id);
@@ -588,13 +587,13 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
         },
         [&workspace] {
             QJsonArray agents;
-            for (const auto& value : workspace.sessions()) {
+            for (const auto& value : workspace.agents()) {
                 const auto* item = value.value<Agent*>();
                 if (item == nullptr)
                     continue;
                 agents.append(QJsonObject{
                     {QStringLiteral("title"), item->title()},
-                    {QStringLiteral("category"), workspace.agentPlace(item->sessionId())
+                    {QStringLiteral("category"), workspace.agentPlace(item->agentId())
                                                      .value(QStringLiteral("category"))
                                                      .toString()},
                     {QStringLiteral("status"), item->statusLabel()},
@@ -614,19 +613,19 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
     QObject::connect(&workspace, &lapis::desktop::Workspace::turnFinished, &next,
                      [&next](Agent* item) {
                          if (item != nullptr)
-                             next.turnFinished(item->sessionId());
+                             next.turnFinished(item->agentId());
                      });
     // A guess held back as a repeat is made when the person shows the agent.
     QObject::connect(&workspace, &lapis::desktop::Workspace::focusChanged, &next,
                      [&next, &workspace] {
-                         const auto* item = workspace.focusedSession();
-                         next.focused(item != nullptr ? item->sessionId() : QString());
+                         const auto* item = workspace.focusedAgent();
+                         next.focused(item != nullptr ? item->agentId() : QString());
                      });
     // A turn that ended while no window watched still gets its guess.
     QObject::connect(&workspace, &lapis::desktop::Workspace::finishedWhileAway, &next,
                      [&next](Agent* item) {
                          if (item != nullptr)
-                             next.turnFinished(item->sessionId());
+                             next.turnFinished(item->agentId());
                      });
     return &next;
 }
@@ -638,8 +637,8 @@ void focus_next_prompt_on_activation(lapis::desktop::NextPrompt& next,
     QObject::connect(&window, &QQuickWindow::activeChanged, &next, [&window, &next, &workspace] {
         if (!window.isActive())
             return;
-        if (const auto* item = workspace.focusedSession())
-            next.focused(item->sessionId());
+        if (const auto* item = workspace.focusedAgent())
+            next.focused(item->agentId());
     });
 }
 
@@ -725,7 +724,7 @@ int run_headless(lapis::desktop::Workspace& workspace, lapis::desktop::Config& c
                          [&handed_over] { handed_over = true; });
     }
     std::vector<Agent*> started;
-    for (const auto& value : workspace.sessions())
+    for (const auto& value : workspace.agents())
         if (auto* item = qobject_cast<Agent*>(value.value<QObject*>()); item && item->live())
             started.push_back(item);
     // A card reads disconnected until its connection begins on the event

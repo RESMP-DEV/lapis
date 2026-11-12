@@ -760,13 +760,12 @@ void suggestions() {
     int seen = 0;
     QObject::connect(&surface, &lapis::desktop::TerminalSurface::suggestionUsed,
                      [&used, &f](const QString& id, const QString&, bool sent, int typed) {
-                         require(id == f.document.sessionId(),
-                                 "Suggestion result changed sessions");
+                         require(id == f.document.agentId(), "Suggestion result changed sessions");
                          used.emplace_back(sent, typed);
                      });
     QObject::connect(&surface, &lapis::desktop::TerminalSurface::suggestionSeen,
                      [&seen, &f](const QString& id, const QString&) {
-                         require(id == f.document.sessionId(),
+                         require(id == f.document.agentId(),
                                  "Suggestion impression changed sessions");
                          ++seen;
                      });

@@ -634,7 +634,7 @@ int main(int argc, char** argv) {
     QCoreApplication::setApplicationName(QStringLiteral("lapis-terminal-render-tests"));
     QCoreApplication::setOrganizationName(QStringLiteral("lapis"));
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
-    qmlRegisterUncreatableType<Agent>("Lapis", 1, 0, "Agent", "Sessions are owned by tests");
+    qmlRegisterUncreatableType<Agent>("Lapis", 1, 0, "Agent", "Agents are owned by tests");
     qmlRegisterType<TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
     try {
         const int result = run_renderer_regression();

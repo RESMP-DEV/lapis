@@ -30,14 +30,14 @@ QQuickItem* visual_item(QQuickItem& parent, const QString& name) {
 }
 QJsonObject view_state(QQuickWindow& window, Workspace& workspace) {
     QJsonArray sessions;
-    for (const auto& entry : workspace.sessions()) {
+    for (const auto& entry : workspace.agents()) {
         auto* session = entry.value<Agent*>();
-        sessions.append(QJsonObject{{"id", session->sessionId()},
+        sessions.append(QJsonObject{{"id", session->agentId()},
                                     {"pending", session->attentionPending()},
                                     {"requests", session->attentionCount()},
                                     {"status", session->statusKind()}});
     }
-    const auto* selected = workspace.focusedSession();
+    const auto* selected = workspace.focusedAgent();
     const auto size = selected ? selected->snapshot().size : session::TerminalSize{0, 0};
     auto* terminal = visual_item(*window.contentItem(), QStringLiteral("liveTerminal"));
     return {
@@ -45,7 +45,7 @@ QJsonObject view_state(QQuickWindow& window, Workspace& workspace) {
         {"window_active", window.isActive()},
         {"focus", window.activeFocusItem() ? window.activeFocusItem()->objectName() : QString{}},
         {"sessions", sessions},
-        {"selected_session", selected ? selected->sessionId() : QString{}},
+        {"selected_session", selected ? selected->agentId() : QString{}},
         {"category", workspace.activeCategoryId()},
         {"terminal_columns", size.columns},
         {"terminal_rows", size.rows},
@@ -107,8 +107,7 @@ class Capture final : public QObject {
         connect(&timeout_, &QTimer::timeout, this, [this] {
             qCritical() << "Window capture timed out; active:" << window_.isActive()
                         << "input ready:"
-                        << (workspace_.focusedSession() &&
-                            workspace_.focusedSession()->inputReady())
+                        << (workspace_.focusedAgent() && workspace_.focusedAgent()->inputReady())
                         << "smoke sent:" << sent_ << "focus:"
                         << (window_.activeFocusItem() ? window_.activeFocusItem()->objectName()
                                                       : QString{});
@@ -127,23 +126,23 @@ class Capture final : public QObject {
             return;
         if (!window_.isActive())
             return;
-        if (!workspace_.fixtureMode() && workspace_.focusedSession() &&
-            !workspace_.focusedSession()->liveSnapshotReady())
+        if (!workspace_.fixtureMode() && workspace_.focusedAgent() &&
+            !workspace_.focusedAgent()->liveSnapshotReady())
             return;
         try {
             if (options_.smoke_input && !sent_) {
                 // Screen restoration precedes asynchronous identity persistence.
                 // Do not discard the one-shot command while input is still gated.
-                if (workspace_.focusedSession() && workspace_.focusedSession()->inputReady())
+                if (workspace_.focusedAgent() && workspace_.focusedAgent()->inputReady())
                     sent_ = send_smoke_input(window_, preview_);
                 return;
             }
             const auto marker = QStringLiteral("LAPIS_INPUT_%1_OK")
                                     .arg(QCoreApplication::applicationPid())
                                     .toStdU32String();
-            if (options_.smoke_input && (!workspace_.focusedSession() ||
-                                         workspace_.focusedSession()->snapshot().graphemes.find(
-                                             marker) == std::u32string::npos))
+            if (options_.smoke_input &&
+                (!workspace_.focusedAgent() || workspace_.focusedAgent()->snapshot().graphemes.find(
+                                                   marker) == std::u32string::npos))
                 return;
             started_ = true;
             before_ = view_state(window_, workspace_);

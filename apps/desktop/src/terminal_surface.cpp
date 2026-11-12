@@ -777,7 +777,7 @@ struct TerminalSurface::RenderState {
     std::vector<TerminalMatch> link;
     QString suggestion;
     bool suggestion_confident{};
-    QString session_id;
+    QString agent_id;
     QString offer_key;
 };
 
@@ -800,7 +800,7 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
     if (document_ && !document_->attentionPending()) {
         frame->suggestion = suggestion_;
         frame->suggestion_confident = suggestion_confident_;
-        frame->session_id = document_->sessionId();
+        frame->agent_id = document_->agentId();
         frame->offer_key = suggestion_key_;
     }
     frame->viewport = size();
@@ -1812,7 +1812,7 @@ void TerminalSurface::reportSeen() {
         return;
     seen_ = key;
     cancelSuggestionObservation();
-    emit suggestionSeen(document_->sessionId(), suggestion_key_);
+    emit suggestionSeen(document_->agentId(), suggestion_key_);
 }
 
 // Count manual input separately from the already-ordered paste transaction.
@@ -1830,7 +1830,7 @@ SuggestionLayout TerminalSurface::presentedSuggestion() const {
         frame = handoff_->presented;
     }
     if (!document_ || !frame || !frame->snapshot || !frame->preedit.isEmpty() ||
-        frame->session_id != document_->sessionId() || frame->offer_key != suggestion_key_ ||
+        frame->agent_id != document_->agentId() || frame->offer_key != suggestion_key_ ||
         frame->suggestion != suggestion_)
         return {};
     const QFontMetricsF metrics(terminal_font(frame->font_family, frame->font_pixel_size));
@@ -1922,7 +1922,7 @@ bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
 bool TerminalSurface::fillSuggestion() {
     const auto owner = document_;
     Filled filled{
-        owner, owner->sessionId(), suggestion_key_, suggestion_, typed_while_offered_, 0, false,
+        owner, owner->agentId(), suggestion_key_, suggestion_, typed_while_offered_, 0, false,
         false};
     filled.request = pasteTextRequest(suggestion_, false);
     interaction::paste(this, suggestion_, filled.request != 0, "suggestion");

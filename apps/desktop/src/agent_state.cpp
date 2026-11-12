@@ -38,34 +38,34 @@ AgentStatePublisher::AgentStatePublisher(Workspace& workspace, NextPrompt* next,
     writer_.setMaxThreadCount(1);
     timer_.setSingleShot(true);
     connect(&timer_, &QTimer::timeout, this, &AgentStatePublisher::publish);
-    connect(&workspace_, &Workspace::sessionsChanged, this, [this] {
-        watchSessions();
+    connect(&workspace_, &Workspace::agentsChanged, this, [this] {
+        watchAgents();
         changed();
     });
     connect(&workspace_, &Workspace::categoriesChanged, this, &AgentStatePublisher::changed);
     connect(&workspace_, &Workspace::parkedChanged, this, &AgentStatePublisher::changed);
     connect(&workspace_, &Workspace::turnFinished, this, [this](Agent* item) {
         if (item != nullptr)
-            turn_at_ms_.insert(item->sessionId(), QDateTime::currentMSecsSinceEpoch());
+            turn_at_ms_.insert(item->agentId(), QDateTime::currentMSecsSinceEpoch());
         changed();
     });
     if (next_) {
         connect(next_, &NextPrompt::changed, this, &AgentStatePublisher::changed);
         connect(next_, &NextPrompt::seenChanged, this, &AgentStatePublisher::changed);
     }
-    watchSessions();
+    watchAgents();
     changed();
 }
 
 AgentStatePublisher::~AgentStatePublisher() { writer_.waitForDone(); }
 
-void AgentStatePublisher::watchSessions() {
+void AgentStatePublisher::watchAgents() {
     QSet<QString> live;
-    for (const auto& value : workspace_.sessions()) {
+    for (const auto& value : workspace_.agents()) {
         auto* item = value.value<Agent*>();
         if (item == nullptr)
             continue;
-        live.insert(item->sessionId());
+        live.insert(item->agentId());
         connect(item, &Agent::statusChanged, this, &AgentStatePublisher::changed,
                 Qt::UniqueConnection);
         connect(item, &Agent::attentionChanged, this, &AgentStatePublisher::changed,
@@ -86,11 +86,11 @@ void AgentStatePublisher::changed() {
 
 QJsonObject AgentStatePublisher::state() const {
     QJsonArray agents;
-    for (const auto& value : workspace_.sessions()) {
+    for (const auto& value : workspace_.agents()) {
         const auto* item = value.value<Agent*>();
         if (item == nullptr)
             continue;
-        const auto& id = item->sessionId();
+        const auto& id = item->agentId();
         QJsonObject agent{{QStringLiteral("id"), id},
                           {QStringLiteral("status"), item->statusKind()},
                           {QStringLiteral("unseen"), item->unseen()},
