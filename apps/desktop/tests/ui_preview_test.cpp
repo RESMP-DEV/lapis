@@ -84,12 +84,12 @@ int run_workspace_tests() {
     CHECK(workspace.fixtureMode());
     CHECK(workspace.focusedIndex() == 0);
     CHECK(workspace.focusedAgent() != nullptr);
-    const int session_count = static_cast<int>(workspace.agents().size());
+    const int agent_count = static_cast<int>(workspace.agents().size());
     workspace.nextAgent(-1);
-    CHECK(workspace.focusedIndex() == session_count - 1);
+    CHECK(workspace.focusedIndex() == agent_count - 1);
     workspace.nextAgent();
     CHECK(workspace.focusedIndex() == 0);
-    workspace.nextAgent(session_count + 2);
+    workspace.nextAgent(agent_count + 2);
     CHECK(workspace.focusedIndex() == 2);
     workspace.nextAgent(-2);
     CHECK(workspace.focusedIndex() == 0);
@@ -97,18 +97,18 @@ int run_workspace_tests() {
     const std::array<QString, 6> expected_ids = {
         QStringLiteral("shell"),   QStringLiteral("renderer"), QStringLiteral("agent"),
         QStringLiteral("service"), QStringLiteral("checks"),   QStringLiteral("notes")};
-    const QVariantList sessions = workspace.agents();
-    CHECK(sessions.size() == static_cast<qsizetype>(expected_ids.size()));
-    std::size_t session_index = 0;
-    for (const auto& value : sessions) {
-        auto* session = qvariant_cast<lapis::desktop::Agent*>(value);
-        CHECK(session != nullptr);
-        CHECK(session->agentId() == expected_ids.at(session_index));
-        CHECK(!session->live());
-        CHECK(!session->attentionPending());
-        CHECK(session->attentionCount() == 0);
-        CHECK(session->attentionSerial() == 0);
-        ++session_index;
+    const QVariantList agents = workspace.agents();
+    CHECK(agents.size() == static_cast<qsizetype>(expected_ids.size()));
+    std::size_t agent_index = 0;
+    for (const auto& value : agents) {
+        auto* agent = qvariant_cast<lapis::desktop::Agent*>(value);
+        CHECK(agent != nullptr);
+        CHECK(agent->agentId() == expected_ids.at(agent_index));
+        CHECK(!agent->live());
+        CHECK(!agent->attentionPending());
+        CHECK(agent->attentionCount() == 0);
+        CHECK(agent->attentionSerial() == 0);
+        ++agent_index;
     }
     CHECK(workspace.agent(QStringLiteral("shell"))->agentId() == QStringLiteral("shell"));
     CHECK(workspace.agent(QStringLiteral("does-not-exist")) == nullptr);
@@ -713,13 +713,13 @@ void check_lazy_command_models(QQuickWindow& window, lapis::desktop::Workspace& 
     CHECK(workspace.selectCategory(initial_category));
     pump(30);
     CHECK(workspace.focusedAgent() != nullptr);
-    const auto sessions = workspace.categoryAgents();
-    CHECK(sessions.size() >= 2);
+    const auto agents = workspace.categoryAgents();
+    CHECK(agents.size() >= 2);
     QString alternate;
-    for (const auto& value : sessions) {
-        auto* session = value.value<lapis::desktop::Agent*>();
-        if (session != nullptr && session->agentId() != initial_id) {
-            alternate = session->agentId();
+    for (const auto& value : agents) {
+        auto* agent = value.value<lapis::desktop::Agent*>();
+        if (agent != nullptr && agent->agentId() != initial_id) {
+            alternate = agent->agentId();
             break;
         }
     }
@@ -1355,9 +1355,9 @@ void check_text_size(QQuickWindow& window, lapis::desktop::Workspace& workspace,
     auto* terminal =
         qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
     for (const auto& value : workspace.categoryAgents()) {
-        auto* session = value.value<lapis::desktop::Agent*>();
-        if (session->title() == QStringLiteral("Codex"))
-            CHECK(workspace.selectAgent(session->agentId()));
+        auto* agent = value.value<lapis::desktop::Agent*>();
+        if (agent->title() == QStringLiteral("Codex"))
+            CHECK(workspace.selectAgent(agent->agentId()));
     }
     pump(60);
 
@@ -1926,14 +1926,14 @@ int run_attention_ui_tests() {
 QString focused_id(const lapis::desktop::Workspace& workspace) {
     return workspace.focusedAgent() ? workspace.focusedAgent()->agentId() : QString();
 }
-void finish_turn(lapis::desktop::Agent& session) {
+void finish_turn(lapis::desktop::Agent& agent) {
     namespace wire = lapis::session::wire;
     wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
     state.activity = lapis::session::attention::Activity::working;
-    session.applyAttention(state);
+    agent.applyAttention(state);
     state.activity = lapis::session::attention::Activity::turn_completed;
-    session.applyAttention(state);
+    agent.applyAttention(state);
 }
 
 QQuickItem* required_visual(QQuickWindow& window, const QString& name) {

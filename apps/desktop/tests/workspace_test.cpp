@@ -122,7 +122,7 @@ void categoriesAndIdentity() {
     require(!workspace.renameCategory(QStringLiteral("General"), QStringLiteral("general")),
             "reversed category arguments cannot resolve identity");
     require(!workspace.renameAgent(QStringLiteral("Render work"), QStringLiteral("renderer")),
-            "reversed session arguments cannot resolve identity");
+            "reversed agent arguments cannot resolve identity");
     require(workspace.addCategory(QStringLiteral("Research")), "add category");
     const auto research = workspace.activeCategoryId();
     require(workspace.focusedAgent() == nullptr && workspace.categoryAgents().isEmpty(),
