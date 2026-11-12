@@ -1,6 +1,7 @@
 #include "transcript.hpp"
 
 #include "code_highlight.hpp"
+#include "platform/published_task.hpp"
 #include "slash_commands.hpp"
 #include "transcript_math.hpp"
 #include "transcript_parts.hpp"
@@ -21,8 +22,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMetaObject>
 #include <QMimeData>
-#include <QPointer>
 #include <QProcess>
 #include <QQuickTextDocument>
 #include <QRegularExpression>
@@ -40,7 +41,10 @@
 #include <QVariantMap>
 #include <algorithm>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <utility>
+#include <vector>
 
 namespace lapis::desktop {
 namespace transcript {
@@ -1898,8 +1902,61 @@ QVariantList diff_rows(const std::vector<transcript::DiffLine>& diff) {
 }
 } // namespace
 
+// Readings made on other threads come back through here. A reading thread
+// holds only the mailbox, never the model or a pointer to it: the GUI thread
+// may be destroying the model meanwhile, and a QPointer read on another
+// thread does not stop that. A reading crosses under the mutex. The wake-up
+// goes to `waker`, a child of the model that the model's destructor detaches
+// under the same mutex before it can be deleted, so the lock keeps it alive
+// while the wake-up is queued.
+struct TranscriptModel::Mailbox {
+    enum class Kind {
+        load,      // startLoad: the shown or a shown-before conversation
+        ahead,     // warmNext: read ahead
+        caught_up, // catchUp: a kept conversation brought up to date
+    };
+    struct Delivery {
+        Kind kind{};
+        QString path;
+        qint64 base{}; // caught_up: the kept offset it was read on from
+        transcript::Read read;
+    };
+    std::mutex mutex;
+    QObject* waker{};         // null once the model is being destroyed
+    TranscriptModel* owner{}; // read on the owner's thread only
+    bool woken{};             // a wake-up is queued and not yet drained
+    std::vector<Delivery> deliveries;
+
+    [[nodiscard]] bool open() {
+        const std::scoped_lock lock(mutex);
+        return waker != nullptr;
+    }
+    // From a reading thread. The reading is dropped once the model is gone.
+    static void post(const std::shared_ptr<Mailbox>& box, Delivery delivery) {
+        const std::scoped_lock lock(box->mutex);
+        if (box->waker == nullptr)
+            return;
+        box->deliveries.push_back(std::move(delivery));
+        if (std::exchange(box->woken, true))
+            return;
+        QMetaObject::invokeMethod(box->waker, platform::PublishedTask([box] {
+                                      TranscriptModel* owner = nullptr;
+                                      {
+                                          const std::scoped_lock lock(box->mutex);
+                                          owner = box->owner;
+                                      }
+                                      if (owner != nullptr)
+                                          owner->drain();
+                                  }),
+                                  Qt::QueuedConnection);
+    }
+};
+
 TranscriptModel::TranscriptModel(QObject* parent)
     : QAbstractListModel(parent), reader_(transcript::make_reader(transcript::Format::claude)) {
+    mailbox_ = std::make_shared<Mailbox>();
+    mailbox_->waker = new QObject(this);
+    mailbox_->owner = this;
     background_ = new QThreadPool(this);
     catch_up_timer_ = new QTimer(this);
     background_->setMaxThreadCount(1);
@@ -1907,6 +1964,45 @@ TranscriptModel::TranscriptModel(QObject* parent)
     // Kept conversations follow their files this often, one per tick.
     catch_up_timer_->setInterval(5000);
     connect(catch_up_timer_, &QTimer::timeout, this, &TranscriptModel::catchUp);
+}
+
+TranscriptModel::~TranscriptModel() {
+    std::vector<Mailbox::Delivery> dropped;
+    {
+        const std::scoped_lock lock(mailbox_->mutex);
+        mailbox_->waker = nullptr;
+        mailbox_->owner = nullptr;
+        dropped.swap(mailbox_->deliveries);
+    }
+    // A read-ahead not started yet is not wanted. One already running ends
+    // into the closed mailbox; the pool, a child, waits for it.
+    background_->clear();
+}
+
+void TranscriptModel::drain() {
+    std::vector<Mailbox::Delivery> deliveries;
+    {
+        const std::scoped_lock lock(mailbox_->mutex);
+        deliveries.swap(mailbox_->deliveries);
+        mailbox_->woken = false;
+    }
+    // In the order they were read: a load's longer tail before its whole file.
+    for (auto& delivery : deliveries) {
+        switch (delivery.kind) {
+        case Mailbox::Kind::load:
+            received(delivery.path, std::move(delivery.read), false);
+            break;
+        case Mailbox::Kind::ahead:
+            warming_ = false;
+            received(delivery.path, std::move(delivery.read), true);
+            if (!kept_.empty() && !catch_up_timer_->isActive())
+                catch_up_timer_->start();
+            break;
+        case Mailbox::Kind::caught_up:
+            caughtUp(delivery.path, delivery.base, std::move(delivery.read));
+            break;
+        }
+    }
 }
 
 transcript::Format TranscriptModel::format_for(const QString& path) const {
@@ -3373,20 +3469,15 @@ void TranscriptModel::startLoad(const QString& path, transcript::Format format) 
     // one may hold only part of the newest turn.
     const bool longer = QFileInfo(path).size() > 16 * tail_bytes && layoutNow().rows.size() < 20;
     QThreadPool::globalInstance()->start(
-        [guard = QPointer<TranscriptModel>(this), path, format, longer] {
-            const auto post = [&guard, &path](transcript::Read read) {
-                QMetaObject::invokeMethod(
-                    guard.data(),
-                    [guard, path, read = std::move(read)]() mutable {
-                        if (guard != nullptr)
-                            guard->received(path, std::move(read), false);
-                    },
-                    Qt::QueuedConnection);
+        platform::PublishedTask([box = mailbox_, path, format, longer] {
+            const auto post = [&box, &path](transcript::Read read) {
+                Mailbox::post(box, {Mailbox::Kind::load, path, 0, std::move(read)});
             };
-            if (longer)
+            if (longer && box->open())
                 post(transcript::read_end(path, format, 8 * tail_bytes, 32 * tail_bytes));
-            post(transcript::read_file(path, format));
-        });
+            if (box->open())
+                post(transcript::read_file(path, format));
+        }));
 }
 
 void TranscriptModel::received(const QString& path, transcript::Read read, bool ahead) {
@@ -3520,20 +3611,11 @@ void TranscriptModel::warmNext() {
         warming_ = true;
         loads_.insert(path);
         const auto format = format_for(path);
-        background_->start([guard = QPointer<TranscriptModel>(this), path, format] {
-            auto read = transcript::read_file(path, format);
-            QMetaObject::invokeMethod(
-                guard.data(),
-                [guard, path, read = std::move(read)]() mutable {
-                    if (guard == nullptr)
-                        return;
-                    guard->warming_ = false;
-                    guard->received(path, std::move(read), true);
-                    if (!guard->kept_.empty() && !guard->catch_up_timer_->isActive())
-                        guard->catch_up_timer_->start();
-                },
-                Qt::QueuedConnection);
-        });
+        background_->start(platform::PublishedTask([box = mailbox_, path, format] {
+            if (box->open())
+                Mailbox::post(box,
+                              {Mailbox::Kind::ahead, path, 0, transcript::read_file(path, format)});
+        }));
         return;
     }
 }
@@ -3565,16 +3647,12 @@ void TranscriptModel::catchUp() {
         auto copy = std::make_shared<transcript::Read>(
             transcript::Read{kept.reader->clone(), kept.offset, kept.pending, false});
         background_->start(
-            [guard = QPointer<TranscriptModel>(this), path = kept.path, base = kept.offset, copy] {
+            platform::PublishedTask([box = mailbox_, path = kept.path, base = kept.offset, copy] {
+                if (!box->open())
+                    return;
                 read_on(path, *copy->reader, copy->offset, copy->pending);
-                QMetaObject::invokeMethod(
-                    guard.data(),
-                    [guard, path, base, copy] {
-                        if (guard != nullptr)
-                            guard->caughtUp(path, base, std::move(*copy));
-                    },
-                    Qt::QueuedConnection);
-            });
+                Mailbox::post(box, {Mailbox::Kind::caught_up, path, base, std::move(*copy)});
+            }));
         return;
     }
 }

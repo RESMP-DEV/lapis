@@ -683,6 +683,11 @@ class TranscriptModel final : public QAbstractListModel {
     [[nodiscard]] const std::vector<transcript::Task>& tasks() const { return reader_->tasks(); }
     [[nodiscard]] static QHash<int, QByteArray> role_names();
     explicit TranscriptModel(QObject* parent = nullptr);
+    // Readings still in flight on other threads are dropped, never handed
+    // to a model being destroyed.
+    ~TranscriptModel() override;
+    TranscriptModel(const TranscriptModel&) = delete;
+    TranscriptModel& operator=(const TranscriptModel&) = delete;
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
@@ -950,6 +955,12 @@ class TranscriptModel final : public QAbstractListModel {
     void startLoad(const QString& path, transcript::Format format);
     void warmNext();
     void catchUp();
+    // What the reading threads hand back (defined in transcript.cpp). They
+    // touch only the mailbox, never the model, and the model takes the
+    // readings out on its own thread (drain).
+    struct Mailbox;
+    std::shared_ptr<Mailbox> mailbox_;
+    void drain();
     [[nodiscard]] transcript::Layout layoutNow() const;
     QSet<QString> loads_;       // conversations a thread is reading
     QStringList warm_queue_;    // to read ahead, in order
