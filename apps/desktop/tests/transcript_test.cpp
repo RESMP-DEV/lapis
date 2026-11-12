@@ -19,6 +19,8 @@
 #include <QTemporaryDir>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextFrame>
+#include <QTextList>
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -1741,11 +1743,82 @@ void thoughts_are_clean() {
 }
 } // namespace
 
+namespace {
+// A reply is styled the same into a fresh document and into one a row used
+// before (rows are reused while scrolling and switching), and keeps what
+// starts it: a list's first item stays in its list, a table stays a table.
+void styled_replies_keep_their_shape() {
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData("import QtQuick\nTextEdit { textFormat: TextEdit.RichText }", QUrl());
+    std::unique_ptr<QObject> reused(component.create());
+    auto* document =
+        reused ? reused->property("textDocument").value<QQuickTextDocument*>() : nullptr;
+    require(document != nullptr, "a TextEdit gives a document to style");
+    if (document == nullptr)
+        return;
+    const QVariantMap style{{QStringLiteral("sans"), QStringLiteral("Helvetica")},
+                            {QStringLiteral("mono"), QStringLiteral("Menlo")},
+                            {QStringLiteral("size"), 15},
+                            {QStringLiteral("codeSize"), 13},
+                            {QStringLiteral("codeColor"), QColor("#111111")},
+                            {QStringLiteral("inlineCodeColor"), QColor("#202020")},
+                            {QStringLiteral("inlineCodeTextColor"), QColor("#cbcbcb")},
+                            {QStringLiteral("linkColor"), QColor("#339cff")},
+                            {QStringLiteral("borderColor"), QColor("#444444")},
+                            {QStringLiteral("quoteColor"), QColor("#888888")}};
+    const char* cases[] = {
+        "Plain paragraph.\n\nSecond paragraph with **bold**, *italic* and `code`.",
+        "# Title\n\n## Sub\n\nText under.\n\n### Third\n\nMore.",
+        "- one\n- two\n  - nested\n  - nested two\n- three\n\n1. a\n2. b\n3. c",
+        "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\nAfter the table.",
+        "> quoted line\n> more\n\nnot quoted",
+        "Math $x^2 + y_1$ inline and\n\n$$E = mc^2$$\n\nafter.",
+        "Box ┌─┐ │x│ └─┘ chars and a [link](https://example.com).",
+        "    indented code\n    more\n\ntext",
+        "- [ ] task\n- [x] done",
+        "- only item",
+        "1. first\n\ntext\n\n2. second",
+        "| a |\n|---|\n| 1 |",
+        "> quote first\n\nthen",
+        "$$a+b$$\n\nafter",
+        "### Heading first",
+        "Copy $x$ and $$y$$ math.",
+        "",
+    };
+    bool same = true;
+    for (const char* text : cases) {
+        std::unique_ptr<QObject> fresh(component.create());
+        auto* clean = fresh->property("textDocument").value<QQuickTextDocument*>();
+        TranscriptModel().style(clean, QString::fromUtf8(text), style);
+        TranscriptModel().style(document, QString::fromUtf8(text), style);
+        same = same && clean->textDocument()->toHtml() == document->textDocument()->toHtml();
+    }
+    require(same, "a reused document is styled as a fresh one");
+    const auto first_block = [&](const char* text) {
+        TranscriptModel().style(document, QString::fromUtf8(text), style);
+        return document->textDocument()->begin();
+    };
+    require(first_block("- only item").textList() != nullptr &&
+                first_block("- one\n- two").textList() != nullptr &&
+                first_block("- one\n- two").textList()->count() == 2 &&
+                first_block("1. a\n2. b").textList()->format().style() ==
+                    QTextListFormat::ListDecimal,
+            "a reply that starts with a list keeps its first item in the list");
+    require(first_block("### Heading first").blockFormat().headingLevel() == 3,
+            "a reply that starts with a heading keeps it");
+    TranscriptModel().style(document, QStringLiteral("| a |\n|---|\n| 1 |"), style);
+    require(document->textDocument()->rootFrame()->childFrames().size() == 1,
+            "a reply that starts with a table keeps it");
+}
+} // namespace
+
 int main(int argc, char** argv) {
     // Text layout needs a GUI application; offscreen keeps it off the screen
     // and the Dock.
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
+    styled_replies_keep_their_shape();
     reader_folds_records();
     result_reports_changed_card();
     status_follows_commands();

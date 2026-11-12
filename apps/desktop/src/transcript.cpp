@@ -2674,7 +2674,12 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
                             const QVariantMap& style) const {
     if (target == nullptr || target->textDocument() == nullptr)
         return;
-    QTextDocument& document = *target->textDocument();
+    // The reply is put together in a document of its own, which nothing
+    // lays out, and then copied into the view's in one edit: the view lays
+    // the text out once, not after the import and again after the styling.
+    QTextDocument& shown = *target->textDocument();
+    QTextDocument document;
+    document.setUndoRedoEnabled(false);
     const auto size = std::max(8, style.value(QStringLiteral("size")).toInt());
     const auto code_size = std::max(8, style.value(QStringLiteral("codeSize")).toInt());
     const auto mono = style.value(QStringLiteral("mono")).toString();
@@ -2830,6 +2835,27 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
                 quoted.mergeCharFormat(format);
             }
     cursor.endEditBlock();
+
+    shown.setUndoRedoEnabled(false);
+    shown.clear(); // before the font changes, so the old text is not laid out again
+    shown.setDefaultFont(base);
+    shown.setDocumentMargin(0);
+    QTextCursor into(&shown);
+    into.beginEditBlock();
+    into.insertFragment(QTextDocumentFragment(&document));
+    // The fragment's first block joins the document's empty one, which
+    // keeps its own format: give it the reply's.
+    into.setPosition(0);
+    into.setBlockFormat(document.begin().blockFormat());
+    // A reply that starts with a list: its first item joins the list too.
+    if (const auto* list = document.begin().textList()) {
+        const auto next = shown.begin().next();
+        if (document.begin().next().textList() == list && next.textList() != nullptr)
+            next.textList()->add(shown.begin());
+        else
+            into.createList(list->format());
+    }
+    into.endEditBlock();
 }
 
 QVariantList TranscriptModel::slashCommands(const QString& harness, const QString& folder) const {
