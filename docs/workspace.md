@@ -85,6 +85,19 @@ rollout under `~/.codex/sessions`, Antigravity's
 and follows it as the agent works; anything it does not recognize shows as a
 plain block. Agents on other machines show their terminal only.
 
+A new agent opens on its thread, not its terminal. Until its CLI saves its
+first message the thread is empty, with the CLI's name, its folder and
+**Starting…** or **Ready for your first message**; the bar works as always.
+While the CLI has not drawn its input box yet, what you type stays in the bar
+(**Not sent: … is still starting**). Your first prompt shows at once as a
+bubble, and the thread takes over from the CLI's file within about a second
+of it being saved. If the CLI opens on a screen of its own instead of its
+input box (trust this folder, a login, an update menu), the terminal shows
+with the keyboard and a note, so you answer it there; lapis never answers it,
+and the thread covers the terminal again once the input box is back. That
+check holds off while you are typing in the bar, and never uncovers for an
+agent at work or one raising a request.
+
 Switching agents shows each thread at once. Threads stay read in memory while
 they fit a budget (`visual.keepMB` and `visual.keepThreads` in
 [config](config.md#visual-view)), so going back to one shows it where you left
@@ -221,8 +234,8 @@ CLI holds until the turn ends becomes the next turn's prompt, with no mark.
 
 Above **Commands** in the sidebar, **This agent** switches the selected agent
 between its terminal and the thread, and **All agents** shows every Claude
-Code, Codex and Antigravity agent on this Mac as a thread (saved, so it
-survives a restart). A per-agent choice wins over **All agents** until lapis
+Code, Codex and Antigravity agent on this Mac as a thread (on by default, and
+saved, so it survives a restart). A per-agent choice wins over **All agents** until lapis
 restarts or **All agents** is switched again. Both are also in Commands. The
 terminal keeps running underneath but takes no input while covered; Escape
 brings it back.

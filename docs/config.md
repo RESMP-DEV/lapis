@@ -73,14 +73,15 @@ Settings writes the [visual view](workspace.md#visual-view)'s choices under
 `black`, `claude-light`, `codex-light`), `font` (`system`, `serif`, `avenir`,
 `helvetica`), `codeFont` (`system`, `terminal`, `menlo`), `size` in pixels
 (10 to 40; 0 follows the terminal font), `all`, which shows every Claude
-Code agent as a thread, and `editor`, what Command-click on a file path opens
+Code, Codex and Antigravity agent on this Mac as a thread from the moment it
+opens (on unless the file says `false`), and `editor`, what Command-click on a file path opens
 it in (`vscode`, `cursor`, `zed`, `textedit`, `system`, or `auto` for the first
 of those installed). An unknown name falls back to the first choice.
 `"factory": true` opens the [factory view](workspace.md#factory-view); it is
 written only while the view is on.
 
 ```json
-"visual": {"theme": "terminal", "font": "system", "codeFont": "system", "size": 0, "all": false, "editor": "auto"}
+"visual": {"theme": "terminal", "font": "system", "codeFont": "system", "size": 0, "all": true, "editor": "auto"}
 ```
 
 Light mode lives there too. `appearance` is `dark`, `light` or `system`
