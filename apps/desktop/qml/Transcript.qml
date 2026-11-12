@@ -218,6 +218,10 @@ FocusScope {
     // one, nor those already going as a new turn after an interrupt).
     readonly property bool messageWaiting: model !== null
                                            && model.pendingEntries.some(p => p.queued && urged[p.key] !== "interrupt")
+    // What Stop (and Escape) does to a waiting message.
+    readonly property string stopLabel: !messageWaiting ? qsTr("Stop")
+                                      : cli === "antigravity" ? qsTr("Stop · queued text returns to the box")
+                                      : qsTr("Interrupt and send")
     // Waiting prompts sent on at once, by key: "now" (the CLI's send-now
     // key) or "interrupt" (sent as a new turn after Escape).
     property var urged: ({})
@@ -270,7 +274,7 @@ FocusScope {
     }
     Timer { interval: 50; repeat: true; running: root.followUps.length > 0; onTriggered: root.runFollowUps() }
 
-    // Stop (the button): Escape for the agent.
+    // Stop (the button, or Escape with nothing typed): Escape for the agent.
     // Claude Code and Codex then send a waiting message as a new turn.
     function stop() {
         if (!interrupt || !interrupt())
@@ -648,7 +652,8 @@ FocusScope {
              : n >= 1000 ? Math.round(n / 1000) + "k" : String(n)
     }
 
-    // Escape asks to go back to the terminal.
+    // Escape asks to go back to the terminal (escape() decides: with
+    // nothing typed while the agent works, it stops the turn instead).
     signal dismissed()
     // Tab put the suggestion in the bar, and a second Tab sent it unchanged.
     signal suggestionFilled()
@@ -772,7 +777,15 @@ FocusScope {
     function tint(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
     function copy(text) { if (model) model.copy(text) }
 
-    Keys.onEscapePressed: dismissed()
+    // Escape in the thread: with nothing typed or attached while the agent
+    // works, Stop (as the button); otherwise back to the terminal.
+    function escapePressed() {
+        if (input.text.length === 0 && attachments.length === 0 && sendButton.stops)
+            stop()
+        else
+            dismissed()
+    }
+    Keys.onEscapePressed: escapePressed()
 
     Rectangle {
         anchors.fill: parent
@@ -3505,18 +3518,30 @@ FocusScope {
                     font.family: root.sansFamily
                     font.pixelSize: Math.max(11, root.codeSize - 1)
                 }
-                // Mid-turn, beside Stop: "Send now" for what is typed.
+                // Mid-turn, beside Stop: "Send now" for what is typed, and
+                // what Stop does to a message already waiting.
                 Row {
                     id: midTurnRow
                     readonly property bool offersSendNow: root.sendsNow && root.canSend && !root.waiting
                                                           && (input.text.trim().length > 0
                                                               || root.attachments.length > 0)
+                    readonly property bool notesStop: sendButton.stops && root.messageWaiting && !offersSendNow
                     anchors.right: sendButton.left
                     anchors.rightMargin: visible ? 6 : 0
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: offersSendNow
+                    visible: notesStop || offersSendNow
                     width: visible ? implicitWidth : 0
                     spacing: 6
+                    Text {
+                        id: stopNote
+                        objectName: "stopNote"
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: midTurnRow.notesStop
+                        text: root.stopLabel
+                        color: root.mutedTextColor
+                        font.family: root.sansFamily
+                        font.pixelSize: Math.max(11, root.codeSize - 1)
+                    }
                     BarButton {
                         id: sendNowButton
                         objectName: "visualSendNow"
@@ -3532,6 +3557,8 @@ FocusScope {
                     id: sendButton
                     objectName: "visualSend"
                     readonly property bool stops: root.working && root.interrupt !== null
+                    Accessible.role: Accessible.Button
+                    Accessible.name: stops ? root.stopLabel : qsTr("Send")
                     readonly property bool ready: stops
                                                   || ((input.text.trim().length > 0 || root.attachments.length > 0)
                                                       && root.canSend && !root.waiting)
@@ -3576,13 +3603,15 @@ FocusScope {
             anchors.topMargin: 6
             anchors.horizontalCenter: composerBox.horizontalCenter
             objectName: "visualHints"
-            // Mid-turn: what Return and Command-Return do for this CLI.
+            // Mid-turn: what Return, Command-Return and Escape do for this CLI.
             text: !root.midTurn || root.cli === ""
                   ? qsTr("Return to send · Shift-Return for a new line · ⌘-click a path to open it · Esc for the terminal")
                   : [root.queueMode === "steer" ? qsTr("Return to steer")
                      : root.queueMode === "immediate" ? qsTr("Return to send") : qsTr("Return to queue"),
                      root.sendsNow ? qsTr("⌘-Return to %1").arg(root.sendNowLabel.toLowerCase()) : "",
-                     qsTr("Esc for the terminal")].filter(s => s.length > 0).join(" · ")
+                     input.text.length > 0 || root.attachments.length > 0 ? qsTr("Esc for the terminal")
+                     : root.messageWaiting ? qsTr("Esc: %1").arg(root.stopLabel.charAt(0).toLowerCase() + root.stopLabel.slice(1))
+                     : qsTr("Esc to stop")].filter(s => s.length > 0).join(" · ")
             color: root.tint(root.mutedTextColor, 0.8)
             font.family: root.sansFamily
             font.pixelSize: Math.max(11, root.codeSize - 3)

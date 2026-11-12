@@ -1290,7 +1290,9 @@ int check_bubble(QQuickView& view, QQuickItem* root, TranscriptModel& model,
 // stand-in terminal that records what reaches the agent: the waiting
 // bubble's label; its "Send now" (Claude Code Control-X Control-S, agy
 // Alt-M, Codex Escape); Command-Return as each CLI's send now (Codex's only
-// once its steer shows). `out`, when given, saves the bubble states as PNGs.
+// once its steer shows); Escape stopping with nothing typed and showing the
+// terminal otherwise, with Stop's note naming what happens to a waiting
+// message. `out`, when given, saves the bubble states as PNGs.
 int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
                    const QString& folder, const QString& out) {
     int failures = 0;
@@ -1479,6 +1481,7 @@ int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
                what("the waiting bubble's label"));
         expect(shown_texts("pendingSendNow").size() == (c.now.isEmpty() ? 0 : 1),
                what("the bubble offers send now where the CLI has one"));
+        expect(shown_texts("stopNote") == QStringList{c.stop}, what("Stop says what happens"));
         shoot("queued");
 
         // The bubble's send now.
@@ -1540,6 +1543,19 @@ int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
         }
         expect(input->property("text").toString().isEmpty(), what("the bar clears"));
         shoot("sent-now");
+
+        // Escape: with text typed, the terminal; with nothing typed while the
+        // agent works, Stop.
+        const int dismissals = count("dismissals");
+        const int stops = count("interrupts");
+        input->setProperty("text", QStringLiteral("draft"));
+        key(Qt::Key_Escape, Qt::NoModifier);
+        expect(count("dismissals") == dismissals + 1 && count("interrupts") == stops,
+               what("Escape with text shows the terminal"));
+        input->setProperty("text", QString());
+        key(Qt::Key_Escape, Qt::NoModifier);
+        expect(count("interrupts") == stops + 1 && count("dismissals") == dismissals + 1,
+               what("Escape with nothing typed stops the turn"));
         root->setProperty("working", false);
         input->setProperty("text", QString());
         settle();
