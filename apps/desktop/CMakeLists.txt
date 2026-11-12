@@ -259,6 +259,11 @@ if(BUILD_TESTING)
     add_test(NAME workspace-visual-files COMMAND lapis_workspace_tests --case visual-files)
     set_tests_properties(workspace-visual-files PROPERTIES TIMEOUT 60
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    # Closing: instant removal, a failed close returning, a relaunch mid-close;
+    # stand-in CLIs under the real session service, windowless.
+    add_test(NAME workspace-closing COMMAND lapis_workspace_tests --case closing)
+    set_tests_properties(workspace-closing PROPERTIES TIMEOUT 90
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     # These launch the real desktop host or QML windows. On a Mac someone is
     # using they would show windows, so they run only on request.
     set_tests_properties(workspace workspace-remote-hooks workspace-retired-plans

@@ -709,6 +709,11 @@ bool LiveConnection::send(wire::Kind kind, const QByteArray& payload) {
             fail(QStringLiteral("Session input could not be queued"));
             return false;
         }
+        // A closed agent is out of sight at once and the window may quit
+        // right after; hand the request to the socket now, not at the next
+        // event-loop turn, so destroying the connection cannot drop it.
+        if (kind == wire::Kind::terminate)
+            socket_->flush();
     } catch (const std::exception& error) {
         fail(QString::fromUtf8(error.what()));
         return false;

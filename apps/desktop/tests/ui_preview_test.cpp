@@ -3046,8 +3046,19 @@ int run_history_ui_tests() {
         mouse(QEvent::MouseMove, grip + QPointF(0, step * 200), Qt::LeftButton);
     mouse(QEvent::MouseButtonRelease, grip + QPointF(0, 1600), Qt::NoButton);
     CHECK(wait([agent] { return !agent->historyActive(); }) && !bar->isVisible());
+    // Closing a live agent the stage shows takes it off the stage at once;
+    // the window keeps drawing while its process ends in the background.
+    auto* stage =
+        qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
+    CHECK(stage != nullptr && stage->document() == agent);
     CHECK(workspace.closeAgent(agent->agentId()));
-    CHECK(wait([&workspace] { return workspace.agents().isEmpty(); }));
+    CHECK(workspace.agents().isEmpty() && workspace.focusedAgent() == nullptr &&
+          workspace.closingAgentIds().size() == 1);
+    // The stage's binding follows focus within the same call.
+    CHECK(stage->document() != agent);
+    QCoreApplication::processEvents();
+    CHECK(wait([&workspace] { return workspace.closingAgentIds().isEmpty(); }));
+    QCoreApplication::processEvents();
     return EXIT_SUCCESS;
 }
 
