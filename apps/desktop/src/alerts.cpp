@@ -1,5 +1,5 @@
 #include "alerts.hpp"
-#include "keymap.hpp"
+#include "config.hpp"
 #include "workspace.hpp"
 #include <QDateTime>
 #include <QDir>
@@ -107,7 +107,7 @@ bool SeenScreens::unchanged(const Agent* item) const {
     return found != seen_.cend() && *found == fingerprint(item);
 }
 
-Alerts::Alerts(Workspace& workspace, const KeyMap& config, Player play, Looking looking,
+Alerts::Alerts(Workspace& workspace, const Config& config, Player play, Looking looking,
                QObject* parent)
     : QObject(parent), config_(config), play_(std::move(play)), looking_(std::move(looking)) {
     connect(&workspace, &Workspace::turnFinished, this, &Alerts::finished);

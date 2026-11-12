@@ -1,7 +1,7 @@
 #include "workspace_control.hpp"
 #include "conversation_index.hpp"
 
-#include "keymap.hpp"
+#include "config.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "terminals.hpp"
 #include "workspace.hpp"
@@ -260,12 +260,12 @@ namespace {
 // looks stays the Mac's to choose.
 struct Switch {
     std::string_view name;
-    std::optional<bool> KeyMap::RemoteSettingsPatch::* field{};
-    bool (KeyMap::*get)() const {};
+    std::optional<bool> Config::RemoteSettingsPatch::* field{};
+    bool (Config::*get)() const {};
 };
 constexpr auto switches = std::to_array<Switch>({
-    {"keepAwake", &KeyMap::RemoteSettingsPatch::keepAwake, &KeyMap::keepAwake},
-    {"finishSound", &KeyMap::RemoteSettingsPatch::finishSound, &KeyMap::finishSound},
+    {"keepAwake", &Config::RemoteSettingsPatch::keepAwake, &Config::keepAwake},
+    {"finishSound", &Config::RemoteSettingsPatch::finishSound, &Config::finishSound},
 });
 // Settings of retired features: the repeating request chime (alertSound,
 // alertRepeat), the plan usage meter (showUsage) and background notifications
@@ -288,12 +288,12 @@ QString text(std::string_view name) {
     return QString::fromLatin1(name.data(), static_cast<qsizetype>(name.size()));
 }
 
-QJsonObject current_settings(const KeyMap& keymap) {
+QJsonObject current_settings(const Config& config) {
     QJsonObject values;
     for (const auto& item : retired)
         values.insert(text(item.name), item.is_switch ? QJsonValue(false) : QJsonValue(item.count));
     for (const auto& item : switches)
-        values.insert(text(item.name), (keymap.*item.get)());
+        values.insert(text(item.name), (config.*item.get)());
     return values;
 }
 
@@ -315,7 +315,7 @@ QString invalid_change(const QJsonObject& changes) {
 } // namespace
 
 QByteArray WorkspaceControl::settings(const QString& kind, const QJsonObject& request) {
-    if (keymap_ == nullptr)
+    if (config_ == nullptr)
         return refusal(QStringLiteral("Settings are not available"));
     if (kind == QStringLiteral("changeSettings")) {
         const auto field = request.value(QStringLiteral("settings"));
@@ -324,18 +324,18 @@ QByteArray WorkspaceControl::settings(const QString& kind, const QJsonObject& re
         const auto changes = field.toObject();
         if (const auto problem = invalid_change(changes); !problem.isEmpty())
             return refusal(problem);
-        KeyMap::RemoteSettingsPatch patch;
+        Config::RemoteSettingsPatch patch;
         for (const auto& item : switches)
             if (const auto value = changes.value(text(item.name)); value.isBool())
                 patch.*item.field = value.toBool();
         QString problem;
-        if (!keymap_->applyRemoteSettings(patch, &problem))
+        if (!config_->applyRemoteSettings(patch, &problem))
             return reply({{QStringLiteral("ok"), false},
                           {QStringLiteral("error"), problem},
-                          {QStringLiteral("settings"), current_settings(*keymap_)}});
+                          {QStringLiteral("settings"), current_settings(*config_)}});
     }
     return reply(
-        {{QStringLiteral("ok"), true}, {QStringLiteral("settings"), current_settings(*keymap_)}});
+        {{QStringLiteral("ok"), true}, {QStringLiteral("settings"), current_settings(*config_)}});
 }
 
 bool WorkspaceControl::requestHandover(const QString& registry) {

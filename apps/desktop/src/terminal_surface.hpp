@@ -1,7 +1,7 @@
 #ifndef LAPIS_DESKTOP_TERMINAL_SURFACE_HPP
 #define LAPIS_DESKTOP_TERMINAL_SURFACE_HPP
 
-#include "keymap.hpp"
+#include "config.hpp"
 #include <lapis/session/terminal.hpp>
 
 #include <QElapsedTimer>

@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-12T00:18:20Z",
+  "agent": "Codex triage parent with read-only Config rename audit",
+  "base_revision": "715b825720fead9a5b6c43f4ca7547f262fd25cf",
+  "merge_base": "c16d1dbb6a49a5a843a0fc1c30307c604050585c",
+  "source_revision": "033899416cab27a8c77a6f2503d8f064e66217e0",
+  "runtime_validation_revision": "033899416cab27a8c77a6f2503d8f064e66217e0",
+  "original_pr_head": "0c0be459f3810a88c1f107bc0c5743f0849754de7",
+  "scope": "PR 205 KeyMap-to-Config rename rebased over merged PR 209 and repaired for all four open review threads plus the completed identifier/test rename.",
+  "changed_source_manifest": {
+    "algorithm": "shasum -a 256 of: git diff --binary --full-index 715b825720fead9a5b6c43f4ca7547f262fd25cf..033899416cab27a8c77a6f2503d8f064e66217e0 -- ':(exclude)evidence/*'",
+    "digest": "ad858eb80d9111850a401595ea8e0852e31626ffb78428e97434cdc21542c5b3",
+    "changed_paths": 23
+  },
+  "validation": [
+    {
+      "command": "cmake --build --preset desktop --parallel 8 && ctest --preset desktop --output-on-failure",
+      "result": "passed; all 39 enabled desktop CTest cases passed, including the renamed config test; eight intentionally disabled tests did not run",
+      "receipt": "interactive command output; build/reports/desktop/build.log"
+    },
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py check",
+      "result": "passed; dev build, all dev CTests, clang-format, Cppcheck and every dev clang-tidy partition",
+      "receipt": "build/reports/dev/receipt.json"
+    },
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py ui-review --json",
+      "result": "passed at source revision 033899416cab27a8c77a6f2503d8f064e66217e0 with a clean tree; all background UI, shortcut and terminal-input cases passed",
+      "receipt": "build/reports/ui-review/20261112T001730Z-o065uteg/receipt.json"
+    },
+    {
+      "command": "rg -n -i 'keymap' apps/desktop/CMakeLists.txt apps/desktop/src apps/desktop/tests",
+      "result": "no matches; Config-typed fields, members, locals, logs, comments, test source and CTest target all use the Config vocabulary"
+    }
+  ],
+  "repair_summary": [
+    "Rebased the Config rename over merged PR 209 while retaining PR 201's expanded configured-model assertions.",
+    "Renamed Config-typed parameters, locals, members and option uses to config or config_model where required by local scope.",
+    "Renamed keymap_test.cpp to config_test.cpp and the CTest key, executable and properties accordingly.",
+    "Repaired stale config log wording, sorted renamed includes and sorted the using-declaration block."
+  ],
+  "non_claims": [
+    "No native macOS GUI input or GPU presentation was exercised; UI review ran offscreen with the software scene graph.",
+    "The current-main desktop static baseline remains defective; the broader desktop static gate failure is not attributed to this PR."
+  ]
+}

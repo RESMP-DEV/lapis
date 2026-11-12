@@ -1,7 +1,7 @@
 #include "app_window.hpp"
+#include "config.hpp"
 #include "interaction_log.hpp"
 #include "interaction_recorder.hpp"
-#include "keymap.hpp"
 #include "platform_desktop.hpp"
 #include "terminal_surface.hpp"
 #include "workspace.hpp"
@@ -494,7 +494,7 @@ int main(int argc, char** argv) {
     qmlRegisterUncreatableType<lapis::desktop::Agent>("Lapis", 1, 0, "Agent",
                                                       "owned by the workspace");
     qmlRegisterType<lapis::desktop::TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
-    qmlRegisterUncreatableType<lapis::desktop::KeyMap>("Lapis", 1, 0, "KeyMap",
+    qmlRegisterUncreatableType<lapis::desktop::Config>("Lapis", 1, 0, "Config",
                                                        "owned by the application");
     try {
         settings_parse_with_defaults_and_limits();

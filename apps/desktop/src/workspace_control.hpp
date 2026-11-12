@@ -7,7 +7,7 @@
 #include <QString>
 
 namespace lapis::desktop {
-class KeyMap;
+class Config;
 class Terminals;
 class Workspace;
 
@@ -38,7 +38,7 @@ class WorkspaceControl final : public QObject {
     void setTerminals(Terminals* terminals) { terminals_ = terminals; }
     // lapis.json, for the settings the phone can change; without it those
     // requests fail.
-    void setKeyMap(KeyMap* keymap) { keymap_ = keymap; }
+    void setConfig(Config* config) { config_ = config; }
     [[nodiscard]] static QString path(const QString& registry);
     // Asks the windowless host holding this registry to let a window have it.
     static bool requestHandover(const QString& registry);
@@ -62,7 +62,7 @@ class WorkspaceControl final : public QObject {
     QByteArray refused();
     Workspace& workspace_;
     Terminals* terminals_{};
-    KeyMap* keymap_{};
+    Config* config_{};
     bool host_;
     QLocalServer server_;
 };

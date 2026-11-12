@@ -1,6 +1,6 @@
 #include "agent_checkpoint.hpp"
 #include "alerts.hpp"
-#include "keymap.hpp"
+#include "config.hpp"
 #include "launch_spec.hpp"
 #include "session_descriptor.hpp"
 #include "terminals.hpp"
@@ -4000,10 +4000,10 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
     QFile file(root.filePath(QStringLiteral("lapis.json")));
     require(file.open(QIODevice::WriteOnly) && file.write("{}\n") == 3, "write a config");
     file.close();
-    lapis::desktop::KeyMap keymap;
-    keymap.setSourcePathForTesting(file.fileName());
-    require(keymap.load(), "the config loads");
-    control.setKeyMap(&keymap);
+    lapis::desktop::Config config_model;
+    config_model.setSourcePathForTesting(file.fileName());
+    require(config_model.load(), "the config loads");
+    control.setConfig(&config_model);
     const auto shown =
         askVersioned(workspace, {{QStringLiteral("request"), QStringLiteral("settings")}})
             .value(QStringLiteral("settings"))
@@ -4026,7 +4026,7 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
                                                              {QStringLiteral("showUsage"), true},
                                                              {QStringLiteral("notify"), true}}}});
     const auto changed_settings = changed.value(QStringLiteral("settings")).toObject();
-    require(answeredOk(changed) && !keymap.keepAwake() &&
+    require(answeredOk(changed) && !config_model.keepAwake() &&
                 !changed_settings.value(QStringLiteral("keepAwake")).toBool() &&
                 changed_settings.value(QStringLiteral("alertSound")) == QJsonValue(false) &&
                 changed_settings.value(QStringLiteral("showUsage")) == QJsonValue(false) &&
@@ -4044,7 +4044,7 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
         require(!answeredOk(askVersioned(
                     workspace, {{QStringLiteral("request"), QStringLiteral("changeSettings")},
                                 {QStringLiteral("settings"), bad}})) &&
-                    !keymap.keepAwake(),
+                    !config_model.keepAwake(),
                 "an unknown or mistyped setting changes nothing");
     for (const auto& request :
          {QJsonObject{{QStringLiteral("request"), QStringLiteral("changeSettings")}},
@@ -4055,13 +4055,13 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
                     refused.value(QStringLiteral("error"))
                         .toString()
                         .contains(QStringLiteral("Missing settings")) &&
-                    !keymap.keepAwake(),
+                    !config_model.keepAwake(),
                 "a missing or non-object settings value is refused");
     }
 
     // A later save can fail even though the request validated. The owner must
     // not leave a mixed batch in memory or replace the damaged file.
-    const auto before_failure = keymap.remoteSettings();
+    const auto before_failure = config_model.remoteSettings();
     const auto malformed_path = root.filePath(QStringLiteral("broken-lapis.json"));
     const QByteArray malformed = "{unfinished remote edit";
     {
@@ -4070,7 +4070,7 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
         replacement.write(malformed);
         require(replacement.commit(), "commit the malformed replacement");
     }
-    keymap.setSourcePathForTesting(malformed_path);
+    config_model.setSourcePathForTesting(malformed_path);
     const auto save_failed = askVersioned(
         workspace,
         {{QStringLiteral("request"), QStringLiteral("changeSettings")},
@@ -4084,7 +4084,7 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
                                                  {QStringLiteral("alertRepeat"), 1},
                                                  {QStringLiteral("notify"), false},
                                                  {QStringLiteral("showUsage"), false}}) &&
-                keymap.remoteSettings() == before_failure,
+                config_model.remoteSettings() == before_failure,
             "a failed save echoes unchanged settings and preserves memory");
     require(save_failed.value(QStringLiteral("error"))
                 .toString()
@@ -4093,7 +4093,7 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
     QFile damaged(malformed_path);
     require(damaged.open(QIODevice::ReadOnly), "read the failed-save config");
     require(damaged.readAll() == malformed, "a failed save preserves disk bytes");
-    control.setKeyMap(nullptr);
+    control.setConfig(nullptr);
 }
 
 // The phone gateway starts an agent through the window: it opens as a new tab
@@ -4361,9 +4361,9 @@ void alertsChimeWhileAnAgentWaits() {
         "notify": true, "awayAfter": 5, "remindAfter": 9999, "judge": true},
         "tabAway": {"rank": "learned"}})");
     config.close();
-    lapis::desktop::KeyMap keymap;
-    keymap.setSourcePathForTesting(config.fileName());
-    require(keymap.load() && keymap.diagnostic().isEmpty(),
+    lapis::desktop::Config config_model;
+    config_model.setSourcePathForTesting(config.fileName());
+    require(config_model.load() && config_model.diagnostic().isEmpty(),
             "alerts config with the retired keys loads cleanly");
     WorkspaceOptions options;
     options.storagePath = root.filePath(QStringLiteral("workspace.json"));
@@ -4372,7 +4372,8 @@ void alertsChimeWhileAnAgentWaits() {
     std::vector<lapis::desktop::Chime> played;
     bool looking = false;
     lapis::desktop::Alerts alerts(
-        workspace, keymap, [&played](lapis::desktop::Chime chime) { played.push_back(chime); },
+        workspace, config_model,
+        [&played](lapis::desktop::Chime chime) { played.push_back(chime); },
         [&looking](const lapis::desktop::Agent*) { return looking; });
     alerts.setQuietForTesting(40);
     const auto request = [&agent](bool pending) {
@@ -4491,7 +4492,7 @@ void alertsChimeWhileAnAgentWaits() {
         alerts.setLog({});
     }
 
-    require(keymap.setFinishSound(false), "turn the sound off");
+    require(config_model.setFinishSound(false), "turn the sound off");
     {
         QFile written(config.fileName());
         require(written.open(QIODevice::ReadOnly), "read the saved alerts config");
@@ -4619,27 +4620,28 @@ void chimesPlayChosenFiles() {
     };
     write(QStringLiteral("ding.wav"), "RIFF-ding");
     write(QStringLiteral("lapis.json"), R"({"version":1,"alerts":{"soundFile":"ding.wav"}})");
-    lapis::desktop::KeyMap keymap;
-    keymap.setSourcePathForTesting(root.filePath(QStringLiteral("lapis.json")));
+    lapis::desktop::Config config_model;
+    config_model.setSourcePathForTesting(root.filePath(QStringLiteral("lapis.json")));
     lapis::desktop::ChimeSounds sounds;
     const auto ready = [&](Chime chime, const QByteArray& bytes) {
-        return waitFor([&] { return sounds.sound(chime, keymap).bytes == bytes; }, 10000);
+        return waitFor([&] { return sounds.sound(chime, config_model).bytes == bytes; }, 10000);
     };
     const auto diagnosed = [&](Chime chime, const QString& text) {
         return waitFor(
             [&] {
-                static_cast<void>(sounds.sound(chime, keymap));
-                return keymap.diagnostic().contains(text);
+                static_cast<void>(sounds.sound(chime, config_model));
+                return config_model.diagnostic().contains(text);
             },
             10000);
     };
-    require(keymap.load() && keymap.alertSoundFile() == root.filePath(QStringLiteral("ding.wav")),
+    require(config_model.load() &&
+                config_model.alertSoundFile() == root.filePath(QStringLiteral("ding.wav")),
             "relative sound path resolves without file I/O on the GUI thread");
     require(ready(Chime::needsYou, "RIFF-ding"), "background file load completes");
-    require(sounds.sound(Chime::finished, keymap).volume == 0.5F,
+    require(sounds.sound(Chime::finished, config_model).volume == 0.5F,
             "the shared cue borrows soundFile at half volume");
     std::vector<ChimeSound> attempted;
-    sounds.play(Chime::finished, keymap, [&](const ChimeSound& clip) {
+    sounds.play(Chime::finished, config_model, [&](const ChimeSound& clip) {
         attempted.push_back(clip);
         return clip.path.isEmpty();
     });
@@ -4648,14 +4650,14 @@ void chimesPlayChosenFiles() {
             "decode failure uses the synthesized cue at its own gain, not double attenuation");
     require(diagnosed(Chime::finished, QStringLiteral("could not be played")),
             "playback failure is visible");
-    sounds.play(Chime::finished, keymap, [](const ChimeSound&) { return true; });
-    require(waitFor([&] { return keymap.diagnostic().isEmpty(); }, 10000),
+    sounds.play(Chime::finished, config_model, [](const ChimeSound&) { return true; });
+    require(waitFor([&] { return config_model.diagnostic().isEmpty(); }, 10000),
             "playback recovery clears its diagnostic");
-    sounds.play(Chime::finished, keymap, [](const ChimeSound&) { return false; });
+    sounds.play(Chime::finished, config_model, [](const ChimeSound&) { return false; });
     require(diagnosed(Chime::finished, QStringLiteral("playback is unavailable")),
             "a failed synthesized fallback is visible too");
-    sounds.play(Chime::finished, keymap, [](const ChimeSound&) { return true; });
-    require(waitFor([&] { return keymap.diagnostic().isEmpty(); }, 10000),
+    sounds.play(Chime::finished, config_model, [](const ChimeSound&) { return true; });
+    require(waitFor([&] { return config_model.diagnostic().isEmpty(); }, 10000),
             "successful output clears the fallback failure");
     const auto modified = QFileInfo(root.filePath(QStringLiteral("ding.wav"))).lastModified();
     write(QStringLiteral("ding.wav"), "RIFF-ping");
@@ -4673,23 +4675,24 @@ void chimesPlayChosenFiles() {
     write(QStringLiteral("low.wav"), "RIFF-low");
     write(QStringLiteral("lapis.json"),
           R"({"version":1,"alerts":{"soundFile":"gone.wav","finishedFile":"low.wav"}})");
-    require(keymap.load() && diagnosed(Chime::needsYou, QStringLiteral("gone.wav")),
+    require(config_model.load() && diagnosed(Chime::needsYou, QStringLiteral("gone.wav")),
             "missing file diagnostic arrives from the loader");
     require(ready(Chime::finished, "RIFF-low") &&
-                sounds.sound(Chime::finished, keymap).volume == 1.0F,
+                sounds.sound(Chime::finished, config_model).volume == 1.0F,
             "an explicit finishedFile uses its own volume");
     write(QStringLiteral("gone.wav"), "RIFF-created");
     require(ready(Chime::needsYou, "RIFF-created") &&
-                waitFor([&] { return keymap.diagnostic().isEmpty(); }, 10000),
+                waitFor([&] { return config_model.diagnostic().isEmpty(); }, 10000),
             "creating a file clears stale diagnostics without reloading configuration");
     require(QFile::remove(root.filePath(QStringLiteral("gone.wav"))), "remove configured file");
     require(diagnosed(Chime::needsYou, QStringLiteral("not found")) &&
-                sounds.sound(Chime::needsYou, keymap).bytes ==
+                sounds.sound(Chime::needsYou, config_model).bytes ==
                     lapis::desktop::chime_wav(Chime::needsYou),
             "deletion is reported and falls back");
 
     write(QStringLiteral("lapis.json"), R"({"version":1,"alerts":{"soundFile":"ding.wav"}})");
-    require(keymap.load() && ready(Chime::needsYou, "RIFF-ding, edited"), "restore readable file");
+    require(config_model.load() && ready(Chime::needsYou, "RIFF-ding, edited"),
+            "restore readable file");
     const auto permissions = QFile::permissions(root.filePath(QStringLiteral("ding.wav")));
     require(QFile::setPermissions(root.filePath(QStringLiteral("ding.wav")), {}),
             "revoke fixture permissions");
@@ -4705,12 +4708,13 @@ void chimesPlayChosenFiles() {
         {QStringLiteral("alerts"),
          QJsonObject{{QStringLiteral("soundFile"), QStringLiteral("~/") + relative}}}};
     write(QStringLiteral("lapis.json"), QJsonDocument(home_config).toJson());
-    require(keymap.load() && keymap.alertSoundFile() == root.filePath(QStringLiteral("ding.wav")),
+    require(config_model.load() &&
+                config_model.alertSoundFile() == root.filePath(QStringLiteral("ding.wav")),
             "tilde expansion works without changing the process HOME");
     write(QStringLiteral("lapis.json"),
           R"({"version":1,"alerts":{"soundFile":"ding.wav","finishedFile":"gone.wav"}})");
-    require(keymap.load() && diagnosed(Chime::finished, QStringLiteral("gone.wav")) &&
-                sounds.sound(Chime::finished, keymap).bytes ==
+    require(config_model.load() && diagnosed(Chime::finished, QStringLiteral("gone.wav")) &&
+                sounds.sound(Chime::finished, config_model).bytes ==
                     lapis::desktop::chime_wav(Chime::finished),
             "an unavailable explicit finishedFile never borrows the other clip");
     QFile big(root.filePath(QStringLiteral("big.wav")));
@@ -4719,16 +4723,17 @@ void chimesPlayChosenFiles() {
             "oversized fixture");
     big.close();
     write(QStringLiteral("lapis.json"), R"({"version":1,"alerts":{"soundFile":"big.wav"}})");
-    require(keymap.load() && diagnosed(Chime::needsYou, QStringLiteral("over 4 MiB")),
+    require(config_model.load() && diagnosed(Chime::needsYou, QStringLiteral("over 4 MiB")),
             "oversized file is diagnosed asynchronously");
     write(QStringLiteral("lapis.json"), R"({"version":1,"alerts":{"soundFile":12}})");
-    require(keymap.load() && keymap.diagnostic().contains(QStringLiteral("path string")),
+    require(config_model.load() &&
+                config_model.diagnostic().contains(QStringLiteral("path string")),
             "malformed setting is diagnosed immediately");
     const auto fifo = root.filePath(QStringLiteral("pipe.wav"));
     require(::mkfifo(QFile::encodeName(fifo).constData(), 0600) == 0,
             "create special-file fixture");
     write(QStringLiteral("lapis.json"), R"({"version":1,"alerts":{"soundFile":"pipe.wav"}})");
-    require(keymap.load() && diagnosed(Chime::needsYou, QStringLiteral("not a regular file")),
+    require(config_model.load() && diagnosed(Chime::needsYou, QStringLiteral("not a regular file")),
             "nonblocking descriptor validation rejects a FIFO without losing a worker");
 }
 

@@ -3,7 +3,7 @@
 // Starts disposable agents (a stand-in CLI that draws a screen of text and
 // waits) under the real session service in a private LAPIS_HOME, loads the
 // real Main.qml offscreen with the software scene graph, and switches agents
-// and categories through the keymap's own bindings, delivered as window-system
+// and categories through the config's own bindings, delivered as window-system
 // key events so Qt's shortcut map, the QML handlers, the workspace and, when
 // asked, the interaction log's event filter all run as in the app. Clicks on
 // strip cards are measured the same way, and pointer moves on their own.
@@ -13,7 +13,7 @@
 // frameSwapped. Offscreen/software rendering is not GPU presentation; compare
 // runs of this tool with each other.
 #include "app_window.hpp"
-#include "keymap.hpp"
+#include "config.hpp"
 #include "terminal_surface.hpp"
 #include "workspace.hpp"
 #if __has_include("interaction_recorder.hpp")
@@ -213,9 +213,9 @@ std::vector<std::vector<QString>> start_agents(Workspace& workspace, const Optio
 
 class Bench : public QObject {
   public:
-    Bench(Workspace& workspace, const lapis::desktop::KeyMap& keymap, QQuickWindow& window,
+    Bench(Workspace& workspace, const lapis::desktop::Config& config, QQuickWindow& window,
           const Options& options)
-        : QObject(nullptr), workspace_(workspace), keymap_(keymap), window_(window),
+        : QObject(nullptr), workspace_(workspace), config_(config), window_(window),
           options_(options) {
         QObject::connect(&window, &QQuickWindow::frameSwapped, this,
                          [this] { swaps_.fetch_add(1, std::memory_order_relaxed); });
@@ -278,7 +278,7 @@ class Bench : public QObject {
         return false;
     }
     std::function<void()> press(const char* action) {
-        const auto binding = keymap_.sequences(QString::fromLatin1(action)).value(0);
+        const auto binding = config_.sequences(QString::fromLatin1(action)).value(0);
         require(!binding.isEmpty(), std::string("binding for ") + action);
         return [this, binding] {
             if (key(binding, QEvent::KeyPress))
@@ -393,7 +393,7 @@ class Bench : public QObject {
     }
 
     Workspace& workspace_;
-    const lapis::desktop::KeyMap& keymap_;
+    const lapis::desktop::Config& config_;
     QQuickWindow& window_;
     Options options_;
     std::atomic<int> swaps_{0};
@@ -462,8 +462,8 @@ QJsonObject measure(const Options& options, const QTemporaryDir& home) {
     workspace_options.storagePath = home.filePath(QStringLiteral("workspace.json"));
     Workspace workspace(lapis::desktop::WorkspaceMode::live, workspace_options);
     require(workspace.workspaceError().isEmpty(), "workspace loads");
-    lapis::desktop::KeyMap keymap;
-    keymap.setSourcePathForTesting(home.filePath(QStringLiteral("lapis.json")));
+    lapis::desktop::Config config;
+    config.setSourcePathForTesting(home.filePath(QStringLiteral("lapis.json")));
     workspace.setLaunchSize(QSize(160, 48));
     const auto folder = home.filePath(QStringLiteral("work"));
     QDir().mkpath(folder);
@@ -483,7 +483,7 @@ QJsonObject measure(const Options& options, const QTemporaryDir& home) {
         workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                     .compact = false,
                     .screen = QString(),
-                    .keymap = &keymap});
+                    .config = &config});
     require(preview.load(), "load Main.qml");
     auto* window = preview.window();
     window->resize(1600, 1000);
@@ -497,7 +497,7 @@ QJsonObject measure(const Options& options, const QTemporaryDir& home) {
                 workspace.categories().front().toMap().value(QStringLiteral("id")).toString()),
             "first category");
     pump(1500); // first frames, previews, fonts
-    Bench bench(workspace, keymap, *window, options);
+    Bench bench(workspace, config, *window, options);
     bench.run();
     auto result = bench.result();
     result.insert("schema", "lapis.switch-benchmark/1");

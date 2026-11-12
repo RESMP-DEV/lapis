@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// Appearance. Themes, density and the terminal font come from the keymap and
+// Appearance. Themes, density and the terminal font come from the config and
 // apply immediately. There is one workspace stage, so this dialog does not
 // offer a layout or preview picker. Font controls live only here.
 Dialog {

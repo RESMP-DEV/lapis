@@ -1,7 +1,7 @@
 #ifndef LAPIS_DESKTOP_APP_WINDOW_HPP
 #define LAPIS_DESKTOP_APP_WINDOW_HPP
 
-#include "keymap.hpp"
+#include "config.hpp"
 #include "workspace.hpp"
 #include <QKeySequence>
 #include <QList>
@@ -26,9 +26,9 @@ struct AppWindowOptions {
     // "built-in" for the MacBook panel and "ultrawide" for an external one.
     // Empty keeps the platform's default placement.
     QString screen;
-    // User keybindings and layout, exposed to QML as `keymap`. Optional; a
+    // User keybindings and layout, exposed to QML as `config`. Optional; a
     // null value uses the shared C++ settings defaults and QML navigation defaults.
-    KeyMap* keymap{};
+    Config* config{};
     QObject* alerts{};        // exposed to QML as `alerts`
     QObject* tools{};         // exposed to QML as `tools`
     QObject* desktop{};       // exposed to QML as `desktop`

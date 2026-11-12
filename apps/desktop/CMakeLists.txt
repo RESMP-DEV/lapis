@@ -31,7 +31,7 @@ add_library(lapis_desktop_core STATIC
     src/agent_state.cpp src/agent_state.hpp
     src/harness_models.cpp src/harness_models.hpp
     src/attention_view.cpp
-    src/keymap.cpp src/keymap.hpp
+    src/config.cpp src/config.hpp
     src/interaction_log.cpp src/interaction_log.hpp
     src/interaction_recorder.cpp src/interaction_recorder.hpp
     src/live_connection.cpp src/live_connection.hpp
@@ -241,10 +241,10 @@ if(BUILD_TESTING)
     add_test(NAME interaction-log COMMAND lapis_interaction_log_tests)
     set_tests_properties(interaction-log PROPERTIES TIMEOUT 60
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Basic")
-    add_executable(lapis_keymap_tests tests/keymap_test.cpp)
-    target_link_libraries(lapis_keymap_tests PRIVATE lapis_project_options lapis_desktop_core)
-    add_test(NAME keymap COMMAND lapis_keymap_tests)
-    set_tests_properties(keymap PROPERTIES TIMEOUT 20)
+    add_executable(lapis_config_tests tests/config_test.cpp)
+    target_link_libraries(lapis_config_tests PRIVATE lapis_project_options lapis_desktop_core)
+    add_test(NAME config COMMAND lapis_config_tests)
+    set_tests_properties(config PROPERTIES TIMEOUT 20)
 
     add_executable(lapis_tool_status_tests tests/tool_status_test.cpp)
     target_link_libraries(lapis_tool_status_tests PRIVATE lapis_project_options lapis_desktop_core)
