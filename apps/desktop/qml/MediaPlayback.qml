@@ -27,6 +27,9 @@ Item {
     readonly property bool video: media !== undefined && media !== null && media.kind === "video"
     readonly property bool playing: player.playbackState === MediaPlayer.PlayingState
     readonly property bool failed: player.error !== MediaPlayer.NoError
+    // Dragging along a line seeks; the view does not take it for dragging
+    // the file out.
+    readonly property bool seeking: videoScrub.seeking || audioScrub.seeking
     // The frame's own size once the file is open; 16:9 until then.
     readonly property real frameWidth: output.sourceRect.width > 0 ? output.sourceRect.width : 16
     readonly property real frameHeight: output.sourceRect.height > 0 ? output.sourceRect.height : 9
@@ -99,6 +102,7 @@ Item {
         id: scrub
         property color track
         property color fill
+        readonly property bool seeking: scrubMouse.pressed
         implicitHeight: 14
         readonly property real done: player.duration > 0 ? player.position / player.duration : 0
         Rectangle {
@@ -201,6 +205,7 @@ Item {
                 font.pixelSize: playback.view ? playback.view.codeSize - 1 : 12
             }
             Scrub {
+                id: videoScrub
                 anchors.left: videoClock.right
                 anchors.leftMargin: 12
                 anchors.right: videoOpen.left
@@ -286,6 +291,7 @@ Item {
             font.pixelSize: playback.view ? playback.view.codeSize - 1 : 12
         }
         Scrub {
+            id: audioScrub
             anchors.left: audioName.left
             anchors.right: parent.right
             anchors.rightMargin: 14

@@ -389,6 +389,9 @@ ApplicationWindow {
     // A named window property prevents the pane's own `tools` model from
     // resolving as the context object and forming an engine binding loop.
     readonly property var toolStatus: tools
+    // The same for the visual view's file actions (the Transcript's own
+    // `mediaActions` property would otherwise bind to itself).
+    readonly property var fileActions: mediaActions
     readonly property bool toolsAvailable: toolStatus !== null
     // Built when a dialog that lists them is open: as a property it would be
     // rebuilt, and the closed lists' delegates with it, on every switch.
@@ -3214,6 +3217,7 @@ ApplicationWindow {
                     width: liveTerminal.width
                     height: liveTerminal.height
                     model: workspace.transcript
+                    mediaActions: window.fileActions
                     themeName: window.visualSettings.theme || "terminal"
                     fontName: window.visualSettings.font || "system"
                     codeFontName: window.visualSettings.codeFont || "system"

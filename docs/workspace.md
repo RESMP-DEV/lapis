@@ -299,6 +299,18 @@ prompt, for what you attached), never twice. A picture with transparency sits
 on the thread's own background with no frame. A path to a file that does not
 exist yet stays text until the reply is next drawn. Copying a reply still gives
 the path as written. Click a picture to open it full size.
+
+Every file the thread shows (a picture in place or under a reply, an SVG, a GIF,
+a player, a file card, or what you attached to a prompt) can leave the window.
+Drag it to Finder, Discord, Slack, Mail or a browser's upload to attach the file
+itself; a picture carries its pixels too, for apps that take an image. A click
+that does not move still opens it, and dragging along a player's line still
+seeks. Right-click (or Control-click) it for a menu: **Open**, **Show in
+Finder**, **Copy Image** for a picture (the image and its file, so it pastes as
+a picture into a chat and as a file into Finder) or **Copy File** for anything
+else, **Copy Path**, and **Save As…** for a copy elsewhere; a picture also has
+**Open With**, the apps Command-click opens paths in. None of these change the
+file.
 Audio (MP3, WAV, M4A, AAC, FLAC, AIFF) and video (MP4, MOV, M4V) play in place
 through macOS's own player: a video shows its first frame with a play button,
 and its controls (time, a line to seek along, ↗ to open it in its app) appear

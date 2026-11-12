@@ -23,6 +23,8 @@ void on_terminal_keys(const std::function<bool(bool shifted)>& handler);
 // Seconds since the last keyboard, mouse or trackpad input anywhere on this
 // Mac (hardware events only), or a negative value when it cannot be read.
 [[nodiscard]] double seconds_since_input();
+// A Finder window with the file selected, as `open -R` does.
+bool reveal_in_file_manager(const QString& path);
 #else
 inline bool login_item_enabled() { return false; }
 inline bool set_login_item(bool) { return false; }
@@ -32,6 +34,8 @@ inline bool updater_available() { return false; }
 inline void on_terminal_keys(const std::function<bool(bool)>&) {}
 inline bool secure_input_enabled() { return false; }
 inline double seconds_since_input() { return -1; }
+// Without a way to select the file, the caller opens its folder.
+inline bool reveal_in_file_manager(const QString&) { return false; }
 #endif
 } // namespace lapis::desktop::platform
 #endif

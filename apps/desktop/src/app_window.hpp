@@ -2,6 +2,7 @@
 #define LAPIS_DESKTOP_APP_WINDOW_HPP
 
 #include "config.hpp"
+#include "media_actions.hpp"
 #include "workspace.hpp"
 #include <QKeySequence>
 #include <QList>
@@ -102,6 +103,8 @@ class AppWindow final : public QObject {
     AppWindowOptions options_;
     // Backs options_.config when the caller passed none; outlives engine_.
     std::unique_ptr<Config> defaults_config_;
+    // What the visual view does with a file it shows; QML's `mediaActions`.
+    MediaActions media_actions_;
     std::unique_ptr<QQmlApplicationEngine> engine_;
     QPointer<QQuickWindow> window_;
     QString diagnostics_;

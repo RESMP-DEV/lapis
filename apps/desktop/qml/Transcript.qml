@@ -1001,9 +1001,25 @@ FocusScope {
         Timer { id: doneTimer; interval: 1200; onTriggered: action.done = false }
     }
 
+    // What a shown file does beyond a click (the window's MediaActions:
+    // Finder, clipboard, save, drag out); null where there is none, as in a
+    // capture, and the menu then offers only Open.
+    property var mediaActions: null
+    function openMedia(media) {
+        if (!media)
+            return
+        if (!mediaActions || !mediaActions.open(media.path))
+            Qt.openUrlExternally(media.url)
+    }
+    function isPicture(media) {
+        return media !== null && media !== undefined
+               && (media.kind === "image" || media.kind === "svg" || media.kind === "animation")
+    }
+
     // Files a message names, shown in place: images, SVG and GIFs drawn at
     // their size (up to the column), audio and video played in place, other
-    // files as a card that opens them. Click an image to open it full size.
+    // files as a card that opens them. Click an image to open it full size;
+    // drag any of them out to another app, or right-click for the rest.
     component MediaList: Column {
         id: mediaList
         property var items: []
@@ -1012,21 +1028,211 @@ FocusScope {
         visible: items.length > 0
         Repeater {
             model: mediaList.items
-            delegate: Loader {
+            delegate: Item {
+                id: mediaCell
+                objectName: "mediaItem"
                 required property var modelData
                 readonly property var media: modelData
                 anchors.right: mediaList.alignRight ? parent.right : undefined
-                sourceComponent: modelData.kind === "image" || modelData.kind === "svg" ? imageMedia
-                               : modelData.kind === "animation" ? animationMedia
-                               : modelData.kind === "audio" || modelData.kind === "video" ? playbackMedia
-                               : fileMedia
-                property real room: mediaList.width
+                width: shown.item ? shown.item.width : 0
+                height: shown.item ? shown.item.height : 0
+                Loader {
+                    id: shown
+                    readonly property var media: mediaCell.media
+                    property real room: mediaList.width
+                    sourceComponent: mediaCell.modelData.kind === "image" || mediaCell.modelData.kind === "svg" ? imageMedia
+                                   : mediaCell.modelData.kind === "animation" ? animationMedia
+                                   : mediaCell.modelData.kind === "audio" || mediaCell.modelData.kind === "video" ? playbackMedia
+                                   : fileMedia
+                }
+                MediaGrip {
+                    anchors.fill: parent
+                    media: mediaCell.media
+                    // A player takes its own clicks (play, seek); its fallback
+                    // card opens the file as the others do.
+                    plays: shown.item !== null && shown.item.item !== undefined && shown.item.item !== null
+                           && typeof shown.item.item.toggle === "function"
+                    seeking: plays && shown.item.item.seeking === true
+                }
             }
         }
+    }
+    // Over a shown file: a click opens it (not over a player), a drag takes
+    // the file out of the window, and a right-click or Control-click opens
+    // its menu. A drag never also counts as the click.
+    component MediaGrip: Item {
+        id: grip
+        property var media: null
+        property bool plays: false
+        // A player's line being dragged to seek, which is not a file drag.
+        property bool seeking: false
+        readonly property string path: media ? media.path : ""
+        // A press moved past the drag distance starts the file drag. The
+        // handler only watches (it never takes the press), so the player's
+        // own buttons still work and a press that stays put is a click.
+        PointHandler {
+            id: gripPoint
+            acceptedButtons: Qt.LeftButton
+            property bool started: false
+            onActiveChanged: if (!active) started = false
+            onPointChanged: {
+                if (!active || started || !root.mediaActions || grip.path.length === 0 || grip.seeking)
+                    return
+                const moved = Math.hypot(point.position.x - point.pressPosition.x,
+                                         point.position.y - point.pressPosition.y)
+                if (moved < Application.styleHints.startDragDistance)
+                    return
+                started = true
+                // Runs until the drop; macOS then sends the release the drop
+                // consumed, which ends this press.
+                root.mediaActions.drag(grip.path, root.isPicture(grip.media), grip)
+            }
+        }
+        HoverHandler {
+            enabled: !grip.plays
+            cursorShape: Qt.PointingHandCursor
+        }
+        TapHandler {
+            enabled: !grip.plays
+            acceptedButtons: Qt.LeftButton
+            acceptedModifiers: Qt.NoModifier
+            onTapped: root.openMedia(grip.media)
+        }
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            onTapped: function(point) { root.showMediaMenu(grip.media, grip, point.position) }
+        }
+        TapHandler {
+            acceptedButtons: Qt.LeftButton
+            acceptedModifiers: Qt.ControlModifier
+            onTapped: function(point) { root.showMediaMenu(grip.media, grip, point.position) }
+        }
+    }
+    // One menu for whichever file was right-clicked, in the bar menus' style.
+    component MediaMenuItem: MenuItem {
+        id: mediaItem
+        indicator: null
+        arrow: Chevron {
+            visible: mediaItem.subMenu !== null
+            x: mediaItem.width - width - 10
+            anchors.verticalCenter: parent.verticalCenter
+            color: root.mutedTextColor
+        }
+        contentItem: Text {
+            leftPadding: 6
+            text: mediaItem.text
+            color: mediaItem.enabled ? root.textColor : root.mutedTextColor
+            font.family: root.sansFamily
+            font.pixelSize: root.codeSize
+            verticalAlignment: Text.AlignVCenter
+        }
+        background: Rectangle {
+            radius: 6
+            color: mediaItem.highlighted ? root.tint(root.textColor, 0.1) : "transparent"
+        }
+    }
+    component MediaMenu: Menu {
+        id: mediaMenu
+        property var media: null
+        readonly property string path: media ? media.path : ""
+        readonly property bool picture: root.isPicture(media)
+        readonly property bool acts: root.mediaActions !== null && path.length > 0
+        function show(media, item, at) {
+            mediaMenu.media = media
+            mediaMenu.popup(item, at.x, at.y)
+        }
+        width: Math.max(180, Math.round(root.codeSize * 15))
+        background: Rectangle {
+            radius: 10
+            color: root.raisedColor
+            border.color: root.borderColor
+        }
+        // The item that opens Open With.
+        delegate: MediaMenuItem {}
+        MediaMenuItem {
+            objectName: "mediaOpen"
+            text: qsTr("Open")
+            onTriggered: root.openMedia(mediaMenu.media)
+        }
+        Menu {
+            id: openWith
+            title: qsTr("Open With")
+            // Only for pictures, with the apps Command-click opens paths in.
+            enabled: mediaMenu.picture && root.model !== null
+            width: Math.max(160, Math.round(root.codeSize * 12))
+            background: Rectangle {
+                radius: 10
+                color: root.raisedColor
+                border.color: root.borderColor
+            }
+            delegate: MediaMenuItem {}
+            Instantiator {
+                model: openWith.enabled && mediaMenu.opened ? root.model.editors() : []
+                delegate: MediaMenuItem {
+                    required property var modelData
+                    text: modelData.label
+                    onTriggered: root.model.openPath(mediaMenu.path, modelData.id)
+                }
+                onObjectAdded: (index, object) => openWith.insertItem(index, object)
+                onObjectRemoved: (index, object) => openWith.removeItem(object)
+            }
+        }
+        MediaMenuItem {
+            objectName: "mediaReveal"
+            text: qsTr("Show in Finder")
+            enabled: mediaMenu.acts
+            onTriggered: root.mediaActions.reveal(mediaMenu.path)
+        }
+        MenuSeparator {
+            contentItem: Rectangle { implicitHeight: 1; color: root.borderColor }
+        }
+        MediaMenuItem {
+            objectName: "mediaCopy"
+            text: mediaMenu.picture ? qsTr("Copy Image") : qsTr("Copy File")
+            enabled: mediaMenu.acts
+            onTriggered: mediaMenu.picture ? root.mediaActions.copyImage(mediaMenu.path)
+                                           : root.mediaActions.copyFile(mediaMenu.path)
+        }
+        MediaMenuItem {
+            objectName: "mediaCopyPath"
+            text: qsTr("Copy Path")
+            enabled: mediaMenu.acts
+            onTriggered: root.mediaActions.copyPath(mediaMenu.path)
+        }
+        MediaMenuItem {
+            objectName: "mediaSaveAs"
+            text: qsTr("Save As…")
+            enabled: mediaMenu.acts
+            onTriggered: {
+                mediaSave.source = mediaMenu.path
+                mediaSave.selectedFile = root.mediaActions.saveSuggestion(mediaMenu.path)
+                mediaSave.open()
+            }
+        }
+    }
+    // Made on the first right-click, so the thread never builds (or lays out
+    // again on a theme or font change) a menu nobody opened.
+    property var mediaMenu: null
+    Component {
+        id: mediaMenuComponent
+        MediaMenu { objectName: "mediaMenu" }
+    }
+    function showMediaMenu(media, item, at) {
+        if (!mediaMenu)
+            mediaMenu = mediaMenuComponent.createObject(root)
+        mediaMenu.show(media, item, at)
+    }
+    FileDialog {
+        id: mediaSave
+        property string source: ""
+        title: qsTr("Save a copy")
+        fileMode: FileDialog.SaveFile
+        onAccepted: if (root.mediaActions) root.mediaActions.saveCopy(source, selectedFile)
     }
     Component {
         id: imageMedia
         Image {
+            id: picture
             readonly property var media: parent ? parent.media : null
             readonly property bool vector: media !== null && media.kind === "svg"
             // Its own size from the file's header, before it is decoded.
@@ -1042,11 +1248,6 @@ FocusScope {
             // 200 dpi charts are; small ones and SVGs show at their own size.
             width: Math.min(parent ? parent.room : 0, !vector && ownWidth >= 800 ? ownWidth / 2 : ownWidth)
             height: ownWidth > 0 ? width * ownHeight / ownWidth : 0
-            MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: if (parent.media) Qt.openUrlExternally(parent.media.url)
-            }
             // A frame round an opaque picture; a see-through one (a diagram
             // of strokes) sits on the thread's own background, unframed.
             Rectangle {
@@ -1067,11 +1268,6 @@ FocusScope {
             fillMode: Image.PreserveAspectFit
             width: Math.min(parent ? parent.room : 0, implicitWidth)
             height: implicitWidth > 0 ? width * implicitHeight / implicitWidth : 0
-            MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: if (parent.media) Qt.openUrlExternally(parent.media.url)
-            }
         }
     }
     // The player lives in its own file, so the thread still loads where Qt
@@ -1100,7 +1296,8 @@ FocusScope {
             width: Math.min(parent ? parent.room : 0, fileRow.implicitWidth + 28)
             height: fileRow.implicitHeight + 18
             radius: root.radius - 2
-            color: fileMouse.containsMouse ? root.tint(root.textColor, 0.1) : root.raisedColor
+            color: fileHover.hovered ? root.tint(root.textColor, 0.1) : root.raisedColor
+            HoverHandler { id: fileHover }
             Row {
                 id: fileRow
                 anchors.verticalCenter: parent.verticalCenter
@@ -1131,13 +1328,6 @@ FocusScope {
                         font.pixelSize: root.codeSize - 1
                     }
                 }
-            }
-            MouseArea {
-                id: fileMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: if (parent.media) Qt.openUrlExternally(parent.media.url)
             }
         }
     }

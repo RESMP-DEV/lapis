@@ -45,6 +45,7 @@ add_library(lapis_desktop_core STATIC
     src/gui_state.cpp src/gui_state.hpp
     src/app_paths.cpp src/app_paths.hpp
     src/desktop_actions.cpp src/desktop_actions.hpp src/platform_desktop.hpp
+    src/media_actions.cpp src/media_actions.hpp
     src/shell_environment.cpp src/shell_environment.hpp
     src/tool_status.cpp src/tool_status.hpp
     src/app_window.cpp src/app_window.hpp
@@ -167,6 +168,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_history_strip_tests PRIVATE lapis_project_options lapis_desktop_core)
     add_test(NAME history-strip COMMAND lapis_history_strip_tests)
     set_tests_properties(history-strip PROPERTIES TIMEOUT 20)
+    add_executable(lapis_media_actions_tests tests/media_actions_test.cpp)
+    target_link_libraries(lapis_media_actions_tests PRIVATE lapis_project_options lapis_desktop_core)
+    add_test(NAME media-actions COMMAND lapis_media_actions_tests)
+    set_tests_properties(media-actions PROPERTIES TIMEOUT 20)
     add_executable(lapis_transcript_tests tests/transcript_test.cpp)
     target_link_libraries(lapis_transcript_tests PRIVATE lapis_project_options lapis_desktop_core)
     add_test(NAME transcript COMMAND lapis_transcript_tests)
@@ -188,7 +193,8 @@ if(BUILD_TESTING)
     add_test(NAME transcript-keys COMMAND lapis_transcript_capture --keys)
     set_tests_properties(transcript-keys PROPERTIES TIMEOUT 30)
     add_test(NAME transcript-live COMMAND lapis_transcript_capture --live-checks)
-    set_tests_properties(transcript-live PROPERTIES TIMEOUT 30)
+    add_test(NAME transcript-media COMMAND lapis_transcript_capture --media-checks)
+    set_tests_properties(transcript-live transcript-media PROPERTIES TIMEOUT 30)
     add_executable(lapis_cell_shapes_tests tests/cell_shapes_test.cpp)
     target_link_libraries(lapis_cell_shapes_tests PRIVATE lapis_project_options lapis_desktop_core)
     add_test(NAME cell-shapes COMMAND lapis_cell_shapes_tests)
