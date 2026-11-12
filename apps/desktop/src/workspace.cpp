@@ -684,6 +684,11 @@ Workspace::~Workspace() {
     }
     if (headless_ && registry_lock_ && registry_lock_->isLocked())
         QFile::remove(storage_path_ + QStringLiteral(".restoring"));
+    // Closes in flight are left to their services (the registry lists them
+    // under "closing" for the next window); nothing they emit while their
+    // connections go may reach this half-destroyed workspace.
+    for (const auto& entry : closing_)
+        QObject::disconnect(entry.item.get(), nullptr, this, nullptr);
 }
 
 Agent::Agent(QString title, QString directory, QString activity, QColor accent,
@@ -1637,14 +1642,11 @@ bool Workspace::removeAgent(const QString& id) {
             "This agent may still be running. End it in the agent before removing it."));
     return discardAgent(id);
 }
-bool Workspace::discardAgent(const QString& id) {
-    const auto* item = agent(id);
-    if (!item)
-        return false;
+Workspace::ClosingAgent
+Workspace::takeAgent(std::vector<std::unique_ptr<Agent>>::iterator position) {
+    const auto* item = position->get();
+    const auto id = item->agentId();
     const auto item_category = agents_.value(id).category;
-    const auto closed_agent = agents_.value(id);
-    const auto closed_title = item->title();
-    const auto previous = checkpoint();
     // A closed agent hands focus to its right neighbor in its own category, or
     // to its left one at that category's end, even while another strip is shown.
     QVariantList list;
@@ -1661,19 +1663,18 @@ bool Workspace::discardAgent(const QString& id) {
             if (category.selected == id)
                 category.selected = next;
     }
-    const auto position = std::find_if(items_.begin(), items_.end(),
-                                       [&](const auto& value) { return value.get() == item; });
-    const auto index = std::distance(items_.begin(), position);
-    auto retained = std::move(*position);
+    ClosingAgent taken;
+    taken.index = static_cast<std::size_t>(std::distance(items_.begin(), position));
+    taken.before =
+        std::next(position) != items_.end() ? (*std::next(position))->agentId() : QString();
+    taken.record = agents_.value(id);
+    taken.title = item->title();
+    taken.item = std::move(*position);
     items_.erase(position);
     agents_.remove(id);
-    restoreSelection();
-    if (!save()) {
-        items_.insert(items_.begin() + index, std::move(retained));
-        rollback(previous);
-        emit errorChanged();
-        return false;
-    }
+    return taken;
+}
+void Workspace::forgetAgent(const QString& id, const Agent* item) {
     reconnects_.remove(id);
     reattaches_.remove(id);
     worked_remotely_.remove(id);
@@ -1686,10 +1687,27 @@ bool Workspace::discardAgent(const QString& id) {
     if (choice_)
         std::erase_if(choice_->candidates,
                       [&id](const TabCandidate& candidate) { return candidate.session == id; });
-    rememberClosed(closed_agent, closed_title);
+}
+bool Workspace::discardAgent(const QString& id) {
+    const auto position = std::find_if(items_.begin(), items_.end(),
+                                       [&](const auto& value) { return value->agentId() == id; });
+    if (position == items_.end())
+        return false;
+    const auto previous = checkpoint();
+    auto taken = takeAgent(position);
+    restoreSelection();
+    if (!save()) {
+        items_.insert(items_.begin() + static_cast<std::ptrdiff_t>(taken.index),
+                      std::move(taken.item));
+        rollback(previous);
+        emit errorChanged();
+        return false;
+    }
+    forgetAgent(id, taken.item.get());
+    rememberClosed(taken.record, taken.title);
     changed();
     // QML delegates can still hold the removed object during this call stack.
-    retained.release()->deleteLater();
+    taken.item.release()->deleteLater();
     return true;
 }
 QString Workspace::homeDirectory() const { return QDir::homePath(); }
@@ -2080,6 +2098,15 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
     // The factory view's pinned orchestrator; earlier builds ignore it.
     if (!home_agent_id_.isEmpty())
         root.insert(QStringLiteral("homeAgent"), home_agent_id_);
+    // Agents closed whose processes have not yet ended (closeAgent); earlier
+    // builds and the phone gateway ignore the list.
+    QJsonArray closing;
+    for (const auto& entry : closing_)
+        closing.append(agentRecord(entry.record, entry.item->agentId(), entry.title));
+    for (const auto& kept : unreadable_closing_)
+        closing.append(kept);
+    if (!closing.isEmpty())
+        root.insert(QStringLiteral("closing"), closing);
     const auto data = QJsonDocument(root).toJson(QJsonDocument::Compact);
     if (data.size() > qint64{1024} * 1024)
         return saveError(QStringLiteral("Workspace metadata exceeds the 1 MiB limit."));
@@ -2923,7 +2950,7 @@ void Workspace::loadManagedResume(const QJsonValue& value, AgentRecord& agent) {
 void Workspace::loadAgents(const QJsonArray& agents) {
     QMap<QString, AgentRecord> metadata;
     std::vector<std::unique_ptr<Agent>> restored;
-    const auto directory = QFileInfo(storage_path_).absolutePath();
+    QSet<QString> taken;
     unreadable_agents_ = {};
     QStringList why;
     for (const auto& value : agents) {
@@ -2931,67 +2958,9 @@ void Workspace::loadAgents(const QJsonArray& agents) {
         // the whole workspace: its service may still be running, and a later
         // lapis may read it.
         try {
-            const auto object = value.toObject();
-            const auto id = object.value(QStringLiteral("id")).toString();
-            const auto title = object.value(QStringLiteral("title")).toString();
-            const auto harness =
-                object.value(QStringLiteral("harness")).toString(QStringLiteral("codex"));
-            if (!find_harness(harness) || (object.contains(QStringLiteral("harness")) &&
-                                           !object.value(QStringLiteral("harness")).isString()))
-                throw std::runtime_error("Invalid agent harness");
-            AgentRecord agent{object.value(QStringLiteral("category")).toString(),
-                              object.value(QStringLiteral("endpoint")).toString(),
-                              {object.value(QStringLiteral("program")).toString(),
-                               {},
-                               object.value(QStringLiteral("directory")).toString(),
-                               {100, 30},
-                               harness == QStringLiteral("codex") ? session::AgentMode::codex
-                                                                  : session::AgentMode::terminal},
-                              harness};
-            const auto resume = object.value(QStringLiteral("resumeThread")).toString();
-            if ((object.contains(QStringLiteral("resumeThread")) &&
-                 !object.value(QStringLiteral("resumeThread")).isString()) ||
-                (!resume.isEmpty() &&
-                 (harness != QStringLiteral("codex") || QUuid(resume).isNull())))
-                throw std::runtime_error("Invalid native resume identity");
-            if (!resume.isEmpty())
-                agent.launch.arguments = {QStringLiteral("resume"), resume};
-            // The full literal argument list, when recorded, is what the running
-            // service was launched with; it is part of the launch fingerprint.
-            if (object.contains(QStringLiteral("arguments")))
-                agent.launch.arguments = savedArguments(object.value(QStringLiteral("arguments")));
-            if (object.contains(QStringLiteral("managedResume")))
-                loadManagedResume(object.value(QStringLiteral("managedResume")), agent);
-            agent.named = object.value(QStringLiteral("named")).toBool();
-            agent.auto_title = object.value(QStringLiteral("autoTitle")).toBool();
-            // A pin that is not a conversation id is dropped; it is found again.
-            if (const auto pinned = object.value(QStringLiteral("conversation")).toString();
-                !QUuid::fromString(pinned).isNull())
-                agent.conversation = pinned;
-            // "account" named a retired lapis-managed plan; it is ignored and
-            // dropped on the next save, and the agent uses its machine's own
-            // sign-in from its next start (see prepareStart).
-            // Claude agents saved before the service adapter ran as terminals; the
-            // launch must match the one their running service was created with.
-            if (harness == QStringLiteral("claude") &&
-                object.value(QStringLiteral("mode")).toString() == QStringLiteral("claude"))
-                agent.launch.agent = session::AgentMode::claude;
-            if (QUuid(id).isNull() || metadata.contains(id) || !validName(title) ||
-                std::none_of(categories_.begin(), categories_.end(),
-                             [&](const auto& category) { return category.id == agent.category; }) ||
-                agent.endpoint != QDir(directory).filePath(id + QStringLiteral(".sock")) ||
-                !QFileInfo(agent.launch.program).isAbsolute() ||
-                agent.launch.program.size() > 4096 || agent.launch.program.contains(QChar::Null) ||
-                !QFileInfo(agent.launch.directory).isAbsolute() ||
-                agent.launch.directory.size() > 4096 ||
-                agent.launch.directory.contains(QChar::Null))
-                throw std::runtime_error("Invalid agent record");
-            auto item = std::make_unique<Agent>(title, agent.launch.directory, QString{},
-                                                QColor(QStringLiteral("#87cbac")), "");
-            item->setAgentId(id);
-            item->setHarnessId(harness);
-            item->setStatusSource(statusSource(agent));
-            metadata.insert(id, agent);
+            auto [agent, item] = readAgent(value.toObject(), taken);
+            taken.insert(item->agentId());
+            metadata.insert(item->agentId(), agent);
             restored.push_back(std::move(item));
         } catch (const std::exception& error) {
             const auto title = value.toObject().value(QStringLiteral("title")).toString().left(80);
@@ -3005,6 +2974,96 @@ void Workspace::loadAgents(const QJsonArray& agents) {
     if (!why.isEmpty())
         fail(QStringLiteral("Not restored, kept in the registry: ") +
              why.join(QStringLiteral("; ")));
+}
+// Agents a window closed whose processes had not ended when it last saved.
+// They stay out of every list; connectRestoredAgents finishes each close.
+void Workspace::loadClosing(const QJsonArray& closing) {
+    closing_.clear();
+    unreadable_closing_ = {};
+    QSet<QString> taken(agents_.keyBegin(), agents_.keyEnd());
+    for (const auto& value : closing) {
+        try {
+            auto [agent, item] = readAgent(value.toObject(), taken);
+            taken.insert(item->agentId());
+            item->setClosing(true);
+            ClosingAgent entry;
+            entry.title = item->title();
+            entry.item = std::move(item);
+            entry.record = agent;
+            entry.index = items_.size();
+            entry.restored = true;
+            entry.since.start();
+            closing_.push_back(std::move(entry));
+        } catch (const std::exception& error) {
+            // Kept as read, never restarted: a later build may finish it.
+            qWarning().noquote()
+                << "Closing agent not read:"
+                << value.toObject().value(QStringLiteral("title")).toString().left(80)
+                << error.what();
+            unreadable_closing_.append(value);
+        }
+    }
+}
+std::pair<Workspace::AgentRecord, std::unique_ptr<Agent>>
+Workspace::readAgent(const QJsonObject& object, const QSet<QString>& taken) const {
+    const auto directory = QFileInfo(storage_path_).absolutePath();
+    const auto id = object.value(QStringLiteral("id")).toString();
+    const auto title = object.value(QStringLiteral("title")).toString();
+    const auto harness = object.value(QStringLiteral("harness")).toString(QStringLiteral("codex"));
+    if (!find_harness(harness) || (object.contains(QStringLiteral("harness")) &&
+                                   !object.value(QStringLiteral("harness")).isString()))
+        throw std::runtime_error("Invalid agent harness");
+    AgentRecord agent{object.value(QStringLiteral("category")).toString(),
+                      object.value(QStringLiteral("endpoint")).toString(),
+                      {object.value(QStringLiteral("program")).toString(),
+                       {},
+                       object.value(QStringLiteral("directory")).toString(),
+                       {100, 30},
+                       harness == QStringLiteral("codex") ? session::AgentMode::codex
+                                                          : session::AgentMode::terminal},
+                      harness};
+    const auto resume = object.value(QStringLiteral("resumeThread")).toString();
+    if ((object.contains(QStringLiteral("resumeThread")) &&
+         !object.value(QStringLiteral("resumeThread")).isString()) ||
+        (!resume.isEmpty() && (harness != QStringLiteral("codex") || QUuid(resume).isNull())))
+        throw std::runtime_error("Invalid native resume identity");
+    if (!resume.isEmpty())
+        agent.launch.arguments = {QStringLiteral("resume"), resume};
+    // The full literal argument list, when recorded, is what the running
+    // service was launched with; it is part of the launch fingerprint.
+    if (object.contains(QStringLiteral("arguments")))
+        agent.launch.arguments = savedArguments(object.value(QStringLiteral("arguments")));
+    if (object.contains(QStringLiteral("managedResume")))
+        loadManagedResume(object.value(QStringLiteral("managedResume")), agent);
+    agent.named = object.value(QStringLiteral("named")).toBool();
+    agent.auto_title = object.value(QStringLiteral("autoTitle")).toBool();
+    // A pin that is not a conversation id is dropped; it is found again.
+    if (const auto pinned = object.value(QStringLiteral("conversation")).toString();
+        !QUuid::fromString(pinned).isNull())
+        agent.conversation = pinned;
+    // "account" named a retired lapis-managed plan; it is ignored and
+    // dropped on the next save, and the agent uses its machine's own
+    // sign-in from its next start (see prepareStart).
+    // Claude agents saved before the service adapter ran as terminals; the
+    // launch must match the one their running service was created with.
+    if (harness == QStringLiteral("claude") &&
+        object.value(QStringLiteral("mode")).toString() == QStringLiteral("claude"))
+        agent.launch.agent = session::AgentMode::claude;
+    if (QUuid(id).isNull() || taken.contains(id) || !validName(title) ||
+        std::none_of(categories_.begin(), categories_.end(),
+                     [&](const auto& category) { return category.id == agent.category; }) ||
+        agent.endpoint != QDir(directory).filePath(id + QStringLiteral(".sock")) ||
+        !QFileInfo(agent.launch.program).isAbsolute() || agent.launch.program.size() > 4096 ||
+        agent.launch.program.contains(QChar::Null) ||
+        !QFileInfo(agent.launch.directory).isAbsolute() || agent.launch.directory.size() > 4096 ||
+        agent.launch.directory.contains(QChar::Null))
+        throw std::runtime_error("Invalid agent record");
+    auto item = std::make_unique<Agent>(title, agent.launch.directory, QString{},
+                                        QColor(QStringLiteral("#87cbac")), "");
+    item->setAgentId(id);
+    item->setHarnessId(harness);
+    item->setStatusSource(statusSource(agent));
+    return {std::move(agent), std::move(item)};
 }
 void Workspace::lockRegistry() {
     registry_lock_ = std::make_unique<QLockFile>(storage_path_ + QStringLiteral(".lock"));
@@ -3059,10 +3118,12 @@ void Workspace::restore() {
             (root.value(QStringLiteral("version")).toInt() != 1 &&
              root.value(QStringLiteral("version")).toInt() != 2) ||
             !root.value(QStringLiteral("agents")).isArray() || groups.isEmpty() ||
-            groups.size() > 32 || agents.size() > 128)
+            groups.size() > 32 || agents.size() > 128 ||
+            root.value(QStringLiteral("closing")).toArray().size() > 128)
             throw std::runtime_error("Invalid workspace registry format");
         loadCategories(groups);
         loadAgents(agents);
+        loadClosing(root.value(QStringLiteral("closing")).toArray());
         active_category_ = root.value(QStringLiteral("activeCategory")).toString();
         if (std::none_of(categories_.begin(), categories_.end(),
                          [&](const auto& category) { return category.id == active_category_; }))
@@ -3074,6 +3135,7 @@ void Workspace::restore() {
     } catch (const std::exception& error) {
         items_.clear();
         agents_.clear();
+        closing_.clear();
         categories_ = {{QStringLiteral("general"), QStringLiteral("General"), {}}};
         active_category_ = QStringLiteral("general");
         focused_index_ = -1;
@@ -3091,6 +3153,18 @@ void Workspace::connectRestoredAgents() {
     };
     std::vector<RestartPlan> restarting;
     QStringList restart_failures;
+    // Closes an earlier window left in flight: a service that is gone took
+    // its agent with it, so it is never started again; a running one is
+    // reattached out of sight below and asked to end again.
+    const auto before = closing_.size();
+    std::erase_if(closing_, [](const ClosingAgent& entry) {
+        if (serviceRunning(entry.record.endpoint))
+            return false;
+        qInfo().noquote() << "Finished closing" << entry.title;
+        return true;
+    });
+    if (closing_.size() != before && !save())
+        fail(error_);
     for (const auto& item : items_) {
         watch(item.get());
         const auto entry = agents_.find(item->agentId());
@@ -3138,6 +3212,15 @@ void Workspace::connectRestoredAgents() {
                 Qt::UniqueConnection);
         unsized_timer_.start(unsized_wait_ms);
     }
+    // The window finishes them; a helper keeps them in the registry.
+    if (!headless_)
+        for (auto& entry : closing_) {
+            auto* item = entry.item.get();
+            connect(item, &Agent::connectionChanged, this, [this, item] { finishClosing(item); });
+            armCloseDeadline(entry);
+            item->startLive(entry.record.endpoint, entry.record.launch,
+                            session::wire::AttachMode::reconnect);
+        }
     if (restore_agents_ && !headless_)
         watchNetwork();
 }
@@ -3291,45 +3374,207 @@ bool Workspace::closeAgent(const QString& id, bool abandon) {
         return false;
     auto* item = agent(id);
     if (!item)
-        return false;
+        return closingAgentIds().contains(id); // a second close of one already going
     if (!item->live() || item->connectionState() == QStringLiteral("ended") ||
         (abandon && !item->reachable()))
         return discardAgent(id);
-    if (item->closing())
-        return true;
-    if (!item->terminate())
-        return fail(QStringLiteral("lapis could not reach this agent's session to end it. "
-                                   "Reconnect it, or exit the agent, then close it."));
+    const auto unreachable = QStringLiteral("lapis could not reach this agent's session to end it. "
+                                            "Reconnect it, or exit the agent, then close it.");
+    if (!item->reachable())
+        return fail(unreachable);
+    // The agent leaves every list now, before the service is asked to end
+    // it; the registry records it as closing in the same save, so a relaunch
+    // mid-close neither shows it nor starts it again.
+    const auto position = std::find_if(items_.begin(), items_.end(),
+                                       [&](const auto& value) { return value.get() == item; });
+    const auto previous = checkpoint();
+    closing_.push_back(takeAgent(position));
+    restoreSelection();
+    if (!save()) {
+        auto taken = std::move(closing_.back());
+        closing_.pop_back();
+        items_.insert(items_.begin() + static_cast<std::ptrdiff_t>(taken.index),
+                      std::move(taken.item));
+        rollback(previous);
+        emit errorChanged();
+        return false;
+    }
+    closing_.back().since.start();
+    closing_.back().attempted = true;
+    // Nothing it does while ending may chime, mark or count: only its end.
+    disconnect(item, nullptr, this, nullptr);
+    connect(item, &Agent::connectionChanged, this, [this, item] { finishClosing(item); });
     item->setClosing(true);
+    forgetAgent(id, item);
+    changed();
+    if (!item->terminate()) {
+        returnClosing(item, unreachable);
+        return false;
+    }
+    // Looked up again: the signals above may have reached other code.
+    const auto entry = closingEntry(item);
+    if (entry == closing_.end())
+        return true;
+    entry->terminate_sent = true;
+    armCloseDeadline(*entry);
+    qInfo().noquote() << "Closing" << entry->title << "in the background";
+    // Reopen's entry reads the CLI's resume record, which can walk its
+    // conversation folders: after this call, not before the agent is gone.
+    QTimer::singleShot(0, this, [this, id] {
+        const auto found =
+            std::find_if(closing_.begin(), closing_.end(),
+                         [&id](const ClosingAgent& value) { return value.item->agentId() == id; });
+        if (found != closing_.end())
+            rememberClosed(found->record, found->title, id);
+    });
     return true;
 }
 
+QStringList Workspace::closingAgentIds() const {
+    QStringList ids;
+    for (const auto& entry : closing_)
+        ids.append(entry.item->agentId());
+    return ids;
+}
+std::vector<Workspace::ClosingAgent>::iterator Workspace::closingEntry(const Agent* item) {
+    return std::find_if(closing_.begin(), closing_.end(),
+                        [item](const ClosingAgent& entry) { return entry.item.get() == item; });
+}
+// The service hangs up the process, then sends SIGTERM at 1.5 s and SIGKILL
+// at 3 s (PtyProcess::hangup) and reports `ended` as it stops. Ten seconds
+// covers that escalation and a loaded machine; past it, a service that still
+// runs is holding a live agent, which must not stay invisible.
+void Workspace::armCloseDeadline(ClosingAgent& entry) {
+    entry.serial = ++closing_serial_;
+    QTimer::singleShot(
+        close_deadline_, this,
+        [this, guarded = QPointer<Agent>(entry.item.get()), serial = entry.serial] {
+            if (!guarded)
+                return;
+            const auto found = closingEntry(guarded);
+            if (found == closing_.end() || found->serial != serial)
+                return;
+            if (!serviceRunning(found->record.endpoint)) {
+                endClosing(guarded);
+                return;
+            }
+            const auto seconds = std::chrono::ceil<std::chrono::seconds>(close_deadline_).count();
+            returnClosing(guarded,
+                          QStringLiteral("%1 did not end within %2 s of closing, so it is "
+                                         "back in its place and may still be running. Exit "
+                                         "it inside the agent, then close it.")
+                              .arg(found->title)
+                              .arg(seconds));
+        });
+}
+
 void Workspace::finishClosing(Agent* item) {
-    if (!item->closing())
+    const auto found = closingEntry(item);
+    if (found == closing_.end())
         return;
     const auto state = item->connectionState();
+    const bool failed_state =
+        state == QStringLiteral("disconnected") || state == QStringLiteral("replaced");
+    if (!failed_state)
+        found->attempted = true;
+    if (state == QStringLiteral("ready") && !found->terminate_sent) {
+        // Read back mid-close after a relaunch and reattached: ask again.
+        if (!item->terminate()) {
+            returnClosing(item, QStringLiteral("lapis could not finish closing %1 after "
+                                               "restarting; it is back in its place.")
+                                    .arg(found->title));
+            return;
+        }
+        found->terminate_sent = true;
+        armCloseDeadline(*found);
+        return;
+    }
+    const QPointer<Agent> guarded(item);
     if (state == QStringLiteral("ended")) {
-        const QPointer<Agent> guarded(item);
         // Remove outside the connection's own signal delivery.
         QMetaObject::invokeMethod(
             this,
             [this, guarded] {
-                if (guarded && guarded->closing() && removeAgent(guarded->agentId()))
-                    return;
                 if (guarded)
-                    guarded->setClosing(false);
+                    endClosing(guarded);
             },
             Qt::QueuedConnection);
         return;
     }
-    if (state == QStringLiteral("disconnected") || state == QStringLiteral("replaced")) {
-        // A session service older than the close request rejects it and drops
-        // this view while its agent keeps running: reattach and say so.
-        item->setClosing(false);
-        fail(QStringLiteral("This agent's session service predates closing from lapis, so the "
-                            "agent is still running. Exit it inside the agent, then close it."));
-        item->reconnect();
-    }
+    if (!failed_state || !found->attempted)
+        return;
+    QMetaObject::invokeMethod(
+        this,
+        [this, guarded, restored = found->restored] {
+            // A connection starting again passes through "disconnected" first.
+            if (!guarded || closingEntry(guarded) == closing_.end() ||
+                (guarded->connectionState() != QStringLiteral("disconnected") &&
+                 guarded->connectionState() != QStringLiteral("replaced")))
+                return;
+            // The service owns the process: once it is gone, so is the agent.
+            if (!serviceRunning(closingEntry(guarded)->record.endpoint)) {
+                endClosing(guarded);
+                return;
+            }
+            // A session service older than the close request rejects it and
+            // drops this view while its agent keeps running: bring it back,
+            // reattach and say so.
+            returnClosing(guarded,
+                          restored ? QStringLiteral("lapis could not reattach to finish closing "
+                                                    "this agent after restarting; it is still "
+                                                    "running and back in its place.")
+                                   : QStringLiteral("This agent's session service predates "
+                                                    "closing from lapis, so the agent is still "
+                                                    "running. Exit it inside the agent, then "
+                                                    "close it."));
+            guarded->reconnect();
+        },
+        Qt::QueuedConnection);
+}
+
+void Workspace::endClosing(Agent* item) {
+    const auto found = closingEntry(item);
+    if (found == closing_.end())
+        return;
+    auto entry = std::move(*found);
+    closing_.erase(found);
+    qInfo().noquote() << "Closed" << entry.title << "after"
+                      << (entry.since.isValid() ? entry.since.elapsed() : 0) << "ms";
+    // A failed save leaves it under "closing"; the next start drops it once
+    // its service is gone.
+    if (!save())
+        emit errorChanged();
+    entry.item.release()->deleteLater();
+}
+
+void Workspace::returnClosing(Agent* item, const QString& message) {
+    const auto found = closingEntry(item);
+    if (found == closing_.end())
+        return;
+    auto entry = std::move(*found);
+    closing_.erase(found);
+    const auto id = item->agentId();
+    item->setClosing(false);
+    disconnect(item, nullptr, this, nullptr);
+    if (category(entry.record.category) == nullptr)
+        entry.record.category = active_category_;
+    auto position = std::find_if(items_.begin(), items_.end(), [&](const auto& value) {
+        return !entry.before.isEmpty() && value->agentId() == entry.before;
+    });
+    if (position == items_.end())
+        position =
+            items_.begin() + static_cast<std::ptrdiff_t>(std::min(entry.index, items_.size()));
+    items_.insert(position, std::move(entry.item));
+    agents_.insert(id, entry.record);
+    watch(item);
+    if (std::erase_if(closed_, [&id](const ClosedAgent& closed) { return closed.agent_id == id; }) >
+        0)
+        emit closedChanged();
+    qWarning().noquote() << "Close failed; returned" << entry.title << "-" << message;
+    if (!save())
+        emit errorChanged();
+    changed();
+    fail(message);
 }
 void Agent::restoreUnseen(bool unseen, qint64 neededAtMs) {
     needed_at_ms_ = std::max<qint64>(0, neededAtMs);
@@ -3467,14 +3712,14 @@ Agent::StatusSource Workspace::statusSource(const AgentRecord& agent) {
                                                             : Agent::StatusSource::output;
 }
 // Command-Shift-T brings it back, resuming its conversation where it can.
-void Workspace::rememberClosed(const AgentRecord& agent, const QString& title) {
+void Workspace::rememberClosed(const AgentRecord& agent, const QString& title, const QString& id) {
     if (fixture_mode_)
         return;
     auto plan = restoredLaunch(agent);
     if (!plan)
         return;
     closed_.push_back({agent.category, title, agent.harness, std::move(*plan),
-                       QFileInfo(agent.launch.program).fileName() == QStringLiteral("ssh")});
+                       QFileInfo(agent.launch.program).fileName() == QStringLiteral("ssh"), id});
     if (closed_.size() > 10)
         closed_.erase(closed_.begin());
     emit closedChanged();

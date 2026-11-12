@@ -81,8 +81,9 @@ class Agent final : public QObject {
     Q_PROPERTY(qreal historyPosition READ historyPosition NOTIFY historyChanged)
     Q_PROPERTY(qreal historySpan READ historySpan NOTIFY historyChanged)
     Q_PROPERTY(QColor accent READ accent CONSTANT)
-    // True while a close request waits for the process to end; cleared if the
-    // service rejects the close and the agent remains attached.
+    // True while a close request waits for the process to end, when the
+    // agent is already out of every list (Workspace::closeAgent); cleared if
+    // the close fails and the agent returns.
     Q_PROPERTY(bool closing READ closing NOTIFY statusChanged)
     // Finished a turn or started needing a response while the person was not
     // looking at it; cleared for good once they look (Workspace::looking).
@@ -533,11 +534,19 @@ class Workspace final : public QObject {
     [[nodiscard]] bool holdsRegistry() const {
         return registry_lock_ != nullptr && registry_lock_->isLocked();
     }
-    // Close an agent. A reachable agent is ended through its session
-    // service first and closes once the process exits. An unreachable one
-    // stays unless `abandon` accepts that it may still be running outside
-    // lapis.
+    // Close an agent. A reachable agent leaves every list at once, within
+    // this call, while its session service ends the process in the
+    // background; it returns to its place with an error if the close fails
+    // (the service refuses, or no `ended` arrives within the close deadline
+    // while the service still runs). An unreachable one stays unless
+    // `abandon` accepts that it may still be running outside lapis.
     Q_INVOKABLE bool closeAgent(const QString& id, bool abandon = false);
+    // Agents closed but not yet ended, hidden from every list.
+    [[nodiscard]] QStringList closingAgentIds() const;
+    // How long a closed agent may take to end before it returns (10 s).
+    void setCloseDeadlineForTesting(std::chrono::milliseconds deadline) {
+        close_deadline_ = deadline;
+    }
     Q_INVOKABLE bool restartAgent(const QString& id);
     // Ends an agent's CLI and starts it again in its card, resuming its
     // conversation as a restart does: a CLI rereads its settings (Claude
@@ -861,7 +870,51 @@ class Workspace final : public QObject {
     void loadCategories(const QJsonArray& groups);
     static void loadManagedResume(const QJsonValue& value, AgentRecord& agent);
     void loadAgents(const QJsonArray& agents);
+    // One saved agent record and the card it restores; throws when invalid.
+    // `taken` holds the ids already read, which a duplicate may not reuse.
+    std::pair<AgentRecord, std::unique_ptr<Agent>> readAgent(const QJsonObject& object,
+                                                             const QSet<QString>& taken) const;
+    void loadClosing(const QJsonArray& closing);
+    // An agent closed from the window whose process has not yet ended: gone
+    // from every list the window, the phone and agent_state.json show, kept
+    // here with its connection until its service reports `ended`. The
+    // registry saves it under "closing", which earlier builds and the phone
+    // gateway ignore, so a relaunch mid-close neither shows nor restarts it.
+    struct ClosingAgent {
+        std::unique_ptr<Agent> item;
+        AgentRecord record;
+        QString title;
+        // Where it returns if the close fails: in front of the agent that
+        // followed it, else at its old index.
+        std::size_t index{};
+        QString before;
+        // Which close (or deadline) is current; a stale deadline is ignored.
+        quint64 serial{};
+        // Read back from the registry: it reattaches before ending again.
+        bool restored{};
+        bool terminate_sent{};
+        // Its connection has tried to attach since the close began; before
+        // that, "disconnected" is only the state a new card starts in.
+        bool attempted{};
+        QElapsedTimer since;
+    };
+    std::vector<ClosingAgent> closing_;
+    quint64 closing_serial_{};
+    QJsonArray unreadable_closing_;
+    std::chrono::milliseconds close_deadline_{std::chrono::seconds(10)};
+    std::vector<ClosingAgent>::iterator closingEntry(const Agent* item);
+    // Removes the agent from items_ and agents_ and moves each category's
+    // selection of it to its neighbour; nothing is saved or deleted.
+    ClosingAgent takeAgent(std::vector<std::unique_ptr<Agent>>::iterator position);
+    // The per-agent bookkeeping dropped once an agent leaves the lists.
+    void forgetAgent(const QString& id, const Agent* item);
+    void armCloseDeadline(ClosingAgent& entry);
     void finishClosing(Agent* item);
+    // The process ended: drop the closing agent and save.
+    void endClosing(Agent* item);
+    // The close failed: the agent returns to its place, still running, and
+    // `message` says so.
+    void returnClosing(Agent* item, const QString& message);
     [[nodiscard]] static Agent::StatusSource statusSource(const AgentRecord& agent);
     [[nodiscard]] static QStringList savedArguments(const QJsonValue& value);
     static void applyStartupDefaults(const AgentRecord& agent, ResumeLaunch& plan);
@@ -873,10 +926,13 @@ class Workspace final : public QObject {
         QString harness;
         ResumeLaunch plan;
         bool remote{};
+        // The closed agent's id, in memory only: a close that fails takes
+        // its reopen entry back.
+        QString agent_id{};
     };
     // Newest last; at most ten.
     std::vector<ClosedAgent> closed_;
-    void rememberClosed(const AgentRecord& agent, const QString& title);
+    void rememberClosed(const AgentRecord& agent, const QString& title, const QString& id = {});
     // Marks an agent saved at work as finished if its first settled status
     // after the restart is not work; `recent` also reports finishedWhileAway.
     void watchFinishWhileAway(Agent* item, bool recent);

@@ -767,6 +767,10 @@ bool waitFor(const std::function<bool()>& condition, int milliseconds) {
     }
     return condition();
 }
+// No agent listed and none still closing: every close has ended its process.
+bool closedFully(const Workspace& workspace) {
+    return workspace.agents().isEmpty() && workspace.closingAgentIds().isEmpty();
+}
 
 // The choices Tab's move log beside a registry holds.
 int loggedChoices(const QString& storagePath) {
@@ -1908,7 +1912,7 @@ void agentsStartWithoutParentSessionMarkers() {
         auto* agent = workspace.focusedAgent();
         require(waitFor([agent] { return agent->inputReady(); }, 10000), "agent ready");
         require(workspace.closeAgent(agent->agentId()) &&
-                    waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+                    waitFor([&workspace] { return closedFully(workspace); }, 10000),
                 "marker fixture closes");
     }
 }
@@ -2067,7 +2071,7 @@ void joinedViewStaysInSync() {
     require(phone.waitForText(QStringLiteral("got:reattached mac"), 5000),
             "the phone receives input from the new desktop attachment");
     require(workspace.closeAgent(agent->agentId()) &&
-                waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+                waitFor([&workspace] { return closedFully(workspace); }, 10000),
             "the joined fixture closes");
 }
 
@@ -2175,7 +2179,7 @@ void updaterLifecycle() {
                         .contains(normal_exit ? "exit 0" : "stopped after timeout"),
                     "timeout outcome is recorded");
             require(workspace->closeAgent(id) &&
-                        waitFor([&] { return workspace->agents().isEmpty(); }, 10000),
+                        waitFor([&] { return closedFully(*workspace); }, 10000),
                     "close updater fixture agent");
         }
 #if defined(Q_OS_UNIX)
@@ -2208,7 +2212,7 @@ void updaterOutputIsDrainedWithABoundedTail() {
     require(logged.contains("tail-marker") && logged.size() < 2048,
             "only the bounded updater tail reaches the log");
     require(workspace.closeAgent(agent->agentId()) &&
-                waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+                waitFor([&workspace] { return closedFully(workspace); }, 10000),
             "close output fixture agent");
 }
 
@@ -2255,7 +2259,7 @@ void pinnedCliIsNotUpdated() {
             "only the unpinned CLI was updated");
     for (const auto& id : {pinned->agentId(), updated->agentId()})
         require(workspace.closeAgent(id), "close a pinned-update fixture agent");
-    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+    require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
             "pinned-update fixture agents close");
 }
 
@@ -2325,7 +2329,7 @@ void explicitLaunchesUseUpdaterPolicy() {
                 "reattachment keeps the same process without updating");
         if (mode == lapis::session::wire::AttachMode::discover)
             require(workspace.closeAgent(agent->agentId()) &&
-                        waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+                        waitFor([&workspace] { return closedFully(workspace); }, 10000),
                     "explicit fixture closes after both reattachments");
     }
     options.mode = lapis::session::wire::AttachMode::create;
@@ -2339,7 +2343,7 @@ void explicitLaunchesUseUpdaterPolicy() {
                 !QFileInfo::exists(fixture.root.filePath("harness-updates.log")),
             "the explicit update opt-out is honored");
     require(workspace.closeAgent(agent->agentId()) &&
-                waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+                waitFor([&workspace] { return closedFully(workspace); }, 10000),
             "update-disabled fixture closes");
 
     options.updateHarnesses = true;
@@ -2356,10 +2360,9 @@ void explicitLaunchesUseUpdaterPolicy() {
                 "constructor-supplied update pins do not create the update marker");
         require(!QFileInfo::exists(fixture.root.filePath(QStringLiteral("harness-updates.log"))),
                 "constructor-supplied update pins do not log a startup update");
-        require(
-            pinnedWorkspace.closeAgent(pinnedAgent->agentId()) &&
-                waitFor([&pinnedWorkspace] { return pinnedWorkspace.agents().isEmpty(); }, 10000),
-            "constructor-pinned fixture agent closes");
+        require(pinnedWorkspace.closeAgent(pinnedAgent->agentId()) &&
+                    waitFor([&pinnedWorkspace] { return closedFully(pinnedWorkspace); }, 10000),
+                "constructor-pinned fixture agent closes");
     }
 }
 
@@ -2606,7 +2609,7 @@ void staleDescriptorReattachesTheRunningService() {
         require(screenText(agent->snapshot()).contains(QStringLiteral("grok ready")),
                 "it is the same running agent, not a new one");
         require(workspace.closeAgent(id, true) &&
-                    waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+                    waitFor([&workspace] { return closedFully(workspace); }, 10000),
                 "the stand-in agent closes");
     }
     qputenv("PATH", path);
@@ -2810,7 +2813,7 @@ exec sleep 600
         // The unreachable one is abandoned; the others end.
         for (const auto& closing : {older_id, booted_id, id, typo->agentId()})
             require(workspace.closeAgent(closing, true), "close the stand-in agents");
-        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+        require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
@@ -3005,7 +3008,7 @@ for n, line in enumerate(sys.stdin, 1):
                 "the remote relay runs the selected profile's notify program");
         for (const auto& closing : {older_id, claude->agentId(), codex->agentId()})
             require(workspace.closeAgent(closing, true), "close the stand-in agents");
-        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+        require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
@@ -3132,7 +3135,7 @@ for n, line in enumerate(sys.stdin, 1):
                         10000));
                     static_cast<void>(workspace.closeAgent(item->agentId()));
                 }
-            static_cast<void>(waitFor([&] { return workspace.agents().isEmpty(); }, 10000));
+            static_cast<void>(waitFor([&] { return closedFully(workspace); }, 10000));
             static_cast<void>(waitFor([&] { return !servicesListening(); }, 10000));
         });
         QHash<QString, int> pings;
@@ -3212,7 +3215,7 @@ for n, line in enumerate(sys.stdin, 1):
         require(waitFor([&] { return again->reachable(); }, 15000),
                 "the resumed agent's service is reachable");
         require(workspace.closeAgent(id), "close the stand-in agent");
-        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+        require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
                 "the stand-in agent closes");
         require(waitFor([&] { return !servicesListening(); }, 10000), "its session service exits");
     }
@@ -3277,7 +3280,7 @@ void reloadStartsAgentsAgain() {
                 "reloading the window starts the rest again");
         for (const auto& closing : {one, two, far})
             require(workspace.closeAgent(closing, true), "close the stand-in agents");
-        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+        require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
@@ -3312,7 +3315,7 @@ void agentsStartAtTheStageSize() {
         require(waitFor([item] { return item->inputReady(); }, 10000),
                 "its terminate handshake is ready");
         require(workspace.closeAgent(item->agentId(), true), "close it");
-        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000), "it closes");
+        require(waitFor([&workspace] { return closedFully(workspace); }, 10000), "it closes");
     }
     qputenv("PATH", path);
 }
@@ -3362,7 +3365,7 @@ void restoredAgentsStartAtTheStageSize() {
         require(waitFor([item] { return item->inputReady(); }, 10000),
                 "its terminate handshake is ready");
         require(workspace.closeAgent(item->agentId(), true), "close it");
-        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000), "it closes");
+        require(waitFor([&workspace] { return closedFully(workspace); }, 10000), "it closes");
     }
 }
 
@@ -3614,7 +3617,7 @@ exec sleep 600
         require(fixture.read("bin/updates") == "update\n", "both used one installer");
         for (const auto& id : {first_id, second_id})
             require(workspace.closeAgent(id, true), "close shared updater consumer");
-        require(waitFor([&] { return workspace.agents().isEmpty(); }, 10000), "consumers close");
+        require(waitFor([&] { return closedFully(workspace); }, 10000), "consumers close");
     }
 }
 
@@ -3733,7 +3736,7 @@ exit 64
                 "the local OMP overlay does not cross the ssh boundary");
         require(workspace.closeAgent(agent->agentId()), "close the local OMP stand-in");
         require(workspace.closeAgent(remote->agentId()), "close the remote OMP stand-in");
-        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+        require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
                 "the OMP stand-ins close");
     }
     if (hadConfig)
@@ -3790,7 +3793,7 @@ void wheelReachesAFullScreenProgram() {
                     10000),
                 "two wheel-up events at the cell reached the program");
         require(workspace.closeAgent(agent->agentId()), "close the stand-in");
-        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+        require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
                 "the stand-in closes");
     }
     qputenv("PATH", path);
@@ -3870,7 +3873,7 @@ void historyJumpsToTheStart() {
         require(waitFor([&] { return shows(QStringLiteral("all printed")); }, 5000),
                 "and live again");
         require(workspace.closeAgent(agent->agentId()), "close the stand-in");
-        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+        require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
                 "the stand-in closes");
     }
     qputenv("PATH", path);
@@ -3933,7 +3936,7 @@ void unseenAgentsDecodeNothing() {
         require(decoded >= 1 && decoded <= 12, "a preview decodes at most every 250 ms");
         agent->removeViewer(250);
         require(workspace.closeAgent(agent->agentId()), "close the stand-in");
-        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+        require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
                 "the stand-in closes");
     }
     qputenv("PATH", path);
@@ -4163,7 +4166,7 @@ void askedEffortReachesTheCli() {
         for (const auto& value : workspace.agents())
             if (auto* item = value.value<lapis::desktop::Agent*>())
                 static_cast<void>(workspace.closeAgent(item->agentId()));
-        static_cast<void>(waitFor([&] { return workspace.agents().isEmpty(); }, 10000));
+        static_cast<void>(waitFor([&] { return closedFully(workspace); }, 10000));
     });
     lapis::desktop::WorkspaceControl control(workspace, false);
     require(!workspace.createAgent(project, QStringLiteral("invalid model"),
@@ -4236,7 +4239,7 @@ void resumingAConversationStartsItsCli() {
             for (const auto& value : workspace.agents())
                 if (auto* item = value.value<lapis::desktop::Agent*>())
                     static_cast<void>(workspace.closeAgent(item->agentId()));
-            static_cast<void>(waitFor([&] { return workspace.agents().isEmpty(); }, 10000));
+            static_cast<void>(waitFor([&] { return closedFully(workspace); }, 10000));
         });
         require(!workspace.resumeAgent(project, QStringLiteral("x"), QStringLiteral("grok"),
                                        QStringLiteral("-rf")),
@@ -4357,7 +4360,7 @@ void resumingAConversationStartsItsCli() {
                 "the agents take input");
         for (const auto& closing : {agent->agentId(), phone->agentId(), own->agentId()})
             require(workspace.closeAgent(closing), "close the stand-in agents");
-        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+        require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
                 "the stand-in agents close");
         workspace.setHarnessArguments(
             {{QStringLiteral("grok"),
@@ -4401,7 +4404,7 @@ void resumingAConversationStartsItsCli() {
                     saved_arguments.at(index + 2) == QLatin1String("--"),
                 "managed resume index refers to the generated pair before the literal tail");
         require(workspace.closeAgent(literal->agentId()), "close the literal-argument fixture");
-        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+        require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
                 "the literal-argument fixture closes");
     }
     qputenv("PATH", path);
@@ -4788,7 +4791,7 @@ void phoneStartsAnAgentInItsCategory() {
                 "over ssh, in that machine's folder");
         for (const auto& closing : {desk->agentId(), id, far->agentId(), mac_far->agentId()})
             require(workspace.closeAgent(closing), "close the stand-in agents");
-        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+        require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
@@ -5308,7 +5311,7 @@ void harnessesUpdateBeforeNewAgents() {
                 "the second agent is ready");
         for (const auto& id : {first->agentId(), second->agentId()})
             require(workspace.closeAgent(id), "close the stand-in agents");
-        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+        require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
@@ -5351,7 +5354,7 @@ void phoneSizeYieldsToTheDesktop() {
     phone.leave();
     require(shows(desk), "the phone leaving hands the size back to the desktop");
     require(workspace.closeAgent(agent->agentId()) &&
-                waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+                waitFor([&workspace] { return closedFully(workspace); }, 10000),
             "the size fixture closes");
 }
 
@@ -5378,11 +5381,12 @@ void closeOnHistoryPageEndsTheAgent() {
     require(!agent->inputReady() && agent->reachable(),
             "a history page hides input but the agent stays reachable");
     const QPointer<lapis::desktop::Agent> guarded(agent);
-    require(workspace.closeAgent(agent->agentId(), true) && !workspace.agents().isEmpty() &&
-                guarded && guarded->closing(),
+    const auto id = agent->agentId();
+    require(workspace.closeAgent(id, true) && workspace.agents().isEmpty() &&
+                workspace.closingAgentIds() == QStringList{id} && guarded && guarded->closing(),
             "closing from a history page ends the agent instead of abandoning it");
-    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
-            "the tab closes once the process has exited");
+    require(waitFor([&workspace] { return workspace.closingAgentIds().isEmpty(); }, 10000),
+            "the close finishes once the process has exited");
 }
 
 // Restart must not replace a connection while its close request is in flight;
@@ -5662,7 +5666,7 @@ void agentsRestoreAfterServiceLoss() {
             "the restarted agent runs again");
     for (const auto& id : {resumed, fresh, foreign})
         require(workspace.closeAgent(id), "close a restored agent");
-    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+    require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
             "restored agents close");
     // Command-Shift-T brings the last closed agent back as a new tab, in its
     // folder and category, running again.
@@ -5675,7 +5679,7 @@ void agentsRestoreAfterServiceLoss() {
             "the reopened agent keeps its name and folder");
     require(waitFor([back] { return back->inputReady(); }, 10000), "the reopened agent runs");
     require(workspace.closeAgent(back->agentId()), "close it again");
-    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+    require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
             "the reopened agent closes");
 }
 
@@ -5831,7 +5835,7 @@ void reopenFailurePreservesTheRetryableManagedPlan() {
     require(waitFor([&workspace] { return workspace.agents().size() == 1; }, 10000),
             "the retried agent ends");
     require(workspace.closeAgent(retained_id), "close the retained fixture agent");
-    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+    require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
             "reopen save-failure agents close");
 }
 
@@ -5907,7 +5911,7 @@ void savedArgumentCapKeepsRegistryLoadable() {
     require(savedAgent.value(QStringLiteral("arguments")).toArray() == arguments,
             "restart preserves the capped launch");
     require(workspace.closeAgent(id) &&
-                waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+                waitFor([&workspace] { return closedFully(workspace); }, 10000),
             "the capped agent closes");
 }
 
@@ -6078,7 +6082,7 @@ void managedResumeFollowsRecovery() {
     }
     for (const auto& id : {managed, explicit_agent})
         require(workspace.closeAgent(id), "close a managed-resume agent");
-    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+    require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
             "managed-resume agents close");
 }
 
@@ -6573,8 +6577,7 @@ void printedCheckpointsResumeButNeverOverrideTheObserver() {
             "printed output cannot overwrite an observer checkpoint");
     require(fixture.waitForArguments("--yolo\n--session\nverified-id\n"),
             "only the verified identity becomes a resume argument");
-    require(workspace.closeAgent(id) &&
-                waitFor([&] { return workspace.agents().isEmpty(); }, 10000),
+    require(workspace.closeAgent(id) && waitFor([&] { return closedFully(workspace); }, 10000),
             "checkpoint fixture closes");
 
     // A legacy Claude identity predates source provenance, and its old launch
@@ -6638,7 +6641,7 @@ void printedCheckpointsResumeButNeverOverrideTheObserver() {
                 10000),
             "the legacy Claude identity remains valid after the restart");
     require(legacy_workspace.closeAgent(legacy.id) &&
-                waitFor([&legacy_workspace] { return legacy_workspace.agents().isEmpty(); }, 10000),
+                waitFor([&legacy_workspace] { return closedFully(legacy_workspace); }, 10000),
             "the legacy Claude fixture closes");
 }
 
@@ -6658,15 +6661,273 @@ void closeEndsTheAgent(const char* script, int minimum_ms) {
     auto* agent = workspace.focusedAgent();
     require(agent != nullptr, "service-backed agent");
     require(waitFor([agent] { return agent->inputReady(); }, 10000), "agent session ready");
+    const auto id = agent->agentId();
+    const QPointer<lapis::desktop::Agent> guarded(agent);
     QElapsedTimer clock;
     clock.start();
-    require(workspace.closeAgent(agent->agentId()), "close request accepted");
-    require(agent->closing() && agent->statusLabel() == QStringLiteral("Ending agent"),
-            "the tab says the agent is ending");
-    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
-            "the tab closes once the process has exited");
+    require(workspace.closeAgent(id), "close request accepted");
+    // Gone within the call, with no event-loop turn in between.
+    const auto call_us = clock.nsecsElapsed() / 1000;
+    require(workspace.agents().isEmpty() && workspace.focusedAgent() == nullptr &&
+                workspace.closingAgentIds() == QStringList{id} && guarded && guarded->closing(),
+            "the agent leaves every list before closeAgent returns");
+    std::cout << "close-to-gone: " << call_us << " us inside closeAgent, 0 event-loop turns\n";
+    require(waitFor([&workspace] { return workspace.closingAgentIds().isEmpty(); }, 10000),
+            "the process ends in the background");
     require(clock.elapsed() >= minimum_ms, "escalation waited for the hangup first");
     require(workspace.workspaceError().isEmpty(), "no error on a normal close");
+    require(waitFor([&guarded] { return guarded.isNull(); }, 2000), "the ended agent is deleted");
+}
+
+QStringList listedIds(const QVariantList& agents) {
+    QStringList ids;
+    for (const auto& value : agents)
+        ids.append(value.value<lapis::desktop::Agent*>()->agentId());
+    return ids;
+}
+QJsonObject registryRoot(const QString& path) {
+    return QJsonDocument::fromJson(readRegistry(path)).object();
+}
+QStringList registryIds(const QString& path, const char* list) {
+    QStringList ids;
+    for (const auto& value : registryRoot(path).value(QLatin1String(list)).toArray())
+        ids.append(value.toObject().value(QStringLiteral("id")).toString());
+    return ids;
+}
+
+// Closing is instant: the agent leaves the sidebar, strip, counts and focus
+// within closeAgent, the neighbour takes the stage as on final removal, and
+// the registry lists it under "closing" until its process ends. Several
+// closes in a row each go at once; the last agent of a category leaves it
+// empty; the agents left keep running.
+void closingIsInstant() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-close-XXXXXX"));
+    require(directory.isValid(), "close directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        QStringList ids;
+        for (const auto* title : {"one", "two", "three", "four"}) {
+            require(workspace.createAgent(root.filePath(QStringLiteral("project")),
+                                          QString::fromLatin1(title), QStringLiteral("grok")),
+                    "a stand-in agent");
+            ids.append(workspace.focusedAgent()->agentId());
+        }
+        for (const auto& value : workspace.agents()) {
+            auto* item = value.value<lapis::desktop::Agent*>();
+            require(waitFor([item] { return item->inputReady(); }, 10000), "it attaches");
+        }
+        const auto category = workspace.activeCategoryId();
+        const auto count = [&workspace, &category] {
+            for (const auto& value : workspace.categories()) {
+                const auto group = value.toMap();
+                if (group.value(QStringLiteral("id")).toString() == category)
+                    return group.value(QStringLiteral("agentCount")).toInt();
+            }
+            return -1;
+        };
+        require(workspace.selectAgent(ids[1]), "show the second agent");
+        int focus_changes = 0;
+        QObject::connect(&workspace, &Workspace::focusChanged,
+                         [&focus_changes] { ++focus_changes; });
+        QElapsedTimer clock;
+        clock.start();
+        require(workspace.closeAgent(ids[1]), "close the shown agent");
+        const auto call_us = clock.nsecsElapsed() / 1000;
+        require(listedIds(workspace.agents()) == QStringList({ids[0], ids[2], ids[3]}) &&
+                    listedIds(workspace.categoryAgents()) ==
+                        QStringList({ids[0], ids[2], ids[3]}) &&
+                    count() == 3 && focusedId(workspace) == ids[2] && focus_changes > 0 &&
+                    workspace.agent(ids[1]) == nullptr,
+                "within the call it is off every list and its right neighbour is shown");
+        require(registryIds(options.storagePath, "agents") ==
+                        QStringList({ids[0], ids[2], ids[3]}) &&
+                    registryIds(options.storagePath, "closing") == QStringList{ids[1]},
+                "the registry already lists it as closing, not as an agent");
+        std::cout << "close-to-gone (4 agents, registry save included): " << call_us
+                  << " us inside closeAgent, 0 event-loop turns\n";
+        // Two more at once: the shown one and the last, whose left
+        // neighbour then takes the stage.
+        require(workspace.closeAgent(ids[2]) && workspace.closeAgent(ids[3]),
+                "close two more in a row");
+        require(listedIds(workspace.agents()) == QStringList{ids[0]} &&
+                    focusedId(workspace) == ids[0] && count() == 1 &&
+                    workspace.closingAgentIds().size() == 3,
+                "both leave at once while three closes are in flight");
+        require(workspace.closeAgent(ids[2]), "closing one already closing is accepted");
+        require(waitFor([&workspace] { return workspace.closingAgentIds().isEmpty(); }, 10000),
+                "all three end in the background");
+        require(registryIds(options.storagePath, "closing").isEmpty() &&
+                    !registryRoot(options.storagePath).contains(QStringLiteral("closing")),
+                "ended agents leave the registry");
+        auto* kept = workspace.agent(ids[0]);
+        require(kept != nullptr && kept->inputReady() && workspace.workspaceError().isEmpty(),
+                "the agent left keeps running, with no error");
+        require(workspace.closeAgent(ids[0]) && workspace.agents().isEmpty() &&
+                    workspace.focusedAgent() == nullptr && count() == 0,
+                "the category's last agent leaves it empty at once");
+        require(waitFor([&workspace] { return workspace.closingAgentIds().isEmpty(); }, 10000),
+                "the last one ends");
+    }
+    qputenv("PATH", path);
+}
+
+// A close that does not finish brings the agent back to its place, still
+// running, with an error: an agent that ignores the hangup and SIGTERM
+// outlasts a short deadline here (the product's is 10 s; the service's
+// SIGKILL comes at 3 s).
+void failedCloseReturnsTheAgent() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-close-XXXXXX"));
+    require(directory.isValid(), "close directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    {
+        QFile script(root.filePath(QStringLiteral("bin/grok")));
+        require(script.open(QIODevice::WriteOnly | QIODevice::Truncate), "rewrite the stand-in");
+        script.write("#!/bin/sh\ntrap '' HUP TERM\necho \"grok ready\"\nexec sleep 600\n");
+    }
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        workspace.setCloseDeadlineForTesting(std::chrono::milliseconds(300));
+        QStringList ids;
+        for (const auto* title : {"left", "stubborn", "right"}) {
+            require(workspace.createAgent(root.filePath(QStringLiteral("project")),
+                                          QString::fromLatin1(title), QStringLiteral("grok")),
+                    "a stand-in agent");
+            ids.append(workspace.focusedAgent()->agentId());
+        }
+        for (const auto& value : workspace.agents()) {
+            auto* item = value.value<lapis::desktop::Agent*>();
+            require(waitFor([item] { return item->inputReady(); }, 10000), "it attaches");
+        }
+        require(workspace.selectAgent(ids[1]), "show the stubborn agent");
+        auto* stubborn = workspace.agent(ids[1]);
+        require(waitFor(
+                    [stubborn] {
+                        return screenText(stubborn->snapshot()).contains(QStringLiteral("ready"));
+                    },
+                    10000),
+                "the stubborn agent ignores the hangup before it is closed");
+        const bool could_reopen = workspace.canReopenAgent();
+        require(workspace.closeAgent(ids[1]) && focusedId(workspace) == ids[2] &&
+                    workspace.agent(ids[1]) == nullptr,
+                "it leaves at once");
+        require(waitFor([&workspace, &ids] { return workspace.agent(ids[1]) != nullptr; }, 3000),
+                "past the deadline it comes back");
+        auto* back = workspace.agent(ids[1]);
+        require(listedIds(workspace.agents()) == ids && !back->closing() && back->live() &&
+                    workspace.closingAgentIds().isEmpty() && focusedId(workspace) == ids[2],
+                "in its old place, without taking the stage");
+        require(workspace.workspaceError().contains(QStringLiteral("did not end within")),
+                "with an error saying so");
+        require(registryIds(options.storagePath, "agents") == ids &&
+                    registryIds(options.storagePath, "closing").isEmpty(),
+                "the registry lists it as an agent again");
+        require(workspace.canReopenAgent() == could_reopen, "its reopen entry is taken back");
+        // The service's SIGKILL ends it after all; it then closes at once.
+        require(
+            waitFor([back] { return back->connectionState() == QStringLiteral("ended"); }, 10000),
+            "the process ends later");
+        require(workspace.closeAgent(ids[1]) && workspace.agent(ids[1]) == nullptr &&
+                    workspace.closingAgentIds().isEmpty(),
+                "an ended agent is discarded at once");
+        workspace.setCloseDeadlineForTesting(std::chrono::milliseconds(10000));
+        for (const auto& id : {ids[0], ids[2]})
+            require(workspace.closeAgent(id), "close the others");
+        require(waitFor([&workspace] { return workspace.closingAgentIds().isEmpty(); }, 10000),
+                "the others end");
+    }
+    qputenv("PATH", path);
+}
+
+// A window that quits (or restarts) mid-close leaves the agent under
+// "closing": once its service is gone, the next window neither shows nor
+// restarts it; a service still running is reattached out of sight and asked
+// again. The other agents are untouched.
+void relaunchMidCloseFinishesTheClose() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-close-XXXXXX"));
+    require(directory.isValid(), "close directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    options.restoreAgents = true;
+    QString kept;
+    QString closed;
+    QString interrupted;
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        for (auto* id : {&kept, &closed, &interrupted}) {
+            require(workspace.createAgent(root.filePath(QStringLiteral("project")),
+                                          QStringLiteral("agent"), QStringLiteral("grok")),
+                    "a stand-in agent");
+            *id = workspace.focusedAgent()->agentId();
+        }
+        for (const auto& value : workspace.agents()) {
+            auto* item = value.value<lapis::desktop::Agent*>();
+            require(waitFor([item] { return item->inputReady(); }, 10000), "it attaches");
+        }
+        // The window goes away within the same turn as the close.
+        require(workspace.closeAgent(closed), "close one");
+    }
+    const auto answers = [&root](const QString& id) {
+        QLocalSocket probe;
+        probe.connectToServer(root.filePath(id + QStringLiteral(".sock")));
+        const bool connected = probe.waitForConnected(250);
+        probe.abort();
+        return connected;
+    };
+    require(registryIds(options.storagePath, "closing") == QStringList{closed},
+            "the quit window left it under closing");
+    // Its service got the request before the window went: it ends.
+    require(waitFor([&] { return !answers(closed); }, 10000),
+            "the closed agent's service ends without its window");
+    require(answers(interrupted) && answers(kept), "the other services still run");
+    // The interrupted one: a window that died before asking its service.
+    {
+        auto document = registryRoot(options.storagePath);
+        QJsonArray agents;
+        QJsonArray closing = document.value(QStringLiteral("closing")).toArray();
+        for (const auto& value : document.value(QStringLiteral("agents")).toArray())
+            (value.toObject().value(QStringLiteral("id")).toString() == interrupted ? closing
+                                                                                    : agents)
+                .append(value);
+        document.insert(QStringLiteral("agents"), agents);
+        document.insert(QStringLiteral("closing"), closing);
+        writeRegistry(options.storagePath, document);
+    }
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(listedIds(workspace.agents()) == QStringList{kept},
+                "neither closing agent is shown after the relaunch");
+        require(workspace.closingAgentIds() == QStringList{interrupted},
+                "the ended one is dropped, the running one is finished out of sight");
+        require(waitFor([&workspace] { return workspace.closingAgentIds().isEmpty(); }, 10000),
+                "the running one is asked again and ends");
+        // A service reports `ended` before it drains and exits.
+        require(waitFor([&] { return !answers(interrupted); }, 10000),
+                "the interrupted agent's service exits");
+        static_cast<void>(waitFor([] { return false; }, 1000));
+        require(!answers(closed), "the ended agent was not started again");
+        require(!answers(interrupted), "the interrupted agent was not started again");
+        require(registryIds(options.storagePath, "agents") == QStringList{kept} &&
+                    registryIds(options.storagePath, "closing").isEmpty(),
+                "the registry keeps only the agent left");
+        auto* item = workspace.agent(kept);
+        require(item != nullptr && waitFor([item] { return item->inputReady(); }, 10000) &&
+                    screenText(item->snapshot()).contains(QStringLiteral("grok ready")),
+                "the other agent is the same one, still running");
+        require(workspace.workspaceError().isEmpty(), "no error");
+        require(workspace.closeAgent(kept) &&
+                    waitFor([&workspace] { return workspace.closingAgentIds().isEmpty(); }, 10000),
+                "close the last stand-in");
+    }
+    qputenv("PATH", path);
 }
 
 class ScopedHome {
@@ -7011,7 +7272,7 @@ void agyAgentsKeepTheirOwnConversations() {
             "a restore resumes each agent's pinned conversation");
     for (const auto& id : {first, second})
         require(workspace.closeAgent(id, true), "close a restored agent");
-    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+    require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
             "restored agents close");
 }
 
@@ -7294,13 +7555,14 @@ int main(int argc, char** argv) {
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("attention") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("sidebar") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("stage-size") ||
-                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("visual-files")),
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("visual-files") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("closing")),
                     "Usage: lapis_workspace_tests [--case "
                     "adapter-status|remote-options|remote-hooks|local-codex|retired-plans|reload|"
                     "updater|"
                     "updates-off|startup-defaults|launch-policy|omp-overlay|chimes|attention|"
                     "sidebar|"
-                    "stage-size|visual-files]");
+                    "stage-size|visual-files|closing]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("adapter-status")) {
                 claudeAgentsUseServiceAdapter();
@@ -7353,6 +7615,12 @@ int main(int argc, char** argv) {
                 tabSkipsTurnsAlreadySeen();
                 attentionMarksSurviveARestart();
                 attentionReplayMarksEachTurnOnce();
+            } else if (selected == QStringLiteral("closing")) {
+                closeEndsTheAgent("exec sleep 600", 0);
+                closeOnHistoryPageEndsTheAgent();
+                closingIsInstant();
+                failedCloseReturnsTheAgent();
+                relaunchMidCloseFinishesTheClose();
             } else if (selected == QStringLiteral("sidebar")) {
                 nextAgentWalksTheSidebar();
                 categoryColorsPersist();
@@ -7426,6 +7694,9 @@ int main(int argc, char** argv) {
         // An agent that ignores SIGHUP is ended by the SIGTERM escalation.
         closeEndsTheAgent("trap '' HUP; exec sleep 600", 1200);
         closeOnHistoryPageEndsTheAgent();
+        closingIsInstant();
+        failedCloseReturnsTheAgent();
+        relaunchMidCloseFinishesTheClose();
         joinedViewStaysInSync();
         explicitLaunchesUseUpdaterPolicy();
         harnessesUpdateBeforeNewAgents();
