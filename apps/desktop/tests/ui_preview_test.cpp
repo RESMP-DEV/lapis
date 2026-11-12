@@ -83,37 +83,37 @@ int run_workspace_tests() {
     lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::fixture);
     CHECK(workspace.fixtureMode());
     CHECK(workspace.focusedIndex() == 0);
-    CHECK(workspace.focusedSession() != nullptr);
-    const int session_count = static_cast<int>(workspace.sessions().size());
-    workspace.nextSession(-1);
-    CHECK(workspace.focusedIndex() == session_count - 1);
-    workspace.nextSession();
+    CHECK(workspace.focusedAgent() != nullptr);
+    const int agent_count = static_cast<int>(workspace.agents().size());
+    workspace.nextAgent(-1);
+    CHECK(workspace.focusedIndex() == agent_count - 1);
+    workspace.nextAgent();
     CHECK(workspace.focusedIndex() == 0);
-    workspace.nextSession(session_count + 2);
+    workspace.nextAgent(agent_count + 2);
     CHECK(workspace.focusedIndex() == 2);
-    workspace.nextSession(-2);
+    workspace.nextAgent(-2);
     CHECK(workspace.focusedIndex() == 0);
 
     const std::array<QString, 6> expected_ids = {
         QStringLiteral("shell"),   QStringLiteral("renderer"), QStringLiteral("agent"),
         QStringLiteral("service"), QStringLiteral("checks"),   QStringLiteral("notes")};
-    const QVariantList sessions = workspace.sessions();
-    CHECK(sessions.size() == static_cast<qsizetype>(expected_ids.size()));
-    std::size_t session_index = 0;
-    for (const auto& value : sessions) {
-        auto* session = qvariant_cast<lapis::desktop::Agent*>(value);
-        CHECK(session != nullptr);
-        CHECK(session->sessionId() == expected_ids.at(session_index));
-        CHECK(!session->live());
-        CHECK(!session->attentionPending());
-        CHECK(session->attentionCount() == 0);
-        CHECK(session->attentionSerial() == 0);
-        ++session_index;
+    const QVariantList agents = workspace.agents();
+    CHECK(agents.size() == static_cast<qsizetype>(expected_ids.size()));
+    std::size_t agent_index = 0;
+    for (const auto& value : agents) {
+        auto* agent = qvariant_cast<lapis::desktop::Agent*>(value);
+        CHECK(agent != nullptr);
+        CHECK(agent->agentId() == expected_ids.at(agent_index));
+        CHECK(!agent->live());
+        CHECK(!agent->attentionPending());
+        CHECK(agent->attentionCount() == 0);
+        CHECK(agent->attentionSerial() == 0);
+        ++agent_index;
     }
-    CHECK(workspace.session(QStringLiteral("shell"))->sessionId() == QStringLiteral("shell"));
-    CHECK(workspace.session(QStringLiteral("does-not-exist")) == nullptr);
+    CHECK(workspace.agent(QStringLiteral("shell"))->agentId() == QStringLiteral("shell"));
+    CHECK(workspace.agent(QStringLiteral("does-not-exist")) == nullptr);
 
-    auto* agent = workspace.session(QStringLiteral("agent"));
+    auto* agent = workspace.agent(QStringLiteral("agent"));
     AttentionRecorder recorder;
     QObject::connect(agent, &lapis::desktop::Agent::attentionChanged, &recorder,
                      [&recorder] { ++recorder.changed_count; });
@@ -151,7 +151,7 @@ int run_workspace_tests() {
     CHECK(recorder.arrived_count == 2);
     CHECK(!workspace.resolveAttention({QStringLiteral("agent"), QStringLiteral("build"), {}}));
 
-    auto* renderer = workspace.session(QStringLiteral("renderer"));
+    auto* renderer = workspace.agent(QStringLiteral("renderer"));
     CHECK(workspace.requestAttention({QStringLiteral("renderer"), QStringLiteral("render"),
                                       QStringLiteral("Choose presentation")}));
     CHECK(renderer->attentionPending());
@@ -171,7 +171,7 @@ int run_workspace_tests() {
     CHECK(renderer->attentionCount() == 1);
     CHECK(!workspace.replayAttention(QStringLiteral("two")));
 
-    auto* checks = workspace.session(QStringLiteral("checks"));
+    auto* checks = workspace.agent(QStringLiteral("checks"));
     for (int index = 0; index < 8; ++index)
         CHECK(workspace.requestAttention({QStringLiteral("checks"),
                                           QStringLiteral("request-%1").arg(index + 1),
@@ -417,7 +417,7 @@ int run_attention_dialog_tests() {
     auto* dialog = window->findChild<QObject*>(QStringLiteral("attentionDialog"));
     CHECK(terminal != nullptr && dialog != nullptr);
     wait_terminal_focus(*window, *terminal);
-    auto* document = workspace.focusedSession();
+    auto* document = workspace.focusedAgent();
     document->setConnection(QStringLiteral("ready"), true);
     wire::AttentionSnapshot state;
     state.attachment = {{wire::new_id(), wire::new_id()}, 1};
@@ -688,14 +688,14 @@ void check_lazy_command_models(QQuickWindow& window, lapis::desktop::Workspace& 
 
     CHECK(model(*commands, "commands").isEmpty());
     CHECK(model(*settings, "shortcutRows").isEmpty());
-    auto* initial = workspace.focusedSession();
+    auto* initial = workspace.focusedAgent();
     CHECK(initial != nullptr);
-    const QString initial_id = initial->sessionId();
+    const QString initial_id = initial->agentId();
     const QString initial_category = workspace.activeCategoryId();
 
     CHECK(workspace.addCategory(QStringLiteral("Lazy commands")));
     pump(30);
-    CHECK(workspace.focusedSession() == nullptr);
+    CHECK(workspace.focusedAgent() == nullptr);
     CHECK(model(*commands, "commands").isEmpty());
     CHECK(model(*settings, "shortcutRows").isEmpty());
     CHECK(command_observer.changes == 0 && shortcut_observer.changes == 0);
@@ -712,26 +712,26 @@ void check_lazy_command_models(QQuickWindow& window, lapis::desktop::Workspace& 
 
     CHECK(workspace.selectCategory(initial_category));
     pump(30);
-    CHECK(workspace.focusedSession() != nullptr);
-    const auto sessions = workspace.categorySessions();
-    CHECK(sessions.size() >= 2);
+    CHECK(workspace.focusedAgent() != nullptr);
+    const auto agents = workspace.categoryAgents();
+    CHECK(agents.size() >= 2);
     QString alternate;
-    for (const auto& value : sessions) {
-        auto* session = value.value<lapis::desktop::Agent*>();
-        if (session != nullptr && session->sessionId() != initial_id) {
-            alternate = session->sessionId();
+    for (const auto& value : agents) {
+        auto* agent = value.value<lapis::desktop::Agent*>();
+        if (agent != nullptr && agent->agentId() != initial_id) {
+            alternate = agent->agentId();
             break;
         }
     }
     CHECK(!alternate.isEmpty());
 
-    CHECK(workspace.selectSession(alternate));
+    CHECK(workspace.selectAgent(alternate));
     pump(30);
     CHECK(model(*commands, "commands").isEmpty());
     CHECK(model(*settings, "shortcutRows").isEmpty());
     CHECK(command_observer.changes == 0);
     CHECK(shortcut_observer.changes == 0);
-    CHECK(workspace.selectSession(initial_id));
+    CHECK(workspace.selectAgent(initial_id));
     pump(30);
     CHECK(model(*commands, "commands").isEmpty());
     CHECK(model(*settings, "shortcutRows").isEmpty());
@@ -1022,7 +1022,7 @@ int run_surface_tests(bool background) {
     surface->setSize(window.size());
     window.show();
     pump(50); // An empty surface also crosses the render boundary.
-    auto* document = workspace.focusedSession();
+    auto* document = workspace.focusedAgent();
     surface->setDocument(document);
     pump(50);
     const auto original = document->snapshot();
@@ -1224,8 +1224,8 @@ QRectF scene_rect(const QQuickItem& item) {
 }
 QStringList strip_ids(const lapis::desktop::Workspace& workspace) {
     QStringList ids;
-    for (const auto& value : workspace.categorySessions())
-        ids.append(value.value<lapis::desktop::Agent*>()->sessionId());
+    for (const auto& value : workspace.categoryAgents())
+        ids.append(value.value<lapis::desktop::Agent*>()->agentId());
     return ids;
 }
 
@@ -1249,14 +1249,14 @@ void check_stage_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     auto* visual = item(QStringLiteral("visualView"));
     const auto ids = strip_ids(workspace);
     CHECK(terminal != nullptr && ids.size() >= 3);
-    CHECK(workspace.selectSession(ids[0]));
+    CHECK(workspace.selectAgent(ids[0]));
     pump(40);
 
     // The stage shows one agent, the selected one, filling it; the visual view
     // lies exactly over its terminal.
     const auto fills_stage = [&](const QString& id) {
-        CHECK(workspace.focusedSession() == workspace.session(id));
-        CHECK(terminal->document() == workspace.session(id));
+        CHECK(workspace.focusedAgent() == workspace.agent(id));
+        CHECK(terminal->document() == workspace.agent(id));
         const auto shown = scene_rect(*terminal);
         const auto edge = scene_rect(*stage);
         CHECK(edge.contains(shown) && shown.width() > edge.width() - 20 &&
@@ -1280,8 +1280,8 @@ void check_stage_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
                 stage->mapToScene(QPointF(stage->width() * 0.92, stage->height() * 0.5)));
     pump(40);
     CHECK(strip_ids(workspace) == strip_before);
-    CHECK(terminal->document() == workspace.focusedSession());
-    CHECK(workspace.selectSession(ids[0]));
+    CHECK(terminal->document() == workspace.focusedAgent());
+    CHECK(workspace.selectAgent(ids[0]));
     pump(40);
 
     // The next and previous agent keys walk the strip and wrap; the stage
@@ -1306,7 +1306,7 @@ void check_stage_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     drag_visual(window, *item(QStringLiteral("agentTab_") + order[0]),
                 last_card->mapToScene(QPointF(last_card->width() - 4, last_card->height() / 2)));
     CHECK(strip_ids(workspace).constLast() == order[0]);
-    CHECK(workspace.placeSessions({order[0]}, workspace.activeCategoryId(), 0));
+    CHECK(workspace.placeAgents({order[0]}, workspace.activeCategoryId(), 0));
     CHECK(strip_ids(workspace) == order);
 
     // Command-click picks a second card; dragging either carries both to a
@@ -1320,7 +1320,7 @@ void check_stage_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     const auto elsewhere = workspace.createCategory(QStringLiteral("Drop target"));
     CHECK(!elsewhere.isEmpty());
     pump(60);
-    CHECK(workspace.selectSession(ids[1]));
+    CHECK(workspace.selectAgent(ids[1]));
     pump(40);
     click_with(window, *item(QStringLiteral("agentTab_") + ids[2]), toggle);
     pump(40);
@@ -1333,7 +1333,7 @@ void check_stage_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     CHECK(workspace.agentPlace(ids[1]).value(QStringLiteral("category")).toString() ==
           QStringLiteral("Drop target"));
     // Back where they were, so later checks see the original strip.
-    CHECK(workspace.placeSessions({ids[1], ids[2]}, home, 1));
+    CHECK(workspace.placeAgents({ids[1], ids[2]}, home, 1));
     CHECK(workspace.selectCategory(home));
     CHECK(workspace.removeCategory(elsewhere));
     pump(60);
@@ -1354,10 +1354,10 @@ void check_text_size(QQuickWindow& window, lapis::desktop::Workspace& workspace,
     };
     auto* terminal =
         qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
-    for (const auto& value : workspace.categorySessions()) {
-        auto* session = value.value<lapis::desktop::Agent*>();
-        if (session->title() == QStringLiteral("Codex"))
-            CHECK(workspace.selectSession(session->sessionId()));
+    for (const auto& value : workspace.categoryAgents()) {
+        auto* agent = value.value<lapis::desktop::Agent*>();
+        if (agent->title() == QStringLiteral("Codex"))
+            CHECK(workspace.selectAgent(agent->agentId()));
     }
     pump(60);
 
@@ -1382,7 +1382,7 @@ void check_composition_navigation(lapis::desktop::Workspace& workspace,
     using namespace lapis::desktop;
     QTemporaryDir directory;
     CHECK(directory.isValid());
-    auto* document = workspace.focusedSession();
+    auto* document = workspace.focusedAgent();
     // A reconnect-only fixture owns no child. Inject ready state after the failed
     // reconnect to exercise actual Qt composition ownership, not CLI behavior.
     document->startLive(directory.filePath(QStringLiteral("absent.sock")),
@@ -1405,7 +1405,7 @@ void check_composition_navigation(lapis::desktop::Workspace& workspace,
           "category2", "newAgent", "newCategory", "openCommands", "toggleSidebar"})
         for (const auto& binding : defaults.sequences(QString::fromLatin1(action))) {
             send_binding(*preview.window(), binding);
-            CHECK(workspace.focusedSession() == document);
+            CHECK(workspace.focusedAgent() == document);
             CHECK(workspace.activeCategoryId() == category);
             CHECK(terminal.composing());
         }
@@ -1426,7 +1426,7 @@ void check_composition_navigation(lapis::desktop::Workspace& workspace,
         click_visual(*preview.window(), *item);
         CHECK(wait_for(
             [&] {
-                return workspace.focusedSession() == document &&
+                return workspace.focusedAgent() == document &&
                        workspace.activeCategoryId() == category && terminal.composing() &&
                        terminal.hasActiveFocus() &&
                        !preview.window()->property("inputBlocked").toBool();
@@ -1445,7 +1445,7 @@ void check_composition_navigation(lapis::desktop::Workspace& workspace,
         find_visual(preview.window()->contentItem(), QStringLiteral("categorySelector"));
     CHECK(selector != nullptr && selector->isVisible());
     click_visual(*preview.window(), *selector);
-    CHECK(workspace.focusedSession() == document);
+    CHECK(workspace.focusedAgent() == document);
     CHECK(workspace.activeCategoryId() == category);
     CHECK(terminal.composing() && terminal.hasActiveFocus());
     CHECK(!preview.window()->property("inputBlocked").toBool());
@@ -1472,7 +1472,7 @@ void check_composition_navigation(lapis::desktop::Workspace& workspace,
             CHECK(!preview.window()->property("inputBlocked").toBool());
             const auto binding = defaults.sequences(QStringLiteral("nextCategory")).front();
             send_binding(*preview.window(), binding);
-            CHECK(workspace.focusedSession() == document);
+            CHECK(workspace.focusedAgent() == document);
             CHECK(workspace.activeCategoryId() == category);
         });
     const auto disconnect_guard =
@@ -1496,9 +1496,9 @@ void reveal_card(QQuickWindow& window, const lapis::desktop::Workspace& workspac
                  const QString& id) {
     auto* strip = find_visual(window.contentItem(), QStringLiteral("agentTabs"));
     CHECK(strip != nullptr);
-    const auto list = workspace.categorySessions();
+    const auto list = workspace.categoryAgents();
     for (qsizetype i = 0; i < list.size(); ++i)
-        if (list[i].value<lapis::desktop::Agent*>()->sessionId() == id)
+        if (list[i].value<lapis::desktop::Agent*>()->agentId() == id)
             CHECK(QMetaObject::invokeMethod(strip, "positionViewAtIndex", Q_ARG(int, int(i)),
                                             Q_ARG(int, 2 /* ListView.Contain */)));
     pump(30);
@@ -1539,10 +1539,10 @@ void check_status_semantics(QQuickWindow& window, lapis::desktop::Workspace& wor
     wire::AttentionSnapshot working;
     working.available = working.connected = working.ready = true;
     working.activity = lapis::session::attention::Activity::working;
-    workspace.session(QStringLiteral("checks"))->applyAttention(working);
+    workspace.agent(QStringLiteral("checks"))->applyAttention(working);
     auto idle = working;
     idle.activity = lapis::session::attention::Activity::idle;
-    workspace.session(QStringLiteral("notes"))->applyAttention(idle);
+    workspace.agent(QStringLiteral("notes"))->applyAttention(idle);
     pump(20);
     reveal_card(window, workspace, QStringLiteral("checks"));
     auto* working_mark = find_visual(window.contentItem(), QStringLiteral("statusMark_checks"));
@@ -1556,7 +1556,7 @@ void check_status_semantics(QQuickWindow& window, lapis::desktop::Workspace& wor
         auto* mark = find_visual(window.contentItem(), QStringLiteral("statusMark_") + id);
         CHECK(mark != nullptr && mark->isVisible());
         CHECK(mark->property("shape").toString() ==
-              shapes.value(workspace.session(id)->statusKind()));
+              shapes.value(workspace.agent(id)->statusKind()));
     }
     CHECK(find_visual(window.contentItem(), QStringLiteral("statusMark_agent"))
               ->property("shape")
@@ -1609,12 +1609,12 @@ int run_attention_ui_tests() {
         find_visual(window->contentItem(), QStringLiteral("liveTerminal")));
     CHECK(terminal != nullptr);
     terminal->forceActiveFocus();
-    auto* original = workspace.focusedSession();
+    auto* original = workspace.focusedAgent();
     const auto stage_size = terminal->size();
     CHECK(workspace.replayAttention(QStringLiteral("two")));
     pump(50);
     check_status_semantics(*window, workspace);
-    CHECK(workspace.focusedSession() == original);
+    CHECK(workspace.focusedAgent() == original);
     CHECK(terminal->document() == original);
     CHECK(terminal->hasActiveFocus());
     CHECK(terminal->size() == stage_size);
@@ -1622,57 +1622,57 @@ int run_attention_ui_tests() {
           2);
     CHECK(!workspace.replayAttention(QStringLiteral("duplicate")));
     CHECK(workspace.replayAttention(QStringLiteral("resolve")));
-    CHECK(workspace.session(QStringLiteral("renderer"))->attentionPending());
-    CHECK(workspace.focusedSession() == original);
+    CHECK(workspace.agent(QStringLiteral("renderer"))->attentionPending());
+    CHECK(workspace.focusedAgent() == original);
     preview.setReducedMotion(true);
     CHECK(workspace.replayAttention(QStringLiteral("arrival")));
-    CHECK(workspace.focusedSession() == original);
+    CHECK(workspace.focusedAgent() == original);
 
-    CHECK(workspace.selectSession(QStringLiteral("agent")));
-    auto* selected = workspace.focusedSession();
+    CHECK(workspace.selectAgent(QStringLiteral("agent")));
+    auto* selected = workspace.focusedAgent();
     CHECK(workspace.addCategory(QStringLiteral("Research")));
     const auto research = workspace.activeCategoryId();
     pump(20);
-    CHECK(workspace.focusedSession() == nullptr);
+    CHECK(workspace.focusedAgent() == nullptr);
     CHECK(terminal->document() == nullptr);
-    CHECK(workspace.moveSession(QStringLiteral("renderer"), research));
+    CHECK(workspace.moveAgent(QStringLiteral("renderer"), research));
     pump(20);
-    CHECK(terminal->document() == workspace.session(QStringLiteral("renderer")));
-    workspace.nextSession();
-    CHECK(workspace.focusedSession() == workspace.session(QStringLiteral("renderer")));
+    CHECK(terminal->document() == workspace.agent(QStringLiteral("renderer")));
+    workspace.nextAgent();
+    CHECK(workspace.focusedAgent() == workspace.agent(QStringLiteral("renderer")));
     CHECK(workspace.selectCategory(QStringLiteral("general")));
     pump(20);
-    CHECK(workspace.focusedSession() == selected);
+    CHECK(workspace.focusedAgent() == selected);
     CHECK(terminal->document() == selected);
-    CHECK(workspace.moveSessionBy(selected->sessionId(), 1));
+    CHECK(workspace.moveAgentBy(selected->agentId(), 1));
     pump(20);
     CHECK(terminal->document() == selected);
-    CHECK(workspace.session(selected->sessionId()) == selected);
+    CHECK(workspace.agent(selected->agentId()) == selected);
     auto* category_button =
         find_visual(window->contentItem(), QStringLiteral("category_") + research);
     CHECK(category_button != nullptr);
     click_visual(*window, *category_button);
     pump(20);
     CHECK(workspace.activeCategoryId() == research);
-    CHECK(terminal->document() == workspace.session(QStringLiteral("renderer")));
+    CHECK(terminal->document() == workspace.agent(QStringLiteral("renderer")));
     category_button = find_visual(window->contentItem(), QStringLiteral("category_general"));
     CHECK(category_button != nullptr);
     click_visual(*window, *category_button);
     pump(20);
-    CHECK(workspace.focusedSession() == selected);
+    CHECK(workspace.focusedAgent() == selected);
     auto* tab = find_visual(window->contentItem(), QStringLiteral("agentTab_shell"));
     CHECK(tab != nullptr);
     const auto original_tab_width = tab->width();
     click_visual(*window, *tab);
     pump(20);
-    CHECK(workspace.focusedSession() == original);
+    CHECK(workspace.focusedAgent() == original);
     CHECK(tab->width() == original_tab_width);
     tab = find_visual(window->contentItem(), QStringLiteral("agentTab_agent"));
     CHECK(tab != nullptr);
     click_visual(*window, *tab);
     pump(20);
-    CHECK(workspace.focusedSession() == selected);
-    CHECK(workspace.renameSession(selected->sessionId(), QString(80, QLatin1Char('W'))));
+    CHECK(workspace.focusedAgent() == selected);
+    CHECK(workspace.renameAgent(selected->agentId(), QString(80, QLatin1Char('W'))));
     CHECK(workspace.renameCategory(QStringLiteral("general"), QString(80, QLatin1Char('W'))));
     struct ChromeVariant {
         const char* density;
@@ -1706,7 +1706,7 @@ int run_attention_ui_tests() {
             CHECK(terminal->document() == selected);
             auto* tabs = find_visual(window->contentItem(), QStringLiteral("agentTabs"));
             auto* selected_tab = find_visual(window->contentItem(),
-                                             QStringLiteral("agentTab_") + selected->sessionId());
+                                             QStringLiteral("agentTab_") + selected->agentId());
             CHECK(tabs != nullptr && selected_tab != nullptr);
             wait_tab_visible(*selected_tab, *tabs);
             check_category_alignment(*window);
@@ -1924,16 +1924,16 @@ int run_attention_ui_tests() {
 }
 
 QString focused_id(const lapis::desktop::Workspace& workspace) {
-    return workspace.focusedSession() ? workspace.focusedSession()->sessionId() : QString();
+    return workspace.focusedAgent() ? workspace.focusedAgent()->agentId() : QString();
 }
-void finish_turn(lapis::desktop::Agent& session) {
+void finish_turn(lapis::desktop::Agent& agent) {
     namespace wire = lapis::session::wire;
     wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
     state.activity = lapis::session::attention::Activity::working;
-    session.applyAttention(state);
+    agent.applyAttention(state);
     state.activity = lapis::session::attention::Activity::turn_completed;
-    session.applyAttention(state);
+    agent.applyAttention(state);
 }
 
 QQuickItem* required_visual(QQuickWindow& window, const QString& name) {
@@ -2211,7 +2211,7 @@ void check_side_terminal(QQuickWindow& window, lapis::desktop::Terminals& termin
     press_action(window, config_model, "toggleTerminal");
     CHECK(!panel->isVisible());
     // The shell's service outlives lapis by design; end it here.
-    const auto id = terminals.current()->sessionId();
+    const auto id = terminals.current()->agentId();
     CHECK(terminals.close(id));
     CHECK(pump_until([&terminals, &id] { return terminals.terminal(id) == nullptr; }, 10000));
 }
@@ -2334,7 +2334,7 @@ int run_strip_ui_tests() {
     check_category_alignment(*window);
     auto* card_surface =
         qobject_cast<TerminalSurface*>(item(QStringLiteral("previewTerminal_agent")));
-    CHECK(card_surface != nullptr && card_surface->document() == workspace.session("agent"));
+    CHECK(card_surface != nullptr && card_surface->document() == workspace.agent("agent"));
     CHECK(!card_surface->interactive() && !card_surface->isEnabled() &&
           card_surface->frameInterval() == 250 && qFuzzyCompare(card_surface->minimumScale(), 0.5));
     click_visual(*window, *item(QStringLiteral("agentTab_agent")));
@@ -2349,13 +2349,13 @@ int run_strip_ui_tests() {
     // whole and part of the next one visible, as sidescrolloff does.
     const auto card_width = item(QStringLiteral("agentTab_shell"))->width();
     const auto scrolloff_ready = [&](bool forward) {
-        const auto list = workspace.categorySessions();
+        const auto list = workspace.categoryAgents();
         const auto* card = item(QStringLiteral("agentTab_") + focused_id(workspace));
         const auto left = card->mapToItem(strip, QPointF()).x();
         const auto right = left + card->width();
         if (!(left >= -1 && right <= strip->width() + 1))
             return false;
-        const bool first = list.front().value<Agent*>() == workspace.focusedSession();
+        const bool first = list.front().value<Agent*>() == workspace.focusedAgent();
         if (forward)
             return strip->width() - right >= card_width * 0.35;
         return first || left >= card_width * 0.35;
@@ -2373,13 +2373,13 @@ int run_strip_ui_tests() {
     capture("strip");
 
     // A finished turn pulses an unselected card; the selected agent never does.
-    CHECK(workspace.selectSession(QStringLiteral("renderer")));
+    CHECK(workspace.selectAgent(QStringLiteral("renderer")));
     pump(260);
-    finish_turn(*workspace.session(QStringLiteral("agent")));
-    finish_turn(*workspace.session(QStringLiteral("renderer")));
+    finish_turn(*workspace.agent(QStringLiteral("agent")));
+    finish_turn(*workspace.agent(QStringLiteral("renderer")));
     pump(30);
-    CHECK(workspace.session(QStringLiteral("agent"))->unseen());
-    CHECK(!workspace.session(QStringLiteral("renderer"))->unseen());
+    CHECK(workspace.agent(QStringLiteral("agent"))->unseen());
+    CHECK(!workspace.agent(QStringLiteral("renderer"))->unseen());
     auto* cue = item(QStringLiteral("unseenCue_agent"));
     CHECK(cue->isVisible());
     CHECK(QQmlProperty::read(cue, QStringLiteral("border.color")).value<QColor>() ==
@@ -2392,7 +2392,7 @@ int run_strip_ui_tests() {
         request.available = request.connected = request.ready = true;
         request.activity = lapis::session::attention::Activity::turn_completed;
         request.requests.emplace_back();
-        workspace.session(QStringLiteral("agent"))->applyAttention(request);
+        workspace.agent(QStringLiteral("agent"))->applyAttention(request);
     }
     pump(30);
     CHECK(
@@ -2411,19 +2411,19 @@ int run_strip_ui_tests() {
     // Unseen agents elsewhere mark their category.
     const auto other = workspace.activeCategoryId();
     CHECK(workspace.selectCategory(QStringLiteral("general")));
-    CHECK(workspace.moveSession(QStringLiteral("notes"), other));
-    CHECK(workspace.selectSession(QStringLiteral("renderer")));
+    CHECK(workspace.moveAgent(QStringLiteral("notes"), other));
+    CHECK(workspace.selectAgent(QStringLiteral("renderer")));
     pump(30);
-    finish_turn(*workspace.session(QStringLiteral("notes")));
+    finish_turn(*workspace.agent(QStringLiteral("notes")));
     pump(30);
     CHECK(item(QStringLiteral("categoryUnseen_") + other)->isVisible());
     CHECK(!item(QStringLiteral("categoryUnseen_general"))->isVisible());
     // Selecting the agent is looking at it.
     click_visual(*window, *item(QStringLiteral("agentTab_agent")));
     pump(30);
-    CHECK(!workspace.session(QStringLiteral("agent"))->unseen() &&
+    CHECK(!workspace.agent(QStringLiteral("agent"))->unseen() &&
           !item(QStringLiteral("unseenCue_agent"))->isVisible());
-    CHECK(workspace.selectSession(QStringLiteral("notes")));
+    CHECK(workspace.selectAgent(QStringLiteral("notes")));
     pump(30);
     CHECK(!item(QStringLiteral("categoryUnseen_") + other)->isVisible());
     CHECK(workspace.selectCategory(QStringLiteral("general")));
@@ -2474,15 +2474,15 @@ int run_strip_ui_tests() {
 
     // Command-W on an agent without a process closes it; its right neighbor
     // takes the stage.
-    CHECK(workspace.selectSession(QStringLiteral("agent")));
+    CHECK(workspace.selectAgent(QStringLiteral("agent")));
     pump(30);
-    const auto list = workspace.categorySessions();
+    const auto list = workspace.categoryAgents();
     QString after;
     for (qsizetype i = 0; i + 1 < list.size(); ++i)
-        if (list[i].value<Agent*>()->sessionId() == QStringLiteral("agent"))
-            after = list[i + 1].value<Agent*>()->sessionId();
+        if (list[i].value<Agent*>()->agentId() == QStringLiteral("agent"))
+            after = list[i + 1].value<Agent*>()->agentId();
     press("closeAgent");
-    CHECK(workspace.session(QStringLiteral("agent")) == nullptr);
+    CHECK(workspace.agent(QStringLiteral("agent")) == nullptr);
     CHECK(focused_id(workspace) == after && terminal->hasActiveFocus());
 
     // The new-agent card ends the strip.
@@ -2517,7 +2517,7 @@ int run_strip_ui_tests() {
 
     check_stage_and_drags(*window, workspace, config_model);
     check_text_size(*window, workspace, config_model);
-    CHECK(workspace.selectSession(QStringLiteral("notes")));
+    CHECK(workspace.selectAgent(QStringLiteral("notes")));
     pump(30);
     check_home_and_resume(*window, workspace, config_model);
     check_nine_categories(*window, workspace, config_model);
@@ -2616,7 +2616,7 @@ int run_history_ui_tests() {
     };
     CHECK(workspace.createAgent(root.filePath(QStringLiteral("project")), QStringLiteral("scroll"),
                                 QStringLiteral("grok")));
-    auto* agent = workspace.focusedSession();
+    auto* agent = workspace.focusedAgent();
     CHECK(agent != nullptr);
     CHECK(wait([agent] {
         return agent->inputReady() &&
@@ -2704,8 +2704,8 @@ int run_history_ui_tests() {
         mouse(QEvent::MouseMove, grip + QPointF(0, step * 200), Qt::LeftButton);
     mouse(QEvent::MouseButtonRelease, grip + QPointF(0, 1600), Qt::NoButton);
     CHECK(wait([agent] { return !agent->historyActive(); }) && !bar->isVisible());
-    CHECK(workspace.closeSession(agent->sessionId()));
-    CHECK(wait([&workspace] { return workspace.sessions().isEmpty(); }));
+    CHECK(workspace.closeAgent(agent->agentId()));
+    CHECK(wait([&workspace] { return workspace.agents().isEmpty(); }));
     return EXIT_SUCCESS;
 }
 
@@ -2727,14 +2727,14 @@ int run_restored_suggestion_tests() {
     }
     CHECK(QFile::setPermissions(python, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
     Workspace workspace(WorkspaceMode::fixture);
-    auto* agent = workspace.session(QStringLiteral("agent"));
+    auto* agent = workspace.agent(QStringLiteral("agent"));
     CHECK(agent != nullptr);
     agent->setHarnessId(QStringLiteral("claude"));
     lapis::session::wire::AttentionSnapshot finished;
     finished.available = finished.connected = finished.ready = true;
     finished.activity = lapis::session::attention::Activity::turn_completed;
     agent->applyAttention(finished);
-    CHECK(workspace.selectSession(QStringLiteral("agent")));
+    CHECK(workspace.selectAgent(QStringLiteral("agent")));
     NextPrompt next(
         [](const QString& id) -> std::optional<NextPrompt::Agent> {
             if (id != QLatin1String("agent"))
@@ -2779,9 +2779,9 @@ int run_restored_suggestion_tests() {
     wait_active(*window);
     CHECK(window->property("lastHarness").toString() == QStringLiteral("codex") &&
           window->property("lastMode").toString() == QStringLiteral("edits"));
-    CHECK(workspace.selectSession(QStringLiteral("checks")));
+    CHECK(workspace.selectAgent(QStringLiteral("checks")));
     pump(2);
-    CHECK(workspace.selectSession(QStringLiteral("agent")));
+    CHECK(workspace.selectAgent(QStringLiteral("agent")));
     pump(2);
     const auto remembered = window->property("lastModels").toMap();
     CHECK(remembered.value(QStringLiteral("claude")).toString() == QLatin1String("custom") &&

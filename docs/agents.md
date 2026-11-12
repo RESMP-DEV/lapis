@@ -52,7 +52,7 @@ agent (as when every agent restores at once after login) attaches again.
 The agent strip's **+** opens the same form, machines included. The category
 rail's **+** creates a category instead.
 
-A new tab shows the CLI's mark and a home-relative folder such as `~/dev/lapis`;
+A new agent shows the CLI's mark and a home-relative folder such as `~/dev/lapis`;
 agents in the same folder are numbered. An agent still named after its folder
 takes its conversation's title: Claude Code's own title, Codex's thread name,
 else the first message typed. A name you choose stays.
@@ -125,7 +125,7 @@ widening, the prompt can sit above some
 blank rows until more output fills them. Agents restarted as lapis opens start
 at the stage's width. A resumed conversation is printed in one burst; lapis
 shows a CLI's first text only once its output has been quiet for 150 ms (at
-most 2 seconds), so a tab opens at the end of its conversation rather than
+most 2 seconds), so an agent opens at the end of its conversation rather than
 showing it run past. Set `CLAUDE_CODE_NO_FLICKER=1` in your login shell for
 Claude Code's full-screen renderer. Grok runs full screen with `--fullscreen`;
 Codex and OpenCode are full screen already. Every CLI starts at the stage's
@@ -198,7 +198,7 @@ An agent that has ended or cannot be reached keeps its last screen, with a bar
 giving the reason and the key that closes it. **Restart agent** in Commands
 starts it again in the same card, resuming its conversation.
 
-**Reload tab**, **Reload category** and **Reload window** do the same for running
+**Reload agent**, **Reload category** and **Reload window** do the same for running
 agents: each CLI ends and starts again in its card, resuming its conversation,
 so it rereads settings such as Claude Code's permissions. An agent on another
 machine that started before lapis knew its conversation is left running, since

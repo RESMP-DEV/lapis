@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-12T00:26:40Z",
+  "agent": "Codex triage parent with read-only agent API terminology audit",
+  "base_revision": "f01d69c84191bae7c0b6515245454747aaf8aa5f",
+  "source_revision": "19df7385c142c33eb445a3220d4abab40140fdff",
+  "runtime_validation_revision": "19df7385c142c33eb445a3220d4abab40140fdff",
+  "original_pr_head": "6b62a3c994143f2b67d1b307755d79dca9342f8a",
+  "scope": "PR 206 desktop agent API terminology rebased over the repaired Config branch and completed for the two audit polish findings.",
+  "changed_source_manifest": {
+    "algorithm": "shasum -a 256 of: git diff --binary --full-index f01d69c84191bae7c0b6515245454747aaf8aa5f..19df7385c142c33eb445a3220d4abab40140fdff -- ':(exclude)evidence/*'",
+    "digest": "e6aed6c883f9dbbff359c9c56fdc92a403c5d66951a661ca187a44aebd1036e4",
+    "changed_paths": 29
+  },
+  "validation": [
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py check",
+      "result": "passed; dev build, all dev CTests, clang-format, Cppcheck and every dev clang-tidy partition at the committed source",
+      "receipt": "build/reports/dev/receipt.json"
+    },
+    {
+      "command": "cmake --build --preset desktop --parallel 8 && ctest --preset desktop --output-on-failure",
+      "result": "passed; all 39 enabled desktop CTest cases passed; eight intentionally disabled tests did not run",
+      "receipt": "interactive command output; build/desktop/Testing/Temporary/LastTest.log"
+    },
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py ui-review --json",
+      "result": "passed at source revision 19df7385c142c33eb445a3220d4abab40140fdff with a clean tree; all background UI, shortcut and terminal-input cases passed",
+      "receipt": "build/reports/ui-review/20261112T002538Z-1q0ckh7p/receipt.json"
+    },
+    {
+      "command": "rg -n 'focusedSession|categorySessions|sessionsChanged|sessionId\\(\\)|renameSession|closeSession|moveSession|placeSessions|nextSession|showSession|lastSessionId|reversed session arguments' apps/desktop docs",
+      "result": "only the intentional nextSessionShortcut objectName remained; no live old Workspace API symbol or stale reversed-session assertion matched"
+    }
+  ],
+  "repair_summary": [
+    "Rebased both agent terminology commits over the completed Config repair while retaining config/config_model local naming.",
+    "Renamed the stale reversed-session assertion to agent vocabulary.",
+    "Renamed Agent-typed locals, loops and finish_turn parameter in ui_preview_test.cpp while retaining intentional session-service namespaces and persistence vocabulary."
+  ],
+  "non_claims": [
+    "No native macOS GUI input or GPU presentation was exercised; UI review ran offscreen with the software scene graph.",
+    "Historical evidence, session-service namespaces, persisted session IDs and deliberately retained test object names are not claimed as desktop agent API symbols."
+  ]
+}

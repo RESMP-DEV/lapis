@@ -195,14 +195,14 @@ std::vector<std::vector<QString>> start_agents(Workspace& workspace, const Optio
                                           QStringLiteral("agent %1.%2").arg(category).arg(index),
                                           QStringLiteral("opencode")),
                     "create agent: " + workspace.workspaceError().toStdString());
-            auto* const created = workspace.focusedSession();
+            auto* const created = workspace.focusedAgent();
             require(created != nullptr, "new agent focused");
-            agents.back().push_back(created->sessionId());
+            agents.back().push_back(created->agentId());
         }
     }
     until(
         [&workspace] {
-            const auto sessions = workspace.sessions();
+            const auto sessions = workspace.agents();
             return std::all_of(sessions.cbegin(), sessions.cend(), [](const QVariant& value) {
                 return value.value<Agent*>()->inputReady();
             });
@@ -293,7 +293,7 @@ class Bench : public QObject {
 
     // Returns whether a frame completed. A timeout is counted and the run continues.
     bool measure(const std::function<void()>& act, Stats* into, bool may_draw_nothing = false) {
-        const auto* was = workspace_.focusedSession();
+        const auto* was = workspace_.focusedAgent();
         const int swaps = swaps_.load(std::memory_order_relaxed);
         const int syncs = syncs_.load(std::memory_order_relaxed);
         const double start = now_ms();
@@ -301,7 +301,7 @@ class Bench : public QObject {
         const double dispatched = now_ms();
         if (!wait_for([this, swaps] { return swaps_.load(std::memory_order_relaxed) > swaps; },
                       5000)) {
-            if (may_draw_nothing && workspace_.focusedSession() == was)
+            if (may_draw_nothing && workspace_.focusedAgent() == was)
                 return false;
             if (into != nullptr)
                 ++into->timeouts;
@@ -322,18 +322,18 @@ class Bench : public QObject {
     }
     void trace(const Agent* was) const {
         std::cerr << "switch " << title(was).toStdString() << " -> "
-                  << title(workspace_.focusedSession()).toStdString() << '\n';
+                  << title(workspace_.focusedAgent()).toStdString() << '\n';
     }
 
     void agentKey(const std::function<void()>& next_agent) {
-        const auto* before = workspace_.focusedSession();
+        const auto* before = workspace_.focusedAgent();
         measure(next_agent, &agent_keys_);
-        agent_keys_.unchanged += workspace_.focusedSession() == before ? 1 : 0;
+        agent_keys_.unchanged += workspace_.focusedAgent() == before ? 1 : 0;
     }
 
     [[nodiscard]] bool cardOnScreen(const Agent* item) const {
         auto* card =
-            find_visual(window_.contentItem(), QStringLiteral("cardPress_") + item->sessionId());
+            find_visual(window_.contentItem(), QStringLiteral("cardPress_") + item->agentId());
         if (card == nullptr)
             return false;
         const auto box = card->mapRectToScene(card->boundingRect());
@@ -342,7 +342,7 @@ class Bench : public QObject {
     }
     // A click on an on-screen strip card of the active category, cycling.
     void clickCard(int index) {
-        const auto list = workspace_.categorySessions();
+        const auto list = workspace_.categoryAgents();
         const Agent* target = nullptr;
         until(
             [&] {
@@ -350,14 +350,14 @@ class Bench : public QObject {
                 for (qsizetype step = 0; step < list.size() && target == nullptr; ++step) {
                     const auto* item =
                         list.at((index * 3 + 1 + step) % list.size()).value<Agent*>();
-                    if (item != workspace_.focusedSession() && cardOnScreen(item))
+                    if (item != workspace_.focusedAgent() && cardOnScreen(item))
                         target = item;
                 }
                 return target != nullptr;
             },
             2000, "an on-screen strip card to click");
-        const auto name = QStringLiteral("cardPress_") + target->sessionId();
-        const auto* before = workspace_.focusedSession();
+        const auto name = QStringLiteral("cardPress_") + target->agentId();
+        const auto* before = workspace_.focusedAgent();
         const bool sampled = measure(
             [this, &name] {
                 auto* item = find_visual(window_.contentItem(), name);
@@ -370,7 +370,7 @@ class Bench : public QObject {
                 mouse(at, Qt::NoButton, Qt::LeftButton, QEvent::MouseButtonRelease);
             },
             &clicks_, true);
-        if (workspace_.focusedSession() == before) {
+        if (workspace_.focusedAgent() == before) {
             // A click that selected nothing is not a switch sample.
             ++clicks_.unchanged;
             if (sampled)
@@ -469,8 +469,8 @@ QJsonObject measure(const Options& options, const QTemporaryDir& home) {
     QDir().mkpath(folder);
     start_agents(workspace, options, folder);
     const auto close_agents = qScopeGuard([&workspace] {
-        for (const auto& value : workspace.sessions())
-            workspace.closeSession(value.value<Agent*>()->sessionId(), true);
+        for (const auto& value : workspace.agents())
+            workspace.closeAgent(value.value<Agent*>()->agentId(), true);
         pump(500);
     });
 #ifdef LAPIS_BENCH_INTERACTION_LOG

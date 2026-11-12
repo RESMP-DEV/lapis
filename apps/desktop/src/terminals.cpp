@@ -228,7 +228,7 @@ void Terminals::attach(Entry& entry, bool create) {
     const auto title = entry.machine.isEmpty() ? QStringLiteral("This Mac") : entry.machine;
     entry.session = std::make_unique<Agent>(title, entry.launch.directory, QString{},
                                             QColor(QStringLiteral("#87cbac")), "");
-    entry.session->setSessionId(entry.id);
+    entry.session->setAgentId(entry.id);
     entry.session->setHarnessId(QStringLiteral("shell"));
     entry.session->setStatusSource(Agent::StatusSource::output);
     watch(entry);

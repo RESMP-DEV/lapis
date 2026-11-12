@@ -206,7 +206,7 @@ InteractionRecorder::InteractionRecorder(Workspace& workspace, QString path, Hoo
         if (!history_session_)
             return;
         note(QStringLiteral("history"),
-             {{QStringLiteral("session"), history_session_->sessionId()},
+             {{QStringLiteral("session"), history_session_->agentId()},
               {QStringLiteral("active"), history_session_->historyActive()},
               {QStringLiteral("position"), history_session_->historyPosition()},
               {QStringLiteral("span"), history_session_->historySpan()},
@@ -341,13 +341,13 @@ QJsonObject InteractionRecorder::focusContext() const {
     if (const auto* surface = qobject_cast<const TerminalSurface*>(focus);
         surface != nullptr && surface->document() != nullptr) {
         context.insert(QStringLiteral("surface"), surface->objectName());
-        context.insert(QStringLiteral("session"), surface->document()->sessionId());
+        context.insert(QStringLiteral("session"), surface->document()->agentId());
         context.insert(QStringLiteral("harness"), session_harness(*surface->document()));
     } else {
         context.insert(QStringLiteral("item"), named(focus));
     }
-    if (const auto* agent = workspace_.focusedSession(); agent != nullptr) {
-        context.insert(QStringLiteral("agent"), agent->sessionId());
+    if (const auto* agent = workspace_.focusedAgent(); agent != nullptr) {
+        context.insert(QStringLiteral("agent"), agent->agentId());
         context.insert(QStringLiteral("agentHarness"), session_harness(*agent));
     }
     return context;
@@ -372,7 +372,7 @@ QJsonObject InteractionRecorder::describeTarget(QQuickWindow* window, QPointF po
         }
         if (const auto* surface = qobject_cast<const TerminalSurface*>(item);
             surface != nullptr && surface->document() != nullptr && session.isEmpty())
-            session = surface->document()->sessionId();
+            session = surface->document()->agentId();
         const auto& name = item->objectName();
         if (name.isEmpty())
             continue;
@@ -719,7 +719,7 @@ void InteractionRecorder::paste(const TerminalSurface* surface, const QString& t
                        {QStringLiteral("length"), static_cast<qint64>(text.size())},
                        {QStringLiteral("accepted"), accepted}};
     if (surface != nullptr && surface->document() != nullptr) {
-        record.insert(QStringLiteral("session"), surface->document()->sessionId());
+        record.insert(QStringLiteral("session"), surface->document()->agentId());
         record.insert(QStringLiteral("harness"), session_harness(*surface->document()));
         record.insert(QStringLiteral("surface"), surface->objectName());
     }
@@ -736,14 +736,13 @@ void InteractionRecorder::copy(const TerminalSurface* surface, const QString& te
                        {QStringLiteral("how"), QLatin1String(how)},
                        {QStringLiteral("length"), static_cast<qint64>(text.size())}};
     if (surface != nullptr && surface->document() != nullptr)
-        record.insert(QStringLiteral("session"), surface->document()->sessionId());
+        record.insert(QStringLiteral("session"), surface->document()->agentId());
     record.insert(QStringLiteral("text"), capped(text, record));
     write(std::move(record));
 }
 
 void InteractionRecorder::followWorkspace() {
-    focused_id_ =
-        workspace_.focusedSession() ? workspace_.focusedSession()->sessionId() : QString();
+    focused_id_ = workspace_.focusedAgent() ? workspace_.focusedAgent()->agentId() : QString();
     category_id_ = workspace_.activeCategoryId();
     followHistory();
     connect(&workspace_, &Workspace::focusChanged, this, &InteractionRecorder::agentFocused);
@@ -751,8 +750,8 @@ void InteractionRecorder::followWorkspace() {
 }
 
 void InteractionRecorder::agentFocused() {
-    const auto* item = workspace_.focusedSession();
-    const auto id = item ? item->sessionId() : QString();
+    const auto* item = workspace_.focusedAgent();
+    const auto id = item ? item->agentId() : QString();
     if (id == focused_id_)
         return;
     focused_id_ = id;
@@ -792,7 +791,7 @@ void InteractionRecorder::categorySelected() {
 // The focused agent's history position: scrubbing, paging and returning live.
 void InteractionRecorder::followHistory() {
     disconnect(history_connection_);
-    history_session_ = workspace_.focusedSession();
+    history_session_ = workspace_.focusedAgent();
     if (history_session_)
         history_connection_ =
             connect(history_session_.data(), &Agent::historyChanged, this, [this] {

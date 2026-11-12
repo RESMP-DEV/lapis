@@ -657,7 +657,7 @@ void addRemoteOptions(session::LaunchSpec& launch) {
     if (launch.arguments.size() + missing.size() > max_saved_arguments) {
         const auto error =
             QStringLiteral("Saved SSH arguments leave no room for lapis connection options. "
-                           "Recreate this remote tab.");
+                           "Recreate this remote agent.");
         throw std::runtime_error(error.toStdString());
     }
     launch.arguments = missing + launch.arguments;
@@ -762,12 +762,12 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
     harness_updates_off_ = options.harnessUpdatesOff;
     // Selecting an agent is looking at it.
     connect(this, &Workspace::focusChanged, this, [this] {
-        if (auto* focused = focusedSession())
+        if (auto* focused = focusedAgent())
             focused->setUnseen(false);
     });
     const auto add = [this](const char* title, const char* directory, const char* activity,
                             const char* accent, std::string_view content) {
-        sessions_.push_back(std::make_unique<Agent>(
+        items_.push_back(std::make_unique<Agent>(
             QString::fromUtf8(title), QString::fromUtf8(directory), QString::fromUtf8(activity),
             QColor(QString::fromLatin1(accent)), content));
     };
@@ -781,20 +781,20 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
             const auto endpoint = session::posix::prepare_endpoint(
                 options.endpoint.isEmpty() ? defaultEndpoint() : options.endpoint);
             add("Agent", launch.directory.toUtf8().constData(), "Connecting", "#87cbac", "");
-            sessions_.front()->setSessionId(QStringLiteral("shell"));
+            items_.front()->setAgentId(QStringLiteral("shell"));
             const auto harness = harness_id(launch.agent);
             const AgentRecord agent{active_category_, endpoint, launch, harness};
-            sessions_.front()->setHarnessId(harness);
-            sessions_.front()->setStatusSource(statusSource(agent));
+            items_.front()->setHarnessId(harness);
+            items_.front()->setStatusSource(statusSource(agent));
             agents_.insert(QStringLiteral("shell"), agent);
-            watch(sessions_.front().get());
+            watch(items_.front().get());
             update_log_directory_ = QFileInfo(endpoint).absolutePath();
             restoreSelection();
             rememberInitialFocus();
             if (options.mode == session::wire::AttachMode::create &&
                 deferForUpdate(QStringLiteral("shell")))
                 return;
-            sessions_.front()->startLive(endpoint, launch, options.mode);
+            items_.front()->startLive(endpoint, launch, options.mode);
             return;
         }
         storage_path_ =
@@ -854,46 +854,45 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
         "  Leave enough quiet space to think.\r\n\r\n"
         "\x1b[90m  Preview cards show the planned layout.\x1b[0m\r\n");
     const std::array ids{"shell", "renderer", "agent", "service", "checks", "notes"};
-    if (sessions_.size() != ids.size())
+    if (items_.size() != ids.size())
         throw std::logic_error("session card count does not match the id table");
-    for (std::size_t i = 0; i < sessions_.size(); ++i)
-        sessions_[i]->setSessionId(QString::fromLatin1(ids[i]));
-    for (const auto& item : sessions_) {
-        agents_.insert(item->sessionId(), {active_category_, {}, {}});
+    for (std::size_t i = 0; i < items_.size(); ++i)
+        items_[i]->setAgentId(QString::fromLatin1(ids[i]));
+    for (const auto& item : items_) {
+        agents_.insert(item->agentId(), {active_category_, {}, {}});
         watch(item.get());
     }
     restoreSelection();
     rememberInitialFocus();
 }
 
-QVariantList Workspace::sessions() const {
+QVariantList Workspace::agents() const {
     QVariantList result;
-    result.reserve(static_cast<qsizetype>(sessions_.size()));
-    for (const auto& session : sessions_)
+    result.reserve(static_cast<qsizetype>(items_.size()));
+    for (const auto& session : items_)
         result.push_back(QVariant::fromValue(session.get()));
     return result;
 }
 
-Agent* Workspace::focusedSession() const {
-    return focused_index_ < 0 ? nullptr
-                              : sessions_.at(static_cast<std::size_t>(focused_index_)).get();
+Agent* Workspace::focusedAgent() const {
+    return focused_index_ < 0 ? nullptr : items_.at(static_cast<std::size_t>(focused_index_)).get();
 }
 
-void Workspace::nextSession(int delta) {
+void Workspace::nextAgent(int delta) {
     QStringList strip;
-    for (const auto& value : categorySessions())
-        strip.append(value.value<Agent*>()->sessionId());
+    for (const auto& value : categoryAgents())
+        strip.append(value.value<Agent*>()->agentId());
     auto* place = category(active_category_);
     if (strip.isEmpty() || place == nullptr)
         return;
     // Strip order, wrapping at either end.
-    const auto* focused = focusedSession();
-    const auto here = focused != nullptr ? strip.indexOf(focused->sessionId()) : -1;
+    const auto* focused = focusedAgent();
+    const auto here = focused != nullptr ? strip.indexOf(focused->agentId()) : -1;
     if (here < 0)
         return;
     const auto count = strip.size();
     const auto& next = strip.at(((here + delta) % count + count) % count);
-    if (next == focused->sessionId() || !mutableRegistry())
+    if (next == focused->agentId() || !mutableRegistry())
         return;
     const auto previous = checkpoint();
     place->selected = next;
@@ -912,13 +911,13 @@ std::vector<TabCandidate> Workspace::waitingCandidates(const QVariantMap& ready,
                                                        const Agent* exclude) const {
     std::vector<TabCandidate> out;
     const auto now = QDateTime::currentMSecsSinceEpoch();
-    for (const auto& item : sessions_) {
+    for (const auto& item : items_) {
         if (item.get() == exclude || item->closing())
             continue;
         const auto kind = item->statusKind();
         if (kind == QLatin1String("ended") || kind == QLatin1String("unknown"))
             continue;
-        const auto guess = ready.find(item->sessionId());
+        const auto guess = ready.find(item->agentId());
         const bool request = item->attentionPending();
         const bool finished = kind == QLatin1String("finished") ||
                               (kind == QLatin1String("idle") && item->hasAttentionSource());
@@ -926,7 +925,7 @@ std::vector<TabCandidate> Workspace::waitingCandidates(const QVariantMap& ready,
             continue;
         if (!request && parked(item.get()))
             continue;
-        const auto& id = item->sessionId();
+        const auto& id = item->agentId();
         const auto category = agents_.value(id).category;
         bool work = false;
         for (const auto& group : categories_)
@@ -945,12 +944,12 @@ std::vector<TabCandidate> Workspace::waitingCandidates(const QVariantMap& ready,
     return out;
 }
 bool Workspace::nextPriorityAttention(const QVariantMap& ready) {
-    const auto candidates = waitingCandidates(ready, focusedSession());
+    const auto candidates = waitingCandidates(ready, focusedAgent());
     std::vector<double> scores;
     const auto best = tab_ranker_->pick(candidates, &scores);
     if (!best)
         return false;
-    if (!selectSession(candidates[*best].session))
+    if (!selectAgent(candidates[*best].session))
         return false;
     tab_ranker_->recordTab(candidates, scores, *best);
     // Where the person settles after this move is the choice it records.
@@ -974,18 +973,18 @@ qint64 Workspace::parkedAtMs(const QString& id) const { return parked_at_.value(
 bool Workspace::parked(const Agent* item) const {
     if (item == nullptr)
         return false;
-    const auto at = parked_at_.value(item->sessionId());
-    return at > 0 && at >= waiting_since_.value(item->sessionId(), item->neededAtMs());
+    const auto at = parked_at_.value(item->agentId());
+    return at > 0 && at >= waiting_since_.value(item->agentId(), item->neededAtMs());
 }
 void Workspace::noteFocusMove() {
-    const auto* focused = focusedSession();
-    const auto id = focused != nullptr ? focused->sessionId() : QString();
+    const auto* focused = focusedAgent();
+    const auto id = focused != nullptr ? focused->agentId() : QString();
     if (id == last_focus_id_)
         return;
     // Leaving a finished turn looked at long enough parks it; the look counts
     // from when it began to wait if that came after the person arrived.
     const auto now = QDateTime::currentMSecsSinceEpoch();
-    if (const auto* left = session(last_focus_id_); left != nullptr && focus_since_ms_ > 0) {
+    if (const auto* left = agent(last_focus_id_); left != nullptr && focus_since_ms_ > 0) {
         const auto kind = left->statusKind();
         const auto since = waiting_since_.value(last_focus_id_, left->neededAtMs());
         if ((kind == QLatin1String("finished") || kind == QLatin1String("idle")) &&
@@ -995,7 +994,7 @@ void Workspace::noteFocusMove() {
         }
     }
     focus_since_ms_ = now;
-    auto fresh = waitingCandidates(guesses_ ? guesses_() : QVariantMap{}, session(last_focus_id_));
+    auto fresh = waitingCandidates(guesses_ ? guesses_() : QVariantMap{}, agent(last_focus_id_));
     if (choice_)
         choice_->add(fresh);
     else
@@ -1049,18 +1048,18 @@ void Agent::clearFixtureRequests() {
     requests_.clear();
     emit attentionChanged();
 }
-Agent* Workspace::session(const QString& id) const {
-    for (const auto& item : sessions_)
-        if (item->sessionId() == id)
+Agent* Workspace::agent(const QString& id) const {
+    for (const auto& item : items_)
+        if (item->agentId() == id)
             return item.get();
     return nullptr;
 }
 bool Workspace::requestAttention(const FixtureRequest& request) {
-    auto* target = session(request.session_id);
+    auto* target = agent(request.agent_id);
     return fixture_mode_ && target && target->addFixtureRequest(request.request_id, request.reason);
 }
 bool Workspace::resolveAttention(const FixtureRequest& request) {
-    auto* target = session(request.session_id);
+    auto* target = agent(request.agent_id);
     return fixture_mode_ && target && target->resolveFixtureRequest(request.request_id);
 }
 bool Workspace::replayAttention(const QString& scenario) {
@@ -1078,7 +1077,7 @@ bool Workspace::replayAttention(const QString& scenario) {
     if (scenario == QStringLiteral("resolve"))
         return resolveAttention({QStringLiteral("agent"), QStringLiteral("request-1"), {}});
     if (scenario == QStringLiteral("reset")) {
-        for (const auto& item : sessions_)
+        for (const auto& item : items_)
             item->clearFixtureRequests();
         return true;
     }
@@ -1118,8 +1117,8 @@ void Workspace::clearError() {
     emit errorChanged();
 }
 void Workspace::rememberInitialFocus() {
-    const auto* focused = focusedSession();
-    last_focus_id_ = focused != nullptr ? focused->sessionId() : QString{};
+    const auto* focused = focusedAgent();
+    last_focus_id_ = focused != nullptr ? focused->agentId() : QString{};
 }
 // A moved or closed agent can reassign focus, but that is not the
 // person choosing an agent. Drop any pending choice and restart attribution
@@ -1127,8 +1126,8 @@ void Workspace::rememberInitialFocus() {
 void Workspace::noteStructuralFocus() {
     choice_.reset();
     choice_settle_.stop();
-    const auto* focused = focusedSession();
-    last_focus_id_ = focused != nullptr ? focused->sessionId() : QString{};
+    const auto* focused = focusedAgent();
+    last_focus_id_ = focused != nullptr ? focused->agentId() : QString{};
 }
 void Workspace::watch(Agent* item) {
     // Its unseen mark and whether it is at work outlive a window (GuiState).
@@ -1136,7 +1135,7 @@ void Workspace::watch(Agent* item) {
     connect(item, &Agent::statusChanged, this, &Workspace::marksChanged);
     connect(item, &Agent::connectionChanged, this, [this, item] { finishClosing(item); });
     // The service reports why a session ended just after the state changes.
-    connect(item, &Agent::connectionChanged, this, [this, id = item->sessionId()] {
+    connect(item, &Agent::connectionChanged, this, [this, id = item->agentId()] {
         QTimer::singleShot(0, this, [this, id] {
             finishReload(id);
             reconnectIfDropped(id);
@@ -1153,7 +1152,7 @@ void Workspace::watch(Agent* item) {
         const auto now = item->statusKind();
         const auto previous = std::exchange(kind, now);
         const auto at = QDateTime::currentMSecsSinceEpoch();
-        const auto& id = item->sessionId();
+        const auto& id = item->agentId();
         if (now == QLatin1String("working") &&
             (previous == QLatin1String("finished") || previous == QLatin1String("idle"))) {
             auto& starts = turn_starts_[id];
@@ -1161,7 +1160,7 @@ void Workspace::watch(Agent* item) {
             if (starts.size() < 256)
                 starts.push_back(at);
             // A prompt sent to the agent shown settles the choice now.
-            if (item == focusedSession() && choice_) {
+            if (item == focusedAgent() && choice_) {
                 choice_settle_.stop();
                 settleChoice();
             }
@@ -1171,7 +1170,7 @@ void Workspace::watch(Agent* item) {
         }
     });
     connect(item, &Agent::attentionArrived, this, [this, item] {
-        waiting_since_.insert(item->sessionId(), QDateTime::currentMSecsSinceEpoch());
+        waiting_since_.insert(item->agentId(), QDateTime::currentMSecsSinceEpoch());
     });
     connect(item, &Agent::unseenChanged, this, [this] {
         if (!batching_categories_)
@@ -1185,7 +1184,7 @@ void Workspace::watch(Agent* item) {
                 if (updated == count)
                     return;
                 batching_categories_ = true;
-                if (updated > count && item != focusedSession())
+                if (updated > count && item != focusedAgent())
                     item->setUnseen(true);
                 batching_categories_ = false;
                 count = updated;
@@ -1193,7 +1192,7 @@ void Workspace::watch(Agent* item) {
             });
 }
 int Workspace::attentionAgents() const {
-    return static_cast<int>(std::count_if(sessions_.begin(), sessions_.end(),
+    return static_cast<int>(std::count_if(items_.begin(), items_.end(),
                                           [](const auto& item) { return item->unseen(); }));
 }
 QVariantList Workspace::categories() const {
@@ -1202,8 +1201,8 @@ QVariantList Workspace::categories() const {
         int count = 0;
         int unseen = 0;
         int agents = 0;
-        for (const auto& item : sessions_)
-            if (agents_.value(item->sessionId()).category == category.id) {
+        for (const auto& item : items_)
+            if (agents_.value(item->agentId()).category == category.id) {
                 count += item->attentionCount();
                 unseen += item->unseen() ? 1 : 0;
                 ++agents;
@@ -1216,10 +1215,10 @@ QVariantList Workspace::categories() const {
     }
     return result;
 }
-QVariantList Workspace::categorySessions() const {
+QVariantList Workspace::categoryAgents() const {
     QVariantList result;
-    for (const auto& item : sessions_)
-        if (agents_.value(item->sessionId()).category == active_category_)
+    for (const auto& item : items_)
+        if (agents_.value(item->agentId()).category == active_category_)
             result.append(QVariant::fromValue(item.get()));
     return result;
 }
@@ -1229,8 +1228,8 @@ void Workspace::restoreSelection() {
                                  [&](const auto& value) { return value.id == active_category_; });
     if (category == categories_.end())
         return;
-    for (std::size_t i = 0; i < sessions_.size(); ++i) {
-        const auto& id = sessions_[i]->sessionId();
+    for (std::size_t i = 0; i < items_.size(); ++i) {
+        const auto& id = items_[i]->agentId();
         if (agents_.value(id).category != active_category_)
             continue;
         if (focused_index_ < 0 || id == category->selected)
@@ -1238,14 +1237,14 @@ void Workspace::restoreSelection() {
         if (id == category->selected)
             break;
     }
-    category->selected = focusedSession() ? focusedSession()->sessionId() : QString{};
+    category->selected = focusedAgent() ? focusedAgent()->agentId() : QString{};
 }
 void Workspace::changed() {
     restoreSelection();
     noteStructuralFocus();
     emit categoriesChanged();
     emit categoryChanged();
-    emit sessionsChanged();
+    emit agentsChanged();
     emit focusChanged();
 }
 Workspace::RegistryState Workspace::checkpoint() const {
@@ -1342,7 +1341,7 @@ bool Workspace::selectCategory(const QString& id) {
         return false;
     noteFocusMove();
     emit categoryChanged();
-    emit sessionsChanged();
+    emit agentsChanged();
     emit focusChanged();
     return true;
 }
@@ -1356,12 +1355,12 @@ void Workspace::nextCategory(int delta) {
             return;
         }
 }
-bool Workspace::selectSession(const QString& id) {
+bool Workspace::selectAgent(const QString& id) {
     if (!mutableRegistry())
         return false;
-    if (!session(id))
+    if (!agent(id))
         return false;
-    if (focusedSession() && focusedSession()->sessionId() == id)
+    if (focusedAgent() && focusedAgent()->agentId() == id)
         return true;
     const auto previous = checkpoint();
     const bool category_changed = active_category_ != agents_.value(id).category;
@@ -1374,17 +1373,17 @@ bool Workspace::selectSession(const QString& id) {
     noteFocusMove();
     if (category_changed) {
         emit categoryChanged();
-        emit sessionsChanged();
+        emit agentsChanged();
     }
     emit focusChanged();
     return true;
 }
 // QML positional API v1 requires QString arguments; role names and boundary validation are
 // explicit. NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-bool Workspace::renameSession(const QString& id, const QString& title) {
+bool Workspace::renameAgent(const QString& id, const QString& title) {
     if (!mutableRegistry())
         return false;
-    auto* item = session(id);
+    auto* item = agent(id);
     const auto entry = agents_.find(id);
     if (!item || entry == agents_.end() || !validName(title))
         return fail(QStringLiteral("Use an agent name of 1–80 characters."));
@@ -1403,7 +1402,7 @@ bool Workspace::renameSession(const QString& id, const QString& title) {
 }
 bool Workspace::followConversationTitle(const QString& id, QStringView title) {
     constexpr qsizetype limit = 80;
-    auto* item = session(id);
+    auto* item = agent(id);
     const auto entry = agents_.find(id);
     if (item == nullptr || entry == agents_.end() || entry->named || fixture_mode_)
         return false;
@@ -1444,12 +1443,11 @@ QString Workspace::agentConversation(const QString& id) const {
         return record->session_id;
     return entry->managed_resume_identity;
 }
-bool Workspace::moveSession(const QString& id, const QString& categoryId) {
+bool Workspace::moveAgent(const QString& id, const QString& categoryId) {
     if (!mutableRegistry())
         return false;
-    if (!session(id) ||
-        std::none_of(categories_.begin(), categories_.end(),
-                     [&](const auto& category) { return category.id == categoryId; }))
+    if (!agent(id) || std::none_of(categories_.begin(), categories_.end(),
+                                   [&](const auto& category) { return category.id == categoryId; }))
         return fail(QStringLiteral("Agent or category no longer exists."));
     const auto previous = checkpoint();
     const auto entry = agents_.find(id);
@@ -1464,24 +1462,24 @@ bool Workspace::moveSession(const QString& id, const QString& categoryId) {
     changed();
     return true;
 }
-bool Workspace::moveSessionBy(const QString& id, int delta) {
+bool Workspace::moveAgentBy(const QString& id, int delta) {
     if (!mutableRegistry())
         return false;
-    if (!session(id) || delta == 0)
+    if (!agent(id) || delta == 0)
         return false;
     std::vector<std::size_t> indices;
-    for (std::size_t i = 0; i < sessions_.size(); ++i)
-        if (agents_.value(sessions_[i]->sessionId()).category == agents_.value(id).category)
+    for (std::size_t i = 0; i < items_.size(); ++i)
+        if (agents_.value(items_[i]->agentId()).category == agents_.value(id).category)
             indices.push_back(i);
     for (std::size_t i = 0; i < indices.size(); ++i)
-        if (sessions_[indices[i]]->sessionId() == id) {
+        if (items_[indices[i]]->agentId() == id) {
             const auto previous = checkpoint();
             const auto target = std::clamp(static_cast<qint64>(i) + delta, qint64{0},
                                            static_cast<qint64>(indices.size()) - 1);
             const auto step = target > static_cast<qint64>(i) ? 1 : -1;
             const auto swapPositions = [&](qint64 from, qint64 to) {
-                std::swap(sessions_[indices[static_cast<std::size_t>(from)]],
-                          sessions_[indices[static_cast<std::size_t>(to)]]);
+                std::swap(items_[indices[static_cast<std::size_t>(from)]],
+                          items_[indices[static_cast<std::size_t>(to)]]);
             };
             for (qint64 position = static_cast<qint64>(i); position != target; position += step)
                 swapPositions(position, position + step);
@@ -1498,37 +1496,37 @@ bool Workspace::moveSessionBy(const QString& id, int delta) {
         }
     return false;
 }
-bool Workspace::placeSessions(const QStringList& ids, const QString& categoryId, int index) {
+bool Workspace::placeAgents(const QStringList& ids, const QString& categoryId, int index) {
     if (!mutableRegistry())
         return false;
     auto* destination = category(categoryId);
     const QSet<QString> moving(ids.begin(), ids.end());
     if (destination == nullptr || moving.isEmpty() || moving.size() != ids.size() ||
-        std::any_of(ids.begin(), ids.end(), [&](const auto& id) { return !session(id); }))
+        std::any_of(ids.begin(), ids.end(), [&](const auto& id) { return !agent(id); }))
         return fail(QStringLiteral("Agent or category no longer exists."));
     const auto previous = checkpoint();
     std::vector<Agent*> old_order;
-    old_order.reserve(sessions_.size());
-    for (const auto& item : sessions_)
+    old_order.reserve(items_.size());
+    for (const auto& item : items_)
         old_order.push_back(item.get());
     std::vector<std::unique_ptr<Agent>> moved;
     std::vector<std::unique_ptr<Agent>> rest;
-    for (auto& item : sessions_)
-        (moving.contains(item->sessionId()) ? moved : rest).push_back(std::move(item));
+    for (auto& item : items_)
+        (moving.contains(item->agentId()) ? moved : rest).push_back(std::move(item));
     const auto position = insertionPoint(rest, categoryId, index);
     rest.insert(rest.begin() + static_cast<std::ptrdiff_t>(position),
                 std::make_move_iterator(moved.begin()), std::make_move_iterator(moved.end()));
-    sessions_ = std::move(rest);
+    items_ = std::move(rest);
     recategorize(ids, categoryId);
     restoreSelection();
     if (!save()) {
         std::vector<std::unique_ptr<Agent>> restored;
         for (auto* item : old_order) {
-            const auto found = std::find_if(sessions_.begin(), sessions_.end(),
+            const auto found = std::find_if(items_.begin(), items_.end(),
                                             [&](const auto& value) { return value.get() == item; });
             restored.push_back(std::move(*found));
         }
-        sessions_ = std::move(restored);
+        items_ = std::move(restored);
         rollback(previous);
         emit errorChanged();
         return false;
@@ -1541,7 +1539,7 @@ std::size_t Workspace::insertionPoint(const std::vector<std::unique_ptr<Agent>>&
     std::optional<std::size_t> last;
     int seen = 0;
     for (std::size_t i = 0; i < staying.size(); ++i) {
-        if (agents_.value(staying[i]->sessionId()).category != categoryId)
+        if (agents_.value(staying[i]->agentId()).category != categoryId)
             continue;
         if (seen++ == index)
             return i;
@@ -1577,19 +1575,19 @@ bool Workspace::placeCategory(const QString& id, int index) {
     changed();
     return true;
 }
-bool Workspace::removeSession(const QString& id) {
+bool Workspace::removeAgent(const QString& id) {
     if (!mutableRegistry())
         return false;
-    const auto* item = session(id);
+    const auto* item = agent(id);
     if (!item)
         return false;
     if (item->live() && item->connectionState() != QStringLiteral("ended"))
         return fail(QStringLiteral(
-            "This agent may still be running. End it in the agent before removing its tab."));
-    return discardSession(id);
+            "This agent may still be running. End it in the agent before removing it."));
+    return discardAgent(id);
 }
-bool Workspace::discardSession(const QString& id) {
-    const auto* item = session(id);
+bool Workspace::discardAgent(const QString& id) {
+    const auto* item = agent(id);
     if (!item)
         return false;
     const auto item_category = agents_.value(id).category;
@@ -1599,29 +1597,28 @@ bool Workspace::discardSession(const QString& id) {
     // A closed agent hands focus to its right neighbor in its own category, or
     // to its left one at that category's end, even while another strip is shown.
     QVariantList list;
-    for (const auto& candidate : sessions_)
-        if (agents_.value(candidate->sessionId()).category == item_category)
+    for (const auto& candidate : items_)
+        if (agents_.value(candidate->agentId()).category == item_category)
             list.append(QVariant::fromValue(candidate.get()));
     for (qsizetype i = 0; i < list.size(); ++i) {
         if (list[i].value<Agent*>() != item)
             continue;
         const auto next =
-            list.size() < 2
-                ? QString()
-                : list[i + 1 < list.size() ? i + 1 : i - 1].value<Agent*>()->sessionId();
+            list.size() < 2 ? QString()
+                            : list[i + 1 < list.size() ? i + 1 : i - 1].value<Agent*>()->agentId();
         for (auto& category : categories_)
             if (category.selected == id)
                 category.selected = next;
     }
-    const auto position = std::find_if(sessions_.begin(), sessions_.end(),
+    const auto position = std::find_if(items_.begin(), items_.end(),
                                        [&](const auto& value) { return value.get() == item; });
-    const auto index = std::distance(sessions_.begin(), position);
+    const auto index = std::distance(items_.begin(), position);
     auto retained = std::move(*position);
-    sessions_.erase(position);
+    items_.erase(position);
     agents_.remove(id);
     restoreSelection();
     if (!save()) {
-        sessions_.insert(sessions_.begin() + index, std::move(retained));
+        items_.insert(items_.begin() + index, std::move(retained));
         rollback(previous);
         emit errorChanged();
         return false;
@@ -1862,7 +1859,7 @@ QString Workspace::startAgent(const AgentRequest& request) {
         return {};
     if (fixture_mode_)
         return failed(QStringLiteral("Agent launch is disabled in the preview fixture."));
-    if (sessions_.size() >= 128 || !validName(request.title))
+    if (items_.size() >= 128 || !validName(request.title))
         return failed(QStringLiteral(
             "Use an agent name of 1–80 characters; at most 128 agents are supported."));
     if (std::none_of(categories_.begin(), categories_.end(),
@@ -1889,7 +1886,7 @@ QString Workspace::launchAgent(const AgentRequest& request, const session::Launc
             QDir(QFileInfo(storage_path_).absolutePath()).filePath(id + QStringLiteral(".sock")));
         auto item = std::make_unique<Agent>(request.title.trimmed(), launch.directory, QString{},
                                             QColor(QStringLiteral("#87cbac")), "");
-        item->setSessionId(id);
+        item->setAgentId(id);
         item->setHarnessId(request.harness);
         AgentRecord agent{request.category, endpoint, launch, request.harness};
         agent.managed_resume_index = managed_resume_index;
@@ -1901,7 +1898,7 @@ QString Workspace::launchAgent(const AgentRequest& request, const session::Launc
         prepareStart(agent, *item);
         const auto previous = checkpoint();
         agents_.insert(id, agent);
-        sessions_.push_back(std::move(item));
+        items_.push_back(std::move(item));
         if (request.select)
             for (auto& category : categories_)
                 if (category.id == request.category)
@@ -1909,16 +1906,16 @@ QString Workspace::launchAgent(const AgentRequest& request, const session::Launc
         restoreSelection();
         // Persist before starting a child, so a failed write cannot orphan a new agent.
         if (!save()) {
-            sessions_.pop_back();
+            items_.pop_back();
             rollback(previous);
             emit errorChanged();
             return {};
         }
-        watch(sessions_.back().get());
+        watch(items_.back().get());
         // Only this Mac's CLIs are updated first.
         if (!request.machine.isEmpty() || !deferForUpdate(id))
-            sessions_.back()->startLive(endpoint, sized(agents_.value(id).launch),
-                                        session::wire::AttachMode::create);
+            items_.back()->startLive(endpoint, sized(agents_.value(id).launch),
+                                     session::wire::AttachMode::create);
         changed();
         return id;
     } catch (const std::exception& error) {
@@ -1974,12 +1971,12 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
         groups.append(QJsonObject{
             {"id", category.id}, {"name", category.name}, {"selected", category.selected}});
     QJsonArray agents;
-    for (const auto& item : sessions_) {
-        const auto entry = agents_.constFind(item->sessionId());
+    for (const auto& item : items_) {
+        const auto entry = agents_.constFind(item->agentId());
         if (entry == agents_.cend())
             return saveError(QStringLiteral("Missing agent metadata."));
-        agents.append(agentRecord(entry.value(), item->sessionId(),
-                                  item->sessionId() == renamedId ? renamedTitle : item->title()));
+        agents.append(agentRecord(entry.value(), item->agentId(),
+                                  item->agentId() == renamedId ? renamedTitle : item->title()));
     }
     for (const auto& kept : unreadable_agents_)
         agents.append(kept);
@@ -2142,7 +2139,7 @@ bool Workspace::restartAgent(const QString& id) {
     if (fixture_mode_ || storage_path_.isEmpty())
         return fail(QStringLiteral("Restart requires a persisted workspace."));
     const auto entry = agents_.find(id);
-    auto* item = session(id);
+    auto* item = agent(id);
     if (entry == agents_.end() || item == nullptr)
         return fail(QStringLiteral("Unknown agent."));
     if (item->closing())
@@ -2203,19 +2200,19 @@ session::LaunchSpec Workspace::sized(session::LaunchSpec launch) const {
 int Workspace::reloadAgent(const QString& id) { return reloadAgents({id}); }
 int Workspace::reloadCategory() {
     QStringList ids;
-    for (const auto& item : sessions_)
-        if (agents_.value(item->sessionId()).category == active_category_)
-            ids << item->sessionId();
+    for (const auto& item : items_)
+        if (agents_.value(item->agentId()).category == active_category_)
+            ids << item->agentId();
     return reloadAgents(ids);
 }
 int Workspace::reloadAll() {
     QStringList ids;
-    for (const auto& item : sessions_)
-        ids << item->sessionId();
+    for (const auto& item : items_)
+        ids << item->agentId();
     return reloadAgents(ids);
 }
 Workspace::ReloadResult Workspace::requestReload(const QString& id) {
-    auto* item = session(id);
+    auto* item = agent(id);
     const auto entry = agents_.constFind(id);
     if (item == nullptr || entry == agents_.cend())
         return {ReloadOutcome::failed, QStringLiteral("Unknown agent.")};
@@ -2290,7 +2287,7 @@ int Workspace::reloadAgents(const QStringList& ids) {
 void Workspace::finishReload(const QString& id, int waits) {
     if (!reloading_.contains(id))
         return;
-    auto* item = session(id);
+    auto* item = agent(id);
     const auto entry = agents_.constFind(id);
     if (item == nullptr || entry == agents_.cend()) {
         reloading_.remove(id);
@@ -2362,7 +2359,7 @@ void Workspace::reconnectIfDropped(const QString& id) {
     // for hours (a laptop asleep, or offline) and the agent should come back
     // on its own once it returns. A network change retries at once.
     constexpr std::array waits{2s, 5s, 10s, 20s, 30s, 60s};
-    auto* item = session(id);
+    auto* item = agent(id);
     const auto entry = agents_.constFind(id);
     if (item == nullptr || entry == agents_.cend())
         return;
@@ -2399,7 +2396,7 @@ void Workspace::reconnectIfDropped(const QString& id) {
                           .arg(remote->first)
                           .arg(std::chrono::ceil<std::chrono::seconds>(wait).count()));
     QTimer::singleShot(wait, this, [this, id, generation] {
-        auto* again = session(id);
+        auto* again = agent(id);
         const auto entry = agents_.constFind(id);
         if (again == nullptr || entry == agents_.cend() ||
             reconnects_.value(id).generation != generation || again->closing() ||
@@ -2417,7 +2414,7 @@ void Workspace::reconnectIfDropped(const QString& id) {
 void Workspace::reattachIfDisconnected(const QString& id) {
     using namespace std::chrono_literals;
     constexpr std::array waits{1s, 2s, 5s, 10s, 30s};
-    auto* item = session(id);
+    auto* item = agent(id);
     if (item == nullptr || fixture_mode_ || headless_ || !agents_.contains(id))
         return;
     auto& attempts = reattaches_[id];
@@ -2450,7 +2447,7 @@ void Workspace::reattachIfDisconnected(const QString& id) {
     ++attempts.count;
     const auto generation = ++attempts.generation;
     QTimer::singleShot(wait, this, [this, id, generation, discover] {
-        auto* again = session(id);
+        auto* again = agent(id);
         const auto entry = agents_.constFind(id);
         if (again == nullptr || entry == agents_.cend() ||
             reattaches_.value(id).generation != generation || again->closing() ||
@@ -2495,8 +2492,8 @@ void Workspace::watchNetwork() {
             [this] { network_settle_.start(); });
 }
 void Workspace::retryConnectionsNow() {
-    for (const auto& item : sessions_) {
-        const auto id = item->sessionId();
+    for (const auto& item : items_) {
+        const auto id = item->agentId();
         const auto entry = agents_.constFind(id);
         if (entry == agents_.cend() || item->closing())
             continue;
@@ -2727,7 +2724,7 @@ void Workspace::loadAgents(const QJsonArray& agents) {
                 throw std::runtime_error("Invalid agent record");
             auto item = std::make_unique<Agent>(title, agent.launch.directory, QString{},
                                                 QColor(QStringLiteral("#87cbac")), "");
-            item->setSessionId(id);
+            item->setAgentId(id);
             item->setHarnessId(harness);
             item->setStatusSource(statusSource(agent));
             metadata.insert(id, agent);
@@ -2740,7 +2737,7 @@ void Workspace::loadAgents(const QJsonArray& agents) {
         }
     }
     agents_ = std::move(metadata);
-    sessions_ = std::move(restored);
+    items_ = std::move(restored);
     if (!why.isEmpty())
         fail(QStringLiteral("Not restored, kept in the registry: ") +
              why.join(QStringLiteral("; ")));
@@ -2808,7 +2805,7 @@ void Workspace::restore() {
             active_category_ = categories_.front().id;
         connectRestoredAgents();
     } catch (const std::exception& error) {
-        sessions_.clear();
+        items_.clear();
         agents_.clear();
         categories_ = {{QStringLiteral("general"), QStringLiteral("General"), {}}};
         active_category_ = QStringLiteral("general");
@@ -2827,16 +2824,16 @@ void Workspace::connectRestoredAgents() {
     };
     std::vector<RestartPlan> restarting;
     QStringList restart_failures;
-    for (const auto& item : sessions_) {
+    for (const auto& item : items_) {
         watch(item.get());
-        const auto entry = agents_.find(item->sessionId());
+        const auto entry = agents_.find(item->agentId());
         if (entry == agents_.end())
             throw std::runtime_error("Missing restored agent metadata");
         auto& agent = entry.value();
         // A saved remote agent reached its machine before; one that cannot
         // yet (the network still coming up after login) keeps retrying.
         if (remoteCommand(agent.launch))
-            worked_remotely_.insert(item->sessionId());
+            worked_remotely_.insert(item->agentId());
         // A card still in the workspace whose service is gone comes back,
         // like a restored terminal tab; Command-W is what removes an agent.
         if (restore_agents_ && !serviceRunning(agent.endpoint)) {
@@ -2905,7 +2902,7 @@ bool Workspace::deferForUpdate(const QString& id) {
     update.harness = harness;
     if (!update.starts.contains(id))
         update.starts.append(id);
-    if (auto* item = session(id))
+    if (auto* item = agent(id))
         item->setUpdating(QStringLiteral("Updating %1…").arg(selected->label));
     if (running)
         return true;
@@ -2987,7 +2984,7 @@ void Workspace::drainUpdater(QProcess* process) {
 
 void Workspace::startUpdatedAgents(const QStringList& ids) {
     for (const auto& id : ids) {
-        auto* item = session(id);
+        auto* item = agent(id);
         const auto entry = agents_.find(id);
         if (!item || entry == agents_.end())
             continue; // closed while waiting
@@ -3022,20 +3019,20 @@ void Agent::setClosing(bool closing) {
     emit statusChanged();
 }
 
-bool Workspace::closeSession(const QString& id, bool abandon) {
+bool Workspace::closeAgent(const QString& id, bool abandon) {
     if (!mutableRegistry())
         return false;
-    auto* item = session(id);
+    auto* item = agent(id);
     if (!item)
         return false;
     if (!item->live() || item->connectionState() == QStringLiteral("ended") ||
         (abandon && !item->reachable()))
-        return discardSession(id);
+        return discardAgent(id);
     if (item->closing())
         return true;
     if (!item->terminate())
         return fail(QStringLiteral("lapis could not reach this agent's session to end it. "
-                                   "Reconnect it, or exit the agent, then close its tab."));
+                                   "Reconnect it, or exit the agent, then close it."));
     item->setClosing(true);
     return true;
 }
@@ -3050,7 +3047,7 @@ void Workspace::finishClosing(Agent* item) {
         QMetaObject::invokeMethod(
             this,
             [this, guarded] {
-                if (guarded && guarded->closing() && removeSession(guarded->sessionId()))
+                if (guarded && guarded->closing() && removeAgent(guarded->agentId()))
                     return;
                 if (guarded)
                     guarded->setClosing(false);
@@ -3063,8 +3060,7 @@ void Workspace::finishClosing(Agent* item) {
         // this view while its agent keeps running: reattach and say so.
         item->setClosing(false);
         fail(QStringLiteral("This agent's session service predates closing from lapis, so the "
-                            "agent is still running. Exit it inside the agent, then close its "
-                            "tab."));
+                            "agent is still running. Exit it inside the agent, then close it."));
         item->reconnect();
     }
 }
@@ -3124,7 +3120,7 @@ void Workspace::noteStatus(Agent* item) {
                   (previous == QStringLiteral("working") || previous == QStringLiteral("idle"));
     if (observed)
         emit turnFinished(item);
-    if ((finished || observed) && item != focusedSession())
+    if ((finished || observed) && item != focusedAgent())
         item->setUnseen(true);
 }
 // Claude Code's hooks report its whole turn. Codex's notify program reports
@@ -3175,7 +3171,7 @@ bool Workspace::reopenAgent() {
         emit closedChanged();
         return false;
     }
-    return selectSession(id);
+    return selectAgent(id);
 }
 
 // Categories --------------------------------------------------------------------
@@ -3201,7 +3197,7 @@ bool settledKind(const QString& kind) {
 
 QJsonObject Workspace::saveMarks() const {
     QJsonObject agents;
-    for (const auto& item : sessions_) {
+    for (const auto& item : items_) {
         const bool working = item->statusKind() == QLatin1String("working");
         if (!item->unseen() && !working && item->neededAtMs() == 0)
             continue;
@@ -3210,9 +3206,9 @@ QJsonObject Workspace::saveMarks() const {
             mark.insert(QStringLiteral("unseen"), true);
         if (working)
             mark.insert(QStringLiteral("working"), true);
-        if (const auto conversation = agentConversation(item->sessionId()); !conversation.isEmpty())
+        if (const auto conversation = agentConversation(item->agentId()); !conversation.isEmpty())
             mark.insert(QStringLiteral("conversation"), conversation);
-        agents.insert(item->sessionId(), mark);
+        agents.insert(item->agentId(), mark);
     }
     return {{QStringLiteral("savedAtMs"), QDateTime::currentMSecsSinceEpoch()},
             {QStringLiteral("agents"), agents}};
@@ -3224,7 +3220,7 @@ void Workspace::restoreMarks(const QJsonObject& marks) {
     const bool recent = saved_at > 0 && now >= saved_at && now - saved_at <= kFinishedWhileAwayMs;
     const auto agents = marks.value(QStringLiteral("agents")).toObject();
     for (auto entry = agents.constBegin(); entry != agents.constEnd(); ++entry) {
-        auto* item = session(entry.key());
+        auto* item = agent(entry.key());
         if (item == nullptr)
             continue;
         const auto mark = entry.value().toObject();
@@ -3235,7 +3231,7 @@ void Workspace::restoreMarks(const QJsonObject& marks) {
         const auto needed =
             static_cast<qint64>(mark.value(QStringLiteral("neededAtMs")).toDouble());
         const bool unseen = mark.value(QStringLiteral("unseen")).toBool() &&
-                            item != focusedSession() && !item->unseen();
+                            item != focusedAgent() && !item->unseen();
         // An already-unseen agent keeps its newer timestamp: a second restore
         // or a status that marked it must not turn Tab's ordering backward.
         if (unseen || item->neededAtMs() == 0)
@@ -3261,7 +3257,7 @@ void Workspace::watchFinishWhileAway(Agent* item) {
             (kind == QLatin1String("idle") && item->statusSource() != Agent::StatusSource::output);
         if (kind != QLatin1String("finished") && kind != QLatin1String("idle"))
             return;
-        if (item != focusedSession())
+        if (item != focusedAgent())
             item->setUnseen(true);
         if (observed)
             emit finishedWhileAway(item);

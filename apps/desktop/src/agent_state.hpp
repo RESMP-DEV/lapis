@@ -55,7 +55,7 @@ class AgentStatePublisher final : public QObject {
     [[nodiscard]] QJsonObject state() const;
     void changed();
     void publish();
-    void watchSessions();
+    void watchAgents();
     Workspace& workspace_;
     QPointer<NextPrompt> next_;
     QString path_;

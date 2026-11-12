@@ -136,7 +136,7 @@ terminals are listed above the agents and swipe away the same way.
 
 A new agent from the phone: pick the machine (this Mac, or an ssh host from your
 ssh config and shell history, reachable and most used first), the CLI, the
-category, a folder, a model and an approval mode. It opens as a new tab in that
+category, a folder, a model and an approval mode. It opens as a new agent in that
 category on the Mac, then on the phone once it runs. The folder starts at
 `newAgent.folder` (the machine's own in `machines`, else the one for every
 machine), then the ten folders where you have started the most agents, then the

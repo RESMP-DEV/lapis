@@ -48,7 +48,7 @@ void publishesEachAgentPrivately() {
     QTemporaryDir directory;
     require(directory.isValid(), "fixture directory");
     Workspace workspace(WorkspaceMode::fixture);
-    require(workspace.selectSession(QStringLiteral("renderer")), "show the renderer");
+    require(workspace.selectAgent(QStringLiteral("renderer")), "show the renderer");
     const auto path = directory.filePath(QStringLiteral("agent_state.json"));
     QElapsedTimer clock;
     clock.start();
@@ -62,7 +62,7 @@ void publishesEachAgentPrivately() {
                     QCoreApplication::applicationPid() &&
                 state.value(QStringLiteral("publishedAtMs")).toInteger() > 0,
             "versioned, with the writer and the time");
-    require(state.value(QStringLiteral("agents")).toArray().size() == workspace.sessions().size(),
+    require(state.value(QStringLiteral("agents")).toArray().size() == workspace.agents().size(),
             "every agent, in workspace order");
     const auto quiet = agent(state, QStringLiteral("agent"));
     require(quiet.value(QStringLiteral("requests")).toInt() == 0 &&

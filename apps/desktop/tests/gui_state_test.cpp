@@ -222,12 +222,12 @@ void marksComeBack() {
     qint64 needed = 0;
     {
         Workspace before(WorkspaceMode::fixture);
-        require(before.selectSession(QStringLiteral("renderer")), "select renderer");
-        auto* agent = before.session(QStringLiteral("agent"));
+        require(before.selectAgent(QStringLiteral("renderer")), "select renderer");
+        auto* agent = before.agent(QStringLiteral("agent"));
         finishTurn(*agent);
         require(agent->unseen(), "a turn finished out of view is marked");
         needed = agent->neededAtMs();
-        setActivity(*before.session(QStringLiteral("checks")),
+        setActivity(*before.agent(QStringLiteral("checks")),
                     lapis::session::attention::Activity::working);
         marks = before.saveMarks();
     }
@@ -246,24 +246,23 @@ void marksComeBack() {
     marks.insert(QStringLiteral("agents"), agents);
 
     Workspace after(WorkspaceMode::fixture);
-    require(after.selectSession(QStringLiteral("renderer")), "select renderer");
+    require(after.selectAgent(QStringLiteral("renderer")), "select renderer");
     int pings = 0;
     int away = 0;
     QObject::connect(&after, &Workspace::turnFinished, [&pings] { ++pings; });
     QObject::connect(&after, &Workspace::finishedWhileAway, [&away] { ++away; });
     after.restoreMarks(marks);
-    auto* agent = after.session(QStringLiteral("agent"));
+    auto* agent = after.agent(QStringLiteral("agent"));
     require(agent->unseen() && agent->neededAtMs() == needed,
             "the mark comes back with when the agent began to need you");
-    require(!after.session(QStringLiteral("renderer"))->unseen(),
-            "the agent shown is never marked");
-    require(after.session(QStringLiteral("gone")) == nullptr && pings == 0 && away == 0,
+    require(!after.agent(QStringLiteral("renderer"))->unseen(), "the agent shown is never marked");
+    require(after.agent(QStringLiteral("gone")) == nullptr && pings == 0 && away == 0,
             "an agent that is gone is skipped, and restoring pings nothing");
-    require(after.selectSession(QStringLiteral("agent")) && !agent->unseen(),
+    require(after.selectAgent(QStringLiteral("agent")) && !agent->unseen(),
             "selecting the restored mark clears it");
     // The agent at work when the window saved is found finished.
-    require(after.selectSession(QStringLiteral("renderer")), "back to renderer");
-    auto* checks = after.session(QStringLiteral("checks"));
+    require(after.selectAgent(QStringLiteral("renderer")), "back to renderer");
+    auto* checks = after.agent(QStringLiteral("checks"));
     setActivity(*checks, lapis::session::attention::Activity::turn_completed);
     require(away == 1 && pings == 0 && checks->unseen(),
             "a turn that ended while no window watched is marked and guessed for, unpinged");
@@ -279,15 +278,14 @@ void marksComeBack() {
     marks.insert(QStringLiteral("savedAtMs"),
                  QDateTime::currentMSecsSinceEpoch() - qint64{24} * 3600 * 1000);
     Workspace later(WorkspaceMode::fixture);
-    require(later.selectSession(QStringLiteral("renderer")), "select renderer");
+    require(later.selectAgent(QStringLiteral("renderer")), "select renderer");
     int later_away = 0;
     QObject::connect(&later, &Workspace::finishedWhileAway, [&later_away] { ++later_away; });
     later.restoreMarks(marks);
-    setActivity(*later.session(QStringLiteral("checks")),
-                lapis::session::attention::Activity::idle);
-    require(later_away == 0 && !later.session(QStringLiteral("checks"))->unseen(),
+    setActivity(*later.agent(QStringLiteral("checks")), lapis::session::attention::Activity::idle);
+    require(later_away == 0 && !later.agent(QStringLiteral("checks"))->unseen(),
             "after a long absence nothing is inferred");
-    require(later.session(QStringLiteral("agent"))->unseen(), "though unseen marks remain");
+    require(later.agent(QStringLiteral("agent"))->unseen(), "though unseen marks remain");
 }
 
 // In a live workspace marks belong to a conversation: after /clear (a new
@@ -332,9 +330,9 @@ void marksFollowTheConversation() {
     {
         Workspace before(WorkspaceMode::live, options);
         require(before.workspaceError().isEmpty(), "load the registry");
-        require(before.focusedSession()->sessionId() == shown, "the first agent is shown");
-        before.session(kept)->restoreUnseen(true, 100);
-        before.session(cleared)->restoreUnseen(true, 100);
+        require(before.focusedAgent()->agentId() == shown, "the first agent is shown");
+        before.agent(kept)->restoreUnseen(true, 100);
+        before.agent(cleared)->restoreUnseen(true, 100);
         marks = before.saveMarks();
     }
     require(marks.value(QStringLiteral("agents"))
@@ -348,8 +346,8 @@ void marksFollowTheConversation() {
     Workspace after(WorkspaceMode::live, options);
     require(after.workspaceError().isEmpty(), "reload the registry");
     after.restoreMarks(marks);
-    require(after.session(kept)->unseen(), "same conversation: the mark comes back");
-    require(!after.session(cleared)->unseen() && after.session(cleared)->neededAtMs() == 0,
+    require(after.agent(kept)->unseen(), "same conversation: the mark comes back");
+    require(!after.agent(cleared)->unseen() && after.agent(cleared)->neededAtMs() == 0,
             "another conversation: nothing comes back");
 
     // Closed agents come back for Command-Shift-T, valid ones only.
@@ -402,8 +400,8 @@ void seenScreensComeBack() {
         SeenScreens seen(before, [](const Agent*) { return false; });
         int changes = 0;
         QObject::connect(&seen, &SeenScreens::changed, [&changes] { ++changes; });
-        seen.see(before.session(QStringLiteral("agent")));
-        seen.see(before.session(QStringLiteral("agent")));
+        seen.see(before.agent(QStringLiteral("agent")));
+        seen.see(before.agent(QStringLiteral("agent")));
         require(changes == 1, "seeing the same screen again changes nothing");
         saved = seen.saveState();
     }
@@ -413,9 +411,9 @@ void seenScreensComeBack() {
     int restored_changes = 0;
     QObject::connect(&seen, &SeenScreens::changed, [&restored_changes] { ++restored_changes; });
     seen.restoreState(saved);
-    require(seen.unchanged(after.session(QStringLiteral("agent"))),
+    require(seen.unchanged(after.agent(QStringLiteral("agent"))),
             "what was seen before the restart still counts as seen");
-    require(!seen.unchanged(after.session(QStringLiteral("checks"))),
+    require(!seen.unchanged(after.agent(QStringLiteral("checks"))),
             "an agent never seen stays unseen");
     require(restored_changes == 1, "a restored fingerprint asks for one save");
 }

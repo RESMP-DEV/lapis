@@ -4,7 +4,7 @@
 
 One terminal stage shows the selected agent. Under it, the strip shows each of
 the category's agents as a card with its latest lines (the rows ending at its
-cursor), refreshed at most four times a second, in tab order. There is no tab
+cursor), refreshed at most four times a second, in order. There is no tab
 row: the strip is how you move through a category. Moving along it keeps part of
 the neighboring card in view, like Neovim's `sidescrolloff`, and the last card is
 **+** for a new agent. With nothing open, the stage lists what to do next (new

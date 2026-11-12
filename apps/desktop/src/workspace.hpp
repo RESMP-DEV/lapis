@@ -46,7 +46,7 @@ class LiveConnection;
 
 class Agent final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QString sessionId READ sessionId CONSTANT)
+    Q_PROPERTY(QString agentId READ agentId CONSTANT)
     Q_PROPERTY(bool attentionPending READ attentionPending NOTIFY attentionChanged)
     Q_PROPERTY(QString attentionReason READ attentionReason NOTIFY attentionChanged)
     Q_PROPERTY(quint32 attentionSerial READ attentionSerial NOTIFY attentionChanged)
@@ -216,8 +216,8 @@ class Agent final : public QObject {
         title_ = title;
         emit identityChanged();
     }
-    void setSessionId(const QString& id) { session_id_ = id; }
-    [[nodiscard]] const QString& sessionId() const { return session_id_; }
+    void setAgentId(const QString& id) { agent_id_ = id; }
+    [[nodiscard]] const QString& agentId() const { return agent_id_; }
     [[nodiscard]] bool attentionPending() const { return attentionCount() != 0; }
     [[nodiscard]] QString attentionReason() const;
     [[nodiscard]] quint32 attentionSerial() const { return attention_serial_; }
@@ -265,7 +265,7 @@ class Agent final : public QObject {
   private:
     std::unique_ptr<LiveConnection> live_;
     QString harness_id_{QStringLiteral("codex")};
-    QString session_id_;
+    QString agent_id_;
     QMap<QString, QString> requests_;
     std::optional<session::wire::AttentionSnapshot> attention_;
     QSet<QString> submitted_attention_;
@@ -313,7 +313,7 @@ class Agent final : public QObject {
     // page ID fetched, for a service that does not place its pages.
     std::optional<HistoryStrip> strip_;
     // Full-screen scroll-back steps the service accepted, and the cell where
-    // they were delivered. This belongs to the session so a rebound surface
+    // they were delivered. This belongs to the agent so a rebound surface
     // cannot lose it; rejected wheels leave the previous debt intact. The
     // const decoder updates it when the newest screen ends the program that
     // owed the debt.
@@ -356,7 +356,7 @@ class Agent final : public QObject {
 enum class WorkspaceMode : std::uint8_t { live, fixture };
 
 struct FixtureRequest {
-    QString session_id;
+    QString agent_id;
     QString request_id;
     QString reason;
 };
@@ -417,17 +417,17 @@ struct WorkspaceOptions {
 
 class Workspace final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QVariantList sessions READ sessions NOTIFY sessionsChanged)
+    Q_PROPERTY(QVariantList agents READ agents NOTIFY agentsChanged)
     Q_PROPERTY(QVariantList categories READ categories NOTIFY categoriesChanged)
     // Agents in any category that finished unseen or wait on a request.
     Q_PROPERTY(int attentionAgents READ attentionAgents NOTIFY categoriesChanged)
-    Q_PROPERTY(QVariantList categorySessions READ categorySessions NOTIFY sessionsChanged)
+    Q_PROPERTY(QVariantList categoryAgents READ categoryAgents NOTIFY agentsChanged)
     Q_PROPERTY(QString activeCategoryId READ activeCategoryId NOTIFY categoryChanged)
     Q_PROPERTY(QString workspaceError READ workspaceError NOTIFY errorChanged)
     Q_PROPERTY(bool fixtureMode READ fixtureMode CONSTANT)
     Q_PROPERTY(QString homeDirectory READ homeDirectory CONSTANT)
     Q_PROPERTY(int focusedIndex READ focusedIndex NOTIFY focusChanged)
-    Q_PROPERTY(lapis::desktop::Agent* focusedSession READ focusedSession NOTIFY focusChanged)
+    Q_PROPERTY(lapis::desktop::Agent* focusedAgent READ focusedAgent NOTIFY focusChanged)
     // An agent closed since lapis opened can come back with its conversation.
     Q_PROPERTY(bool canReopenAgent READ canReopenAgent NOTIFY closedChanged)
     // The visual view's conversation: the stage sets its path to an agent's
@@ -441,13 +441,13 @@ class Workspace final : public QObject {
     Q_INVOKABLE [[nodiscard]] QVariantList availableHarnesses() const;
     [[nodiscard]] std::vector<ModelChoice> modelChoices(const QString& harness) const;
     Q_INVOKABLE [[nodiscard]] QString displayPath(const QString& directory) const;
-    [[nodiscard]] Agent* session(const QString& id) const;
+    [[nodiscard]] Agent* agent(const QString& id) const;
     // Development fixture v1 only. No calls are accepted in a live workspace.
     bool requestAttention(const FixtureRequest& request);
     bool resolveAttention(const FixtureRequest& request);
     Q_INVOKABLE bool replayAttention(const QString& scenario);
     [[nodiscard]] QVariantList categories() const;
-    [[nodiscard]] QVariantList categorySessions() const;
+    [[nodiscard]] QVariantList categoryAgents() const;
     [[nodiscard]] const QString& activeCategoryId() const { return active_category_; }
     [[nodiscard]] const QString& workspaceError() const { return error_; }
     Q_INVOKABLE void clearError();
@@ -458,7 +458,7 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool removeCategory(const QString& id);
     Q_INVOKABLE bool selectCategory(const QString& id);
     Q_INVOKABLE void nextCategory(int delta = 1);
-    Q_INVOKABLE bool selectSession(const QString& id);
+    Q_INVOKABLE bool selectAgent(const QString& id);
     // `machine` is an ssh host; empty starts it on this Mac.
     Q_INVOKABLE bool createAgent(const QString& directory, const QString& title,
                                  const QString& harness = QStringLiteral("codex"),
@@ -505,13 +505,13 @@ class Workspace final : public QObject {
     [[nodiscard]] bool holdsRegistry() const {
         return registry_lock_ != nullptr && registry_lock_->isLocked();
     }
-    // Close an agent's tab. A reachable agent is ended through its
-    // session service first and its tab closes once the process exits. An
-    // unreachable one keeps its tab unless `abandon` accepts that it may still
-    // be running without one.
-    Q_INVOKABLE bool closeSession(const QString& id, bool abandon = false);
+    // Close an agent. A reachable agent is ended through its session
+    // service first and closes once the process exits. An unreachable one
+    // stays unless `abandon` accepts that it may still be running outside
+    // lapis.
+    Q_INVOKABLE bool closeAgent(const QString& id, bool abandon = false);
     Q_INVOKABLE bool restartAgent(const QString& id);
-    // Ends an agent's CLI and starts it again in its tab, resuming its
+    // Ends an agent's CLI and starts it again in its card, resuming its
     // conversation as a restart does: a CLI rereads its settings (Claude
     // Code's permissions, say) only when it starts. An ended agent starts at
     // once. An agent on another machine whose conversation lapis cannot name
@@ -520,9 +520,9 @@ class Workspace final : public QObject {
     // Every agent in the category shown, or in every category.
     Q_INVOKABLE int reloadCategory();
     Q_INVOKABLE int reloadAll();
-    Q_INVOKABLE bool moveSession(const QString& id, const QString& categoryId);
+    Q_INVOKABLE bool moveAgent(const QString& id, const QString& categoryId);
     // A name someone chose; it stays until they choose another.
-    Q_INVOKABLE bool renameSession(const QString& id, const QString& title);
+    Q_INVOKABLE bool renameAgent(const QString& id, const QString& title);
     // The agent's conversation title, from its CLI. It names an agent that
     // still has the name it started with; one someone renamed keeps theirs.
     bool followConversationTitle(const QString& id, QStringView title);
@@ -544,21 +544,21 @@ class Workspace final : public QObject {
     // The folder an agent runs in, as launched.
     Q_INVOKABLE [[nodiscard]] QString agentFolder(const QString& id) const;
     [[nodiscard]] QObject* transcript() const { return transcript_; }
-    Q_INVOKABLE bool moveSessionBy(const QString& id, int delta);
+    Q_INVOKABLE bool moveAgentBy(const QString& id, int delta);
     // Puts agents, in their strip order, at `index` of a category's strip (at
     // its end when `index` is past it), moving them there from any category.
-    Q_INVOKABLE bool placeSessions(const QStringList& ids, const QString& categoryId, int index);
+    Q_INVOKABLE bool placeAgents(const QStringList& ids, const QString& categoryId, int index);
     // Moves a category to `index` in the rail.
     Q_INVOKABLE bool placeCategory(const QString& id, int index);
-    Q_INVOKABLE bool removeSession(const QString& id);
-    Q_INVOKABLE void nextSession(int delta = 1);
+    Q_INVOKABLE bool removeAgent(const QString& id);
+    Q_INVOKABLE void nextAgent(int delta = 1);
     // Tab's next agent, in any category, of those truly waiting on you: a
     // request, or a finished turn (no background work in flight) that is
     // unseen or has a guessed next prompt. Agents at work, paused on their own
     // background work, or without a status never qualify. The TabRanker
     // orders them (anything overdue first, then work, requests, unseen,
     // newest). `ready` maps agents
-    // with a guess to whether it was seen. Advances past the focused session;
+    // with a guess to whether it was seen. Advances past the focused agent;
     // false (none waiting) leaves Tab with the program. Every move is logged
     // with the candidates and their scores.
     Q_INVOKABLE bool nextPriorityAttention(const QVariantMap& ready);
@@ -577,9 +577,9 @@ class Workspace final : public QObject {
     void setGuesses(std::function<QVariantMap()> guesses) { guesses_ = std::move(guesses); }
     // How long the person stays on an agent before it counts as their choice.
     void setChoiceSettleMsForTesting(int ms) { choice_settle_.setInterval(ms); }
-    [[nodiscard]] QVariantList sessions() const;
+    [[nodiscard]] QVariantList agents() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
-    [[nodiscard]] Agent* focusedSession() const;
+    [[nodiscard]] Agent* focusedAgent() const;
     [[nodiscard]] int attentionAgents() const;
     // Starts the most recently closed agent again, resuming its conversation
     // where its CLI can, in its category, and shows it.
@@ -610,7 +610,7 @@ class Workspace final : public QObject {
     // A Codex or Claude turn ended; terminal agents' output pauses do not count.
     // A new request for you arrives here too, once its attention is applied.
     void turnFinished(lapis::desktop::Agent* item);
-    void sessionsChanged();
+    void agentsChanged();
     void categoriesChanged();
     void categoryChanged();
     void errorChanged();
@@ -625,7 +625,7 @@ class Workspace final : public QObject {
   private:
     [[nodiscard]] static QString rootDirectory();
     [[nodiscard]] static QString defaultEndpoint();
-    std::vector<std::unique_ptr<Agent>> sessions_;
+    std::vector<std::unique_ptr<Agent>> items_;
     QHash<QString, QStringList> harness_arguments_;
     QSet<QString> harness_updates_off_;
     AgentDefaults agent_defaults_;
@@ -782,7 +782,7 @@ class Workspace final : public QObject {
     void rememberInitialFocus();
     void noteStructuralFocus();
     bool batching_categories_{};
-    bool discardSession(const QString& id);
+    bool discardAgent(const QString& id);
     void changed();
     void restoreSelection();
     void watch(Agent* item);

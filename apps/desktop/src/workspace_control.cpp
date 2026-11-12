@@ -177,7 +177,7 @@ QByteArray WorkspaceControl::create(const QString& /*kind*/, const QJsonObject& 
                                .prefill = {}});
     if (id.isEmpty())
         return refused();
-    const auto* item = workspace_.session(id);
+    const auto* item = workspace_.agent(id);
     return reply({{QStringLiteral("ok"), true},
                   {QStringLiteral("id"), id},
                   {QStringLiteral("updating"), item != nullptr && item->updating()}});
@@ -214,24 +214,24 @@ QByteArray WorkspaceControl::category(const QString& kind, const QJsonObject& re
 // puts it at a position in a category's strip; or restarts it once stopped.
 QByteArray WorkspaceControl::agent(const QString& kind, const QJsonObject& request) {
     const auto id = request.value(QStringLiteral("id")).toString();
-    if (workspace_.session(id) == nullptr)
+    if (workspace_.agent(id) == nullptr)
         return refusal(QStringLiteral("No such agent"));
     bool done = false;
     if (kind == QStringLiteral("renameAgent")) {
         const auto title = request.value(QStringLiteral("title"));
         if (!title.isString())
             return refusal(QStringLiteral("Missing title"));
-        done = workspace_.renameSession(id, title.toString());
+        done = workspace_.renameAgent(id, title.toString());
     } else if (kind == QStringLiteral("placeAgent")) {
         const auto category = request.value(QStringLiteral("category"));
         const auto index = request.value(QStringLiteral("index"));
         if (!category.isString() || !is_whole_position(index))
             return refusal(QStringLiteral("Missing category or index"));
-        done = workspace_.placeSessions({id}, category.toString(), index.toInt());
+        done = workspace_.placeAgents({id}, category.toString(), index.toInt());
     } else if (kind == QStringLiteral("restartAgent")) {
         done = workspace_.restartAgent(id);
     } else if (kind == QStringLiteral("closeAgent")) {
-        done = workspace_.closeSession(id, false);
+        done = workspace_.closeAgent(id, false);
     } else {
         return refusal(QStringLiteral("Unsupported agent request"));
     }

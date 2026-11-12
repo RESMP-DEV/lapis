@@ -271,7 +271,7 @@ int main(int argc, char** argv) {
                             {.endpoint = {},
                              .launch = {},
                              .storagePath = temp.filePath(QStringLiteral("workspace.json"))});
-        require(workspace.sessions().isEmpty(), "live fixture starts no agents or shell services");
+        require(workspace.agents().isEmpty(), "live fixture starts no agents or shell services");
         remembered_geometry_and_offscreen_restore(workspace, temp);
         isolated_modes_leave_geometry_untouched(workspace, temp);
         unsafe_paths_are_preserved(workspace, temp);

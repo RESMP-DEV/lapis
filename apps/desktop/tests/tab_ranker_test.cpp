@@ -140,11 +140,11 @@ void logsMovesAndChoices() {
 void tabAwayChoosesOnlyAgentsWaitingOnYou() {
     Workspace workspace(WorkspaceMode::fixture);
     workspace.setTabAway({});
-    require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
+    require(workspace.selectAgent(QStringLiteral("renderer")), "select renderer");
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
     const auto set = [&](const char* id, lapis::session::attention::Activity activity) {
-        auto* item = workspace.session(QString::fromLatin1(id));
+        auto* item = workspace.agent(QString::fromLatin1(id));
         state.activity = activity;
         item->applyAttention(state);
         return item;
@@ -155,12 +155,12 @@ void tabAwayChoosesOnlyAgentsWaitingOnYou() {
     set("agent", Activity::working); // back at work, still marked unseen
     require(busy->unseen() && busy->statusKind() == QLatin1String("working"),
             "fixture: an unseen agent at work");
-    const QVariantMap guesses{{busy->sessionId(), false}};
+    const QVariantMap guesses{{busy->agentId(), false}};
     require(!workspace.nextPriorityAttention(guesses),
             "an agent at work is never Tab's, unseen and with a guess");
-    require(workspace.focusedSession()->sessionId() == QLatin1String("renderer"),
+    require(workspace.focusedAgent()->agentId() == QLatin1String("renderer"),
             "Tab with nothing waiting stays");
-    require(workspace.session(QStringLiteral("checks"))
+    require(workspace.agent(QStringLiteral("checks"))
                 ->addFixtureRequest(QStringLiteral("r1"), QStringLiteral("approve")),
             "fixture request");
     const auto unavailableRequest = [](const char* id) {
@@ -172,26 +172,26 @@ void tabAwayChoosesOnlyAgentsWaitingOnYou() {
         unavailable.requests.push_back(request);
         return unavailable;
     };
-    auto* stale = workspace.session(QStringLiteral("service"));
+    auto* stale = workspace.agent(QStringLiteral("service"));
     stale->applyAttention(unavailableRequest("stale"));
     stale->invalidateAttention();
-    auto* unknown = workspace.session(QStringLiteral("notes"));
+    auto* unknown = workspace.agent(QStringLiteral("notes"));
     unknown->applyAttention(unavailableRequest("unknown"));
     unknown->invalidateAttention();
     for (auto* unusable : {stale, unknown})
         require(unusable->attentionPending() && unusable->statusKind() == QLatin1String("unknown"),
                 "fixture: a request without a usable observer");
     require(workspace.nextPriorityAttention(guesses) &&
-                workspace.focusedSession()->sessionId() == QLatin1String("checks"),
+                workspace.focusedAgent()->agentId() == QLatin1String("checks"),
             "ended and unknown agents are not request candidates");
-    require(workspace.selectSession(QStringLiteral("renderer")), "return to the start");
-    workspace.session(QStringLiteral("checks"))->clearFixtureRequests();
+    require(workspace.selectAgent(QStringLiteral("renderer")), "return to the start");
+    workspace.agent(QStringLiteral("checks"))->clearFixtureRequests();
     require(!workspace.nextPriorityAttention(guesses), "only the still-unusable requests remain");
-    require(workspace.session(QStringLiteral("checks"))
+    require(workspace.agent(QStringLiteral("checks"))
                 ->addFixtureRequest(QStringLiteral("r2"), QStringLiteral("approve")),
             "restore a usable request");
     require(workspace.nextPriorityAttention(guesses) &&
-                workspace.focusedSession()->sessionId() == QLatin1String("checks"),
+                workspace.focusedAgent()->agentId() == QLatin1String("checks"),
             "a request is waiting on you");
     require(!workspace.nextPriorityAttention(guesses), "Tab never goes back to the agent at work");
 }
@@ -205,13 +205,13 @@ void tabAwayPutsWorkFirst() {
     workspace.setChoiceSettleMsForTesting(20);
     require(workspace.addCategory(QStringLiteral("Work")), "add a work category");
     const auto work = workspace.activeCategoryId();
-    require(workspace.moveSession(QStringLiteral("checks"), work), "a work agent");
-    require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
+    require(workspace.moveAgent(QStringLiteral("checks"), work), "a work agent");
+    require(workspace.selectAgent(QStringLiteral("renderer")), "select renderer");
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
     using lapis::session::attention::Activity;
     const auto set = [&](const char* id, Activity activity) {
-        auto* item = workspace.session(QString::fromLatin1(id));
+        auto* item = workspace.agent(QString::fromLatin1(id));
         state.activity = activity;
         item->applyAttention(state);
         return item;
@@ -224,10 +224,10 @@ void tabAwayPutsWorkFirst() {
     auto* job = finish("checks");
     QThread::msleep(5);
     auto* other = finish("agent");
-    require(workspace.nextPriorityAttention({}) && workspace.focusedSession() == job,
+    require(workspace.nextPriorityAttention({}) && workspace.focusedAgent() == job,
             "Tab goes to the waiting work agent first, though the other finished later");
     set("checks", Activity::working); // Tab, Tab: its guess is sent
-    require(workspace.nextPriorityAttention({}) && workspace.focusedSession() == other,
+    require(workspace.nextPriorityAttention({}) && workspace.focusedAgent() == other,
             "Tab moves on to the other waiting agent, never the one at work");
     require(!workspace.nextPriorityAttention({}), "and with nothing else waiting stays");
 }
@@ -295,29 +295,29 @@ void parkedAgentsWaitForTheirNextTurn() {
     state.available = state.connected = state.ready = true;
     using lapis::session::attention::Activity;
     const auto finish = [&](const char* id) {
-        auto* item = workspace.session(QString::fromLatin1(id));
+        auto* item = workspace.agent(QString::fromLatin1(id));
         state.activity = Activity::working;
         item->applyAttention(state);
         state.activity = Activity::turn_completed;
         item->applyAttention(state);
         return item;
     };
-    require(workspace.selectSession(QStringLiteral("renderer")), "start on renderer");
+    require(workspace.selectAgent(QStringLiteral("renderer")), "start on renderer");
     auto* agent_item = finish("agent");
-    require(workspace.selectSession(QStringLiteral("agent")), "look at its finished turn");
+    require(workspace.selectAgent(QStringLiteral("agent")), "look at its finished turn");
     QThread::msleep(40);
-    require(workspace.selectSession(QStringLiteral("renderer")), "and move on");
+    require(workspace.selectAgent(QStringLiteral("renderer")), "and move on");
     require(workspace.parked(agent_item) && workspace.parkedAtMs(QStringLiteral("agent")) > 0,
             "it is parked");
     require(!workspace.nextPriorityAttention({}), "Tab passes a parked agent over");
     QThread::msleep(5);
     finish("agent");
     require(!workspace.parked(agent_item), "its next turn brings it back");
-    require(workspace.nextPriorityAttention({}) && workspace.focusedSession() == agent_item,
+    require(workspace.nextPriorityAttention({}) && workspace.focusedAgent() == agent_item,
             "and Tab goes to it");
     auto* glanced = finish("checks");
-    require(workspace.selectSession(QStringLiteral("checks")), "a quick glance");
-    require(workspace.selectSession(QStringLiteral("agent")), "straight on");
+    require(workspace.selectAgent(QStringLiteral("checks")), "a quick glance");
+    require(workspace.selectAgent(QStringLiteral("agent")), "straight on");
     require(!workspace.parked(glanced), "a glance does not park");
 }
 } // namespace

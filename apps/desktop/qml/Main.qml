@@ -72,7 +72,7 @@ ApplicationWindow {
     // previews in tab order. Short windows get shorter cards, not fewer.
     readonly property int stripHeight: height < 640 ? 96 :
                                        densityMode === "minimal" ? 112 : densityMode === "compact" ? 128 : 144
-    readonly property bool stripShown: previewsEnabled && workspace.categorySessions.length > 0
+    readonly property bool stripShown: previewsEnabled && workspace.categoryAgents.length > 0
     readonly property bool sidebarExpanded: typeof config !== "undefined" && config !== null ? config.sidebarVisible : transientSidebarVisible
     readonly property bool narrow: width < 860
     // Zero-duration themes and reduced motion change state instantly.
@@ -105,7 +105,7 @@ ApplicationWindow {
         return ""
     }
     readonly property string windowTitle: {
-        const session = workspace.focusedSession
+        const session = workspace.focusedAgent
         if (session && activeCategoryName.length > 0)
             return "lapis · " + activeCategoryName + " · " + window.agentTabTitle(session)
         if (activeCategoryName.length > 0)
@@ -220,7 +220,7 @@ ApplicationWindow {
     function agentTabTitle(session) {
         const base = agentBaseTitle(session)
         if (workspace.fixtureMode) return base
-        const list = workspace.categorySessions
+        const list = workspace.categoryAgents
         let ordinal = 0
         let total = 0
         for (let i = 0; i < list.length; ++i) {
@@ -262,7 +262,7 @@ ApplicationWindow {
     }
     property var homeRuns: []
     function rebuildHome() {
-        if (workspace.focusedSession !== null && homeModel.count > 0)
+        if (workspace.focusedAgent !== null && homeModel.count > 0)
             return
         const runs = []
         homeModel.clear()
@@ -306,7 +306,7 @@ ApplicationWindow {
         function onCategoriesChanged() { homeRebuild.restart() }
         function onFocusChanged() { homeRebuild.restart() }
         function onClosedChanged() { homeRebuild.restart() }
-        function onSessionsChanged() { homeRebuild.restart() }
+        function onAgentsChanged() { homeRebuild.restart() }
     }
     Connections {
         target: window.conversationsAvailable ? conversations : null
@@ -317,7 +317,7 @@ ApplicationWindow {
     // nothing is open.
     readonly property string focusTarget: sideTerminalOpen && terminalsAvailable && terminals.current !== null ?
                                               "sideTerminalSurface" :
-                                          workspace.focusedSession === null ? "homeList" : "liveTerminal"
+                                          workspace.focusedAgent === null ? "homeList" : "liveTerminal"
     // Command-` (or Control-`): a plain shell on this Mac or an ssh host,
     // beside the agents, for a quick command; never an agent. Command-~
     // picks the machine.
@@ -380,7 +380,7 @@ ApplicationWindow {
     // Built when a dialog that lists them is open: as a property it would be
     // rebuilt, and the closed lists' delegates with it, on every switch.
     function commandEntries() {
-        const agent = workspace.focusedSession
+        const agent = workspace.focusedAgent
         const hasAgent = agent !== null
         const needAgent = qsTr("Select an agent first")
         const entries = []
@@ -393,14 +393,14 @@ ApplicationWindow {
         add("openTools", qsTr("Tools"), "", toolsAvailable, qsTr("The tools pane is not available here"), () => window.openToolsDialog())
         add("toggleSidebar", sidebarExpanded ? qsTr("Hide sidebar") : qsTr("Show sidebar"), "toggleSidebar", true, "", () => window.toggleSidebar())
         add("togglePreviews", previewsEnabled ? qsTr("Hide agent previews") : qsTr("Show agent previews"), "togglePreviews", true, "", () => window.togglePreviews())
-        add("nextWindow", qsTr("Next agent in category"), "nextWindow", workspace.categorySessions.length > 1, qsTr("This category needs another agent"), () => workspace.nextSession())
-        add("previousWindow", qsTr("Previous agent in category"), "previousWindow", workspace.categorySessions.length > 1, qsTr("This category needs another agent"), () => workspace.nextSession(-1))
+        add("nextWindow", qsTr("Next agent in category"), "nextWindow", workspace.categoryAgents.length > 1, qsTr("This category needs another agent"), () => workspace.nextAgent())
+        add("previousWindow", qsTr("Previous agent in category"), "previousWindow", workspace.categoryAgents.length > 1, qsTr("This category needs another agent"), () => workspace.nextAgent(-1))
         add("closeAgent", qsTr("Close agent"), "closeAgent", hasAgent, needAgent, () => window.closeFocusedAgent())
         add("reopenAgent", qsTr("Reopen closed agent"), "reopenAgent", workspace.canReopenAgent, qsTr("No agent was closed since lapis opened"), () => window.reopenAgent())
         add("resumeConversation", qsTr("Resume a conversation"), "resumeConversation", conversationsAvailable, qsTr("Not available here"), () => window.openResumeDialog())
         add("toggleTerminal", sideTerminalOpen ? qsTr("Hide terminal") : qsTr("Terminal"), "toggleTerminal", terminalsAvailable, qsTr("Not available here"), () => window.toggleTerminal())
         add("chooseTerminal", qsTr("Terminal on another machine"), "chooseTerminal", terminalsAvailable, qsTr("Not available here"), () => window.chooseTerminal())
-        const conversationFile = hasAgent && !window.visualActive ? workspace.conversationFile(agent.sessionId) : ""
+        const conversationFile = hasAgent && !window.visualActive ? workspace.conversationFile(agent.agentId) : ""
         add("toggleVisual", window.visualActive ? qsTr("Show terminal") : qsTr("Show visual view"), "",
             window.visualActive || conversationFile.length > 0,
             hasAgent ? qsTr("Only for a Claude Code agent on this Mac, once its conversation is saved") : needAgent,
@@ -412,12 +412,12 @@ ApplicationWindow {
         add("textSmaller", qsTr("Smaller text"), "textSmaller", true, "", () => window.changeTextSize(-1))
         add("textReset", qsTr("Default text size"), "textReset", true, "", () => window.changeTextSize(0))
         const stopped = hasAgent && agent.live && (agent.connectionState === "ended" || agent.connectionState === "disconnected")
-        add("restartAgent", qsTr("Restart agent"), "", stopped, qsTr("Only an ended or unreachable agent restarts"), () => workspace.restartAgent(agent.sessionId))
+        add("restartAgent", qsTr("Restart agent"), "", stopped, qsTr("Only an ended or unreachable agent restarts"), () => workspace.restartAgent(agent.agentId))
         // A CLI rereads its settings only when it starts: these end it and
         // start it again, resuming its conversation.
-        add("reloadTab", qsTr("Reload tab"), "", hasAgent && agent.live, needAgent, () => workspace.reloadAgent(agent.sessionId))
-        add("reloadCategory", qsTr("Reload category"), "", workspace.categorySessions.length > 0, qsTr("This category has no agents"), () => workspace.reloadCategory())
-        add("reloadWindow", qsTr("Reload window"), "", workspace.sessions.length > 0, qsTr("No agents are open"), () => workspace.reloadAll())
+        add("reloadTab", qsTr("Reload agent"), "", hasAgent && agent.live, needAgent, () => workspace.reloadAgent(agent.agentId))
+        add("reloadCategory", qsTr("Reload category"), "", workspace.categoryAgents.length > 0, qsTr("This category has no agents"), () => workspace.reloadCategory())
+        add("reloadWindow", qsTr("Reload window"), "", workspace.agents.length > 0, qsTr("No agents are open"), () => workspace.reloadAll())
         add("nextCategory", qsTr("Next category"), "nextCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory())
         add("previousCategory", qsTr("Previous category"), "previousCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory(-1))
         for (let i = 0; i < Math.min(9, workspace.categories.length); ++i) {
@@ -427,11 +427,11 @@ ApplicationWindow {
         add("renameCategory", qsTr("Rename category"), "", true, "", () => window.openCategoryDialog("rename"))
         add("removeCategory", qsTr("Remove category"), "", window.canRemoveActiveCategory(), qsTr("Move its agents first; keep at least one category"), () => window.removeActiveCategory())
         add("renameAgent", qsTr("Rename agent"), "", hasAgent, needAgent, () => window.openRenameDialog())
-        add("earlier", qsTr("Move agent earlier"), "", hasAgent && window.focusedTabIndex() > 0, qsTr("No earlier tab position"), () => window.moveFocused(-1))
-        add("later", qsTr("Move agent later"), "", hasAgent && window.focusedTabIndex() < workspace.categorySessions.length - 1, qsTr("No later tab position"), () => window.moveFocused(1))
+        add("earlier", qsTr("Move agent earlier"), "", hasAgent && window.focusedTabIndex() > 0, qsTr("Already first in this category"), () => window.moveFocused(-1))
+        add("later", qsTr("Move agent later"), "", hasAgent && window.focusedTabIndex() < workspace.categoryAgents.length - 1, qsTr("Already last in this category"), () => window.moveFocused(1))
         for (const category of workspace.categories) {
             if (category.id !== workspace.activeCategoryId)
-                add("move:" + category.id, qsTr("Move agent to %1").arg(category.name), "", hasAgent, needAgent, () => workspace.moveSession(agent.sessionId, category.id))
+                add("move:" + category.id, qsTr("Move agent to %1").arg(category.name), "", hasAgent, needAgent, () => workspace.moveAgent(agent.agentId, category.id))
         }
         add("requests", qsTr("Review requests"), "", hasAgent && agent.attentionCount > 0, qsTr("No pending requests"), () => window.openAttentionDialog())
         add("older", qsTr("Browse older history"), "", hasAgent && agent.live && agent.connectionState === "ready" && !agent.historyRequestPending, qsTr("Connect the agent and wait for pending history"), () => agent.olderHistory())
@@ -507,12 +507,12 @@ ApplicationWindow {
     }
 
     function focusedTabIndex() {
-        const session = workspace.focusedSession
-        const list = workspace.categorySessions
+        const session = workspace.focusedAgent
+        const list = workspace.categoryAgents
         if (!session)
             return -1
         for (let i = 0; i < list.length; ++i) {
-            if (list[i].sessionId === session.sessionId)
+            if (list[i].agentId === session.agentId)
                 return i
         }
         return -1
@@ -622,8 +622,8 @@ ApplicationWindow {
             return
         if (inputBlocked)
             return
-        if (workspace.focusedSession && workspace.focusedSession.hasAttentionSource)
-            attentionDialog.showSession(workspace.focusedSession)
+        if (workspace.focusedAgent && workspace.focusedAgent.hasAttentionSource)
+            attentionDialog.showAgent(workspace.focusedAgent)
     }
 
     // What the last new agent was started with, kept for the next one: the
@@ -713,7 +713,7 @@ ApplicationWindow {
             closeSideTerminal()
             return
         }
-        if (workspace.focusedSession !== null) {
+        if (workspace.focusedAgent !== null) {
             closeFocusedAgent()
             return
         }
@@ -725,14 +725,14 @@ ApplicationWindow {
     function closeFocusedAgent() {
         if (terminalBusy)
             return
-        const session = workspace.focusedSession
+        const session = workspace.focusedAgent
         if (!session || session.closing)
             return
         if (!session.live || session.connectionState === "ended") {
-            workspace.closeSession(session.sessionId, false)
+            workspace.closeAgent(session.agentId, false)
             return
         }
-        closeAgentDialog.sessionId = session.sessionId
+        closeAgentDialog.agentId = session.agentId
         closeAgentDialog.harnessId = session.harnessId
         closeAgentDialog.agentName = session.agentName
         closeAgentDialog.place = workspace.displayPath(session.directory)
@@ -754,10 +754,10 @@ ApplicationWindow {
     function openRenameDialog() {
         if (terminalBusy)
             return
-        const session = workspace.focusedSession
+        const session = workspace.focusedAgent
         if (!session || dialogsVisible())
             return
-        renameAgentDialog.sessionId = session.sessionId
+        renameAgentDialog.agentId = session.agentId
         renameAgentDialog.initialTitle = session.title
         renameAgentDialog.localError = ""
         openFresh(renameAgentDialog)
@@ -800,7 +800,7 @@ ApplicationWindow {
         }
         // Agents dropped on the rail's + come along into the new category.
         if (categoryDialog.mode !== "rename" && pendingCategoryAgents.length > 0)
-            workspace.placeSessions(pendingCategoryAgents, workspace.activeCategoryId, 1 << 20)
+            workspace.placeAgents(pendingCategoryAgents, workspace.activeCategoryId, 1 << 20)
         pendingCategoryAgents = []
         categoryDialog.localError = ""
         categoryDialog.close()
@@ -812,7 +812,7 @@ ApplicationWindow {
             renameAgentDialog.localError = issue
             return
         }
-        if (!workspace.renameSession(renameAgentDialog.sessionId, renameAgentField.text.trim())) {
+        if (!workspace.renameAgent(renameAgentDialog.agentId, renameAgentField.text.trim())) {
             renameAgentDialog.localError = workspace.workspaceError.length > 0 ? workspace.workspaceError :
                                                                               qsTr("Could not rename the agent.")
             return
@@ -822,7 +822,7 @@ ApplicationWindow {
     }
 
     function canRemoveActiveCategory() {
-        return workspace.categories.length > 1 && workspace.categorySessions.length === 0
+        return workspace.categories.length > 1 && workspace.categoryAgents.length === 0
     }
 
     function removeActiveCategory() {
@@ -832,10 +832,10 @@ ApplicationWindow {
     }
 
     function moveFocused(delta) {
-        const session = workspace.focusedSession
+        const session = workspace.focusedAgent
         if (!session)
             return
-        workspace.moveSessionBy(session.sessionId, delta)
+        workspace.moveAgentBy(session.agentId, delta)
     }
 
     // Several agents picked with Command-click or Shift-click, to drag together.
@@ -857,17 +857,17 @@ ApplicationWindow {
     readonly property var visualSettings: (typeof config !== "undefined" && config !== null) ? config.visual : ({})
     readonly property bool visualAll: visualSettings.all === true
     readonly property bool visualWanted: {
-        const agent = workspace.focusedSession
+        const agent = workspace.focusedAgent
         if (agent === null)
             return false
-        const choice = visualAgents[agent.sessionId]
+        const choice = visualAgents[agent.agentId]
         return choice === undefined ? visualAll : choice
     }
     // The file appears once the CLI saves its first message; until then the
     // check repeats while the thread is wanted.
     property int visualProbe: 0
     readonly property string visualFile: visualProbe >= 0 && visualWanted
-                                         ? workspace.conversationFile(workspace.focusedSession.sessionId) : ""
+                                         ? workspace.conversationFile(workspace.focusedAgent.agentId) : ""
     readonly property bool visualActive: visualWanted && visualFile.length > 0
     Timer {
         interval: 2000
@@ -888,7 +888,7 @@ ApplicationWindow {
     function watchVisualDialog(found) {
         if (!visualActive || liveTerminal.document === null)
             return
-        visualDialogAgent = liveTerminal.document.sessionId
+        visualDialogAgent = liveTerminal.document.agentId
         visualDialogTicks = 0
         if (found)
             visualDialog = true
@@ -903,7 +903,7 @@ ApplicationWindow {
         running: window.visualDialogTicks >= 0
         onTriggered: {
             const agent = liveTerminal.document
-            if (!window.visualActive || agent === null || agent.sessionId !== window.visualDialogAgent) {
+            if (!window.visualActive || agent === null || agent.agentId !== window.visualDialogAgent) {
                 window.endVisualDialog() // another agent is selected now
             } else if (workspace.transcript.dialogShowing(liveTerminal.screenLines())) {
                 // A turn's own request is the agent's, not this command's.
@@ -923,11 +923,11 @@ ApplicationWindow {
         Qt.callLater(() => visualCovers ? visualView.composer.forceActiveFocus() : liveTerminal.forceActiveFocus())
     }
     function toggleVisual() {
-        const agent = workspace.focusedSession
+        const agent = workspace.focusedAgent
         if (!agent)
             return
         const next = Object.assign({}, visualAgents)
-        next[agent.sessionId] = !visualActive
+        next[agent.agentId] = !visualActive
         visualAgents = next
         endVisualDialog()
         visualFocus()
@@ -967,21 +967,21 @@ ApplicationWindow {
     // A new agent from this conversation: up to a reply, or just before a
     // prompt with that prompt waiting in its input.
     function forkVisual(record, before, prefill) {
-        const agent = workspace.focusedSession
+        const agent = workspace.focusedAgent
         if (!agent)
             return
-        const fork = workspace.forkConversation(agent.sessionId, record, before)
+        const fork = workspace.forkConversation(agent.agentId, record, before)
         if (fork.length === 0)
             return
         const defaults = workspace.agentDefaults()
         const mode = window.lastMode.length > 0 ? window.lastMode :
                      defaults.mode && defaults.mode.length > 0 ? defaults.mode : "full"
         const title = (agent.title.length > 0 ? agent.title : "claude").slice(0, 73) + " (fork)"
-        workspace.resumeAgent(workspace.agentFolder(agent.sessionId), title, "claude", fork, mode, prefill)
+        workspace.resumeAgent(workspace.agentFolder(agent.agentId), title, "claude", fork, mode, prefill)
     }
 
     function stripIds() {
-        return workspace.categorySessions.map(session => session.sessionId)
+        return workspace.categoryAgents.map(session => session.agentId)
     }
     function isAgentSelected(id) {
         return selectedAgents.indexOf(id) >= 0
@@ -993,7 +993,7 @@ ApplicationWindow {
     // A plain click shows the agent; Command-click adds or removes it from a
     // selection, and Shift-click selects the run from the shown agent to it.
     function clickAgent(id, modifiers) {
-        const focused = workspace.focusedSession ? workspace.focusedSession.sessionId : ""
+        const focused = workspace.focusedAgent ? workspace.focusedAgent.agentId : ""
         if (modifiers & toggleModifier) {
             let chosen = selectedAgents.length > 0 || focused === "" ? selectedAgents.slice() : [focused]
             const at = chosen.indexOf(id)
@@ -1014,7 +1014,7 @@ ApplicationWindow {
             }
         }
         clearAgentSelection()
-        if (workspace.selectSession(id))
+        if (workspace.selectAgent(id))
             app.deferTerminalFocus()
     }
     // Dragging a selected card carries the whole selection, in strip order.
@@ -1034,7 +1034,7 @@ ApplicationWindow {
             return
         draggedAgents = ids
         dragSource = source
-        const first = workspace.categorySessions.find(session => session.sessionId === ids[0])
+        const first = workspace.categoryAgents.find(session => session.agentId === ids[0])
         const label = ids.length > 1 ? qsTr("%1 agents").arg(ids.length) : first ? agentTabTitle(first) : ""
         beginDrag("lapis-agents", label, scenePosition)
     }
@@ -1072,12 +1072,12 @@ ApplicationWindow {
         for (let i = 0; i < Math.min(visualIndex, strip.length); ++i)
             if (ids.indexOf(strip[i]) < 0)
                 ++index
-        workspace.placeSessions(ids, workspace.activeCategoryId, index)
+        workspace.placeAgents(ids, workspace.activeCategoryId, index)
         clearAgentSelection()
     }
     function dropOnCategory(categoryId) {
         if (draggedAgents.length > 0 && categoryId !== workspace.activeCategoryId)
-            workspace.placeSessions(draggedAgents, categoryId, 1 << 20)
+            workspace.placeAgents(draggedAgents, categoryId, 1 << 20)
         clearAgentSelection()
     }
     function dropOnNewCategory() {
@@ -1120,16 +1120,16 @@ ApplicationWindow {
     function pastePaths(text, destinationId) {
         if (!window.interactionArmed || text.length === 0)
             return false
-        const destination = workspace.focusedSession
+        const destination = workspace.focusedAgent
         if (!destination || liveTerminal.document !== destination)
             return false
-        if (destination.sessionId !== destinationId)
+        if (destination.agentId !== destinationId)
             return false
         return liveTerminal.pasteText(text)
     }
 
     function recoveryAvailable() {
-        const session = workspace.focusedSession
+        const session = workspace.focusedAgent
         return session && session.live && !session.inputReady
                 && session.connectionState !== "connecting"
                 && session.connectionState !== "synchronizing"
@@ -1425,14 +1425,14 @@ ApplicationWindow {
         sequences: window.bindings("nextWindow")
         context: Qt.WindowShortcut
         enabled: window.shortcutsArmed
-        onActivated: workspace.nextSession(1)
+        onActivated: workspace.nextAgent(1)
     }
     Shortcut {
         objectName: "previousSessionShortcut"
         sequences: window.bindings("previousWindow")
         context: Qt.WindowShortcut
         enabled: window.shortcutsArmed
-        onActivated: workspace.nextSession(-1)
+        onActivated: workspace.nextAgent(-1)
     }
     Shortcut {
         objectName: "newAgentShortcut"
@@ -2149,18 +2149,18 @@ ApplicationWindow {
     StageDialog {
         id: closeAgentDialog
         objectName: "closeAgentDialog"
-        title: reachable ? qsTr("End agent") : qsTr("Close tab")
+        title: reachable ? qsTr("End agent") : qsTr("Close agent")
         height: Math.min(window.height - 32, closeForm.implicitHeight + topPadding + bottomPadding)
-        property string sessionId: ""
+        property string agentId: ""
         property string harnessId: ""
         property string agentName: ""
         property string place: ""
         property bool reachable: true
         function confirm() {
-            const id = sessionId
+            const id = agentId
             const abandon = !reachable
             close()
-            if (!workspace.closeSession(id, abandon))
+            if (!workspace.closeAgent(id, abandon))
                 app.deferTerminalFocus()
         }
         onOpened: Qt.callLater(function() { closeConfirm.forceActiveFocus() })
@@ -2181,7 +2181,7 @@ ApplicationWindow {
                     Layout.minimumWidth: 0
                     text: closeAgentDialog.reachable ?
                               qsTr("End %1 in %2?").arg(closeAgentDialog.agentName).arg(closeAgentDialog.place) :
-                              qsTr("Close the %1 tab for %2?").arg(closeAgentDialog.agentName).arg(closeAgentDialog.place)
+                              qsTr("Close the %1 agent in %2?").arg(closeAgentDialog.agentName).arg(closeAgentDialog.place)
                     color: window.textColor
                     font.pixelSize: window.chromeFont + 1
                     font.bold: true
@@ -2191,8 +2191,8 @@ ApplicationWindow {
             PlainLabel {
                 Layout.fillWidth: true
                 text: closeAgentDialog.reachable ?
-                          qsTr("Its process stops and the tab closes.") :
-                          qsTr("lapis can't reach this agent. If it is still running, it keeps running without a tab.")
+                          qsTr("Its process stops and lapis closes it.") :
+                          qsTr("lapis can't reach this agent. If it is still running, it keeps running outside lapis.")
                 color: window.mutedTextColor
                 wrapMode: Text.WordWrap
             }
@@ -2208,7 +2208,7 @@ ApplicationWindow {
                 CommandButton {
                     id: closeConfirm
                     objectName: "closeAgentConfirm"
-                    text: closeAgentDialog.reachable ? qsTr("End agent") : qsTr("Close tab")
+                    text: closeAgentDialog.reachable ? qsTr("End agent") : qsTr("Close agent")
                     hint: "↩"
                     selected: true
                     focusPolicy: Qt.StrongFocus
@@ -2298,7 +2298,7 @@ ApplicationWindow {
         id: renameAgentDialog
         objectName: "renameAgentDialog"
         title: qsTr("Rename agent")
-        property string sessionId: ""
+        property string agentId: ""
         property string initialTitle: ""
         property string localError: ""
         onOpened: Qt.callLater(function() {
@@ -2374,7 +2374,7 @@ ApplicationWindow {
             objectName: "removeCategoryAction"
             enabled: window.canRemoveActiveCategory()
             text: workspace.categories.length <= 1 ? qsTr("Keep at least one category") :
-                  workspace.categorySessions.length > 0 ? qsTr("Move agents out before removing") :
+                  workspace.categoryAgents.length > 0 ? qsTr("Move agents out before removing") :
                   qsTr("Remove category")
             onTriggered: window.removeActiveCategory()
         }
@@ -2396,13 +2396,13 @@ ApplicationWindow {
 
         ActionItem {
             enabled: false
-            text: workspace.focusedSession ? workspace.focusedSession.title : ""
+            text: workspace.focusedAgent ? workspace.focusedAgent.title : ""
             visible: text.length > 0
         }
         ActionItem {
             objectName: "sessionDiagnostic"
             enabled: false
-            text: workspace.focusedSession ? (workspace.focusedSession.attentionDiagnostic || workspace.focusedSession.activity) : ""
+            text: workspace.focusedAgent ? (workspace.focusedAgent.attentionDiagnostic || workspace.focusedAgent.activity) : ""
             visible: text.length > 0
             contentItem: PlainLabel {
                 text: parent.text
@@ -2415,7 +2415,7 @@ ApplicationWindow {
         ActionItem {
             objectName: "renameAgentAction"
             text: qsTr("Rename")
-            enabled: workspace.focusedSession !== null
+            enabled: workspace.focusedAgent !== null
             onTriggered: window.openRenameDialog()
         }
         ActionItem {
@@ -2429,7 +2429,7 @@ ApplicationWindow {
             text: qsTr("Move later")
             enabled: {
                 const index = window.focusedTabIndex()
-                return index >= 0 && index < workspace.categorySessions.length - 1
+                return index >= 0 && index < workspace.categoryAgents.length - 1
             }
             onTriggered: window.moveFocused(1)
         }
@@ -2454,9 +2454,9 @@ ApplicationWindow {
                     implicitHeight: Math.max(32, window.chromeFont + 16)
                     enabled: modelData.id !== workspace.activeCategoryId
                     onTriggered: {
-                        const session = workspace.focusedSession
+                        const session = workspace.focusedAgent
                         if (session)
-                            workspace.moveSession(session.sessionId, modelData.id)
+                            workspace.moveAgent(session.agentId, modelData.id)
                     }
                 }
             }
@@ -2465,36 +2465,36 @@ ApplicationWindow {
         ActionItem {
             objectName: "closeAgentAction"
             text: qsTr("Close")
-            enabled: workspace.focusedSession !== null
+            enabled: workspace.focusedAgent !== null
             onTriggered: window.closeFocusedAgent()
         }
         MenuSeparator {
-            visible: workspace.focusedSession !== null && workspace.focusedSession.live
+            visible: workspace.focusedAgent !== null && workspace.focusedAgent.live
         }
         ActionItem {
             objectName: "historyOlderAction"
             text: qsTr("Older history")
-            visible: workspace.focusedSession !== null && workspace.focusedSession.live
-            enabled: workspace.focusedSession !== null && !workspace.focusedSession.historyRequestPending
-            onTriggered: if (workspace.focusedSession)
-                             workspace.focusedSession.olderHistory()
+            visible: workspace.focusedAgent !== null && workspace.focusedAgent.live
+            enabled: workspace.focusedAgent !== null && !workspace.focusedAgent.historyRequestPending
+            onTriggered: if (workspace.focusedAgent)
+                             workspace.focusedAgent.olderHistory()
         }
         ActionItem {
             objectName: "historyNewerAction"
             text: qsTr("Newer history")
-            visible: workspace.focusedSession !== null && workspace.focusedSession.live
-            enabled: workspace.focusedSession !== null && workspace.focusedSession.historyActive
-                     && !workspace.focusedSession.historyRequestPending
-            onTriggered: if (workspace.focusedSession)
-                             workspace.focusedSession.newerHistory()
+            visible: workspace.focusedAgent !== null && workspace.focusedAgent.live
+            enabled: workspace.focusedAgent !== null && workspace.focusedAgent.historyActive
+                     && !workspace.focusedAgent.historyRequestPending
+            onTriggered: if (workspace.focusedAgent)
+                             workspace.focusedAgent.newerHistory()
         }
         ActionItem {
             objectName: "historyLiveAction"
             text: qsTr("Back to live")
-            visible: workspace.focusedSession !== null && workspace.focusedSession.live
-            enabled: workspace.focusedSession !== null && workspace.focusedSession.historyActive
-            onTriggered: if (workspace.focusedSession)
-                             workspace.focusedSession.returnToLive()
+            visible: workspace.focusedAgent !== null && workspace.focusedAgent.live
+            enabled: workspace.focusedAgent !== null && workspace.focusedAgent.historyActive
+            onTriggered: if (workspace.focusedAgent)
+                             workspace.focusedAgent.returnToLive()
         }
     }
 
@@ -2507,7 +2507,7 @@ ApplicationWindow {
             if (!window.inputBlocked)
                 app.deferTerminalFocus()
         }
-        function onSessionsChanged() {
+        function onAgentsChanged() {
             agentTabs.revealFocused()
         }
         function onCategoryChanged() {
@@ -2791,9 +2791,9 @@ ApplicationWindow {
                         objectName: "visualThisAgent"
                         text: qsTr("This agent")
                         selected: window.visualActive
-                        enabled: window.interactionArmed && workspace.focusedSession !== null
+                        enabled: window.interactionArmed && workspace.focusedAgent !== null
                                  && (window.visualActive || window.visualProbe >= 0
-                                     && workspace.conversationFile(workspace.focusedSession.sessionId).length > 0)
+                                     && workspace.conversationFile(workspace.focusedAgent.agentId).length > 0)
                         Layout.fillWidth: true
                         Layout.preferredWidth: 1
                         onClicked: window.toggleVisual()
@@ -3047,15 +3047,15 @@ ApplicationWindow {
                     editor: window.visualSettings.editor || "auto"
                     screen: () => liveTerminal.screenLines()
                     folder: window.visualActive && liveTerminal.document
-                            ? workspace.agentFolder(liveTerminal.document.sessionId) : ""
+                            ? workspace.agentFolder(liveTerminal.document.agentId) : ""
                     slashCommands: liveTerminal.document !== null && liveTerminal.document.harnessId === "claude"
                     onSuggestionFilled: {
                         if (typeof nextPrompt !== "undefined" && nextPrompt !== null && liveTerminal.document)
-                            nextPrompt.used(liveTerminal.document.sessionId, false, 0, liveTerminal.suggestionKey)
+                            nextPrompt.used(liveTerminal.document.agentId, false, 0, liveTerminal.suggestionKey)
                     }
                     onSuggestionSent: {
                         if (typeof nextPrompt !== "undefined" && nextPrompt !== null && liveTerminal.document)
-                            nextPrompt.used(liveTerminal.document.sessionId, true, 0, liveTerminal.suggestionKey)
+                            nextPrompt.used(liveTerminal.document.agentId, true, 0, liveTerminal.suggestionKey)
                     }
                     // The same picker for every CLI; each CLI's own command
                     // makes the change, typed into its session.
@@ -3117,7 +3117,7 @@ ApplicationWindow {
                     y: stage.inset
                     width: Math.max(0, stage.width - 2 * stage.inset)
                     height: Math.max(0, stage.height - 2 * stage.inset)
-                    document: workspace.focusedSession
+                    document: workspace.focusedAgent
                     fontFamily: (typeof config !== "undefined" && config !== null) ? config.terminalFontFamily : ""
                     fontPixelSize: window.terminalFontSize
                     scrollToBottomOnTyping: (typeof config !== "undefined" && config !== null) ? config.scrollToBottomOnTyping : true
@@ -3139,21 +3139,21 @@ ApplicationWindow {
                     tabFlow: predicting && nextPrompt.guesses(document.harnessId)
                     suggestion: predicting && nextPrompt.revision >= 0 && !document.historyActive
                                 && ["finished", "idle"].indexOf(document.statusKind) >= 0
-                                ? nextPrompt.suggestion(document.sessionId) : ""
+                                ? nextPrompt.suggestion(document.agentId) : ""
                     suggestionConfident: predicting && nextPrompt.revision >= 0 && document !== null
-                                         && nextPrompt.confidence(document.sessionId) >=
+                                         && nextPrompt.confidence(document.agentId) >=
                                          nextPrompt.confidentThreshold
-                    onSuggestionSeen: (sessionId, offerKey) => {
+                    onSuggestionSeen: (agentId, offerKey) => {
                         if (typeof nextPrompt !== "undefined" && nextPrompt !== null)
-                            nextPrompt.seenOffer({session: sessionId, offer: offerKey})
+                            nextPrompt.seenOffer({session: agentId, offer: offerKey})
                     }
-                    onSuggestionUsed: (sessionId, offerKey, sent, typedFirst) => {
+                    onSuggestionUsed: (agentId, offerKey, sent, typedFirst) => {
                         if (typeof nextPrompt !== "undefined" && nextPrompt !== null)
-                            nextPrompt.used(sessionId, sent, typedFirst, offerKey)
+                            nextPrompt.used(agentId, sent, typedFirst, offerKey)
                     }
                     // Follows every offer, even one with the same words as the last.
                     suggestionKey: suggestion.length > 0 && nextPrompt.revision >= 0
-                                   ? nextPrompt.offerKey(document.sessionId) : ""
+                                   ? nextPrompt.offerKey(document.agentId) : ""
                     tabAway: function() {
                         return predicting && workspace.nextPriorityAttention(nextPrompt.readyAgents())
                     }
@@ -3264,7 +3264,7 @@ ApplicationWindow {
                 Rectangle {
                     id: historyBanner
                     objectName: "historyBar"
-                    readonly property var session: workspace.focusedSession
+                    readonly property var session: workspace.focusedAgent
                     readonly property string note: !session ? ""
                                                    : session.historyRequestPending ? qsTr("Loading history…")
                                                    : session.historyMessage
@@ -3378,7 +3378,7 @@ ApplicationWindow {
                 Rectangle {
                     id: endedBar
                     objectName: "sessionEndedBar"
-                    readonly property var session: workspace.focusedSession
+                    readonly property var session: workspace.focusedAgent
                     readonly property string connection: session && session.live ? session.connectionState : ""
                     visible: connection === "ended" || connection === "disconnected"
                     anchors.left: liveTerminal.left
@@ -3418,7 +3418,7 @@ ApplicationWindow {
                 ColumnLayout {
                     id: homePanel
                     objectName: "emptyState"
-                    visible: workspace.focusedSession === null
+                    visible: workspace.focusedAgent === null
                     anchors.centerIn: parent
                     width: Math.min(560, parent.width - 32)
                     spacing: 10
@@ -3533,15 +3533,15 @@ ApplicationWindow {
                     objectName: "fileDrop"
                     anchors.fill: parent
                     keys: ["text/uri-list"]
-                    enabled: workspace.focusedSession !== null && window.interactionArmed
+                    enabled: workspace.focusedAgent !== null && window.interactionArmed
                     onDropped: function(drop) {
                         if (!drop.hasUrls)
                             return
                         const text = window.quoteDroppedPaths(drop.urls)
                         if (text.length === 0)
                             return
-                        const destinationId = workspace.focusedSession !== null ?
-                                                  workspace.focusedSession.sessionId : ""
+                        const destinationId = workspace.focusedAgent !== null ?
+                                                  workspace.focusedAgent.agentId : ""
                         if (destinationId.length === 0)
                             return
                         Qt.callLater(() => window.pastePaths(text, destinationId))
@@ -3576,7 +3576,7 @@ ApplicationWindow {
                 interactive: false
                 // Hidden cards release their surfaces; off-screen ones are not
                 // kept, so only what is visible renders.
-                model: visible ? workspace.categorySessions : []
+                model: visible ? workspace.categoryAgents : []
                 cacheBuffer: 0
                 highlight: null
                 highlightFollowsCurrentItem: false
@@ -3606,7 +3606,7 @@ ApplicationWindow {
                     property int index: -1
                     function update(px) {
                         const step = agentTabs.cardWidth + agentTabs.spacing
-                        index = Math.max(0, Math.min(workspace.categorySessions.length,
+                        index = Math.max(0, Math.min(workspace.categoryAgents.length,
                                                      Math.round((px + agentTabs.contentX) / step)))
                     }
                     onEntered: function(drag) { update(drag.x) }
@@ -3681,11 +3681,11 @@ ApplicationWindow {
                     id: agentTab
                     required property var modelData
                     required property int index
-                    readonly property bool marked: workspace.focusedSession !== null
-                                                   && workspace.focusedSession.sessionId === modelData.sessionId
-                    readonly property bool picked: window.isAgentSelected(modelData.sessionId)
-                    objectName: "agentTab_" + modelData.sessionId
-                    opacity: window.dragSource === "strip" && window.draggedAgents.indexOf(modelData.sessionId) >= 0 ?
+                    readonly property bool marked: workspace.focusedAgent !== null
+                                                   && workspace.focusedAgent.agentId === modelData.agentId
+                    readonly property bool picked: window.isAgentSelected(modelData.agentId)
+                    objectName: "agentTab_" + modelData.agentId
+                    opacity: window.dragSource === "strip" && window.draggedAgents.indexOf(modelData.agentId) >= 0 ?
                                  0.45 : 1
                     width: agentTabs.cardWidth
                     height: agentTabs.height
@@ -3693,7 +3693,7 @@ ApplicationWindow {
                     Accessible.name: modelData.agentName + ", " + window.agentTabTitle(modelData) + ", " + modelData.statusLabel
                     // Assistive activation selects the agent, as a click does.
                     Accessible.onPressAction: {
-                        if (window.interactionArmed && workspace.selectSession(agentTab.modelData.sessionId))
+                        if (window.interactionArmed && workspace.selectAgent(agentTab.modelData.agentId))
                             app.deferTerminalFocus()
                     }
 
@@ -3713,7 +3713,7 @@ ApplicationWindow {
                     // pulse of the card edge in ink until the agent is selected.
                     Rectangle {
                         id: unseenCue
-                        objectName: "unseenCue_" + agentTab.modelData.sessionId
+                        objectName: "unseenCue_" + agentTab.modelData.agentId
                         anchors.fill: parent
                         visible: agentTab.modelData.unseen && !agentTab.marked
                         color: "transparent"
@@ -3744,7 +3744,7 @@ ApplicationWindow {
                             Layout.preferredHeight: 12
                         }
                         StatusMark {
-                            objectName: "statusMark_" + agentTab.modelData.sessionId
+                            objectName: "statusMark_" + agentTab.modelData.agentId
                             kind: agentTab.modelData.statusKind
                             Layout.preferredWidth: 8
                             Layout.preferredHeight: 8
@@ -3762,7 +3762,7 @@ ApplicationWindow {
                             verticalAlignment: Text.AlignVCenter
                         }
                         PlainText {
-                            objectName: "statusLabel_" + agentTab.modelData.sessionId
+                            objectName: "statusLabel_" + agentTab.modelData.agentId
                             // On a narrow card the status dot carries the state and
                             // the project path keeps the room.
                             visible: agentTab.marked && agentTab.width >= 240
@@ -3778,7 +3778,7 @@ ApplicationWindow {
                     // A scaled copy of the agent's latest lines: never interactive
                     // and never resizes the agent's terminal.
                     TerminalSurface {
-                        objectName: "previewTerminal_" + agentTab.modelData.sessionId
+                        objectName: "previewTerminal_" + agentTab.modelData.agentId
                         x: 6
                         y: agentHeader.y + agentHeader.height + 4
                         width: parent.width - 12
@@ -3793,7 +3793,7 @@ ApplicationWindow {
                     }
                     // Picked for a drag with Command-click or Shift-click.
                     Rectangle {
-                        objectName: "pickedCue_" + agentTab.modelData.sessionId
+                        objectName: "pickedCue_" + agentTab.modelData.agentId
                         anchors.fill: parent
                         visible: agentTab.picked && !agentTab.marked
                         radius: window.chromeRadius
@@ -3801,12 +3801,12 @@ ApplicationWindow {
                     }
                     HoverHandler { id: agentHover }
                     DragOrClick {
-                        objectName: "cardPress_" + agentTab.modelData.sessionId
+                        objectName: "cardPress_" + agentTab.modelData.agentId
                         anchors.fill: parent
                         enabled: window.interactionArmed
-                        onTapped: function(modifiers) { window.clickAgent(agentTab.modelData.sessionId, modifiers) }
+                        onTapped: function(modifiers) { window.clickAgent(agentTab.modelData.agentId, modifiers) }
                         onDragStarted: function(scene) {
-                            window.beginAgentDrag(window.agentsToDrag(agentTab.modelData.sessionId), "strip", scene)
+                            window.beginAgentDrag(window.agentsToDrag(agentTab.modelData.agentId), "strip", scene)
                         }
                         onDragMoved: function(scene) { window.moveDragGhost(scene) }
                         onDragEnded: window.endDrag()
@@ -3815,7 +3815,7 @@ ApplicationWindow {
                         acceptedButtons: Qt.RightButton
                         enabled: window.interactionArmed
                         onTapped: {
-                            if (workspace.selectSession(agentTab.modelData.sessionId))
+                            if (workspace.selectAgent(agentTab.modelData.agentId))
                                 window.popupAt(agentMenu, agentTab)
                         }
                     }

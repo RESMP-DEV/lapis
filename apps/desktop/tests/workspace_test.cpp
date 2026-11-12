@@ -77,7 +77,7 @@ void explicitAgentIdentity() {
         options.launch = lapis::session::LaunchSpec{
             QStringLiteral("/usr/bin/true"), {}, directory.path(), {80, 24}, mode};
         Workspace workspace(WorkspaceMode::live, options);
-        const auto* item = workspace.focusedSession();
+        const auto* item = workspace.focusedAgent();
         const QString expected = mode == AgentMode::codex    ? QStringLiteral("codex")
                                  : mode == AgentMode::claude ? QStringLiteral("claude")
                                                              : QString{};
@@ -93,7 +93,7 @@ void explicitAgentIdentity() {
         require(workspace.workspaceError() ==
                     QStringLiteral("Restart requires a persisted workspace."),
                 "explicit restart rejection names the persistence requirement");
-        require(workspace.sessions().size() == 1, "rejected creation leaves the attach intact");
+        require(workspace.agents().size() == 1, "rejected creation leaves the attach intact");
     }
 }
 void projectPaths() {
@@ -110,47 +110,47 @@ void projectPaths() {
 }
 void categoriesAndIdentity() {
     Workspace workspace(WorkspaceMode::fixture);
-    auto* original = workspace.session(QStringLiteral("renderer"));
+    auto* original = workspace.agent(QStringLiteral("renderer"));
     require(!workspace.restartAgent(QStringLiteral("renderer")),
             "a preview cannot restart its sample agents");
     require(workspace.workspaceError() == QStringLiteral("Restart requires a persisted workspace."),
             "preview restart rejection names the persistence requirement");
     int list_changes = 0;
-    QObject::connect(&workspace, &Workspace::sessionsChanged, &workspace, [&] { ++list_changes; });
-    require(workspace.selectSession(QStringLiteral("renderer")), "select existing agent");
+    QObject::connect(&workspace, &Workspace::agentsChanged, &workspace, [&] { ++list_changes; });
+    require(workspace.selectAgent(QStringLiteral("renderer")), "select existing agent");
     require(list_changes == 0, "tab selection does not rebuild the tab model");
     require(!workspace.renameCategory(QStringLiteral("General"), QStringLiteral("general")),
             "reversed category arguments cannot resolve identity");
-    require(!workspace.renameSession(QStringLiteral("Render work"), QStringLiteral("renderer")),
-            "reversed session arguments cannot resolve identity");
+    require(!workspace.renameAgent(QStringLiteral("Render work"), QStringLiteral("renderer")),
+            "reversed agent arguments cannot resolve identity");
     require(workspace.addCategory(QStringLiteral("Research")), "add category");
     const auto research = workspace.activeCategoryId();
-    require(workspace.focusedSession() == nullptr && workspace.categorySessions().isEmpty(),
+    require(workspace.focusedAgent() == nullptr && workspace.categoryAgents().isEmpty(),
             "empty category must have no focused terminal");
-    require(workspace.moveSession(QStringLiteral("renderer"), research), "move existing agent");
-    require(workspace.focusedSession() == original, "move must preserve object identity");
+    require(workspace.moveAgent(QStringLiteral("renderer"), research), "move existing agent");
+    require(workspace.focusedAgent() == original, "move must preserve object identity");
     require(workspace.selectCategory(QStringLiteral("general")), "select original category");
-    require(workspace.selectSession(QStringLiteral("agent")), "select other agent");
+    require(workspace.selectAgent(QStringLiteral("agent")), "select other agent");
     require(workspace.selectCategory(research), "return to research");
-    require(workspace.focusedSession() == original, "category restores selected agent");
-    workspace.nextSession(-1);
-    require(workspace.focusedSession() == original, "tab navigation cannot leave category");
+    require(workspace.focusedAgent() == original, "category restores selected agent");
+    workspace.nextAgent(-1);
+    require(workspace.focusedAgent() == original, "tab navigation cannot leave category");
     require(!workspace.removeCategory(research), "occupied category cannot be removed");
-    require(workspace.renameSession(QStringLiteral("renderer"), QStringLiteral("Render work")),
+    require(workspace.renameAgent(QStringLiteral("renderer"), QStringLiteral("Render work")),
             "rename agent");
     require(original->title() == QStringLiteral("Render work"),
             "title changed without replacement");
-    require(workspace.moveSession(QStringLiteral("renderer"), QStringLiteral("general")),
+    require(workspace.moveAgent(QStringLiteral("renderer"), QStringLiteral("general")),
             "return agent to general");
     require(workspace.removeCategory(research), "remove empty category");
-    require(workspace.selectSession(QStringLiteral("renderer")), "select moved agent");
-    require(workspace.moveSessionBy(QStringLiteral("renderer"), -100), "reorder agent");
-    require(workspace.categorySessions().front().value<lapis::desktop::Agent*>() == original,
+    require(workspace.selectAgent(QStringLiteral("renderer")), "select moved agent");
+    require(workspace.moveAgentBy(QStringLiteral("renderer"), -100), "reorder agent");
+    require(workspace.categoryAgents().front().value<lapis::desktop::Agent*>() == original,
             "reorder within category");
-    require(workspace.focusedSession() == original, "reorder preserves selected identity");
-    const auto selected = workspace.focusedSession();
+    require(workspace.focusedAgent() == original, "reorder preserves selected identity");
+    const auto selected = workspace.focusedAgent();
     require(workspace.replayAttention(QStringLiteral("arrival")), "request fixture");
-    require(workspace.focusedSession() == selected, "attention cannot steal focus");
+    require(workspace.focusedAgent() == selected, "attention cannot steal focus");
     require(
         workspace.categories().front().toMap().value(QStringLiteral("attentionCount")).toInt() == 1,
         "category aggregates requests");
@@ -162,7 +162,7 @@ void categoryCountsChangeOnlyWhenNeeded() {
     int notifications = 0;
     QObject::connect(&workspace, &Workspace::categoriesChanged, &receiver,
                      [&] { ++notifications; });
-    auto* agent = workspace.session(QStringLiteral("agent"));
+    auto* agent = workspace.agent(QStringLiteral("agent"));
     if (!agent)
         throw std::runtime_error("missing agent fixture");
     lapis::session::wire::AttentionSnapshot state;
@@ -190,14 +190,14 @@ void persistence() {
     {
         Workspace workspace(WorkspaceMode::live, options);
         require(workspace.workspaceError().isEmpty(), "new registry ready");
-        require(workspace.sessions().isEmpty() && !workspace.focusedSession(),
+        require(workspace.agents().isEmpty() && !workspace.focusedAgent(),
                 "normal workspace never launches shell or fixtures");
         require(
             !workspace.createAgent(directory.filePath(QStringLiteral("missing")), directory.path()),
             "invalid project directory cannot launch an agent");
         require(workspace.workspaceError().contains(QStringLiteral("project directory")),
                 "invalid directory diagnostic does not depend on Codex installation");
-        require(workspace.sessions().isEmpty(), "invalid launch cannot add an agent tab");
+        require(workspace.agents().isEmpty(), "invalid launch cannot add an agent tab");
         workspace.clearError();
         require(workspace.addCategory(QStringLiteral("Research")), "persist category");
         category = workspace.activeCategoryId();
@@ -276,30 +276,29 @@ void restoreAgentIdentity() {
     {
         Workspace restored(WorkspaceMode::live, options);
         require(restored.workspaceError().isEmpty(), "load agent registry");
-        require(restored.sessions().size() == 2, "restore both agents");
-        require(restored.focusedSession()->sessionId() == second,
-                "restore selected agent identity");
-        require(restored.session(second)->harnessId() == QStringLiteral("claude") &&
-                    restored.session(second)->agentName() == QStringLiteral("Claude"),
+        require(restored.agents().size() == 2, "restore both agents");
+        require(restored.focusedAgent()->agentId() == second, "restore selected agent identity");
+        require(restored.agent(second)->harnessId() == QStringLiteral("claude") &&
+                    restored.agent(second)->agentName() == QStringLiteral("Claude"),
                 "restore harness identity");
-        require(restored.session(first)->live(), "restore reconnect object");
-        require(restored.session(first)->harnessId() == QStringLiteral("codex"),
+        require(restored.agent(first)->live(), "restore reconnect object");
+        require(restored.agent(first)->harnessId() == QStringLiteral("codex"),
                 "legacy registry remains Codex");
-        require(!restored.removeSession(first), "disconnected agent may still be running");
+        require(!restored.removeAgent(first), "disconnected agent may still be running");
         require(restored.addCategory(QStringLiteral("Research")), "create destination category");
-        require(restored.moveSession(first, restored.activeCategoryId()), "persist category move");
-        require(restored.focusedSession()->sessionId() == first,
+        require(restored.moveAgent(first, restored.activeCategoryId()), "persist category move");
+        require(restored.focusedAgent()->agentId() == first,
                 "select moved agent in empty category");
     }
     {
         Workspace restored(WorkspaceMode::live, options);
         require(restored.workspaceError().isEmpty(), "reload moved agents");
-        require(restored.categorySessions().size() == 1, "persist category membership");
-        require(restored.focusedSession()->sessionId() == first, "persist per-category selection");
+        require(restored.categoryAgents().size() == 1, "persist category membership");
+        require(restored.focusedAgent()->agentId() == first, "persist per-category selection");
         require(restored.selectCategory(QStringLiteral("general")), "return original category");
-        require(restored.focusedSession()->sessionId() == second,
+        require(restored.focusedAgent()->agentId() == second,
                 "preserve original category selection");
-        require(restored.session(second)->harnessId() == QStringLiteral("claude"),
+        require(restored.agent(second)->harnessId() == QStringLiteral("claude"),
                 "persist harness after registry mutation");
     }
 }
@@ -347,33 +346,33 @@ void failedWritesPreserveState() {
     {
         Workspace workspace(WorkspaceMode::live, options);
         require(workspace.workspaceError().isEmpty(), "load mutation failure fixture");
-        auto* first_object = workspace.session(first);
-        auto* second_object = workspace.session(second);
+        auto* first_object = workspace.agent(first);
+        auto* second_object = workspace.agent(second);
         if (first_object == nullptr || second_object == nullptr)
             throw std::runtime_error("retain both session objects");
         first_object->setConnection(QStringLiteral("ended"), false);
         const auto categories = workspace.categories();
-        const auto sessions = workspace.sessions();
-        const auto category_sessions = workspace.categorySessions();
+        const auto sessions = workspace.agents();
+        const auto category_sessions = workspace.categoryAgents();
         int notifications = 0;
         const auto count = [&] { ++notifications; };
         QObject::connect(&workspace, &Workspace::categoriesChanged, &workspace, count);
         QObject::connect(&workspace, &Workspace::categoryChanged, &workspace, count);
-        QObject::connect(&workspace, &Workspace::sessionsChanged, &workspace, count);
+        QObject::connect(&workspace, &Workspace::agentsChanged, &workspace, count);
         QObject::connect(&workspace, &Workspace::focusChanged, &workspace, count);
         QObject::connect(first_object, &lapis::desktop::Agent::identityChanged, &workspace, count);
         QObject::connect(second_object, &lapis::desktop::Agent::identityChanged, &workspace, count);
         require(QDir().rename(original, moved),
                 "move registry parent to force real QSaveFile failure");
         const auto unchanged = [&] {
-            require(workspace.categories() == categories && workspace.sessions() == sessions &&
-                        workspace.categorySessions() == category_sessions,
+            require(workspace.categories() == categories && workspace.agents() == sessions &&
+                        workspace.categoryAgents() == category_sessions,
                     "failed write preserves category metadata and object order");
             require(workspace.activeCategoryId() == QStringLiteral("general") &&
-                        workspace.focusedSession() == second_object,
+                        workspace.focusedAgent() == second_object,
                     "failed write preserves active category and selection");
-            require(workspace.session(first) == first_object &&
-                        workspace.session(second) == second_object && first_object->live() &&
+            require(workspace.agent(first) == first_object &&
+                        workspace.agent(second) == second_object && first_object->live() &&
                         second_object->live(),
                     "failed removal cannot destroy or disconnect retained objects");
             require(first_object->title() == first && second_object->title() == second,
@@ -394,22 +393,22 @@ void failedWritesPreserveState() {
         require(!workspace.selectCategory(QStringLiteral("empty")),
                 "category selection rolls back");
         unchanged();
-        require(!workspace.selectSession(first), "tab selection rolls back");
+        require(!workspace.selectAgent(first), "tab selection rolls back");
         unchanged();
-        require(!workspace.renameSession(first, QStringLiteral("Uncommitted")),
+        require(!workspace.renameAgent(first, QStringLiteral("Uncommitted")),
                 "title rename rolls back");
         unchanged();
-        require(!workspace.moveSession(first, QStringLiteral("empty")), "category move rolls back");
+        require(!workspace.moveAgent(first, QStringLiteral("empty")), "category move rolls back");
         unchanged();
-        require(!workspace.moveSessionBy(first, 1), "tab reorder rolls back");
+        require(!workspace.moveAgentBy(first, 1), "tab reorder rolls back");
         unchanged();
         require(!workspace.followConversationTitle(second, second),
                 "conversation-title provenance rolls back on failed save");
         unchanged();
-        require(!workspace.removeSession(first), "ended tab removal rolls back");
+        require(!workspace.removeAgent(first), "ended tab removal rolls back");
         unchanged();
         require(QDir().rename(moved, original), "restore registry parent");
-        require(workspace.renameSession(first, QStringLiteral("Committed")),
+        require(workspace.renameAgent(first, QStringLiteral("Committed")),
                 "write recovers when directory returns");
         require(first_object->title() == QStringLiteral("Committed") && notifications == 1,
                 "successful rename publishes exactly one identity change");
@@ -424,8 +423,8 @@ void failedWritesPreserveState() {
                              }),
                 "a later successful mutation does not persist the failed auto-title flag");
         const QPointer<lapis::desktop::Agent> removed(first_object);
-        require(workspace.removeSession(first), "remove ended agent after save recovers");
-        require(removed && !workspace.session(first), "removed tab survives the QML call stack");
+        require(workspace.removeAgent(first), "remove ended agent after save recovers");
+        require(removed && !workspace.agent(first), "removed tab survives the QML call stack");
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         require(removed.isNull(), "removed tab is eventually destroyed");
     }
@@ -454,9 +453,9 @@ void malformedAgentRegistry() {
     require(workspace.categories().size() == 1 &&
                 workspace.categories().front().toMap().value(QStringLiteral("id")).toString() ==
                     QStringLiteral("foreign") &&
-                workspace.sessions().isEmpty(),
+                workspace.agents().isEmpty(),
             "a malformed agent is skipped, not the workspace");
-    require(workspace.sessions().isEmpty() && !workspace.focusedSession(),
+    require(workspace.agents().isEmpty() && !workspace.focusedAgent(),
             "malformed restore creates no session");
     require(workspace.addCategory(QStringLiteral("Later")), "the workspace still saves");
     const auto agents =
@@ -477,17 +476,17 @@ void discardOutsideActiveCategorySelectsNeighbor() {
     Workspace workspace(WorkspaceMode::fixture);
     require(workspace.addCategory(QStringLiteral("Research")), "destination category");
     const auto research = workspace.activeCategoryId();
-    require(workspace.moveSession(QStringLiteral("renderer"), research), "move first neighbor");
-    require(workspace.moveSession(QStringLiteral("agent"), research), "move second neighbor");
-    require(workspace.moveSession(QStringLiteral("service"), research), "move right neighbor");
-    require(workspace.selectSession(QStringLiteral("agent")), "select the future closed tab");
+    require(workspace.moveAgent(QStringLiteral("renderer"), research), "move first neighbor");
+    require(workspace.moveAgent(QStringLiteral("agent"), research), "move second neighbor");
+    require(workspace.moveAgent(QStringLiteral("service"), research), "move right neighbor");
+    require(workspace.selectAgent(QStringLiteral("agent")), "select the future closed tab");
     require(workspace.selectCategory(QStringLiteral("general")), "show a different category");
-    auto* agent = workspace.session(QStringLiteral("agent"));
+    auto* agent = workspace.agent(QStringLiteral("agent"));
     require(agent != nullptr, "retain the closed preview fixture");
     agent->setConnection(QStringLiteral("ended"), false);
-    require(workspace.removeSession(QStringLiteral("agent")), "remove an inactive-category tab");
+    require(workspace.removeAgent(QStringLiteral("agent")), "remove an inactive-category tab");
     require(workspace.selectCategory(research) &&
-                workspace.focusedSession() == workspace.session(QStringLiteral("service")),
+                workspace.focusedAgent() == workspace.agent(QStringLiteral("service")),
             "closing an unseen category remembers its own neighbor");
 }
 void truthfulStatus() {
@@ -680,14 +679,14 @@ void writeExecutable(const QString& path, const QByteArray& body) {
 // is selected is marked until it is selected; the selected agent never is.
 void unseenFollowsTurnsAndSelection() {
     Workspace workspace(WorkspaceMode::fixture);
-    require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
+    require(workspace.selectAgent(QStringLiteral("renderer")), "select renderer");
     int pings = 0;
     QObject::connect(&workspace, &Workspace::turnFinished, [&pings] { ++pings; });
     const int waiting_before = workspace.attentionAgents();
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
     const auto turn = [&](const char* id) {
-        auto* item = workspace.session(QString::fromLatin1(id));
+        auto* item = workspace.agent(QString::fromLatin1(id));
         state.activity = lapis::session::attention::Activity::working;
         item->applyAttention(state);
         state.activity = lapis::session::attention::Activity::turn_completed;
@@ -705,10 +704,10 @@ void unseenFollowsTurnsAndSelection() {
     };
     require(count("general") == 1, "categories count unseen agents");
     require(workspace.attentionAgents() > waiting_before, "the Dock badge counts unseen agents");
-    require(workspace.selectSession(QStringLiteral("agent")) && !agent->unseen(),
+    require(workspace.selectAgent(QStringLiteral("agent")) && !agent->unseen(),
             "selecting an agent clears its mark");
-    require(workspace.selectSession(QStringLiteral("renderer")), "select renderer again");
-    auto* checks = workspace.session(QStringLiteral("checks"));
+    require(workspace.selectAgent(QStringLiteral("renderer")), "select renderer again");
+    auto* checks = workspace.agent(QStringLiteral("checks"));
     state.activity = lapis::session::attention::Activity::idle;
     checks->applyAttention(state);
     require(!checks->unseen(), "an agent that was not working has nothing new");
@@ -719,8 +718,7 @@ void unseenFollowsTurnsAndSelection() {
     require(pings == pings_before + 1, "a new request pings once, as a finished turn does");
     require(count("general") == 1, "one unseen agent after the earlier one was selected");
     // Selecting the waiting agent clears it as seen.
-    require(workspace.selectSession(QStringLiteral("checks")) &&
-                workspace.focusedSession() == checks,
+    require(workspace.selectAgent(QStringLiteral("checks")) && workspace.focusedAgent() == checks,
             "the waiting agent is selected");
     require(!checks->unseen(), "selecting an agent is looking at it");
     require(workspace.attentionAgents() == waiting_before,
@@ -796,11 +794,11 @@ void modelessAgentsGetTheDefaultMode() {
 void tabGoesToTheReadyThenTheOldest() {
     Workspace workspace(WorkspaceMode::fixture);
     workspace.setTabAway({});
-    require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
+    require(workspace.selectAgent(QStringLiteral("renderer")), "select renderer");
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
     const auto finish = [&](const char* id) {
-        auto* item = workspace.session(QString::fromLatin1(id));
+        auto* item = workspace.agent(QString::fromLatin1(id));
         state.activity = lapis::session::attention::Activity::working;
         item->applyAttention(state);
         state.activity = lapis::session::attention::Activity::turn_completed;
@@ -810,18 +808,18 @@ void tabGoesToTheReadyThenTheOldest() {
     };
     auto* older = finish("agent");
     auto* newer = finish("checks");
-    require(workspace.nextPriorityAttention({{newer->sessionId(), false}}) &&
-                workspace.focusedSession() == newer,
+    require(workspace.nextPriorityAttention({{newer->agentId(), false}}) &&
+                workspace.focusedAgent() == newer,
             "the agent with a guess not yet seen goes first");
-    const QVariantMap seen{{newer->sessionId(), true}};
-    require(workspace.nextPriorityAttention(seen) && workspace.focusedSession() == older,
+    const QVariantMap seen{{newer->agentId(), true}};
+    require(workspace.nextPriorityAttention(seen) && workspace.focusedAgent() == older,
             "then the one whose turn finished unseen");
-    require(workspace.nextPriorityAttention(seen) && workspace.focusedSession() == newer,
+    require(workspace.nextPriorityAttention(seen) && workspace.focusedAgent() == newer,
             "a guess already seen and not used keeps its agent in the rotation, last");
     auto* third = finish("renderer");
-    require(workspace.nextPriorityAttention(seen) && workspace.focusedSession() == third,
+    require(workspace.nextPriorityAttention(seen) && workspace.focusedAgent() == third,
             "an unseen turn goes before a guess already seen");
-    require(workspace.selectSession(older->sessionId()), "back to the older one");
+    require(workspace.selectAgent(older->agentId()), "back to the older one");
     state.activity = lapis::session::attention::Activity::working;
     newer->applyAttention(state);
     require(!workspace.nextPriorityAttention(seen),
@@ -868,9 +866,9 @@ void oneBadAgentDoesNotEmptyTheWorkspace() {
     }
     {
         Workspace workspace(WorkspaceMode::live, options);
-        require(workspace.session(good) != nullptr && workspace.session(remote) != nullptr,
+        require(workspace.agent(good) != nullptr && workspace.agent(remote) != nullptr,
                 "the readable agents, including a long remote argument, come back");
-        require(workspace.session(bad) == nullptr &&
+        require(workspace.agent(bad) == nullptr &&
                     workspace.workspaceError().startsWith(QStringLiteral("Not restored")),
                 "the unreadable one is skipped and named");
         require(workspace.addCategory(QStringLiteral("Later")), "the workspace still saves");
@@ -920,18 +918,18 @@ void tabAttributionFollowsTheNextHandMove() {
     file.close();
     Workspace workspace(WorkspaceMode::live, options);
     workspace.setChoiceSettleMsForTesting(20);
-    require(workspace.focusedSession()->sessionId() == second, "start on the source agent");
+    require(workspace.focusedAgent()->agentId() == second, "start on the source agent");
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
-    auto* target = workspace.session(first);
+    auto* target = workspace.agent(first);
     target->setConnection(QStringLiteral("ready"), true);
     state.activity = lapis::session::attention::Activity::working;
     target->applyAttention(state);
     state.activity = lapis::session::attention::Activity::turn_completed;
     target->applyAttention(state);
-    auto* source = workspace.session(second);
+    auto* source = workspace.agent(second);
     source->setConnection(QStringLiteral("ready"), true);
-    require(workspace.nextPriorityAttention({}) && workspace.focusedSession() == target,
+    require(workspace.nextPriorityAttention({}) && workspace.focusedAgent() == target,
             "Tab moves to the waiting agent");
     // The source begins a turn while Tab's move is on screen, so its finishing
     // turn out of view is the second choice the person settles between.
@@ -940,7 +938,7 @@ void tabAttributionFollowsTheNextHandMove() {
     state.activity = lapis::session::attention::Activity::turn_completed;
     source->applyAttention(state);
     require(source->unseen(), "a turn finished out of view marks the agent");
-    require(workspace.selectSession(second), "the person then moves back by hand");
+    require(workspace.selectAgent(second), "the person then moves back by hand");
     require(waitFor([&] { return loggedChoices(options.storagePath) == 1; }, 5000),
             "the Tab-and-hand sequence settles once");
     QFile log(QFileInfo(options.storagePath).dir().filePath(QStringLiteral("tab_away.jsonl")));
@@ -999,11 +997,11 @@ void firstTabChoiceExcludesTheInitialFocus() {
     auto options = tabAttributionRegistry(directory, QStringLiteral("source"));
     Workspace workspace(WorkspaceMode::live, options);
     workspace.setChoiceSettleMsForTesting(20);
-    require(workspace.focusedSession()->sessionId() == source, "start on the initial focus");
+    require(workspace.focusedAgent()->agentId() == source, "start on the initial focus");
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
     const auto finish = [&](const QString& id) {
-        auto* item = workspace.session(id);
+        auto* item = workspace.agent(id);
         item->setConnection(QStringLiteral("ready"), true);
         state.activity = lapis::session::attention::Activity::working;
         item->applyAttention(state);
@@ -1015,7 +1013,7 @@ void firstTabChoiceExcludesTheInitialFocus() {
     finish(target);
     const bool moved = workspace.nextPriorityAttention({});
     const auto selected =
-        workspace.focusedSession() ? workspace.focusedSession()->sessionId() : QString();
+        workspace.focusedAgent() ? workspace.focusedAgent()->agentId() : QString();
     require(moved && selected == target, "Tab moves to the newer waiting agent");
     require(waitFor([&] { return loggedChoices(options.storagePath) == 1; }, 5000),
             "the first move settles");
@@ -1047,7 +1045,7 @@ void closingRemovesAPendingChoiceCandidate() {
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
     const auto finish = [&](const QString& id) {
-        auto* item = workspace.session(id);
+        auto* item = workspace.agent(id);
         item->setConnection(QStringLiteral("ready"), true);
         state.activity = lapis::session::attention::Activity::working;
         item->applyAttention(state);
@@ -1058,10 +1056,9 @@ void closingRemovesAPendingChoiceCandidate() {
     finish(target);
     QThread::msleep(5);
     finish(candidate);
-    require(workspace.nextPriorityAttention({}) &&
-                workspace.focusedSession()->sessionId() == candidate,
+    require(workspace.nextPriorityAttention({}) && workspace.focusedAgent()->agentId() == candidate,
             "Tab stages a choice among both waiting agents");
-    require(workspace.closeSession(candidate, true), "close the pending candidate");
+    require(workspace.closeAgent(candidate, true), "close the pending candidate");
     QThread::msleep(60); // longer than the test settle interval
     require(loggedChoices(options.storagePath) == 0, "a closed candidate cannot form a choice");
 }
@@ -1077,7 +1074,7 @@ void closingFocusedAgentCancelsPendingChoice() {
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
     const auto finish = [&](const QString& id) {
-        auto* item = workspace.session(id);
+        auto* item = workspace.agent(id);
         item->setConnection(QStringLiteral("ready"), true);
         state.activity = lapis::session::attention::Activity::working;
         item->applyAttention(state);
@@ -1089,10 +1086,9 @@ void closingFocusedAgentCancelsPendingChoice() {
     const QString target = QStringLiteral("eb00ff7d-e97a-472a-b74e-01c3909d5a55");
     finish(source);
     finish(target);
-    require(workspace.nextPriorityAttention({}) &&
-                workspace.focusedSession()->sessionId() == target,
+    require(workspace.nextPriorityAttention({}) && workspace.focusedAgent()->agentId() == target,
             "Tab stages a focused choice");
-    require(workspace.closeSession(target, true), "close the focused candidate");
+    require(workspace.closeAgent(target, true), "close the focused candidate");
     QThread::msleep(60);
     require(loggedChoices(options.storagePath) == 0, "a structural focus change records no choice");
 }
@@ -1129,8 +1125,8 @@ void failedTabSelectionRecordsNothing() {
     require(file.write(bytes) == bytes.size(), "write failed-tab registry");
     file.close();
     Workspace workspace(WorkspaceMode::live, options);
-    auto* waiting = workspace.session(target);
-    require(waiting != nullptr && workspace.focusedSession()->sessionId() == source,
+    auto* waiting = workspace.agent(target);
+    require(waiting != nullptr && workspace.focusedAgent()->agentId() == source,
             "load the failed-tab fixture");
     waiting->setConnection(QStringLiteral("ready"), true);
     lapis::session::wire::AttentionSnapshot state;
@@ -1142,7 +1138,7 @@ void failedTabSelectionRecordsNothing() {
     require(QFile::setPermissions(canonical, QFile::ReadOwner | QFile::ExeOwner),
             "make the registry parent unwritable");
     require(!workspace.nextPriorityAttention({}), "the Tab selection fails with the registry");
-    require(workspace.focusedSession()->sessionId() == source,
+    require(workspace.focusedAgent()->agentId() == source,
             "a failed Tab move leaves the source focused");
     require(!QFileInfo::exists(
                 QFileInfo(options.storagePath).dir().filePath(QStringLiteral("tab_away.jsonl"))),
@@ -1179,7 +1175,7 @@ void claudeAgentsUseServiceAdapter() {
             {"agents",
              QJsonArray{managed_record, legacy_record, agentRecord(canonical, codex, "general")}}});
     const auto source = [](Workspace& workspace, const QString& id) {
-        return workspace.session(id)->statusSource();
+        return workspace.agent(id)->statusSource();
     };
     using Source = lapis::desktop::Agent::StatusSource;
     {
@@ -1286,10 +1282,10 @@ void savedTilesLoadAsTheSelectedAgent() {
             {"agents", QJsonArray{agent(left), agent(right), agent(other)}}});
     Workspace workspace(WorkspaceMode::live, options);
     require(workspace.workspaceError().isEmpty(), "a registry with saved tiles loads");
-    require(workspace.focusedSession() == workspace.session(right),
+    require(workspace.focusedAgent() == workspace.agent(right),
             "the stage shows the category's selected agent");
-    workspace.nextSession(1);
-    require(workspace.focusedSession() == workspace.session(other),
+    workspace.nextAgent(1);
+    require(workspace.focusedAgent() == workspace.agent(other),
             "the next key walks the strip, not the old tiles");
     const auto groups = QJsonDocument::fromJson(readRegistry(options.storagePath))
                             .object()
@@ -1318,7 +1314,7 @@ void unknownRegistryVersionsAreRejected() {
     writeRegistry(options.storagePath, QJsonDocument::fromJson(bytes).object());
     Workspace workspace(WorkspaceMode::live, options);
     require(!workspace.workspaceError().isEmpty(), "unknown registry versions are rejected");
-    require(workspace.sessions().isEmpty() && !workspace.focusedSession(),
+    require(workspace.agents().isEmpty() && !workspace.focusedAgent(),
             "unknown registry versions create no sessions");
     require(readRegistry(options.storagePath) == bytes, "unknown versions remain for migration");
 }
@@ -1406,10 +1402,10 @@ void agentsStartWithoutParentSessionMarkers() {
                     "parent-session markers are removed");
         require(lines.contains(QStringLiteral("CLAUDE_CODE_EFFORT_LEVEL=max")),
                 "user configuration is kept");
-        auto* agent = workspace.focusedSession();
+        auto* agent = workspace.focusedAgent();
         require(waitFor([agent] { return agent->inputReady(); }, 10000), "agent ready");
-        require(workspace.closeSession(agent->sessionId()) &&
-                    waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+        require(workspace.closeAgent(agent->agentId()) &&
+                    waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
                 "marker fixture closes");
     }
 }
@@ -1509,7 +1505,7 @@ void joinedViewStaysInSync() {
         lapis::session::AgentMode::terminal};
     options.mode = lapis::session::wire::AttachMode::create;
     Workspace workspace(WorkspaceMode::live, options);
-    auto* agent = workspace.focusedSession();
+    auto* agent = workspace.focusedAgent();
     require(agent != nullptr && waitFor([agent] { return agent->inputReady(); }, 10000),
             "the desktop is attached");
     // The service fingerprints the validated launch (canonical folder).
@@ -1567,8 +1563,8 @@ void joinedViewStaysInSync() {
     agent->sendText("reattached mac\r");
     require(phone.waitForText(QStringLiteral("got:reattached mac"), 5000),
             "the phone receives input from the new desktop attachment");
-    require(workspace.closeSession(agent->sessionId()) &&
-                waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+    require(workspace.closeAgent(agent->agentId()) &&
+                waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
             "the joined fixture closes");
 }
 
@@ -1650,8 +1646,8 @@ void updaterLifecycle() {
         fixture.options.updateTimeoutMs = destroy ? 30000 : updater_timeout_ms;
         auto workspace = std::make_unique<Workspace>(WorkspaceMode::live, fixture.options);
         fixture.create(*workspace);
-        auto* agent = workspace->focusedSession();
-        const auto id = agent->sessionId();
+        auto* agent = workspace->focusedAgent();
+        const auto id = agent->agentId();
         for (int attempt = 0; attempt < 3; ++attempt)
             require(!workspace->restartAgent(id), "repeated restart while queued is rejected");
         require(!agent->live(), "queued restarts never create an early service");
@@ -1675,8 +1671,8 @@ void updaterLifecycle() {
             require(fixture.read("harness-updates.log")
                         .contains(normal_exit ? "exit 0" : "stopped after timeout"),
                     "timeout outcome is recorded");
-            require(workspace->closeSession(id) &&
-                        waitFor([&] { return workspace->sessions().isEmpty(); }, 10000),
+            require(workspace->closeAgent(id) &&
+                        waitFor([&] { return workspace->agents().isEmpty(); }, 10000),
                     "close updater fixture agent");
         }
 #if defined(Q_OS_UNIX)
@@ -1702,14 +1698,14 @@ void updaterOutputIsDrainedWithABoundedTail() {
                            "while read -r line; do [ \"$line\" = done ] && exit 0; done\n");
     Workspace workspace(WorkspaceMode::live, fixture.options);
     fixture.create(workspace);
-    auto* agent = workspace.focusedSession();
+    auto* agent = workspace.focusedAgent();
     require(waitFor([agent] { return agent->inputReady(); }, 10000),
             "high-volume updater completes before agent launch");
     const auto logged = fixture.read("harness-updates.log");
     require(logged.contains("tail-marker") && logged.size() < 2048,
             "only the bounded updater tail reaches the log");
-    require(workspace.closeSession(agent->sessionId()) &&
-                waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+    require(workspace.closeAgent(agent->agentId()) &&
+                waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
             "close output fixture agent");
 }
 
@@ -1717,7 +1713,7 @@ void failedUpdaterStartClearsTheQueue() {
     UpdaterFixture fixture("#!/nonexistent/lapis-fake-updater\n");
     Workspace workspace(WorkspaceMode::live, fixture.options);
     fixture.create(workspace);
-    auto* agent = workspace.focusedSession();
+    auto* agent = workspace.focusedAgent();
     require(
         waitFor([agent] { return agent->statusLabel() != QStringLiteral("Updating Grok…"); }, 2000),
         "FailedToStart releases the queue");
@@ -1740,7 +1736,7 @@ void pinnedCliIsNotUpdated() {
     Workspace workspace(WorkspaceMode::live, fixture.options);
     workspace.setHarnessUpdatesOff({QStringLiteral("grok")});
     fixture.create(workspace);
-    auto* pinned = workspace.focusedSession();
+    auto* pinned = workspace.focusedAgent();
     require(pinned->statusLabel() != QStringLiteral("Updating Grok…"),
             "a pinned CLI's agent does not wait for an update");
     require(waitFor([pinned] { return pinned->inputReady(); }, 10000), "the pinned agent starts");
@@ -1749,14 +1745,14 @@ void pinnedCliIsNotUpdated() {
     require(workspace.createAgent(fixture.root.filePath(QStringLiteral("project")),
                                   QStringLiteral("unpinned"), QStringLiteral("claude")),
             "create an agent of a CLI that still updates");
-    auto* updated = workspace.focusedSession();
+    auto* updated = workspace.focusedAgent();
     require(waitFor([updated] { return updated->inputReady(); }, 10000),
             "the unpinned agent starts after its update");
     require(fixture.read(QStringLiteral("updates")) == "claude\n",
             "only the unpinned CLI was updated");
-    for (const auto& id : {pinned->sessionId(), updated->sessionId()})
-        require(workspace.closeSession(id), "close a pinned-update fixture agent");
-    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+    for (const auto& id : {pinned->agentId(), updated->agentId()})
+        require(workspace.closeAgent(id), "close a pinned-update fixture agent");
+    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
             "pinned-update fixture agents close");
 }
 
@@ -1784,7 +1780,7 @@ void explicitLaunchesUseUpdaterPolicy() {
     QByteArray original_pid;
     {
         Workspace workspace(WorkspaceMode::live, options);
-        auto* agent = workspace.focusedSession();
+        auto* agent = workspace.focusedAgent();
         require(agent && agent->statusLabel() == QStringLiteral("Updating Claude…") &&
                     !agent->live(),
                 "explicit creation waits before starting");
@@ -1817,7 +1813,7 @@ void explicitLaunchesUseUpdaterPolicy() {
                             lapis::session::wire::AttachMode::discover}) {
         options.mode = mode;
         Workspace workspace(WorkspaceMode::live, options);
-        auto* agent = workspace.focusedSession();
+        auto* agent = workspace.focusedAgent();
         require(agent && waitFor([agent] { return agent->inputReady(); }, 20000),
                 "explicit reattachment retains its mode");
         require(fixture.read("starts") == original_pid &&
@@ -1825,22 +1821,22 @@ void explicitLaunchesUseUpdaterPolicy() {
                     !QFileInfo::exists(fixture.root.filePath("harness-updates.log")),
                 "reattachment keeps the same process without updating");
         if (mode == lapis::session::wire::AttachMode::discover)
-            require(workspace.closeSession(agent->sessionId()) &&
-                        waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            require(workspace.closeAgent(agent->agentId()) &&
+                        waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
                     "explicit fixture closes after both reattachments");
     }
     options.mode = lapis::session::wire::AttachMode::create;
     options.updateHarnesses = false;
     options.endpoint = fixture.root.filePath(QStringLiteral("disabled.sock"));
     Workspace workspace(WorkspaceMode::live, options);
-    auto* agent = workspace.focusedSession();
+    auto* agent = workspace.focusedAgent();
     require(agent && waitFor([agent] { return agent->inputReady(); }, 20000),
             "update-disabled explicit creation starts");
     require(!QFileInfo::exists(fixture.root.filePath("updates")) &&
                 !QFileInfo::exists(fixture.root.filePath("harness-updates.log")),
             "the explicit update opt-out is honored");
-    require(workspace.closeSession(agent->sessionId()) &&
-                waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+    require(workspace.closeAgent(agent->agentId()) &&
+                waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
             "update-disabled fixture closes");
 
     options.updateHarnesses = true;
@@ -1848,7 +1844,7 @@ void explicitLaunchesUseUpdaterPolicy() {
     options.endpoint = fixture.root.filePath(QStringLiteral("pinned.sock"));
     {
         Workspace pinnedWorkspace(WorkspaceMode::live, options);
-        auto* pinnedAgent = pinnedWorkspace.focusedSession();
+        auto* pinnedAgent = pinnedWorkspace.focusedAgent();
         require(pinnedAgent && pinnedAgent->statusLabel() != QStringLiteral("Updating Claude…"),
                 "constructor-supplied update pins skip the startup update");
         require(waitFor([pinnedAgent] { return pinnedAgent->inputReady(); }, 10000),
@@ -1858,8 +1854,8 @@ void explicitLaunchesUseUpdaterPolicy() {
         require(!QFileInfo::exists(fixture.root.filePath(QStringLiteral("harness-updates.log"))),
                 "constructor-supplied update pins do not log a startup update");
         require(
-            pinnedWorkspace.closeSession(pinnedAgent->sessionId()) &&
-                waitFor([&pinnedWorkspace] { return pinnedWorkspace.sessions().isEmpty(); }, 10000),
+            pinnedWorkspace.closeAgent(pinnedAgent->agentId()) &&
+                waitFor([&pinnedWorkspace] { return pinnedWorkspace.agents().isEmpty(); }, 10000),
             "constructor-pinned fixture agent closes");
     }
 }
@@ -2044,7 +2040,7 @@ void remoteOptionsRespectTheArgumentLimit() {
         const auto expected = variant.added + arguments;
         for (int pass = 0; pass < 2; ++pass) {
             Workspace workspace(WorkspaceMode::live, options);
-            require(workspace.sessions().size() == 1, "a rejected migration retains the tab");
+            require(workspace.agents().size() == 1, "a rejected migration retains the tab");
             require(variant.rejected
                         ? workspace.workspaceError().contains(QStringLiteral("no room"))
                         : workspace.workspaceError().isEmpty(),
@@ -2077,10 +2073,10 @@ void staleDescriptorReattachesTheRunningService() {
         Workspace workspace(WorkspaceMode::live, options);
         require(workspace.createAgent(root.path(), QStringLiteral("stale"), QStringLiteral("grok")),
                 "a local agent");
-        auto* agent = workspace.focusedSession();
+        auto* agent = workspace.focusedAgent();
         require(agent != nullptr && waitFor([agent] { return agent->inputReady(); }, 10000),
                 "it attaches");
-        id = agent->sessionId();
+        id = agent->agentId();
     }
     const auto endpoint = QJsonDocument::fromJson(readRegistry(options.storagePath))
                               .object()[QStringLiteral("agents")]
@@ -2101,13 +2097,13 @@ void staleDescriptorReattachesTheRunningService() {
     }
     {
         Workspace workspace(WorkspaceMode::live, options);
-        auto* agent = workspace.session(id);
+        auto* agent = workspace.agent(id);
         require(agent != nullptr && waitFor([agent] { return agent->inputReady(); }, 15000),
                 "the running service is reattached despite the stale descriptor");
         require(screenText(agent->snapshot()).contains(QStringLiteral("grok ready")),
                 "it is the same running agent, not a new one");
-        require(workspace.closeSession(id, true) &&
-                    waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+        require(workspace.closeAgent(id, true) &&
+                    waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
                 "the stand-in agent closes");
     }
     qputenv("PATH", path);
@@ -2205,9 +2201,9 @@ exec sleep 600
         require(workspace.createAgent(QStringLiteral("~/dev/far"), QStringLiteral("far"),
                                       QStringLiteral("claude"), {}, {}, QStringLiteral("devbox")),
                 "a Claude Code agent on another machine");
-        auto* far = workspace.focusedSession();
+        auto* far = workspace.focusedAgent();
         require(far != nullptr, "the new agent is shown");
-        const auto id = far->sessionId();
+        const auto id = far->agentId();
         require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 1; }, 10000), "ssh starts");
         const auto first = call(QStringLiteral("devbox"), 1);
         require(
@@ -2246,10 +2242,10 @@ exec sleep 600
         });
         require(QDir().mkpath(options.storagePath), "replace the registry path with a directory");
         workspace.clearError();
-        require(!workspace.closeSession(id, true),
+        require(!workspace.closeAgent(id, true),
                 "a failed discard during a pending retry reports failure");
         require(workspace.workspaceError().contains(QStringLiteral("Cannot save workspace:")) &&
-                    workspace.session(id) == far,
+                    workspace.agent(id) == far,
                 "a failed discard retains the reconnecting card");
         require(QDir(options.storagePath).removeRecursively() &&
                     QFile::rename(held_registry, options.storagePath),
@@ -2291,7 +2287,7 @@ exec sleep 600
                                       QStringLiteral("claude"), {}, {}, QStringLiteral("typo")),
                 "an agent on a machine that never answers");
         lapis::desktop::Agent* typo = nullptr;
-        for (const auto& listed : workspace.sessions())
+        for (const auto& listed : workspace.agents())
             if (auto* item = listed.value<lapis::desktop::Agent*>();
                 item != nullptr && item->title() == QStringLiteral("typo"))
                 typo = item;
@@ -2309,9 +2305,9 @@ exec sleep 600
         waitFor([&] { return settle.elapsed() >= 300; }, 1000);
         require(calls(QStringLiteral("typo")) == 1, "a connection that never worked stays ended");
         // The unreachable one is abandoned; the others end.
-        for (const auto& closing : {older_id, booted_id, id, typo->sessionId()})
-            require(workspace.closeSession(closing, true), "close the stand-in agents");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+        for (const auto& closing : {older_id, booted_id, id, typo->agentId()})
+            require(workspace.closeAgent(closing, true), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
@@ -2433,7 +2429,7 @@ for n, line in enumerate(sys.stdin, 1):
         workspace.setSshConfigForTesting(config.fileName());
         QHash<QString, int> pings;
         QObject::connect(&workspace, &Workspace::turnFinished,
-                         [&pings](Agent* item) { ++pings[item->sessionId()]; });
+                         [&pings](Agent* item) { ++pings[item->agentId()]; });
         const auto shows = [](Agent* item, const QString& text) {
             return screenText(item->snapshot()).contains(text);
         };
@@ -2442,14 +2438,14 @@ for n, line in enumerate(sys.stdin, 1):
             return !text.contains(QStringLiteral("7717")) &&
                    !text.contains(QStringLiteral("lapis-"));
         };
-        auto* restored = workspace.session(older_id);
+        auto* restored = workspace.agent(older_id);
         require(restored != nullptr &&
                     waitFor([&] { return shows(restored, QStringLiteral("claude ready")); }, 15000),
                 "a saved remote Claude Code agent starts with the hooks it lacked");
         require(workspace.createAgent(QStringLiteral("~"), QStringLiteral("far claude"),
                                       QStringLiteral("claude"), {}, {}, QStringLiteral("devbox")),
                 "a Claude Code agent on another machine");
-        auto* claude = workspace.focusedSession();
+        auto* claude = workspace.focusedAgent();
         require(claude != nullptr, "the remote Claude Code agent is shown");
         require(claude != restored && claude->statusSource() == Agent::StatusSource::output,
                 "it starts from the output estimate");
@@ -2467,11 +2463,11 @@ for n, line in enumerate(sys.stdin, 1):
                     "the remote Claude Code stand-in finishes its output");
             if (turn <= 2) {
                 waitFor([&] { return false; }, 300);
-                require(pings.value(claude->sessionId()) == 0 &&
+                require(pings.value(claude->agentId()) == 0 &&
                             claude->statusKind() == QStringLiteral("working"),
                         "malformed or oversized background work cannot finish a remote turn");
             } else {
-                require(waitFor([&] { return pings.value(claude->sessionId()) == 1; }, 15000) &&
+                require(waitFor([&] { return pings.value(claude->agentId()) == 1; }, 15000) &&
                             claude->statusKind() == QStringLiteral("finished"),
                         "a valid empty Stop hook finishes the remote turn and pings once");
             }
@@ -2486,7 +2482,7 @@ for n, line in enumerate(sys.stdin, 1):
         require(workspace.createAgent(QStringLiteral("~"), QStringLiteral("far codex"),
                                       QStringLiteral("codex"), {}, {}, QStringLiteral("devbox")),
                 "a Codex agent on another machine");
-        auto* codex = workspace.focusedSession();
+        auto* codex = workspace.focusedAgent();
         require(codex != nullptr, "the Codex agent is shown");
         require(codex != claude && codex != restored, "the Codex agent is distinct");
         codex->setOutputTimingForTesting({.settle_ms = 0, .burst_ms = 1500, .quiet_ms = 4000});
@@ -2497,16 +2493,16 @@ for n, line in enumerate(sys.stdin, 1):
             "the remote Codex stand-in starts");
         for (int turn = 1; turn <= 2; ++turn) {
             require(codex->sendText("next prompt\r"), "type a Codex prompt");
-            require(waitFor([&] { return pings.value(codex->sessionId()) == turn; }, 15000) &&
+            require(waitFor([&] { return pings.value(codex->agentId()) == turn; }, 15000) &&
                         codex->statusKind() == QStringLiteral("finished"),
                     "Codex's notify program finishes each turn once; a prompt starts the next");
         }
         require(clean(codex), "notify sequences never reach the screen");
         require(QFileInfo::exists(profile_marker) && !QFileInfo::exists(base_marker),
                 "the remote relay runs the selected profile's notify program");
-        for (const auto& closing : {older_id, claude->sessionId(), codex->sessionId()})
-            require(workspace.closeSession(closing, true), "close the stand-in agents");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+        for (const auto& closing : {older_id, claude->agentId(), codex->agentId()})
+            require(workspace.closeAgent(closing, true), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
@@ -2623,7 +2619,7 @@ for n, line in enumerate(sys.stdin, 1):
     {
         Workspace workspace(WorkspaceMode::live, options);
         const auto close_owned = qScopeGuard([&] {
-            for (const auto& value : workspace.sessions())
+            for (const auto& value : workspace.agents())
                 if (auto* item = value.value<Agent*>()) {
                     static_cast<void>(waitFor(
                         [item] {
@@ -2631,23 +2627,23 @@ for n, line in enumerate(sys.stdin, 1):
                                    item->connectionState() == QStringLiteral("ended");
                         },
                         10000));
-                    static_cast<void>(workspace.closeSession(item->sessionId()));
+                    static_cast<void>(workspace.closeAgent(item->agentId()));
                 }
-            static_cast<void>(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000));
+            static_cast<void>(waitFor([&] { return workspace.agents().isEmpty(); }, 10000));
             static_cast<void>(waitFor([&] { return !servicesListening(); }, 10000));
         });
         QHash<QString, int> pings;
         QObject::connect(&workspace, &Workspace::turnFinished,
-                         [&pings](Agent* item) { ++pings[item->sessionId()]; });
+                         [&pings](Agent* item) { ++pings[item->agentId()]; });
         workspace.setHarnessArguments(
             {{QStringLiteral("codex"), {QStringLiteral("-p"), QStringLiteral("work")}}});
         require(workspace.createAgent(root.filePath(QStringLiteral("project")),
                                       QStringLiteral("local codex"), QStringLiteral("codex")),
                 "a local Codex agent");
-        auto* codex = workspace.focusedSession();
+        auto* codex = workspace.focusedAgent();
         require(codex != nullptr && codex->statusSource() == Agent::StatusSource::output,
                 "a local Codex agent starts from the output estimate");
-        const auto id = codex->sessionId();
+        const auto id = codex->agentId();
         codex->setOutputTimingForTesting({.settle_ms = 0, .burst_ms = 1500, .quiet_ms = 4000});
         const auto shows = [&codex](const QString& text) {
             return screenText(codex->snapshot()).contains(text);
@@ -2702,7 +2698,7 @@ for n, line in enumerate(sys.stdin, 1):
                     restarted.contains(QStringLiteral("-p")) &&
                     restarted.contains(QStringLiteral("work")),
                 "the restart resumes the saved thread, with the notify program again");
-        auto* again = workspace.session(id);
+        auto* again = workspace.agent(id);
         require(again != nullptr && waitFor(
                                         [&] {
                                             return screenText(again->snapshot())
@@ -2712,8 +2708,8 @@ for n, line in enumerate(sys.stdin, 1):
                 "the resumed stand-in starts");
         require(waitFor([&] { return again->reachable(); }, 15000),
                 "the resumed agent's service is reachable");
-        require(workspace.closeSession(id), "close the stand-in agent");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+        require(workspace.closeAgent(id), "close the stand-in agent");
+        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
                 "the stand-in agent closes");
         require(waitFor([&] { return !servicesListening(); }, 10000), "its session service exits");
     }
@@ -2745,16 +2741,16 @@ void reloadStartsAgentsAgain() {
         Workspace workspace(WorkspaceMode::live, options);
         workspace.setSshConfigForTesting(config.fileName());
         const auto ready = [&workspace](const QString& id) {
-            const auto* item = workspace.session(id);
+            const auto* item = workspace.agent(id);
             return item != nullptr && item->inputReady();
         };
         const auto project = root.filePath(QStringLiteral("project"));
         require(workspace.createAgent(project, QStringLiteral("one"), QStringLiteral("grok")),
                 "a first agent");
-        const auto one = workspace.focusedSession()->sessionId();
+        const auto one = workspace.focusedAgent()->agentId();
         require(workspace.createAgent(project, QStringLiteral("two"), QStringLiteral("grok")),
                 "a second agent");
-        const auto two = workspace.focusedSession()->sessionId();
+        const auto two = workspace.focusedAgent()->agentId();
         require(waitFor([&] { return starts() == 2 && ready(one) && ready(two); }, 10000),
                 "both run");
         require(workspace.reloadAgent(one) == 1 &&
@@ -2767,7 +2763,7 @@ void reloadStartsAgentsAgain() {
         require(workspace.createAgent(QStringLiteral("~/far"), QStringLiteral("far"),
                                       QStringLiteral("grok"), {}, {}, QStringLiteral("devbox")),
                 "an agent on another machine");
-        const auto far = workspace.focusedSession()->sessionId();
+        const auto far = workspace.focusedAgent()->agentId();
         require(waitFor([&] { return ready(far); }, 10000), "it runs");
         require(workspace.reloadAgent(far) == 0 &&
                     workspace.workspaceError().contains(QStringLiteral("/resume")) && ready(far),
@@ -2777,8 +2773,8 @@ void reloadStartsAgentsAgain() {
                     waitFor([&] { return starts() == 7 && ready(one) && ready(two); }, 10000),
                 "reloading the window starts the rest again");
         for (const auto& closing : {one, two, far})
-            require(workspace.closeSession(closing, true), "close the stand-in agents");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            require(workspace.closeAgent(closing, true), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
@@ -2801,7 +2797,7 @@ void agentsStartAtTheStageSize() {
         require(workspace.createAgent(root.filePath(QStringLiteral("project")),
                                       QStringLiteral("sized"), QStringLiteral("grok")),
                 "an agent");
-        auto* item = workspace.focusedSession();
+        auto* item = workspace.focusedAgent();
         require(
             item != nullptr &&
                 waitFor(
@@ -2812,9 +2808,8 @@ void agentsStartAtTheStageSize() {
             "its CLI starts at the stage's grid");
         require(waitFor([item] { return item->inputReady(); }, 10000),
                 "its terminate handshake is ready");
-        require(workspace.closeSession(item->sessionId(), true), "close it");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
-                "it closes");
+        require(workspace.closeAgent(item->agentId(), true), "close it");
+        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000), "it closes");
     }
     qputenv("PATH", path);
 }
@@ -2846,7 +2841,7 @@ void restoredAgentsStartAtTheStageSize() {
                     {"agents", QJsonArray{record}}});
     {
         Workspace workspace(WorkspaceMode::live, options);
-        auto* item = workspace.focusedSession();
+        auto* item = workspace.focusedAgent();
         require(item != nullptr, "the restored agent is shown");
         QElapsedTimer waited;
         waited.start();
@@ -2863,9 +2858,8 @@ void restoredAgentsStartAtTheStageSize() {
                 "it starts at the stage's grid");
         require(waitFor([item] { return item->inputReady(); }, 10000),
                 "its terminate handshake is ready");
-        require(workspace.closeSession(item->sessionId(), true), "close it");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
-                "it closes");
+        require(workspace.closeAgent(item->agentId(), true), "close it");
+        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000), "it closes");
     }
 }
 
@@ -2926,11 +2920,11 @@ void retiredPlansLeaveSavedAgentsStartable() {
     WorkspaceOptions options;
     options.storagePath = root.filePath(QStringLiteral("workspace.json"));
     Workspace workspace(WorkspaceMode::live, options);
-    require(workspace.sessions().size() == 2 && workspace.workspaceError().isEmpty(),
+    require(workspace.agents().size() == 2 && workspace.workspaceError().isEmpty(),
             "agents saved with a plan load without an error");
     require(workspace.restartAgent(id) && workspace.restartAgent(local_id),
             "agents saved with a plan restart");
-    auto* local_item = workspace.session(local_id);
+    auto* local_item = workspace.agent(local_id);
     require(local_item != nullptr && local_item->serviceEnvironment().isEmpty(),
             "a local agent saved with a plan starts with no plan credential");
     const auto saved = QJsonDocument::fromJson(readRegistry(options.storagePath))
@@ -3011,7 +3005,7 @@ void reloadFailureRemainsRetryable(lapis::session::wire::StatusCode outcome) {
         }
     });
     Workspace workspace(WorkspaceMode::live, options);
-    auto* item = workspace.session(id);
+    auto* item = workspace.agent(id);
     require(item != nullptr, "reload fixture loads");
     require(!workspace.restartAgent(QStringLiteral("missing")), "seed an unrelated error");
     require(workspace.reloadAgent(id) == 0 &&
@@ -3062,10 +3056,10 @@ void batchReloadRetainsEarlierFailures() {
     require(workspace.reloadAll() == 1 &&
                 workspace.workspaceError().contains(QStringLiteral("program or folder")),
             "a later successful restart cannot erase the earlier failure");
-    auto* running = workspace.session(working_id);
+    auto* running = workspace.agent(working_id);
     require(waitFor([&] { return running->inputReady(); }, 10000), "the valid peer starts");
-    require(workspace.closeSession(working_id) &&
-                waitFor([&] { return workspace.session(working_id) == nullptr; }, 10000),
+    require(workspace.closeAgent(working_id) &&
+                waitFor([&] { return workspace.agent(working_id) == nullptr; }, 10000),
             "batch fixture closes its child");
 }
 
@@ -3094,11 +3088,11 @@ exec sleep 600
             flag("fail");
         Workspace workspace(WorkspaceMode::live, fixture.options);
         fixture.create(workspace);
-        auto* one = workspace.focusedSession();
-        const auto first_id = one->sessionId();
+        auto* one = workspace.focusedAgent();
+        const auto first_id = one->agentId();
         fixture.create(workspace);
-        auto* two = workspace.focusedSession();
-        const auto second_id = two->sessionId();
+        auto* two = workspace.focusedAgent();
+        const auto second_id = two->agentId();
         require(
             waitFor([&] { return QFileInfo::exists(fixture.root.filePath("bin/updates")); }, 10000),
             "the one installer started");
@@ -3116,8 +3110,8 @@ exec sleep 600
                 "each starts once, whatever the result");
         require(fixture.read("bin/updates") == "update\n", "both used one installer");
         for (const auto& id : {first_id, second_id})
-            require(workspace.closeSession(id, true), "close shared updater consumer");
-        require(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000), "consumers close");
+            require(workspace.closeAgent(id, true), "close shared updater consumer");
+        require(waitFor([&] { return workspace.agents().isEmpty(); }, 10000), "consumers close");
     }
 }
 
@@ -3183,7 +3177,7 @@ exit 64
         require(workspace.createAgent(root.filePath(QStringLiteral("project")),
                                       QStringLiteral("overlay"), QStringLiteral("omp")),
                 "an OMP stand-in");
-        auto* agent = workspace.focusedSession();
+        auto* agent = workspace.focusedAgent();
         require(agent != nullptr && waitFor([&] { return agent->inputReady(); }, 10000),
                 "the OMP stand-in starts");
         const auto overlay = root.filePath(QStringLiteral("omp-lapis.yml"));
@@ -3220,7 +3214,7 @@ exit 64
         require(workspace.createAgent(QStringLiteral("~"), QStringLiteral("remote overlay"),
                                       QStringLiteral("omp"), {}, {}, QStringLiteral("devbox")),
                 "an OMP stand-in on another machine");
-        auto* remote = workspace.focusedSession();
+        auto* remote = workspace.focusedAgent();
         require(remote != nullptr && remote != agent, "the remote OMP stand-in is shown");
         require(waitFor(
                     [&] {
@@ -3234,9 +3228,9 @@ exit 64
                 "the remote stand-in recorded its environment");
         require(remoteCaptured.readAll().isEmpty(),
                 "the local OMP overlay does not cross the ssh boundary");
-        require(workspace.closeSession(agent->sessionId()), "close the local OMP stand-in");
-        require(workspace.closeSession(remote->sessionId()), "close the remote OMP stand-in");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+        require(workspace.closeAgent(agent->agentId()), "close the local OMP stand-in");
+        require(workspace.closeAgent(remote->agentId()), "close the remote OMP stand-in");
+        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
                 "the OMP stand-ins close");
     }
     if (hadConfig)
@@ -3274,7 +3268,7 @@ void wheelReachesAFullScreenProgram() {
         require(workspace.createAgent(root.filePath(QStringLiteral("project")),
                                       QStringLiteral("wheel"), QStringLiteral("grok")),
                 "a full-screen stand-in");
-        auto* agent = workspace.focusedSession();
+        auto* agent = workspace.focusedAgent();
         require(agent != nullptr && waitFor(
                                         [agent] {
                                             return agent->inputReady() &&
@@ -3292,8 +3286,8 @@ void wheelReachesAFullScreenProgram() {
                     },
                     10000),
                 "two wheel-up events at the cell reached the program");
-        require(workspace.closeSession(agent->sessionId()), "close the stand-in");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+        require(workspace.closeAgent(agent->agentId()), "close the stand-in");
+        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
                 "the stand-in closes");
     }
     qputenv("PATH", path);
@@ -3322,7 +3316,7 @@ void historyJumpsToTheStart() {
         require(workspace.createAgent(root.filePath(QStringLiteral("project")),
                                       QStringLiteral("scrub"), QStringLiteral("grok")),
                 "a talkative stand-in");
-        auto* agent = workspace.focusedSession();
+        auto* agent = workspace.focusedAgent();
         const auto shows = [agent](const QString& text) {
             return screenText(agent->snapshot()).contains(text);
         };
@@ -3372,8 +3366,8 @@ void historyJumpsToTheStart() {
         agent->returnToLive();
         require(waitFor([&] { return shows(QStringLiteral("all printed")); }, 5000),
                 "and live again");
-        require(workspace.closeSession(agent->sessionId()), "close the stand-in");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+        require(workspace.closeAgent(agent->agentId()), "close the stand-in");
+        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
                 "the stand-in closes");
     }
     qputenv("PATH", path);
@@ -3405,7 +3399,7 @@ void unseenAgentsDecodeNothing() {
         require(workspace.createAgent(root.filePath(QStringLiteral("project")),
                                       QStringLiteral("unseen"), QStringLiteral("grok")),
                 "a stand-in that prints on request");
-        auto* agent = workspace.focusedSession();
+        auto* agent = workspace.focusedAgent();
         const auto shows = [agent](const QString& text) {
             return screenText(agent->snapshot()).contains(text);
         };
@@ -3435,8 +3429,8 @@ void unseenAgentsDecodeNothing() {
         const auto decoded = agent->decodedScreens() - previewed;
         require(decoded >= 1 && decoded <= 12, "a preview decodes at most every 250 ms");
         agent->removeViewer(250);
-        require(workspace.closeSession(agent->sessionId()), "close the stand-in");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+        require(workspace.closeAgent(agent->agentId()), "close the stand-in");
+        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
                 "the stand-in closes");
     }
     qputenv("PATH", path);
@@ -3486,7 +3480,7 @@ void terminalsRunPlainShells() {
         require(terminals.show(QString()) && terminals.current() != nullptr,
                 "a terminal on this Mac");
         auto* current = terminals.current();
-        id = current->sessionId();
+        id = current->agentId();
         require(waitFor([current] { return current->inputReady(); }, 10000) &&
                     waitFor(
                         [current] {
@@ -3495,7 +3489,7 @@ void terminalsRunPlainShells() {
                         },
                         5000),
                 "a login shell starts at home");
-        require(terminals.show(QString()) && terminals.current()->sessionId() == id,
+        require(terminals.show(QString()) && terminals.current()->agentId() == id,
                 "the machine's terminal is reused");
         const auto machines = terminals.machines();
         require(machines.front().toMap().value(QStringLiteral("name")) ==
@@ -3544,11 +3538,11 @@ void terminalsRunPlainShells() {
                 "closing ends the shell and the terminal leaves");
         require(QFile::rename(shell.fileName() + QStringLiteral(".moved"), shell.fileName()),
                 "restore the fixture executable before starting a new shell");
-        require(terminals.show(QString()) && terminals.current()->sessionId() != id,
+        require(terminals.show(QString()) && terminals.current()->agentId() != id,
                 "the next one is a fresh shell");
         auto* fresh = terminals.current();
         require(fresh != nullptr, "a fresh terminal");
-        const auto fresh_id = fresh->sessionId();
+        const auto fresh_id = fresh->agentId();
         require(terminals.close(fresh_id) && terminals.terminal(fresh_id) != nullptr,
                 "the first close is accepted and owns the unsynchronized terminal");
         require(waitFor([&terminals, &fresh_id] { return terminals.terminal(fresh_id) == nullptr; },
@@ -3663,10 +3657,10 @@ void askedEffortReachesTheCli() {
     defaults.models.insert(QStringLiteral("codex"), {configured_model});
     workspace.setAgentDefaults(defaults);
     const auto close_owned = qScopeGuard([&] {
-        for (const auto& value : workspace.sessions())
+        for (const auto& value : workspace.agents())
             if (auto* item = value.value<lapis::desktop::Agent*>())
-                static_cast<void>(workspace.closeSession(item->sessionId()));
-        static_cast<void>(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000));
+                static_cast<void>(workspace.closeAgent(item->agentId()));
+        static_cast<void>(waitFor([&] { return workspace.agents().isEmpty(); }, 10000));
     });
     lapis::desktop::WorkspaceControl control(workspace, false);
     require(!workspace.createAgent(project, QStringLiteral("invalid model"),
@@ -3676,7 +3670,7 @@ void askedEffortReachesTheCli() {
     request.insert(QStringLiteral("model"), configured_model);
     request.insert(QStringLiteral("effort"), QStringLiteral("medium"));
     const auto started = askWorkspace(workspace.storagePath(), request);
-    auto* agent = workspace.session(started.value(QStringLiteral("id")).toString());
+    auto* agent = workspace.agent(started.value(QStringLiteral("id")).toString());
     require(agent != nullptr &&
                 waitFor(
                     [agent] {
@@ -3694,7 +3688,7 @@ void askedEffortReachesTheCli() {
     codex_request.insert(QStringLiteral("model"), configured_model);
     codex_request.insert(QStringLiteral("effort"), QStringLiteral("max"));
     const auto codex_started = askWorkspace(workspace.storagePath(), codex_request);
-    auto* codex_agent = workspace.session(codex_started.value(QStringLiteral("id")).toString());
+    auto* codex_agent = workspace.agent(codex_started.value(QStringLiteral("id")).toString());
     require(codex_agent != nullptr &&
                 waitFor(
                     [codex_agent] {
@@ -3716,7 +3710,7 @@ void askedEffortReachesTheCli() {
             !askWorkspace(workspace.storagePath(), refused).value(QStringLiteral("ok")).toBool(),
             "an effort the CLI cannot take is refused");
     }
-    require(workspace.sessions().size() == 2, "a refused effort starts nothing");
+    require(workspace.agents().size() == 2, "a refused effort starts nothing");
 }
 
 // Resuming a past conversation starts its CLI with the resume option, from the
@@ -3736,10 +3730,10 @@ void resumingAConversationStartsItsCli() {
     {
         Workspace workspace(WorkspaceMode::live, options);
         const auto close_owned = qScopeGuard([&] {
-            for (const auto& value : workspace.sessions())
+            for (const auto& value : workspace.agents())
                 if (auto* item = value.value<lapis::desktop::Agent*>())
-                    static_cast<void>(workspace.closeSession(item->sessionId()));
-            static_cast<void>(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000));
+                    static_cast<void>(workspace.closeAgent(item->agentId()));
+            static_cast<void>(waitFor([&] { return workspace.agents().isEmpty(); }, 10000));
         });
         require(!workspace.resumeAgent(project, QStringLiteral("x"), QStringLiteral("grok"),
                                        QStringLiteral("-rf")),
@@ -3747,7 +3741,7 @@ void resumingAConversationStartsItsCli() {
         require(workspace.resumeAgent(project, QStringLiteral("project"), QStringLiteral("grok"),
                                       QStringLiteral("conv-123")),
                 "a past conversation resumes, named after its folder");
-        auto* agent = workspace.focusedSession();
+        auto* agent = workspace.focusedAgent();
         require(agent != nullptr && waitFor(
                                         [agent] {
                                             return screenText(agent->snapshot())
@@ -3762,7 +3756,7 @@ void resumingAConversationStartsItsCli() {
         auto request = createRequest(workspace.activeCategoryId(), QStringLiteral("grok"), project);
         request.insert(QStringLiteral("resume"), QStringLiteral("conv-456"));
         const auto started = askWorkspace(workspace.storagePath(), request);
-        auto* phone = workspace.session(started.value(QStringLiteral("id")).toString());
+        auto* phone = workspace.agent(started.value(QStringLiteral("id")).toString());
         require(phone != nullptr && waitFor(
                                         [phone] {
                                             return screenText(phone->snapshot())
@@ -3783,7 +3777,7 @@ void resumingAConversationStartsItsCli() {
                             [&](const QJsonValue& entry) {
                                 const auto managed =
                                     entry[QStringLiteral("managedResume")].toObject();
-                                return entry[QStringLiteral("id")] == agent->sessionId() &&
+                                return entry[QStringLiteral("id")] == agent->agentId() &&
                                        managed.value(QStringLiteral("identity")) ==
                                            QStringLiteral("conv-123");
                             }),
@@ -3791,41 +3785,40 @@ void resumingAConversationStartsItsCli() {
         // An agent named after its folder takes its conversation's title; a
         // name chosen on the Mac or the phone stays.
         const auto conversations = workspace.agentConversations();
-        require(conversations.value(agent->sessionId()) == QStringLiteral("conv-123") &&
-                    conversations.value(phone->sessionId()) == QStringLiteral("conv-456"),
+        require(conversations.value(agent->agentId()) == QStringLiteral("conv-123") &&
+                    conversations.value(phone->agentId()) == QStringLiteral("conv-456"),
                 "each agent's conversation is known");
-        require(workspace.followConversationTitle(agent->sessionId(),
+        require(workspace.followConversationTitle(agent->agentId(),
                                                   QStringLiteral("  Fix   the resize bug ")) &&
                     agent->title() == QStringLiteral("Fix the resize bug"),
                 "the conversation's title names the agent");
         require(
-            workspace.followConversationTitle(agent->sessionId(), QStringLiteral("After /clear")) &&
+            workspace.followConversationTitle(agent->agentId(), QStringLiteral("After /clear")) &&
                 agent->title() == QStringLiteral("After /clear"),
             "it keeps following its conversation");
         const auto rocket = QString::fromUcs4(U"\U0001f680");
         const auto long_title = rocket.repeated(41);
         const auto elided_title = rocket.repeated(39) + QChar(0x2026);
-        require(workspace.followConversationTitle(agent->sessionId(), long_title) &&
+        require(workspace.followConversationTitle(agent->agentId(), long_title) &&
                     agent->title() == elided_title,
                 "auto titles keep complete supplementary Unicode scalars");
         // A name from before chosen names were recorded stays.
         require(
             workspace.createAgent(project, QFileInfo(project).fileName(), QStringLiteral("grok")),
             "an agent with its own name");
-        auto* own = workspace.focusedSession();
+        auto* own = workspace.focusedAgent();
         require(own != nullptr, "the named agent is shown");
-        require(
-            !workspace.followConversationTitle(own->sessionId(), QFileInfo(project).fileName()) &&
-                own->title() == QFileInfo(project).fileName(),
-            "an explicit folder default is user-owned");
+        require(!workspace.followConversationTitle(own->agentId(), QFileInfo(project).fileName()) &&
+                    own->title() == QFileInfo(project).fileName(),
+                "an explicit folder default is user-owned");
         const auto renamed = askWorkspace(
             workspace.storagePath(), {{QStringLiteral("version"), 1},
                                       {QStringLiteral("request"), QStringLiteral("renameAgent")},
-                                      {QStringLiteral("id"), phone->sessionId()},
+                                      {QStringLiteral("id"), phone->agentId()},
                                       {QStringLiteral("title"), QStringLiteral("Named here")}});
         require(renamed.value(QStringLiteral("ok")).toBool() &&
                     phone->title() == QStringLiteral("Named here") &&
-                    !workspace.followConversationTitle(phone->sessionId(),
+                    !workspace.followConversationTitle(phone->agentId(),
                                                        QStringLiteral("Their title")) &&
                     phone->title() == QStringLiteral("Named here"),
                 "a name chosen on the phone stays over the conversation's title");
@@ -3838,7 +3831,7 @@ void resumingAConversationStartsItsCli() {
                                           .toArray();
             require(std::any_of(saved_agents.begin(), saved_agents.end(),
                                 [&](const QJsonValue& entry) {
-                                    return entry[QStringLiteral("id")] == phone->sessionId() &&
+                                    return entry[QStringLiteral("id")] == phone->agentId() &&
                                            entry[QStringLiteral("named")].toBool() &&
                                            entry[QStringLiteral("title")] ==
                                                QStringLiteral("Named here");
@@ -3846,7 +3839,7 @@ void resumingAConversationStartsItsCli() {
                     "the chosen name is saved as chosen");
             require(std::any_of(saved_agents.begin(), saved_agents.end(),
                                 [&](const QJsonValue& entry) {
-                                    return entry[QStringLiteral("id")] == own->sessionId() &&
+                                    return entry[QStringLiteral("id")] == own->agentId() &&
                                            entry[QStringLiteral("named")].toBool() &&
                                            entry[QStringLiteral("title")] ==
                                                QFileInfo(project).fileName();
@@ -3859,9 +3852,9 @@ void resumingAConversationStartsItsCli() {
                     },
                     10000),
                 "the agents take input");
-        for (const auto& closing : {agent->sessionId(), phone->sessionId(), own->sessionId()})
-            require(workspace.closeSession(closing), "close the stand-in agents");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+        for (const auto& closing : {agent->agentId(), phone->agentId(), own->agentId()})
+            require(workspace.closeAgent(closing), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
                 "the stand-in agents close");
         workspace.setHarnessArguments(
             {{QStringLiteral("grok"),
@@ -3873,7 +3866,7 @@ void resumingAConversationStartsItsCli() {
         require(workspace.resumeAgent(project, QStringLiteral("literal"), QStringLiteral("grok"),
                                       QStringLiteral("conv-literal")),
                 "a modeless resume with literal configured arguments starts");
-        auto* literal = workspace.focusedSession();
+        auto* literal = workspace.focusedAgent();
         require(literal != nullptr &&
                     waitFor(
                         [literal] {
@@ -3904,8 +3897,8 @@ void resumingAConversationStartsItsCli() {
                     saved_arguments.at(index + 1) == QLatin1String("conv-literal") &&
                     saved_arguments.at(index + 2) == QLatin1String("--"),
                 "managed resume index refers to the generated pair before the literal tail");
-        require(workspace.closeSession(literal->sessionId()), "close the literal-argument fixture");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+        require(workspace.closeAgent(literal->agentId()), "close the literal-argument fixture");
+        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
                 "the literal-argument fixture closes");
     }
     qputenv("PATH", path);
@@ -3932,7 +3925,7 @@ void phoneArrangesTheWorkspace(Workspace& workspace, const PhoneArrangement& pla
     // A copy: the requests below change the workspace through its socket.
     // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
     const auto shown = workspace.activeCategoryId();
-    const auto* focused = workspace.focusedSession();
+    const auto* focused = workspace.focusedAgent();
     const auto& ideas = place.ideas;
     require(answeredOk(askVersioned(workspace,
                                     {{QStringLiteral("request"), QStringLiteral("renameCategory")},
@@ -3986,7 +3979,7 @@ void phoneArrangesTheWorkspace(Workspace& workspace, const PhoneArrangement& pla
                                         .toString()
                                         .contains(QStringLiteral("still running")),
             "a running agent is not restarted");
-    require(workspace.activeCategoryId() == shown && workspace.focusedSession() == focused,
+    require(workspace.activeCategoryId() == shown && workspace.focusedAgent() == focused,
             "the window keeps its category and agent");
 }
 
@@ -4111,7 +4104,7 @@ void phoneStartsAnAgentInItsCategory() {
         const auto desk_category = workspace.activeCategoryId();
         require(workspace.createAgent(project, QStringLiteral("desk"), QStringLiteral("grok")),
                 "an agent on the Mac");
-        auto* desk = workspace.focusedSession();
+        auto* desk = workspace.focusedAgent();
         require(workspace.addCategory(QStringLiteral("Later")) &&
                     workspace.selectCategory(desk_category),
                 "a second category");
@@ -4134,7 +4127,7 @@ void phoneStartsAnAgentInItsCategory() {
                                 }),
                 "the phone learns which CLIs this Mac has");
 
-        const auto count = workspace.sessions().size();
+        const auto count = workspace.agents().size();
         auto wrong_version = createRequest(later, QStringLiteral("grok"), project);
         wrong_version[QStringLiteral("version")] = 2;
         auto missing_field = createRequest(later, QStringLiteral("grok"), project);
@@ -4151,7 +4144,7 @@ void phoneStartsAnAgentInItsCategory() {
                         !refused.value(QStringLiteral("error")).toString().isEmpty(),
                     "a bad request is refused with a reason");
         }
-        require(workspace.sessions().size() == count, "refused requests start nothing");
+        require(workspace.agents().size() == count, "refused requests start nothing");
 
         const auto started =
             askWorkspace(registry, createRequest(later, QStringLiteral("grok"), project));
@@ -4159,9 +4152,9 @@ void phoneStartsAnAgentInItsCategory() {
         require(started.value(QStringLiteral("ok")).toBool() && !id.isEmpty() &&
                     !started.value(QStringLiteral("updating")).toBool(),
                 "the phone starts an agent");
-        require(workspace.activeCategoryId() == desk_category && workspace.focusedSession() == desk,
+        require(workspace.activeCategoryId() == desk_category && workspace.focusedAgent() == desk,
                 "the window keeps its category and agent");
-        auto* agent = workspace.session(id);
+        auto* agent = workspace.agent(id);
         require(agent != nullptr && agent->title() == QStringLiteral("project"),
                 "the new tab is named after its folder");
         require(waitFor([agent] { return agent->inputReady(); }, 10000) &&
@@ -4250,7 +4243,7 @@ void phoneStartsAnAgentInItsCategory() {
         remote[QStringLiteral("machine")] = QStringLiteral("devbox");
         remote[QStringLiteral("program")] = QStringLiteral("/opt/grok/bin/grok");
         const auto over_ssh = askWorkspace(registry, remote);
-        auto* far = workspace.session(over_ssh.value(QStringLiteral("id")).toString());
+        auto* far = workspace.agent(over_ssh.value(QStringLiteral("id")).toString());
         require(over_ssh.value(QStringLiteral("ok")).toBool() && far != nullptr &&
                     far->title() == QStringLiteral("some project"),
                 "the phone starts an agent on another machine");
@@ -4279,7 +4272,7 @@ void phoneStartsAnAgentInItsCategory() {
         require(workspace.createAgent(QStringLiteral("~/dev/other"), QStringLiteral("other"),
                                       QStringLiteral("grok"), {}, {}, QStringLiteral("devbox")),
                 "the Mac starts an agent on another machine");
-        auto* mac_far = workspace.focusedSession();
+        auto* mac_far = workspace.focusedAgent();
         require(mac_far != nullptr, "the new agent is shown");
         require(waitFor(
                     [mac_far] {
@@ -4290,9 +4283,9 @@ void phoneStartsAnAgentInItsCategory() {
                     10000) &&
                     waitFor([mac_far] { return mac_far->inputReady(); }, 10000),
                 "over ssh, in that machine's folder");
-        for (const auto& closing : {desk->sessionId(), id, far->sessionId(), mac_far->sessionId()})
-            require(workspace.closeSession(closing), "close the stand-in agents");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+        for (const auto& closing : {desk->agentId(), id, far->agentId(), mac_far->agentId()})
+            require(workspace.closeAgent(closing), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
@@ -4768,7 +4761,7 @@ void harnessesUpdateBeforeNewAgents() {
         const auto project = root.filePath(QStringLiteral("project"));
         require(workspace.createAgent(project, QStringLiteral("first"), QStringLiteral("grok")),
                 "create a Grok agent");
-        auto* first = workspace.focusedSession();
+        auto* first = workspace.focusedAgent();
         require(first->statusLabel() == QStringLiteral("Updating Grok…") && !first->live(),
                 "the card waits while the CLI updates");
         require(waitFor([first] { return first->inputReady(); }, 15000),
@@ -4782,7 +4775,7 @@ void harnessesUpdateBeforeNewAgents() {
                 "the agent started on the updated CLI");
         require(workspace.createAgent(project, QStringLiteral("second"), QStringLiteral("grok")),
                 "create another Grok agent");
-        auto* second = workspace.focusedSession();
+        auto* second = workspace.focusedAgent();
         require(second->statusLabel() != QStringLiteral("Updating Grok…"),
                 "a recent update is not repeated");
         require(waitFor(
@@ -4798,9 +4791,9 @@ void harnessesUpdateBeforeNewAgents() {
                 "the update is logged");
         require(waitFor([second] { return second->inputReady(); }, 10000),
                 "the second agent is ready");
-        for (const auto& id : {first->sessionId(), second->sessionId()})
-            require(workspace.closeSession(id), "close the stand-in agents");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+        for (const auto& id : {first->agentId(), second->agentId()})
+            require(workspace.closeAgent(id), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
@@ -4822,7 +4815,7 @@ void phoneSizeYieldsToTheDesktop() {
         lapis::session::AgentMode::terminal};
     options.mode = lapis::session::wire::AttachMode::create;
     Workspace workspace(WorkspaceMode::live, options);
-    auto* agent = workspace.focusedSession();
+    auto* agent = workspace.focusedAgent();
     require(agent != nullptr && waitFor([agent] { return agent->inputReady(); }, 10000),
             "the desktop is attached");
     const lapis::session::TerminalSize desk{100, 30};
@@ -4842,8 +4835,8 @@ void phoneSizeYieldsToTheDesktop() {
     require(shows(phone_size), "the phone takes it again");
     phone.leave();
     require(shows(desk), "the phone leaving hands the size back to the desktop");
-    require(workspace.closeSession(agent->sessionId()) &&
-                waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+    require(workspace.closeAgent(agent->agentId()) &&
+                waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
             "the size fixture closes");
 }
 
@@ -4863,17 +4856,17 @@ void closeOnHistoryPageEndsTheAgent() {
                                    lapis::session::AgentMode::terminal};
     options.mode = lapis::session::wire::AttachMode::create;
     Workspace workspace(WorkspaceMode::live, options);
-    auto* agent = workspace.focusedSession();
+    auto* agent = workspace.focusedAgent();
     require(agent != nullptr, "service-backed agent");
     require(waitFor([agent] { return agent->inputReady(); }, 10000), "agent session ready");
     agent->beginHistoryRequest();
     require(!agent->inputReady() && agent->reachable(),
             "a history page hides input but the agent stays reachable");
     const QPointer<lapis::desktop::Agent> guarded(agent);
-    require(workspace.closeSession(agent->sessionId(), true) && !workspace.sessions().isEmpty() &&
+    require(workspace.closeAgent(agent->agentId(), true) && !workspace.agents().isEmpty() &&
                 guarded && guarded->closing(),
             "closing from a history page ends the agent instead of abandoning it");
-    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
             "the tab closes once the process has exited");
 }
 
@@ -4895,7 +4888,7 @@ void restartRefusesClosingAgent() {
                     {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
                     {"agents", QJsonArray{record}}});
     Workspace workspace(WorkspaceMode::live, options);
-    auto* agent = workspace.session(id);
+    auto* agent = workspace.agent(id);
     require(agent != nullptr, "closing-agent fixture loads");
     agent->setClosing(true);
     require(!workspace.restartAgent(id), "a closing agent is not restarted");
@@ -4985,8 +4978,8 @@ void restoreProgramFallbackSeparatesTransportFromHarness() {
                     {"agents", QJsonArray{remote, native}}});
     Workspace workspace(WorkspaceMode::live, options);
     require(workspace.workspaceError().isEmpty(), "transport-fallback fixture loads");
-    auto* native_item = workspace.session(native_id);
-    require(workspace.session(remote_id) != nullptr && native_item != nullptr,
+    auto* native_item = workspace.agent(native_id);
+    require(workspace.agent(remote_id) != nullptr && native_item != nullptr,
             "transport-fallback agents load");
 
     require(!workspace.restartAgent(remote_id),
@@ -5017,13 +5010,12 @@ void restoreProgramFallbackSeparatesTransportFromHarness() {
             "native relocation records the catalog executable");
     require(saved_agent(remote_id).value(QStringLiteral("program")).toString() == missing_ssh,
             "native relocation does not rewrite the remote transport");
-    require(workspace.closeSession(native_id) && waitFor(
-                                                     [&workspace, native_id] {
-                                                         return workspace.sessions().size() == 1 &&
-                                                                workspace.session(native_id) ==
-                                                                    nullptr;
-                                                     },
-                                                     10000),
+    require(workspace.closeAgent(native_id) && waitFor(
+                                                   [&workspace, native_id] {
+                                                       return workspace.agents().size() == 1 &&
+                                                              workspace.agent(native_id) == nullptr;
+                                                   },
+                                                   10000),
             "the relocated native fixture closes");
     require(!QFileInfo::exists(bad_invocation), "the transport is never invoked as local Claude");
 }
@@ -5057,7 +5049,7 @@ void restoreSaveFailureStartsNoService() {
         Workspace workspace(WorkspaceMode::live, options);
         require(workspace.workspaceError().contains(QStringLiteral("Cannot save workspace:")),
                 "restore reports the failed metadata commit");
-        require(workspace.sessions().isEmpty(), "failed restore retains no session objects");
+        require(workspace.agents().isEmpty(), "failed restore retains no session objects");
     }
     require(readRegistry(options.storagePath) == original,
             "failed restore leaves the original registry bytes intact");
@@ -5136,7 +5128,7 @@ void agentsRestoreAfterServiceLoss() {
     require(arguments(foreign) == QJsonArray{},
             "a conversation recorded by another CLI is not passed on");
     for (const auto& id : {resumed, fresh, foreign}) {
-        auto* item = workspace.session(id);
+        auto* item = workspace.agent(id);
         require(waitFor([item] { return item->inputReady(); }, 10000),
                 "a restored agent runs under a new service");
     }
@@ -5144,7 +5136,7 @@ void agentsRestoreAfterServiceLoss() {
     workspace.clearError();
     // An agent that ended restarts in its card without reopening lapis, once
     // its service has exited.
-    auto* ended = workspace.session(fresh);
+    auto* ended = workspace.agent(fresh);
     ended->sendText("done\r");
     require(waitFor([ended] { return ended->connectionState() == QStringLiteral("ended"); }, 10000),
             "the agent ends");
@@ -5154,21 +5146,21 @@ void agentsRestoreAfterServiceLoss() {
     require(waitFor([ended] { return ended->inputReady(); }, 10000),
             "the restarted agent runs again");
     for (const auto& id : {resumed, fresh, foreign})
-        require(workspace.closeSession(id), "close a restored agent");
-    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+        require(workspace.closeAgent(id), "close a restored agent");
+    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
             "restored agents close");
     // Command-Shift-T brings the last closed agent back as a new tab, in its
     // folder and category, running again.
     require(workspace.canReopenAgent(), "closed agents can come back");
-    require(workspace.reopenAgent() && workspace.sessions().size() == 1, "reopen the last one");
-    auto* back = workspace.focusedSession();
+    require(workspace.reopenAgent() && workspace.agents().size() == 1, "reopen the last one");
+    auto* back = workspace.focusedAgent();
     // The three closed in whichever order their processes ended.
     require(back != nullptr && QStringList({resumed, fresh, foreign}).contains(back->title()) &&
                 back->directory() == canonical,
             "the reopened agent keeps its name and folder");
     require(waitFor([back] { return back->inputReady(); }, 10000), "the reopened agent runs");
-    require(workspace.closeSession(back->sessionId()), "close it again");
-    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+    require(workspace.closeAgent(back->agentId()), "close it again");
+    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
             "the reopened agent closes");
 }
 
@@ -5229,8 +5221,8 @@ void reopenFailurePreservesTheRetryableManagedPlan() {
                         {QStringLiteral("kimi"), QStringLiteral("m-1")});
     Workspace workspace(WorkspaceMode::live, options);
     require(workspace.workspaceError().isEmpty(), "load reopen save-failure fixture");
-    auto* retained_item = workspace.session(retained_id);
-    auto* managed_item = workspace.session(managed_id);
+    auto* retained_item = workspace.agent(retained_id);
+    auto* managed_item = workspace.agent(managed_id);
     require(waitFor(
                 [retained_item, managed_item] {
                     return retained_item && managed_item && retained_item->inputReady() &&
@@ -5261,11 +5253,11 @@ void reopenFailurePreservesTheRetryableManagedPlan() {
     for (const auto& name : QDir(canonical).entryList({QStringLiteral("args.*.txt")}, QDir::Files))
         require(QFile::remove(QDir(canonical).filePath(name)), "remove startup argv receipts");
 
-    require(workspace.closeSession(managed_id) &&
-                waitFor([&workspace] { return workspace.sessions().size() == 1; }, 10000),
+    require(workspace.closeAgent(managed_id) &&
+                waitFor([&workspace] { return workspace.agents().size() == 1; }, 10000),
             "close the managed reopen fixture");
     require(workspace.canReopenAgent(), "the closed managed plan is retryable");
-    const auto previous_focus = workspace.focusedSession();
+    const auto previous_focus = workspace.focusedAgent();
     const auto previous_category = workspace.activeCategoryId();
     const auto held_registry = QDir(canonical).filePath(QStringLiteral("registry-held"));
     require(QFile::rename(options.storagePath, held_registry), "move complete registry bytes");
@@ -5277,8 +5269,8 @@ void reopenFailurePreservesTheRetryableManagedPlan() {
     require(!workspace.reopenAgent(), "a failed reopen save does not report success");
     require(!workspace.workspaceError().isEmpty(), "a failed reopen names its save failure");
     require(workspace.canReopenAgent(), "a failed reopen remains retryable");
-    require(workspace.sessions().size() == 1 && workspace.session(retained_id) == retained_item &&
-                workspace.focusedSession() == previous_focus &&
+    require(workspace.agents().size() == 1 && workspace.agent(retained_id) == retained_item &&
+                workspace.focusedAgent() == previous_focus &&
                 workspace.activeCategoryId() == previous_category,
             "a failed reopen preserves the existing session and selection");
     require(QDir(canonical).entryList({QStringLiteral("args.*.txt")}, QDir::Files).isEmpty(),
@@ -5289,13 +5281,13 @@ void reopenFailurePreservesTheRetryableManagedPlan() {
     require(QDir(options.storagePath).removeRecursively(), "remove the save-failure directory");
     require(QFile::rename(held_registry, options.storagePath), "restore complete registry bytes");
     QJsonObject first_published_record;
-    QObject::connect(&workspace, &Workspace::sessionsChanged, &workspace, [&] {
-        if (first_published_record.isEmpty() && workspace.sessions().size() == 2)
-            first_published_record = saved_agent(workspace.focusedSession()->sessionId());
+    QObject::connect(&workspace, &Workspace::agentsChanged, &workspace, [&] {
+        if (first_published_record.isEmpty() && workspace.agents().size() == 2)
+            first_published_record = saved_agent(workspace.focusedAgent()->agentId());
     });
-    require(workspace.reopenAgent() && workspace.sessions().size() == 2,
+    require(workspace.reopenAgent() && workspace.agents().size() == 2,
             "a retryable reopen commits and starts");
-    auto* reopened = workspace.focusedSession();
+    auto* reopened = workspace.focusedAgent();
     require(reopened != nullptr && reopened->title() == managed_id &&
                 workspace.activeCategoryId() == QStringLiteral("closed"),
             "a retried reopen restores its category and selection");
@@ -5304,7 +5296,7 @@ void reopenFailurePreservesTheRetryableManagedPlan() {
     require(agents.size() == 2 &&
                 agents.first().toObject().value(QStringLiteral("id")).toString() == retained_id &&
                 agents.last().toObject().value(QStringLiteral("id")).toString() ==
-                    reopened->sessionId(),
+                    reopened->agentId(),
             "a retried reopen appends without changing existing registry order");
     const auto reopened_record = agents.last().toObject();
     require(reopened_record.value(QStringLiteral("arguments")).toArray() == expected_arguments,
@@ -5320,11 +5312,11 @@ void reopenFailurePreservesTheRetryableManagedPlan() {
     require(waitFor([reopened] { return reopened->inputReady(); }, 10000),
             "the reopened process completes attachment before closing");
 
-    require(workspace.closeSession(reopened->sessionId()), "close the retried agent");
-    require(waitFor([&workspace] { return workspace.sessions().size() == 1; }, 10000),
+    require(workspace.closeAgent(reopened->agentId()), "close the retried agent");
+    require(waitFor([&workspace] { return workspace.agents().size() == 1; }, 10000),
             "the retried agent ends");
-    require(workspace.closeSession(retained_id), "close the retained fixture agent");
-    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+    require(workspace.closeAgent(retained_id), "close the retained fixture agent");
+    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
             "reopen save-failure agents close");
 }
 
@@ -5364,7 +5356,7 @@ void savedArgumentCapKeepsRegistryLoadable() {
     writeObservedResume(endpoint, {QStringLiteral("kimi"), QStringLiteral("capped")});
     Workspace workspace(WorkspaceMode::live, options);
     require(workspace.workspaceError().isEmpty(), "load an argument-capped registry");
-    auto* item = workspace.session(id);
+    auto* item = workspace.agent(id);
     require(item != nullptr && waitFor([item] { return item->inputReady(); }, 10000),
             "the capped restored agent starts");
     auto savedAgent = [&] {
@@ -5399,8 +5391,8 @@ void savedArgumentCapKeepsRegistryLoadable() {
     }();
     require(savedAgent.value(QStringLiteral("arguments")).toArray() == arguments,
             "restart preserves the capped launch");
-    require(workspace.closeSession(id) &&
-                waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+    require(workspace.closeAgent(id) &&
+                waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
             "the capped agent closes");
 }
 
@@ -5453,7 +5445,7 @@ void managedResumeFollowsRecovery() {
         bad_options.storagePath = malformed_path;
         Workspace bad(WorkspaceMode::live, bad_options);
         require(bad.workspaceError().isEmpty(), "invalid provenance leaves the workspace usable");
-        require(bad.renameSession(managed, QStringLiteral("recovered")),
+        require(bad.renameAgent(managed, QStringLiteral("recovered")),
                 "save a workspace with stale provenance");
     }
     {
@@ -5485,8 +5477,8 @@ void managedResumeFollowsRecovery() {
                         {QStringLiteral("kimi"), QStringLiteral("user-1")});
     Workspace workspace(WorkspaceMode::live, options);
     require(workspace.workspaceError().isEmpty(), "load managed-resume registry");
-    auto* managed_item = workspace.session(managed);
-    auto* explicit_item = workspace.session(explicit_agent);
+    auto* managed_item = workspace.agent(managed);
+    auto* explicit_item = workspace.agent(explicit_agent);
     require(waitFor(
                 [managed_item, explicit_item] {
                     return managed_item->inputReady() && explicit_item->inputReady();
@@ -5570,8 +5562,8 @@ void managedResumeFollowsRecovery() {
         check_cycle(explicit_agent, false, {});
     }
     for (const auto& id : {managed, explicit_agent})
-        require(workspace.closeSession(id), "close a managed-resume agent");
-    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+        require(workspace.closeAgent(id), "close a managed-resume agent");
+    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
             "managed-resume agents close");
 }
 
@@ -6026,7 +6018,7 @@ void printedCheckpointsResumeButNeverOverrideTheObserver() {
                                      QJsonArray{QStringLiteral("--yolo")});
     Workspace workspace(WorkspaceMode::live, fixture.options);
     const auto id = fixture.id;
-    auto* item = workspace.session(id);
+    auto* item = workspace.agent(id);
     require(item != nullptr, "checkpoint fixture agent exists");
     const auto endpoint = fixture.endpoint;
     require(waitFor(
@@ -6066,8 +6058,8 @@ void printedCheckpointsResumeButNeverOverrideTheObserver() {
             "printed output cannot overwrite an observer checkpoint");
     require(fixture.waitForArguments("--yolo\n--session\nverified-id\n"),
             "only the verified identity becomes a resume argument");
-    require(workspace.closeSession(id) &&
-                waitFor([&] { return workspace.sessions().isEmpty(); }, 10000),
+    require(workspace.closeAgent(id) &&
+                waitFor([&] { return workspace.agents().isEmpty(); }, 10000),
             "checkpoint fixture closes");
 
     // A legacy Claude identity predates source provenance, and its old launch
@@ -6093,7 +6085,7 @@ void printedCheckpointsResumeButNeverOverrideTheObserver() {
     require(loaded && loaded->source == lapis::session::ResumeSource::legacy,
             "the fixture loaded a version 1 Claude record");
     Workspace legacy_workspace(WorkspaceMode::live, legacy.options);
-    auto* legacy_item = legacy_workspace.session(legacy.id);
+    auto* legacy_item = legacy_workspace.agent(legacy.id);
     require(legacy_item != nullptr, "legacy Claude fixture agent exists");
     require(waitFor(
                 [legacy_item] {
@@ -6130,10 +6122,9 @@ void printedCheckpointsResumeButNeverOverrideTheObserver() {
                 },
                 10000),
             "the legacy Claude identity remains valid after the restart");
-    require(
-        legacy_workspace.closeSession(legacy.id) &&
-            waitFor([&legacy_workspace] { return legacy_workspace.sessions().isEmpty(); }, 10000),
-        "the legacy Claude fixture closes");
+    require(legacy_workspace.closeAgent(legacy.id) &&
+                waitFor([&legacy_workspace] { return legacy_workspace.agents().isEmpty(); }, 10000),
+            "the legacy Claude fixture closes");
 }
 
 void closeEndsTheAgent(const char* script, int minimum_ms) {
@@ -6149,15 +6140,15 @@ void closeEndsTheAgent(const char* script, int minimum_ms) {
                                                 lapis::session::AgentMode::terminal};
     options.mode = lapis::session::wire::AttachMode::create;
     Workspace workspace(WorkspaceMode::live, options);
-    auto* agent = workspace.focusedSession();
+    auto* agent = workspace.focusedAgent();
     require(agent != nullptr, "service-backed agent");
     require(waitFor([agent] { return agent->inputReady(); }, 10000), "agent session ready");
     QElapsedTimer clock;
     clock.start();
-    require(workspace.closeSession(agent->sessionId()), "close request accepted");
+    require(workspace.closeAgent(agent->agentId()), "close request accepted");
     require(agent->closing() && agent->statusLabel() == QStringLiteral("Ending agent"),
             "the tab says the agent is ending");
-    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
             "the tab closes once the process has exited");
     require(clock.elapsed() >= minimum_ms, "escalation waited for the hangup first");
     require(workspace.workspaceError().isEmpty(), "no error on a normal close");

@@ -147,7 +147,7 @@ qint64 ready(Workspace& workspace, const QString& id, QSet<qint64> excluded = {}
     const auto before = observed.size();
     await(
         [&] {
-            auto* item = workspace.session(id);
+            auto* item = workspace.agent(id);
             if (!item || !item->inputReady() || item->serviceSessionId().isEmpty())
                 return false;
             return std::any_of(observed.begin() + before, observed.end(),
@@ -169,10 +169,10 @@ void run_harness_probe(const QString& harness, QTemporaryDir& runtime, OwnedProc
         Workspace workspace(WorkspaceMode::live, options);
         require(workspace.createAgent(runtime.path(), QStringLiteral("Probe"), harness),
                 "Native harness launch rejected");
-        id = workspace.focusedSession()->sessionId();
+        id = workspace.focusedAgent()->agentId();
         pid = ready(workspace, id);
         static_cast<void>(owned.serviceFor(pid));
-        auto* item = workspace.session(id);
+        auto* item = workspace.agent(id);
         await(
             [&] {
                 visible_cells = 0;
@@ -194,8 +194,8 @@ void run_harness_probe(const QString& harness, QTemporaryDir& runtime, OwnedProc
         Workspace restored(WorkspaceMode::live, options);
         const auto restored_pid = ready(restored, id);
         require(restored_pid == pid, "Reconnect replaced the native process");
-        require(restored.session(id)->harnessId() == harness &&
-                    restored.session(id)->serviceSessionId() == identity,
+        require(restored.agent(id)->harnessId() == harness &&
+                    restored.agent(id)->serviceSessionId() == identity,
                 "Reconnect lost native harness identity");
     }
     owned.cleanup();
@@ -248,25 +248,25 @@ int main(int argc, char** argv) {
             require(workspace.workspaceError().isEmpty(), "Private workspace failed to initialize");
             require(workspace.createAgent(runtime.path(), QStringLiteral("First")),
                     "First managed Codex launch rejected");
-            first = workspace.focusedSession()->sessionId();
+            first = workspace.focusedAgent()->agentId();
             pid1 = ready(workspace, first);
             service1 = owned.serviceFor(pid1);
-            identity1 = workspace.session(first)->serviceSessionId();
+            identity1 = workspace.agent(first)->serviceSessionId();
             require(workspace.addCategory(QStringLiteral("Research")), "Create second category");
             category = workspace.activeCategoryId();
             require(workspace.createAgent(runtime.path(), QStringLiteral("Second")),
                     "Second managed Codex launch rejected");
-            second = workspace.focusedSession()->sessionId();
+            second = workspace.focusedAgent()->agentId();
             pid2 = ready(workspace, second, {pid1});
             service2 = owned.serviceFor(pid2);
-            identity2 = workspace.session(second)->serviceSessionId();
+            identity2 = workspace.agent(second)->serviceSessionId();
             require(pid1 != pid2 && service1 != service2,
                     "Independent terminal and service processes required");
-            auto* retained = workspace.session(first);
-            require(workspace.moveSession(first, category), "Move retained agent");
-            require(workspace.moveSessionBy(first, 1), "Reorder retained agent");
-            require(workspace.session(first) == retained, "Moving must preserve retained object");
-            require(workspace.selectSession(first), "Remember category selection");
+            auto* retained = workspace.agent(first);
+            require(workspace.moveAgent(first, category), "Move retained agent");
+            require(workspace.moveAgentBy(first, 1), "Reorder retained agent");
+            require(workspace.agent(first) == retained, "Moving must preserve retained object");
+            require(workspace.selectAgent(first), "Remember category selection");
         }
         require(owned.serviceFor(pid1) == service1 && owned.serviceFor(pid2) == service2,
                 "Closing workspace must preserve both children");
@@ -275,26 +275,26 @@ int main(int argc, char** argv) {
             Workspace restored(WorkspaceMode::live, options);
             require(restored.workspaceError().isEmpty(),
                     "Registry lock must release on destruction");
-            require(restored.session(first) && restored.session(second),
+            require(restored.agent(first) && restored.agent(second),
                     "Both registry identities must restore");
             await(
                 [&] {
-                    return restored.session(first)->inputReady() &&
-                           restored.session(second)->inputReady() &&
+                    return restored.agent(first)->inputReady() &&
+                           restored.agent(second)->inputReady() &&
                            observed.size() >= reconnect_start + 2;
                 },
                 "Both retained agents must reconnect");
             const QSet<qint64> reconnects(observed.begin() + reconnect_start, observed.end());
             require(reconnects == QSet<qint64>{pid1, pid2},
                     "Reconnect must report the original terminal PIDs");
-            require(restored.session(first)->serviceSessionId() == identity1 &&
-                        restored.session(second)->serviceSessionId() == identity2,
+            require(restored.agent(first)->serviceSessionId() == identity1 &&
+                        restored.agent(second)->serviceSessionId() == identity2,
                     "Service identities survive reconnect");
             require(restored.activeCategoryId() == category &&
-                        restored.focusedSession()->sessionId() == first &&
-                        restored.categorySessions().size() == 2,
+                        restored.focusedAgent()->agentId() == first &&
+                        restored.categoryAgents().size() == 2,
                     "Category membership and selected tab survive restart");
-            require(restored.categorySessions().front().value<Agent*>()->sessionId() == second,
+            require(restored.categoryAgents().front().value<Agent*>()->agentId() == second,
                     "Tab order survives restart");
         }
         owned.cleanup();

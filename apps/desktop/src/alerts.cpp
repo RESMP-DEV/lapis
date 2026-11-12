@@ -68,7 +68,7 @@ void SeenScreens::see(const Agent* item) {
 QJsonObject SeenScreens::saveState() const {
     QJsonObject state;
     for (auto entry = seen_.cbegin(); entry != seen_.cend(); ++entry)
-        state.insert(entry.key()->sessionId(),
+        state.insert(entry.key()->agentId(),
                      QString::number(static_cast<std::uint64_t>(entry.value()), 16));
     return state;
 }
@@ -76,7 +76,7 @@ QJsonObject SeenScreens::saveState() const {
 void SeenScreens::restoreState(const QJsonObject& state) {
     bool restored = false;
     for (auto entry = state.constBegin(); entry != state.constEnd(); ++entry) {
-        const auto* item = workspace_.session(entry.key());
+        const auto* item = workspace_.agent(entry.key());
         bool valid = false;
         const auto print = entry.value().toString().toULongLong(&valid, 16);
         if (item == nullptr || !valid || seen_.contains(item))
@@ -90,7 +90,7 @@ void SeenScreens::restoreState(const QJsonObject& state) {
 }
 
 void SeenScreens::sample() {
-    const auto* shown = workspace_.focusedSession();
+    const auto* shown = workspace_.focusedAgent();
     if (shown != nullptr && looking_(shown))
         see(shown);
 }
