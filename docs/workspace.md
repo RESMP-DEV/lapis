@@ -108,6 +108,34 @@ the turn folds as above. While the conversation compacts (a `/compact`, or
 Claude Code's own when the context fills) the line reads **Compacting
 conversation for 1m 3s** with nothing under it.
 
+Subagents and background tasks are steps of their own. A subagent is one line,
+**Subagent · Map the lexer · 4m 10s · 23 steps**, running (with a dot) or done;
+clicking it opens how it went (its type, model, tokens), what it was asked, its
+own steps as one-line rows in a box like the live box (each opens under it; a
+subagent's own subagents stay lines) and its final report. Its steps are read
+from its own conversation file only when it is opened. A background command or
+monitor is one line too, **Started in background · npm test --watch**; the
+agent's later looks at its output and its end attach to that line, which opens
+to its status, exit code, run time, how often it was checked and its last lines
+of output, rather than adding rows. The turn a finished task wakes still folds
+to its own "Worked for" line with no "finished" row.
+
+While any run, a strip under the live box lists them, one quiet line each:
+**Subagent · Map the lexer · Explore / Sonnet 5.5 · 3m 12s · 14 steps**,
+**Background · npm test --watch · 1m 5s**. It is at most four lines tall and
+scrolls past that; with more than four it is one line, **3 subagents and 2
+background tasks running**, that opens the list. A line opens its task under
+the strip, and finished ones leave it. When the agent's turn has ended but its
+work runs on, the thread ends in **Waiting on 2 subagents · 4m 2s** (counted
+from the turn's end) and the strip, instead of looking finished.
+
+A task counts as running until its end is recorded. One whose end never was
+(the CLI quit) counts as ended, with "no end recorded", once its last sign of
+life is an hour old: its start, a check or event in the conversation, or the
+last write to its own file (a subagent's conversation, a command's output); a
+monitor also stops at its own expiry. All of this is read from the files, so it
+is the same after lapis restarts.
+
 A prompt you send while the agent works shows at once under the box, marked
 **Queued · the agent reads it at its next step**; several keep their order.
 When the agent reads it mid-turn it moves into the thread where it was read,
@@ -132,13 +160,24 @@ What differs by CLI:
   done, so the box shows a running step (with a dot) until its result lands.
   Its own queue is in the file: a prompt sent mid-turn shows queued from
   that record, and its "read after N more steps" counts the tool calls
-  between its sending and its reading.
+  between its sending and its reading. A subagent's steps are in
+  `<session>/subagents/agent-<id>.jsonl` beside the conversation; its end,
+  steps, tokens and report come in the task notification Claude Code writes
+  when it finishes (SendMessage to it runs it again). A background command
+  (`run_in_background`, or one moved there when it ran long) ends with its own
+  notification and exit code; BashOutput, TaskOutput, KillShell, TaskStop and
+  reading its output file attach to it. A monitor's events count as its checks.
 - **Codex** saves each step when it is done, so the box gains a step as each
   one finishes (within milliseconds of it, in rollouts on this Mac). A message
   sent mid-turn is read at Codex's next step; lapis shows it queued until
   Codex records it and counts the steps between. Its reasoning shows only when Codex saves a
   summary (`model_reasoning_summary` not `none`). Its model and effort show in
-  the toolbar without choices, since Codex's `/model` is a picker. A new agent's
+  the toolbar without choices, since Codex's `/model` is a picker. A command
+  still running when Codex's exec_command yields is a background task until
+  the process exits (Codex writes the command's item then); its polls attach
+  to it. Subagents come from Codex's collaboration items (spawn_agent, and the
+  states a later wait or close reports), each opening to its own rollout; no
+  rollout on this Mac has one yet, so this follows Codex 0.157.1's source. A new agent's
   thread appears with Codex's first saved message (before its first turn ends,
   lapis takes the conversation the agent's own Codex holds open, else the one
   started in the agent's folder since the agent started when no other agent
@@ -156,7 +195,13 @@ What differs by CLI:
   next prompt; the menus send `/model <id>` and `/effort <level>`. A turn
   woken by a timer or a finished background task folds like one Claude Code's
   task notification woke. agy's checkpoint, which summarizes the steps before
-  it, shows as a divider.
+  it, shows as a divider. invoke_subagent is a step per subagent it created,
+  each opening to its own conversation in `brain/<id>`; agy records no end for
+  one, so a subagent ends with its message to the agent, when manage_subagents
+  lists it idle or kills it, or when its own conversation comes to rest. A
+  command agy left running ("background task with task id") is a background
+  task: manage_task checks attach to it and agy's "Task id ... finished"
+  message ends it.
 - For both, the dialog peek is off (it reads Claude Code's screen layout),
   a slash command sent from the bar that opens a
   picker or panel, or that lapis does not know, shows the terminal, and
