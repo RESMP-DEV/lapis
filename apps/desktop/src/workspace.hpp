@@ -747,6 +747,9 @@ class Workspace final : public QObject {
     [[nodiscard]] conversation_owner::Agent conversationOwner(const QString& id) const;
     void pinConversations();
     void applyPins(const QHash<QString, QString>& pins);
+    // conversationFile without placing or re-checking pins: the file of the
+    // conversation lapis already knows the agent writes, or empty.
+    [[nodiscard]] QString knownConversationFile(const QString& id);
     QString active_category_{QStringLiteral("general")};
     QString storage_path_;
     std::unique_ptr<QLockFile> registry_lock_;

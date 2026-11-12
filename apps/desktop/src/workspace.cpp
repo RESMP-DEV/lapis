@@ -2207,7 +2207,6 @@ QString Workspace::conversationFile(const QString& id) {
     if (entry == agents_.cend() || !agentMachine(*entry).isEmpty())
         return {};
     const auto& harness = entry->harness;
-    const bool codex = harness == QLatin1String("codex");
     if (harness != QLatin1String("claude") && !pinnedHarness(harness))
         return {};
     if (pinnedHarness(harness)) {
@@ -2223,6 +2222,16 @@ QString Workspace::conversationFile(const QString& id) {
                 !held.isEmpty() && held != owner.known)
                 applyPins({{id, held}});
     }
+    return knownConversationFile(id);
+}
+QString Workspace::knownConversationFile(const QString& id) {
+    const auto entry = agents_.constFind(id);
+    if (entry == agents_.cend() || !agentMachine(*entry).isEmpty())
+        return {};
+    const auto& harness = entry->harness;
+    const bool codex = harness == QLatin1String("codex");
+    if (harness != QLatin1String("claude") && !pinnedHarness(harness))
+        return {};
     const auto conversation = agentConversation(id);
     // A conversation id is a UUID; anything else never names a file.
     if (QUuid::fromString(conversation).isNull())
@@ -2268,9 +2277,11 @@ void Workspace::setVisualKeep(int mb, int threads, bool ahead) {
 }
 
 void Workspace::warmThreads() {
+    // Only conversations already known: the pin timer places the rest, and
+    // reading ahead must not search every agent's processes in one go.
     QList<std::pair<qint64, QString>> found;
     for (auto entry = agents_.cbegin(); entry != agents_.cend(); ++entry) {
-        const auto path = conversationFile(entry.key());
+        const auto path = knownConversationFile(entry.key());
         if (!path.isEmpty())
             found.append({QFileInfo(path).lastModified().toMSecsSinceEpoch(), path});
     }
