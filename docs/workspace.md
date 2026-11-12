@@ -156,7 +156,51 @@ monitor also stops at its own expiry. All of this is read from the files, so it
 is the same after lapis restarts.
 
 A prompt you send while the agent works shows at once under the box, marked
-**Queued · the agent reads it at its next step**; several keep their order.
+with what its CLI will do with it; several keep their order:
+
+| CLI | Return mid-turn | Mark under the prompt |
+| --- | --- | --- |
+| Claude Code | queues it; read at the next tool boundary | **Queued · read at the next step** |
+| Codex | steers the turn; delivered once the running tool or reply finishes | **Steering · read after the current step** |
+| Antigravity, `queuedMessages` Queue (agy's default) | holds it until the turn ends, then sends all queued prompts as one | **Queued · sent when this turn ends** |
+| Antigravity, `queuedMessages` `send-immediately` | read at the next step | **Sent · read at the next step** |
+
+lapis reads agy's setting from `~/.gemini/antigravity-cli/settings.json` when
+the conversation opens, when a turn starts and when it sends mid-turn.
+
+**Send now** takes a message soonest without discarding work where the CLI
+allows it: Command-Return in the bar, the **Send now** button beside Stop
+while you have typed something, or **Send now** beside a waiting prompt (for
+everything already waiting). Plain Return keeps the behaviour above, and
+with the agent idle Command-Return is an ordinary send.
+
+| CLI | Send now sends | Then |
+| --- | --- | --- |
+| Claude Code | the message and Return, then Control-X Control-S (a waiting prompt: Control-X Control-S alone) | a running command moves to the background and the model reads the message in about a second, in the same turn |
+| Codex | **Interrupt and send**: the message and Return, then Escape once Codex shows it waiting ("Messages to be submitted after next tool call"); a waiting prompt: Escape | the turn stops and the message goes at once as a new turn; if Codex never shows it waiting (4 seconds), lapis does not press Escape and it stays a steer |
+| Antigravity, Queue | the message with no Return, then Alt-M (Escape m) a moment later; a waiting prompt: Alt-M alone | read at the next step |
+| Antigravity, `send-immediately` | an ordinary send (Return already does it) | read at the next step |
+
+A prompt sent on now is marked **Sending now** (**Interrupting · sent as a
+new turn** for Codex). lapis never sends Control-C or Control-D to an agent.
+
+Escape in the thread with nothing typed or attached stops the turn while the
+agent works, as Stop does; otherwise it shows the terminal. While a prompt
+waits, Stop says what will happen to it: **Interrupt and send** for Claude
+Code and Codex (each interrupts, then sends what waits as a new turn), and
+**Stop · queued text returns to the box** for agy, which puts its queued
+prompts back in its own input box unsent. lapis then reads Codex's and agy's
+input box: text found there comes back into the bar and its waiting prompts
+go. Before every send to Codex or agy, text in their input box that lapis
+did not put there (a draft typed in the terminal, text returned by a stop)
+would be merged into what lapis pastes; lapis pulls it into the bar instead,
+ahead of what you typed, clears the box with Control-U, and sends nothing
+until you press Return again. A record that holds several sent prompts at
+once (agy's queue delivered as one input, Claude Code's queue taken whole)
+retires each of their bubbles. Reading the input box is a heuristic over the
+screen's text: the lowest row led by the box's mark, its indented
+continuation, with faint text and Codex's placeholders left out.
+
 When the agent reads it mid-turn it moves into the thread where it was read,
 above the box, marked **Steered · read after 3 more steps** (or just
 **Steered** where the CLI does not say how long it waited), and the box
@@ -226,15 +270,16 @@ What differs by CLI:
   picker or panel, or that lapis does not know, shows the terminal, and
   **Edit** on a prompt is not offered.
 
-The bar at the bottom types to the agent: Return (or Command-Return) sends and
-Shift-Return starts a new line; it is two lines tall at rest and grows to fit
+The bar at the bottom types to the agent: Return sends (Command-Return sends
+now while the agent works, as above) and Shift-Return starts a new line; it is two lines tall at rest and grows to fit
 what you type, and lapis's guess shows there in full. It edits as the terminal does on a Mac: Command-Left and
 -Right go to the line's start and end, Option-Left and -Right move by word,
 Command-Backspace and Option-Backspace delete to the line start and the word
 start, Control-A, E, K, U and W work as in the shell, and Shift extends the
 selection. While the agent works, the send button is a stop button (■) that
 interrupts the turn, as Escape does in the terminal; Return still sends, and
-the message waits in the agent's queue. lapis's guess at your next prompt shows in the empty bar; Tab puts it
+the message waits as its CLI keeps it. The line under the bar says what
+Return, Command-Return and Escape do for the agent's CLI at that moment. lapis's guess at your next prompt shows in the empty bar; Tab puts it
 in the bar to edit, and Tab again sends it. Tab with nothing typed or offered
 moves to the next agent that needs you, as in the terminal. While the agent is
 waiting on a request, the bar says so and sends nothing; answer it in the
@@ -252,7 +297,8 @@ press Return in the terminal**. The note goes once the box no longer holds the
 text. Prompts sent from the bar are never written to disk by lapis.
 
 The bar's toolbar is the same for every CLI: **+** attaches files or a folder,
-then the model and the effort (Low, Medium, High, Extra High, Max) the agent
+then the model and the effort (Low, Medium, High, Extra High, Max; Low,
+Medium and High for Antigravity, whose `/effort` takes no others) the agent
 last reported, each a menu that changes it by typing that CLI's own command
 (`/model`, `/effort` for Claude Code and Antigravity), and a ring with the context window's use
 written beside it ("21% · 206k / 1M"). Nothing in the view uses hover popups.

@@ -36,6 +36,19 @@ all under Keys. Terminal Control chords stay with the agent.
 | Command-Backspace / Command-Delete | Delete to the line's start / end |
 | Command-hover, Command-click | Show, then open, a link, file or folder |
 
+## Visual view
+
+These are the thread's own keys and are not configurable. See
+[the visual view](workspace.md#visual-view) for what each CLI does with them.
+
+| Keys | Does |
+| --- | --- |
+| Return | Send; while the agent works, queue (Claude Code, agy) or steer (Codex) |
+| Command-Return | While the agent works, send now: Claude Code reads it within the turn, agy at its next step, and Codex interrupts and sends it as a new turn; with nothing typed, the same for the prompts already waiting; when the agent is idle, send |
+| Shift-Return | New line |
+| Escape | With nothing typed while the agent works, stop the turn; otherwise show the terminal |
+| Tab | Take lapis's suggestion; again to send it; with nothing typed or offered, the next agent that needs you |
+
 ## Window
 
 | Keys | Does |
