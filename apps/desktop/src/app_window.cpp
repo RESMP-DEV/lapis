@@ -499,7 +499,7 @@ void AppWindow::exposeObjects(QQmlContext& context) {
         {"guiState", options_.guiState},
     }};
     for (const auto& [name, object] : optional)
-        context.setContextProperty(QString::fromLatin1(name), object);
+        context.setContextProperty(QString::fromLatin1(name), QVariant::fromValue(object));
 }
 
 bool AppWindow::loadCandidate() {
