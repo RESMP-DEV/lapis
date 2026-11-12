@@ -420,6 +420,62 @@ void kept_ones_follow_their_files() {
             "a result for a call read in the background attaches to it");
 }
 
+QVariantMap shown(const char* agent, const char* harness, const QString& path) {
+    return {{QStringLiteral("agent"), QString::fromLatin1(agent)},
+            {QStringLiteral("harness"), QString::fromLatin1(harness)},
+            {QStringLiteral("path"), path}};
+}
+
+// A new agent's CLI has saved nothing yet: its thread is empty, read as its
+// own CLI, never another agent's rows; a prompt sent waits for it alone
+// while others show, and carries into its file once the file shows, where
+// the CLI recording it retires it.
+void blank_threads_wait_for_their_file() {
+    QTemporaryDir directory;
+    const auto other = write(directory, QStringLiteral("b.jsonl"), claude_conversation("b", 2));
+    TranscriptModel model;
+    model.setShown(shown("b", "claude", other));
+    require(model.rowCount() > 0, "a saved conversation shows");
+    model.setShown(shown("a", "codex", QString()));
+    require(model.rowCount() == 0 && model.items().empty() && model.pendingPrompts().isEmpty(),
+            "an agent with no file shows an empty thread, not the last agent's");
+    require(model.formatName() == QStringLiteral("codex") && model.path().isEmpty(),
+            "the empty thread reads as its agent's CLI");
+    model.noteSent(QStringLiteral("Start the sweep"), false);
+    require(model.pendingPrompts() == QStringList{QStringLiteral("Start the sweep")},
+            "a prompt sent with no file shows at once");
+    model.setShown(shown("c", "claude", QString()));
+    require(model.pendingPrompts().isEmpty() && model.formatName() == QStringLiteral("claude"),
+            "another new agent does not show it");
+    model.setShown(shown("b", "claude", other));
+    require(model.pendingPrompts().isEmpty() && model.rowCount() > 0,
+            "nor does an agent with a file");
+    model.setShown(shown("a", "codex", QString()));
+    require(model.pendingPrompts() == QStringList{QStringLiteral("Start the sweep")},
+            "it waits for its own agent");
+
+    // Claude Code saves the prompt as its first record.
+    model.setShown(shown("d", "claude", QString()));
+    model.noteSent(QStringLiteral("Hello there, read the README"), false);
+    model.noteSent(QStringLiteral("And then the tests"), true);
+    const auto first = write(
+        directory, QStringLiteral("d.jsonl"),
+        R"({"type":"user","uuid":"d-1","message":{"content":"Hello there, read the README"}})"
+        "\n");
+    model.setShown(shown("d", "claude", first));
+    require(model.path() == first && model.rowCount() > 0,
+            "the file takes over when it shows");
+    require(model.pendingPrompts() == QStringList{QStringLiteral("And then the tests")},
+            "the recorded prompt leaves; the one still unrecorded waits");
+    append(first,
+           R"({"type":"user","uuid":"d-2","message":{"content":"And then the tests"}})"
+           "\n");
+    model.readMore();
+    require(model.pendingPrompts().isEmpty(), "it leaves once recorded too");
+    model.setShown({});
+    require(model.path().isEmpty() && model.rowCount() == 0, "nothing shown");
+}
+
 // Where the view was, and the work opened, come back with the conversation.
 void view_comes_back() {
     QTemporaryDir directory;
@@ -554,6 +610,7 @@ int main(int argc, char** argv) {
     cold_conversation_shows_its_end();
     kept_within_budget();
     kept_ones_follow_their_files();
+    blank_threads_wait_for_their_file();
     destroyed_while_reading();
     view_comes_back();
     view_switches();
