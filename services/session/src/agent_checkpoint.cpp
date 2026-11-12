@@ -261,7 +261,10 @@ void write_resume_record(const QString& endpoint, const ResumeRecord& record) {
         {"agent", record.agent},
         {"session_id", record.session_id},
         {"source", record.source == ResumeSource::observer ? "observer" : "terminal"}};
-    if (!posix::write_private_file(path, QJsonDocument(object).toJson(QJsonDocument::Compact)))
-        throw std::runtime_error("Cannot write resume record");
+    QString error;
+    if (!posix::write_private_file(path, QJsonDocument(object).toJson(QJsonDocument::Compact),
+                                   &error))
+        throw std::runtime_error(
+            QStringLiteral("Cannot write resume record: %1").arg(error).toStdString());
 }
 } // namespace lapis::session

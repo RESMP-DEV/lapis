@@ -36,8 +36,11 @@ struct GuiState::Writer {
     QString path;
 
     static void store(const QString& path, const QByteArray& bytes) {
-        QDir().mkpath(QFileInfo(path).absolutePath(),
-                      QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        if (!QDir().mkpath(QFileInfo(path).absolutePath(),
+                           QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner)) {
+            qWarning().noquote() << "Window state not saved: cannot create" << path;
+            return;
+        }
         QString error;
         if (!session::posix::write_private_file(path, bytes, &error))
             qWarning().noquote() << "Window state not saved:" << error;

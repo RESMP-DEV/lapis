@@ -44,20 +44,8 @@
 
 namespace lapis::desktop {
 namespace {
-// Writes `content` to `path` unless it already holds exactly that, owner-only.
+// Writes `content` to `path` atomically and owner-only.
 bool update_private_file(const QString& path, const QByteArray& content) {
-    QFile existing(path);
-    if (existing.open(QIODevice::ReadOnly)) {
-        const bool same = existing.readAll() == content;
-        existing.close();
-        if (same) {
-            if (!QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
-                qWarning() << "lapis cannot restrict" << path;
-                return false;
-            }
-            return true;
-        }
-    }
     QString error;
     if (!session::posix::write_private_file(path, content, &error)) {
         qWarning().noquote() << "lapis cannot write" << error;

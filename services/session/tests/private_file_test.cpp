@@ -96,6 +96,22 @@ void followsASymbolicLink(const QDir& directory) {
             "the target holds the bytes, owner-only");
 }
 
+// A relative target is resolved from the link's directory, never the process's
+// current directory.
+void followsARelativeSymbolicLink(const QDir& directory) {
+    require(directory.mkdir(QStringLiteral("nested")), "make the nested directory");
+    const QDir nested(directory.filePath(QStringLiteral("nested")));
+    const auto target = directory.filePath(QStringLiteral("relative-target.json"));
+    const auto link = nested.filePath(QStringLiteral("relative-link.json"));
+    require(write_private_file(target, "before"), "write the relative link target");
+    require(QFile::link(QStringLiteral("../relative-target.json"), link),
+            "link with a relative target");
+    require(write_private_file(link, "through"), "write through the relative link");
+    require(QFileInfo(link).isSymLink(), "the relative link is kept");
+    require(contents(target) == "through" && mode(target) == 0600U,
+            "the relative target holds the bytes, owner-only");
+}
+
 // A read-only target is refused, as QSaveFile refuses it.
 void refusesAReadOnlyTarget(const QDir& directory) {
     const auto path = directory.filePath(QStringLiteral("locked.json"));
@@ -135,6 +151,7 @@ int main() {
         replacesAtomically(directory);
         narrowsAnExistingTarget(directory);
         followsASymbolicLink(directory);
+        followsARelativeSymbolicLink(directory);
         refusesAReadOnlyTarget(directory);
         // The superuser writes anywhere; the failure needs an ordinary account.
         if (::geteuid() != 0)
