@@ -20,7 +20,12 @@ Responsiveness is the first product priority, followed by ergonomics and then
 visual polish. Input-to-presentation and warm-switch tails are measured claims
 only when a reviewed receipt names the workload, source, artifact, display, and
 percentiles. Terminal glyphs are never animated. Motion is short,
-interruptible, and respects the user's reduced-motion setting.
+interruptible, and respects the user's reduced-motion setting. Colour feedback
+in the chrome (hover, press, selection, status) shares one 150 ms ease; a change
+of palette (a theme, light or dark, a thread replacing a terminal) is applied
+in a single frame with easing off, because the thread itself cannot ease its
+glyph colours and a half-way chrome colour would lag or contrast-invert beside
+it. Beside a thread, the chrome takes the thread theme's roles.
 
 The current reference machine is an M4 Max with 128 GB unified memory and a
 120 Hz display. That is a measurement context, not a minimum requirement or a
