@@ -1,9 +1,9 @@
+#include "app_window.hpp"
 #include "interaction_log.hpp"
 #include "interaction_recorder.hpp"
 #include "keymap.hpp"
 #include "platform_desktop.hpp"
 #include "terminal_surface.hpp"
-#include "ui_preview.hpp"
 #include "workspace.hpp"
 
 #include <QDir>
@@ -176,7 +176,7 @@ void writer_refuses_a_shared_folder() {
 struct Fixture {
     QTemporaryDir directory;
     QString path = directory.filePath(QStringLiteral("runtime/interaction.jsonl"));
-    lapis::desktop::Workspace workspace{lapis::desktop::WorkspaceMode::preview};
+    lapis::desktop::Workspace workspace{lapis::desktop::WorkspaceMode::fixture};
     qint64 now_us = 1'000'000;
     bool secure = false;
     std::unique_ptr<InteractionRecorder> recorder = std::make_unique<InteractionRecorder>(
@@ -390,7 +390,7 @@ QQuickItem* find_item(QQuickItem* root, const QString& name) {
 void production_window_is_described() {
     Fixture fixture;
     fixture.recorder->setSettings({.enabled = true});
-    lapis::desktop::UiPreview preview(
+    lapis::desktop::AppWindow preview(
         fixture.workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                             .compact = true,
                             .screen = QString()});

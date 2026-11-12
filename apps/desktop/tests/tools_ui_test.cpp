@@ -1,9 +1,9 @@
 // The Tools pane renders the status layer's real fixture answers, including
 // failure, timeout, missing, unprobed and stale states, without touching the
 // user's cursor, keyboard or OS focus.
+#include "app_window.hpp"
 #include "terminal_surface.hpp"
 #include "tool_status.hpp"
-#include "ui_preview.hpp"
 #include "workspace.hpp"
 
 #include <QCoreApplication>
@@ -113,7 +113,7 @@ QVariantMap rowFor(const ToolStatus& status, const QString& id) {
 
 int run() {
     using namespace lapis::desktop;
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     ToolStatus status(&fixture);
     status.setProbeForTesting(QStringLiteral("claude"),
                               ToolStatus::Probe{.argv = {QStringLiteral("/bin/echo"),
@@ -129,7 +129,7 @@ int run() {
     for (const auto* id : {"grok", "kimi", "gemini"})
         status.setProbeForTesting(QString::fromLatin1(id), ToolStatus::Probe{});
 
-    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+    AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = true,
                                   .screen = QString(),
                                   .tools = &status});

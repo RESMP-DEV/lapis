@@ -4,7 +4,7 @@
 class QQuickWindow;
 namespace lapis::desktop {
 class Workspace;
-class UiPreview;
+class AppWindow;
 struct CaptureOptions {
     QString image_path;
     QString trace_path;
@@ -12,7 +12,7 @@ struct CaptureOptions {
     int delay_ms{2000};
     bool smoke_input{};
 };
-void capture_window(QQuickWindow& window, Workspace& workspace, UiPreview& preview,
+void capture_window(QQuickWindow& window, Workspace& workspace, AppWindow& preview,
                     CaptureOptions options);
 } // namespace lapis::desktop
 #endif

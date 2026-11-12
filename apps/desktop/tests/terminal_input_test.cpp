@@ -1013,21 +1013,21 @@ void suggestions() {
     typed = frames(1);
     require(paste_is(typed[0], "yes do it", false),
             "Tab did not type the suggestion before the request arrived");
-    require(f.document.addPreviewRequest(QStringLiteral("r1"), QStringLiteral("rm -rf")),
+    require(f.document.addFixtureRequest(QStringLiteral("r1"), QStringLiteral("rm -rf")),
             "Fixture request was not added");
     const int before = calls();
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     require(nothing_sent() && calls() == before + 1 && surface.suggestion().isEmpty(),
             "Tab answered a pending request with the suggestion");
-    require(f.document.resolvePreviewRequest(QStringLiteral("r1")), "Fixture request stayed");
+    require(f.document.resolveFixtureRequest(QStringLiteral("r1")), "Fixture request stayed");
     engine.globalObject().setProperty(QStringLiteral("moves"), false);
-    require(f.document.addPreviewRequest(QStringLiteral("r2"), QStringLiteral("sudo rm")),
+    require(f.document.addFixtureRequest(QStringLiteral("r2"), QStringLiteral("sudo rm")),
             "Second fixture request was not added");
     const int before_held = calls();
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     require(nothing_sent() && calls() == before_held + 1,
             "Tab reached a permission dialog when no destination waited");
-    require(f.document.resolvePreviewRequest(QStringLiteral("r2")),
+    require(f.document.resolveFixtureRequest(QStringLiteral("r2")),
             "Second fixture request stayed");
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);

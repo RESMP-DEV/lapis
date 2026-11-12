@@ -1,4 +1,4 @@
-#include "ui_preview.hpp"
+#include "app_window.hpp"
 #include "app_paths.hpp"
 
 #include <QDebug>
@@ -174,7 +174,7 @@ constexpr int kMaximumDiagnosticsLength = 4096;
 
 } // namespace
 
-UiPreview::UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* parent)
+AppWindow::AppWindow(Workspace& workspace, AppWindowOptions options, QObject* parent)
     : QObject(parent), workspace_(workspace), options_(std::move(options)) {
     refreshSettingsShortcuts();
     if (options_.keymap != nullptr)
@@ -182,14 +182,14 @@ UiPreview::UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* pa
             refreshSettingsShortcuts();
             deferTerminalFocus();
         });
-    connect(&workspace_, &Workspace::focusChanged, this, &UiPreview::deferTerminalFocus);
+    connect(&workspace_, &Workspace::focusChanged, this, &AppWindow::deferTerminalFocus);
     // Every way of quitting (Quit, the Dock's menu, logging out) sends Quit to
     // the application before it closes the window.
     if (options_.hideOnClose && QCoreApplication::instance() != nullptr)
         QCoreApplication::instance()->installEventFilter(this);
 }
 
-QStringList UiPreview::monospaceFamilies() const {
+QStringList AppWindow::monospaceFamilies() const {
     QStringList families;
     for (const QString& family : QFontDatabase::families()) {
         // Private platform faces are not user-selectable.
@@ -200,7 +200,7 @@ QStringList UiPreview::monospaceFamilies() const {
     return families;
 }
 
-void UiPreview::refreshSettingsShortcuts() {
+void AppWindow::refreshSettingsShortcuts() {
     settings_shortcuts_ = options_.keymap != nullptr
                               ? options_.keymap->sequences(QStringLiteral("openSettings"))
                               : default_settings_shortcuts();
@@ -217,7 +217,7 @@ void UiPreview::refreshSettingsShortcuts() {
     emit settingsShortcutsChanged();
 }
 
-UiPreview::~UiPreview() {
+AppWindow::~AppWindow() {
     shutting_down_ = true;
     // A close event already saved the last visible placement. After native
     // teardown Qt can report the old platform geometry, so do not overwrite
@@ -240,9 +240,9 @@ UiPreview::~UiPreview() {
         delete engine;
 }
 
-QQuickWindow* UiPreview::window() const { return window_.data(); }
+QQuickWindow* AppWindow::window() const { return window_.data(); }
 
-void UiPreview::setReducedMotion(bool enabled) {
+void AppWindow::setReducedMotion(bool enabled) {
     if (reduced_motion_ == enabled)
         return;
 
@@ -252,7 +252,7 @@ void UiPreview::setReducedMotion(bool enabled) {
         emit reducedMotionChanged();
 }
 
-void UiPreview::setSystemReducedMotion(bool enabled) {
+void AppWindow::setSystemReducedMotion(bool enabled) {
     if (system_reduced_motion_ == enabled)
         return;
 
@@ -260,28 +260,28 @@ void UiPreview::setSystemReducedMotion(bool enabled) {
     emit reducedMotionChanged();
 }
 
-bool UiPreview::load() {
+bool AppWindow::load() {
     if (shutting_down_)
         return false;
     if (engine_) {
-        qWarning() << "UiPreview load rejected: initial load has already completed";
+        qWarning() << "AppWindow load rejected: initial load has already completed";
         return false;
     }
 
     return loadCandidate();
 }
 
-bool UiPreview::reload() {
+bool AppWindow::reload() {
     if (shutting_down_)
         return false;
     if (!active()) {
-        qWarning() << "UiPreview reload rejected: preview mode is not active";
+        qWarning() << "AppWindow reload rejected: preview mode is not active";
         return false;
     }
 
     if (!isLocalSource(options_.source)) {
         const QString message =
-            QStringLiteral("UiPreview reload rejected: source is not a local file URL: %1")
+            QStringLiteral("AppWindow reload rejected: source is not a local file URL: %1")
                 .arg(options_.source.toString());
         qWarning().noquote() << message;
         return false;
@@ -290,7 +290,7 @@ bool UiPreview::reload() {
     return loadCandidate();
 }
 
-bool UiPreview::assignTerminalFocus() {
+bool AppWindow::assignTerminalFocus() {
     if (shutting_down_)
         return false;
     QQuickWindow* target_window = window();
@@ -320,7 +320,7 @@ bool UiPreview::assignTerminalFocus() {
     return terminal->hasActiveFocus();
 }
 
-void UiPreview::deferTerminalFocus() {
+void AppWindow::deferTerminalFocus() {
     if (shutting_down_)
         return;
     QMetaObject::invokeMethod(
@@ -333,7 +333,7 @@ void UiPreview::deferTerminalFocus() {
         Qt::QueuedConnection);
 }
 
-bool UiPreview::eventFilter(QObject* watched, QEvent* event) {
+bool AppWindow::eventFilter(QObject* watched, QEvent* event) {
     if (watched == QCoreApplication::instance()) {
         if (event->type() == QEvent::Quit)
             quitting_ = true;
@@ -367,7 +367,7 @@ bool UiPreview::eventFilter(QObject* watched, QEvent* event) {
     return false;
 }
 
-bool UiPreview::openSettings() {
+bool AppWindow::openSettings() {
     if (shutting_down_)
         return false;
     QQuickWindow* target_window = window();
@@ -389,11 +389,11 @@ bool UiPreview::openSettings() {
            QMetaObject::invokeMethod(root, "openSettingsDialog", Qt::DirectConnection);
 }
 
-bool UiPreview::geometryPersistenceEnabled() const {
+bool AppWindow::geometryPersistenceEnabled() const {
     return options_.persistGeometry && !active() && options_.screen.isEmpty();
 }
 
-void UiPreview::restoreGeometry(QQuickWindow& target) {
+void AppWindow::restoreGeometry(QQuickWindow& target) {
     if (options_.geometryPath.isEmpty())
         options_.geometryPath =
             QDir(data_directory()).filePath(QStringLiteral("runtime/window.json"));
@@ -422,7 +422,7 @@ void UiPreview::restoreGeometry(QQuickWindow& target) {
         target.setWindowState(Qt::WindowMaximized);
 }
 
-void UiPreview::saveGeometry() {
+void AppWindow::saveGeometry() {
     if (!geometryPersistenceEnabled() || window_ == nullptr)
         return;
     // Native configure notifications can lag a requested move or resize. The
@@ -455,22 +455,22 @@ void UiPreview::saveGeometry() {
         qWarning() << "Could not save window geometry:" << file.errorString();
 }
 
-void UiPreview::rememberGeometry() {
+void AppWindow::rememberGeometry() {
     if (window_ && window_->windowState() == Qt::WindowNoState)
         normal_geometry_ = window_->geometry();
 }
 
-void UiPreview::configureGeometry(QQuickWindow& target, bool reloading) {
+void AppWindow::configureGeometry(QQuickWindow& target, bool reloading) {
     if (!reloading && geometryPersistenceEnabled())
         restoreGeometry(target);
-    connect(&target, &QWindow::xChanged, this, &UiPreview::rememberGeometry);
-    connect(&target, &QWindow::yChanged, this, &UiPreview::rememberGeometry);
-    connect(&target, &QWindow::widthChanged, this, &UiPreview::rememberGeometry);
-    connect(&target, &QWindow::heightChanged, this, &UiPreview::rememberGeometry);
+    connect(&target, &QWindow::xChanged, this, &AppWindow::rememberGeometry);
+    connect(&target, &QWindow::yChanged, this, &AppWindow::rememberGeometry);
+    connect(&target, &QWindow::widthChanged, this, &AppWindow::rememberGeometry);
+    connect(&target, &QWindow::heightChanged, this, &AppWindow::rememberGeometry);
     rememberGeometry();
 }
 
-void UiPreview::publishWarnings(const QList<QQmlError>& warnings) {
+void AppWindow::publishWarnings(const QList<QQmlError>& warnings) {
     for (const QQmlError& warning : warnings)
         qWarning().noquote() << warning.toString();
     if (publishing_diagnostics_)
@@ -484,9 +484,9 @@ void UiPreview::publishWarnings(const QList<QQmlError>& warnings) {
 }
 
 // What QML reads by name. An absent object is left undefined; QML falls back.
-void UiPreview::exposeObjects(QQmlContext& context) {
+void AppWindow::exposeObjects(QQmlContext& context) {
     context.setContextProperty(QStringLiteral("workspace"), &workspace_);
-    context.setContextProperty(QStringLiteral("preview"), this);
+    context.setContextProperty(QStringLiteral("app"), this);
     // QML reads `keymap.actionSequences(...)`. Absent keymap keeps the literals.
     const std::array<std::pair<const char*, QObject*>, 8> optional{{
         {"keymap", options_.keymap},
@@ -503,7 +503,7 @@ void UiPreview::exposeObjects(QQmlContext& context) {
             context.setContextProperty(QString::fromLatin1(name), object);
 }
 
-bool UiPreview::loadCandidate() {
+bool AppWindow::loadCandidate() {
     std::unique_ptr<QQmlApplicationEngine> candidate = std::make_unique<QQmlApplicationEngine>();
     exposeObjects(*candidate->rootContext());
     candidate->setInitialProperties({{QStringLiteral("visible"), false}});
@@ -577,7 +577,7 @@ bool UiPreview::loadCandidate() {
         },
         Qt::DirectConnection);
     QObject::connect(candidate.get(), &QQmlApplicationEngine::warnings, this,
-                     &UiPreview::publishWarnings);
+                     &AppWindow::publishWarnings);
 
     const QPointer<QQuickWindow> acceptedWindow = candidateWindow;
     setDiagnostics(candidateDiagnostics);

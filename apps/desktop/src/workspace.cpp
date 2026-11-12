@@ -750,7 +750,7 @@ QString Workspace::defaultEndpoint() {
 Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
     : restore_agents_(options.restoreAgents), update_harnesses_(options.updateHarnesses),
       headless_(options.headless), update_timeout_ms_(std::max(qint64{1}, options.updateTimeoutMs)),
-      preview_mode_(mode == WorkspaceMode::preview) {
+      fixture_mode_(mode == WorkspaceMode::fixture) {
     transcript_ = new TranscriptModel(this);
     // Before selecting clears the arriving agent's unseen mark, so a choice
     // is recorded with the state the person chose from.
@@ -771,10 +771,10 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
             QString::fromUtf8(title), QString::fromUtf8(directory), QString::fromUtf8(activity),
             QColor(QString::fromLatin1(accent)), content));
     };
-    if (preview_mode_ && (options.launch || !options.endpoint.isEmpty()))
+    if (fixture_mode_ && (options.launch || !options.endpoint.isEmpty()))
         throw std::invalid_argument("UI preview cannot launch or attach to a process");
     categories_.push_back({QStringLiteral("general"), QStringLiteral("General"), {}});
-    if (!preview_mode_) {
+    if (!fixture_mode_) {
         if (options.launch || !options.endpoint.isEmpty()) {
             const auto launch = options.launch ? session::validate_launch(*options.launch)
                                                : session::shell_launch(rootDirectory());
@@ -1027,7 +1027,7 @@ void Workspace::settleChoice() {
         tab_ranker_->recordChoice(candidates, static_cast<std::size_t>(chosen - candidates.begin()),
                                   via_tab);
 }
-bool Agent::addPreviewRequest(const QString& id, const QString& reason) {
+bool Agent::addFixtureRequest(const QString& id, const QString& reason) {
     if (id.isEmpty() || id.size() > 64 || reason.size() > 256 || requests_.contains(id) ||
         requests_.size() >= 8)
         return false;
@@ -1037,13 +1037,13 @@ bool Agent::addPreviewRequest(const QString& id, const QString& reason) {
     emit attentionArrived();
     return true;
 }
-bool Agent::resolvePreviewRequest(const QString& id) {
+bool Agent::resolveFixtureRequest(const QString& id) {
     if (requests_.remove(id) == 0)
         return false;
     emit attentionChanged();
     return true;
 }
-void Agent::clearPreviewRequests() {
+void Agent::clearFixtureRequests() {
     if (requests_.isEmpty())
         return;
     requests_.clear();
@@ -1055,16 +1055,16 @@ Agent* Workspace::session(const QString& id) const {
             return item.get();
     return nullptr;
 }
-bool Workspace::requestAttention(const PreviewRequest& request) {
+bool Workspace::requestAttention(const FixtureRequest& request) {
     auto* target = session(request.session_id);
-    return preview_mode_ && target && target->addPreviewRequest(request.request_id, request.reason);
+    return fixture_mode_ && target && target->addFixtureRequest(request.request_id, request.reason);
 }
-bool Workspace::resolveAttention(const PreviewRequest& request) {
+bool Workspace::resolveAttention(const FixtureRequest& request) {
     auto* target = session(request.session_id);
-    return preview_mode_ && target && target->resolvePreviewRequest(request.request_id);
+    return fixture_mode_ && target && target->resolveFixtureRequest(request.request_id);
 }
 bool Workspace::replayAttention(const QString& scenario) {
-    if (!preview_mode_)
+    if (!fixture_mode_)
         return false;
     if (scenario == QStringLiteral("arrival") || scenario == QStringLiteral("duplicate"))
         return requestAttention({QStringLiteral("agent"), QStringLiteral("request-1"),
@@ -1079,7 +1079,7 @@ bool Workspace::replayAttention(const QString& scenario) {
         return resolveAttention({QStringLiteral("agent"), QStringLiteral("request-1"), {}});
     if (scenario == QStringLiteral("reset")) {
         for (const auto& item : sessions_)
-            item->clearPreviewRequests();
+            item->clearFixtureRequests();
         return true;
     }
     return false;
@@ -1405,7 +1405,7 @@ bool Workspace::followConversationTitle(const QString& id, QStringView title) {
     constexpr qsizetype limit = 80;
     auto* item = session(id);
     const auto entry = agents_.find(id);
-    if (item == nullptr || entry == agents_.end() || entry->named || preview_mode_)
+    if (item == nullptr || entry == agents_.end() || entry->named || fixture_mode_)
         return false;
     const bool was_auto = entry->auto_title;
     auto name = conversations::elide_title(title.toString().simplified(), limit);
@@ -1860,7 +1860,7 @@ std::optional<Workspace::ResumeLaunch> Workspace::agentLaunch(const AgentRequest
 QString Workspace::startAgent(const AgentRequest& request) {
     if (!mutableRegistry())
         return {};
-    if (preview_mode_)
+    if (fixture_mode_)
         return failed(QStringLiteral("Agent launch is disabled in the preview fixture."));
     if (sessions_.size() >= 128 || !validName(request.title))
         return failed(QStringLiteral(
@@ -2139,7 +2139,7 @@ QString Workspace::agentFolder(const QString& id) const {
 bool Workspace::restartAgent(const QString& id) {
     if (!mutableRegistry())
         return false;
-    if (preview_mode_ || storage_path_.isEmpty())
+    if (fixture_mode_ || storage_path_.isEmpty())
         return fail(QStringLiteral("Restart requires a persisted workspace."));
     const auto entry = agents_.find(id);
     auto* item = session(id);
@@ -2418,7 +2418,7 @@ void Workspace::reattachIfDisconnected(const QString& id) {
     using namespace std::chrono_literals;
     constexpr std::array waits{1s, 2s, 5s, 10s, 30s};
     auto* item = session(id);
-    if (item == nullptr || preview_mode_ || headless_ || !agents_.contains(id))
+    if (item == nullptr || fixture_mode_ || headless_ || !agents_.contains(id))
         return;
     auto& attempts = reattaches_[id];
     const auto& state = item->connectionState();
@@ -3136,7 +3136,7 @@ Agent::StatusSource Workspace::statusSource(const AgentRecord& agent) {
 }
 // Command-Shift-T brings it back, resuming its conversation where it can.
 void Workspace::rememberClosed(const AgentRecord& agent, const QString& title) {
-    if (preview_mode_)
+    if (fixture_mode_)
         return;
     auto plan = restoredLaunch(agent);
     if (!plan)
@@ -3296,7 +3296,7 @@ QJsonArray Workspace::saveClosed() const {
 }
 
 void Workspace::restoreClosed(const QJsonArray& closed) {
-    if (preview_mode_ || !closed_.empty())
+    if (fixture_mode_ || !closed_.empty())
         return;
     for (const auto& value : closed) {
         try {

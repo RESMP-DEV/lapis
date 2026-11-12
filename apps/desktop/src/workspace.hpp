@@ -222,9 +222,9 @@ class Agent final : public QObject {
     [[nodiscard]] QString attentionReason() const;
     [[nodiscard]] quint32 attentionSerial() const { return attention_serial_; }
     [[nodiscard]] int attentionCount() const;
-    bool addPreviewRequest(const QString& id, const QString& reason);
-    bool resolvePreviewRequest(const QString& id);
-    void clearPreviewRequests();
+    bool addFixtureRequest(const QString& id, const QString& reason);
+    bool resolveFixtureRequest(const QString& id);
+    void clearFixtureRequests();
     [[nodiscard]] bool liveSnapshotReady() const { return live_snapshot_ready_; }
     [[nodiscard]] bool historyActive() const { return history_active_; }
     [[nodiscard]] bool historyRequestPending() const { return history_request_pending_; }
@@ -353,9 +353,9 @@ class Agent final : public QObject {
     QTimer decode_timer_;
 };
 
-enum class WorkspaceMode : std::uint8_t { live, preview };
+enum class WorkspaceMode : std::uint8_t { live, fixture };
 
-struct PreviewRequest {
+struct FixtureRequest {
     QString session_id;
     QString request_id;
     QString reason;
@@ -424,7 +424,7 @@ class Workspace final : public QObject {
     Q_PROPERTY(QVariantList categorySessions READ categorySessions NOTIFY sessionsChanged)
     Q_PROPERTY(QString activeCategoryId READ activeCategoryId NOTIFY categoryChanged)
     Q_PROPERTY(QString workspaceError READ workspaceError NOTIFY errorChanged)
-    Q_PROPERTY(bool previewMode READ previewMode CONSTANT)
+    Q_PROPERTY(bool fixtureMode READ fixtureMode CONSTANT)
     Q_PROPERTY(QString homeDirectory READ homeDirectory CONSTANT)
     Q_PROPERTY(int focusedIndex READ focusedIndex NOTIFY focusChanged)
     Q_PROPERTY(lapis::desktop::Agent* focusedSession READ focusedSession NOTIFY focusChanged)
@@ -436,15 +436,15 @@ class Workspace final : public QObject {
   public:
     explicit Workspace(WorkspaceMode mode = WorkspaceMode::live, WorkspaceOptions options = {});
     ~Workspace() override;
-    [[nodiscard]] bool previewMode() const { return preview_mode_; }
+    [[nodiscard]] bool fixtureMode() const { return fixture_mode_; }
     [[nodiscard]] QString homeDirectory() const;
     Q_INVOKABLE [[nodiscard]] QVariantList availableHarnesses() const;
     [[nodiscard]] std::vector<ModelChoice> modelChoices(const QString& harness) const;
     Q_INVOKABLE [[nodiscard]] QString displayPath(const QString& directory) const;
     [[nodiscard]] Agent* session(const QString& id) const;
     // Development fixture v1 only. No calls are accepted in a live workspace.
-    bool requestAttention(const PreviewRequest& request);
-    bool resolveAttention(const PreviewRequest& request);
+    bool requestAttention(const FixtureRequest& request);
+    bool resolveAttention(const FixtureRequest& request);
     Q_INVOKABLE bool replayAttention(const QString& scenario);
     [[nodiscard]] QVariantList categories() const;
     [[nodiscard]] QVariantList categorySessions() const;
@@ -845,7 +845,7 @@ class Workspace final : public QObject {
     void watchNetwork();
     void retryConnectionsNow();
     int focused_index_{-1};
-    bool preview_mode_{};
+    bool fixture_mode_{};
 };
 
 } // namespace lapis::desktop

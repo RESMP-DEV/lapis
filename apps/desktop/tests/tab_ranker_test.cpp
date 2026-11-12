@@ -138,7 +138,7 @@ void logsMovesAndChoices() {
 // observer reports as working) never is, even unseen and with a guess; a
 // request always is.
 void tabAwayChoosesOnlyAgentsWaitingOnYou() {
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     workspace.setTabAway({});
     require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
     lapis::session::wire::AttentionSnapshot state;
@@ -161,7 +161,7 @@ void tabAwayChoosesOnlyAgentsWaitingOnYou() {
     require(workspace.focusedSession()->sessionId() == QLatin1String("renderer"),
             "Tab with nothing waiting stays");
     require(workspace.session(QStringLiteral("checks"))
-                ->addPreviewRequest(QStringLiteral("r1"), QStringLiteral("approve")),
+                ->addFixtureRequest(QStringLiteral("r1"), QStringLiteral("approve")),
             "fixture request");
     const auto unavailableRequest = [](const char* id) {
         lapis::session::wire::AttentionSnapshot unavailable;
@@ -185,10 +185,10 @@ void tabAwayChoosesOnlyAgentsWaitingOnYou() {
                 workspace.focusedSession()->sessionId() == QLatin1String("checks"),
             "ended and unknown agents are not request candidates");
     require(workspace.selectSession(QStringLiteral("renderer")), "return to the start");
-    workspace.session(QStringLiteral("checks"))->clearPreviewRequests();
+    workspace.session(QStringLiteral("checks"))->clearFixtureRequests();
     require(!workspace.nextPriorityAttention(guesses), "only the still-unusable requests remain");
     require(workspace.session(QStringLiteral("checks"))
-                ->addPreviewRequest(QStringLiteral("r2"), QStringLiteral("approve")),
+                ->addFixtureRequest(QStringLiteral("r2"), QStringLiteral("approve")),
             "restore a usable request");
     require(workspace.nextPriorityAttention(guesses) &&
                 workspace.focusedSession()->sessionId() == QLatin1String("checks"),
@@ -200,7 +200,7 @@ void tabAwayChoosesOnlyAgentsWaitingOnYou() {
 // at work), Tab moves on to the next waiting agent, and with nothing else
 // waiting stays.
 void tabAwayPutsWorkFirst() {
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     workspace.setTabAway({});
     workspace.setChoiceSettleMsForTesting(20);
     require(workspace.addCategory(QStringLiteral("Work")), "add a work category");
@@ -289,7 +289,7 @@ void appendFailureLeavesTheLogUnchanged() {
 // Looked at and left: an agent whose finished turn the person stayed on is
 // parked until it next begins to wait, so Tab passes it over.
 void parkedAgentsWaitForTheirNextTurn() {
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     workspace.setParkAfterMsForTesting(30);
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;

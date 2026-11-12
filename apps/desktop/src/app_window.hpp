@@ -1,5 +1,5 @@
-#ifndef LAPIS_DESKTOP_UI_PREVIEW_HPP
-#define LAPIS_DESKTOP_UI_PREVIEW_HPP
+#ifndef LAPIS_DESKTOP_APP_WINDOW_HPP
+#define LAPIS_DESKTOP_APP_WINDOW_HPP
 
 #include "keymap.hpp"
 #include "workspace.hpp"
@@ -19,7 +19,7 @@ class QQmlError;
 class QQuickWindow;
 
 namespace lapis::desktop {
-struct UiPreviewOptions {
+struct AppWindowOptions {
     QUrl source;
     bool compact{};
     // Case-insensitive substring of the target QScreen name, for example
@@ -46,7 +46,7 @@ struct UiPreviewOptions {
 
 // View host shared by normal launch and the isolated development fixture.
 // Workspace outlives this host. QML types are registered by main before load().
-class UiPreview final : public QObject {
+class AppWindow final : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool active READ active CONSTANT)
     Q_PROPERTY(
@@ -57,9 +57,9 @@ class UiPreview final : public QObject {
     // Installed fixed-pitch families offered by Appearance, sorted by name.
     Q_PROPERTY(QStringList monospaceFamilies READ monospaceFamilies CONSTANT)
   public:
-    UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* parent = nullptr);
-    ~UiPreview() override;
-    [[nodiscard]] bool active() const { return workspace_.previewMode(); }
+    AppWindow(Workspace& workspace, AppWindowOptions options, QObject* parent = nullptr);
+    ~AppWindow() override;
+    [[nodiscard]] bool active() const { return workspace_.fixtureMode(); }
     [[nodiscard]] bool reducedMotion() const { return system_reduced_motion_ || reduced_motion_; }
     [[nodiscard]] bool systemReducedMotion() const { return system_reduced_motion_; }
     void setReducedMotion(bool enabled);
@@ -97,7 +97,7 @@ class UiPreview final : public QObject {
     void saveGeometry();
     QRect normal_geometry_;
     Workspace& workspace_;
-    UiPreviewOptions options_;
+    AppWindowOptions options_;
     std::unique_ptr<QQmlApplicationEngine> engine_;
     QPointer<QQuickWindow> window_;
     QString diagnostics_;

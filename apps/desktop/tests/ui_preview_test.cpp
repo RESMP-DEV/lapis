@@ -1,3 +1,4 @@
+#include "app_window.hpp"
 #include "conversation_index.hpp"
 #include "gui_state.hpp"
 #include "keymap.hpp"
@@ -6,7 +7,6 @@
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include "terminals.hpp"
-#include "ui_preview.hpp"
 #include "workspace.hpp"
 #include <QAccessible>
 #include <QElapsedTimer>
@@ -80,8 +80,8 @@ QString write_qml(const QTemporaryDir& directory, const QString& name, QStringVi
 }
 
 int run_workspace_tests() {
-    lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::preview);
-    CHECK(workspace.previewMode());
+    lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::fixture);
+    CHECK(workspace.fixtureMode());
     CHECK(workspace.focusedIndex() == 0);
     CHECK(workspace.focusedSession() != nullptr);
     const int session_count = static_cast<int>(workspace.sessions().size());
@@ -190,16 +190,16 @@ int run_workspace_tests() {
 }
 
 int run_ui_tests() {
-    lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::preview);
+    lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::fixture);
     QTemporaryDir directory;
     CHECK(directory.isValid());
     const QString qml_path =
         write_qml(directory, QStringLiteral("valid.qml"),
                   QStringLiteral("import QtQuick\nWindow { id: root; objectName: \"preview-root\"; "
                                  "width: 481; height: 313; visible: false\nfunction reloadNow() { "
-                                 "preview.reload(); return 7; }\n}"));
+                                 "app.reload(); return 7; }\n}"));
 
-    lapis::desktop::UiPreview preview(
+    lapis::desktop::AppWindow preview(
         workspace, {.source = QUrl::fromLocalFile(qml_path), .compact = true, .screen = QString()});
     CHECK(preview.active());
     CHECK(!preview.reducedMotion());
@@ -212,7 +212,7 @@ int run_ui_tests() {
 
     QScreen* selected = QGuiApplication::primaryScreen();
     if (selected != nullptr && !selected->name().isEmpty()) {
-        lapis::desktop::UiPreview placed(
+        lapis::desktop::AppWindow placed(
             workspace,
             {.source = QUrl::fromLocalFile(qml_path), .compact = true, .screen = selected->name()});
         CHECK(placed.load());
@@ -226,7 +226,7 @@ int run_ui_tests() {
         placed.window()->hide();
     }
 
-    lapis::desktop::UiPreview unmatched(workspace, {.source = QUrl::fromLocalFile(qml_path),
+    lapis::desktop::AppWindow unmatched(workspace, {.source = QUrl::fromLocalFile(qml_path),
                                                     .compact = true,
                                                     .screen = QStringLiteral("no-such-screen")});
     CHECK(unmatched.load());
@@ -238,7 +238,7 @@ int run_ui_tests() {
     const bool manual_reduced_motion = !preview.reducedMotion();
     int reduced_motion_changes = 0;
     const QMetaObject::Connection reduced_connection =
-        QObject::connect(&preview, &lapis::desktop::UiPreview::reducedMotionChanged,
+        QObject::connect(&preview, &lapis::desktop::AppWindow::reducedMotionChanged,
                          [&reduced_motion_changes] { ++reduced_motion_changes; });
     CHECK(reduced_connection);
     preview.setReducedMotion(manual_reduced_motion);
@@ -265,7 +265,7 @@ int run_ui_tests() {
     write_qml(directory, QStringLiteral("valid.qml"),
               QStringLiteral("import QtQuick\nWindow { id: root; objectName: \"preview-root\"; "
                              "width: 481; height: 313; visible: false\nfunction reloadNow() { "
-                             "preview.reload(); return 7; }\n}"));
+                             "app.reload(); return 7; }\n}"));
     QPointer<QQuickWindow> old_window(window);
     CHECK(QMetaObject::invokeMethod(window, "reloadNow"));
     CHECK(preview.window() != nullptr);
@@ -275,10 +275,9 @@ int run_ui_tests() {
     CHECK(preview.window()->objectName() == QStringLiteral("preview-root"));
     CHECK(preview.window()->geometry() == preserved_geometry);
     write_qml(directory, QStringLiteral("valid.qml"),
-              QStringLiteral(
-                  "import QtQuick\nWindow { visible: false; "
-                  "property int invalidBinding: missingValue; "
-                  "function reloadTwice() { preview.reload(); preview.reload(); return 7; } }"));
+              QStringLiteral("import QtQuick\nWindow { visible: false; "
+                             "property int invalidBinding: missingValue; "
+                             "function reloadTwice() { app.reload(); app.reload(); return 7; } }"));
     CHECK(preview.reload());
     CHECK(!preview.diagnostics().isEmpty());
     QPointer<QQuickWindow> twice = preview.window();
@@ -406,8 +405,8 @@ int run_attention_dialog_tests() {
     using namespace lapis::desktop;
     namespace wire = lapis::session::wire;
     namespace attention = lapis::session::attention;
-    Workspace workspace(WorkspaceMode::preview);
-    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+    Workspace workspace(WorkspaceMode::fixture);
+    AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = true,
                                   .screen = QString()});
     CHECK(preview.load());
@@ -646,7 +645,7 @@ void check_terminal_font_controls(QQuickWindow& window, lapis::desktop::KeyMap& 
 // workspace changes. Opening either resolves the entries for the state the
 // user would see, including a category with no focused agent.
 void check_lazy_command_models(QQuickWindow& window, lapis::desktop::Workspace& workspace,
-                               lapis::desktop::UiPreview& preview) {
+                               lapis::desktop::AppWindow& preview) {
     auto* commands = window.findChild<QObject*>(QStringLiteral("commandsDialog"));
     auto* settings = window.findChild<QObject*>(QStringLiteral("settingsDialog"));
     CHECK(commands != nullptr && settings != nullptr);
@@ -768,7 +767,7 @@ void check_lazy_command_models(QQuickWindow& window, lapis::desktop::Workspace& 
 
 int run_shortcut_focus_tests() {
     using namespace lapis::desktop;
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     QTemporaryDir directory;
     CHECK(directory.isValid());
     write_config(directory, QStringLiteral(R"({"version":1,"layout":"focus","theme":"lapis",)"
@@ -777,7 +776,7 @@ int run_shortcut_focus_tests() {
     keymap.setSourcePathForTesting(directory.filePath(QStringLiteral("lapis.json")));
     CHECK(keymap.load());
 
-    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+    AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = true,
                                   .screen = QString(),
                                   .keymap = &keymap});
@@ -1016,7 +1015,7 @@ int run_surface_tests(bool background) {
         CHECK(terminal_text_key(event) == item.expected);
     }
 
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     QQuickWindow window;
     window.resize(420, 220);
     auto* surface = new TerminalSurface(window.contentItem()); // parent owns it
@@ -1378,7 +1377,7 @@ void check_text_size(QQuickWindow& window, lapis::desktop::Workspace& workspace,
     pump(40);
 }
 void check_composition_navigation(lapis::desktop::Workspace& workspace,
-                                  lapis::desktop::UiPreview& preview,
+                                  lapis::desktop::AppWindow& preview,
                                   lapis::desktop::TerminalSurface& terminal) {
     using namespace lapis::desktop;
     QTemporaryDir directory;
@@ -1593,12 +1592,12 @@ void wait_tab_visible(QQuickItem& tab, QQuickItem& view) {
 
 int run_attention_ui_tests() {
     using namespace lapis::desktop;
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     QTemporaryDir palette_config;
     CHECK(palette_config.isValid());
     KeyMap keymap;
     keymap.setSourcePathForTesting(palette_config.filePath(QStringLiteral("palette.json")));
-    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+    AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
                                   .keymap = &keymap});
@@ -2278,7 +2277,7 @@ void wait_ready(lapis::desktop::ConversationIndex& conversations) {
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int run_strip_ui_tests() {
     using namespace lapis::desktop;
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     // Leave room for terminal IDs inside the POSIX local-socket path limit.
     QTemporaryDir config(QStringLiteral("/tmp/lapis-ui-XXXXXX"));
     CHECK(config.isValid());
@@ -2292,7 +2291,7 @@ int run_strip_ui_tests() {
     Terminals terminals(config.filePath(QStringLiteral("runtime")),
                         config.filePath(QStringLiteral("ssh_config")));
     terminals.setShellForTesting(config.filePath(QStringLiteral("shell")));
-    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+    AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
                                   .keymap = &keymap,
@@ -2540,18 +2539,18 @@ Window {
     width: 200; height: 200
     function warn() { throw new Error("runtime fixture warning") }
     Connections {
-        target: preview
+        target: app
         function onDiagnosticsChanged() { throw new Error("diagnostics fixture warning") }
     }
     Timer { interval: 1; running: true; onTriggered: warningWindow.warn() }
 }
 )"));
-    lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::preview);
-    lapis::desktop::UiPreview preview(
+    lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::fixture);
+    lapis::desktop::AppWindow preview(
         workspace, {.source = QUrl::fromLocalFile(path), .compact = true, .screen = QString()});
     int notifications = 0;
     QObject observation;
-    QObject::connect(&preview, &lapis::desktop::UiPreview::diagnosticsChanged, &observation,
+    QObject::connect(&preview, &lapis::desktop::AppWindow::diagnosticsChanged, &observation,
                      [&] { ++notifications; });
     CHECK(preview.load());
     QElapsedTimer deadline;
@@ -2593,7 +2592,7 @@ int run_history_ui_tests() {
     Workspace workspace(WorkspaceMode::live, options);
     KeyMap keymap;
     keymap.setSourcePathForTesting(root.filePath(QStringLiteral("lapis.json")));
-    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+    AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
                                   .keymap = &keymap});
@@ -2726,7 +2725,7 @@ int run_restored_suggestion_tests() {
         script.write("#!/bin/sh\nprintf '%s' '{\"conversation\":\"c\",\"turn\":3}'\n");
     }
     CHECK(QFile::setPermissions(python, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
-    Workspace workspace(WorkspaceMode::preview);
+    Workspace workspace(WorkspaceMode::fixture);
     auto* agent = workspace.session(QStringLiteral("agent"));
     CHECK(agent != nullptr);
     agent->setHarnessId(QStringLiteral("claude"));
@@ -2768,7 +2767,7 @@ int run_restored_suggestion_tests() {
     GuiState state(path);
     CHECK(state.load());
     next.restoreState(state.section(QStringLiteral("nextPrompt")).toObject());
-    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+    AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
                                   .nextPrompt = &next,
