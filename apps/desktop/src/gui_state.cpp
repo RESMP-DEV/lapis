@@ -1,5 +1,6 @@
 #include "gui_state.hpp"
 
+#include "platform/posix/private_file.hpp"
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -7,7 +8,6 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
-#include <QSaveFile>
 #include <QThreadPool>
 
 #include <algorithm>
@@ -36,20 +36,14 @@ struct GuiState::Writer {
     QString path;
 
     static void store(const QString& path, const QByteArray& bytes) {
-        QDir().mkpath(QFileInfo(path).absolutePath(),
-                      QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-        QSaveFile file(path);
-        if (!file.open(QIODevice::WriteOnly)) {
-            qWarning().noquote() << "Window state not saved:" << file.errorString();
+        if (!QDir().mkpath(QFileInfo(path).absolutePath(),
+                           QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner)) {
+            qWarning().noquote() << "Window state not saved: cannot create" << path;
             return;
         }
-        if (!file.setPermissions(QFile::ReadOwner | QFile::WriteOwner)) {
-            qWarning().noquote() << "Window state not saved: cannot make it private";
-            file.cancelWriting();
-            return;
-        }
-        if (file.write(bytes) != bytes.size() || !file.commit())
-            qWarning().noquote() << "Window state not saved:" << file.errorString();
+        QString error;
+        if (!session::posix::write_private_file(path, bytes, &error))
+            qWarning().noquote() << "Window state not saved:" << error;
     }
     // Runs on a pool thread until nothing waits.
     void drain() {

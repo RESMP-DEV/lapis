@@ -1,5 +1,6 @@
 #include "agent_checkpoint.hpp"
 
+#include "platform/posix/private_file.hpp"
 #include "platform/posix/unique_fd.hpp"
 #include <QDir>
 #include <QFile>
@@ -7,7 +8,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
-#include <QSaveFile>
 #include <QSysInfo>
 #include <algorithm>
 #include <array>
@@ -261,10 +261,10 @@ void write_resume_record(const QString& endpoint, const ResumeRecord& record) {
         {"agent", record.agent},
         {"session_id", record.session_id},
         {"source", record.source == ResumeSource::observer ? "observer" : "terminal"}};
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly) ||
-        !file.setPermissions(QFile::ReadOwner | QFile::WriteOwner) ||
-        file.write(QJsonDocument(object).toJson(QJsonDocument::Compact)) < 0 || !file.commit())
-        throw std::runtime_error("Cannot write resume record");
+    QString error;
+    if (!posix::write_private_file(path, QJsonDocument(object).toJson(QJsonDocument::Compact),
+                                   &error))
+        throw std::runtime_error(
+            QStringLiteral("Cannot write resume record: %1").arg(error).toStdString());
 }
 } // namespace lapis::session

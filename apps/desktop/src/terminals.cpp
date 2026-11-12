@@ -1,6 +1,7 @@
 #include "terminals.hpp"
 
 #include "platform/posix/local_endpoint.hpp"
+#include "platform/posix/private_file.hpp"
 #include "workspace.hpp"
 #include <QColor>
 #include <QDir>
@@ -11,7 +12,6 @@
 #include <QJsonObject>
 #include <QLocalSocket>
 #include <QRegularExpression>
-#include <QSaveFile>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUuid>
@@ -466,18 +466,11 @@ void Terminals::save() const {
                                 {QStringLiteral("arguments"), arguments},
                                 {QStringLiteral("directory"), entry.launch.directory}});
     }
-    QSaveFile out(registryPath());
-    if (!out.open(QIODevice::WriteOnly))
-        qWarning().noquote() << "Terminals not saved:" << registryPath() << out.errorString();
-    else if (!out.setPermissions(QFile::ReadOwner | QFile::WriteOwner))
-        qWarning().noquote() << "Terminals not saved privately:" << registryPath()
-                             << out.errorString();
-    else {
-        const auto document = QJsonDocument(QJsonObject{{QStringLiteral("version"), 1},
-                                                        {QStringLiteral("terminals"), list}})
-                                  .toJson(QJsonDocument::Compact);
-        if (out.write(document) != document.size() || !out.commit())
-            qWarning().noquote() << "Terminals not saved:" << registryPath() << out.errorString();
-    }
+    const auto document = QJsonDocument(QJsonObject{{QStringLiteral("version"), 1},
+                                                    {QStringLiteral("terminals"), list}})
+                              .toJson(QJsonDocument::Compact);
+    QString error;
+    if (!session::posix::write_private_file(registryPath(), document, &error))
+        qWarning().noquote() << "Terminals not saved:" << error;
 }
 } // namespace lapis::desktop

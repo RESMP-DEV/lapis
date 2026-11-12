@@ -6,6 +6,7 @@
 #include "hook_relay.hpp"
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
+#include "platform/posix/private_file.hpp"
 #include "platform/updater_process.hpp"
 #include "terminal_hook_relay.hpp"
 #include "terminals.hpp"
@@ -43,33 +44,11 @@
 
 namespace lapis::desktop {
 namespace {
-// Writes `content` to `path` unless it already holds exactly that, owner-only.
-bool write_private_file(const QString& path, const QByteArray& content) {
-    QFile existing(path);
-    if (existing.open(QIODevice::ReadOnly)) {
-        const bool same = existing.readAll() == content;
-        existing.close();
-        if (same) {
-            if (!QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
-                qWarning() << "lapis cannot restrict" << path;
-                return false;
-            }
-            return true;
-        }
-    }
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly)) {
-        qWarning() << "lapis cannot open" << path << file.errorString();
-        return false;
-    }
-    if (file.write(content) != content.size()) {
-        qWarning() << "lapis cannot write" << path << file.errorString();
-        file.cancelWriting();
-        return false;
-    }
-    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    if (!file.commit()) {
-        qWarning() << "lapis cannot commit" << path << file.errorString();
+// Writes `content` to `path` atomically and owner-only.
+bool update_private_file(const QString& path, const QByteArray& content) {
+    QString error;
+    if (!session::posix::write_private_file(path, content, &error)) {
+        qWarning().noquote() << "lapis cannot write" << error;
         return false;
     }
     return true;
@@ -118,7 +97,7 @@ QString omp_overlay(const QString& directory) {
         return {};
     const QDir root(directory);
     const auto extension = root.filePath(QStringLiteral("omp-lapis-turns.ts"));
-    if (!write_private_file(extension, QByteArray(kOmpTurnsExtension)))
+    if (!update_private_file(extension, QByteArray(kOmpTurnsExtension)))
         return {};
     const auto path = root.filePath(QStringLiteral("omp-lapis.yml"));
     const QByteArray content =
@@ -129,7 +108,7 @@ QString omp_overlay(const QString& directory) {
         "extensions:\n  - " +
         QJsonDocument(QJsonArray{extension}).toJson(QJsonDocument::Compact).mid(1).chopped(1) +
         "\n";
-    return write_private_file(path, content) ? path : QString();
+    return update_private_file(path, content) ? path : QString();
 }
 // A fresh 32-hex-digit nonce for the terminal hook channel.
 QString hook_nonce() {
@@ -1980,12 +1959,6 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
     }
     for (const auto& kept : unreadable_agents_)
         agents.append(kept);
-    QSaveFile file(storage_path_);
-    if (!file.open(QIODevice::WriteOnly))
-        return saveError(QStringLiteral("Cannot save workspace: ") + file.errorString());
-    if (!file.setPermissions(QFile::ReadOwner | QFile::WriteOwner))
-        return saveError(QStringLiteral("Cannot make workspace registry private: ") +
-                         file.errorString());
     const auto data = QJsonDocument(QJsonObject{{"version", 2},
                                                 {"activeCategory", active_category_},
                                                 {"categories", groups},
@@ -1993,8 +1966,9 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
                           .toJson(QJsonDocument::Compact);
     if (data.size() > qint64{1024} * 1024)
         return saveError(QStringLiteral("Workspace metadata exceeds the 1 MiB limit."));
-    if (file.write(data) != data.size() || !file.commit())
-        return saveError(QStringLiteral("Cannot save workspace: ") + file.errorString());
+    QString failure;
+    if (!session::posix::write_private_file(storage_path_, data, &failure))
+        return saveError(QStringLiteral("Cannot save workspace: ") + failure);
     if (!error_.isEmpty())
         clearError();
     return true;

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-12T00:38:35Z",
+  "agent": "Codex triage parent with read-only private-file audit",
+  "base_revision": "c8a9bf5080e8659873ca76cfc429d577d77b42ca",
+  "source_revision": "9db95cfd842035bebfb7562a95ca818370ee80f3",
+  "runtime_validation_revision": "9db95cfd842035bebfb7562a95ca818370ee80f3",
+  "original_pr_head": "bde238939115fcc30c38803defcce4854c067888",
+  "scope": "PR 207 owner-only atomic writer rebased over the repaired agent API branch and hardened for verified review findings.",
+  "changed_source_manifest": {
+    "algorithm": "shasum -a 256 of: git diff --binary --full-index c8a9bf5080e8659873ca76cfc429d577d77b42ca..9db95cfd842035bebfb7562a95ca818370ee80f3 -- ':(exclude)evidence/*'",
+    "digest": "14b877e5994072950c12a3870477895d94a00488318837c555a165cc01185cab",
+    "changed_paths": 11
+  },
+  "validation": [
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py check",
+      "result": "passed; dev build, all dev CTests, clang-format, Cppcheck and every dev clang-tidy partition at the committed source",
+      "receipt": "build/reports/dev/receipt.json"
+    },
+    {
+      "command": "cmake --build --preset desktop --parallel 8 && ctest --preset desktop --output-on-failure",
+      "result": "passed; all 40 enabled desktop/session CTest cases passed, including session-private-file; eight intentionally disabled tests did not run",
+      "receipt": "interactive command output; build/desktop/Testing/Temporary/LastTest.log"
+    },
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py ui-review --json",
+      "result": "passed at source revision 9db95cfd842035bebfb7562a95ca818370ee80f3 with a clean tree; all background UI, shortcut and terminal-input cases passed",
+      "receipt": "build/reports/ui-review/20261112T003728Z-c8vhccvu/receipt.json"
+    }
+  ],
+  "repair_summary": [
+    "Use mode-bit QFileInfo::isWritable for an existing target so the QSaveFile-equivalent refusal also holds for root, unlike access(W_OK).",
+    "Anchor each relative symlink hop to the link directory and add a regression test through ../relative-target.json.",
+    "Replace internal qt_error_string with thread-safe std::generic_category().message.",
+    "Check GUI state directory creation, include write errors in resume-record exceptions, and remove the skip-if-same TOCTOU path."
+  ],
+  "non_claims": [
+    "No parent-directory fsync was added; this PR claims atomic replacement, not full rename durability.",
+    "The existing 127-hop symlink bound and cycle fallback remain unchanged; no legitimate >127-hop workload was supplied.",
+    "No native macOS GUI input or GPU presentation was exercised; UI review ran offscreen with the software scene graph."
+  ]
+}
