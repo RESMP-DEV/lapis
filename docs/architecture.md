@@ -345,6 +345,49 @@ burst with a full interval. Debounce is a separate named feature where waiting
 for quiet is intentional. Hidden panels stop drawing while their output remains
 bounded and consumable. Static scenes sleep.
 
+### Visual view loading and switching
+
+One `TranscriptModel` is re-pointed at the selected agent's conversation file;
+the desktop keeps one list view over it. Switching never waits for a parse:
+
+- **Kept threads.** Every conversation read stays parsed (its reader, file
+  offset, opened work and scroll place) while it fits `visual.keepMB` (default
+  1024 MB, counted as about three times the text the reader holds, which is
+  what the process footprint was measured to grow by) and `visual.keepThreads`
+  (default 32), least recently shown first out; the shown one is never let go.
+  Showing a kept one reads only the bytes its CLI wrote since.
+- **Cold threads.** A conversation not kept shows its end at once: about the
+  last 1 MB, read on the GUI thread (1 to 10 ms measured), further back up to
+  4 MB until it holds two turns' starts, shown from its second turn so no turn
+  is missing records before its prompt (Codex readings start at a turn's
+  `task_started`). The whole file is read on a pool thread, plus an 8 MB tail
+  first when the file is over 16 MB and the first tail is short; the whole
+  reading replaces the tail in one reset while the view keeps its place.
+- **Read ahead.** With `visual.all`, about four seconds after launch the
+  workspace hands the model every local agent's conversation, most recently
+  written first; one low-priority thread reads them whole, one at a time,
+  only into room the budget has (never pushing out one the person showed).
+  Every 5 s one kept conversation whose file grew is brought up to date on
+  that thread from a copy of its reader, only the new bytes.
+- **Making rows.** Before the rows are replaced the view gives the list no
+  height and no cache buffer, so the reset makes no delegates; placing the
+  view at its end (or its kept place) and then restoring the height makes only
+  the rows on screen. The 2000 px cache fills back in 250 ms later. A reply is
+  styled in a scratch document and copied into its row's document in one edit,
+  so its text is laid out once.
+
+Measured with `lapis_transcript_capture --switch` over 20 local
+conversations (16 Claude Code, 2 Codex, 2 Antigravity, 9 to 358 MB, 1.86 GB
+in all), offscreen with software rendering, on a machine under other load
+(load average 16 to 33; runs vary by up to 2x). In the quieter run, a switch
+to a kept thread reaches its first frame at p50 28 to 40 ms, p95 39 to 46 ms;
+before, a switch among 20 agents missed the six-thread cache and was blank for
+p50 175 ms, p95 0.84 s, and switching between two kept threads was p50 16 ms,
+p95 97 ms. A thread not read yet shows its end at p50 34 ms, p95 54 ms, the
+whole history by p95 0.79 s. Idle CPU with 19 kept: 0.25% of a core. The
+footprint with all 20 kept was 489 to 774 MB across runs (320 to 435 MB
+before with six). Native GPU presentation and a real window are not measured.
+
 ### Storage, credentials, and diagnostics
 
 Tracked `lapis.json` contains defaults only. Private workspace, window, and

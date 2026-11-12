@@ -91,6 +91,16 @@ theme.
 "visual": {"appearance": "system", "darkTheme": "terminal", "lightTheme": "claude-light", "darkWindowTheme": "oled", "lightWindowTheme": "daylight"}
 ```
 
+Two hand-written keys size the threads the visual view keeps read so switching
+agents is instant: `keepMB`, about how much memory they may take besides the
+shown one (default 1024, 0 keeps none), and `keepThreads`, how many (default
+32). The least recently shown goes first; the shown thread is always kept.
+Twenty conversations of 9 to 358 MB, all kept, measured 0.5 to 0.8 GB.
+
+```json
+"visual": {"keepMB": 1024, "keepThreads": 32}
+```
+
 ## Alerts
 
 A completed turn or request you were not looking at plays one quiet cue when

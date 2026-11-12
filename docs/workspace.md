@@ -85,6 +85,14 @@ rollout under `~/.codex/sessions`, Antigravity's
 and follows it as the agent works; anything it does not recognize shows as a
 plain block. Agents on other machines show their terminal only.
 
+Switching agents shows each thread at once. Threads stay read in memory while
+they fit a budget (`visual.keepMB` and `visual.keepThreads` in
+[config](config.md#visual-view)), so going back to one shows it where you left
+it, scrolled place and opened work included; with **all agents** shown as
+threads, lapis reads every local agent's thread ahead a few seconds after it
+opens. A thread not read yet shows its newest turns at once and the earlier
+history fills in above them a moment later without moving what is on screen.
+
 As in the Codex app, a finished turn folds to your prompt, one **Worked for
 3m 12s** line, and the final reply. A turn a background task or subagent woke
 shows only that line and the reply, with no "finished" notice. Clicking the
