@@ -3684,6 +3684,7 @@ ApplicationWindow {
                     pressReturn: () => liveTerminal.pressReturn()
                     typeText: text => liveTerminal.typeText(text)
                     sendKeys: bytes => liveTerminal.sendKeys(bytes)
+                    typedScreen: () => liveTerminal.screenLines(true)
                     interrupt: () => liveTerminal.interrupt()
                     tabAway: () => liveTerminal.tabFlow && liveTerminal.tabAway()
                     suggestion: liveTerminal.suggestion

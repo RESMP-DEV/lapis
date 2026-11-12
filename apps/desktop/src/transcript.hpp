@@ -273,9 +273,21 @@ struct Piece {
 // text above it, as the CLI shows what was sent, do not count.
 enum class Format;
 [[nodiscard]] bool composer_holds(const QStringList& screen, const QString& text, Format format);
+// What the CLI's input box holds, or empty: the same lowest marked row, then
+// the rows under it that continue it (indented, up to a rule, a blank row or
+// Codex's hint row), lines kept. A placeholder (Codex's "Ask Codex to do
+// anything", "Ask a follow-up question") counts as empty. Heuristic: read
+// from text alone, so a CLI's dimmed hint the screen does not mark as faint,
+// or a row the CLI draws differently from the fixtures, can be misread.
+[[nodiscard]] QString composer_text(const QStringList& screen, Format format);
 // Whether Codex shows a steering message waiting ("Messages to be submitted
 // after next tool call"), which Escape then sends at once as a new turn.
 [[nodiscard]] bool steer_waiting(const QStringList& screen);
+
+// Whether `record` (a prompt as the CLI saved it, or text it gave back)
+// holds `sent`: the sent text's non-empty lines, spaces collapsed and @path
+// mentions left out, appear in the record's lines as one run in order.
+[[nodiscard]] bool holds_prompt(const QString& record, const QString& sent);
 
 // How a CLI takes a message sent while it works (TranscriptModel::queueMode):
 // Claude Code queues it and reads it at its next step ("queue"); Codex steers
@@ -338,6 +350,10 @@ class Reader {
     // sent while the agent worked.
     [[nodiscard]] QStringList sent_as_written() const;
     [[nodiscard]] std::vector<bool> sent_queued() const;
+    // Forgets the prompts sent whose text `text` holds (see holds_prompt):
+    // they came back unsent (to the CLI's input box, then the bar). Returns
+    // how many went.
+    int drop_sent(const QString& text);
     // Takes over the prompts `from`, an earlier reading of the same
     // conversation (a tail this whole reading replaces), still waits for,
     // less those this reading has recorded since.
@@ -346,7 +362,9 @@ class Reader {
   protected:
     Reader(const Reader&) = default; // for clone()
     // Matches a prompt the CLI recorded (about to be pushed) against the
-    // prompts sent; see note_sent.
+    // prompts sent; see note_sent. A record that joins several (agy's queue
+    // delivered as one input, Claude Code's queue sent at once) takes every
+    // prompt whose lines it holds in a run.
     void taken(Item& prompt);
     // Starts a task for its step (task.item, else the step about to be
     // pushed); returns its index.
@@ -779,11 +797,16 @@ class TranscriptModel final : public QAbstractListModel {
     // transcript::composer_holds): a prompt sent but not taken.
     Q_INVOKABLE [[nodiscard]] bool composerHolds(const QStringList& screen,
                                                  const QString& text) const;
+    // What this CLI's input box holds (transcript::composer_text), or empty.
+    Q_INVOKABLE [[nodiscard]] QString composerText(const QStringList& screen) const;
     // Whether Codex shows a steering message waiting (transcript::steer_waiting).
     Q_INVOKABLE [[nodiscard]] bool steerWaiting(const QStringList& screen) const;
     // Reads agy's queued-message setting again; see queueMode.
     Q_INVOKABLE void refreshQueueMode();
     [[nodiscard]] const QString& queueMode() const { return queue_mode_; }
+    // Forgets the prompts sent that `text` holds: the CLI gave them back
+    // unsent and they are in the bar again (Reader::drop_sent).
+    Q_INVOKABLE void forgetSent(const QString& text);
     // When the last turn's prompt was written (ms since the epoch) while that
     // turn is still open, else 0: what "Working for" counts from.
     Q_INVOKABLE [[nodiscard]] double runningSince() const;

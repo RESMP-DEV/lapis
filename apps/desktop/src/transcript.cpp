@@ -657,7 +657,27 @@ QString prompt_words(const QString& text) {
     static const QRegularExpression mention(QStringLiteral(R"((^|\s)@("[^"]*"|\S+))"));
     return QString(text).replace(mention, QStringLiteral(" ")).simplified();
 }
+
+// A text's non-empty lines as prompt_words makes them.
+QStringList prompt_lines(const QString& text) {
+    QStringList out;
+    for (const auto& line : text.split(QLatin1Char('\n')))
+        if (auto words = prompt_words(line); !words.isEmpty())
+            out << std::move(words);
+    return out;
+}
 } // namespace
+
+bool holds_prompt(const QString& record, const QString& sent) {
+    const auto lines = prompt_lines(record);
+    const auto wanted = prompt_lines(sent);
+    if (wanted.isEmpty() || wanted.size() > lines.size())
+        return false;
+    for (qsizetype start = 0; start + wanted.size() <= lines.size(); ++start)
+        if (std::equal(wanted.begin(), wanted.end(), lines.begin() + start))
+            return true;
+    return false;
+}
 
 void Reader::taken(Item& prompt) {
     if (sent_.empty())
@@ -672,15 +692,34 @@ void Reader::taken(Item& prompt) {
         return simple == words ||
                (n >= 40 && QStringView(simple).left(n) == QStringView(words).left(n));
     };
-    const auto match = std::find_if(sent_.begin(), sent_.end(), same);
-    if (match == sent_.end())
-        return;
+    auto first = std::find_if(sent_.begin(), sent_.end(), same);
+    auto last = first;
+    if (first == sent_.end()) {
+        // One record holding several sent prompts, joined by the CLI: each
+        // it holds is taken. The sent text keeps its lines (written).
+        const auto held = [&prompt](const Sent& sent) {
+            return holds_prompt(prompt.body, sent.written);
+        };
+        first = std::find_if(sent_.begin(), sent_.end(), held);
+        if (first == sent_.end())
+            return;
+        last = std::find_if(std::make_reverse_iterator(sent_.end()),
+                            std::make_reverse_iterator(first), held)
+                   .base() -
+               1;
+    }
     if (prompt.steered)
         prompt.waited = static_cast<int>(
-            std::count_if(items_.begin() + std::min(match->at, static_cast<int>(items_.size())),
+            std::count_if(items_.begin() + std::min(first->at, static_cast<int>(items_.size())),
                           items_.end(), [](const Item& item) { return item.kind == Kind::tool; }));
     // Prompts are read in order: any sent before it are not coming.
-    sent_.erase(sent_.begin(), match + 1);
+    sent_.erase(sent_.begin(), last + 1);
+}
+
+int Reader::drop_sent(const QString& text) {
+    const auto before = sent_.size();
+    std::erase_if(sent_, [&text](const Sent& sent) { return holds_prompt(text, sent.written); });
+    return static_cast<int>(before - sent_.size());
 }
 
 int Reader::start_task(Task task) {
@@ -966,6 +1005,41 @@ bool composer_holds(const QStringList& screen, const QString& text, Format forma
                QStringView(held).left(n) == QStringView(first_line).left(n);
     }
     return false;
+}
+
+QString composer_text(const QStringList& screen, Format format) {
+    const QChar mark = format == Format::claude  ? QChar(0x276F) // ❯
+                       : format == Format::codex ? QChar(0x203A) // ›
+                                                 : QLatin1Char('>');
+    // Codex's hint row under its box ("? for shortcuts", "esc to interrupt",
+    // "42% context left") is indented as a continued line would be.
+    static const QRegularExpression hint(
+        QStringLiteral(R"(for shortcuts|context left|esc to |tab to |ctrl\s*\+|enter to )"),
+        QRegularExpression::CaseInsensitiveOption);
+    const auto rule = [](const QString& row) {
+        const auto trimmed = row.trimmed();
+        return !trimmed.isEmpty() && trimmed.at(0) == QChar(0x2500);
+    };
+    for (qsizetype row = screen.size() - 1; row >= std::max<qsizetype>(0, screen.size() - 16);
+         --row) {
+        const auto line = screen.at(row).trimmed();
+        if (!line.startsWith(mark))
+            continue;
+        QStringList lines{line.mid(1).trimmed()};
+        for (auto next = row + 1; next < screen.size(); ++next) {
+            const auto& below = screen.at(next);
+            if (below.trimmed().isEmpty() || rule(below) || !below.startsWith(QLatin1Char(' ')) ||
+                (format == Format::codex && hint.match(below).hasMatch()))
+                break;
+            lines << below.trimmed();
+        }
+        auto text = lines.join(QLatin1Char('\n')).trimmed();
+        if (format == Format::codex && (text == QLatin1String("Ask Codex to do anything") ||
+                                        text == QLatin1String("Ask a follow-up question")))
+            return {};
+        return text;
+    }
+    return {};
 }
 
 bool steer_waiting(const QStringList& screen) {
@@ -1540,6 +1614,24 @@ int ClaudeReader::add(const QByteArray& line) {
             queued_.emplace_back(text, first);
             push(std::move(item));
             return first;
+        }
+        if (operation == QLatin1String("popAll")) {
+            // The whole queue taken at once (an interrupt sends it on as one
+            // prompt, or it goes back to the input box): every entry its
+            // content holds, or all of them when it names none.
+            int changed_at = -1;
+            std::erase_if(queued_, [&](const auto& entry) {
+                if (!text.trimmed().isEmpty() && !holds_prompt(text, entry.first))
+                    return false;
+                if (entry.second >= 0) {
+                    auto& item = items_[static_cast<size_t>(entry.second)];
+                    item.queued = false;
+                    item.dropped = true;
+                    changed_at = changed_at < 0 ? entry.second : std::min(changed_at, entry.second);
+                }
+                return true;
+            });
+            return changed_at;
         }
         auto waiting = queued_.begin();
         if (operation != QLatin1String("dequeue") || !text.isEmpty())
@@ -3248,6 +3340,10 @@ bool TranscriptModel::composerHolds(const QStringList& screen, const QString& te
     return transcript::composer_holds(screen, text, format());
 }
 
+QString TranscriptModel::composerText(const QStringList& screen) const {
+    return transcript::composer_text(screen, format());
+}
+
 bool TranscriptModel::steerWaiting(const QStringList& screen) const {
     return format() == transcript::Format::codex && transcript::steer_waiting(screen);
 }
@@ -3263,6 +3359,11 @@ void TranscriptModel::refreshQueueMode() {
         return;
     queue_mode_ = std::move(mode);
     emit queueModeChanged();
+}
+
+void TranscriptModel::forgetSent(const QString& text) {
+    if (reader_->drop_sent(text) > 0)
+        notePending();
 }
 
 QVariantMap TranscriptModel::fonts() const {

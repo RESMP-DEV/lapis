@@ -402,6 +402,106 @@ void steer_is_seen() {
             "Codex's waiting steer is seen, its end-of-turn queue is not one");
 }
 
+// What each CLI's input box holds: empty for an empty box or Codex's
+// placeholder, the draft's lines otherwise, never the rows around the box.
+void input_boxes_are_read() {
+    using lapis::desktop::transcript::composer_text;
+    using lapis::desktop::transcript::Format;
+    const QString rule(66, QChar(0x2500));
+    struct Case {
+        const char* name;
+        Format format;
+        QStringList screen;
+        QString held;
+    };
+    const std::vector<Case> cases{
+        {"Claude Code, empty box under an echoed prompt",
+         Format::claude,
+         {QStringLiteral("❯ say ok"), rule, QStringLiteral("❯ "), rule},
+         {}},
+        {"Codex placeholder",
+         Format::codex,
+         {QStringLiteral("› say ok"), QStringLiteral("› Ask Codex to do anything"),
+          QStringLiteral("  ? for shortcuts")},
+         {}},
+        {"Codex follow-up placeholder",
+         Format::codex,
+         {QStringLiteral("› Ask a follow-up question"), QStringLiteral("")},
+         {}},
+        {"Codex draft of two lines above its hint row",
+         Format::codex,
+         {QStringLiteral("• Working (3s • esc to interrupt)"), QStringLiteral("› fix the test"),
+          QStringLiteral("  and the docs"), QStringLiteral("  ? for shortcuts")},
+         QStringLiteral("fix the test\nand the docs")},
+        {"agy text returned to its box, between rules",
+         Format::antigravity,
+         {QStringLiteral("> count to twenty"), QStringLiteral("Interrupted · What should "
+                                                              "Antigravity CLI do instead?"),
+          rule, QStringLiteral("> first queued"), QStringLiteral("  second queued"), rule},
+         QStringLiteral("first queued\nsecond queued")},
+        {"agy empty box with a queued line above it",
+         Format::antigravity,
+         {QStringLiteral("▸ say ok (alt+m to send immediately)"), rule, QStringLiteral(">"),
+          rule},
+         {}},
+        {"no box on the screen", Format::codex, {QStringLiteral("plain output")}, {}},
+    };
+    for (const auto& c : cases)
+        if (composer_text(c.screen, c.format) != c.held) {
+            std::fprintf(stderr, "FAIL: input box %s: got \"%s\"\n", c.name,
+                         qPrintable(composer_text(c.screen, c.format)));
+            ++failures;
+        }
+}
+
+// A record that joins several sent prompts (agy delivering its queue as one
+// input, Claude Code's queue taken whole) takes each of them; text given
+// back to the bar takes those it holds; a prompt is never taken by a record
+// that only shares words with it.
+void merged_records_take_every_prompt() {
+    using lapis::desktop::transcript::AntigravityReader;
+    using lapis::desktop::transcript::holds_prompt;
+    require(holds_prompt(QStringLiteral("first\nsecond line\n  third"),
+                         QStringLiteral("second   line\nthird")) &&
+                !holds_prompt(QStringLiteral("first\nthird"), QStringLiteral("first\nsecond")) &&
+                !holds_prompt(QStringLiteral("say ok please"), QStringLiteral("ok")) &&
+                !holds_prompt(QStringLiteral("anything"), QString()),
+            "holds_prompt: whole lines, as one run, in order");
+    AntigravityReader agy;
+    (void)agy.add(
+        R"({"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T16:00:00Z","content":"<USER_REQUEST>Build it</USER_REQUEST>"})");
+    agy.note_sent(QStringLiteral("also add tests"), true);
+    agy.note_sent(QStringLiteral("and docs\nfor both"), true);
+    agy.note_sent(QStringLiteral("not yet"), true);
+    (void)agy.add(
+        R"({"step_index":1,"type":"PLANNER_RESPONSE","created_at":"2026-11-11T16:00:05Z","content":"Built."})");
+    (void)agy.add(
+        R"({"step_index":2,"type":"USER_INPUT","created_at":"2026-11-11T16:00:06Z","content":"<USER_REQUEST>also add tests\nand docs\nfor both</USER_REQUEST>"})");
+    require(agy.sent() == QStringList{QStringLiteral("not yet")},
+            "agy's queue delivered as one input takes both bubbles it holds");
+    require(agy.drop_sent(QStringLiteral("not yet")) == 1 && agy.sent().isEmpty(),
+            "text given back to the bar takes its bubble");
+
+    ClaudeReader claude;
+    const char* const lines[] = {
+        R"({"type":"user","uuid":"u1","message":{"content":"Go"}})",
+        R"({"type":"queue-operation","operation":"enqueue","content":"first"})",
+        R"({"type":"queue-operation","operation":"enqueue","content":"second"})",
+        R"({"type":"queue-operation","operation":"popAll","content":"first\nsecond"})",
+    };
+    for (const char* line : lines)
+        (void)claude.add(line);
+    const auto& items = claude.items();
+    require(items.size() == 3 && items[1].dropped && items[2].dropped && !items[1].queued &&
+                !items[2].queued,
+            "Claude Code's popAll takes every queued prompt its content holds");
+    claude.note_sent(QStringLiteral("first"), true);
+    claude.note_sent(QStringLiteral("second"), true);
+    (void)claude.add(R"({"type":"user","uuid":"u2","message":{"content":"first\nsecond"}})");
+    require(claude.sent().isEmpty() && items.back().body == "first\nsecond",
+            "sent on as one prompt, it takes both bubbles");
+}
+
 // How each CLI takes a message sent mid-turn: agy's from its settings file,
 // read from a throwaway home.
 void queue_modes_follow_settings() {
@@ -1890,6 +1990,8 @@ int main(int argc, char** argv) {
     dialogs_are_seen();
     composers_are_read();
     steer_is_seen();
+    input_boxes_are_read();
+    merged_records_take_every_prompt();
     queue_modes_follow_settings();
     sent_prompts_are_matched();
     queued_prompts_show();

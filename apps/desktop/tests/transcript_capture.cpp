@@ -1292,7 +1292,9 @@ int check_bubble(QQuickView& view, QQuickItem* root, TranscriptModel& model,
 // Alt-M, Codex Escape); Command-Return as each CLI's send now (Codex's only
 // once its steer shows); Escape stopping with nothing typed and showing the
 // terminal otherwise, with Stop's note naming what happens to a waiting
-// message. `out`, when given, saves the bubble states as PNGs.
+// message; and for Codex and agy, text in the agent's input box pulled into
+// the bar before a send and after a stop instead of being pasted over.
+// `out`, when given, saves the bubble states as PNGs.
 int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
                    const QString& folder, const QString& out) {
     int failures = 0;
@@ -1354,7 +1356,7 @@ int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
     };
     QJSValue terminal = view.engine()->evaluate(QStringLiteral(R"((function(mark) {
         var t = { mark: mark, held: "", steer: false, submits: [], types: [], keys: [],
-                  interrupts: 0, dismissals: 0 };
+                  interrupts: 0, returned: "", dismissals: 0 };
         t.submit = function(text) { t.submits.push(text); return true };
         t.type = function(text) { t.types.push(text); t.held = text; return true };
         t.send = function(bytes) {
@@ -1364,6 +1366,7 @@ int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
         };
         t.interrupt = function() {
             t.interrupts++;
+            if (t.returned.length > 0) { t.held = t.returned; t.returned = "" }
             return true
         };
         t.press = function() { return true };
@@ -1553,9 +1556,45 @@ int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
         expect(count("dismissals") == dismissals + 1 && count("interrupts") == stops,
                what("Escape with text shows the terminal"));
         input->setProperty("text", QString());
+        if (c.mode != nullptr) // agy gives queued text back on Escape
+            fake.setProperty("returned", QStringLiteral("Plain return"));
         key(Qt::Key_Escape, Qt::NoModifier);
         expect(count("interrupts") == stops + 1 && count("dismissals") == dismissals + 1,
                what("Escape with nothing typed stops the turn"));
+        if (c.mode != nullptr) {
+            wait(300);
+            expect(input->property("text").toString() == QLatin1String("Plain return"),
+                   what("text Escape returned to agy's box comes into the bar"));
+            expect(!model.pendingPrompts().contains(QStringLiteral("Plain return")),
+                   what("and its bubble goes"));
+            expect(keys().endsWith(QStringLiteral("\u0015")) &&
+                       fake.property("held").toString().isEmpty(),
+                   what("agy's box is cleared with Control-U"));
+            shoot("returned");
+        }
+
+        // Codex and agy: a draft left in the agent's box is not pasted over.
+        // (The stops' own checks of the box, still waiting, are dropped.)
+        root->setProperty("followUps", QVariantList());
+        if (name != QLatin1String("claude")) {
+            input->setProperty("text", QStringLiteral("Mine"));
+            fake.setProperty("held", QStringLiteral("left in the box"));
+            const int submits = count("submits");
+            key(Qt::Key_Return, Qt::NoModifier);
+            expect(count("submits") == submits &&
+                       input->property("text").toString() ==
+                           QStringLiteral("left in the box\n\nMine"),
+                   what("leftover text comes into the bar, ahead of the message, unsent"));
+            wait(100);
+            expect(fake.property("held").toString().isEmpty() &&
+                       keys().endsWith(QStringLiteral("\u0015")) &&
+                       !keys().contains(QStringLiteral("\u0003")) &&
+                       !keys().contains(QStringLiteral("\u0004")),
+                   what("the box is cleared with Control-U only"));
+            key(Qt::Key_Return, Qt::NoModifier);
+            expect(last("submits") == QStringLiteral("left in the box\n\nMine"),
+                   what("then Return sends both"));
+        }
         root->setProperty("working", false);
         input->setProperty("text", QString());
         settle();

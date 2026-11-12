@@ -1157,7 +1157,8 @@ void long_pastes() {
 }
 
 // The visual view's composer: a paste with no Return (typeText), control
-// chords as their exact bytes (sendKeys), never Control-C or Control-D.
+// chords as their exact bytes (sendKeys), never Control-C or Control-D, and
+// the screen read without the faint placeholder an input box shows.
 void composer_keys() {
     Fixture f;
     QQuickWindow window;
@@ -1207,6 +1208,14 @@ void composer_keys() {
                 "Control-C, Control-D and long text must be refused");
     require(!surface.sendKeys(QString()), "An empty chord must be refused");
     require(text_frames(peer).isEmpty(), "A refused chord sent bytes");
+    // A faint placeholder is on the screen but not in the typed rows (the
+    // fixture's screen is four columns wide).
+    f.terminal.feed("\x1b[2J\x1b[H\xe2\x80\xba \x1b[2mAs\x1b[22m");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 2, f.terminal.snapshot()}));
+    until([&] { return surface.screenLines().value(0) == QStringLiteral("› As"); });
+    require(surface.screenLines(true).value(0).trimmed() == QStringLiteral("›"),
+            "Typed rows must leave faint text out");
 }
 
 // Typing returns a scrolled-back full-screen program to its bottom before the

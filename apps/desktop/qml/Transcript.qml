@@ -44,9 +44,11 @@ FocusScope {
     property var pressReturn: null
     // typeText(text) pastes into the agent's input box with no Return;
     // sendKeys(bytes) sends a control chord (never Control-C or -D, which
-    // quit a CLI).
+    // quit a CLI); typedScreen() is screen() without faint text, so a
+    // placeholder in the input box does not read as text it holds.
     property var typeText: null
     property var sendKeys: null
+    property var typedScreen: null
     // lapis's predicted next prompt (Tab), shown in the empty bar.
     property string suggestion: ""
     property bool suggestionConfident: false
@@ -245,9 +247,12 @@ FocusScope {
                                                       : qsTr("Sending now · read in a moment"))
              : queuedLabel()
     }
-    // A note in the bar's toolbar.
-    function say(text) {
+    // A note in the bar's toolbar; `quiet` for one that reports rather
+    // than warns.
+    property bool noticeQuiet: false
+    function say(text, quiet) {
         notice = text
+        noticeQuiet = quiet === true
         noticeTimer.restart()
     }
 
@@ -274,13 +279,70 @@ FocusScope {
     }
     Timer { interval: 50; repeat: true; running: root.followUps.length > 0; onTriggered: root.runFollowUps() }
 
+    // What the agent's input box holds (Codex and agy, whose boxes keep or
+    // get back text: a draft left there, queued messages Escape returned),
+    // or "". Read from the screen's rows, so a heuristic.
+    function heldText() {
+        if (!model || (cli !== "codex" && cli !== "antigravity") || (!typedScreen && !screen))
+            return ""
+        return model.composerText(typedScreen ? typedScreen() : screen())
+    }
+    // Held text that could not be cleared is not pulled again.
+    property string heldIgnored: ""
+    // Puts what the agent's input box held into the bar, ahead of anything
+    // typed, retires the bubbles it holds, and clears the box with
+    // Control-U (never Control-C or -D) until it reads empty.
+    function pullBack(held) {
+        const typed = input.text
+        input.text = typed.trim().length > 0 ? held + "\n\n" + typed : held
+        input.cursorPosition = input.text.length
+        if (model)
+            model.forgetSent(held)
+        clearAgentBox(held, 0)
+    }
+    function clearAgentBox(held, tries) {
+        if (!sendKeys || !sendKeys("\u0015")) {
+            heldIgnored = held
+            return
+        }
+        after(400, () => heldText().length === 0, null, () => {
+            if (tries + 1 < 6) {
+                clearAgentBox(held, tries + 1)
+            } else {
+                heldIgnored = held
+                say(qsTr("The agent's input box still holds text; clear it in the terminal"))
+            }
+        })
+    }
+    // Before sending: text in the agent's box the view did not put there
+    // would join the message, so it comes into the bar instead. Returns
+    // whether it did (and nothing was sent).
+    function tookLeftover() {
+        const held = heldText()
+        if (held.length === 0 || held === heldIgnored)
+            return false
+        const rows = screen ? screen() : []
+        for (const mine of [checkingText, unsentText])
+            if (mine.length > 0 && model.composerHolds(rows, mine))
+                return false
+        pullBack(held)
+        say(qsTr("The agent's input box held this; it is in the bar now"), true)
+        return true
+    }
+
     // Stop (the button, or Escape with nothing typed): Escape for the agent.
-    // Claude Code and Codex then send a waiting message as a new turn.
+    // Claude Code and Codex then send a waiting message as a new turn; agy
+    // puts its queued messages back in its box, which come into the bar.
     function stop() {
         if (!interrupt || !interrupt())
             return false
         if (messageWaiting && cli !== "antigravity")
             markUrged(model.pendingEntries.filter(p => p.queued).map(p => p.key), "interrupt")
+        if (cli === "codex" || cli === "antigravity")
+            after(2500, () => heldText().length > 0, () => {
+                pullBack(heldText())
+                say(qsTr("Back in the bar from the agent's input box"), true)
+            }, null)
         return true
     }
     // Command-Return: the message sent now (sendMessage(true)); with
@@ -299,6 +361,8 @@ FocusScope {
             stop()
             return
         }
+        if (cli === "antigravity" && tookLeftover())
+            return // Alt-M would send that text instead
         const chord = cli === "claude" ? "\u0018\u0013" : "\u001bm"
         if (sendKeys && sendKeys(chord))
             markUrged(keys, "now")
@@ -3067,6 +3131,8 @@ FocusScope {
                          && root.answersInTerminal(text.trim().split(/\s/)[0].slice(1))
         // A turn the file shows ended is not working, whatever the status.
         const working = root.working && !root.turnEnded
+        if (!root.waiting && root.tookLeftover())
+            return
         if (now === true && working && root.cli === "antigravity" && root.model)
             root.model.refreshQueueMode()
         const urgent = now === true && working && command.length === 0 && root.sendsNow
@@ -3514,7 +3580,8 @@ FocusScope {
                         : root.suggestion.length > 0 && input.text.length === 0 ? qsTr("Tab to use the suggestion")
                         : root.filledFromSuggestion ? qsTr("Tab or Return to send")
                         : ""
-                    color: root.notice.length > 0 || root.waiting ? root.faultColor : root.mutedTextColor
+                    color: (root.notice.length > 0 && !root.noticeQuiet) || root.waiting
+                           ? root.faultColor : root.mutedTextColor
                     font.family: root.sansFamily
                     font.pixelSize: Math.max(11, root.codeSize - 1)
                 }

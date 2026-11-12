@@ -1677,7 +1677,7 @@ struct RowText {
     QString text;
     QList<int> columns;
 };
-RowText row_text(const session::TerminalSnapshot& snapshot, int row) {
+RowText row_text(const session::TerminalSnapshot& snapshot, int row, bool typed = false) {
     RowText result;
     const int columns = snapshot.size.columns;
     for (int column = 0; column < columns; ++column) {
@@ -1687,8 +1687,9 @@ RowText row_text(const session::TerminalSnapshot& snapshot, int row) {
         if (kind == session::CellKind::wide_tail || kind == session::CellKind::wrap_spacer)
             continue;
         const auto text = snapshot.text(index);
+        const auto& style = snapshot.cells[index].style;
         const auto value =
-            text.empty() || snapshot.cells[index].style.invisible
+            text.empty() || style.invisible || (typed && style.faint)
                 ? QStringLiteral(" ")
                 : QString::fromUcs4(text.data(), static_cast<qsizetype>(text.size()));
         for (qsizetype unit = 0; unit < value.size(); ++unit)
@@ -2034,14 +2035,14 @@ bool TerminalSurface::sendKeys(const QString& bytes) {
     return document_->sendText(raw);
 }
 
-QStringList TerminalSurface::screenLines() const {
+QStringList TerminalSurface::screenLines(bool typed) const {
     QStringList rows;
     if (!document_)
         return rows;
     const auto& snapshot = document_->snapshot();
     rows.reserve(snapshot.size.rows);
     for (int row = 0; row < snapshot.size.rows; ++row)
-        rows.append(row_text(snapshot, row).text);
+        rows.append(row_text(snapshot, row, typed).text);
     return rows;
 }
 

@@ -155,8 +155,10 @@ class TerminalSurface : public QQuickItem {
     Q_INVOKABLE bool sendKeys(const QString& bytes);
     static constexpr qsizetype max_chord_bytes = 16;
     // The screen's rows as text, top to bottom: what the visual view streams
-    // while a turn runs.
-    Q_INVOKABLE [[nodiscard]] QStringList screenLines() const;
+    // while a turn runs. `typed` leaves faint (dimmed) text out as spaces:
+    // a CLI's placeholder or ghost suggestion in its input box is not text
+    // the box holds.
+    Q_INVOKABLE [[nodiscard]] QStringList screenLines(bool typed = false) const;
     // Escape for the agent: how Claude Code and Codex stop a turn.
     Q_INVOKABLE bool interrupt();
     // A valid file URL as QUrl's local or UNC path; empty for other schemes,
