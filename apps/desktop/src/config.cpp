@@ -765,7 +765,9 @@ void Config::load_visual(const QJsonObject& root) {
     visual_code_font_ = name("codeFont", "system");
     const int size = visual.value(QStringLiteral("size")).toInt();
     visual_size_ = visual_size(size) ? size : 0;
-    visual_all_ = visual.value(QStringLiteral("all")).toBool();
+    // Every agent shows as a thread unless the file says false.
+    const auto all = visual.value(QStringLiteral("all"));
+    visual_all_ = all.isBool() ? all.toBool() : true;
     visual_factory_ = visual.value(QStringLiteral("factory")).toBool();
     visual_editor_ = name("editor", "auto");
     // A missing or out-of-range number keeps the default.

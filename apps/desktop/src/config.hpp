@@ -320,7 +320,7 @@ class Config final : public QObject {
     QString visual_font_{QStringLiteral("system")};
     QString visual_code_font_{QStringLiteral("system")};
     int visual_size_{};
-    bool visual_all_{};
+    bool visual_all_{true};
     bool visual_factory_{};
     int visual_keep_mb_{1024};
     int visual_keep_threads_{32};
