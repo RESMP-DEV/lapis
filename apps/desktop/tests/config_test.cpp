@@ -902,7 +902,8 @@ void settings_write_known_keys() {
         QDir(directory.path()),
         R"({"keybindings":{"quit":["Meta+Q"]},"custom":1,)"
         R"("newAgent":{"machines":{"box":{"folder":"~/w"}},"models":{"codex":["m1"]}},)"
-        R"("nextPrompt":{"model":"x","providers":[]}})");
+        R"("nextPrompt":{"model":"x","providers":[],"separate":["~/work/client"],)"
+        R"("off":["~/work/private"]}})");
     Config config;
     config.setSourcePathForTesting(path);
     config.setSystemDark(true);
@@ -936,7 +937,8 @@ void settings_write_known_keys() {
         "custom": 1,
         "newAgent": {"machines": {"box": {"folder": "~/w"}}, "models": {"codex": ["m1"]},
                      "harness": "codex", "folder": "~/dev", "mode": "edits"},
-        "nextPrompt": {"model": "x", "providers": [], "auto": true},
+        "nextPrompt": {"model": "x", "providers": [], "separate": ["~/work/client"],
+                       "off": ["~/work/private"], "auto": true},
         "harnessUpdates": {"omp": false},
         "interactionLog": {"enabled": true},
         "tabAway": {"overdueHours": 6},
@@ -961,6 +963,8 @@ void settings_write_known_keys() {
                     QStringLiteral("~/w") &&
                 config.harnessUpdatesOff().contains(QStringLiteral("omp")) &&
                 config.nextPrompt().automatic && config.nextPrompt().model == QStringLiteral("x") &&
+                config.nextPrompt().separate == QStringList{QStringLiteral("~/work/client")} &&
+                config.nextPrompt().off == QStringList{QStringLiteral("~/work/private")} &&
                 config.interactionLog().enabled && config.tabAway().overdueHours == 6,
             "the settings apply at once");
 

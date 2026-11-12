@@ -181,7 +181,192 @@ void parse_prompt_arms(const QJsonObject& object, NextPromptSettings& settings) 
     if (settings.promptArms.isEmpty())
         settings.promptArms = QStringList{QStringLiteral("base"), QStringLiteral("checks")};
 }
+
+// Folder walls: the same bounds and cleaning as next_prompt.py's wall_list, so
+// a zone's index names the same entry on both sides.
+constexpr qsizetype kWallLimit = 64;
+constexpr qsizetype kWallChars = 1024;
+QString unknown_zone() { return QStringLiteral("?"); }
+
+QStringList parse_walls(const QJsonValue& value) {
+    QStringList kept;
+    if (!value.isArray())
+        return kept;
+    for (const auto& entry : value.toArray()) {
+        if (kept.size() >= kWallLimit)
+            break;
+        if (!entry.isString())
+            continue;
+        const auto folder = entry.toString().trimmed();
+        if (folder.isEmpty() || folder.size() > kWallChars ||
+            !(folder.startsWith(QLatin1Char('/')) || folder == QLatin1String("~") ||
+              folder.startsWith(QLatin1String("~/"))))
+            continue;
+        kept.append(folder);
+    }
+    return kept;
+}
+
+// `path` is `folder` or below it, by whole components.
+bool inside(const QString& path, const QString& folder) {
+    if (folder == QLatin1String("/"))
+        return path.startsWith(QLatin1Char('/'));
+    return path == folder || path.startsWith(folder + QLatin1Char('/'));
+}
+
+// A folder on this Mac as realpath gives it: `~` expanded, then the longest
+// existing prefix's symlinks followed. Empty for a relative path.
+QString resolved_here(QString path) {
+    if (path == QLatin1String("~"))
+        path = QDir::homePath();
+    else if (path.startsWith(QLatin1String("~/")))
+        path = QDir::homePath() + path.mid(1);
+    if (!path.startsWith(QLatin1Char('/')))
+        return {};
+    path = QDir::cleanPath(path);
+    QString head = path;
+    QString rest;
+    while (!QFileInfo::exists(head)) {
+        const auto slash = head.lastIndexOf(QLatin1Char('/'));
+        rest.prepend(head.mid(slash));
+        head = slash == 0 ? QStringLiteral("/") : head.left(slash);
+    }
+    const auto canonical = QFileInfo(head).canonicalFilePath();
+    return canonical.isEmpty() ? path : QDir::cleanPath(canonical + rest);
+}
+
+// Another machine's folder as its launch line has it (see remoteFolder in
+// workspace.cpp: `~`, `~/` and a shell word, or a shell word), without the
+// shell quoting. Anything but plain and single-quoted text is not read.
+std::optional<QString> unquoted(const QString& word) {
+    QString text;
+    bool quoted = false;
+    for (qsizetype at = 0; at < word.size(); ++at) {
+        const auto c = word.at(at);
+        if (quoted) {
+            if (c == QLatin1Char('\''))
+                quoted = false;
+            else
+                text += c;
+        } else if (c == QLatin1Char('\'')) {
+            quoted = true;
+        } else if (c == QLatin1Char('\\') && at + 1 < word.size()) {
+            text += word.at(++at);
+        } else if (c == QLatin1Char('"') || c == QLatin1Char('$') || c == QLatin1Char('`') ||
+                   c.isSpace()) {
+            return std::nullopt;
+        } else {
+            text += c;
+        }
+    }
+    if (quoted)
+        return std::nullopt;
+    return text;
+}
+
+// The zone of `path` among the listed folders, each put in the same form as
+// `path` by `form`, which gives nothing when the two cannot be compared.
+QString zone_among(const NextPromptSettings& settings, const QString& path,
+                   const std::function<std::optional<QString>(const QString&)>& form) {
+    bool unknown = false;
+    for (qsizetype index = 0; index < settings.off.size(); ++index) {
+        const auto folder = form(settings.off.at(index));
+        if (!folder)
+            unknown = true;
+        else if (inside(path, *folder))
+            return QStringLiteral("o%1").arg(index);
+    }
+    // A folder that might be inside an off one is not known to be outside it.
+    if (unknown)
+        return unknown_zone();
+    qsizetype best = -1;
+    qsizetype best_length = -1;
+    for (qsizetype index = 0; index < settings.separate.size(); ++index) {
+        const auto folder = form(settings.separate.at(index));
+        if (!folder)
+            return unknown_zone();
+        if (inside(path, *folder) && folder->size() > best_length) {
+            best = index;
+            best_length = folder->size();
+        }
+    }
+    return best < 0 ? QString() : QStringLiteral("s%1").arg(best);
+}
+
+// A guess may be made for a session in `zone` (see guessable in the helper).
+bool guessable(const NextPromptSettings& settings, const QString& zone) {
+    if (!settings.walled())
+        return true;
+    return !zone.startsWith(QLatin1Char('o')) && !(zone == unknown_zone() && !settings.off.isEmpty());
+}
+
+// A session in zone `source` may inform a guess for one in `target`.
+bool visible(const QString& source, const QString& target) {
+    return source == target && target != unknown_zone() && !target.startsWith(QLatin1Char('o'));
+}
+
+// The other agents' lines a guess in `zone` may see, without the fields that
+// only decide the walls.
+QJsonArray walled_agents(const QJsonArray& agents, const NextPromptSettings& settings,
+                         const QString& zone) {
+    QJsonArray kept;
+    for (const auto& value : agents) {
+        auto agent = value.toObject();
+        const auto machine = agent.take(QStringLiteral("machine")).toString();
+        const auto folder = agent.take(QStringLiteral("folder")).toString();
+        if (settings.walled() && !visible(folder_zone(settings, machine, folder), zone))
+            continue;
+        kept.append(agent);
+    }
+    return kept;
+}
+
+// {"separate": [...], "off": [...]} for the helper's --walls.
+QString walls_argument(const NextPromptSettings& settings) {
+    return QString::fromUtf8(
+        QJsonDocument(QJsonObject{{QStringLiteral("separate"),
+                                   QJsonArray::fromStringList(settings.separate)},
+                                  {QStringLiteral("off"), QJsonArray::fromStringList(settings.off)}})
+            .toJson(QJsonDocument::Compact));
+}
 } // namespace
+
+QString folder_zone(const NextPromptSettings& settings, const QString& machine,
+                    const QString& folder) {
+    if (!settings.walled())
+        return {};
+    auto text = folder.trimmed();
+    if (machine.isEmpty()) {
+        if (text.size() > 1 && text.front() == text.back() &&
+            (text.front() == QLatin1Char('\'') || text.front() == QLatin1Char('"')))
+            text = text.mid(1, text.size() - 2);
+        const auto path = resolved_here(text);
+        if (path.isEmpty())
+            return unknown_zone();
+        return zone_among(settings, path, [](const QString& entry) -> std::optional<QString> {
+            return resolved_here(entry);
+        });
+    }
+    // Compared as written: `~` is that machine's home, which is not known here.
+    const auto plain = unquoted(text);
+    if (!plain || plain->isEmpty())
+        return unknown_zone();
+    const auto home = plain->startsWith(QLatin1Char('~'));
+    if (!home && !plain->startsWith(QLatin1Char('/')))
+        return unknown_zone();
+    if (home && *plain != QLatin1String("~") && !plain->startsWith(QLatin1String("~/")))
+        return unknown_zone();
+    const auto path = QDir::cleanPath(*plain);
+    // `..` that climbs out of `~` or survives cleaning is not compared as text.
+    if (path.startsWith(QLatin1Char('~')) != home ||
+        path.split(QLatin1Char('/')).contains(QLatin1String("..")))
+        return unknown_zone();
+    return zone_among(settings, path, [home](const QString& entry) -> std::optional<QString> {
+        if (entry.startsWith(QLatin1Char('~')) != home)
+            return std::nullopt;
+        return QDir::cleanPath(entry);
+    });
+}
 
 NextPromptSettings parse_next_prompt(const QJsonValue& value) {
     NextPromptSettings settings;
@@ -199,6 +384,8 @@ NextPromptSettings parse_next_prompt(const QJsonValue& value) {
     parse_prompt_arms(object, settings);
     if (const auto minutes = object.value(QStringLiteral("returnMinutes")); minutes.isDouble())
         settings.returnMinutes = std::max(1, minutes.toInt());
+    settings.separate = parse_walls(object.value(QStringLiteral("separate")));
+    settings.off = parse_walls(object.value(QStringLiteral("off")));
     return settings;
 }
 
@@ -327,6 +514,13 @@ void NextPrompt::run(const QString& id, bool force, int returned) {
         return;
     if (auto old = running_.take(id); old.process)
         old.process->stopGroup();
+    // An agent known to be in an off folder is not read, let alone sent to a
+    // model. One whose folder cannot be told from here is read where it runs,
+    // and predict() decides from what its conversation records.
+    if (folder_zone(settings_, agent->machine, agent->folder).startsWith(QLatin1Char('o'))) {
+        skippedOff(id);
+        return;
+    }
     if (!budgetAvailable(id))
         return;
     const auto generation = ++generation_;
@@ -370,7 +564,18 @@ QStringList NextPrompt::contextWords(const QString& id, const Agent& agent) cons
                       agent.conversation};
     if (const auto waiting = awaiting_.constFind(id); waiting != awaiting_.cend())
         words << QStringLiteral("--answered") << QString::number(waiting->offer.turn);
+    // Resolved where the helper runs; without walls the words are as before.
+    if (settings_.walled())
+        words << QStringLiteral("--walls") << walls_argument(settings_);
     return words;
+}
+
+void NextPrompt::skippedOff(const QString& id) {
+    running_.remove(id);
+    emit stateChanged();
+    record({{QStringLiteral("event"), QStringLiteral("skipped")},
+            {QStringLiteral("agent"), id},
+            {QStringLiteral("reason"), QStringLiteral("off_folder")}});
 }
 
 void NextPrompt::runContext(const QString& id, quint64 generation, const Agent& agent, Stage stage,
@@ -482,6 +687,23 @@ QStringList predict_arguments(const PredictArguments& args) {
 
 void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObject& context,
                          int returned) {
+    // The guess's zone, read where the agent runs from the folders its
+    // conversation records (the helper's `wall`), checked against where lapis
+    // started it when that can be told from here. A disagreement, or no
+    // answer from the helper, is unknown: the guess sees no other session.
+    QString zone;
+    if (settings_.walled()) {
+        const auto& target = running_.value(id).agent;
+        const auto here = folder_zone(settings_, target.machine, target.folder);
+        const auto wall = context.value(QStringLiteral("wall"));
+        zone = wall.isString() ? wall.toString() : unknown_zone();
+        if (here != unknown_zone() && here != zone)
+            zone = unknown_zone();
+        if (!guessable(settings_, zone) || here.startsWith(QLatin1Char('o'))) {
+            skippedOff(id);
+            return;
+        }
+    }
     const auto claude = program_(QStringLiteral("claude"));
     // The chain replaces the CLI call, so the CLI is only required when it
     // is the route that answers.
@@ -509,7 +731,7 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
         {QStringLiteral("agent"), about},
         {QStringLiteral("screen"), agent.screen},
         {QStringLiteral("context"), context},
-        {QStringLiteral("agents"), agents_()},
+        {QStringLiteral("agents"), walled_agents(agents_(), settings_, zone)},
         {QStringLiteral("taken"), QJsonArray::fromStringList(taken_)},
         {QStringLiteral("target"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
         {QStringLiteral("time"),

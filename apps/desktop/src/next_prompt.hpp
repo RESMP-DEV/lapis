@@ -51,9 +51,28 @@ struct NextPromptSettings {
     // When the person comes back to an agent whose untyped guess is at least
     // `returnMinutes` old, it is guessed again.
     int returnMinutes{30};
+    // Folder walls, each an absolute or `~` path (others are dropped; at most
+    // 64). A session working inside a `separate` folder is walled off: its
+    // prompts and its agent reach only guesses for sessions inside the same
+    // listed folder, and a guess for it sees only those. A session inside an
+    // `off` folder gets no guesses, and its prompts and agent reach no other
+    // guess. With either list set, a session whose folder cannot be told is
+    // left out of every other guess. Both empty: nothing is walled.
+    QStringList separate;
+    QStringList off;
+    [[nodiscard]] bool walled() const { return !separate.isEmpty() || !off.isEmpty(); }
     bool operator==(const NextPromptSettings&) const = default;
 };
 [[nodiscard]] NextPromptSettings parse_next_prompt(const QJsonValue& value);
+
+// The zone a folder falls in under the settings' walls, named as next_prompt.py
+// names it: "" outside every listed folder, "s<i>" inside separate entry i (the
+// deepest), "o<i>" inside off entry i (off first), or "?" when it cannot be
+// told. On this Mac (`machine` empty) `~` and symlinks are resolved; another
+// machine's folder is compared as written, so `~/a` there is never matched with
+// an absolute listed folder (or the reverse) and is "?" instead.
+[[nodiscard]] QString folder_zone(const NextPromptSettings& settings, const QString& machine,
+                                  const QString& folder);
 
 // A screen's text, a row a line, without trailing blanks or blank last rows.
 [[nodiscard]] QString terminal_screen_text(const session::TerminalSnapshot& snapshot);
@@ -94,7 +113,9 @@ class NextPrompt final : public QObject {
         QString screen; // what its terminal shows now
     };
     using Lookup = std::function<std::optional<Agent>(const QString& id)>;
-    // One line of state for every agent: {title, category, status, waiting}.
+    // One line of state for every agent: {title, category, status, waiting},
+    // plus its `machine` and `folder` (as in Agent), which decide the folder
+    // walls and are removed before the line reaches the model.
     using Agents = std::function<QJsonArray()>;
     // The path of "python3", "ssh" or "claude" on this Mac.
     using Program = std::function<QString(const QString&)>;
@@ -254,6 +275,8 @@ class NextPrompt final : public QObject {
     void recordWithdrawn(const Offer& offer, const QString& id, const char* reason) const;
     // The conversation's arguments for the helper's context mode.
     [[nodiscard]] QStringList contextWords(const QString& id, const Agent& agent) const;
+    // The agent is in an off folder (see NextPromptSettings): no guess, logged.
+    void skippedOff(const QString& id);
     void runContext(const QString& id, quint64 generation, const Agent& agent, Stage stage,
                     const std::function<void(const QJsonObject&)>& done);
     // A restored offer: shown once its conversation proves it current.

@@ -601,13 +601,20 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
                 const auto* item = value.value<Agent*>();
                 if (item == nullptr)
                     continue;
+                const auto place = workspace.agentPlace(item->agentId());
+                const auto machine = place.value(QStringLiteral("machine")).toString();
+                auto folder = place.value(QStringLiteral("place")).toString();
+                if (!machine.isEmpty())
+                    folder = folder.mid(machine.size() + 1);
+                // machine and folder decide the folder walls; NextPrompt
+                // removes them before the line reaches the model.
                 agents.append(QJsonObject{
                     {QStringLiteral("title"), item->title()},
-                    {QStringLiteral("category"), workspace.agentPlace(item->agentId())
-                                                     .value(QStringLiteral("category"))
-                                                     .toString()},
+                    {QStringLiteral("category"), place.value(QStringLiteral("category")).toString()},
                     {QStringLiteral("status"), item->statusLabel()},
-                    {QStringLiteral("waiting"), item->unseen() || item->attentionPending()}});
+                    {QStringLiteral("waiting"), item->unseen() || item->attentionPending()},
+                    {QStringLiteral("machine"), machine},
+                    {QStringLiteral("folder"), folder}});
             }
             return agents;
         },
