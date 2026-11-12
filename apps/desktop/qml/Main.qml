@@ -425,6 +425,8 @@ ApplicationWindow {
             () => window.toggleVisual())
         add("toggleVisualAll", window.visualAll ? qsTr("Show terminals for all agents") : qsTr("Show visual view for all agents"), "",
             true, "", () => window.toggleVisualAll())
+        add("toggleAppearance", window.visualSettings.light ? qsTr("Switch to dark mode") : qsTr("Switch to light mode"), "",
+            true, "", () => window.toggleAppearance())
         add("textBigger", qsTr("Bigger text"), "textBigger", true, "", () => window.changeTextSize(1))
         add("textSmaller", qsTr("Smaller text"), "textSmaller", true, "", () => window.changeTextSize(-1))
         add("textReset", qsTr("Default text size"), "textReset", true, "", () => window.changeTextSize(0))
@@ -986,6 +988,11 @@ ApplicationWindow {
         visualAgents = next
         endVisualDialog()
         visualFocus()
+    }
+    // Light or dark reading: the thread and the window around it, never the
+    // terminals. From "Match macOS" it switches to the other kind for good.
+    function toggleAppearance() {
+        config.setAppearance(visualSettings.light === true ? "dark" : "light")
     }
     function toggleVisualAll() {
         visualAgents = ({})
@@ -2981,12 +2988,80 @@ ApplicationWindow {
                         }
                     }
                 }
-                // The visual view for the selected agent, or for every agent.
-                PlainText {
-                    text: qsTr("Visual view")
-                    color: window.mutedTextColor
-                    font.pixelSize: window.readoutFont
+                // The visual view for the selected agent, or for every agent,
+                // and light or dark reading beside its title.
+                RowLayout {
+                    Layout.fillWidth: true
                     Layout.topMargin: 4
+                    spacing: 6
+                    PlainText {
+                        text: qsTr("Visual view")
+                        color: window.mutedTextColor
+                        font.pixelSize: window.readoutFont
+                        Layout.fillWidth: true
+                    }
+                    Rectangle {
+                        id: appearanceToggle
+                        objectName: "appearanceToggle"
+                        readonly property bool light: window.visualSettings.light === true
+                        implicitWidth: Math.round(window.chromeFont * 1.9)
+                        implicitHeight: implicitWidth
+                        radius: window.chromeRadius
+                        color: appearanceHover.hovered ? window.hoveredCardColor : "transparent"
+                        border.width: 1
+                        border.color: appearanceHover.hovered ? window.mutedTextColor : window.borderColor
+                        Accessible.role: Accessible.Button
+                        Accessible.name: light ? qsTr("Switch to dark mode") : qsTr("Switch to light mode")
+                        // The mode it switches to: a moon in light mode, a sun in dark.
+                        Canvas {
+                            id: appearanceGlyph
+                            anchors.centerIn: parent
+                            width: Math.round(parent.width * 0.56)
+                            height: width
+                            readonly property color ink: appearanceHover.hovered ? window.textColor : window.mutedTextColor
+                            readonly property bool moon: appearanceToggle.light
+                            onInkChanged: requestPaint()
+                            onMoonChanged: requestPaint()
+                            onWidthChanged: requestPaint()
+                            onPaint: {
+                                const g = getContext("2d")
+                                g.reset()
+                                const s = width, c = s / 2
+                                g.fillStyle = ink
+                                g.strokeStyle = ink
+                                if (moon) {
+                                    g.beginPath()
+                                    g.arc(c, c, s * 0.42, 0, Math.PI * 2)
+                                    g.fill()
+                                    g.globalCompositeOperation = "destination-out"
+                                    g.beginPath()
+                                    g.arc(c + s * 0.22, c - s * 0.16, s * 0.36, 0, Math.PI * 2)
+                                    g.fill()
+                                } else {
+                                    g.beginPath()
+                                    g.arc(c, c, s * 0.2, 0, Math.PI * 2)
+                                    g.fill()
+                                    g.lineWidth = Math.max(1.2, s / 11)
+                                    g.lineCap = "round"
+                                    for (let i = 0; i < 8; ++i) {
+                                        const a = i * Math.PI / 4
+                                        g.beginPath()
+                                        g.moveTo(c + Math.cos(a) * s * 0.32, c + Math.sin(a) * s * 0.32)
+                                        g.lineTo(c + Math.cos(a) * s * 0.46, c + Math.sin(a) * s * 0.46)
+                                        g.stroke()
+                                    }
+                                }
+                            }
+                        }
+                        HoverHandler { id: appearanceHover; cursorShape: Qt.PointingHandCursor }
+                        TapHandler {
+                            enabled: window.interactionArmed
+                            onTapped: window.toggleAppearance()
+                        }
+                        ToolTip.visible: appearanceHover.hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: Accessible.name
+                    }
                 }
                 RowLayout {
                     Layout.fillWidth: true

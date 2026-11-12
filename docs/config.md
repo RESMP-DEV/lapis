@@ -77,6 +77,20 @@ of those installed). An unknown name falls back to the first choice.
 "visual": {"theme": "terminal", "font": "system", "codeFont": "system", "size": 0, "all": false, "editor": "auto"}
 ```
 
+Light mode lives there too. `appearance` is `dark`, `light` or `system`
+(follows macOS as it changes). It picks the thread's theme from `darkTheme`
+or `lightTheme` and the window's from `darkWindowTheme` or `lightWindowTheme`,
+each your last choice of that kind; terminals keep their own colors. A
+thread theme is light when its name ends in `-light`; of the window themes,
+`daylight` is light. Choosing a theme of the other kind switches the mode to
+that kind. `theme` and the top-level `theme` record what shows now. A file
+without `appearance` shows what it did before, as dark or light by its thread
+theme.
+
+```json
+"visual": {"appearance": "system", "darkTheme": "terminal", "lightTheme": "claude-light", "darkWindowTheme": "oled", "lightWindowTheme": "daylight"}
+```
+
 ## Alerts
 
 A completed turn or request you were not looking at plays one quiet cue when

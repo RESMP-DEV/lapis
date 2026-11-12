@@ -335,6 +335,18 @@ block or output) and, on a prompt, **Edit**: a new agent that continues from
 just before it, with the prompt waiting unsent in its input. The original
 conversation is never changed.
 
+Light mode reads the thread as dark text on an off-white page. The sun beside
+**Visual view** in the sidebar (a moon in light mode), or **Switch to light
+mode** in Commands, flips it; `"appearance": "system"` in
+[config](config.md#visual-view) follows the Mac's appearance as it changes. It
+switches the thread (its replies, code,
+the live work box, the bar and the menus) and the window around it (sidebar,
+strip frames, dialogs) to your last light theme of each, and back to your last
+dark ones; terminals keep their own colors. A see-through picture drawn for
+the other kind of page (white strokes made for a dark thread) sits on a small
+card of that kind so its lines stay visible. Charts agents draw follow the
+mode too. No key is bound to it.
+
 Appearance has a **Visual view** section: a theme (Match terminal, Tokyo Night,
 Codex, Claude, Graphite, Black, Claude light, Codex light), a reading font
 (System, Serif, Avenir Next, Helvetica Neue), a code font and a text size, which

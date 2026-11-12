@@ -1876,6 +1876,7 @@ int main(int argc, char** argv) {
     QElapsedTimer load_timer;
     load_timer.start();
     TranscriptModel model;
+    lapis::desktop::MediaActions media_actions;
     if (parser.isSet("format")) {
         const auto format = lapis::desktop::transcript::format_named(parser.value("format"));
         if (!format) {
@@ -1988,6 +1989,8 @@ int main(int argc, char** argv) {
     root->setProperty("terminalFamily", mono);
     std::printf("fonts: sans %s, mono %s\n", qPrintable(sans), qPrintable(mono));
     root->setProperty("model", QVariant::fromValue(static_cast<QObject*>(&model)));
+    // What the window gives it, for pictures' cards; nothing here is clicked.
+    root->setProperty("mediaActions", QVariant::fromValue(static_cast<QObject*>(&media_actions)));
     auto* list = root->property("list").value<QObject*>();
     if (parser.isSet("live")) {
         // A turn in progress: Stop in place of Send, and the screen's rows

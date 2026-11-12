@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -17,6 +18,7 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QSignalBlocker>
+#include <QStyleHints>
 #include <QVariantMap>
 #include <algorithm>
 #include <array>
@@ -86,7 +88,7 @@ constexpr std::array<Theme, 7> kThemes = {{
      .border = "#c6cbd4",
      .focused_border = "#4a5bd4",
      .text = "#14181f",
-     .muted_text = "#5d6675",
+     .muted_text = "#545d6b", // 4.8:1 even on the selected row
      .attention = "#c8342c",
      .attention_text = "#ffffff",
      .activity = "#0a6558",
@@ -369,12 +371,14 @@ Config::Config(QObject* parent) : QObject(parent) {
     connect(&watcher_, &QFileSystemWatcher::directoryChanged, &settle_,
             qOverload<>(&QTimer::start));
     watch();
+    follow_system_appearance();
 }
 
 // No source path, so nothing below can name a file to read, watch or write.
 Config::Config(DefaultsOnly, QObject* parent) : QObject(parent), file_backed_(false) {
     connect(this, &Config::changed, this, &Config::diagnosticChanged);
     apply_defaults();
+    follow_system_appearance();
 }
 
 void Config::watch() {
@@ -510,6 +514,8 @@ void Config::apply_defaults() {
     alert_sound_file_.clear();
     finish_sound_file_.clear();
     keep_awake_ = true;
+    // The window theme first: light mode remembers it as its kind's.
+    theme_ = QStringLiteral("lapis");
     load_visual({});
     // Each CLI lists its own models (HarnessModels) unless the config names some.
     agent_defaults_ = {};
@@ -519,7 +525,6 @@ void Config::apply_defaults() {
     terminal_font_size_ = kTerminalFontSizeDefault;
     scroll_to_bottom_on_typing_ = true;
     density_ = CardDensity::Comfortable;
-    theme_ = QStringLiteral("lapis");
 }
 
 bool Config::load() {
@@ -761,6 +766,90 @@ void Config::load_visual(const QJsonObject& root) {
     visual_size_ = visual_size(size) ? size : 0;
     visual_all_ = visual.value(QStringLiteral("all")).toBool();
     visual_editor_ = name("editor", "auto");
+
+    // Light mode. Each kind's theme must be of that kind; a missing or wrong
+    // one falls back to the built-in choice, or to what shows now.
+    const bool showing_light = visualThemeLight(visual_theme_);
+    const bool window_light = theme_for(theme_).light;
+    const auto slot = [&visual](const char* key, bool light, const QString& fallback) {
+        const auto value = visual.value(QLatin1String(key)).toString();
+        return visual_name(value) && visualThemeLight(value) == light ? value : fallback;
+    };
+    visual_dark_theme_ =
+        slot("darkTheme", false, showing_light ? QStringLiteral("terminal") : visual_theme_);
+    visual_light_theme_ =
+        slot("lightTheme", true, showing_light ? visual_theme_ : QStringLiteral("claude-light"));
+    const auto window_slot = [&visual](const char* key, bool light, const QString& fallback) {
+        const auto value = visual.value(QLatin1String(key)).toString();
+        return theme_exists(value) && theme_for(value).light == light ? value : fallback;
+    };
+    window_dark_theme_ =
+        window_slot("darkWindowTheme", false, window_light ? QStringLiteral("lapis") : theme_);
+    window_light_theme_ =
+        window_slot("lightWindowTheme", true, window_light ? theme_ : QStringLiteral("daylight"));
+    const auto mode = visual.value(QStringLiteral("appearance")).toString();
+    if (mode == QLatin1String("dark") || mode == QLatin1String("light") ||
+        mode == QLatin1String("system")) {
+        appearance_ = mode;
+        apply_appearance();
+    } else {
+        // A file from before light mode shows exactly what it did; the mode
+        // is the visual view's kind until it is chosen.
+        appearance_ = showing_light ? QStringLiteral("light") : QStringLiteral("dark");
+    }
+}
+
+bool Config::visualThemeLight(const QString& name) {
+    return name.endsWith(QLatin1String("-light"));
+}
+
+bool Config::lightShown() const {
+    return appearance_ == QLatin1String("system") ? !system_dark_
+                                                  : appearance_ == QLatin1String("light");
+}
+
+void Config::apply_appearance() {
+    const bool light = lightShown();
+    visual_theme_ = light ? visual_light_theme_ : visual_dark_theme_;
+    theme_ = light ? window_light_theme_ : window_dark_theme_;
+}
+
+void Config::choose_kind(bool light) {
+    if (lightShown() != light)
+        appearance_ = light ? QStringLiteral("light") : QStringLiteral("dark");
+}
+
+bool Config::setAppearance(const QString& mode) {
+    if (mode != QLatin1String("dark") && mode != QLatin1String("light") &&
+        mode != QLatin1String("system"))
+        return false;
+    if (mode == appearance_)
+        return true;
+    appearance_ = mode;
+    apply_appearance();
+    qInfo().noquote() << "lapis appearance:" << appearance_;
+    emit changed();
+    return save();
+}
+
+void Config::setSystemDark(bool dark) {
+    if (system_dark_ == dark)
+        return;
+    system_dark_ = dark;
+    if (appearance_ != QLatin1String("system"))
+        return;
+    // Followed live and not saved: the file keeps "system".
+    apply_appearance();
+    emit changed();
+}
+
+void Config::follow_system_appearance() {
+    if (qobject_cast<QGuiApplication*>(QCoreApplication::instance()) == nullptr)
+        return;
+    auto* hints = QGuiApplication::styleHints();
+    system_dark_ = hints->colorScheme() != Qt::ColorScheme::Light;
+    connect(hints, &QStyleHints::colorSchemeChanged, this,
+            [this](Qt::ColorScheme scheme) { setSystemDark(scheme != Qt::ColorScheme::Light); });
 }
 
 QVariantMap Config::visual() const {
@@ -769,7 +858,13 @@ QVariantMap Config::visual() const {
             {QStringLiteral("codeFont"), visual_code_font_},
             {QStringLiteral("size"), visual_size_},
             {QStringLiteral("all"), visual_all_},
-            {QStringLiteral("editor"), visual_editor_}};
+            {QStringLiteral("editor"), visual_editor_},
+            {QStringLiteral("appearance"), appearance_},
+            {QStringLiteral("light"), lightShown()},
+            {QStringLiteral("darkTheme"), visual_dark_theme_},
+            {QStringLiteral("lightTheme"), visual_light_theme_},
+            {QStringLiteral("darkWindowTheme"), window_dark_theme_},
+            {QStringLiteral("lightWindowTheme"), window_light_theme_}};
 }
 
 bool Config::setVisual(const QString& key, const QVariant& value) {
@@ -778,7 +873,19 @@ bool Config::setVisual(const QString& key, const QVariant& value) {
                     : key == QLatin1String("codeFont") ? &visual_code_font_
                     : key == QLatin1String("editor")   ? &visual_editor_
                                                        : nullptr;
-    if (name != nullptr) {
+    if (name == &visual_theme_) {
+        const auto text = value.toString();
+        if (!visual_name(text))
+            return false;
+        if (visual_theme_ == text)
+            return true;
+        // Remembered as its kind's theme; choosing one of the other kind
+        // switches light mode with it, window included.
+        const bool light = visualThemeLight(text);
+        (light ? visual_light_theme_ : visual_dark_theme_) = text;
+        choose_kind(light);
+        apply_appearance();
+    } else if (name != nullptr) {
         const auto text = value.toString();
         if (!visual_name(text))
             return false;
@@ -916,6 +1023,7 @@ QVariantList Config::themes() const {
             {QStringLiteral("headingTracking"), theme.heading_tracking},
             {QStringLiteral("categoryColors"), category_colors},
             {QStringLiteral("categoryQuietColors"), category_quiet_colors},
+            {QStringLiteral("light"), theme.light},
         });
     }
     return list;
@@ -949,7 +1057,12 @@ bool Config::setTheme(const QString& name) {
     }
     if (name == theme_)
         return true;
-    theme_ = name;
+    // As with the visual view's themes: remembered as its kind's, and a
+    // theme of the other kind switches light mode, the thread included.
+    const bool light = theme_for(name).light;
+    (light ? window_light_theme_ : window_dark_theme_) = name;
+    choose_kind(light);
+    apply_appearance();
     diagnostic_.clear();
     qInfo().noquote() << "lapis theme:" << theme_;
     emit changed();
@@ -1151,6 +1264,11 @@ bool Config::persist() {
     visual.insert(QStringLiteral("size"), visual_size_);
     visual.insert(QStringLiteral("all"), visual_all_);
     visual.insert(QStringLiteral("editor"), visual_editor_);
+    visual.insert(QStringLiteral("appearance"), appearance_);
+    visual.insert(QStringLiteral("darkTheme"), visual_dark_theme_);
+    visual.insert(QStringLiteral("lightTheme"), visual_light_theme_);
+    visual.insert(QStringLiteral("darkWindowTheme"), window_dark_theme_);
+    visual.insert(QStringLiteral("lightWindowTheme"), window_light_theme_);
     visual.remove(QStringLiteral("sendOnReturn")); // Return always sends now
     root.insert(QStringLiteral("visual"), visual);
     if (!root.contains(QStringLiteral("version")))

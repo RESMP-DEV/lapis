@@ -529,8 +529,10 @@ FocusScope {
         { name: "black", label: qsTr("Black"), dark: true, background: "#000000", raised: "#161616",
           code: "#0b0b0b", border: "#262626", text: "#e6e6e6", muted: "#8a8a8a", accent: "#7aa2f7",
           added: "#4fb57a", removed: "#d0605e", fault: "#ef6b73" },
+        // Light themes end in "-light" (Config tells the kinds apart by it).
+        // Muted text and links keep 4.5:1 on the page and the bubbles.
         { name: "claude-light", label: qsTr("Claude light"), dark: false, background: "#faf9f5", raised: "#efede4",
-          code: "#f1efe7", border: "#e2dfd4", text: "#29261b", muted: "#76736a", accent: "#c96442",
+          code: "#f1efe7", border: "#e2dfd4", text: "#29261b", muted: "#66635a", accent: "#ad4f2c",
           added: "#2e7d32", removed: "#b3412f", fault: "#b3261e" },
         { name: "codex-light", label: qsTr("Codex light"), dark: false, background: "#ffffff", raised: "#f2f2f2",
           code: "#f7f7f7", border: "#e5e5e5", text: "#0d0d0d", muted: "#6e6e6e", accent: "#0169cc",
@@ -1005,6 +1007,8 @@ FocusScope {
     // Finder, clipboard, save, drag out); null where there is none, as in a
     // capture, and the menu then offers only Open.
     property var mediaActions: null
+    // A light page (light mode's themes), for pictures drawn for the other.
+    readonly property bool lightPage: backgroundColor.hslLightness > 0.5
     function openMedia(media) {
         if (!media)
             return
@@ -1248,6 +1252,22 @@ FocusScope {
             // 200 dpi charts are; small ones and SVGs show at their own size.
             width: Math.min(parent ? parent.room : 0, !vector && ownWidth >= 800 ? ownWidth / 2 : ownWidth)
             height: ownWidth > 0 ? width * ownHeight / ownWidth : 0
+            // A see-through picture drawn for the other kind of page (white
+            // strokes made for a dark thread, now on a light one, or the
+            // reverse) sits on a card of that kind, so its lines stay
+            // visible; one that suits the page sits on it bare.
+            readonly property string ink: media && media.alpha && root.mediaActions
+                                          ? root.mediaActions.inkTone(media.path) : ""
+            readonly property bool carded: (ink === "light" && root.lightPage) || (ink === "dark" && !root.lightPage)
+            Rectangle {
+                objectName: "inkCard"
+                z: -1
+                visible: picture.carded
+                anchors.fill: parent
+                anchors.margins: -6
+                radius: root.radius
+                color: root.lightPage ? "#26272b" : "#f3f2ee"
+            }
             // A frame round an opaque picture; a see-through one (a diagram
             // of strokes) sits on the thread's own background, unframed.
             Rectangle {

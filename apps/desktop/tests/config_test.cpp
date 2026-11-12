@@ -843,6 +843,108 @@ void visual_settings_persist() {
             "hand-edited visual values fall back");
 }
 
+// Light mode: one switch moves the thread and the window to the person's
+// last theme of the other kind, and back; "system" follows macOS live
+// without writing the file; a file from before it shows what it did.
+void appearance_switches_kinds() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "appearance fixture directory");
+    const auto path = write_config(QDir(directory.path()), R"({"theme":"oled"})");
+    Config config;
+    config.setSourcePathForTesting(path);
+    config.setSystemDark(true);
+    const auto shown = [&config] {
+        return config.themeName() + QLatin1Char('/') +
+               config.visual().value(QStringLiteral("theme")).toString();
+    };
+    require(config.load() && config.appearance() == QStringLiteral("dark") &&
+                shown() == QStringLiteral("oled/terminal") && !config.lightShown(),
+            "a file without the mode stays dark as it was");
+    require(config.setAppearance(QStringLiteral("light")) &&
+                shown() == QStringLiteral("daylight/claude-light") && config.lightShown(),
+            "light mode shows the light window and thread");
+    auto saved = read_config(path);
+    auto visual = saved.value(QStringLiteral("visual")).toObject();
+    require(visual.value(QStringLiteral("appearance")) == QStringLiteral("light") &&
+                visual.value(QStringLiteral("darkWindowTheme")) == QStringLiteral("oled") &&
+                visual.value(QStringLiteral("lightWindowTheme")) == QStringLiteral("daylight") &&
+                visual.value(QStringLiteral("darkTheme")) == QStringLiteral("terminal") &&
+                visual.value(QStringLiteral("lightTheme")) == QStringLiteral("claude-light") &&
+                saved.value(QStringLiteral("theme")) == QStringLiteral("daylight") &&
+                visual.value(QStringLiteral("theme")) == QStringLiteral("claude-light"),
+            "the mode and each kind's theme are saved under visual");
+    require(config.setVisual(QStringLiteral("theme"), QStringLiteral("codex-light")) &&
+                config.appearance() == QStringLiteral("light"),
+            "a light theme in light mode stays light");
+    require(config.setVisual(QStringLiteral("theme"), QStringLiteral("tokyo-night")) &&
+                config.appearance() == QStringLiteral("dark") &&
+                shown() == QStringLiteral("oled/tokyo-night"),
+            "a dark theme switches to dark mode, window included");
+    require(config.setTheme(QStringLiteral("graphite")) &&
+                shown() == QStringLiteral("graphite/tokyo-night"),
+            "a dark window theme is the dark one");
+    require(config.setAppearance(QStringLiteral("light")) &&
+                shown() == QStringLiteral("daylight/codex-light"),
+            "light mode returns to the last light themes");
+    require(config.setAppearance(QStringLiteral("dark")) &&
+                shown() == QStringLiteral("graphite/tokyo-night"),
+            "dark mode returns to the last dark themes");
+    require(!config.setAppearance(QStringLiteral("dim")) &&
+                config.appearance() == QStringLiteral("dark"),
+            "an unknown mode is refused");
+    Config restored;
+    restored.setSourcePathForTesting(path);
+    restored.setSystemDark(true);
+    require(restored.load() && restored.themeName() == QStringLiteral("graphite") &&
+                restored.visual().value(QStringLiteral("lightTheme")) ==
+                    QStringLiteral("codex-light"),
+            "both kinds survive a restart");
+
+    // Match macOS follows the platform's appearance as it changes, unsaved.
+    require(config.setAppearance(QStringLiteral("system")) && !config.lightShown(),
+            "system while macOS is dark");
+    const auto before = read_config(path);
+    config.setSystemDark(false);
+    require(config.lightShown() && shown() == QStringLiteral("daylight/codex-light"),
+            "macOS turning light shows light mode");
+    config.setSystemDark(true);
+    require(shown() == QStringLiteral("graphite/tokyo-night"), "and dark again");
+    require(read_config(path) == before, "following macOS writes nothing");
+    config.setSystemDark(false);
+    require(config.setTheme(QStringLiteral("lapis")) &&
+                config.appearance() == QStringLiteral("dark") &&
+                shown() == QStringLiteral("lapis/tokyo-night"),
+            "a dark theme chosen while macOS is light switches to dark for good");
+    Config system;
+    system.setSourcePathForTesting(
+        write_config(QDir(directory.path()),
+                     R"({"visual":{"appearance":"system","lightTheme":"codex-light"}})"));
+    system.setSystemDark(false);
+    require(system.load() &&
+                system.visual().value(QStringLiteral("theme")) == QStringLiteral("codex-light"),
+            "a saved system mode loads as macOS shows");
+
+    // A file from before light mode that already read in a light theme.
+    static_cast<void>(write_config(QDir(directory.path()),
+                                   R"({"theme":"oled","visual":{"theme":"claude-light"}})"));
+    Config mixed;
+    mixed.setSourcePathForTesting(path);
+    require(mixed.load() && mixed.appearance() == QStringLiteral("light") &&
+                mixed.themeName() == QStringLiteral("oled") &&
+                mixed.visual().value(QStringLiteral("theme")) == QStringLiteral("claude-light"),
+            "an older light thread in a dark window shows as it did");
+    require(mixed.setAppearance(QStringLiteral("dark")) &&
+                mixed.themeName() == QStringLiteral("oled") &&
+                mixed.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal"),
+            "and switches to dark with its own window theme kept");
+    static_cast<void>(write_config(
+        QDir(directory.path()),
+        R"({"visual":{"appearance":"light","lightTheme":"tokyo-night","lightWindowTheme":"oled"}})"));
+    require(mixed.load() && mixed.themeName() == QStringLiteral("daylight") &&
+                mixed.visual().value(QStringLiteral("theme")) == QStringLiteral("claude-light"),
+            "a theme of the wrong kind in a slot falls back");
+}
+
 // The terminal font is validated, written immediately, restored on restart and
 // rolled back when the file cannot be saved.
 void terminal_font_persists_and_rolls_back() {
@@ -1148,6 +1250,7 @@ int main(int argc, char** argv) {
         sidebar_preference_and_commands();
         typing_scroll_preference_persists();
         visual_settings_persist();
+        appearance_switches_kinds();
         selection_persists();
         symbolic_link_config_updates_target();
         appearance_preserves_json_and_bad_files();

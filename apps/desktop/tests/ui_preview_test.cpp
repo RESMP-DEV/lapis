@@ -7,6 +7,7 @@
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include "terminals.hpp"
+#include "transcript.hpp"
 #include "workspace.hpp"
 #include <QAccessible>
 #include <QElapsedTimer>
@@ -3137,6 +3138,110 @@ int run_restored_suggestion_tests() {
     return EXIT_SUCCESS;
 }
 
+// A made-up conversation for the window captures: a prompt and a reply with
+// inline code, a list and a code block.
+const char* const kSettingsThread[] = {
+    R"({"type":"user","uuid":"p1","timestamp":"2026-11-11T16:00:00.000Z","message":{"content":"Why is the warm switch slow?"}})",
+    R"({"type":"assistant","uuid":"a1","timestamp":"2026-11-11T16:00:20.000Z","message":{"content":[{"type":"text","text":"Each switch measured the whole screen again. Two changes fix it:\n\n- keep the last `layout()` result per agent\n- skip glyph shaping for rows that did not change\n\n```cpp\nif (auto hit = cache.find(id); hit != cache.end())\n    return hit->second;\n```\n\nThe warm switch drops from 18 ms to 4 ms."}]}})",
+    R"({"type":"system","subtype":"turn_duration","durationMs":20000})",
+};
+
+// Light mode: the sun and moon beside the visual view and the Commands entry
+// switch the window and the thread together, terminals untouched.
+void check_appearance_toggle(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                             lapis::desktop::Config& config_model, const QTemporaryDir& directory,
+                             const QString& captures) {
+    using namespace lapis::desktop;
+    auto* toggle = find_visual(window.contentItem(), QStringLiteral("appearanceToggle"));
+    CHECK(toggle != nullptr && toggle->isVisible());
+    const auto terminal_background = [&window] {
+        return qobject_cast<TerminalSurface*>(
+                   find_visual(window.contentItem(), QStringLiteral("liveTerminal")))
+            ->property("backgroundColor")
+            .value<QColor>();
+    };
+    const QColor terminal_before = terminal_background();
+    CHECK(config_model.appearance() == QStringLiteral("dark") &&
+          config_model.themeName() == QStringLiteral("oled"));
+    click_visual(window, *toggle);
+    pump(50);
+    CHECK(config_model.appearance() == QStringLiteral("light"));
+    CHECK(config_model.themeName() == QStringLiteral("daylight"));
+    CHECK(window.property("backgroundColor").value<QColor>() == QColor(QStringLiteral("#f4f5f7")));
+    CHECK(terminal_background() == terminal_before);
+    auto* view = find_visual(window.contentItem(), QStringLiteral("visualView"));
+    CHECK(view != nullptr);
+    CHECK(view->property("themeName").toString() == QStringLiteral("claude-light"));
+    CHECK(view->property("lightPage").toBool());
+
+    // The Commands entry names the way it switches.
+    CHECK(QMetaObject::invokeMethod(&window, "openCommandsDialog"));
+    auto* commands = window.findChild<QObject*>(QStringLiteral("commandsDialog"));
+    CHECK(commands != nullptr);
+    wait_popup(*commands, true);
+    QString label;
+    for (const auto& value : commands->property("commands").toList())
+        if (value.toMap().value(QStringLiteral("id")).toString() ==
+            QStringLiteral("toggleAppearance"))
+            label = value.toMap().value(QStringLiteral("label")).toString();
+    CHECK(label == QStringLiteral("Switch to dark mode"));
+    CHECK(QMetaObject::invokeMethod(commands, "close"));
+    wait_popup(*commands, false);
+
+    // The whole window in light mode with a thread on the stage.
+    if (!captures.isEmpty()) {
+        const auto path = directory.filePath(QStringLiteral("thread.jsonl"));
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly));
+        for (const char* line : kSettingsThread)
+            file.write(QByteArray(line) + '\n');
+        file.close();
+        auto* model = qobject_cast<TranscriptModel*>(workspace.transcript());
+        CHECK(model != nullptr);
+        model->setPath(path);
+        model->loadNow();
+        view->setProperty("visible", true);
+        pump(400);
+        CHECK(
+            window.grabWindow().save(QDir(captures).filePath(QStringLiteral("window-light.png"))));
+        view->setProperty("visible", false);
+        model->setPath(QString());
+    }
+    CHECK(QMetaObject::invokeMethod(&window, "runCommand",
+                                    Q_ARG(QVariant, QStringLiteral("toggleAppearance"))));
+    pump(50);
+    CHECK(config_model.appearance() == QStringLiteral("dark") &&
+          config_model.themeName() == QStringLiteral("oled"));
+    CHECK(view->property("themeName").toString() == QStringLiteral("terminal"));
+}
+
+// Light mode and the Settings window, on a config of its own.
+int run_settings_window_tests() {
+    using namespace lapis::desktop;
+    Workspace workspace(WorkspaceMode::fixture);
+    QTemporaryDir directory;
+    CHECK(directory.isValid());
+    write_config(directory, QStringLiteral(R"({"theme":"oled"})"));
+    Config config_model;
+    config_model.setSourcePathForTesting(directory.filePath(QStringLiteral("lapis.json")));
+    config_model.setSystemDark(true);
+    CHECK(config_model.load());
+    AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+                                  .compact = true,
+                                  .screen = QString(),
+                                  .config = &config_model});
+    CHECK(preview.load());
+    auto* window = preview.window();
+    window->resize(1400, 900);
+    window->show();
+    wait_active(*window);
+    pump(80);
+    const auto captures = qEnvironmentVariable("LAPIS_SETTINGS_CAPTURE_DIR");
+    check_appearance_toggle(*window, workspace, config_model, directory, captures);
+    CHECK(preview.diagnostics().isEmpty());
+    return EXIT_SUCCESS;
+}
+
 int main(int argc, char** argv) {
     bool background = false;
     bool shortcuts_only = false;
@@ -3200,7 +3305,8 @@ int main(int argc, char** argv) {
                    run_attention_ui_tests() != EXIT_SUCCESS ||
                    run_strip_ui_tests() != EXIT_SUCCESS || run_sidebar_ui_tests() != EXIT_SUCCESS ||
                    run_history_ui_tests() != EXIT_SUCCESS ||
-                   run_restored_suggestion_tests() != EXIT_SUCCESS)
+                   run_restored_suggestion_tests() != EXIT_SUCCESS ||
+                   run_settings_window_tests() != EXIT_SUCCESS)
             return EXIT_FAILURE;
         std::cout << "ui_preview_test: PASS"
                   << (background ? " (offscreen/software; not native input or GPU acceptance)" : "")

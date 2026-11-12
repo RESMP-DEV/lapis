@@ -55,6 +55,8 @@ struct Theme {
     bool light{};
     bool mono_chrome{};
     double heading_tracking{1.0};
+    // Dark text on a light surface: the window theme light mode uses.
+    bool light{};
 };
 
 // Built-in colour schemes, indexed by ThemeName. Kept in one table so the
@@ -222,6 +224,20 @@ class Config final : public QObject {
     // Sets one visual-view key (theme, font, codeFont, size or all) and
     // saves; an invalid value is refused and nothing changes.
     Q_INVOKABLE bool setVisual(const QString& key, const QVariant& value);
+    // Light or dark reading: "dark", "light" or "system" (follows macOS).
+    // It picks the visual view's theme and the window's from the person's
+    // last choice of each kind (visual.darkTheme, lightTheme, darkWindowTheme,
+    // lightWindowTheme); terminal colors never change. Choosing a theme of
+    // the other kind switches to that kind. Saved; an unknown mode is refused.
+    Q_INVOKABLE bool setAppearance(const QString& mode);
+    [[nodiscard]] const QString& appearance() const { return appearance_; }
+    // Whether light mode shows now (for "system", whether macOS is light).
+    [[nodiscard]] bool lightShown() const;
+    // macOS's own appearance, which "system" follows. The window feeds it
+    // from the platform's color scheme; tests set it directly. Not saved.
+    Q_INVOKABLE void setSystemDark(bool dark);
+    // A visual-view theme is light when its name ends in "-light".
+    [[nodiscard]] static bool visualThemeLight(const QString& name);
     [[nodiscard]] const AgentDefaults& agentDefaults() const { return agent_defaults_; }
     // {"nextPrompt": {...}}: when and how lapis predicts the next prompt.
     [[nodiscard]] const NextPromptSettings& nextPrompt() const { return next_prompt_; }
@@ -285,6 +301,20 @@ class Config final : public QObject {
     // What Command-click on a file path in the visual view opens it with:
     // vscode, cursor, zed, textedit, system, or auto (the first installed).
     QString visual_editor_{QStringLiteral("auto")};
+    // Light mode: the mode and the last theme of each kind, for the visual
+    // view and the window. visual_theme_ and theme_ hold what shows now.
+    QString appearance_{QStringLiteral("dark")};
+    QString visual_dark_theme_{QStringLiteral("terminal")};
+    QString visual_light_theme_{QStringLiteral("claude-light")};
+    QString window_dark_theme_{QStringLiteral("lapis")};
+    QString window_light_theme_{QStringLiteral("daylight")};
+    bool system_dark_{true};
+    // Shows the remembered themes of the kind the mode now asks for.
+    void apply_appearance();
+    // Remembers a chosen theme as its kind's, switching the mode to that kind
+    // when the other kind shows.
+    void choose_kind(bool light);
+    void follow_system_appearance();
     AgentDefaults agent_defaults_;
     NextPromptSettings next_prompt_;
     InteractionLogSettings interaction_log_;
