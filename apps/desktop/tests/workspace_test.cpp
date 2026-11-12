@@ -5,6 +5,7 @@
 #include "launch_spec.hpp"
 #include "session_descriptor.hpp"
 #include "terminals.hpp"
+#include "transcript.hpp"
 #include "transport/local_protocol.hpp"
 #include "workspace.hpp"
 #include "workspace_control.hpp"
@@ -7074,6 +7075,203 @@ void codexAgentsNeverTakeEachOthersThread() {
     require(workspace.conversationFile(first) == mine,
             "with the other's thread known, the first agent's is its own");
 }
+
+// A local Claude Code agent's saved transcript: looked for first in the
+// project folder Claude Code names after the agent's directory (each
+// character other than an ASCII letter or digit made '-'), else in any
+// project folder; the path found is kept while the file exists; and one
+// not saved yet is searched for everywhere at most every 30 seconds, while
+// the named folder is still looked in at once.
+void claudeTranscriptsAreFoundAndKept() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "Claude transcript directory");
+    const QString root = QFileInfo(directory.path()).canonicalFilePath();
+    const ScopedClaudeHome claude_home{QDir(root).filePath(QStringLiteral("claude")).toUtf8()};
+    const ScopedHome home{QDir(root).filePath(QStringLiteral("home")).toUtf8()};
+    const auto work = QDir(root).filePath(QStringLiteral("my_project.v2"));
+    require(QDir().mkpath(work), "agent folder");
+    QString folder = work;
+    for (auto& c : folder)
+        if (!(c.isLetterOrNumber() && c.unicode() < 128))
+            c = QLatin1Char('-');
+    require(folder.endsWith(QStringLiteral("-my-project-v2")), "the folder name maps every mark");
+    const auto projects = QDir(root).filePath(QStringLiteral("claude/projects"));
+    const auto saved = [&projects](const QString& project, const QString& conversation) {
+        const auto path = QDir(projects).filePath(project + QLatin1Char('/') + conversation +
+                                                  QStringLiteral(".jsonl"));
+        writeLines(path, {R"({"type":"user","uuid":"u1","message":{"content":"hi"}})"});
+        return path;
+    };
+    QHash<QString, QString> ids, conversations;
+    QJsonArray agents;
+    for (const auto* role : {"named", "elsewhere", "unsaved"}) {
+        const auto id = uuid();
+        const auto conversation = uuid();
+        ids.insert(QString::fromLatin1(role), id);
+        conversations.insert(QString::fromLatin1(role), conversation);
+        auto record = agentRecord(root, id, "general");
+        record.insert(QStringLiteral("harness"), QStringLiteral("claude"));
+        record.insert(QStringLiteral("directory"), work);
+        record.insert(QStringLiteral("conversation"), conversation);
+        agents.append(record);
+    }
+    // The same conversation in both folders: the named one wins.
+    const auto named = saved(folder, conversations.value(QStringLiteral("named")));
+    (void)saved(QStringLiteral("-other-project"), conversations.value(QStringLiteral("named")));
+    const auto elsewhere =
+        saved(QStringLiteral("-moved-project"), conversations.value(QStringLiteral("elsewhere")));
+    const WorkspaceOptions options{.storagePath = QDir(root).filePath(QStringLiteral("ws.json"))};
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", agents}});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "Claude agents restored");
+    const auto file = [&workspace, &ids](const char* role) {
+        return workspace.conversationFile(ids.value(QString::fromLatin1(role)));
+    };
+    require(file("named") == named, "the folder named after the agent's directory first");
+    require(file("elsewhere") == elsewhere, "else any project folder");
+    // Kept while it exists: a copy in the named folder made later is not
+    // looked for, and the kept path is checked to exist.
+    const auto moved = saved(folder, conversations.value(QStringLiteral("elsewhere")));
+    require(file("elsewhere") == elsewhere, "the path found is kept");
+    require(QFile::remove(elsewhere), "remove the kept transcript");
+    require(file("elsewhere") == moved, "a kept path whose file is gone is looked for again");
+
+    // Not saved yet: empty, and the search of every folder is not repeated
+    // within 30 seconds; the named folder is.
+    require(file("unsaved").isEmpty(), "nothing before Claude Code saved the conversation");
+    const auto other =
+        saved(QStringLiteral("-another-project"), conversations.value(QStringLiteral("unsaved")));
+    require(file("unsaved").isEmpty(),
+            "every project folder is searched again only after 30 seconds");
+    const auto own = saved(folder, conversations.value(QStringLiteral("unsaved")));
+    require(file("unsaved") == own && own != other,
+            "the named folder is looked in each time it is asked");
+}
+
+// The visual view's read-ahead (setVisualKeep, warmThreads): the budget
+// reaches the thread model, the threads of this Mac's agents whose
+// conversations lapis already knows are read most recently written first
+// while the budget has room, and an agent whose conversation is not known
+// yet is not placed by it (its pin waits for the pin timer).
+void visualThreadsAreReadAhead() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "read-ahead directory");
+    const QString root = QFileInfo(directory.path()).canonicalFilePath();
+    const ScopedClaudeHome claude_home{QDir(root).filePath(QStringLiteral("claude")).toUtf8()};
+    const ScopedCodexHome codex_home{QDir(root).filePath(QStringLiteral("codex")).toUtf8()};
+    const ScopedHome home{QDir(root).filePath(QStringLiteral("home")).toUtf8()};
+    const auto work = QDir(root).filePath(QStringLiteral("work"));
+    require(QDir().mkpath(work), "agent folder");
+    QString folder = work;
+    for (auto& c : folder)
+        if (!(c.isLetterOrNumber() && c.unicode() < 128))
+            c = QLatin1Char('-');
+    const auto projects = QDir(root).filePath(QStringLiteral("claude/projects"));
+    const auto endpoint = [&root](const QString& id) {
+        return QDir(root).filePath(id + QStringLiteral(".sock"));
+    };
+    QHash<QString, QString> ids, paths;
+    QJsonArray agents;
+    const auto now = QDateTime::currentDateTime();
+    // Claude Code agents: "newer" written last, "older" before it, and
+    // "unsaved" with no transcript yet.
+    for (const auto* role : {"older", "newer", "unsaved"}) {
+        const auto id = uuid();
+        const auto conversation = uuid();
+        ids.insert(QString::fromLatin1(role), id);
+        auto record = agentRecord(root, id, "general");
+        record.insert(QStringLiteral("harness"), QStringLiteral("claude"));
+        record.insert(QStringLiteral("directory"), work);
+        record.insert(QStringLiteral("conversation"), conversation);
+        agents.append(record);
+        if (QLatin1String(role) == QLatin1String("unsaved"))
+            continue;
+        const auto path = QDir(projects).filePath(folder + QLatin1Char('/') + conversation +
+                                                  QStringLiteral(".jsonl"));
+        writeLines(path, {R"({"type":"user","uuid":"u1","message":{"content":"hi"}})",
+                          R"({"type":"assistant","uuid":"a1","message":{"content":[)"
+                          R"({"type":"text","text":"hello"}]}})"});
+        QFile touched(path);
+        require(touched.open(QIODevice::ReadWrite) &&
+                    touched.setFileTime(QLatin1String(role) == QLatin1String("newer")
+                                            ? now.addSecs(-10)
+                                            : now.addSecs(-3600),
+                                        QFileDevice::FileModificationTime),
+                "date a transcript");
+        paths.insert(QString::fromLatin1(role), path);
+    }
+    // A Codex agent whose thread nothing names yet: conversationFile would
+    // place it (the thread it started in its folder since its service
+    // started); reading ahead must not.
+    const auto codex = uuid();
+    {
+        QFile made(endpoint(codex));
+        require(made.open(QIODevice::WriteOnly), "make an endpoint");
+        auto record = agentRecord(root, codex, "general");
+        record.insert(QStringLiteral("harness"), QStringLiteral("codex"));
+        record.insert(QStringLiteral("directory"), work);
+        agents.append(record);
+    }
+    const auto thread = uuid();
+    const auto rollout =
+        QDir(QDir(root).filePath(QStringLiteral("codex/sessions")))
+            .filePath(QDateTime::currentDateTime().date().toString(QStringLiteral("yyyy/MM/dd")) +
+                      QStringLiteral("/rollout-2026-11-10T10-00-00-") + thread +
+                      QStringLiteral(".jsonl"));
+    writeLines(rollout,
+               {R"({"type":"session_meta","payload":{"id":")" + thread.toUtf8() +
+                R"(","timestamp":")" +
+                QDateTime::currentDateTimeUtc().addSecs(1).toString(Qt::ISODateWithMs).toUtf8() +
+                R"(","cwd":")" + work.toUtf8() + R"(","source":"cli"}})"});
+    const WorkspaceOptions options{.storagePath = QDir(root).filePath(QStringLiteral("ws.json"))};
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", agents}});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "read-ahead agents restored");
+    auto* threads = qobject_cast<lapis::desktop::TranscriptModel*>(workspace.transcript());
+    require(threads != nullptr, "the workspace owns a thread model");
+    const auto settled = [threads] {
+        return waitFor([threads] { return !threads->readingAhead(); }, 10000);
+    };
+
+    // No memory budget: nothing is read ahead.
+    workspace.setVisualKeep(0, 32, false);
+    workspace.warmThreads();
+    require(settled() && threads->keptCount() == 0, "a zero budget reads nothing ahead");
+    // Room for one: the most recently written.
+    workspace.setVisualKeep(1024, 1, false);
+    workspace.warmThreads();
+    require(waitFor([&] { return threads->kept(paths.value(QStringLiteral("newer"))); }, 10000) &&
+                settled() && threads->keptCount() == 1 &&
+                !threads->kept(paths.value(QStringLiteral("older"))),
+            "the most recently written thread is read first");
+    // Room for all: the rest of the known ones, never the unplaced Codex
+    // thread.
+    workspace.setVisualKeep(1024, 32, false);
+    workspace.warmThreads();
+    require(waitFor([&] { return threads->kept(paths.value(QStringLiteral("older"))); }, 10000) &&
+                settled() && threads->keptCount() == 2 && !threads->kept(rollout),
+            "every known thread is read ahead, and an unplaced one is not");
+    require(workspace.conversationFile(codex) == rollout,
+            "the Codex thread is placed when the view asks for it");
+    // Scheduled once a run, a few seconds after it is asked for.
+    workspace.setVisualKeep(0, 32, false);
+    require(threads->keptCount() == 0, "a smaller budget lets the kept threads go");
+    workspace.setVisualKeep(1024, 32, true);
+    require(threads->keptCount() == 0, "the scheduled read-ahead waits");
+    require(waitFor([&] { return threads->keptCount() == 3; }, 10000) && settled() &&
+                threads->kept(rollout),
+            "then reads every thread known by then");
+}
 } // namespace
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
@@ -7138,6 +7336,8 @@ int main(int argc, char** argv) {
                 visualConversationFiles();
                 agyAgentsKeepTheirOwnConversations();
                 codexAgentsNeverTakeEachOthersThread();
+                claudeTranscriptsAreFoundAndKept();
+                visualThreadsAreReadAhead();
             } else if (selected == QStringLiteral("omp-overlay")) {
                 ompGetsItsResizeOverlay();
             } else if (selected == QStringLiteral("chimes")) {
@@ -7176,6 +7376,8 @@ int main(int argc, char** argv) {
         visualConversationFiles();
         agyAgentsKeepTheirOwnConversations();
         codexAgentsNeverTakeEachOthersThread();
+        claudeTranscriptsAreFoundAndKept();
+        visualThreadsAreReadAhead();
         truthfulStatus();
         placeholderMatchesTerminalDefaults();
         discardOutsideActiveCategorySelectsNeighbor();

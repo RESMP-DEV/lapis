@@ -843,6 +843,51 @@ void visual_settings_persist() {
             "hand-edited visual values fall back");
 }
 
+// visual.keepMB and visual.keepThreads are hand-written: whole numbers from
+// 0 to their limits (65536 MB, 1000 threads) are taken, and anything else
+// (missing, negative, too large, fractional or not a number) keeps the
+// default of 1024 MB and 32 threads.
+void visual_keep_budget_parses() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "keep budget fixture directory");
+    const QDir dir(directory.path());
+    Config config;
+    config.setSourcePathForTesting(write_config(dir, R"({})"));
+    require(config.load() && config.visualKeepMB() == 1024 && config.visualKeepThreads() == 32,
+            "the keep budget defaults to 1024 MB and 32 threads");
+    struct Case {
+        const char* name;
+        QByteArray visual;
+        int mb;
+        int threads;
+    };
+    const std::array cases{
+        Case{"in range", R"({"keepMB": 512, "keepThreads": 8})", 512, 8},
+        Case{"zero keeps none", R"({"keepMB": 0, "keepThreads": 0})", 0, 0},
+        Case{"the limits", R"({"keepMB": 65536, "keepThreads": 1000})", 65536, 1000},
+        Case{"past the limits", R"({"keepMB": 65537, "keepThreads": 1001})", 1024, 32},
+        Case{"negative", R"({"keepMB": -1, "keepThreads": -5})", 1024, 32},
+        Case{"fractional", R"({"keepMB": 1.5, "keepThreads": 2.5})", 1024, 32},
+        Case{"strings", R"({"keepMB": "512", "keepThreads": "8"})", 1024, 32},
+        Case{"booleans and null", R"({"keepMB": true, "keepThreads": null})", 1024, 32},
+        Case{"huge", R"({"keepMB": 1e300, "keepThreads": 4294967296})", 1024, 32},
+        Case{"one bad, one good", R"({"keepMB": "lots", "keepThreads": 4})", 1024, 4},
+    };
+    for (const auto& c : cases) {
+        static_cast<void>(write_config(dir, R"({"visual":)" + c.visual + "}"));
+        if (!config.load() || config.visualKeepMB() != c.mb ||
+            config.visualKeepThreads() != c.threads) {
+            std::cerr << "visual keep case \"" << c.name << "\": keepMB " << config.visualKeepMB()
+                      << ", keepThreads " << config.visualKeepThreads() << '\n';
+            require(false, "visual.keepMB and visual.keepThreads parse as documented");
+        }
+    }
+    // A reload without them goes back to the defaults.
+    static_cast<void>(write_config(dir, R"({"visual":{"theme":"terminal"}})"));
+    require(config.load() && config.visualKeepMB() == 1024 && config.visualKeepThreads() == 32,
+            "a reload without the keys restores the defaults");
+}
+
 // Golden file for Settings: every setting it changes lands on its own
 // lapis.json key, beside hand-written keys left as they were.
 void settings_write_known_keys() {
@@ -1363,6 +1408,7 @@ int main(int argc, char** argv) {
         sidebar_preference_and_commands();
         typing_scroll_preference_persists();
         visual_settings_persist();
+        visual_keep_budget_parses();
         appearance_switches_kinds();
         settings_write_known_keys();
         selection_persists();
