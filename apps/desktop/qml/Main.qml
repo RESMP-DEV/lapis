@@ -328,11 +328,13 @@ ApplicationWindow {
         function onChanged() { homeRebuild.restart() }
     }
     // What gets the keyboard when no dialog does: the side terminal while it
-    // shows, else the selected agent's terminal, or the home list when
-    // nothing is open.
+    // shows, else the selected agent's terminal, or its thread's bar while
+    // the thread covers the terminal, or the home list when nothing is open.
+    // AppWindow gives it the keyboard after every move between agents.
     readonly property string focusTarget: sideTerminalOpen && terminalsAvailable && terminals.current !== null ?
                                               "sideTerminalSurface" :
-                                          workspace.focusedAgent === null ? "homeList" : "liveTerminal"
+                                          workspace.focusedAgent === null ? "homeList" :
+                                          visualCovers ? "visualComposer" : "liveTerminal"
     // Command-` (or Control-`): a plain shell on this Mac or an ssh host,
     // beside the agents, for a quick command; never an agent. Command-~
     // picks the machine.
@@ -3783,8 +3785,16 @@ ApplicationWindow {
                     sendKeys: bytes => liveTerminal.sendKeys(bytes)
                     typedScreen: () => liveTerminal.screenLines(true)
                     interrupt: () => liveTerminal.interrupt()
-                    tabAway: () => liveTerminal.tabFlow && liveTerminal.tabAway()
+                    // Tab on the empty bar with nothing offered: the next
+                    // agent that needs you, for every CLI and with guesses on
+                    // or off (the bar's Tab means nothing else); false when
+                    // none waits. The terminal's own Tab is the program's
+                    // unless its Tab flow is on.
+                    tabAway: () => workspace.nextPriorityAttention(window.nextPromptAvailable
+                                                                   ? nextPrompt.readyAgents() : ({}))
+                    agent: liveTerminal.document !== null ? liveTerminal.document.agentId : ""
                     suggestion: liveTerminal.suggestion
+                    suggestionKey: liveTerminal.suggestionKey
                     suggestionConfident: liveTerminal.suggestionConfident
                     working: liveTerminal.document !== null && liveTerminal.document.statusKind === "working"
                     waiting: liveTerminal.document !== null && liveTerminal.document.attentionPending
@@ -3801,13 +3811,20 @@ ApplicationWindow {
                             ? workspace.agentFolder(liveTerminal.document.agentId) : ""
                     harness: liveTerminal.document !== null ? liveTerminal.document.harnessId : ""
                     slashCommands: ["claude", "codex", "agy"].indexOf(harness) >= 0
-                    onSuggestionFilled: {
-                        if (window.nextPromptAvailable && liveTerminal.document)
-                            nextPrompt.used(liveTerminal.document.agentId, false, 0, liveTerminal.suggestionKey)
+                    // The experiment's record, as the terminal's Tab keeps it:
+                    // seen once on screen (here, in the bar), used when Tab
+                    // takes it, sent only when a second Tab sends it unchanged.
+                    onSuggestionShown: {
+                        if (window.nextPromptAvailable && liveTerminal.document && liveTerminal.suggestionKey.length > 0)
+                            nextPrompt.seenOffer({session: liveTerminal.document.agentId, offer: liveTerminal.suggestionKey})
                     }
-                    onSuggestionSent: {
+                    onSuggestionFilled: offerKey => {
                         if (window.nextPromptAvailable && liveTerminal.document)
-                            nextPrompt.used(liveTerminal.document.agentId, true, 0, liveTerminal.suggestionKey)
+                            nextPrompt.used(liveTerminal.document.agentId, false, 0, offerKey)
+                    }
+                    onSuggestionSent: offerKey => {
+                        if (window.nextPromptAvailable && liveTerminal.document)
+                            nextPrompt.used(liveTerminal.document.agentId, true, 0, offerKey)
                     }
                     // The same picker for every CLI; each CLI's own command
                     // makes the change, typed into its session.

@@ -51,7 +51,19 @@ FocusScope {
     property var typedScreen: null
     // lapis's predicted next prompt (Tab), shown in the empty bar.
     property string suggestion: ""
+    property string suggestionKey: ""   // the offer the suggestion belongs to
     property bool suggestionConfident: false
+    // The agent the bar types into (its lapis id). The view is one for every
+    // agent, so what Tab filled, and the check on a sent prompt, belong to
+    // the agent they were for and end when another shows.
+    property string agent: ""
+    onAgentChanged: {
+        filledText = ""
+        filledKey = ""
+        sendCheck.stop()
+        checkingText = ""
+        retried = false
+    }
     property bool working: false        // a turn is running: Send becomes Stop
     property bool waiting: false        // a request waits in the terminal
     property string waitingReason: ""
@@ -776,9 +788,11 @@ FocusScope {
     // Escape asks to go back to the terminal (escape() decides: with
     // nothing typed while the agent works, it stops the turn instead).
     signal dismissed()
-    // Tab put the suggestion in the bar, and a second Tab sent it unchanged.
-    signal suggestionFilled()
-    signal suggestionSent()
+    // The guess shows in the empty bar (an impression); Tab put it in the
+    // bar; a second Tab sent it unchanged. `offerKey` is the offer Tab took.
+    signal suggestionShown()
+    signal suggestionFilled(string offerKey)
+    signal suggestionSent(string offerKey)
     // Start a new agent from just before a prompt, with it in the input.
     signal editRequested(string record, string text)
 
@@ -2950,7 +2964,54 @@ FocusScope {
 
     // The bar to type in, as in the Codex and Claude apps: Return sends to
     // the agent, Shift-Return starts a new line, Tab takes lapis's guess.
-    property bool filledFromSuggestion: false
+    // What Tab put in the bar and the offer it came from, until it is sent,
+    // edited at all, or another agent shows. Taking the guess retires its
+    // offer (NextPrompt::used), so `suggestion` is empty by the second Tab:
+    // that Tab compares the bar with this, never with the suggestion.
+    property string filledText: ""
+    property string filledKey: ""
+    readonly property bool filledFromSuggestion: filledText.length > 0 && input.text === filledText
+                                                 && attachments.length === 0
+    // The guess is on screen in the empty bar of the active window.
+    readonly property bool offerShown: suggestion.length > 0 && !waiting && input.text.length === 0
+                                       && input.preeditText.length === 0 && visible && Window.active
+    onOfferShownChanged: if (offerShown) suggestionShown()
+    onSuggestionKeyChanged: if (offerShown) suggestionShown()
+    // Tab, as one key for the whole round: into an empty bar it puts the
+    // guess (to edit); on that guess, unchanged, it sends it; on an empty bar
+    // with nothing offered it moves to the next agent that needs the person,
+    // whose own guess is then offered, so Tab goes on from there. Text the
+    // person edited waits for Return. A held key's repeats do nothing, and a
+    // composition (IME) in progress keeps Tab. A request is never answered:
+    // the bar offers no guess over one and sends nothing to it.
+    function tabStep(repeat) {
+        if (repeat || input.preeditText.length > 0)
+            return
+        if (filledFromSuggestion) {
+            if (waiting) {
+                say(qsTr("Answer the request in the terminal first (Esc)"))
+                return
+            }
+            const key = filledKey
+            if (sendMessage(false))
+                suggestionSent(key)
+            return
+        }
+        if (input.text.length > 0 || attachments.length > 0)
+            return
+        if (suggestion.length > 0 && !waiting) {
+            const key = suggestionKey
+            suggestionShown() // what Tab took was on screen
+            input.text = suggestion
+            input.cursorPosition = input.text.length
+            filledText = input.text
+            filledKey = key
+            suggestionFilled(key)
+            return
+        }
+        if (tabAway && !tabAway())
+            say(qsTr("Nothing else is waiting"), true)
+    }
     property string notice: ""
     // Attached files go as @ mentions, which the CLI reads whatever their
     // type (images are seen as images); quoted when the path has spaces.
@@ -2963,21 +3024,22 @@ FocusScope {
     }
     function send() { sendMessage(false) }
     // `now`: Command-Return, the message taken soonest (see urge); an
-    // ordinary send when the agent is idle or for a slash command.
+    // ordinary send when the agent is idle or for a slash command. Returns
+    // whether the message went to the agent.
     function sendMessage(now) {
         const text = message()
         if (text.trim().length === 0 || !root.submit)
-            return
+            return false
         if (root.starting) {
             root.say(qsTr("Not sent: %1 is still starting · the message stays here").arg(root.cliName()))
-            return
+            return false
         }
         // A dialog in the terminal (a picker, settings) would take these
         // keys as its own, so show it instead and keep the message here.
         if (!root.waiting && root.slashCommands && root.screen && root.model
                 && root.model.dialogShowing(root.screen())) {
             root.dialogFound()
-            return
+            return false
         }
         const command = root.slashCommands && /^\/[^\s\/]+/.test(text.trim()) ? text.trim().split(/\s/)[0] : ""
         // A CLI whose screen the view cannot read (any but Claude Code) may
@@ -2989,7 +3051,7 @@ FocusScope {
         // A turn the file shows ended is not working, whatever the status.
         const working = root.working && !root.turnEnded
         if (!root.waiting && root.tookLeftover())
-            return
+            return false
         if (now === true && working && root.cli === "antigravity" && root.model)
             root.model.refreshQueueMode()
         const urgent = now === true && working && command.length === 0 && root.sendsNow
@@ -3018,18 +3080,18 @@ FocusScope {
                 root.quietTicks = 0
                 root.commandSent(text.trim())
             }
-            if (root.filledFromSuggestion && text === root.suggestion)
-                root.suggestionSent()
-            root.filledFromSuggestion = false
+            root.filledText = ""
+            root.filledKey = ""
             root.attachments = []
             input.clear()
             root.following = true
             list.positionViewAtEnd()
             root.notice = ""
-        } else {
-            root.say(root.waiting ? qsTr("Answer the request in the terminal first (Esc)")
-                                  : qsTr("Not sent: the agent is not ready for input"))
+            return true
         }
+        root.say(root.waiting ? qsTr("Answer the request in the terminal first (Esc)")
+                              : qsTr("Not sent: the agent is not ready for input"))
+        return false
     }
     Timer { id: noticeTimer; interval: 4000; onTriggered: root.notice = "" }
 
@@ -3224,13 +3286,22 @@ FocusScope {
                     selectedTextColor: root.textColor
                     font.family: root.sansFamily
                     font.pixelSize: root.fontSize
-                    onTextChanged: if (text.length === 0) root.filledFromSuggestion = false
+                    // Any edit, even one undone, makes it the person's text.
+                    onTextChanged: if (text !== root.filledText) { root.filledText = ""; root.filledKey = "" }
                     Keys.onPressed: function(event) {
                         // AppKit marks arrows as keypad keys; lapis keeps
                         // Command as Meta and Control as Control.
                         const mods = event.modifiers & ~Qt.KeypadModifier
                         const plain = mods === Qt.NoModifier
                         const isReturn = event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                        // Tab's round (tabStep); a guess that is a slash
+                        // command still sends on the second Tab.
+                        if (event.key === Qt.Key_Tab && plain
+                                && (root.slashMatches.length === 0 || root.filledFromSuggestion)) {
+                            root.tabStep(event.isAutoRepeat)
+                            event.accepted = true
+                            return
+                        }
                         // The slash list takes arrows, Tab, Return and Escape.
                         if (root.slashMatches.length > 0 && plain) {
                             const count = root.slashMatches.length
@@ -3268,18 +3339,6 @@ FocusScope {
                             insert(cursorPosition, "\n")
                             event.accepted = true
                         } else if (root.editKey(input, event.key, mods)) {
-                            event.accepted = true
-                        } else if (event.key === Qt.Key_Tab && plain) {
-                            if (root.suggestion.length > 0 && text.length === 0) {
-                                text = root.suggestion
-                                cursorPosition = text.length
-                                root.filledFromSuggestion = true
-                                root.suggestionFilled()
-                            } else if (root.filledFromSuggestion && text === root.suggestion) {
-                                root.send()
-                            } else if (text.length === 0 && root.tabAway) {
-                                root.tabAway()
-                            }
                             event.accepted = true
                         } else if (event.matches(StandardKey.Copy) && selectedText.length > 0) {
                             root.copy(selectedText)
@@ -3438,6 +3497,7 @@ FocusScope {
                     }
                 }
                 Text {
+                    objectName: "visualHint"
                     anchors.left: controls.right
                     anchors.leftMargin: 8
                     anchors.right: contextMeter.left
@@ -3447,7 +3507,8 @@ FocusScope {
                     text: root.notice.length > 0 ? root.notice
                         : root.waiting ? (root.waitingReason.length > 0 ? root.waitingReason
                                                                          : qsTr("The agent is waiting on a request"))
-                        : root.suggestion.length > 0 && input.text.length === 0 ? qsTr("Tab to use the suggestion")
+                        : root.suggestion.length > 0 && input.text.length === 0
+                          ? qsTr("Tab to use · again to send · then the next agent")
                         : root.filledFromSuggestion ? qsTr("Tab or Return to send")
                         : ""
                     color: (root.notice.length > 0 && !root.noticeQuiet) || root.waiting
