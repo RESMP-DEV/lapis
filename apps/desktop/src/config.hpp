@@ -6,6 +6,7 @@
 #include "tab_ranker.hpp"
 #include <QFileSystemWatcher>
 #include <QHash>
+#include <QJsonObject>
 #include <QJsonValue>
 #include <QKeyCombination>
 #include <QObject>
@@ -51,12 +52,11 @@ struct Theme {
     const char* plenty{};
     int corner_radius{2};
     int motion_ms{100};
-    // Light surfaces take the darker category colours.
+    // Dark text on a light surface: the window theme light mode uses, and
+    // the one that takes the darker category colours.
     bool light{};
     bool mono_chrome{};
     double heading_tracking{1.0};
-    // Dark text on a light surface: the window theme light mode uses.
-    bool light{};
 };
 
 // Built-in colour schemes, indexed by ThemeName. Kept in one table so the
@@ -125,6 +125,11 @@ class Config final : public QObject {
     Q_PROPERTY(QVariantMap visual READ visual NOTIFY changed)
     // False for a defaults-only config: it has no file to reload.
     Q_PROPERTY(bool fileBacked READ fileBacked CONSTANT)
+    // The settings Settings changes through setSetting, by dotted path:
+    // newAgent.harness, newAgent.folder, newAgent.mode, nextPrompt.auto,
+    // interactionLog.enabled, tabAway.overdueHours, and harnessUpdatesOff (the
+    // CLIs not updated automatically).
+    Q_PROPERTY(QVariantMap settings READ settings NOTIFY changed)
   public:
     explicit Config(QObject* parent = nullptr);
     // Built-in defaults that read, watch and write no file. Changes apply in
@@ -238,6 +243,15 @@ class Config final : public QObject {
     Q_INVOKABLE void setSystemDark(bool dark);
     // A visual-view theme is light when its name ends in "-light".
     [[nodiscard]] static bool visualThemeLight(const QString& name);
+    // Sets one setting kept in a section of its own (see `settings`), or
+    // harnessUpdates.<cli> (false keeps that CLI's version), and saves. Only
+    // the section changed is written; the rest of it (machines, models,
+    // providers...) stays as written. An invalid value is refused.
+    Q_INVOKABLE bool setSetting(const QString& path, const QVariant& value);
+    [[nodiscard]] QVariantMap settings() const;
+    // Every setting Settings shows, at its built-in value, by the names
+    // visual(), settings() and the properties above use; for Reset.
+    Q_INVOKABLE [[nodiscard]] static QVariantMap defaults();
     [[nodiscard]] const AgentDefaults& agentDefaults() const { return agent_defaults_; }
     // {"nextPrompt": {...}}: when and how lapis predicts the next prompt.
     [[nodiscard]] const NextPromptSettings& nextPrompt() const { return next_prompt_; }
@@ -315,6 +329,11 @@ class Config final : public QObject {
     // when the other kind shows.
     void choose_kind(bool light);
     void follow_system_appearance();
+    // The sections setSetting edits, as last read, and the ones it changed
+    // since the last save: only those are written back.
+    QJsonObject sections_;
+    QSet<QString> touched_;
+    void parse_sections();
     AgentDefaults agent_defaults_;
     NextPromptSettings next_prompt_;
     InteractionLogSettings interaction_log_;

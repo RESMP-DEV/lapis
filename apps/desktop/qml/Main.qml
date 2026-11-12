@@ -400,9 +400,10 @@ ApplicationWindow {
         const hasAgent = agent !== null
         const needAgent = qsTr("Select an agent first")
         const entries = []
-        function add(id, label, action, enabled, reason, run) {
+        // keywords: other words it is found by, such as an older name.
+        function add(id, label, action, enabled, reason, run, keywords) {
             entries.push({id: id, label: label, shortcut: action ? window.shortcutText(action) : "",
-                          enabled: enabled, reason: reason || "", run: run})
+                          enabled: enabled, reason: reason || "", run: run, keywords: keywords || ""})
         }
         add("newAgent", qsTr("New agent"), "newAgent", true, "", () => window.openNewAgentDialog())
         add("newCategory", qsTr("New category"), "newCategory", true, "", () => window.openCategoryDialog("add"))
@@ -459,7 +460,8 @@ ApplicationWindow {
         // Takes the agent back from another view, such as the phone holding a
         // session that cannot be joined; nothing else reclaims a replaced view.
         add("reconnect", qsTr("Reconnect agent"), "", window.recoveryAvailable(), qsTr("The selected agent is already connected or opening"), () => agent.reconnect())
-        add("appearance", qsTr("Appearance"), "openSettings", true, "", () => window.openSettingsDialog())
+        add("appearance", qsTr("Settings"), "openSettings", true, "", () => window.openSettingsDialog(),
+            qsTr("appearance preferences options"))
         add("reloadConfig", qsTr("Reload configuration"), "reloadConfig", config.fileBacked, qsTr("No configuration in this fixture"), () => config.reload())
         const mac = Qt.platform.os === "osx"
         add("closeWindow", qsTr("Close window (lapis keeps running)"), "closeWindow", mac, qsTr("Only on the Mac"), () => window.close())
@@ -1771,7 +1773,22 @@ ApplicationWindow {
                        : []
         visual: window.visualSettings
         visualSize: visualView.fontSize
+        sidebarVisible: config.sidebarVisible
+        previewsVisible: config.previewsVisible
+        scrollToBottomOnTyping: config.scrollToBottomOnTyping
+        values: config.settings
+        defaults: config.defaults()
+        harnesses: visible ? workspace.availableHarnesses().map(h => ({ id: h.id, name: h.name })) : []
+        fileBacked: config.fileBacked
         onVisualChosen: function(key, value) { config.setVisual(key, value) }
+        onAppearanceChosen: function(mode) { config.setAppearance(mode) }
+        onSidebarChosen: function(on) { config.setSidebarVisible(on) }
+        onPreviewsChosen: function(on) { config.setPreviewsVisible(on) }
+        onScrollChosen: function(on) { config.setScrollToBottomOnTyping(on) }
+        onSettingChosen: function(path, value) { config.setSetting(path, value) }
+        onReloadRequested: config.reload()
+        onOpenConfigRequested: window.fileActions.open(config.sourcePath)
+        onOpenDocsRequested: Qt.openUrlExternally("https://github.com/RESMP-DEV/lapis/blob/main/docs/config.md")
         onLaunchAtLoginChosen: function(on) { if (window.desktopAvailable) desktop.setLaunchAtLogin(on) }
         onCheckUpdates: if (window.desktopAvailable) desktop.checkForUpdates()
         onFinishSoundChosen: function(on) { config.setFinishSound(on) }
@@ -2461,7 +2478,7 @@ ApplicationWindow {
         MenuSeparator {}
         ActionItem {
             objectName: "appearanceAction"
-            text: qsTr("Appearance")
+            text: qsTr("Settings")
             onTriggered: window.openSettingsDialog()
         }
     }

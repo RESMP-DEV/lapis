@@ -843,6 +843,119 @@ void visual_settings_persist() {
             "hand-edited visual values fall back");
 }
 
+// Golden file for Settings: every setting it changes lands on its own
+// lapis.json key, beside hand-written keys left as they were.
+void settings_write_known_keys() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "golden fixture directory");
+    const auto path = write_config(
+        QDir(directory.path()),
+        R"({"keybindings":{"quit":["Meta+Q"]},"custom":1,)"
+        R"("newAgent":{"machines":{"box":{"folder":"~/w"}},"models":{"codex":["m1"]}},)"
+        R"("nextPrompt":{"model":"x","providers":[]}})");
+    Config config;
+    config.setSourcePathForTesting(path);
+    config.setSystemDark(true);
+    require(config.load(), "golden fixture loads");
+    const auto set = [&config](const char* key, const QVariant& value) {
+        require(config.setSetting(QString::fromLatin1(key), value), key);
+    };
+    require(config.setTheme(QStringLiteral("graphite")) &&
+                config.setDensity(QStringLiteral("compact")) && config.setSidebarVisible(false) &&
+                config.setPreviewsVisible(false) && config.setScrollToBottomOnTyping(false) &&
+                config.setTerminalFontFamily(QStringLiteral("Menlo")) &&
+                config.setTerminalFontSize(16) && config.setFinishSound(false) &&
+                config.setKeepAwake(false),
+            "window settings save");
+    require(config.setVisual(QStringLiteral("font"), QStringLiteral("serif")) &&
+                config.setVisual(QStringLiteral("codeFont"), QStringLiteral("menlo")) &&
+                config.setVisual(QStringLiteral("size"), 18) &&
+                config.setVisual(QStringLiteral("all"), true) &&
+                config.setVisual(QStringLiteral("editor"), QStringLiteral("zed")) &&
+                config.setVisual(QStringLiteral("theme"), QStringLiteral("tokyo-night")),
+            "reading view settings save");
+    set("newAgent.harness", QStringLiteral("codex"));
+    set("newAgent.folder", QStringLiteral("~/dev"));
+    set("newAgent.mode", QStringLiteral("edits"));
+    set("harnessUpdates.omp", false);
+    set("nextPrompt.auto", true);
+    set("interactionLog.enabled", true);
+    set("tabAway.overdueHours", 6);
+    const auto expected = QJsonDocument::fromJson(R"({
+        "keybindings": {"quit": ["Meta+Q"]},
+        "custom": 1,
+        "newAgent": {"machines": {"box": {"folder": "~/w"}}, "models": {"codex": ["m1"]},
+                     "harness": "codex", "folder": "~/dev", "mode": "edits"},
+        "nextPrompt": {"model": "x", "providers": [], "auto": true},
+        "harnessUpdates": {"omp": false},
+        "interactionLog": {"enabled": true},
+        "tabAway": {"overdueHours": 6},
+        "theme": "graphite",
+        "density": "compact",
+        "sidebarVisible": false,
+        "previewsVisible": false,
+        "scrollToBottomOnTyping": false,
+        "terminalFont": {"size": 16, "family": "Menlo"},
+        "alerts": {"finished": false},
+        "keepAwake": false,
+        "visual": {"theme": "tokyo-night", "font": "serif", "codeFont": "menlo", "size": 18,
+                   "all": true, "editor": "zed", "appearance": "dark",
+                   "darkTheme": "tokyo-night", "lightTheme": "claude-light",
+                   "darkWindowTheme": "graphite", "lightWindowTheme": "daylight"},
+        "version": 1
+    })")
+                              .object();
+    require(read_config(path) == expected, "the saved file matches the golden file");
+    require(config.agentDefaults().harness == QStringLiteral("codex") &&
+                config.agentDefaults().machineFolders.value(QStringLiteral("box")) ==
+                    QStringLiteral("~/w") &&
+                config.harnessUpdatesOff().contains(QStringLiteral("omp")) &&
+                config.nextPrompt().automatic && config.nextPrompt().model == QStringLiteral("x") &&
+                config.interactionLog().enabled && config.tabAway().overdueHours == 6,
+            "the settings apply at once");
+
+    // Turning updates back on removes the key rather than writing true;
+    // bad values are refused.
+    set("harnessUpdates.omp", true);
+    require(read_config(path).value(QStringLiteral("harnessUpdates")).toObject().isEmpty(),
+            "updating again leaves no key");
+    require(!config.setSetting(QStringLiteral("newAgent.mode"), QStringLiteral("yolo")) &&
+                !config.setSetting(QStringLiteral("tabAway.overdueHours"), -1) &&
+                !config.setSetting(QStringLiteral("nextPrompt.auto"), QStringLiteral("yes")) &&
+                !config.setSetting(QStringLiteral("nextPrompt.model"), QStringLiteral("y")) &&
+                !config.setSetting(QStringLiteral("harnessUpdates.Bad Name"), false),
+            "unknown paths and bad values are refused");
+    set("newAgent.folder", QString());
+    require(!read_config(path)
+                 .value(QStringLiteral("newAgent"))
+                 .toObject()
+                 .contains(QStringLiteral("folder")),
+            "an empty folder removes the key");
+
+    // A section Settings did not just change is never rewritten from memory:
+    // an edit made since stays.
+    auto edited = read_config(path);
+    auto next = edited.value(QStringLiteral("nextPrompt")).toObject();
+    next.insert(QStringLiteral("maxPerHour"), 5);
+    edited.insert(QStringLiteral("nextPrompt"), next);
+    static_cast<void>(
+        write_config(QDir(directory.path()), QJsonDocument(edited).toJson(QJsonDocument::Compact)));
+    require(config.setKeepAwake(true), "an unrelated save");
+    require(read_config(path)
+                    .value(QStringLiteral("nextPrompt"))
+                    .toObject()
+                    .value(QStringLiteral("maxPerHour"))
+                    .toInt() == 5,
+            "an untouched section stays as edited");
+    const auto defaults = Config::defaults();
+    require(defaults.value(QStringLiteral("theme")) == QStringLiteral("lapis") &&
+                defaults.value(QStringLiteral("visual.appearance")) == QStringLiteral("dark") &&
+                defaults.value(QStringLiteral("terminalFont.size")).toInt() == 14 &&
+                defaults.value(QStringLiteral("tabAway.overdueHours")).toDouble() == 4 &&
+                !defaults.value(QStringLiteral("nextPrompt.auto")).toBool(),
+            "built-in values for Reset");
+}
+
 // Light mode: one switch moves the thread and the window to the person's
 // last theme of the other kind, and back; "system" follows macOS live
 // without writing the file; a file from before it shows what it did.
@@ -1251,6 +1364,7 @@ int main(int argc, char** argv) {
         typing_scroll_preference_persists();
         visual_settings_persist();
         appearance_switches_kinds();
+        settings_write_known_keys();
         selection_persists();
         symbolic_link_config_updates_target();
         appearance_preserves_json_and_bad_files();

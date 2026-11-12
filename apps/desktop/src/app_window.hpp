@@ -57,7 +57,7 @@ class AppWindow final : public QObject {
     Q_PROPERTY(bool systemReducedMotion READ systemReducedMotion NOTIFY reducedMotionChanged)
     Q_PROPERTY(QString diagnostics READ diagnostics NOTIFY diagnosticsChanged)
     Q_PROPERTY(QStringList settingsShortcuts READ settingsShortcuts NOTIFY settingsShortcutsChanged)
-    // Installed fixed-pitch families offered by Appearance, sorted by name.
+    // Installed fixed-pitch families offered by Settings, sorted by name.
     Q_PROPERTY(QStringList monospaceFamilies READ monospaceFamilies CONSTANT)
   public:
     AppWindow(Workspace& workspace, AppWindowOptions options, QObject* parent = nullptr);

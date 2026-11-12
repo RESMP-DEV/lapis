@@ -2,8 +2,8 @@
 
 Settings live in `lapis.json`: `~/.lapis/lapis.json` for the app, the checkout's
 `lapis.json` for a development build. It applies as soon as it changes, whether
-Appearance, you or an agent edits it, and Command-R reloads it by hand. Besides
-key bindings and appearance it holds these:
+Settings (Command-comma), you or an agent edits it, and Command-R reloads it by
+hand. Besides key bindings and appearance it holds these:
 
 ```json
 {
@@ -64,7 +64,7 @@ The wheel still reaches a full-screen program either way. See
 
 ## Visual view
 
-Appearance writes the [visual view](workspace.md#visual-view)'s choices under
+Settings writes the [visual view](workspace.md#visual-view)'s choices under
 `visual`: `theme` (`terminal`, `tokyo-night`, `codex`, `claude`, `graphite`,
 `black`, `claude-light`, `codex-light`), `font` (`system`, `serif`, `avenir`,
 `helvetica`), `codeFont` (`system`, `terminal`, `menlo`), `size` in pixels
@@ -99,7 +99,7 @@ repeat: it plays once per turn or request, when the agent becomes unseen, and
 never again for a turn you have looked at. You are looking at an agent while it
 is on the stage, lapis is in front and you are at the Mac (some keyboard, mouse
 or trackpad input within two minutes); showing it by any path, bringing lapis
-to the front or coming back to the Mac with it on the stage counts. Appearance
+to the front or coming back to the Mac with it on the stage counts. Settings
 has one switch and Play button for it. lapis posts no macOS notifications.
 Keys of retired alerts are ignored, and older files may keep
 them: `alerts.sound` and `alerts.repeat` (the repeating request chime),
@@ -250,7 +250,30 @@ longer read or written.
   limit resets); a file that still has them loads, and lapis leaves them as
   written. Each CLI uses the sign-in its machine already has.
 - `nextPrompt` turns on guessed next prompts; see [suggestions](suggestions.md).
-- Key bindings are listed in [keys](keys.md); Appearance shows and edits them.
+- Key bindings are listed in [keys](keys.md); Settings lists them under Keys.
+
+## Settings
+
+Command-comma (or **Settings** in Commands, which also answers to
+"Appearance") opens Settings: General, Appearance, Reading view, Terminal, New
+agents, Keys and Advanced, one at a time, with a search across all of them.
+Each change applies at once and is written here; a row that differs from the
+built-in value has **Reset**, and each section has a Reset for all of its rows.
+Besides the keys above, it writes these, and only the section it changed, so
+the rest of that section (machines, models, providers) stays as written:
+
+- `newAgent.harness`, `newAgent.folder` and `newAgent.mode` (an empty value
+  removes the key);
+- `harnessUpdates.<cli>` (turning updates back on removes the key);
+- `nextPrompt.auto`, `interactionLog.enabled` and `tabAway.overdueHours`
+  (0 to 168);
+- `sidebarVisible`, `previewsVisible` and `scrollToBottomOnTyping`.
+
+Key bindings, models per CLI, folders per machine, `harnessArguments`, the
+chime's sound files, the next-prompt model, providers and limits, the
+interaction log's sizes and Tab's work categories are only in this file:
+lists, paths and endpoints read better as JSON than as controls. Advanced
+opens it in its default app.
 
 ## Window state across restarts
 

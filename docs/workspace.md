@@ -328,7 +328,7 @@ and no colors or hidden characters come along. A selection that covers a whole
 equation copies its LaTeX source; part of one copies what is shown. Links underline under the
 pointer. Command-click a file path anywhere in the thread (absolute, `~`, or
 relative to the agent's folder, with any `:line` after it) to open it in your
-editor at that line, or a folder in the Finder; Appearance's **Open files in**
+editor at that line, or a folder in the Finder; Settings' **Open files in**
 picks VS Code, Cursor, Zed, TextEdit or the default app, from those installed
 (the first installed of VS Code, Cursor and Zed until you choose). Hovering a message shows **Copy** (on prompts, replies and every code
 block or output) and, on a prompt, **Edit**: a new agent that continues from
@@ -337,8 +337,8 @@ conversation is never changed.
 
 Light mode reads the thread as dark text on an off-white page. The sun beside
 **Visual view** in the sidebar (a moon in light mode), or **Switch to light
-mode** in Commands, flips it; `"appearance": "system"` in
-[config](config.md#visual-view) follows the Mac's appearance as it changes. It
+mode** in Commands, flips it; Settings' Appearance section also has **Match
+macOS**, which follows the Mac's appearance as it changes, and a preview. It
 switches the thread (its replies, code,
 the live work box, the bar and the menus) and the window around it (sidebar,
 strip frames, dialogs) to your last light theme of each, and back to your last
@@ -347,7 +347,7 @@ the other kind of page (white strokes made for a dark thread) sits on a small
 card of that kind so its lines stay visible. Charts agents draw follow the
 mode too. No key is bound to it.
 
-Appearance has a **Visual view** section: a theme (Match terminal, Tokyo Night,
+Settings has a **Reading view** section: a theme (Match terminal, Tokyo Night,
 Codex, Claude, Graphite, Black, Claude light, Codex light), a reading font
 (System, Serif, Avenir Next, Helvetica Neue), a code font and a text size, which
 follows the terminal font unless set. Agents on other machines and other CLIs
@@ -368,7 +368,7 @@ you type `exit`.
 
 ## In the terminal
 
-Terminal text defaults to 14 pixels. Appearance takes a size from 10 to 32 with
+Terminal text defaults to 14 pixels. Settings takes a size from 10 to 32 with
 plus, minus and reset, and Command-plus, minus and zero do the same.
 
 Drag to select text or double-click a word; Command-C copies it and typing

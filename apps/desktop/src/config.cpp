@@ -518,10 +518,11 @@ void Config::apply_defaults() {
     theme_ = QStringLiteral("lapis");
     load_visual({});
     // Each CLI lists its own models (HarnessModels) unless the config names some.
-    agent_defaults_ = {};
+    sections_ = {};
+    touched_.clear();
+    parse_sections();
     terminal_font_family_.clear();
     harness_arguments_.clear();
-    harness_updates_off_.clear();
     terminal_font_size_ = kTerminalFontSizeDefault;
     scroll_to_bottom_on_typing_ = true;
     density_ = CardDensity::Comfortable;
@@ -612,17 +613,17 @@ bool Config::load() {
 
     load_terminal_font(root.value(QStringLiteral("terminalFont")));
     load_harness_arguments(root.value(QStringLiteral("harnessArguments")));
-    load_harness_updates(root.value(QStringLiteral("harnessUpdates")));
     load_alerts(root);
     load_visual(root);
-    load_agent_defaults(root.value(QStringLiteral("newAgent")));
     // Retired features' settings: "usage" and the older top-level "showUsage"
     // (the plan usage meter), "accounts" (lapis-managed plans) and
     // "limitResets" (automatic limit resets). A file that still has them
     // loads, and saving leaves them as written.
-    next_prompt_ = parse_next_prompt(root.value(QStringLiteral("nextPrompt")));
-    interaction_log_ = parse_interaction_log(root.value(QStringLiteral("interactionLog")));
-    tab_away_ = parse_tab_away(root.value(QStringLiteral("tabAway")));
+    for (const char* name :
+         {"newAgent", "harnessUpdates", "nextPrompt", "interactionLog", "tabAway"})
+        if (root.contains(QLatin1String(name)))
+            sections_.insert(QLatin1String(name), root.value(QLatin1String(name)));
+    parse_sections();
 
     known_contents_ = contents;
     loaded_ = true;
@@ -940,6 +941,112 @@ void Config::load_agent_defaults(const QJsonValue& value) {
         }
         agent_defaults_.models.insert(it.key(), names);
     }
+}
+
+void Config::parse_sections() {
+    agent_defaults_ = {};
+    load_agent_defaults(sections_.value(QStringLiteral("newAgent")));
+    harness_updates_off_.clear();
+    load_harness_updates(sections_.value(QStringLiteral("harnessUpdates")));
+    next_prompt_ = parse_next_prompt(sections_.value(QStringLiteral("nextPrompt")));
+    interaction_log_ = parse_interaction_log(sections_.value(QStringLiteral("interactionLog")));
+    tab_away_ = parse_tab_away(sections_.value(QStringLiteral("tabAway")));
+}
+
+namespace {
+constexpr double kMaximumOverdueHours = 168;
+bool plain_text(const QVariant& value, qsizetype limit) {
+    const auto text = value.toString();
+    return value.canConvert<QString>() && text.size() <= limit && !text.contains(QChar::Null);
+}
+} // namespace
+
+bool Config::setSetting(const QString& path, const QVariant& value) {
+    const auto dot = path.indexOf(QLatin1Char('.'));
+    if (dot <= 0)
+        return false;
+    const auto section_name = path.left(dot);
+    const auto key = path.mid(dot + 1);
+    // What the file gets for the key: a value, or Undefined to remove it.
+    QJsonValue stored;
+    if (section_name == QLatin1String("newAgent") &&
+        (key == QLatin1String("harness") || key == QLatin1String("folder"))) {
+        if (!plain_text(value, key == QLatin1String("folder") ? 4096 : 64))
+            return false;
+        const auto text = value.toString().trimmed();
+        stored = text.isEmpty() ? QJsonValue(QJsonValue::Undefined) : QJsonValue(text);
+    } else if (section_name == QLatin1String("newAgent") && key == QLatin1String("mode")) {
+        const auto mode = value.toString();
+        if (!mode.isEmpty() && mode != QLatin1String("edits") && mode != QLatin1String("auto") &&
+            mode != QLatin1String("full"))
+            return false;
+        stored = mode.isEmpty() ? QJsonValue(QJsonValue::Undefined) : QJsonValue(mode);
+    } else if ((section_name == QLatin1String("nextPrompt") && key == QLatin1String("auto")) ||
+               (section_name == QLatin1String("interactionLog") &&
+                key == QLatin1String("enabled"))) {
+        if (value.typeId() != QMetaType::Bool)
+            return false;
+        stored = value.toBool();
+    } else if (section_name == QLatin1String("tabAway") && key == QLatin1String("overdueHours")) {
+        bool number = false;
+        const double hours = value.toDouble(&number);
+        if (!number || hours < 0 || hours > kMaximumOverdueHours)
+            return false;
+        stored = hours;
+    } else if (section_name == QLatin1String("harnessUpdates")) {
+        static const QRegularExpression cli(QStringLiteral("^[a-z][a-z0-9-]{0,31}$"));
+        if (!cli.match(key).hasMatch() || value.typeId() != QMetaType::Bool)
+            return false;
+        // Absent means updating, as true does; only false is written.
+        stored = value.toBool() ? QJsonValue(QJsonValue::Undefined) : QJsonValue(false);
+    } else {
+        return false;
+    }
+    auto section = sections_.value(section_name).toObject();
+    if (section.value(key) == stored)
+        return true;
+    if (stored.isUndefined())
+        section.remove(key);
+    else
+        section.insert(key, stored);
+    sections_.insert(section_name, section);
+    touched_.insert(section_name);
+    // Parsing the section again must not repeat its diagnostics.
+    const auto diagnostic = diagnostic_;
+    parse_sections();
+    diagnostic_ = diagnostic;
+    emit changed();
+    return save();
+}
+
+QVariantMap Config::settings() const {
+    QStringList updates_off(harness_updates_off_.begin(), harness_updates_off_.end());
+    updates_off.sort();
+    return {{QStringLiteral("newAgent.harness"), agent_defaults_.harness},
+            {QStringLiteral("newAgent.folder"), agent_defaults_.folder},
+            {QStringLiteral("newAgent.mode"), agent_defaults_.mode},
+            {QStringLiteral("nextPrompt.auto"), next_prompt_.automatic},
+            {QStringLiteral("interactionLog.enabled"), interaction_log_.enabled},
+            {QStringLiteral("tabAway.overdueHours"), tab_away_.overdueHours},
+            {QStringLiteral("harnessUpdatesOff"), updates_off}};
+}
+
+QVariantMap Config::defaults() {
+    const Config built_in(DefaultsOnly{});
+    QVariantMap values = built_in.settings();
+    const auto visual = built_in.visual();
+    for (auto it = visual.begin(); it != visual.end(); ++it)
+        values.insert(QStringLiteral("visual.") + it.key(), it.value());
+    values.insert(QStringLiteral("theme"), built_in.themeName());
+    values.insert(QStringLiteral("density"), built_in.densityName());
+    values.insert(QStringLiteral("sidebarVisible"), built_in.sidebarVisible());
+    values.insert(QStringLiteral("previewsVisible"), built_in.previewsVisible());
+    values.insert(QStringLiteral("terminalFont.family"), built_in.terminalFontFamily());
+    values.insert(QStringLiteral("terminalFont.size"), built_in.terminalFontSize());
+    values.insert(QStringLiteral("alerts.finished"), built_in.finishSound());
+    values.insert(QStringLiteral("keepAwake"), built_in.keepAwake());
+    values.insert(QStringLiteral("scrollToBottomOnTyping"), built_in.scrollToBottomOnTyping());
+    return values;
 }
 
 void Config::load_terminal_font(const QJsonValue& value) {
@@ -1271,6 +1378,9 @@ bool Config::persist() {
     visual.insert(QStringLiteral("lightWindowTheme"), window_light_theme_);
     visual.remove(QStringLiteral("sendOnReturn")); // Return always sends now
     root.insert(QStringLiteral("visual"), visual);
+    // Sections Settings changed; the others stay exactly as on disk.
+    for (const auto& name : std::as_const(touched_))
+        root.insert(name, sections_.value(name));
     if (!root.contains(QStringLiteral("version")))
         root.insert(QStringLiteral("version"), 1);
     QByteArray contents = format_config(root) + '\n';
@@ -1284,6 +1394,7 @@ bool Config::persist() {
     if (file.write(contents) != contents.size() || !file.commit())
         return fail(file.errorString());
     known_contents_ = std::move(contents);
+    touched_.clear();
     watch();
     diagnostic_.clear();
     emit changed();

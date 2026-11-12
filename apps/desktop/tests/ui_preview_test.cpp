@@ -371,10 +371,26 @@ void wait_sidebar(QQuickWindow& window, lapis::desktop::Config& config_model, bo
           visible);
 }
 
+// Opens the Settings section that holds `item`, as a click on it would.
+void show_setting_section(QQuickWindow& window, QQuickItem* item) {
+    for (auto* row = item; row != nullptr; row = row->parentItem()) {
+        if (!row->property("isSettingRow").toBool())
+            continue;
+        auto* dialog = window.findChild<QObject*>(QStringLiteral("settingsDialog"));
+        CHECK(dialog != nullptr);
+        CHECK(QMetaObject::invokeMethod(dialog, "showSection",
+                                        Q_ARG(QVariant, row->property("section"))));
+        pump(20);
+        return;
+    }
+}
+
 void click_setting(QQuickWindow& window, const QString& name) {
     auto* item = find_visual(window.contentItem(), name);
     auto* scroll = find_visual(window.contentItem(), QStringLiteral("settingsScroll"));
     CHECK(item != nullptr && scroll != nullptr);
+    show_setting_section(window, item);
+    CHECK(item->isVisible());
     scroll->setProperty("contentY", 0);
     pump(10);
     const auto offset = item->mapToItem(scroll, QPointF()).y();
@@ -3215,6 +3231,137 @@ void check_appearance_toggle(QQuickWindow& window, lapis::desktop::Workspace& wo
     CHECK(view->property("themeName").toString() == QStringLiteral("terminal"));
 }
 
+// The Settings window: sections by click and by arrow, search across
+// sections (keys included), Reset on a row and for a section, the light and
+// dark switch with its preview, and Esc. Captures go to `captures`.
+void check_settings_window(QQuickWindow& window, lapis::desktop::AppWindow& preview,
+                           lapis::desktop::Config& config_model, const QString& captures) {
+    using namespace lapis::desktop;
+    auto* dialog = window.findChild<QObject*>(QStringLiteral("settingsDialog"));
+    CHECK(dialog != nullptr);
+    const auto save = [&](const char* name) {
+        if (!captures.isEmpty())
+            CHECK(window.grabWindow().save(QDir(captures).filePath(QString::fromLatin1(name))));
+    };
+    const auto item = [&window](const QString& name) {
+        return find_visual(window.contentItem(), name);
+    };
+    const auto shown = [&item](const QString& name) {
+        auto* found = item(name);
+        return found != nullptr && found->isVisible();
+    };
+    const auto search = [&](const QString& text) {
+        item(QStringLiteral("settingsSearch"))->setProperty("text", text);
+        pump(30);
+    };
+    CHECK(preview.openSettings());
+    wait_popup(*dialog, true);
+    CHECK(dialog->property("title").toString() == QStringLiteral("Settings"));
+    CHECK(item(QStringLiteral("settingsSearch"))->hasActiveFocus());
+    CHECK(dialog->property("currentSection").toString() == QStringLiteral("general"));
+    CHECK(shown(QStringLiteral("switch-keepAwake")) && !shown(QStringLiteral("fontLarger")));
+    CHECK(!item(QStringLiteral("resetSection"))->isEnabled()); // nothing changed yet
+    pump(100);
+    save("settings-general.png");
+
+    // Down from the search reaches the sections; arrows walk them.
+    QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &down);
+    pump(20);
+    CHECK(item(QStringLiteral("settingsSections"))->hasActiveFocus());
+    QCoreApplication::sendEvent(&window, &down);
+    pump(20);
+    CHECK(dialog->property("currentSection").toString() == QStringLiteral("appearance"));
+    CHECK(shown(QStringLiteral("appearance-light")) && !shown(QStringLiteral("switch-keepAwake")));
+    QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &up);
+    pump(20);
+    CHECK(dialog->property("currentSection").toString() == QStringLiteral("general"));
+
+    // Search: rows of every section by label, help or keywords, under
+    // their section's name; keys too; and a line when nothing matches.
+    search(QStringLiteral("font"));
+    CHECK(shown(QStringLiteral("fontLarger")) && shown(QStringLiteral("visual-font-system")) &&
+          shown(QStringLiteral("visual-codeFont-system")));
+    CHECK(!shown(QStringLiteral("switch-keepAwake")));
+    pump(100);
+    save("settings-search.png");
+    search(QStringLiteral("sleep"));
+    CHECK(shown(QStringLiteral("switch-keepAwake")) && !shown(QStringLiteral("fontLarger")));
+    search(QStringLiteral("new agent"));
+    bool key_found = false;
+    for (const auto& value : dialog->property("shortcutRows").toList()) {
+        const auto label = value.toMap().value(QStringLiteral("label")).toString();
+        if (label == QStringLiteral("New agent"))
+            key_found = shown(QStringLiteral("key-") + label);
+    }
+    CHECK(key_found);
+    search(QStringLiteral("no such setting here"));
+    CHECK(shown(QStringLiteral("settingsNoMatch")));
+    search(QString());
+    CHECK(!shown(QStringLiteral("settingsNoMatch")) && shown(QStringLiteral("switch-keepAwake")));
+
+    // A changed row offers Reset; Reset puts the built-in value back.
+    CHECK(config_model.keepAwake() && !shown(QStringLiteral("reset-Keep this Mac awake")));
+    click_setting(window, QStringLiteral("switch-keepAwake"));
+    CHECK(!config_model.keepAwake());
+    CHECK(shown(QStringLiteral("reset-Keep this Mac awake")));
+    click_setting(window, QStringLiteral("reset-Keep this Mac awake"));
+    CHECK(config_model.keepAwake() && !shown(QStringLiteral("reset-Keep this Mac awake")));
+    // Reset Terminal puts every changed row of the section back.
+    click_setting(window, QStringLiteral("fontLarger"));
+    click_setting(window, QStringLiteral("switch-scrollToBottom"));
+    CHECK(config_model.terminalFontSize() == kTerminalFontSizeDefault + 1 &&
+          !config_model.scrollToBottomOnTyping());
+    CHECK(dialog->property("currentSection").toString() == QStringLiteral("terminal"));
+    click_setting(window, QStringLiteral("resetSection"));
+    CHECK(config_model.terminalFontSize() == kTerminalFontSizeDefault &&
+          config_model.scrollToBottomOnTyping());
+
+    // Appearance leads with light, dark and Match macOS, over a preview.
+    CHECK(QMetaObject::invokeMethod(dialog, "showSection",
+                                    Q_ARG(QVariant, QStringLiteral("appearance"))));
+    pump(100);
+    auto* sample = item(QStringLiteral("settingsPreview"));
+    CHECK(sample != nullptr && sample->isVisible());
+    const auto page = [sample] {
+        return QQmlProperty::read(sample, QStringLiteral("color")).value<QColor>();
+    };
+    CHECK(page().lightnessF() < 0.5);
+    save("settings-appearance-dark.png");
+    click_setting(window, QStringLiteral("appearance-light"));
+    CHECK(config_model.appearance() == QStringLiteral("light") &&
+          config_model.themeName() == QStringLiteral("daylight"));
+    CHECK(page().lightnessF() > 0.5);
+    CHECK(dialog->property("paletteWindow").value<QColor>().lightnessF() > 0.5);
+    pump(100);
+    save("settings-appearance-light.png");
+    click_setting(window, QStringLiteral("appearance-system"));
+    CHECK(config_model.appearance() == QStringLiteral("system") && !config_model.lightShown());
+    config_model.setSystemDark(false);
+    pump(30);
+    CHECK(page().lightnessF() > 0.5);
+    config_model.setSystemDark(true);
+    pump(30);
+    CHECK(page().lightnessF() < 0.5);
+    click_setting(window, QStringLiteral("appearance-dark"));
+    CHECK(config_model.appearance() == QStringLiteral("dark") &&
+          config_model.themeName() == QStringLiteral("oled"));
+
+    // New agents: a CLI's updates turn off and on.
+    CHECK(QMetaObject::invokeMethod(dialog, "showSection",
+                                    Q_ARG(QVariant, QStringLiteral("agents"))));
+    pump(30);
+    click_setting(window, QStringLiteral("agent-mode-edits"));
+    CHECK(config_model.agentDefaults().mode == QStringLiteral("edits"));
+    click_setting(window, QStringLiteral("reset-Approval mode"));
+    CHECK(config_model.agentDefaults().mode.isEmpty());
+
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &escape);
+    wait_popup(*dialog, false);
+}
+
 // Light mode and the Settings window, on a config of its own.
 int run_settings_window_tests() {
     using namespace lapis::desktop;
@@ -3238,6 +3385,7 @@ int run_settings_window_tests() {
     pump(80);
     const auto captures = qEnvironmentVariable("LAPIS_SETTINGS_CAPTURE_DIR");
     check_appearance_toggle(*window, workspace, config_model, directory, captures);
+    check_settings_window(*window, preview, config_model, captures);
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;
 }

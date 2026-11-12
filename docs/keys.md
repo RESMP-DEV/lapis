@@ -1,8 +1,8 @@
 # Keys
 
 These are the macOS defaults. Linux uses Control-Shift in place of Command.
-Every binding can be changed in [config](config.md), and Appearance lists them
-all. Terminal Control chords stay with the agent.
+Every binding can be changed in [config](config.md), and Settings lists them
+all under Keys. Terminal Control chords stay with the agent.
 
 ## Agents and categories
 
@@ -40,7 +40,7 @@ all. Terminal Control chords stay with the agent.
 | Keys | Does |
 | --- | --- |
 | Command-Shift-P | Commands |
-| Command-comma | Appearance |
+| Command-comma | Settings |
 | Command-R | Reload `lapis.json` |
 | Command-M | Minimize |
 | Command-Shift-W | Close the window (lapis keeps running) |
