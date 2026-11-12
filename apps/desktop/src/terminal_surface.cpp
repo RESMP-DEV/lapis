@@ -1984,7 +1984,9 @@ bool TerminalSurface::pasteText(const QString& text) {
         noteTyped(); // A dropped file or other paste is no longer just the guess.
     return request != 0;
 }
-bool TerminalSurface::submitText(const QString& text) {
+bool TerminalSurface::submitText(const QString& text) { return composerPaste(text, true); }
+bool TerminalSurface::typeText(const QString& text) { return composerPaste(text, false); }
+bool TerminalSurface::composerPaste(const QString& text, bool submit) {
     // Reachable, not inputReady: a history page showing under the visual view
     // is left for live below rather than refusing the message.
     if (!document_ || text.trimmed().isEmpty() || !document_->live() || !document_->reachable() ||
@@ -2003,7 +2005,7 @@ bool TerminalSurface::submitText(const QString& text) {
     }
     clearSelection();
     returnProgramToBottom();
-    const auto request = document_->requestPaste(bytes, true);
+    const auto request = document_->requestPaste(bytes, submit);
     interaction::paste(this, text, request != 0, "composer");
     if (request == 0) {
         emit pasteRefused(document_->activity());
@@ -2014,12 +2016,22 @@ bool TerminalSurface::submitText(const QString& text) {
     return true;
 }
 
+bool TerminalSurface::composerKeysAccepted() const {
+    return document_ && document_->live() && document_->reachable() &&
+           !document_->attentionPending() && !document_->historyActive() && !pasting_ &&
+           window() != nullptr && window()->isActive();
+}
+
 bool TerminalSurface::pressReturn() {
-    if (!document_ || !document_->live() || !document_->reachable() ||
-        document_->attentionPending() || document_->historyActive() || pasting_ ||
-        window() == nullptr || !window()->isActive())
+    return composerKeysAccepted() && document_->sendKey(session::TerminalKey::enter, {});
+}
+
+bool TerminalSurface::sendKeys(const QString& bytes) {
+    const auto raw = bytes.toUtf8();
+    if (raw.isEmpty() || raw.size() > max_chord_bytes || raw.contains('\x03') ||
+        raw.contains('\x04') || !composerKeysAccepted())
         return false;
-    return document_->sendKey(session::TerminalKey::enter, {});
+    return document_->sendText(raw);
 }
 
 QStringList TerminalSurface::screenLines() const {

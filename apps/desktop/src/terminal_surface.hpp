@@ -140,10 +140,20 @@ class TerminalSurface : public QQuickItem {
     // keyboard instead of this surface (the visual view's bar). Refused while
     // the agent waits on a request, so typed text never answers a dialog.
     Q_INVOKABLE bool submitText(const QString& text);
+    // The same paste with no Return after it: the composer puts text in the
+    // agent's input box for a key that sends it differently (agy's Alt-M).
+    Q_INVOKABLE bool typeText(const QString& text);
     // One Return for the agent, as the key sends it in the program's
     // keyboard mode: the composer's second try when the agent's input box
     // still holds what submitText sent. Refused as submitText refuses.
     Q_INVOKABLE bool pressReturn();
+    // A short control chord for the agent as raw bytes (Claude Code's
+    // Control-X Control-S, agy's Alt-M as Escape m, Control-U), refused as
+    // pressReturn refuses. Never Control-C or Control-D, which quit a CLI
+    // sitting at an empty prompt: text holding either is refused, as is
+    // anything longer than max_chord_bytes.
+    Q_INVOKABLE bool sendKeys(const QString& bytes);
+    static constexpr qsizetype max_chord_bytes = 16;
     // The screen's rows as text, top to bottom: what the visual view streams
     // while a turn runs.
     Q_INVOKABLE [[nodiscard]] QStringList screenLines() const;
@@ -356,6 +366,10 @@ class TerminalSurface : public QQuickItem {
     [[nodiscard]] bool holdFilledOverRequest(bool plain_tab);
     bool takeSuggestion(const QKeyEvent& event);
     quint64 pasteTextRequest(const QString& text, std::optional<bool> submit);
+    // submitText and typeText: the composer's paste, with or without Return.
+    bool composerPaste(const QString& text, bool submit);
+    // Whether a key the composer sends would reach the agent now.
+    [[nodiscard]] bool composerKeysAccepted() const;
     void reportSeen();
     void noteTyped();
     quint64 ime_epoch_{};

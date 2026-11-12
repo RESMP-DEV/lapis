@@ -42,6 +42,11 @@ FocusScope {
     // pressReturn() sends the agent one Return, as the key would: the
     // second try for a prompt its input box still holds.
     property var pressReturn: null
+    // typeText(text) pastes into the agent's input box with no Return;
+    // sendKeys(bytes) sends a control chord (never Control-C or -D, which
+    // quit a CLI).
+    property var typeText: null
+    property var sendKeys: null
     // lapis's predicted next prompt (Tab), shown in the empty bar.
     property string suggestion: ""
     property bool suggestionConfident: false
@@ -186,22 +191,139 @@ FocusScope {
             if (root.unsentText.length > 0
                     && root.model.pendingPrompts.indexOf(root.unsentText.replace(/\s+/g, " ").trim()) < 0)
                 root.unsentText = ""
+            // A prompt sent now that the CLI recorded (or gave back) goes.
+            const left = {}
+            for (const key in root.urged)
+                if (root.model.pendingPrompts.indexOf(key) >= 0)
+                    left[key] = root.urged[key]
+            root.urged = left
         }
     }
 
-    // How the agent's CLI takes a message sent mid-turn (verified by hand
-    // against Claude Code 2.1.322, Codex 0.157.1 and agy 1.5.7): Claude Code
-    // queues it for its next step, Codex steers the turn once the running
-    // step ends, agy holds it until the turn ends or reads it at its next
-    // step as its `queuedMessages` setting says.
+    // Mid-turn sending, per CLI (verified by hand against Claude Code
+    // 2.1.322, Codex 0.157.1 and agy 1.5.7): Return queues (Claude Code),
+    // steers (Codex) or queues as agy's `queuedMessages` says; "send now"
+    // makes the model take it soonest without discarding work where the CLI
+    // allows. Claude Code: the message, then Control-X Control-S. agy in its
+    // Queue mode: the message with no Return, then Alt-M (Escape m); with no
+    // text, Alt-M sends what it has queued. Codex has no such key: its send
+    // now is "Interrupt and send", Escape once the steer shows waiting.
     readonly property string cli: model ? model.format : ""
     readonly property string queueMode: model ? model.queueMode : "queue"
+    readonly property bool midTurn: working && !turnEnded
+    readonly property bool sendsNow: midTurn && (cli === "claude" || cli === "codex"
+                                                 || (cli === "antigravity" && queueMode === "turn-end"))
+    readonly property string sendNowLabel: cli === "codex" ? qsTr("Interrupt and send") : qsTr("Send now")
+    // Prompts sent mid-turn waiting for the CLI (not those sent to an idle
+    // one, nor those already going as a new turn after an interrupt).
+    readonly property bool messageWaiting: model !== null
+                                           && model.pendingEntries.some(p => p.queued && urged[p.key] !== "interrupt")
+    // Waiting prompts sent on at once, by key: "now" (the CLI's send-now
+    // key) or "interrupt" (sent as a new turn after Escape).
+    property var urged: ({})
+    function markUrged(keys, how) {
+        const next = Object.assign({}, urged)
+        keys.forEach(k => next[k] = how)
+        urged = next
+    }
+    function keyOf(text) { return text.replace(/\s+/g, " ").trim() }
     // The quiet line under a waiting prompt, as its CLI will treat it.
     function queuedLabel() {
         return queueMode === "steer" ? qsTr("Steering · read after the current step")
              : queueMode === "turn-end" ? qsTr("Queued · sent when this turn ends")
              : queueMode === "immediate" ? qsTr("Sent · read at the next step")
              : qsTr("Queued · read at the next step")
+    }
+    function pendingLabel(key) {
+        const how = urged[key]
+        return how === "interrupt" ? qsTr("Interrupting · sent as a new turn")
+             : how === "now" ? (cli === "antigravity" ? qsTr("Sending now · read at the next step")
+                                                      : qsTr("Sending now · read in a moment"))
+             : queuedLabel()
+    }
+    // A note in the bar's toolbar.
+    function say(text) {
+        notice = text
+        noticeTimer.restart()
+    }
+
+    // Steps to take once a condition holds on the agent's screen, or after
+    // a delay: each {due, until, then, otherwise}, checked every 50 ms.
+    property var followUps: []
+    function after(ms, until, then, otherwise) {
+        followUps = followUps.concat([{ due: Date.now() + ms, until: until, then: then,
+                                        otherwise: otherwise || null }])
+    }
+    function runFollowUps() {
+        const now = Date.now()
+        const keep = [], ready = []
+        for (const f of followUps) {
+            if (f.until && f.until())
+                ready.push(f.then)
+            else if (now >= f.due)
+                ready.push(f.until ? f.otherwise : f.then)
+            else
+                keep.push(f)
+        }
+        followUps = keep
+        ready.forEach(fn => { if (fn) fn() })
+    }
+    Timer { interval: 50; repeat: true; running: root.followUps.length > 0; onTriggered: root.runFollowUps() }
+
+    // Stop (the button): Escape for the agent.
+    // Claude Code and Codex then send a waiting message as a new turn.
+    function stop() {
+        if (!interrupt || !interrupt())
+            return false
+        if (messageWaiting && cli !== "antigravity")
+            markUrged(model.pendingEntries.filter(p => p.queued).map(p => p.key), "interrupt")
+        return true
+    }
+    // Command-Return: the message sent now (sendMessage(true)); with
+    // nothing typed, the messages already waiting.
+    function sendNow() {
+        if (message().trim().length === 0)
+            sendQueuedNow()
+        else
+            sendMessage(true)
+    }
+    function sendQueuedNow() {
+        if (!sendsNow || !messageWaiting || !model)
+            return
+        const keys = model.pendingEntries.filter(p => p.queued).map(p => p.key)
+        if (cli === "codex") {
+            stop()
+            return
+        }
+        const chord = cli === "claude" ? "\u0018\u0013" : "\u001bm"
+        if (sendKeys && sendKeys(chord))
+            markUrged(keys, "now")
+        else
+            say(qsTr("Not sent now: the agent is not ready for input"))
+    }
+    // After a message sent mid-turn with send now: the CLI's key for it.
+    function urge(text) {
+        const key = keyOf(text)
+        if (cli === "codex") {
+            markUrged([key], "interrupt")
+            after(4000, () => model && screen && model.steerWaiting(screen())
+                              && !model.composerHolds(screen(), text),
+                  () => { if (!interrupt || !interrupt()) markUrged([key], "") },
+                  () => {
+                      markUrged([key], "")
+                      say(qsTr("Codex has not shown the message waiting; it stays a steer"))
+                  })
+            return
+        }
+        markUrged([key], "now")
+        const chord = cli === "claude" ? "\u0018\u0013" : "\u001bm"
+        // A moment after the paste, so the CLI has the text before the key.
+        after(300, null, () => {
+            if (!sendKeys || !sendKeys(chord)) {
+                markUrged([key], "")
+                say(qsTr("Not sent now: the agent is not ready for input"))
+            }
+        })
     }
     // Subagents and background tasks still running (model.running), and
     // whether they keep the agent's work going after its turn ended.
@@ -403,7 +525,7 @@ FocusScope {
         if (!entry)
             return ""
         if (entry.queued)
-            return queuedLabel()
+            return pendingLabel(keyOf(entry.body))
         if (!entry.steered)
             return ""
         return entry.waited < 0 ? qsTr("Steered")
@@ -2600,6 +2722,7 @@ FocusScope {
     // row will draw it: "Queued" when sent while the agent worked, and a
     // note when it was found still in the agent's input box.
     component PendingPrompt: Column {
+        id: pendingPrompt
         required property var modelData
         required property int index
         readonly property bool unsent: root.unsentText.length > 0
@@ -2638,16 +2761,41 @@ FocusScope {
                 font.pixelSize: root.fontSize
             }
         }
-        Text {
-            objectName: "pendingLabel"
+        // How the CLI will take it, and for a waiting one not yet sent on,
+        // the CLI's way to send it now.
+        Row {
+            id: pendingNote
             anchors.right: parent.right
             anchors.rightMargin: 6
-            visible: text.length > 0
-            text: parent.unsent ? qsTr("Not sent yet · press Return in the terminal")
-                : modelData.queued ? root.queuedLabel() : ""
-            color: parent.unsent ? root.faultColor : root.mutedTextColor
-            font.family: root.sansFamily
-            font.pixelSize: root.codeSize - 1
+            spacing: 10
+            readonly property bool waiting: !pendingPrompt.unsent && pendingPrompt.modelData.queued
+            Text {
+                objectName: "pendingSendNow"
+                anchors.verticalCenter: parent.verticalCenter
+                visible: pendingNote.waiting && root.sendsNow && !root.urged[pendingPrompt.modelData.key]
+                text: root.sendNowLabel
+                color: sendNowMouse.containsMouse ? root.textColor : root.accentColor
+                font.family: root.sansFamily
+                font.pixelSize: root.codeSize - 1
+                MouseArea {
+                    id: sendNowMouse
+                    anchors.fill: parent
+                    anchors.margins: -4
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.sendQueuedNow()
+                }
+            }
+            Text {
+                objectName: "pendingLabel"
+                anchors.verticalCenter: parent.verticalCenter
+                visible: text.length > 0
+                text: pendingPrompt.unsent ? qsTr("Not sent yet · press Return in the terminal")
+                    : pendingPrompt.modelData.queued ? root.pendingLabel(pendingPrompt.modelData.key) : ""
+                color: pendingPrompt.unsent ? root.faultColor : root.mutedTextColor
+                font.family: root.sansFamily
+                font.pixelSize: root.codeSize - 1
+            }
         }
     }
 
@@ -2883,7 +3031,10 @@ FocusScope {
              : text.length === 0 ? mentions.join(" ")
              : input.text.replace(/\s+$/, "") + "\n\n" + mentions.join(" ")
     }
-    function send() {
+    function send() { sendMessage(false) }
+    // `now`: Command-Return, the message taken soonest (see urge); an
+    // ordinary send when the agent is idle or for a slash command.
+    function sendMessage(now) {
         const text = message()
         if (text.trim().length === 0 || !root.submit)
             return
@@ -2903,7 +3054,12 @@ FocusScope {
                          && root.answersInTerminal(text.trim().split(/\s/)[0].slice(1))
         // A turn the file shows ended is not working, whatever the status.
         const working = root.working && !root.turnEnded
-        if (root.submit(text)) {
+        if (now === true && working && root.cli === "antigravity" && root.model)
+            root.model.refreshQueueMode()
+        const urgent = now === true && working && command.length === 0 && root.sendsNow
+        // agy sends now by Alt-M on text in its box, with no Return.
+        const typed = urgent && root.cli === "antigravity"
+        if (typed ? (root.typeText !== null && root.typeText(text)) : root.submit(text)) {
             // The prompt shows at once, at the thread's end, until the CLI
             // records it (queued when the agent was working), and is then
             // checked for having been taken.
@@ -2915,6 +3071,8 @@ FocusScope {
                 root.retried = false
                 root.unsentText = ""
                 sendCheck.restart()
+                if (urgent)
+                    root.urge(text)
             }
             if (uncovers)
                 root.terminalNeeded()
@@ -2933,9 +3091,8 @@ FocusScope {
             list.positionViewAtEnd()
             root.notice = ""
         } else {
-            root.notice = root.waiting ? qsTr("Answer the request in the terminal first (Esc)")
-                                       : qsTr("Not sent: the agent is not ready for input")
-            noticeTimer.restart()
+            root.say(root.waiting ? qsTr("Answer the request in the terminal first (Esc)")
+                                  : qsTr("Not sent: the agent is not ready for input"))
         }
     }
     Timer { id: noticeTimer; interval: 4000; onTriggered: root.notice = "" }
@@ -3161,8 +3318,11 @@ FocusScope {
                                 return
                             }
                         }
-                        if (isReturn && (plain || mods === Qt.MetaModifier)) {
+                        if (isReturn && plain) {
                             root.send()
+                            event.accepted = true
+                        } else if (isReturn && mods === Qt.MetaModifier) {
+                            root.sendNow()
                             event.accepted = true
                         } else if (isReturn && mods === Qt.ShiftModifier) {
                             // A plain newline: Qt's own Shift-Return puts a
@@ -3282,7 +3442,7 @@ FocusScope {
                     readonly property real used: root.model && root.model.contextWindow > 0
                                                  ? Math.min(1, root.model.contextTokens / root.model.contextWindow) : 0
                     visible: root.model !== null && root.model.contextTokens > 0
-                    anchors.right: sendButton.left
+                    anchors.right: midTurnRow.left
                     anchors.rightMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
                     width: visible ? ring.width + percent.implicitWidth + 6 : 0
@@ -3345,6 +3505,27 @@ FocusScope {
                     font.family: root.sansFamily
                     font.pixelSize: Math.max(11, root.codeSize - 1)
                 }
+                // Mid-turn, beside Stop: "Send now" for what is typed.
+                Row {
+                    id: midTurnRow
+                    readonly property bool offersSendNow: root.sendsNow && root.canSend && !root.waiting
+                                                          && (input.text.trim().length > 0
+                                                              || root.attachments.length > 0)
+                    anchors.right: sendButton.left
+                    anchors.rightMargin: visible ? 6 : 0
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: offersSendNow
+                    width: visible ? implicitWidth : 0
+                    spacing: 6
+                    BarButton {
+                        id: sendNowButton
+                        objectName: "visualSendNow"
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: midTurnRow.offersSendNow
+                        label: root.sendNowLabel
+                        onTriggered: root.sendNow()
+                    }
+                }
                 // Send, or Stop while a turn runs: Return sends (a message
                 // typed mid-turn queues for the agent), so the button stops.
                 Rectangle {
@@ -3383,7 +3564,7 @@ FocusScope {
                         hoverEnabled: true
                         enabled: sendButton.ready
                         cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: sendButton.stops ? root.interrupt() : root.send()
+                        onClicked: sendButton.stops ? root.stop() : root.send()
                     }
                 }
             }
@@ -3394,7 +3575,14 @@ FocusScope {
             anchors.top: composerBox.bottom
             anchors.topMargin: 6
             anchors.horizontalCenter: composerBox.horizontalCenter
-            text: qsTr("Return to send · Shift-Return for a new line · ⌘-click a path to open it · Esc for the terminal")
+            objectName: "visualHints"
+            // Mid-turn: what Return and Command-Return do for this CLI.
+            text: !root.midTurn || root.cli === ""
+                  ? qsTr("Return to send · Shift-Return for a new line · ⌘-click a path to open it · Esc for the terminal")
+                  : [root.queueMode === "steer" ? qsTr("Return to steer")
+                     : root.queueMode === "immediate" ? qsTr("Return to send") : qsTr("Return to queue"),
+                     root.sendsNow ? qsTr("⌘-Return to %1").arg(root.sendNowLabel.toLowerCase()) : "",
+                     qsTr("Esc for the terminal")].filter(s => s.length > 0).join(" · ")
             color: root.tint(root.mutedTextColor, 0.8)
             font.family: root.sansFamily
             font.pixelSize: Math.max(11, root.codeSize - 3)

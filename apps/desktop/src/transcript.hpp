@@ -273,6 +273,10 @@ struct Piece {
 // text above it, as the CLI shows what was sent, do not count.
 enum class Format;
 [[nodiscard]] bool composer_holds(const QStringList& screen, const QString& text, Format format);
+// Whether Codex shows a steering message waiting ("Messages to be submitted
+// after next tool call"), which Escape then sends at once as a new turn.
+[[nodiscard]] bool steer_waiting(const QStringList& screen);
+
 // How a CLI takes a message sent while it works (TranscriptModel::queueMode):
 // Claude Code queues it and reads it at its next step ("queue"); Codex steers
 // the turn with it once the running step ends ("steer"); agy holds it until
@@ -775,6 +779,8 @@ class TranscriptModel final : public QAbstractListModel {
     // transcript::composer_holds): a prompt sent but not taken.
     Q_INVOKABLE [[nodiscard]] bool composerHolds(const QStringList& screen,
                                                  const QString& text) const;
+    // Whether Codex shows a steering message waiting (transcript::steer_waiting).
+    Q_INVOKABLE [[nodiscard]] bool steerWaiting(const QStringList& screen) const;
     // Reads agy's queued-message setting again; see queueMode.
     Q_INVOKABLE void refreshQueueMode();
     [[nodiscard]] const QString& queueMode() const { return queue_mode_; }

@@ -1156,6 +1156,59 @@ void long_pastes() {
             "Lost paste receipt must report uncertainty without replay");
 }
 
+// The visual view's composer: a paste with no Return (typeText), control
+// chords as their exact bytes (sendKeys), never Control-C or Control-D.
+void composer_keys() {
+    Fixture f;
+    QQuickWindow window;
+    window.setGeometry(100, 100, 640, 360);
+    lapis::desktop::TerminalSurface surface(window.contentItem());
+    surface.setSize(QSizeF(640, 360));
+    surface.setHoldResize(true);
+    surface.setDocument(&f.document);
+    surface.setInteractive(true);
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer, 1, true);
+    f.screen(peer);
+    window.show();
+    until([&] { return window.isExposed(); });
+    lapis::desktop::test::activate_test_window(window);
+    until([&] { return window.isActive(); });
+    settle();
+    static_cast<void>(text_frames(peer));
+    require(surface.typeText(QStringLiteral("hold this")), "typeText was refused");
+    auto packet = peer.read();
+    require(packet.kind == wire::Kind::paste_request, "typeText must be one paste request");
+    const auto typed = wire::decode_paste_request(packet.payload);
+    require(typed.text == "hold this" && !typed.submit, "typeText must paste with no Return");
+    peer.send(wire::Kind::paste_result,
+              wire::encode_paste_result({typed.attachment, typed.request_id, true, {}}));
+    settle();
+    require(surface.submitText(QStringLiteral("go")), "submitText was refused");
+    const auto submitted = wire::decode_paste_request(peer.read().payload);
+    require(submitted.text == "go" && submitted.submit, "submitText must paste with Return");
+    peer.send(wire::Kind::paste_result,
+              wire::encode_paste_result({submitted.attachment, submitted.request_id, true, {}}));
+    settle();
+    // Each chord goes as its bytes, in order.
+    const std::array<QByteArray, 3> chords{QByteArray("\x18\x13"), QByteArray("\x1bm"),
+                                           QByteArray("\x15")};
+    QByteArray expected;
+    for (const auto& chord : chords) {
+        require(surface.sendKeys(QString::fromLatin1(chord)), "A chord was refused");
+        expected += chord;
+    }
+    require(text_frames(peer, expected.size()) == expected,
+            "Chords must reach the agent as their exact bytes");
+    for (const auto* refused : {"\x03", "\x04", "a\x03", "0123456789abcdefg"})
+        require(!surface.sendKeys(QString::fromLatin1(refused)),
+                "Control-C, Control-D and long text must be refused");
+    require(!surface.sendKeys(QString()), "An empty chord must be refused");
+    require(text_frames(peer).isEmpty(), "A refused chord sent bytes");
+}
+
 // Typing returns a scrolled-back full-screen program to its bottom before the
 // key, whether it reports the mouse or scrolls with arrow keys, and the
 // setting can leave the view where it is.
@@ -1807,6 +1860,7 @@ int main(int argc, char** argv) {
         presentation_callback_lifetime();
         suggestions();
         long_pastes();
+        composer_keys();
         selection_and_scroll();
         typing_returns_to_bottom();
         links_follow_wrapped_rows();

@@ -3682,6 +3682,8 @@ ApplicationWindow {
                     // the session, history and Tab's guesses it always had.
                     submit: text => liveTerminal.submitText(text)
                     pressReturn: () => liveTerminal.pressReturn()
+                    typeText: text => liveTerminal.typeText(text)
+                    sendKeys: bytes => liveTerminal.sendKeys(bytes)
                     interrupt: () => liveTerminal.interrupt()
                     tabAway: () => liveTerminal.tabFlow && liveTerminal.tabAway()
                     suggestion: liveTerminal.suggestion

@@ -1288,7 +1288,9 @@ int check_bubble(QQuickView& view, QQuickItem* root, TranscriptModel& model,
 // Sending mid-turn, for each CLI (agy in both of its `queuedMessages`
 // modes, from settings.json in the capture's throwaway home), against a
 // stand-in terminal that records what reaches the agent: the waiting
-// bubble's label. `out`, when given, saves the bubble states as PNGs.
+// bubble's label; its "Send now" (Claude Code Control-X Control-S, agy
+// Alt-M, Codex Escape); Command-Return as each CLI's send now (Codex's only
+// once its steer shows). `out`, when given, saves the bubble states as PNGs.
 int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
                    const QString& folder, const QString& out) {
     int failures = 0;
@@ -1302,6 +1304,12 @@ int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
     if (input == nullptr)
         return 1;
     auto* list = root->property("list").value<QQuickItem*>();
+    const auto wait = [](int ms) {
+        QElapsedTimer waited;
+        waited.start();
+        while (waited.elapsed() < ms)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    };
     const auto key = [&view](int code, Qt::KeyboardModifiers mods) {
         QKeyEvent press(QEvent::KeyPress, code, mods);
         QKeyEvent release(QEvent::KeyRelease, code, mods);
@@ -1343,13 +1351,29 @@ int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
         return texts;
     };
     QJSValue terminal = view.engine()->evaluate(QStringLiteral(R"((function(mark) {
-        var t = { mark: mark, held: "", submits: [], interrupts: 0 };
+        var t = { mark: mark, held: "", steer: false, submits: [], types: [], keys: [],
+                  interrupts: 0, dismissals: 0 };
         t.submit = function(text) { t.submits.push(text); return true };
-        t.interrupt = function() { t.interrupts++; return true };
+        t.type = function(text) { t.types.push(text); t.held = text; return true };
+        t.send = function(bytes) {
+            t.keys.push(bytes);
+            if (bytes === "\u0015" || bytes === "\u001bm") t.held = "";
+            return true
+        };
+        t.interrupt = function() {
+            t.interrupts++;
+            return true
+        };
         t.press = function() { return true };
-        t.screen = function() { return ["", "  working", t.mark + " " + t.held] };
+        t.screen = function() {
+            var rows = ["", "  working"];
+            if (t.steer) rows.push("  Messages to be submitted after next tool call");
+            rows.push(t.mark + " " + t.held);
+            return rows
+        };
         return t;
     }))"));
+    QJSEngine::setObjectOwnership(root, QJSEngine::CppOwnership);
     const auto agy_settings =
         QDir::home().filePath(QStringLiteral(".gemini/antigravity-cli/settings.json"));
     QDir().mkpath(QFileInfo(agy_settings).path());
@@ -1358,13 +1382,23 @@ int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
         const char* format;
         const char* mode; // agy's queuedMessages, or null
         QString queued;   // the waiting bubble's label
+        QString now;      // after its send now
+        QString stop;     // Stop's note while it waits
+        QString bytes;    // what its send now sends as keys
     };
+    const QString interrupting = QStringLiteral("Interrupting · sent as a new turn");
     const std::vector<Case> cases{
-        {"claude", "claude", nullptr, QStringLiteral("Queued · read at the next step")},
-        {"codex", "codex", nullptr, QStringLiteral("Steering · read after the current step")},
-        {"agy-queue", "antigravity", "queue", QStringLiteral("Queued · sent when this turn ends")},
+        {"claude", "claude", nullptr, QStringLiteral("Queued · read at the next step"),
+         QStringLiteral("Sending now · read in a moment"), QStringLiteral("Interrupt and send"),
+         QStringLiteral("\x18\x13")},
+        {"codex", "codex", nullptr, QStringLiteral("Steering · read after the current step"),
+         interrupting, QStringLiteral("Interrupt and send"), {}},
+        {"agy-queue", "antigravity", "queue", QStringLiteral("Queued · sent when this turn ends"),
+         QStringLiteral("Sending now · read at the next step"),
+         QStringLiteral("Stop · queued text returns to the box"), QStringLiteral("\x1bm")},
         {"agy-immediate", "antigravity", "send-immediately",
-         QStringLiteral("Sent · read at the next step")},
+         QStringLiteral("Sent · read at the next step"), {},
+         QStringLiteral("Stop · queued text returns to the box"), {}},
     };
     const auto fixtures = sent_fixtures();
     for (const auto& c : cases) {
@@ -1400,7 +1434,13 @@ int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
                              : name == QLatin1String("codex") ? QStringLiteral("›")
                                                               : QStringLiteral(">");
         auto fake = terminal.call({QJSValue(mark)});
+        view.engine()
+            ->evaluate(QStringLiteral(
+                "(function(root, t) { root.dismissed.connect(function() { t.dismissals++ }) })"))
+            .call({view.engine()->newQObject(root), fake});
         root->setProperty("submit", QVariant::fromValue(fake.property("submit")));
+        root->setProperty("typeText", QVariant::fromValue(fake.property("type")));
+        root->setProperty("sendKeys", QVariant::fromValue(fake.property("send")));
         root->setProperty("interrupt", QVariant::fromValue(fake.property("interrupt")));
         root->setProperty("pressReturn", QVariant::fromValue(fake.property("press")));
         root->setProperty("screen", QVariant::fromValue(fake.property("screen")));
@@ -1410,26 +1450,102 @@ int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
         model.loadNow();
         root->setProperty("working", true);
         settle();
+        const auto keys = [&fake] {
+            QStringList out;
+            const auto list = fake.property("keys");
+            const auto n = list.property("length").toUInt();
+            for (quint32 i = 0; i < n; ++i)
+                out << list.property(i).toString();
+            return out;
+        };
+        const auto count = [&fake](const char* field) {
+            const auto value = fake.property(field);
+            return value.isArray() ? value.property("length").toInt() : value.toInt();
+        };
         const auto last = [&fake](const char* field) {
             const auto list = fake.property(field);
             const auto n = list.property("length").toUInt();
             return n > 0 ? list.property(n - 1).toString() : QString();
         };
 
-        // Return mid-turn: the CLI's own label under the bubble.
+        // Return mid-turn: the CLI's own label under the bubble, its send
+        // now beside it (none where Return already sends at the next step),
+        // and Stop's note on what happens to it.
         input->forceActiveFocus();
         input->setProperty("text", QStringLiteral("Plain return"));
         key(Qt::Key_Return, Qt::NoModifier);
         expect(last("submits") == QLatin1String("Plain return"), what("Return sends with Return"));
         expect(shown_texts("pendingLabel") == QStringList{c.queued},
                what("the waiting bubble's label"));
+        expect(shown_texts("pendingSendNow").size() == (c.now.isEmpty() ? 0 : 1),
+               what("the bubble offers send now where the CLI has one"));
         shoot("queued");
+
+        // The bubble's send now.
+        const int interrupts = count("interrupts");
+        if (!c.now.isEmpty()) {
+            to_end();
+            const auto links = anywhere("pendingSendNow");
+            if (!links.empty())
+                click(view, links.front());
+            if (name == QLatin1String("codex"))
+                expect(count("interrupts") == interrupts + 1 && keys().isEmpty(),
+                       what("the bubble's Interrupt and send is Escape"));
+            else
+                expect(keys() == QStringList{c.bytes}, what("the bubble's send now key"));
+            expect(shown_texts("pendingLabel") ==
+                       QStringList{name == QLatin1String("codex") ? interrupting : c.now},
+                   what("the bubble says it is sent now"));
+            shoot("urged");
+        }
+
+        // Command-Return with text: shows Send now beside Stop first.
+        fake.setProperty("keys", view.engine()->newArray());
+        input->setProperty("text", QStringLiteral("Right now"));
+        settle();
+        const auto beside = anywhere("visualSendNow");
+        auto* send_now = beside.empty() ? nullptr : beside.front();
+        expect(beside.size() == (c.now.isEmpty() ? 0U : 1U),
+               what("Send now shows beside Stop with text typed"));
+        if (send_now != nullptr)
+            expect(send_now->property("label").toString() ==
+                       (name == QLatin1String("codex") ? QStringLiteral("Interrupt and send")
+                                                       : QStringLiteral("Send now")),
+                   what("Send now's label"));
+        shoot("typed");
+        const int before_interrupts = count("interrupts");
+        key(Qt::Key_Return, Qt::MetaModifier);
+        if (name == QLatin1String("agy-queue")) {
+            expect(last("types") == QLatin1String("Right now") &&
+                       last("submits") != QLatin1String("Right now"),
+                   what("agy's send now pastes with no Return"));
+        } else {
+            expect(last("submits") == QLatin1String("Right now"),
+                   what("Command-Return pastes with Return"));
+        }
+        if (name == QLatin1String("codex")) {
+            wait(300);
+            expect(count("interrupts") == before_interrupts,
+                   what("Codex: no Escape before the steer shows"));
+            fake.setProperty("steer", true);
+            wait(300);
+            expect(count("interrupts") == before_interrupts + 1,
+                   what("Codex: Escape once the steer shows"));
+            fake.setProperty("steer", false);
+        } else {
+            expect(keys().isEmpty(), what("the key waits until the text is in"));
+            wait(450);
+            expect(keys() == (c.bytes.isEmpty() ? QStringList{} : QStringList{c.bytes}),
+                   what("then the CLI's send now key"));
+        }
+        expect(input->property("text").toString().isEmpty(), what("the bar clears"));
+        shoot("sent-now");
         root->setProperty("working", false);
         input->setProperty("text", QString());
         settle();
     }
     QFile::remove(agy_settings);
-    for (const char* name : {"interrupt", "pressReturn", "screen"})
+    for (const char* name : {"typeText", "sendKeys", "interrupt", "pressReturn", "screen"})
         root->setProperty(name, QVariant());
     root->setProperty("submit", QVariant());
     std::puts(failures == 0 ? "send now: all checks passed" : "send now: failed");

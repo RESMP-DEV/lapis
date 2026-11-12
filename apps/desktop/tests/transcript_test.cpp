@@ -392,6 +392,16 @@ void composers_are_read() {
             "a few letters or no screen do not");
 }
 
+// Codex's waiting steer, which its send now waits for.
+void steer_is_seen() {
+    using lapis::desktop::transcript::steer_waiting;
+    require(steer_waiting({QStringLiteral("• Working (4s)"),
+                           QStringLiteral("  Messages to be submitted after next tool call"),
+                           QStringLiteral("    ↳ fix it"), QStringLiteral("› ")}) &&
+                !steer_waiting({QStringLiteral("  Messages to be submitted at end of turn")}),
+            "Codex's waiting steer is seen, its end-of-turn queue is not one");
+}
+
 // How each CLI takes a message sent mid-turn: agy's from its settings file,
 // read from a throwaway home.
 void queue_modes_follow_settings() {
@@ -1879,6 +1889,7 @@ int main(int argc, char** argv) {
     notices_and_attachments();
     dialogs_are_seen();
     composers_are_read();
+    steer_is_seen();
     queue_modes_follow_settings();
     sent_prompts_are_matched();
     queued_prompts_show();

@@ -968,6 +968,12 @@ bool composer_holds(const QStringList& screen, const QString& text, Format forma
     return false;
 }
 
+bool steer_waiting(const QStringList& screen) {
+    return std::any_of(screen.begin(), screen.end(), [](const QString& row) {
+        return row.contains(QLatin1String("Messages to be submitted after next tool call"));
+    });
+}
+
 QString queue_mode(Format format, bool agy_immediate) {
     switch (format) {
     case Format::codex:
@@ -3240,6 +3246,10 @@ bool TranscriptModel::dialogShowing(const QStringList& screen) const {
 
 bool TranscriptModel::composerHolds(const QStringList& screen, const QString& text) const {
     return transcript::composer_holds(screen, text, format());
+}
+
+bool TranscriptModel::steerWaiting(const QStringList& screen) const {
+    return format() == transcript::Format::codex && transcript::steer_waiting(screen);
 }
 
 void TranscriptModel::refreshQueueMode() {
