@@ -3550,6 +3550,9 @@ ApplicationWindow {
                 // Hidden cards release their surfaces; off-screen ones are not
                 // kept, so only what is visible renders.
                 model: visible ? workspace.categoryAgents : []
+                // A category model reset repurposes visible cards instead of
+                // rebuilding every preview terminal while off-screen ones stay pooled.
+                reuseItems: true
                 cacheBuffer: 0
                 highlight: null
                 highlightFollowsCurrentItem: false

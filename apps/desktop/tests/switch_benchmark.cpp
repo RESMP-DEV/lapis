@@ -458,8 +458,11 @@ std::unique_ptr<lapis::desktop::InteractionRecorder> recorder(Workspace& workspa
 #endif
 
 QJsonObject measure(const Options& options, const QTemporaryDir& home) {
+    // Match the product: registry replacement churn stays outside the watched
+    // config directory instead of waking lapis.json's watcher on every switch.
+    QDir().mkpath(home.filePath(QStringLiteral("runtime")));
     lapis::desktop::WorkspaceOptions workspace_options;
-    workspace_options.storagePath = home.filePath(QStringLiteral("workspace.json"));
+    workspace_options.storagePath = home.filePath(QStringLiteral("runtime/workspace.json"));
     Workspace workspace(lapis::desktop::WorkspaceMode::live, workspace_options);
     require(workspace.workspaceError().isEmpty(), "workspace loads");
     lapis::desktop::Config config;
