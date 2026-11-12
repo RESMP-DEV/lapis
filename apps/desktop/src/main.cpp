@@ -861,6 +861,8 @@ int main(int argc, char** argv) {
             workspace.setHarnessUpdatesOff(config.harnessUpdatesOff());
             workspace.setAgentDefaults(config.agentDefaults());
             workspace.setTabAway(config.tabAway());
+            workspace.setVisualKeep(config.visualKeepMB(), config.visualKeepThreads(),
+                                    config.visualAll());
         };
         configure();
         QObject::connect(&config, &Config::changed, &workspace, configure);

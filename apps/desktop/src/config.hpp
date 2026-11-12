@@ -252,6 +252,12 @@ class Config final : public QObject {
     // Every setting Settings shows, at its built-in value, by the names
     // visual(), settings() and the properties above use; for Reset.
     Q_INVOKABLE [[nodiscard]] static QVariantMap defaults();
+    // visual.keepMB and visual.keepThreads: how much memory and how many
+    // conversations the visual view keeps parsed besides the shown one, so
+    // switching agents shows their threads at once. Hand-written only.
+    [[nodiscard]] int visualKeepMB() const { return visual_keep_mb_; }
+    [[nodiscard]] int visualKeepThreads() const { return visual_keep_threads_; }
+    [[nodiscard]] bool visualAll() const { return visual_all_; }
     [[nodiscard]] const AgentDefaults& agentDefaults() const { return agent_defaults_; }
     // {"nextPrompt": {...}}: when and how lapis predicts the next prompt.
     [[nodiscard]] const NextPromptSettings& nextPrompt() const { return next_prompt_; }
@@ -312,6 +318,8 @@ class Config final : public QObject {
     QString visual_code_font_{QStringLiteral("system")};
     int visual_size_{};
     bool visual_all_{};
+    int visual_keep_mb_{1024};
+    int visual_keep_threads_{32};
     // What Command-click on a file path in the visual view opens it with:
     // vscode, cursor, zed, textedit, system, or auto (the first installed).
     QString visual_editor_{QStringLiteral("auto")};

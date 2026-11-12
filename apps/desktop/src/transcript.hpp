@@ -16,6 +16,8 @@
 class QJsonObject;
 class QQuickTextDocument;
 class QTextDocument;
+class QThreadPool;
+class QTimer;
 
 namespace lapis::desktop {
 // A visual, read-only reading of an agent CLI's saved conversation. The
@@ -290,7 +292,6 @@ class Reader {
   public:
     Reader() = default;
     virtual ~Reader() = default;
-    Reader(const Reader&) = delete;
     Reader& operator=(const Reader&) = delete;
     Reader(Reader&&) = default;
     Reader& operator=(Reader&&) = default;
@@ -298,6 +299,18 @@ class Reader {
     // appended items follow it.
     virtual int add(const QByteArray& line) = 0;
     [[nodiscard]] virtual Format format() const = 0;
+    // A copy that reads on from where this one is, so another thread can
+    // feed it what the file gained while this one stays shown or kept.
+    [[nodiscard]] virtual std::unique_ptr<Reader> clone() const = 0;
+    // Whether reading only a file's end can start at this line (read_file):
+    // a line whose meaning does not rest on records before it.
+    [[nodiscard]] virtual bool starts_reading(const QByteArray& line) const {
+        Q_UNUSED(line);
+        return true;
+    }
+    // About how many bytes of memory what was read takes, for the budget of
+    // conversations kept parsed.
+    [[nodiscard]] qint64 footprint() const;
     [[nodiscard]] const std::vector<Item>& items() const { return items_; }
     [[nodiscard]] const Status& status() const { return status_; }
     [[nodiscard]] const std::vector<Task>& tasks() const { return tasks_; }
@@ -313,6 +326,7 @@ class Reader {
     [[nodiscard]] std::vector<bool> sent_queued() const;
 
   protected:
+    Reader(const Reader&) = default; // for clone()
     // Matches a prompt the CLI recorded (about to be pushed) against the
     // prompts sent; see note_sent.
     void taken(Item& prompt);
@@ -342,6 +356,40 @@ class Reader {
 };
 [[nodiscard]] std::unique_ptr<Reader> make_reader(Format format);
 
+// A conversation file read into a reader: `offset` is where reading
+// stopped and `pending` a line the CLI has not finished writing.
+struct Read {
+    std::unique_ptr<Reader> reader;
+    qint64 offset{};
+    QByteArray pending;
+    bool tail{}; // only the file's end was read (see read_file)
+};
+// Reads the whole file, or with `tail_bytes` >= 0 only about that much of
+// its end, from the first line that starts there (a record cut by the
+// boundary is skipped), so a thread can show its newest turns before the
+// rest is read. A file no longer than `tail_bytes` is read whole.
+[[nodiscard]] Read read_file(const QString& path, Format format, qint64 tail_bytes = -1);
+// Feeds `bytes` (after `pending`, a line started earlier) to `reader` and
+// keeps a trailing unfinished line in `pending`. Returns the first item a
+// line changed, or -1.
+int feed(Reader& reader, QByteArray& pending, const QByteArray& bytes);
+// The end of a conversation file holding at least two turns' starts, so
+// its rows (trim_to_turns) are the last rows of the whole file: read from
+// `bytes` before the end, four times further back each time it holds fewer,
+// up to `most` bytes (or the whole file).
+[[nodiscard]] Read read_end(const QString& path, Format format, qint64 bytes, qint64 most);
+// A tail's rows from its second turn's prompt on: rows before it are the
+// rest of a turn whose start the tail cut off, or a turn whose records
+// before its prompt may be cut, which the whole file shows differently. A
+// tail with one turn keeps it, and one with none keeps its rows.
+void trim_to_turns(Layout& layout);
+// Whether row `x` of one reading of a conversation shows what row `y` of
+// another (a tail, the whole file) shows: the same record's item with the
+// same text and state, or the same "Worked for" or live row. Item indexes
+// differ between readings, so they are not compared.
+[[nodiscard]] bool same_content(const Layout& a, const std::vector<Item>& a_items, const Row& x,
+                                const Layout& b, const std::vector<Item>& b_items, const Row& y);
+
 // Folds Claude Code session JSONL records, in file order, into items. Tool
 // results attach to the tool call that asked for them; a subagent's records
 // (isSidechain) are skipped unless the file is that subagent's own
@@ -358,6 +406,9 @@ class ClaudeReader final : public Reader {
     explicit ClaudeReader(bool sidechain = false) : sidechain_(sidechain) {}
     int add(const QByteArray& line) override;
     [[nodiscard]] Format format() const override { return Format::claude; }
+    [[nodiscard]] std::unique_ptr<Reader> clone() const override {
+        return std::make_unique<ClaudeReader>(*this);
+    }
 
   private:
     void push(Item item);
@@ -410,6 +461,14 @@ class CodexReader final : public Reader {
   public:
     int add(const QByteArray& line) override;
     [[nodiscard]] Format format() const override { return Format::codex; }
+    [[nodiscard]] std::unique_ptr<Reader> clone() const override {
+        return std::make_unique<CodexReader>(*this);
+    }
+    // A turn's task_started: its prompts and steering are read by the turn
+    // it opens.
+    [[nodiscard]] bool starts_reading(const QByteArray& line) const override {
+        return line.contains(R"("type":"task_started")");
+    }
 
   private:
     void push(Item item);
@@ -446,6 +505,9 @@ class AntigravityReader final : public Reader {
   public:
     int add(const QByteArray& line) override;
     [[nodiscard]] Format format() const override { return Format::antigravity; }
+    [[nodiscard]] std::unique_ptr<Reader> clone() const override {
+        return std::make_unique<AntigravityReader>(*this);
+    }
 
   private:
     void push(Item item);
@@ -744,7 +806,48 @@ class TranscriptModel final : public QAbstractListModel {
     // from the next setPath.
     void setFormat(std::optional<transcript::Format> format) { forced_format_ = format; }
 
+    // Switching between agents. Each conversation read stays parsed (kept)
+    // while it fits the budget, least recently shown going first, so showing
+    // it again is at once and reads only what its CLI wrote since; the shown
+    // one is never let go. A conversation not kept shows its end (the last
+    // tail_bytes, read at once) and the rest is read on another thread and
+    // put in above it. See docs/architecture.md (visual view loading).
+    static constexpr qint64 tail_bytes = qint64{1} << 20;
+    static constexpr qint64 default_kept_mb = 1024;
+    static constexpr int default_kept_count = 32;
+    // The budget for conversations kept parsed besides the shown one: about
+    // `bytes` of memory and `count` conversations.
+    void setBudget(qint64 bytes, int count);
+    [[nodiscard]] qint64 keptBytes() const;
+    [[nodiscard]] int keptCount() const { return static_cast<int>(kept_.size()); }
+    [[nodiscard]] bool kept(const QString& path) const;
+    // Reads these conversations ahead on a low-priority thread, one at a
+    // time and in this order (most recently active first), while the budget
+    // has room; ones already kept or being read are skipped. Kept ones are
+    // then brought up to date in the background when their files grow.
+    void warm(const QStringList& paths);
+    // Where the view was in the shown conversation when another replaced
+    // it (the view calls this on leaving()): the row at its top and how far
+    // into that row, or following its end.
+    Q_INVOKABLE void keepView(int row, double offset, bool following);
+    // The view to restore for the conversation just shown (pathChanged) or
+    // read again (reloaded): {following} or {following: false, row, offset}.
+    Q_INVOKABLE [[nodiscard]] QVariantMap view() const;
+    // Only the file's end is shown yet (the rest is being read).
+    [[nodiscard]] bool tailShown() const { return tail_; }
+    // Brings one kept conversation up to date now, as the timer does, and
+    // whether a read ahead or such a catch-up is running; for tests.
+    void followKept() { catchUp(); }
+    [[nodiscard]] bool readingAhead() const { return warming_; }
+
   signals:
+    // The rows are about to be replaced, by another conversation or by a
+    // longer reading of this one: the view keeps its place (keepView) now
+    // and makes no rows until pathChanged or reloaded.
+    void leaving();
+    // The shown conversation's rows were replaced by a longer reading of it
+    // (its history came in above its end); the view goes back to view().
+    void reloaded();
     void pathChanged();
     void loadingChanged();
     void countChanged();
@@ -821,9 +924,36 @@ class TranscriptModel final : public QAbstractListModel {
         std::unique_ptr<transcript::Reader> reader;
         qint64 offset{};
         QByteArray pending;
+        QSet<int> expanded;
+        QVariantMap view;
+        qint64 bytes{};  // the reader's footprint when kept
+        quint64 shown{}; // when it was last shown (shown_clock_), 0 if never
     };
-    static constexpr std::size_t kept_conversations = 6;
+    // Most recently shown first; read ahead and never shown last.
     std::vector<Parsed> kept_;
+    void keep(Parsed parsed);
+    void evict();
+    qint64 kept_budget_{default_kept_mb << 20};
+    int kept_limit_{default_kept_count};
+    quint64 shown_clock_{};
+    // A whole reading (or a longer tail) of `path` from another thread.
+    void received(const QString& path, transcript::Read read, bool ahead);
+    // A kept conversation's reader brought up to date from `base` on.
+    void caughtUp(const QString& path, qint64 base, transcript::Read read);
+    // Shows another reading of the shown conversation in place of this
+    // one, changing only the rows that differ (the history above a tail).
+    void adopt(transcript::Read read);
+    void startLoad(const QString& path, transcript::Format format);
+    void warmNext();
+    void catchUp();
+    [[nodiscard]] transcript::Layout layoutNow() const;
+    QSet<QString> loads_;       // conversations a thread is reading
+    QStringList warm_queue_;    // to read ahead, in order
+    bool warming_{};            // a read-ahead or catch-up is running
+    bool tail_{};               // reader_ holds only the file's end
+    QVariantMap view_;          // the shown conversation's (keepView)
+    QThreadPool* background_{}; // one low-priority thread for read-ahead
+    QTimer* catch_up_timer_{};
     QString path_;
     std::optional<transcript::Format> forced_format_;
     // Never null: an empty Claude Code reader until a path is set.

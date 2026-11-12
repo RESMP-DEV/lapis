@@ -767,6 +767,14 @@ void Config::load_visual(const QJsonObject& root) {
     visual_size_ = visual_size(size) ? size : 0;
     visual_all_ = visual.value(QStringLiteral("all")).toBool();
     visual_editor_ = name("editor", "auto");
+    // A missing or out-of-range number keeps the default.
+    const auto number = [&visual](const char* key, int fallback, int most) {
+        const auto value = visual.value(QLatin1String(key));
+        const int n = value.toInt(-1);
+        return value.isDouble() && n >= 0 && n <= most ? n : fallback;
+    };
+    visual_keep_mb_ = number("keepMB", 1024, 65536);
+    visual_keep_threads_ = number("keepThreads", 32, 1000);
 
     // Light mode. Each kind's theme must be of that kind; a missing or wrong
     // one falls back to the built-in choice, or to what shows now.

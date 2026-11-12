@@ -30,9 +30,12 @@
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextDocumentFragment>
 #include <QTextList>
 #include <QTextTable>
+#include <QThread>
 #include <QThreadPool>
+#include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 #include <algorithm>
@@ -1734,19 +1737,7 @@ int ClaudeReader::add(const QByteArray& line) {
         changed = changed < 0 ? first : std::min(changed, first);
     return changed;
 }
-} // namespace transcript
-
-namespace {
-struct ReadResult {
-    std::unique_ptr<transcript::Reader> reader;
-    qint64 offset{};
-    QByteArray pending;
-};
-
-// Feeds `bytes` (after `pending`, a line started earlier) to the reader and
-// keeps a trailing unfinished line for next time. Returns the first item a
-// line changed, or -1.
-int feed(transcript::Reader& reader, QByteArray& pending, const QByteArray& bytes) {
+int feed(Reader& reader, QByteArray& pending, const QByteArray& bytes) {
     pending += bytes;
     int changed = -1;
     qsizetype start = 0;
@@ -1760,16 +1751,113 @@ int feed(transcript::Reader& reader, QByteArray& pending, const QByteArray& byte
     return changed;
 }
 
-ReadResult read_whole(const QString& path, transcript::Format format) {
-    ReadResult result{transcript::make_reader(format), 0, {}};
+Read read_file(const QString& path, Format format, qint64 tail_bytes) {
+    Read result{make_reader(format), 0, {}, false};
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
         return result;
+    const auto size = file.size();
+    if (tail_bytes >= 0 && size > tail_bytes && file.seek(size - tail_bytes)) {
+        // The byte before the boundary says whether a line starts at it;
+        // otherwise the first line read is the cut end of a record.
+        file.seek(size - tail_bytes - 1);
+        char before = 0;
+        file.getChar(&before);
+        if (before != '\n') {
+            const auto cut = file.readLine();
+            Q_UNUSED(cut);
+        }
+        // Then on to the first line the reader can start at; with none (one
+        // long turn), from the first whole line, so something shows.
+        const auto first = file.pos();
+        bool found = false;
+        for (auto at = first; !found && !file.atEnd(); at = file.pos()) {
+            const auto line = file.readLine();
+            found = line.endsWith('\n') && result.reader->starts_reading(line);
+            if (found)
+                file.seek(at);
+        }
+        if (!found)
+            file.seek(first);
+        result.tail = true;
+    }
     while (!file.atEnd())
         feed(*result.reader, result.pending, file.read(qint64{1} << 20));
     result.offset = file.pos();
     return result;
 }
+
+Read read_end(const QString& path, Format format, qint64 bytes, qint64 most) {
+    for (;;) {
+        auto read = read_file(path, format, bytes);
+        if (!read.tail || bytes >= most)
+            return read;
+        if (lay_out(read.reader->items(), {}).turns.size() > 1)
+            return read;
+        bytes = std::min(most, bytes * 4);
+    }
+}
+
+void trim_to_turns(Layout& layout) {
+    if (layout.turns.empty())
+        return;
+    // The first row of the second turn (its prompt, or for a turn a
+    // background task started, its first row): the first turn's own records
+    // before its prompt (when it started, what woke it) may be cut off too,
+    // so it would be timed or folded unlike the whole file shows it. A tail
+    // with one turn keeps it.
+    const int turn = layout.turns.size() > 1 ? 1 : 0;
+    const auto first = std::ranges::find_if(
+        layout.rows, [turn](const Row& row) { return row.turn == turn && !row.in_work; });
+    if (first == layout.rows.end() || first == layout.rows.begin())
+        return;
+    layout.rows.erase(layout.rows.begin(), first);
+}
+
+bool same_content(const Layout& a, const std::vector<Item>& a_items, const Row& x, const Layout& b,
+                  const std::vector<Item>& b_items, const Row& y) {
+    if (x.in_work != y.in_work || x.live != y.live || (x.item < 0) != (y.item < 0))
+        return false;
+    const auto same_item = [&](int i, int j) {
+        const auto& p = a_items[static_cast<size_t>(i)];
+        const auto& q = b_items[static_cast<size_t>(j)];
+        return p.kind == q.kind && p.record == q.record && p.title == q.title && p.body == q.body &&
+               p.result == q.result && p.answered == q.answered && p.failed == q.failed &&
+               p.queued == q.queued && p.steered == q.steered && p.at_ms == q.at_ms &&
+               p.duration_ms == q.duration_ms && (p.task < 0) == (q.task < 0);
+    };
+    if (x.item >= 0)
+        return same_item(x.item, y.item);
+    const auto& s = a.turns[static_cast<size_t>(x.turn)];
+    const auto& t = b.turns[static_cast<size_t>(y.turn)];
+    const auto& p = s.parts[static_cast<size_t>(x.part)];
+    const auto& q = t.parts[static_cast<size_t>(y.part)];
+    return p.steps == q.steps && p.duration_ms == q.duration_ms && p.summary == q.summary &&
+           same_item(p.lead, q.lead);
+}
+
+qint64 Reader::footprint() const {
+    const auto text = [](const QString& s) { return static_cast<qint64>(s.capacity()) * 2 + 24; };
+    qint64 bytes = static_cast<qint64>(items_.capacity() * sizeof(Item));
+    for (const auto& item : items_) {
+        bytes += text(item.title) + text(item.body) + text(item.detail) + text(item.result) +
+                 text(item.tool_id) + text(item.record);
+        bytes += static_cast<qint64>(item.diff.capacity() * sizeof(DiffLine));
+        for (const auto& line : item.diff)
+            bytes += text(line.text);
+    }
+    bytes += static_cast<qint64>(tasks_.capacity() * sizeof(Task));
+    for (const auto& task : tasks_)
+        bytes +=
+            text(task.description) + text(task.last_check) + text(task.report) + text(task.file);
+    // The process grows about three times what the text holds (allocator
+    // overhead, the reader's tables, the pages reading it left), measured
+    // with twenty conversations kept: 244 MB of text, 734 MB more footprint.
+    return bytes * 3;
+}
+} // namespace transcript
+
+namespace {
 
 QVariantList diff_rows(const std::vector<transcript::DiffLine>& diff) {
     QVariantList rows;
@@ -1782,7 +1870,15 @@ QVariantList diff_rows(const std::vector<transcript::DiffLine>& diff) {
 } // namespace
 
 TranscriptModel::TranscriptModel(QObject* parent)
-    : QAbstractListModel(parent), reader_(transcript::make_reader(transcript::Format::claude)) {}
+    : QAbstractListModel(parent), reader_(transcript::make_reader(transcript::Format::claude)) {
+    background_ = new QThreadPool(this);
+    catch_up_timer_ = new QTimer(this);
+    background_->setMaxThreadCount(1);
+    background_->setThreadPriority(QThread::LowPriority);
+    // Kept conversations follow their files this often, one per tick.
+    catch_up_timer_->setInterval(5000);
+    connect(catch_up_timer_, &QTimer::timeout, this, &TranscriptModel::catchUp);
+}
 
 transcript::Format TranscriptModel::format_for(const QString& path) const {
     return forced_format_ ? *forced_format_ : transcript::format_of(path);
@@ -2354,7 +2450,7 @@ bool same_row(const transcript::Layout& a, const transcript::Row& x, const trans
 } // namespace
 
 void TranscriptModel::relayout(int changed) {
-    auto next = transcript::lay_out(reader_->items(), expanded_, live_);
+    auto next = layoutNow();
     const auto old_size = layout_.rows.size();
     const auto new_size = next.rows.size();
     size_t prefix = 0;
@@ -3082,88 +3178,371 @@ QString transcript::selection_text(const QTextDocument& document, int start, int
     return clean_copy(out);
 }
 
+transcript::Layout TranscriptModel::layoutNow() const {
+    auto layout = transcript::lay_out(reader_->items(), expanded_, live_);
+    if (tail_)
+        transcript::trim_to_turns(layout);
+    return layout;
+}
+
+namespace {
+// Brings a reader up to what the file holds now from `offset` on; false
+// when the file was rewritten shorter (the reading no longer fits it).
+bool read_on(const QString& path, transcript::Reader& reader, qint64& offset, QByteArray& pending,
+             int* changed = nullptr) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return true;
+    if (file.size() < offset)
+        return false;
+    if (file.size() > offset && file.seek(offset)) {
+        const auto bytes = file.readAll();
+        offset += bytes.size();
+        const auto first = transcript::feed(reader, pending, bytes);
+        if (changed != nullptr)
+            *changed = first;
+    }
+    return true;
+}
+} // namespace
+
 void TranscriptModel::setPath(const QString& path) {
     if (path == path_)
         return;
-    const auto generation = ++generation_;
+    ++generation_;
     const bool was_loading = loading_;
-    loading_ = false;
-    // The reader is swapped inside the reset, so the view never sees the old
-    // rows over the new reader.
-    beginResetModel();
-    // Keep what was read (a load still running has nothing whole to keep).
-    if (!path_.isEmpty() && !was_loading) {
-        std::erase_if(kept_, [this](const Parsed& kept) { return kept.path == path_; });
-        kept_.insert(kept_.begin(),
-                     Parsed{path_, std::move(reader_), offset_, std::move(pending_)});
-        if (kept_.size() > kept_conversations)
-            kept_.pop_back();
-    }
-    path_ = path;
+    // The view notes where it is (keepView) before the rows go.
+    if (!path_.isEmpty())
+        emit leaving();
     const auto format = format_for(path);
-    const auto hit = std::find_if(kept_.begin(), kept_.end(), [&path, format](const Parsed& kept) {
+    // Keep what was read whole; a tail is dropped, and the whole reading
+    // still under way is kept when it arrives.
+    std::unique_ptr<transcript::Reader> outgoing = std::move(reader_);
+    if (!path_.isEmpty() && !tail_ && !loading_)
+        keep({path_, std::move(outgoing), offset_, std::move(pending_), expanded_, view_, 0,
+              ++shown_clock_});
+    expanded_.clear();
+    view_.clear();
+    tail_ = false;
+    loading_ = false;
+    offset_ = 0;
+    pending_.clear();
+    const auto hit = std::ranges::find_if(kept_, [&path, format](const Parsed& kept) {
         return kept.path == path && kept.reader->format() == format;
     });
-    if (hit != kept_.end() && !path.isEmpty()) {
+    bool warm = false;
+    if (path.isEmpty()) {
+        reader_ = transcript::make_reader(format);
+    } else if (hit != kept_.end()) {
         reader_ = std::move(hit->reader);
         offset_ = hit->offset;
         pending_ = std::move(hit->pending);
+        expanded_ = std::move(hit->expanded);
+        view_ = std::move(hit->view);
         kept_.erase(hit);
-    } else {
-        reader_ = transcript::make_reader(format);
-        offset_ = 0;
-        pending_.clear();
+        // What the CLI wrote since it was last shown, before the rows are
+        // made, so they are made once. A file rewritten shorter is read
+        // again like one never shown.
+        warm = read_on(path, *reader_, offset_, pending_);
+        if (!warm) {
+            offset_ = 0;
+            pending_.clear();
+            expanded_.clear();
+            view_.clear();
+        }
     }
-    expanded_.clear();
+    if (!path.isEmpty() && !warm) {
+        // Not kept: its end now, the rest from another thread.
+        auto read = transcript::read_end(path, format, tail_bytes, 4 * tail_bytes);
+        reader_ = std::move(read.reader);
+        offset_ = read.offset;
+        pending_ = std::move(read.pending);
+        tail_ = read.tail;
+        loading_ = read.tail;
+        if (tail_ && !loads_.contains(path))
+            startLoad(path, format);
+    }
+    path_ = path;
     live_tasks_.clear();
-    layout_ = transcript::lay_out(reader_->items(), expanded_, live_);
+    auto next = layoutNow();
+    // The reader is swapped inside the reset, so the view never sees the
+    // old rows over the new reader.
+    beginResetModel();
+    layout_ = std::move(next);
     endResetModel();
+    outgoing.reset();
     emit pathChanged();
-    if (was_loading)
+    if (was_loading != loading_)
         emit loadingChanged();
     emit countChanged();
     noteStatus();
     showLive(0);
     updateRunning();
     notePending();
-    const bool warm = !reader_->items().empty() || offset_ > 0;
     auto* watcher = findChild<QFileSystemWatcher*>();
     if (watcher == nullptr) {
         watcher = new QFileSystemWatcher(this);
-        connect(watcher, &QFileSystemWatcher::fileChanged, this, [this] {
-            if (!loading_)
-                readMore();
-        });
+        connect(watcher, &QFileSystemWatcher::fileChanged, this, [this] { readMore(); });
     }
     if (!watcher->files().isEmpty())
         watcher->removePaths(watcher->files());
-    if (path.isEmpty())
-        return;
-    watcher->addPath(path);
-    if (warm) {
-        readMore(); // only what the CLI wrote since it was last shown
+    if (!path.isEmpty())
+        watcher->addPath(path);
+    if (!catch_up_timer_->isActive() && !kept_.empty())
+        catch_up_timer_->start();
+}
+
+void TranscriptModel::keepView(int row, double offset, bool following) {
+    if (following || row < 0) {
+        view_.clear();
         return;
     }
-    loading_ = true;
-    emit loadingChanged();
-    QThreadPool::globalInstance()->start([guard = QPointer<TranscriptModel>(this), path, format,
-                                          generation] {
-        auto result = read_whole(path, format);
-        QMetaObject::invokeMethod(
-            guard.data(),
-            [guard, generation, result = std::move(result)]() mutable {
-                if (guard == nullptr || guard->generation_ != generation)
-                    return;
-                guard->apply(std::move(result.reader), result.offset, std::move(result.pending));
-            },
-            Qt::QueuedConnection);
-    });
+    view_ = {{QStringLiteral("following"), false},
+             {QStringLiteral("row"), row},
+             {QStringLiteral("offset"), offset}};
+}
+
+QVariantMap TranscriptModel::view() const {
+    if (view_.value(QStringLiteral("following"), true) != false)
+        return {{QStringLiteral("following"), true}};
+    auto out = view_;
+    out.insert(QStringLiteral("row"),
+               std::clamp(view_.value(QStringLiteral("row")).toInt(), 0,
+                          std::max(0, static_cast<int>(layout_.rows.size()) - 1)));
+    return out;
+}
+
+void TranscriptModel::startLoad(const QString& path, transcript::Format format) {
+    loads_.insert(path);
+    // A long file shows a longer tail while the rest is read: the first
+    // one may hold only part of the newest turn.
+    const bool longer = QFileInfo(path).size() > 16 * tail_bytes && layoutNow().rows.size() < 20;
+    QThreadPool::globalInstance()->start(
+        [guard = QPointer<TranscriptModel>(this), path, format, longer] {
+            const auto post = [&guard, &path](transcript::Read read) {
+                QMetaObject::invokeMethod(
+                    guard.data(),
+                    [guard, path, read = std::move(read)]() mutable {
+                        if (guard != nullptr)
+                            guard->received(path, std::move(read), false);
+                    },
+                    Qt::QueuedConnection);
+            };
+            if (longer)
+                post(transcript::read_end(path, format, 8 * tail_bytes, 32 * tail_bytes));
+            post(transcript::read_file(path, format));
+        });
+}
+
+void TranscriptModel::received(const QString& path, transcript::Read read, bool ahead) {
+    if (!read.tail)
+        loads_.remove(path);
+    if (path == path_) {
+        // A reading of the shown conversation replaces a shorter one.
+        if (tail_ && read.reader->format() == reader_->format() &&
+            (!read.tail || read.reader->items().size() > reader_->items().size()))
+            adopt(std::move(read));
+    } else if (!read.tail && !kept(path) && read.reader->format() == format_for(path)) {
+        // Read for a conversation shown before, or read ahead (kept after
+        // every shown one, so it never pushes one of those out).
+        keep({path,
+              std::move(read.reader),
+              read.offset,
+              std::move(read.pending),
+              {},
+              {},
+              0,
+              ahead ? 0 : ++shown_clock_});
+    }
+    if (!read.tail)
+        warmNext();
+}
+
+void TranscriptModel::adopt(transcript::Read read) {
+    const auto& old_items = reader_->items();
+    const auto& new_items = read.reader->items();
+    // Opened work stays open where its items line up at the end.
+    QSet<int> expanded;
+    const auto shift = static_cast<int>(new_items.size()) - static_cast<int>(old_items.size());
+    for (const int lead : std::as_const(expanded_)) {
+        const int moved = lead + shift;
+        if (moved >= 0 && std::cmp_less(moved, new_items.size()) &&
+            new_items[static_cast<size_t>(moved)].record ==
+                old_items[static_cast<size_t>(lead)].record)
+            expanded.insert(moved);
+    }
+    auto next = transcript::lay_out(new_items, expanded, live_);
+    if (read.tail)
+        transcript::trim_to_turns(next);
+    // The view notes its place, the rows are replaced at once, and it goes
+    // back to the same rows (now further down: the history is above them)
+    // before anything is drawn.
+    emit leaving();
+    if (view_.value(QStringLiteral("following"), true) == false)
+        view_.insert(QStringLiteral("row"), view_.value(QStringLiteral("row")).toInt() +
+                                                static_cast<int>(next.rows.size()) -
+                                                static_cast<int>(layout_.rows.size()));
+    beginResetModel();
+    const auto old_reader = std::exchange(reader_, std::move(read.reader));
+    layout_ = std::move(next);
+    expanded_ = std::move(expanded);
+    offset_ = read.offset;
+    pending_ = std::move(read.pending);
+    tail_ = read.tail;
+    live_tasks_.clear();
+    endResetModel();
+    emit reloaded();
+    emit countChanged();
+    noteStatus();
+    showLive(0);
+    updateRunning();
+    notePending();
+    if (loading_ != tail_) {
+        loading_ = tail_;
+        emit loadingChanged();
+    }
+    readMore(); // whatever the CLI wrote while the file was being read
+}
+
+void TranscriptModel::keep(Parsed parsed) {
+    if (parsed.reader == nullptr || parsed.path.isEmpty())
+        return;
+    std::erase_if(kept_, [&parsed](const Parsed& kept) { return kept.path == parsed.path; });
+    parsed.bytes = parsed.reader->footprint();
+    const auto at = std::ranges::find_if(
+        kept_, [&parsed](const Parsed& kept) { return kept.shown < parsed.shown; });
+    kept_.insert(at, std::move(parsed));
+    evict();
+}
+
+void TranscriptModel::evict() {
+    // Least recently shown first; the shown conversation is not in kept_.
+    while (!kept_.empty() &&
+           (std::cmp_greater(kept_.size(), kept_limit_) || keptBytes() > kept_budget_))
+        kept_.pop_back();
+}
+
+void TranscriptModel::setBudget(qint64 bytes, int count) {
+    kept_budget_ = std::max<qint64>(0, bytes);
+    kept_limit_ = std::max(0, count);
+    evict();
+}
+
+qint64 TranscriptModel::keptBytes() const {
+    qint64 total = 0;
+    for (const auto& kept : kept_)
+        total += kept.bytes;
+    return total;
+}
+
+bool TranscriptModel::kept(const QString& path) const {
+    return std::ranges::any_of(kept_, [&path](const Parsed& kept) { return kept.path == path; });
+}
+
+void TranscriptModel::warm(const QStringList& paths) {
+    warm_queue_.clear();
+    for (const auto& path : paths)
+        if (!path.isEmpty() && !warm_queue_.contains(path))
+            warm_queue_ << path;
+    warmNext();
+}
+
+void TranscriptModel::warmNext() {
+    if (warming_)
+        return;
+    while (!warm_queue_.isEmpty()) {
+        const auto path = warm_queue_.takeFirst();
+        if (path == path_ || kept(path) || loads_.contains(path) || !QFileInfo::exists(path))
+            continue;
+        // Read ahead only into room the budget has: never at the cost of a
+        // conversation the person has shown.
+        if (std::cmp_greater_equal(kept_.size(), kept_limit_) || keptBytes() >= kept_budget_) {
+            warm_queue_.clear();
+            return;
+        }
+        warming_ = true;
+        loads_.insert(path);
+        const auto format = format_for(path);
+        background_->start([guard = QPointer<TranscriptModel>(this), path, format] {
+            auto read = transcript::read_file(path, format);
+            QMetaObject::invokeMethod(
+                guard.data(),
+                [guard, path, read = std::move(read)]() mutable {
+                    if (guard == nullptr)
+                        return;
+                    guard->warming_ = false;
+                    guard->received(path, std::move(read), true);
+                    if (!guard->kept_.empty() && !guard->catch_up_timer_->isActive())
+                        guard->catch_up_timer_->start();
+                },
+                Qt::QueuedConnection);
+        });
+        return;
+    }
+}
+
+void TranscriptModel::catchUp() {
+    if (kept_.empty()) {
+        catch_up_timer_->stop();
+        return;
+    }
+    if (warming_)
+        return;
+    // The most recently shown kept conversation whose file grew is brought
+    // up to date on the low-priority thread, one per tick: only the bytes
+    // its CLI wrote, so switching to it reads little.
+    for (auto& kept : kept_) {
+        if (loads_.contains(kept.path))
+            continue;
+        const auto size = QFileInfo(kept.path).size();
+        if (size == kept.offset)
+            continue;
+        if (size < kept.offset) { // rewritten: read again when shown
+            const auto path = kept.path;
+            std::erase_if(kept_, [&path](const Parsed& entry) { return entry.path == path; });
+            return;
+        }
+        warming_ = true;
+        loads_.insert(kept.path);
+        // A copy is fed there, so the kept one can be shown meanwhile.
+        auto copy = std::make_shared<transcript::Read>(
+            transcript::Read{kept.reader->clone(), kept.offset, kept.pending, false});
+        background_->start(
+            [guard = QPointer<TranscriptModel>(this), path = kept.path, base = kept.offset, copy] {
+                read_on(path, *copy->reader, copy->offset, copy->pending);
+                QMetaObject::invokeMethod(
+                    guard.data(),
+                    [guard, path, base, copy] {
+                        if (guard != nullptr)
+                            guard->caughtUp(path, base, std::move(*copy));
+                    },
+                    Qt::QueuedConnection);
+            });
+        return;
+    }
+}
+
+void TranscriptModel::caughtUp(const QString& path, qint64 base, transcript::Read read) {
+    warming_ = false;
+    loads_.remove(path);
+    const auto entry =
+        std::ranges::find_if(kept_, [&path](const Parsed& kept) { return kept.path == path; });
+    if (entry != kept_.end() && entry->offset == base) {
+        entry->reader = std::move(read.reader);
+        entry->offset = read.offset;
+        entry->pending = std::move(read.pending);
+        entry->bytes = entry->reader->footprint();
+        evict();
+    } else if (path == path_ && tail_) {
+        adopt(std::move(read));
+    }
+    warmNext();
 }
 
 void TranscriptModel::loadNow() {
     ++generation_;
-    auto result = read_whole(path_, format_for(path_));
-    apply(std::move(result.reader), result.offset, std::move(result.pending));
+    auto read = transcript::read_file(path_, format_for(path_));
+    apply(std::move(read.reader), read.offset, std::move(read.pending));
 }
 
 void TranscriptModel::apply(std::unique_ptr<transcript::Reader> reader, qint64 offset,
@@ -3172,7 +3551,8 @@ void TranscriptModel::apply(std::unique_ptr<transcript::Reader> reader, qint64 o
     beginResetModel();
     reader_ = std::move(reader);
     live_tasks_.clear();
-    layout_ = transcript::lay_out(reader_->items(), expanded_, live_);
+    tail_ = false;
+    layout_ = layoutNow();
     offset_ = offset;
     pending_ = std::move(pending);
     endResetModel();

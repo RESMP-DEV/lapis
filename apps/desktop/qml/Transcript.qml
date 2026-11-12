@@ -632,14 +632,47 @@ FocusScope {
         color: root.backgroundColor
     }
 
-    // Another conversation opens at its newest message.
+    // Another conversation opens where it was left: at its newest message,
+    // or where it was scrolled to; one whose history comes in later stays on
+    // the rows it shows. While the rows are replaced the list makes none
+    // (no screen below its top, no cache), so after the replacement only
+    // the screen it opens on is made; the cache fills in after a few frames.
     Connections {
         target: root.model
-        function onPathChanged() {
-            root.following = true
-            Qt.callLater(list.positionViewAtEnd)
+        function onLeaving() {
+            const top = list.indexAt(list.width / 2, list.contentY + 1)
+            const item = top >= 0 ? list.itemAtIndex(top) : null
+            root.model.keepView(top, item ? list.contentY - item.y : 0,
+                                root.following || item === null)
+            root.following = false // placeView decides; the reset's count change must not
+            list.cacheBuffer = 0
+            list.anchors.bottom = undefined
+            list.height = 0
         }
+        function onPathChanged() { root.placeView() }
+        function onReloaded() { root.placeView() }
     }
+    function placeView() {
+        const view = model.view()
+        following = view.following
+        // Placed while it has no height, then given its height back: the
+        // rows the screen shows are made, and none it does not.
+        const place = () => {
+            if (following) {
+                list.positionViewAtEnd()
+            } else {
+                list.positionViewAtIndex(view.row, ListView.Beginning)
+                list.contentY += view.offset
+            }
+        }
+        place()
+        list.anchors.bottom = composerArea.top
+        place()
+        listCache.restart()
+        if (following)
+            Qt.callLater(list.positionViewAtEnd) // once rows have their heights
+    }
+    Timer { id: listCache; interval: 250; onTriggered: list.cacheBuffer = 2000 }
 
     ListView {
         id: list

@@ -184,6 +184,16 @@ if(BUILD_TESTING)
         LAPIS_VISUAL_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/visual")
     add_test(NAME transcript-clis COMMAND lapis_transcript_clis_tests)
     set_tests_properties(transcript-clis PROPERTIES TIMEOUT 20)
+    # Switching agents in the visual view: a cold thread's end first, threads
+    # kept within a budget, kept ones following their files, the view's place.
+    add_executable(lapis_transcript_switch_tests tests/transcript_switch_test.cpp)
+    target_link_libraries(lapis_transcript_switch_tests PRIVATE lapis_project_options
+        lapis_desktop_core)
+    target_compile_definitions(lapis_transcript_switch_tests PRIVATE
+        LAPIS_VISUAL_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/visual"
+        LAPIS_TRANSCRIPT_QML="${CMAKE_CURRENT_SOURCE_DIR}/qml/Transcript.qml")
+    add_test(NAME transcript-switch COMMAND lapis_transcript_switch_tests)
+    set_tests_properties(transcript-switch PROPERTIES TIMEOUT 60)
     # Offscreen contact sheet and scroll timing of the visual view (a review
     # tool); its --keys check of the bar's editing keys is a CTest entry.
     add_executable(lapis_transcript_capture tests/transcript_capture.cpp)

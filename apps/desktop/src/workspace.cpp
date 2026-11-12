@@ -2256,6 +2256,31 @@ QString Workspace::conversationFile(const QString& id) {
     }
     return path;
 }
+void Workspace::setVisualKeep(int mb, int threads, bool ahead) {
+    auto* transcript = qobject_cast<TranscriptModel*>(transcript_);
+    transcript->setBudget(qint64{mb} << 20, threads);
+    // Once a run: a few seconds after launch, or after every agent is
+    // switched to show as a thread.
+    if (!ahead || warm_scheduled_ || fixture_mode_ || headless_)
+        return;
+    warm_scheduled_ = true;
+    QTimer::singleShot(4000, this, [this] { warmThreads(); });
+}
+
+void Workspace::warmThreads() {
+    QList<std::pair<qint64, QString>> found;
+    for (auto entry = agents_.cbegin(); entry != agents_.cend(); ++entry) {
+        const auto path = conversationFile(entry.key());
+        if (!path.isEmpty())
+            found.append({QFileInfo(path).lastModified().toMSecsSinceEpoch(), path});
+    }
+    std::ranges::sort(found, [](const auto& a, const auto& b) { return a.first > b.first; });
+    QStringList paths;
+    for (const auto& [modified, path] : found)
+        paths << path;
+    qobject_cast<TranscriptModel*>(transcript_)->warm(paths);
+}
+
 QString Workspace::forkConversation(const QString& id, const QString& record, bool before) const {
     // A fork copies Claude Code's own records; other CLIs' files differ.
     const auto entry = agents_.constFind(id);

@@ -591,6 +591,13 @@ class Workspace final : public QObject {
     void setParkAfterMsForTesting(qint64 ms) { park_after_ms_ = ms; }
     void setTabAway(const TabAwaySettings& settings);
     [[nodiscard]] const TabAwaySettings& tabAway() const { return tab_away_; }
+    // The visual view's budget for threads kept parsed (visual.keepMB,
+    // keepThreads). With `ahead` (every agent shows as a thread), a few
+    // seconds later the threads of this Mac's agents are read ahead once,
+    // most recently written first, so the first switch to each is at once.
+    void setVisualKeep(int mb, int threads, bool ahead);
+    // Reads ahead the threads of this Mac's agents now (see setVisualKeep).
+    void warmThreads();
     // Where the guesses come from when the person moves by hand, for the
     // choices the move log records (NextPrompt::readyAgents).
     void setGuesses(std::function<QVariantMap()> guesses) { guesses_ = std::move(guesses); }
@@ -733,6 +740,7 @@ class Workspace final : public QObject {
     // looks in every project folder (milliseconds on each switch).
     QHash<QString, QString> claude_paths_;
     QHash<QString, qint64> claude_searched_; // id -> when a search last missed it
+    bool warm_scheduled_{};                  // threads are read ahead (setVisualKeep)
     // Pins what each local Codex and agy agent's CLI is writing, as the
     // visual view does, so restore resumes it even for one never shown.
     QTimer conversation_pins_;
