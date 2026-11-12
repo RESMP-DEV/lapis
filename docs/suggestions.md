@@ -137,6 +137,52 @@ Nothing is installed or left there. Without `python3` there, or for an agent
 started before this, its turns are not reported and no guess is made; restart
 it to add the hooks.
 
+## Keeping folders apart
+
+A guess for one agent carries your recent prompts to other agents and a line
+for every other agent (title, category, status). Two lists keep work in some
+folders out of that:
+
+```json
+{"nextPrompt": {"separate": ["~/work/client"], "off": ["~/work/private"]}}
+```
+
+- **`separate`**: an agent working inside a listed folder is walled off. Its
+  prompts and its line reach only guesses for agents inside the same listed
+  folder, and a guess for it sees only those. Agents outside every listed
+  folder see each other as before.
+- **`off`**: an agent inside a listed folder gets no guesses, so nothing of
+  it is sent to the model, and its prompts and line reach no other guess.
+
+Each entry is an absolute path or starts with `~`; anything else is ignored,
+and at most 64 are read. Both default to empty, which changes nothing. A
+folder holds what is inside it by whole path components, so `~/work/client`
+does not hold `~/work/clientele`; where listed folders nest, the deepest
+holds the agent, and `off` wins over `separate`. Matching is exact in case.
+
+Where a conversation works is read from its transcript, on the machine it
+runs on, with `~` and symlinks resolved there: every `cwd` Claude Code
+records, the `cwd` of Codex's `session_meta` and of each `turn_context`, and
+OMP's `session` entry. A conversation that recorded no folder, or folders on
+both sides of a wall, cannot be placed: with either list set, its prompts and
+line reach no other guess, and a guess for it sees no other agent; with an
+`off` list it gets no guess at all. The folder lapis started an agent in
+stands in for its own guess when its transcript records none, and must agree
+with what the transcript records. Another machine's agent lines are compared
+with the lists as written, since `~` there is that machine's home: a folder
+written with `~` is only compared with entries written with `~`, an absolute
+one only with absolute entries, and any other pair cannot be placed. Your
+prompts on that machine are walled where the helper runs, so `~` in a list
+means that machine's home there.
+
+The prompt index (`next_prompt_pairs.json`) records each transcript's folders;
+an index written before this is read again a few seconds per guess, and until
+an entry is, its prompts are left out while a list is set.
+`next_prompt_eval.py replay` samples with the same lists from `lapis.json`, so
+an `off` conversation is never sampled and walled prompts stay out of samples;
+manifests saved before this keep what they held. A guess not made for an `off`
+folder is logged as `skipped` with reason `off_folder`.
+
 An OMP agent on this Mac reports its turns through an extension lapis writes
 next to its OMP overlay in the runtime folder (`omp-lapis-turns.ts`, loaded by
 `omp-lapis.yml`). It prints the same terminal sequences with a nonce lapis puts

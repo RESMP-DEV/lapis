@@ -325,6 +325,10 @@ def replay(arguments):
                     str(arguments.seed),
                     *(["--since", arguments.since] if arguments.since else []),
                     *(["--exclude", *arguments.exclude] if arguments.exclude else []),
+                    # The same folder walls as live guesses, from lapis.json,
+                    # resolved on each machine sampled.
+                    "--walls",
+                    next_prompt.config_walls(),
                 ],
             )
             if "error" in sample:

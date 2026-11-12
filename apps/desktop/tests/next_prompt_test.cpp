@@ -1252,10 +1252,225 @@ void ompOffersRestoreBySessionId() {
             "an OMP offer restores by the CLI session id");
 }
 
+// Folder walls (`separate`, `off`), all under a made-up temporary root: work/client
+// is walled, work/clientele only starts like it, dev/app is outside, private is off.
+void wallSettingsAndZones() {
+    const auto none = lapis::desktop::parse_next_prompt(QJsonValue());
+    require(none.separate.isEmpty() && none.off.isEmpty() && !none.walled(),
+            "no folders are walled by default");
+    const auto listed = lapis::desktop::parse_next_prompt(
+        QJsonDocument::fromJson(R"({"separate": ["~/work/client", " /srv/a ", "relative", 3, "",
+                                                 "~other/x"],
+                                    "off": "not a list"})")
+            .object());
+    require(listed.separate == QStringList({QStringLiteral("~/work/client"),
+                                            QStringLiteral("/srv/a")}) &&
+                listed.off.isEmpty() && listed.walled(),
+            "absolute and ~ folders are kept, trimmed; anything else is dropped");
+
+    QTemporaryDir directory;
+    require(directory.isValid(), "fixture directory");
+    const QDir root(directory.path());
+    for (const auto* folder : {"work/client/sub", "work/clientele", "dev/app", "private"})
+        require(root.mkpath(QLatin1String(folder)), "fixture folders");
+    require(QFile::link(root.filePath(QStringLiteral("work/client")),
+                        root.filePath(QStringLiteral("alias"))),
+            "a link into the walled folder");
+    NextPromptSettings settings;
+    settings.separate = {root.filePath(QStringLiteral("work")),
+                         root.filePath(QStringLiteral("work/client"))};
+    settings.off = {root.filePath(QStringLiteral("private"))};
+    const auto zone = [&settings, &root](const QString& machine, const QString& folder) {
+        return lapis::desktop::folder_zone(
+            settings, machine, folder.startsWith(QLatin1Char('/')) ? folder : root.filePath(folder));
+    };
+    require(zone({}, QStringLiteral("work/client/sub")) == QLatin1String("s1") &&
+                zone({}, QStringLiteral("work/clientele")) == QLatin1String("s0") &&
+                zone({}, QStringLiteral("alias/new")) == QLatin1String("s1") &&
+                zone({}, QStringLiteral("dev/app")) == QLatin1String("") &&
+                zone({}, QStringLiteral("private/x")) == QLatin1String("o0"),
+            "here: the deepest listed folder, by component, through links, off first");
+    require(lapis::desktop::folder_zone(settings, {}, {}) == QLatin1String("?") &&
+                lapis::desktop::folder_zone(settings, {}, QStringLiteral("rel/x")) ==
+                    QLatin1String("?"),
+            "an unknown folder here is unknown");
+    require(lapis::desktop::folder_zone(NextPromptSettings{}, {}, {}).isEmpty(),
+            "without walls every folder is outside");
+
+    NextPromptSettings remote;
+    remote.separate = {QStringLiteral("~/work/client"), QStringLiteral("~/a b")};
+    const auto there = [&remote](const QString& folder) {
+        return lapis::desktop::folder_zone(remote, QStringLiteral("box"), folder);
+    };
+    require(there(QStringLiteral("~/work/client/r")) == QLatin1String("s0") &&
+                there(QStringLiteral("~/work/clientele")) == QLatin1String("") &&
+                there(QStringLiteral("~/'a b'/c")) == QLatin1String("s1") &&
+                there(QStringLiteral("~/x/../work/client")) == QLatin1String("s0") &&
+                there(QStringLiteral("~/../elsewhere")) == QLatin1String("?") &&
+                there(QStringLiteral("/home/u/work/client")) == QLatin1String("?") &&
+                there(QStringLiteral("~/$(x)")) == QLatin1String("?") &&
+                there({}) == QLatin1String("?"),
+            "another machine: compared as written, ~ only with ~");
+}
+
+void foldersAreWalled() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "fixture directory");
+    const QDir root(directory.path());
+    require(root.mkpath(QStringLiteral("bin")), "fixture bin");
+    for (const auto* folder : {"work/client/sub", "work/clientele", "dev/app", "private"})
+        require(root.mkpath(QLatin1String(folder)), "fixture folders");
+    standIns(root);
+    write(root.filePath(QStringLiteral("predict.reply")),
+          R"({"candidates":[{"text":"go","p":0.8}]})");
+    const auto log = root.filePath(QStringLiteral("next.jsonl"));
+    const QHash<QString, QString> folders{
+        {QStringLiteral("out"), root.filePath(QStringLiteral("dev/app"))},
+        {QStringLiteral("in"), root.filePath(QStringLiteral("work/client/sub"))},
+        {QStringLiteral("pre"), root.filePath(QStringLiteral("work/clientele"))},
+        {QStringLiteral("off"), root.filePath(QStringLiteral("private"))},
+        {QStringLiteral("unknown"), QString()}};
+    NextPrompt next(
+        [&folders](const QString& id) -> std::optional<NextPrompt::Agent> {
+            NextPrompt::Agent agent;
+            agent.cli = QStringLiteral("claude");
+            agent.folder = folders.value(id);
+            agent.title = id;
+            agent.conversation = id;
+            agent.screen = QStringLiteral("> ");
+            return agent;
+        },
+        [&folders] {
+            QJsonArray agents;
+            for (const auto& id : {"out", "in", "pre", "off", "unknown"})
+                agents.append(QJsonObject{{QStringLiteral("title"), QLatin1String(id)},
+                                          {QStringLiteral("category"), QStringLiteral("c")},
+                                          {QStringLiteral("status"), QStringLiteral("Done")},
+                                          {QStringLiteral("waiting"), false},
+                                          {QStringLiteral("machine"), QString()},
+                                          {QStringLiteral("folder"), folders.value(id)}});
+            agents.append(QJsonObject{{QStringLiteral("title"), QStringLiteral("far")},
+                                      {QStringLiteral("machine"), QStringLiteral("box")},
+                                      {QStringLiteral("folder"), QStringLiteral("~/work/client")}});
+            return agents;
+        },
+        [&root](const QString& name) { return root.filePath(QStringLiteral("bin/") + name); },
+        {root.path(), log});
+    // One guess for `id` with the helper reporting `reply` as its context:
+    // the titles of the other agents the model was given, and its arguments.
+    struct Guess {
+        QStringList titles;
+        QStringList context;
+        bool predicted{};
+    };
+    // `wall` is the zone the helper reports, or absent when null. Each guess
+    // is a new turn, so none is held back as an unseen repeat.
+    int turn = 0;
+    const auto guess = [&](const QString& id, const char* wall) {
+        QFile::remove(root.filePath(QStringLiteral("predict.stdin")));
+        QFile::remove(root.filePath(QStringLiteral("context.args")));
+        QJsonObject reply{{QStringLiteral("conversation"), id}, {QStringLiteral("turn"), ++turn}};
+        if (wall != nullptr)
+            reply.insert(QStringLiteral("wall"), QLatin1String(wall));
+        write(root.filePath(QStringLiteral("context.reply")), QJsonDocument(reply).toJson());
+        const auto before = events(log).size();
+        next.turnFinished(id);
+        // The previous offer's withdrawal is logged first; wait for the end.
+        const auto ended = [&] {
+            const auto logged = events(log);
+            if (logged.size() <= before)
+                return false;
+            const auto event = logged.last().value(QStringLiteral("event")).toString();
+            return event == QLatin1String("predicted") || event == QLatin1String("skipped") ||
+                   event == QLatin1String("failed");
+        };
+        require(waitFor(ended), "the guess is logged");
+        Guess made;
+        made.predicted = events(log).last().value(QStringLiteral("event")) ==
+                         QLatin1String("predicted");
+        const auto bundle =
+            QJsonDocument::fromJson(read(root.filePath(QStringLiteral("predict.stdin")))).object();
+        for (const auto& agent : bundle.value(QStringLiteral("agents")).toArray()) {
+            const auto object = agent.toObject();
+            require(!object.contains(QStringLiteral("machine")) &&
+                        !object.contains(QStringLiteral("folder")),
+                    "where an agent runs decides the wall and is not sent");
+            made.titles << object.value(QStringLiteral("title")).toString();
+        }
+        made.context = QString::fromUtf8(read(root.filePath(QStringLiteral("context.args"))))
+                           .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        return made;
+    };
+
+    // No lists: every agent, and the helper's arguments as before.
+    next.setSettings(on());
+    const auto open = guess(QStringLiteral("out"), nullptr);
+    require(open.predicted && open.titles == QStringList({QStringLiteral("out"),
+                                                          QStringLiteral("in"),
+                                                          QStringLiteral("pre"),
+                                                          QStringLiteral("off"),
+                                                          QStringLiteral("unknown"),
+                                                          QStringLiteral("far")}),
+            "without walls every agent is shown");
+    require(!open.context.contains(QStringLiteral("--walls")), "and no walls are passed");
+
+    auto settings = on();
+    settings.separate = {root.filePath(QStringLiteral("work/client"))};
+    settings.off = {root.filePath(QStringLiteral("private"))};
+    next.setSettings(settings);
+    const auto outside = guess(QStringLiteral("out"), "");
+    require(outside.predicted &&
+                outside.titles == QStringList({QStringLiteral("out"), QStringLiteral("pre")}),
+            "outside: no walled, off, unknown or uncomparable agent");
+    const auto walls = outside.context.indexOf(QStringLiteral("--walls"));
+    require(walls > 0 &&
+                QJsonDocument::fromJson(outside.context.value(walls + 1).toUtf8()).object() ==
+                    QJsonObject{{QStringLiteral("separate"),
+                                 QJsonArray{root.filePath(QStringLiteral("work/client"))}},
+                                {QStringLiteral("off"),
+                                 QJsonArray{root.filePath(QStringLiteral("private"))}}},
+            "the helper is given the lists to resolve where it runs");
+    const auto inside = guess(QStringLiteral("in"), "s0");
+    require(inside.predicted && inside.titles == QStringList{QStringLiteral("in")},
+            "inside: only the agents inside the same folder");
+    // Where lapis started it and what its conversation records disagree, or
+    // the helper does not say: unknown, which an off list leaves unguessed.
+    require(!guess(QStringLiteral("out"), "s0").predicted &&
+                !guess(QStringLiteral("out"), nullptr).predicted,
+            "with an off list, an agent in an unknown zone is not guessed");
+
+    // Off: not read at all when lapis knows, not predicted when the helper says.
+    const auto off = guess(QStringLiteral("off"), "o0");
+    require(!off.predicted && off.context.isEmpty() &&
+                events(log).last().value(QStringLiteral("reason")) ==
+                    QLatin1String("off_folder"),
+            "an agent in an off folder is not even read");
+    const auto moved = guess(QStringLiteral("out"), "o0");
+    require(!moved.predicted && !moved.context.isEmpty() &&
+                events(log).last().value(QStringLiteral("reason")) ==
+                    QLatin1String("off_folder"),
+            "a conversation recorded in an off folder is read, never predicted");
+    const auto unknown = guess(QStringLiteral("unknown"), "?");
+    require(!unknown.predicted, "with an off list, an unknown folder is not guessed");
+    settings.off.clear();
+    next.setSettings(settings);
+    const auto unknown_separate = guess(QStringLiteral("unknown"), "?");
+    require(unknown_separate.predicted && unknown_separate.titles.isEmpty(),
+            "with only separate folders, an unknown one is guessed alone");
+    const auto disagree = guess(QStringLiteral("out"), "s0");
+    require(disagree.predicted && disagree.titles.isEmpty(),
+            "a conversation recorded elsewhere than lapis started it sees no other agent");
+    const auto silent = guess(QStringLiteral("out"), nullptr);
+    require(silent.predicted && silent.titles.isEmpty(),
+            "a helper that does not say where the conversation is: no other agent");
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
         settingsReadFromTheConfig();
+        wallSettingsAndZones();
+        foldersAreWalled();
         screensReadAsText();
         concurrentContextsRespectCap();
         missingProbabilityIsNotOffered();
