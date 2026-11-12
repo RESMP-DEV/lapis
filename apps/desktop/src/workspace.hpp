@@ -729,6 +729,10 @@ class Workspace final : public QObject {
     QMap<QString, AgentRecord> agents_;
     // Codex thread id -> its rollout, found once (conversationFile).
     mutable QHash<QString, QString> rollout_paths_;
+    // Claude Code session id -> its transcript, found once: the search
+    // looks in every project folder (milliseconds on each switch).
+    QHash<QString, QString> claude_paths_;
+    QHash<QString, qint64> claude_searched_; // id -> when a search last missed it
     // Pins what each local Codex and agy agent's CLI is writing, as the
     // visual view does, so restore resumes it even for one never shown.
     QTimer conversation_pins_;

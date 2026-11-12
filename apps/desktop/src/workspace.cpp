@@ -2103,12 +2103,26 @@ bool resumable(const session::ResumeRecord& record, const QString& harness) {
 }
 
 // Where Claude Code saved a conversation on this Mac: one folder per project
-// under its projects directory. Empty when it has not saved one.
-QString claudeTranscript(const QString& conversation) {
+// under its projects directory. Empty when it has not saved one. The folder
+// Claude Code names after `directory` (each character other than a letter or
+// digit made a '-') is looked in first; `search` false looks only there.
+QString claudeTranscript(const QString& conversation, const QString& directory = {},
+                         bool search = true) {
     const QDir projects(
         qEnvironmentVariable("CLAUDE_CONFIG_DIR", QDir::homePath() + QStringLiteral("/.claude")) +
         QStringLiteral("/projects"));
     const auto transcript = conversation + QStringLiteral(".jsonl");
+    if (!directory.isEmpty()) {
+        QString folder = directory;
+        for (auto& c : folder)
+            if (!(c.isLetterOrNumber() && c.unicode() < 128))
+                c = QLatin1Char('-');
+        if (const auto path = projects.filePath(folder + QLatin1Char('/') + transcript);
+            QFileInfo::exists(path))
+            return path;
+    }
+    if (!search)
+        return {};
     for (const auto& folder : projects.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
         const auto path = projects.filePath(folder + QLatin1Char('/') + transcript);
         if (QFileInfo::exists(path))
@@ -2213,8 +2227,23 @@ QString Workspace::conversationFile(const QString& id) {
     // A conversation id is a UUID; anything else never names a file.
     if (QUuid::fromString(conversation).isNull())
         return {};
-    if (harness == QLatin1String("claude"))
-        return claudeTranscript(conversation);
+    if (harness == QLatin1String("claude")) {
+        // Transcripts never move either; a cached one is checked to exist.
+        // One not saved yet is looked for again as the view asks (every
+        // two seconds), searching every project folder at most every 30.
+        auto path = claude_paths_.value(conversation);
+        if (!path.isEmpty() && QFileInfo::exists(path))
+            return path;
+        const auto now = QDateTime::currentMSecsSinceEpoch();
+        const auto searched = claude_searched_.value(conversation, -1);
+        path = claudeTranscript(conversation, entry->launch.directory,
+                                searched < 0 || now - searched > 30'000);
+        if (path.isEmpty())
+            claude_searched_.insert(conversation, now);
+        else
+            claude_paths_.insert(conversation, path);
+        return path;
+    }
     if (!codex)
         return conversation_owner::antigravity_transcript(conversation);
     // Rollouts never move, so a thread's path is looked up once.
