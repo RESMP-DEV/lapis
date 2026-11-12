@@ -371,6 +371,246 @@ int check_live(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile
     return failures == 0 ? 0 : 1;
 }
 
+// Items named `name` shown in the thread's rows or its footer (where the
+// running strip sits while the agent waits on its work).
+std::vector<QQuickItem*> shown_named(QQuickItem* root, const char* name) {
+    std::vector<QQuickItem*> out;
+    const auto walk = [&out, name](auto&& self, QQuickItem* item) -> void {
+        if (!item->isVisible())
+            return;
+        if (item->objectName() == QLatin1String(name) && item->height() > 0)
+            out.push_back(item);
+        for (auto* child : item->childItems())
+            self(self, child);
+    };
+    auto* list = root->property("list").value<QQuickItem*>();
+    if (auto* footer = list->property("footerItem").value<QQuickItem*>())
+        walk(walk, footer);
+    for (auto* item : named(root, name))
+        out.push_back(item);
+    return out;
+}
+
+// A made-up running Claude Code turn with subagents and a background
+// command, timed from now: `ago` seconds before it.
+QString stamp(int ago) {
+    return QDateTime::currentDateTimeUtc().addSecs(-ago).toString(Qt::ISODateWithMs);
+}
+QByteArray launch(const QString& id, const QString& agent, const QString& what, int ago) {
+    return QStringLiteral(
+               R"({"type":"assistant","timestamp":"%1","message":{"content":[{"type":"tool_use","id":"%2","name":"Agent","input":{"description":"%3","subagent_type":"Explore","run_in_background":true,"prompt":"Look"}}]}})"
+               "\n"
+               R"({"type":"user","timestamp":"%4","toolUseResult":{"status":"async_launched","agentId":"%5"},"message":{"content":[{"type":"tool_result","tool_use_id":"%2","content":"launched"}]}})"
+               "\n")
+        .arg(stamp(ago), id, what, stamp(ago - 1), agent)
+        .toUtf8();
+}
+
+// The running strip: subagents and a background command listed under the
+// live box while the agent works, under "Waiting on ..." once its turn
+// ended, a subagent opening to its own steps, more than four summed up, and
+// each leaving once it ends.
+int check_work(QQuickView& view, QQuickItem* root, TranscriptModel& model, const QString& folder) {
+    int failures = 0;
+    const auto expect = [&failures](bool ok, const char* what) {
+        if (!ok) {
+            std::fprintf(stderr, "work FAIL %s\n", what);
+            ++failures;
+        }
+    };
+    const auto path = QDir(folder).filePath(QStringLiteral("work.jsonl"));
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly))
+        return 1;
+    file.write(
+        QStringLiteral(R"({"type":"user","timestamp":"%1","message":{"content":"Split it"}})")
+            .arg(stamp(300))
+            .toUtf8() +
+        '\n');
+    file.write(
+        launch(QStringLiteral("g1"), QStringLiteral("ag1"), QStringLiteral("Map the lexer"), 280));
+    file.write(
+        launch(QStringLiteral("g2"), QStringLiteral("ag2"), QStringLiteral("Check errors"), 260));
+    file.write(
+        QStringLiteral(
+            R"({"type":"assistant","timestamp":"%1","message":{"content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"npm test --watch","run_in_background":true}}]}})"
+            "\n"
+            R"({"type":"user","timestamp":"%2","toolUseResult":{"backgroundTaskId":"bg1"},"message":{"content":[{"type":"tool_result","tool_use_id":"b1","content":"Command running in background with ID: bg1."}]}})"
+            "\n")
+            .arg(stamp(240), stamp(239))
+            .toUtf8());
+    file.flush();
+    // The second subagent's own file, two steps in.
+    const auto own = QDir(folder).filePath(QStringLiteral("work/subagents/agent-ag2.jsonl"));
+    QDir().mkpath(QFileInfo(own).path());
+    QFile steps(own);
+    if (steps.open(QIODevice::WriteOnly)) {
+        for (const auto& [name, input] : {std::pair{"Grep", R"({"pattern":"error("})"},
+                                          std::pair{"Bash", R"({"command":"ctest"})"}})
+            steps.write(
+                QStringLiteral(
+                    R"({"type":"assistant","isSidechain":true,"timestamp":"%1","message":{"content":[{"type":"tool_use","id":"%2","name":"%2","input":%3}]}})")
+                    .arg(stamp(200), QString::fromUtf8(name), QString::fromUtf8(input))
+                    .toUtf8() +
+                '\n');
+        steps.close();
+    }
+    model.setPath(path);
+    model.loadNow();
+    auto* list = root->property("list").value<QQuickItem*>();
+    const auto end = [&] {
+        QMetaObject::invokeMethod(list, "positionViewAtEnd");
+        settle();
+        QMetaObject::invokeMethod(list, "positionViewAtEnd");
+        settle();
+    };
+    root->setProperty("working", true);
+    end();
+    expect(model.running().size() == 3, "two subagents and a command run");
+    auto strips = shown_named(root, "runningStrip");
+    expect(named(root, "liveBox").size() == 1 && strips.size() == 1 &&
+               strips.front()->height() < 4 * root->property("liveLineHeight").toReal() + 12,
+           "while it works, one strip of three lines under the box");
+    // The turn ends; its work runs on.
+    file.write(
+        QStringLiteral(
+            R"({"type":"assistant","timestamp":"%1","message":{"content":[{"type":"text","text":"Started them."}]}})"
+            "\n"
+            R"({"type":"system","subtype":"turn_duration","durationMs":120000,"timestamp":"%2"})"
+            "\n")
+            .arg(stamp(180), stamp(180))
+            .toUtf8());
+    file.flush();
+    model.readMore();
+    root->setProperty("working", false);
+    end();
+    const auto busy = shown_named(root, "busyText");
+    expect(busy.size() == 1 && busy.front()->property("text").toString().startsWith(
+                                   QLatin1String("Waiting on 2 subagents and 1 background task")),
+           "idle, the agent shows it waits on its work");
+    strips = shown_named(root, "runningStrip");
+    expect(named(root, "liveBox").empty() && strips.size() == 1, "the strip stays, under it");
+    // A subagent's line opens to its own steps, once a frame has placed the
+    // footer where the thread's end puts it (its items move when polished).
+    (void)view.grabWindow();
+    strips = shown_named(root, "runningStrip");
+    if (!strips.empty()) {
+        QQuickItem* line = nullptr;
+        const auto walk = [&line](auto&& self, QQuickItem* item) -> void {
+            const auto entry = item->property("entry").toMap();
+            if (line == nullptr &&
+                entry.value(QStringLiteral("body")).toString() == QLatin1String("Check errors"))
+                line = item;
+            for (auto* child : item->childItems())
+                self(self, child);
+        };
+        walk(walk, strips.front());
+        expect(line != nullptr, "the subagent is a line of the strip");
+        if (line != nullptr) {
+            click(view, line);
+            for (int i = 0; i < 5; ++i)
+                settle();
+            const auto boxes = shown_named(root, "subagentList");
+            expect(boxes.size() == 1 && boxes.front()->property("count").toInt() == 2,
+                   "opened, it lists its own two steps");
+            click(view, line);
+        }
+    }
+    // More than fit: one line sums them up.
+    for (int i = 3; i <= 5; ++i)
+        file.write(launch(QStringLiteral("g%1").arg(i), QStringLiteral("ag%1").arg(i),
+                          QStringLiteral("Extra %1").arg(i), 100));
+    file.flush();
+    model.readMore();
+    end();
+    const auto summary = shown_named(root, "runningSummary");
+    expect(model.running().size() == 6 && summary.size() == 1 &&
+               shown_named(root, "runningStrip").empty(),
+           "six running collapse to one line");
+    // Ends land: finished work leaves; nothing is left in the thread.
+    const int rows = model.rowCount();
+    for (int i = 1; i <= 5; ++i)
+        file.write(
+            QStringLiteral(
+                R"({"type":"user","timestamp":"%1","message":{"content":"<task-notification><task-id>ag%2</task-id><status>completed</status><summary>Agent finished</summary></task-notification>"}})")
+                .arg(stamp(10))
+                .arg(i)
+                .toUtf8() +
+            '\n');
+    file.write(
+        QStringLiteral(
+            R"({"type":"user","timestamp":"%1","message":{"content":"<task-notification><task-id>bg1</task-id><status>completed</status><summary>Background command completed (exit code 0)</summary></task-notification>"}})")
+            .arg(stamp(5))
+            .toUtf8() +
+        '\n');
+    file.flush();
+    model.readMore();
+    end();
+    expect(model.running().isEmpty() && shown_named(root, "runningStrip").empty() &&
+               shown_named(root, "runningSummary").empty(),
+           "all ended: the strip goes");
+    expect(model.rowCount() == rows, "and leaves no finished rows behind");
+    std::puts(failures == 0 ? "work: all checks passed" : "work: failed");
+    return failures == 0 ? 0 : 1;
+}
+
+// --open: the newest step whose verb starts with `verb` opened, in the live
+// box while it shows, else in its opened "Worked for", and shot there.
+QImage open_step(QQuickView& view, QQuickItem* root, TranscriptModel& model, QObject* list,
+                 const QString& verb) {
+    const auto& steps = model.liveStepsModel();
+    for (int row = steps.rowCount() - 1; row >= 0; --row)
+        if (steps.data(steps.index(row), TranscriptModel::TitleRole).toString().startsWith(verb)) {
+            root->setProperty("liveOpenItem",
+                              steps.data(steps.index(row), TranscriptModel::ItemRole).toInt());
+            settle();
+            return shot(view, list, -1);
+        }
+    root->setProperty("following", false);
+    for (int work = model.rowCount() - 1; work >= 0; --work) {
+        if (model.data(model.index(work), TranscriptModel::KindRole).toString() !=
+            QLatin1String("work"))
+            continue;
+        model.toggleWork(work);
+        for (int row = model.rowCount() - 1; row > work; --row) {
+            const auto index = model.index(row);
+            if (!model.data(index, TranscriptModel::InWorkRole).toBool() ||
+                !model.data(index, TranscriptModel::TitleRole).toString().startsWith(verb))
+                continue;
+            QMetaObject::invokeMethod(list, "positionViewAtIndex", Q_ARG(int, row),
+                                      Q_ARG(int, 3 /* ListView.Center */));
+            settle();
+            QQuickItem* delegate = nullptr;
+            QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, delegate),
+                                      Q_ARG(int, row));
+            const auto walk = [](auto&& self, QQuickItem* item) -> QQuickItem* {
+                if (item->objectName() == QLatin1String("step"))
+                    return item;
+                for (auto* child : item->childItems())
+                    if (auto* hit = self(self, child))
+                        return hit;
+                return nullptr;
+            };
+            if (auto* step = delegate != nullptr ? walk(walk, delegate) : nullptr)
+                step->setProperty("open", true);
+            settle();
+            // Long enough for the opened task to read its files.
+            for (int i = 0; i < 10; ++i)
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QMetaObject::invokeMethod(list, "positionViewAtIndex", Q_ARG(int, row),
+                                      Q_ARG(int, 1 /* ListView.Beginning */));
+            settle();
+            const auto image = view.grabWindow();
+            root->setProperty("following", true);
+            return image;
+        }
+        model.toggleWork(work);
+    }
+    std::fprintf(stderr, "no step \"%s\" to open\n", qPrintable(verb));
+    root->setProperty("following", true);
+    return view.grabWindow();
+}
+
 // Messages Qt and QML log while the view is checked.
 QStringList& logged() {
     static QStringList messages;
@@ -635,6 +875,11 @@ int main(int argc, char** argv) {
                       "Check the live work box against a made-up running turn (fixed height, "
                       "steps opening, diffs only when opened), then exit"});
     parser.addOption({"panel", "Save only the panel whose caption starts with this", "caption"});
+    parser.addOption({"open",
+                      "Open the newest step whose verb starts with this (in the live box, else in "
+                      "its opened \"Worked for\") and shoot it as the \"Opened\" panel",
+                      "verb"});
+    parser.addOption({"working", "Show the agent as working (the live box), with no screen"});
     parser.addOption(
         {"live", "Show a running turn whose terminal screen is this text file", "file"});
     parser.addOption(
@@ -813,6 +1058,11 @@ int main(int argc, char** argv) {
             "screen", QVariant::fromValue(screen_of.call({view.engine()->toScriptValue(rows)})));
         root->setProperty("working", true);
     }
+    if (parser.isSet("working")) {
+        root->setProperty("interrupt", QVariant::fromValue(view.engine()->evaluate(
+                                           QStringLiteral("(function () {})"))));
+        root->setProperty("working", true);
+    }
     view.show(); // offscreen: nothing reaches the screen
     settle();
     // Long enough for the view's short timers (the chart style it writes).
@@ -830,8 +1080,10 @@ int main(int argc, char** argv) {
     }
     if (keys)
         return check_keys(view, root);
-    if (live_checks)
-        return check_live(view, root, model, live_file);
+    if (live_checks) {
+        const int live = check_live(view, root, model, live_file);
+        return check_work(view, root, model, home.path()) == 0 ? live : 1;
+    }
     if (checking) {
         // The first screen, three evenly spaced, and the last, each timed
         // from the jump to the frame drawn.
@@ -984,6 +1236,9 @@ int main(int argc, char** argv) {
             root->setProperty("liveOpenItem", -1);
         }
     }
+    if (parser.isSet("open"))
+        panels.push_back(
+            {QStringLiteral("Opened"), open_step(view, root, model, list, parser.value("open"))});
     // Following would pull every later panel back to the end.
     root->setProperty("following", false);
     if (edit >= 0)

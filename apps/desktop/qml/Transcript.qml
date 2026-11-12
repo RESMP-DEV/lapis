@@ -111,15 +111,22 @@ FocusScope {
         function onModelReset() { root.pendingCommand = "" }
     }
     onWorkingChanged: if (working) pendingCommand = ""
-    // The clock the running turn's elapsed time follows.
+    // Subagents and background tasks still running (model.running), and
+    // whether they keep the agent's work going after its turn ended.
+    readonly property var runningWork: model ? model.running : []
+    readonly property bool waitingOnWork: !busy && runningWork.length > 0
+    // The clock the running turn's elapsed time follows; it also keeps the
+    // running tasks current (their files, their silence).
     property double now: Date.now()
     property double turnSince: 0
     Timer {
         interval: 1000
         repeat: true
-        running: root.busy && root.visible
+        running: (root.busy || root.runningWork.length > 0) && root.visible
         triggeredOnStart: true
         onTriggered: {
+            if (root.model)
+                root.model.tick()
             root.now = Date.now()
             root.turnSince = root.working ? (root.model ? root.model.runningSince() : 0) : root.pendingSince
         }
@@ -323,6 +330,89 @@ FocusScope {
         const first = entry.body.split("\n")[0]
         const file = ["Read", "Edited", "Wrote", "Deleted", "Viewed image"].indexOf(entry.title) >= 0
         return file && first.indexOf("/") >= 0 ? first.slice(first.lastIndexOf("/") + 1) : first
+    }
+    // Subagents and background tasks (a step's `task`): what follows the
+    // step's target on its line, " · "-joined: its type and model (in the
+    // running strip), how long it ran or has run, its steps or how it ended.
+    function taskParts(task, withKind) {
+        if (!task)
+            return []
+        const parts = []
+        if (withKind && task.type === "subagent") {
+            const kind = [task.agentType, task.model ? modelLabel(task.model) : ""]
+                         .filter(s => s && s.length > 0).join(" / ")
+            if (kind.length > 0)
+                parts.push(kind)
+        }
+        const ms = task.running ? now - task.since : task.duration
+        if (ms >= 1000)
+            parts.push(durationLabel(ms))
+        if (task.type === "subagent" && task.steps >= 0)
+            parts.push(task.steps === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(task.steps))
+        if (!task.running) {
+            if (task.stale)
+                parts.push(qsTr("no end recorded"))
+            else if (task.status === "failed" && task.exit < 0)
+                parts.push(qsTr("failed"))
+            else if (task.status === "stopped" || task.status === "killed")
+                parts.push(qsTr("stopped"))
+            if (task.exit > 0)
+                parts.push(qsTr("exit %1").arg(task.exit))
+        }
+        return parts
+    }
+    function taskLine(task, withKind) {
+        const parts = taskParts(task, withKind)
+        return parts.length > 0 ? " · " + parts.join(" · ") : ""
+    }
+    // "2 subagents and 1 background task" (monitors count as background).
+    function workCount(list) {
+        let agents = 0, other = 0
+        for (let i = 0; i < list.length; ++i)
+            list[i].type === "subagent" ? ++agents : ++other
+        const said = []
+        if (agents > 0)
+            said.push(agents === 1 ? qsTr("1 subagent") : qsTr("%1 subagents").arg(agents))
+        if (other > 0)
+            said.push(other === 1 ? qsTr("1 background task") : qsTr("%1 background tasks").arg(other))
+        return said.join(qsTr(" and "))
+    }
+    // How an opened task stands: "Running · 3m 12s · 14 steps", "Finished
+    // after 4m 10s · 23 steps · 54k tokens", "Exited with code 1 after 12s".
+    function taskState(task) {
+        if (!task)
+            return ""
+        const parts = []
+        const ms = task.running ? now - task.since : task.duration
+        const took = ms >= 1000 ? durationLabel(ms) : ""
+        if (task.running)
+            parts.push(took.length > 0 ? qsTr("Running for %1").arg(took) : qsTr("Running"))
+        else if (task.stale)
+            parts.push(qsTr("No end recorded"))
+        else if (task.exit >= 0)
+            parts.push(took.length > 0 ? qsTr("Exited with code %1 after %2").arg(task.exit).arg(took)
+                                       : qsTr("Exited with code %1").arg(task.exit))
+        else if (task.status === "failed")
+            parts.push(took.length > 0 ? qsTr("Failed after %1").arg(took) : qsTr("Failed"))
+        else if (task.status === "stopped" || task.status === "killed")
+            parts.push(took.length > 0 ? qsTr("Stopped after %1").arg(took) : qsTr("Stopped"))
+        else
+            parts.push(took.length > 0 ? qsTr("Finished after %1").arg(took) : qsTr("Finished"))
+        if (task.type === "subagent") {
+            if (task.steps >= 0)
+                parts.push(task.steps === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(task.steps))
+            if (task.tokens > 0)
+                parts.push(qsTr("%1 tokens").arg(tokensLabel(task.tokens)))
+            if (task.agentType.length > 0)
+                parts.push(task.agentType)
+            if (task.model.length > 0)
+                parts.push(modelLabel(task.model))
+        } else if (task.checks > 0) {
+            parts.push(task.type === "monitor"
+                       ? (task.checks === 1 ? qsTr("1 event") : qsTr("%1 events").arg(task.checks))
+                       : (task.checks === 1 ? qsTr("checked once") : qsTr("checked %1 times").arg(task.checks)))
+        }
+        return parts.join(" · ")
     }
     function tokensLabel(n) {
         return n >= 1000000 ? (n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1) + "M"
@@ -532,6 +622,8 @@ FocusScope {
         required property double duration
         required property bool steered
         required property int waited
+        required property int item
+        required property var task
         property Component block
 
         readonly property int gapAbove: index === 0 ? 0
@@ -1195,9 +1287,11 @@ FocusScope {
             readonly property bool thinking: entry && entry.kind === "thinking"
             readonly property bool edit: entry && entry.diff.length > 0
             readonly property bool command: entry && entry.title === "Ran"
-            readonly property bool running: entry && !thinking && !entry.answered
+            // A subagent or background task this step started.
+            readonly property var task: entry && entry.task ? entry.task : null
+            readonly property bool running: entry && !thinking && (task ? task.running : !entry.answered)
             readonly property bool expandable: entry && (thinking ? entry.body.length > 0
-                                               : entry.result.length > 0 || entry.detail.length > 0
+                                               : task !== null || entry.result.length > 0 || entry.detail.length > 0
                                                  || edit || command || entry.body.indexOf("\n") >= 0)
             property bool open: false
             spacing: 6
@@ -1226,7 +1320,8 @@ FocusScope {
                     Text {
                         id: verb
                         anchors.verticalCenter: parent.verticalCenter
-                        text: step.entry ? step.entry.title : ""
+                        // "Subagent · <description>", "Started in background · <command>"
+                        text: step.entry ? step.entry.title + (step.task ? " ·" : "") : ""
                         color: step.entry && step.entry.failed ? root.faultColor
                              : hover.containsMouse ? root.textColor : root.mutedTextColor
                         font.family: root.sansFamily
@@ -1237,12 +1332,25 @@ FocusScope {
                         visible: text.length > 0
                         anchors.verticalCenter: parent.verticalCenter
                         width: Math.min(implicitWidth, parent.width - verb.width - counts.width - took.width
-                                                       - chevron.width - 36)
+                                                       - taskInfo.width - chevron.width - 42)
                         text: step.entry && !step.thinking ? step.entry.body.split("\n")[0] : ""
                         elide: Text.ElideRight
                         color: step.entry && step.entry.failed ? root.tint(root.faultColor, 0.85) : root.tint(root.textColor, 0.82)
-                        font.family: root.monoFamily
-                        font.pixelSize: root.codeSize
+                        // A subagent's description and what a monitor watches read as prose.
+                        readonly property bool prose: !!step.task && step.task.type !== "background"
+                        font.family: prose ? root.sansFamily : root.monoFamily
+                        font.pixelSize: prose ? root.stepSize : root.codeSize
+                    }
+                    // A task's run: "· 4m 10s · 23 steps".
+                    Text {
+                        id: taskInfo
+                        visible: step.task !== null
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: visible ? root.taskLine(step.task, false).slice(1) : ""
+                        color: root.tint(root.mutedTextColor, 0.75)
+                        font.family: root.sansFamily
+                        font.pixelSize: root.stepSize - 2
+                        font.features: { "tnum": 1 }
                     }
                     Row {
                         id: counts
@@ -1257,7 +1365,8 @@ FocusScope {
                         id: took
                         // Hidden it has no text, so no width: a Row skips it,
                         // and the target's width can count it either way.
-                        visible: step.entry !== null && !step.thinking && step.entry.duration >= 1000
+                        visible: step.entry !== null && !step.thinking && !step.task
+                                 && step.entry.duration >= 1000
                         anchors.verticalCenter: parent.verticalCenter
                         text: visible ? root.durationLabel(step.entry.duration) : ""
                         color: root.tint(root.mutedTextColor, 0.75)
@@ -1292,20 +1401,32 @@ FocusScope {
     component StepDetail: Column {
         id: detail
         property var entry: null
+        // Opened inside a subagent's own steps: its subagents stay lines.
+        property bool nested: false
         readonly property bool thinking: entry !== null && entry.kind === "thinking"
         readonly property bool tool: entry !== null && entry.kind === "tool"
         readonly property bool edit: tool && entry.diff.length > 0
         readonly property bool command: tool && entry.title === "Ran"
+        // A subagent or background task shows its run instead (TaskDetail).
+        readonly property bool task: tool && !nested && !!entry.task
         spacing: 6
+        Loader {
+            width: parent.width
+            active: detail.task
+            visible: active
+            sourceComponent: Component {
+                TaskDetail { entry: detail.entry }
+            }
+        }
         Selectable {
-            visible: detail.tool && detail.entry.detail.length > 0
+            visible: detail.tool && !detail.task && detail.entry.detail.length > 0
             width: parent.width
             text: detail.tool ? detail.entry.detail : ""
             color: root.mutedTextColor
             font.pixelSize: root.stepSize - 1
         }
         Code {
-            visible: detail.tool && !detail.edit
+            visible: detail.tool && !detail.edit && !detail.task
                      && (detail.command || detail.entry.body.indexOf("\n") >= 0)
             width: parent.width
             text: detail.tool ? detail.entry.body : ""
@@ -1370,7 +1491,7 @@ FocusScope {
             }
         }
         Code {
-            visible: detail.tool && detail.entry.result.length > 0
+            visible: detail.tool && !detail.task && detail.entry.result.length > 0
             width: parent.width
             text: detail.tool ? detail.entry.result : ""
             textColor: detail.tool && detail.entry.failed ? root.faultColor : root.tint(root.textColor, 0.75)
@@ -1385,6 +1506,346 @@ FocusScope {
         }
     }
 
+    // A step as one line in a box (a subagent's own steps, the running
+    // strip): its verb and target, a task's run after them, a dot while it
+    // runs. Clicking it asks to open it.
+    component StepLine: Item {
+        id: stepLine
+        property var entry: null
+        property bool opened: false
+        property bool withKind: false // a subagent's type and model too
+        signal clicked()
+        readonly property var task: entry && entry.task ? entry.task : null
+        readonly property bool prose: entry !== null && (entry.kind === "reply"
+                                                         || (task !== null && task.type !== "background"))
+        height: root.liveLineHeight
+        Rectangle {
+            anchors.fill: parent
+            anchors.leftMargin: 4
+            anchors.rightMargin: 4
+            radius: 4
+            color: stepLine.opened ? root.tint(root.textColor, 0.07) : "transparent"
+        }
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: stepLine.clicked()
+        }
+        Row {
+            anchors.verticalCenter: parent.verticalCenter
+            x: 12
+            width: parent.width - 24
+            spacing: 6
+            Rectangle {
+                visible: !!stepLine.entry && stepLine.entry.kind === "tool"
+                         && (stepLine.task ? stepLine.task.running : !stepLine.entry.answered)
+                width: 6; height: 6; radius: 3
+                anchors.verticalCenter: parent.verticalCenter
+                color: root.activityColor
+            }
+            Text {
+                id: stepLineVerb
+                visible: text.length > 0
+                anchors.verticalCenter: parent.verticalCenter
+                text: !stepLine.entry || stepLine.entry.kind === "reply" ? ""
+                      : stepLine.entry.title + (stepLine.task ? " ·" : "")
+                color: stepLine.entry && stepLine.entry.failed ? root.faultColor : root.mutedTextColor
+                font.family: root.sansFamily
+                font.pixelSize: root.stepSize - 1
+            }
+            Text {
+                visible: text.length > 0
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.min(implicitWidth, parent.width - stepLineVerb.width - stepLineInfo.width - 24)
+                text: root.stepTarget(stepLine.entry)
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+                color: root.tint(root.textColor, stepLine.prose ? 0.78 : 0.82)
+                font.family: stepLine.prose ? root.sansFamily : root.monoFamily
+                font.pixelSize: stepLine.prose ? root.stepSize - 1 : root.codeSize - 1
+            }
+            Text {
+                id: stepLineInfo
+                visible: text.length > 0
+                anchors.verticalCenter: parent.verticalCenter
+                text: !stepLine.entry ? ""
+                      : stepLine.task ? root.taskLine(stepLine.task, stepLine.withKind).slice(1)
+                      : [stepLine.entry.added > 0 ? "+" + stepLine.entry.added : "",
+                         stepLine.entry.removed > 0 ? "−" + stepLine.entry.removed : "",
+                         stepLine.entry.kind === "tool" && stepLine.entry.duration >= 1000
+                         ? root.durationLabel(stepLine.entry.duration) : ""]
+                        .filter(s => s.length > 0).join(" ")
+                color: root.tint(root.mutedTextColor, 0.75)
+                font.family: root.sansFamily
+                font.pixelSize: root.stepSize - 2
+                font.features: { "tnum": 1 }
+            }
+        }
+    }
+
+    // The wheel over a box of lines scrolls it, past either end the thread.
+    component BoxWheel: WheelHandler {
+        property var view: null
+        target: null
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        onWheel: function(event) {
+            const step = event.pixelDelta.y !== 0 ? event.pixelDelta.y
+                                                  : event.angleDelta.y / 120 * root.liveLineHeight * 2
+            const top = view.originY
+            const bottom = Math.max(top, view.originY + view.contentHeight - view.height)
+            const next = Math.max(top, Math.min(bottom, view.contentY - step))
+            if (next === view.contentY) {
+                event.accepted = false
+                return
+            }
+            view.contentY = next
+            if (view.follow !== undefined)
+                view.follow = next >= bottom - 2
+        }
+    }
+
+    // What an opened subagent or background task shows: how it stands, what
+    // it was asked or runs, then a subagent's own steps as one-line rows in
+    // a box like the live work box (each opens under it; its own subagents
+    // stay lines) and its final report, or a background command's last
+    // lines of output. Read from its files when opened, and again every two
+    // seconds while it runs.
+    component TaskDetail: Column {
+        id: taskDetail
+        property var entry: null
+        readonly property var task: entry && entry.task ? entry.task : null
+        readonly property bool subagent: task !== null && task.type === "subagent"
+        property var loaded: ({})
+        readonly property var steps: loaded.steps ? loaded.steps : []
+        property int openStep: -1
+        function load() {
+            loaded = root.model && entry && entry.item >= 0 ? root.model.taskDetail(entry.item) : ({})
+        }
+        onEntryChanged: load()
+        Component.onCompleted: load()
+        Timer {
+            interval: 2000
+            repeat: true
+            running: taskDetail.task !== null && taskDetail.task.running && taskDetail.visible
+            onTriggered: taskDetail.load()
+        }
+        spacing: 6
+        Text {
+            width: parent.width
+            text: root.taskState(taskDetail.task)
+            wrapMode: Text.Wrap
+            color: root.mutedTextColor
+            font.family: root.sansFamily
+            font.pixelSize: root.stepSize - 1
+            font.features: { "tnum": 1 }
+        }
+        // What it was asked (a subagent's prompt) or is for.
+        Selectable {
+            visible: text.length > 0
+            width: parent.width
+            text: !taskDetail.entry ? ""
+                  : taskDetail.task && taskDetail.task.type === "monitor" ? taskDetail.entry.body
+                  : taskDetail.entry.detail
+            color: root.mutedTextColor
+            font.pixelSize: root.stepSize - 1
+        }
+        Code {
+            visible: !taskDetail.subagent && text.length > 0
+            width: parent.width
+            text: !taskDetail.entry || taskDetail.subagent ? ""
+                  : taskDetail.task.type === "monitor" ? taskDetail.entry.detail : taskDetail.entry.body
+            language: "bash"
+            caption: ""
+            highlighted: true
+            textColor: root.codeTextColor
+        }
+        Rectangle {
+            objectName: "subagentSteps"
+            visible: taskDetail.subagent && taskDetail.steps.length > 0
+            width: parent.width
+            height: Math.min(taskDetail.steps.length, root.liveBoxLines + 2) * root.liveLineHeight + 12
+            radius: root.radius
+            color: root.tint(root.raisedColor, 0.35)
+            border.color: root.borderColor
+            clip: true
+            ListView {
+                id: subList
+                objectName: "subagentList"
+                property bool follow: true
+                anchors.fill: parent
+                anchors.topMargin: 6
+                anchors.bottomMargin: 6
+                model: taskDetail.steps
+                interactive: false
+                boundsBehavior: Flickable.StopAtBounds
+                clip: true
+                // A running subagent's newest step stays in view; a finished
+                // one opens at its start.
+                function toEnd() { if (follow && taskDetail.task && taskDetail.task.running) positionViewAtEnd() }
+                onCountChanged: Qt.callLater(toEnd)
+                delegate: StepLine {
+                    required property var modelData
+                    required property int index
+                    width: subList.width
+                    entry: modelData
+                    opened: taskDetail.openStep === index
+                    onClicked: taskDetail.openStep = opened ? -1 : index
+                }
+            }
+            BoxWheel { view: subList }
+        }
+        Loader {
+            width: parent.width
+            active: taskDetail.openStep >= 0 && taskDetail.openStep < taskDetail.steps.length
+            visible: active
+            property var subEntry: active ? taskDetail.steps[taskDetail.openStep] : null
+            // By id, so StepDetail and TaskDetail do not hold each other.
+            sourceComponent: nestedStepDetail
+        }
+        Text {
+            visible: taskDetail.subagent && taskDetail.loaded.found !== true
+            width: parent.width
+            text: qsTr("Its own steps are not saved where lapis can read them")
+            wrapMode: Text.Wrap
+            color: root.tint(root.mutedTextColor, 0.7)
+            font.family: root.sansFamily
+            font.pixelSize: root.stepSize - 2
+        }
+        // Its final report, as its parent received it.
+        Text {
+            visible: report.visible
+            topPadding: 4
+            text: qsTr("Report")
+            color: root.tint(root.mutedTextColor, 0.75)
+            font.family: root.sansFamily
+            font.pixelSize: root.stepSize - 2
+        }
+        Selectable {
+            id: report
+            objectName: "subagentReport"
+            visible: taskDetail.subagent && text.length > 0
+            width: parent.width
+            text: taskDetail.loaded.report ? taskDetail.loaded.report : ""
+            color: root.tint(root.textColor, 0.9)
+            font.pixelSize: root.stepSize
+        }
+        Item { width: 1; height: 4 } // a breath before the next step
+        Code {
+            objectName: "taskOutput"
+            visible: !taskDetail.subagent && text.length > 0
+            width: parent.width
+            text: taskDetail.loaded.output ? taskDetail.loaded.output : ""
+            textColor: root.tint(root.textColor, 0.75)
+        }
+    }
+
+    // A subagent's own step opened under its box.
+    Component {
+        id: nestedStepDetail
+        StepDetail {
+            entry: parent ? parent.subEntry : null
+            nested: true
+        }
+    }
+
+    // Subagents and background tasks still running, one quiet line each
+    // ("Subagent · review the parser · general-purpose · 3m 12s · 14
+    // steps", "Background · npm test · 1m 05s"), at most four lines tall and
+    // scrolling past that. More than fit collapse to one line ("3 subagents
+    // and 2 background tasks running") that opens the list. A line opens
+    // its task under the strip; finished ones leave it.
+    property int stripOpenItem: -1
+    property var stripDetail: null
+    function refreshStripDetail() {
+        let still = false
+        for (let i = 0; i < runningWork.length; ++i)
+            still = still || runningWork[i].item === stripOpenItem
+        if (!still)
+            stripOpenItem = -1
+        stripDetail = stripOpenItem >= 0 && model ? model.itemEntry(stripOpenItem) : null
+    }
+    onRunningWorkChanged: refreshStripDetail()
+    onStripOpenItemChanged: refreshStripDetail()
+    component RunningStrip: Column {
+        id: strip
+        readonly property var tasks: root.runningWork
+        property bool expanded: false
+        readonly property bool many: tasks.length > root.liveBoxLines
+        visible: tasks.length > 0
+        spacing: 6
+        Item {
+            objectName: "runningSummary"
+            visible: strip.many
+            width: parent.width
+            height: root.liveLineHeight
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: strip.expanded = !strip.expanded
+            }
+            Row {
+                anchors.verticalCenter: parent.verticalCenter
+                x: 12
+                spacing: 8
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 6; height: 6; radius: 3
+                    color: root.activityColor
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: qsTr("%1 running").arg(root.workCount(strip.tasks))
+                    color: root.mutedTextColor
+                    font.family: root.sansFamily
+                    font.pixelSize: root.stepSize - 1
+                }
+                Chevron {
+                    anchors.verticalCenter: parent.verticalCenter
+                    turned: strip.expanded
+                }
+            }
+        }
+        Rectangle {
+            objectName: "runningStrip"
+            visible: !strip.many || strip.expanded
+            width: parent.width
+            height: Math.min(strip.tasks.length, root.liveBoxLines) * root.liveLineHeight + 8
+            radius: root.radius
+            color: "transparent"
+            border.color: root.borderColor
+            clip: true
+            ListView {
+                id: stripList
+                anchors.fill: parent
+                anchors.topMargin: 4
+                anchors.bottomMargin: 4
+                model: strip.tasks
+                interactive: false
+                boundsBehavior: Flickable.StopAtBounds
+                clip: true
+                delegate: StepLine {
+                    required property var modelData
+                    width: stripList.width
+                    withKind: true
+                    entry: ({ kind: "tool", title: modelData.type === "subagent" ? qsTr("Subagent") : qsTr("Background"),
+                              body: modelData.description, task: modelData, answered: true, failed: false,
+                              added: 0, removed: 0, duration: 0 })
+                    opened: root.stripOpenItem === modelData.item
+                    onClicked: root.stripOpenItem = opened ? -1 : modelData.item
+                }
+            }
+            BoxWheel { view: stripList }
+        }
+        Loader {
+            width: parent.width
+            active: root.stripDetail !== null
+            visible: active
+            sourceComponent: Component {
+                StepDetail { entry: root.stripDetail }
+            }
+        }
+    }
+
     // The running state's line: "Working · 2m 10s · 14 steps", "Compacting
     // conversation for 1m 3s", or "Running /review for 40s", with a slow
     // pulse. `steps` is -1 where no steps are known.
@@ -1392,7 +1853,9 @@ FocusScope {
         id: busyLine
         property int steps: -1
         readonly property double since: root.compacting && root.model && root.model.compactingSince > 0
-                                        ? root.model.compactingSince : root.turnSince
+                                        ? root.model.compactingSince
+                                        : root.waitingOnWork && root.model ? root.model.waitingSince
+                                        : root.turnSince
         readonly property string elapsed: since > 0 && root.now - since >= 1000
                                           ? root.durationLabel(root.now - since) : ""
         height: root.stepSize + 10
@@ -1404,13 +1867,14 @@ FocusScope {
                 width: 6; height: 6; radius: 3
                 color: root.activityColor
                 SequentialAnimation on opacity {
-                    running: root.busy && busyLine.visible
+                    running: (root.busy || root.waitingOnWork) && busyLine.visible
                     loops: Animation.Infinite
                     NumberAnimation { to: 0.3; duration: 700; easing.type: Easing.InOutSine }
                     NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutSine }
                 }
             }
             Text {
+                objectName: "busyText"
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.compacting
                       ? (busyLine.elapsed.length > 0 ? qsTr("Compacting conversation for %1").arg(busyLine.elapsed)
@@ -1418,6 +1882,10 @@ FocusScope {
                       : !root.working && root.pendingCommand.length > 0
                       ? (busyLine.elapsed.length > 0 ? qsTr("Running %1 for %2").arg(root.pendingCommand).arg(busyLine.elapsed)
                                                      : qsTr("Running %1").arg(root.pendingCommand))
+                      // The agent's turn ended, but work it started runs on.
+                      : root.waitingOnWork
+                      ? [qsTr("Waiting on %1").arg(root.workCount(root.runningWork)), busyLine.elapsed]
+                        .filter(s => s.length > 0).join(" · ")
                       : [qsTr("Working"),
                          busyLine.elapsed,
                          busyLine.steps < 0 ? "" : busyLine.steps === 1 ? qsTr("1 step")
@@ -1527,8 +1995,9 @@ FocusScope {
                         required property bool answered
                         required property double duration
                         required property int item
+                        required property var task
                         readonly property bool opened: root.liveOpenItem === item
-                        readonly property bool openable: kind !== "tool" || result.length > 0
+                        readonly property bool openable: kind !== "tool" || !!task || result.length > 0
                                                          || detail.length > 0 || diff.length > 0
                                                          || title === "Ran" || body.indexOf("\n") >= 0
                                                          || body.indexOf("/") >= 0
@@ -1553,7 +2022,7 @@ FocusScope {
                             width: parent.width - 24
                             spacing: 6
                             Rectangle {
-                                visible: line.kind === "tool" && !line.answered
+                                visible: line.kind === "tool" && (line.task ? line.task.running : !line.answered)
                                 width: 6; height: 6; radius: 3
                                 anchors.verticalCenter: parent.verticalCenter
                                 color: root.activityColor
@@ -1562,7 +2031,7 @@ FocusScope {
                                 id: lineVerb
                                 visible: text.length > 0
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: line.kind === "reply" ? "" : line.title
+                                text: line.kind === "reply" ? "" : line.title + (line.task ? " ·" : "")
                                 color: line.failed ? root.faultColor : root.mutedTextColor
                                 font.family: root.sansFamily
                                 font.pixelSize: root.stepSize - 1
@@ -1572,14 +2041,16 @@ FocusScope {
                                 visible: text.length > 0
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: Math.min(implicitWidth, parent.width - lineVerb.width - lineCounts.width
-                                                - lineTook.width - lineChevron.width - 40)
+                                                - lineTook.width - lineChevron.width - 46)
                                 text: root.stepTarget(line)
                                 elide: Text.ElideRight
                                 textFormat: Text.PlainText
                                 color: line.kind === "reply" ? root.tint(root.textColor, 0.78)
                                      : root.tint(root.textColor, 0.82)
-                                font.family: line.kind === "reply" ? root.sansFamily : root.monoFamily
-                                font.pixelSize: line.kind === "reply" ? root.stepSize - 1 : root.codeSize - 1
+                                readonly property bool prose: line.kind === "reply"
+                                                              || (!!line.task && line.task.type !== "background")
+                                font.family: prose ? root.sansFamily : root.monoFamily
+                                font.pixelSize: prose ? root.stepSize - 1 : root.codeSize - 1
                             }
                             Row {
                                 id: lineCounts
@@ -1589,11 +2060,13 @@ FocusScope {
                                 Text { text: "+" + line.added; visible: line.added > 0; color: root.addedColor; font.pixelSize: root.codeSize - 1; font.family: root.monoFamily }
                                 Text { text: "−" + line.removed; visible: line.removed > 0; color: root.removedColor; font.pixelSize: root.codeSize - 1; font.family: root.monoFamily }
                             }
+                            // How long it took; a task's run as its line says it.
                             Text {
                                 id: lineTook
-                                visible: line.kind === "tool" && line.duration >= 1000
+                                visible: text.length > 0
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: visible ? root.durationLabel(line.duration) : ""
+                                text: line.task ? root.taskLine(line.task, false).slice(1)
+                                      : line.kind === "tool" && line.duration >= 1000 ? root.durationLabel(line.duration) : ""
                                 color: root.tint(root.mutedTextColor, 0.75)
                                 font.family: root.sansFamily
                                 font.pixelSize: root.stepSize - 2
@@ -1637,6 +2110,9 @@ FocusScope {
                     StepDetail { entry: root.liveDetail }
                 }
             }
+            RunningStrip {
+                width: parent.width
+            }
         }
     }
     // The newest step in the box is done (or is not a tool call).
@@ -1669,8 +2145,14 @@ FocusScope {
                 y: 12
                 width: footer.column
                 spacing: 10
+                // With no live box: the agent busy, or idle while its
+                // subagents and background tasks run ("Waiting on ...").
                 BusyLine {
-                    visible: root.busy && !root.liveShown
+                    visible: (root.busy || root.waitingOnWork) && !root.liveShown
+                    width: parent.width
+                }
+                RunningStrip {
+                    visible: !root.liveShown && root.runningWork.length > 0
                     width: parent.width
                 }
                 Repeater {
