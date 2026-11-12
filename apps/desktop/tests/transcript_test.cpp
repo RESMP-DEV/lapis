@@ -1435,6 +1435,226 @@ void math_is_styled() {
     require(document.toPlainText() == QStringLiteral("Costs $5 and $10, see $x$."),
             "text without math is styled as before");
 }
+// Made-up Claude Code records for subagents and background work, timed from
+// 2026-11-11T16:00:00Z; %1 is the folder their files live in.
+const char* const kWork[] = {
+    R"({"type":"user","uuid":"p1","timestamp":"2026-11-11T16:00:00.000Z","message":{"content":"Split the parser"}})",
+    R"({"type":"assistant","uuid":"a1","timestamp":"2026-11-11T16:00:01.000Z","message":{"content":[{"type":"tool_use","id":"g1","name":"Agent","input":{"description":"Map the lexer","subagent_type":"Explore","model":"sonnet","run_in_background":true,"prompt":"Find the lexer"}}]}})",
+    R"({"type":"user","uuid":"r1","timestamp":"2026-11-11T16:00:02.000Z","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"agent1","resolvedModel":"claude-sonnet-5-5"},"message":{"content":[{"type":"tool_result","tool_use_id":"g1","content":"Async agent launched successfully."}]}})",
+    R"({"type":"assistant","uuid":"a2","timestamp":"2026-11-11T16:00:03.000Z","message":{"content":[{"type":"tool_use","id":"g2","name":"Agent","input":{"description":"Check messages","prompt":"Read the errors","run_in_background":"true"}}]}})",
+    R"({"type":"user","uuid":"r2","timestamp":"2026-11-11T16:00:04.000Z","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"agent2"},"message":{"content":[{"type":"tool_result","tool_use_id":"g2","content":"Async agent launched successfully."}]}})",
+    R"({"type":"assistant","uuid":"a3","timestamp":"2026-11-11T16:00:05.000Z","message":{"content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"npm test --watch","description":"Watch tests","run_in_background":true}}]}})",
+    R"({"type":"user","uuid":"r3","timestamp":"2026-11-11T16:00:06.000Z","toolUseResult":{"backgroundTaskId":"bg1","stdout":""},"message":{"content":[{"type":"tool_result","tool_use_id":"b1","content":"Command running in background with ID: bg1. Output is being written to: %1/bg1.output You will be notified."}]}})",
+    R"({"type":"assistant","uuid":"a4","timestamp":"2026-11-11T16:00:07.000Z","message":{"content":[{"type":"tool_use","id":"c1","name":"BashOutput","input":{"bash_id":"bg1"}}]}})",
+    R"({"type":"user","uuid":"r4","timestamp":"2026-11-11T16:00:08.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"c1","content":"PASS lexer"}]}})",
+    R"({"type":"assistant","uuid":"a5","timestamp":"2026-11-11T16:00:09.000Z","message":{"content":[{"type":"tool_use","id":"c2","name":"Read","input":{"file_path":"%1/bg1.output"}}]}})",
+    R"({"type":"user","uuid":"r5","timestamp":"2026-11-11T16:00:10.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"c2","content":"PASS parser"}]}})",
+    R"({"type":"assistant","uuid":"a6","timestamp":"2026-11-11T16:00:11.000Z","message":{"content":[{"type":"tool_use","id":"m1","name":"Monitor","input":{"description":"CI status","command":"gh run watch","timeout_ms":600000}}]}})",
+    R"({"type":"user","uuid":"r6","timestamp":"2026-11-11T16:00:12.000Z","toolUseResult":{"taskId":"mon1","timeoutMs":600000,"persistent":false},"message":{"content":[{"type":"tool_result","tool_use_id":"m1","content":"Monitor started"}]}})",
+    R"({"type":"assistant","uuid":"a7","timestamp":"2026-11-11T16:00:13.000Z","message":{"content":[{"type":"text","text":"Started them."}]}})",
+    R"({"type":"system","subtype":"turn_duration","durationMs":13000,"timestamp":"2026-11-11T16:00:13.500Z"})",
+};
+// Later: the monitor's event, the command's and the first subagent's ends.
+const char* const kWorkEnds[] = {
+    R"({"type":"user","uuid":"n1","timestamp":"2026-11-11T16:01:00.000Z","message":{"content":"<task-notification>\n<task-id>mon1</task-id>\n<summary>Monitor event: \"CI status\"</summary>\n<event>build 3 passed</event>\n</task-notification>"}})",
+    R"({"type":"user","uuid":"n2","timestamp":"2026-11-11T16:02:00.000Z","message":{"content":"<task-notification>\n<task-id>bg1</task-id>\n<tool-use-id>b1</tool-use-id>\n<status>failed</status>\n<summary>Background command \"Watch tests\" failed with exit code 2</summary>\n</task-notification>"}})",
+    R"({"type":"user","uuid":"n3","timestamp":"2026-11-11T16:03:00.000Z","message":{"content":"<task-notification>\n<task-id>agent1</task-id>\n<tool-use-id>g1</tool-use-id>\n<status>completed</status>\n<summary>Agent \"Map the lexer\" finished</summary>\n<result>The lexer is in lex.cpp.</result>\n<usage><subagent_tokens>48210</subagent_tokens><tool_uses>23</tool_uses><duration_ms>178000</duration_ms></usage>\n</task-notification>"}})",
+    R"({"type":"assistant","uuid":"a8","timestamp":"2026-11-11T16:03:05.000Z","message":{"content":[{"type":"text","text":"The map is in."}]}})",
+    R"({"type":"system","subtype":"turn_duration","durationMs":5000,"timestamp":"2026-11-11T16:03:05.500Z"})",
+};
+// The second subagent's own file: its prompt, two steps, an interim note.
+const char* const kSubagent[] = {
+    R"({"type":"user","isSidechain":true,"agentId":"agent2","uuid":"s1","timestamp":"2026-11-11T16:00:04.000Z","message":{"content":"Read the errors"}})",
+    R"({"type":"assistant","isSidechain":true,"agentId":"agent2","uuid":"s2","timestamp":"2026-11-11T16:00:05.000Z","message":{"content":[{"type":"tool_use","id":"x1","name":"Grep","input":{"pattern":"error("}}]}})",
+    R"({"type":"user","isSidechain":true,"agentId":"agent2","uuid":"s3","timestamp":"2026-11-11T16:00:06.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"x1","content":"a.cpp:3"}]}})",
+    R"({"type":"assistant","isSidechain":true,"agentId":"agent2","uuid":"s4","timestamp":"2026-11-11T16:00:07.000Z","message":{"content":[{"type":"tool_use","id":"x2","name":"Bash","input":{"command":"ctest"}}]}})",
+    R"({"type":"user","isSidechain":true,"agentId":"agent2","uuid":"s5","timestamp":"2026-11-11T16:00:09.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"x2","content":"ok"}]}})",
+    R"({"type":"assistant","isSidechain":true,"agentId":"agent2","uuid":"s6","timestamp":"2026-11-11T16:00:10.000Z","message":{"content":[{"type":"text","text":"Errors are in a.cpp."}]}})",
+};
+
+qint64 at(const char* stamp) {
+    return QDateTime::fromString(QString::fromLatin1(stamp), Qt::ISODateWithMs).toMSecsSinceEpoch();
+}
+
+void append(const QString& path, const QStringList& lines) {
+    QDir().mkpath(QFileInfo(path).path());
+    QFile file(path);
+    require(file.open(QIODevice::Append), "fixture appends");
+    for (const auto& line : lines)
+        file.write(line.toUtf8() + '\n');
+}
+
+QStringList filled(const char* const* lines, size_t count, const QString& folder) {
+    QStringList out;
+    for (size_t i = 0; i < count; ++i)
+        out << QString::fromUtf8(lines[i]).replace(QStringLiteral("%1"), folder);
+    return out;
+}
+
+// The running items, by the step that started them.
+QList<int> running_items(const TranscriptModel& model) {
+    QList<int> out;
+    for (const auto& entry : model.running())
+        out << entry.toMap().value(QStringLiteral("item")).toInt();
+    return out;
+}
+
+void subagents_and_background_work() {
+    using lapis::desktop::transcript::Task;
+    QTemporaryDir folder;
+    const auto path = folder.filePath(QStringLiteral("session.jsonl"));
+    append(path, filled(kWork, std::size(kWork), folder.path()));
+    TranscriptModel model;
+    model.setNow(at("2026-11-11T16:00:30.000Z"));
+    model.setPath(path);
+    model.loadNow();
+    const auto& items = model.items();
+    const auto& tasks = model.tasks();
+    require(tasks.size() == 4, "two subagents, a command and a monitor are tasks");
+    if (tasks.size() != 4)
+        return;
+    require(tasks[0].type == Task::Type::subagent && tasks[0].id == "agent1" &&
+                tasks[0].description == "Map the lexer" && tasks[0].agent_type == "Explore" &&
+                tasks[0].model == "claude-sonnet-5-5",
+            "a subagent's description, type and model");
+    require(tasks[1].id == "agent2", "\"true\" as text runs in the background too");
+    require(tasks[2].type == Task::Type::background && tasks[2].id == "bg1" &&
+                tasks[2].description == "npm test --watch" &&
+                tasks[2].file == folder.filePath(QStringLiteral("bg1.output")),
+            "a background command and its output file");
+    require(tasks[3].type == Task::Type::monitor && tasks[3].id == "mon1" &&
+                tasks[3].expires_ms == at("2026-11-11T16:00:11.000Z") + 600000,
+            "a monitor and its expiry");
+    const auto& launch = items[static_cast<size_t>(tasks[0].item)];
+    require(launch.title == "Subagent" && launch.body == "Map the lexer" && launch.result.isEmpty(),
+            "a subagent is one step, the launch notice dropped");
+    require(items[static_cast<size_t>(tasks[2].item)].title == "Started in background",
+            "a background command's step");
+    // Its output checks fold into it.
+    require(tasks[2].checks == 2 && tasks[2].last_check == "PASS parser",
+            "BashOutput and a Read of its output file are checks");
+    int quiet = 0;
+    for (const auto& item : items)
+        quiet += item.quiet ? 1 : 0;
+    require(quiet == 2, "the checks are no rows of their own");
+    require(model.turnCount() == 1, "one turn");
+    QString summary;
+    for (int row = 0; row < model.rowCount(); ++row)
+        if (model.data(model.index(row), TranscriptModel::KindRole).toString() == "work") {
+            summary = model.data(model.index(row), TranscriptModel::DetailRole).toString();
+            require(model.data(model.index(row), TranscriptModel::StepsRole).toInt() == 4,
+                    "four steps: two subagents, a command, a monitor");
+        }
+    require(summary == "ran 2 commands, started 2 agents", "the summary counts them");
+    // Everything runs, though the turn ended: the agent waits on them.
+    require(running_items(model).size() == 4, "all four run");
+    require(model.waitingSince() == static_cast<double>(at("2026-11-11T16:00:13.500Z")),
+            "waiting since the turn ended");
+    const auto first = model.running().first().toMap();
+    require(first.value("type").toString() == "subagent" &&
+                first.value("description").toString() == "Map the lexer" &&
+                first.value("running").toBool() &&
+                static_cast<qint64>(first.value("since").toDouble()) ==
+                    at("2026-11-11T16:00:01.000Z"),
+            "a running subagent's entry");
+
+    // The second subagent's own file: read on open, counted while it runs.
+    const auto own = folder.filePath(QStringLiteral("session/subagents/agent-agent2.jsonl"));
+    append(own, filled(kSubagent, std::size(kSubagent), folder.path()));
+    {
+        // Last written when its last record was.
+        QFile file(own);
+        require(file.open(QIODevice::ReadWrite) &&
+                    file.setFileTime(QDateTime::fromMSecsSinceEpoch(at("2026-11-11T16:00:10.000Z")),
+                                     QFileDevice::FileModificationTime),
+                "the subagent's file time is set");
+    }
+    model.tick();
+    QVariantMap second;
+    for (const auto& entry : model.running())
+        if (entry.toMap().value("item").toInt() == tasks[1].item)
+            second = entry.toMap();
+    require(second.value("steps").toInt() == 2, "a running subagent counts its own steps");
+    auto detail = model.taskDetail(tasks[1].item);
+    const auto steps = detail.value("steps").toList();
+    require(detail.value("found").toBool() && steps.size() == 3 &&
+                steps[0].toMap().value("title") == "Searched for" &&
+                steps[1].toMap().value("title") == "Ran" &&
+                steps[2].toMap().value("kind") == "reply",
+            "an opened subagent lists its steps; while it runs its note is one");
+
+    // Ends land on their steps; nothing new is shown for them.
+    const int rows_before = model.rowCount();
+    model.setNow(at("2026-11-11T16:03:30.000Z"));
+    append(path, filled(kWorkEnds, std::size(kWorkEnds), folder.path()));
+    model.readMore();
+    require(tasks[3].checks == 1 && tasks[3].last_check == "build 3 passed",
+            "a monitor's event is a check");
+    require(tasks[2].status == "failed" && tasks[2].exited && tasks[2].exit_code == 2,
+            "the command failed with its exit code");
+    require(tasks[0].status == "completed" && tasks[0].steps == 23 && tasks[0].tokens == 48210 &&
+                tasks[0].duration_ms == 178000 && tasks[0].report == "The lexer is in lex.cpp.",
+            "the subagent's end: its steps, tokens, time and report");
+    require(model.rowCount() == rows_before + 1,
+            "woken turns add only the reply, no finished rows");
+    const auto still = running_items(model);
+    require(still.size() == 2 && still.contains(tasks[1].item) && still.contains(tasks[3].item),
+            "finished ones leave the running list");
+    const auto map = model.data(model.index(0), TranscriptModel::TaskRole);
+    require(!map.isValid() || map.isNull(), "a prompt has no task");
+    // The monitor's own expiry ends it; a subagent silent too long has ended.
+    model.setNow(at("2026-11-11T16:11:00.000Z"));
+    model.tick();
+    require(running_items(model) == QList<int>{tasks[1].item}, "a monitor stops at its expiry");
+    model.setNow(at("2026-11-11T18:00:00.000Z"));
+    model.tick();
+    require(model.running().isEmpty(), "a subagent with no end, silent an hour, is not running");
+    const auto stale = model.itemEntry(tasks[1].item).value("task").toMap();
+    require(stale.value("stale").toBool() && !stale.value("running").toBool(),
+            "it shows as ended with no end recorded");
+
+    // Reloaded mid-run, the same work runs.
+    QTemporaryDir again;
+    const auto copy = again.filePath(QStringLiteral("session.jsonl"));
+    append(copy, filled(kWork, std::size(kWork), again.path()));
+    TranscriptModel reloaded;
+    reloaded.setNow(at("2026-11-11T16:00:40.000Z"));
+    reloaded.setPath(copy);
+    reloaded.loadNow();
+    require(running_items(reloaded).size() == 4, "a reload finds the same work running");
+}
+
+// SendMessage runs a finished subagent again; a command moved to the
+// background starts a task; a new session ends the commands left open.
+void tasks_resume_and_end() {
+    using lapis::desktop::transcript::Task;
+    ClaudeReader reader;
+    for (
+        const char* line : {
+            R"({"type":"user","timestamp":"2026-11-11T16:00:00.000Z","message":{"content":"Go"}})",
+            R"({"type":"assistant","timestamp":"2026-11-11T16:00:01.000Z","message":{"content":[{"type":"tool_use","id":"g1","name":"Agent","input":{"description":"Review"}}]}})",
+            R"({"type":"user","timestamp":"2026-11-11T16:00:02.000Z","toolUseResult":{"status":"async_launched","agentId":"ag"},"message":{"content":[{"type":"tool_result","tool_use_id":"g1","content":"launched"}]}})",
+            R"({"type":"user","timestamp":"2026-11-11T16:01:00.000Z","message":{"content":"<task-notification><task-id>ag</task-id><status>completed</status><summary>Agent \"Review\" finished</summary></task-notification>"}})",
+            R"({"type":"assistant","timestamp":"2026-11-11T16:02:00.000Z","message":{"content":[{"type":"tool_use","id":"s1","name":"SendMessage","input":{"to":"ag","message":"more"}}]}})",
+            R"({"type":"user","timestamp":"2026-11-11T16:02:01.000Z","toolUseResult":{"success":true,"resumedAgentId":"ag"},"message":{"content":[{"type":"tool_result","tool_use_id":"s1","content":"sent"}]}})",
+            R"({"type":"assistant","timestamp":"2026-11-11T16:03:00.000Z","message":{"content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"make all"}}]}})",
+            R"({"type":"user","timestamp":"2026-11-11T16:05:00.000Z","toolUseResult":{"backgroundTaskId":"bgx","timedOutAfterMs":120000},"message":{"content":[{"type":"tool_result","tool_use_id":"b1","content":"moved to the background"}]}})",
+            R"({"type":"user","timestamp":"2026-11-11T17:00:00.000Z","message":{"content":"<task-notification><status>stopped</status><summary>1 background shell command task didn't finish before the previous session ended</summary></task-notification>"}})",
+        })
+        (void)reader.add(line);
+    const auto& tasks = reader.tasks();
+    require(tasks.size() == 2, "a subagent and a command moved to the background");
+    if (tasks.size() != 2)
+        return;
+    require(tasks[0].status.isEmpty() && tasks[0].ended_ms == 0,
+            "SendMessage runs a finished subagent again");
+    require(tasks[1].type == Task::Type::background && tasks[1].id == "bgx" &&
+                reader.items()[static_cast<size_t>(tasks[1].item)].title ==
+                    "Started in background" &&
+                tasks[1].started_ms == at("2026-11-11T16:03:00.000Z"),
+            "a command that ran long becomes a background task from its start");
+    require(tasks[1].status == "stopped", "a new session ends the commands left open");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1471,6 +1691,8 @@ int main(int argc, char** argv) {
     math_is_found();
     math_is_rendered();
     math_is_styled();
+    subagents_and_background_work();
+    tasks_resume_and_end();
     if (failures == 0)
         std::puts("transcript: all checks passed");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

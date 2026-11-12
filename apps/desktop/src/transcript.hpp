@@ -70,7 +70,48 @@ struct Item {
     // person ran between turns), so it is never folded into a turn's work.
     bool between_turns{};
     qint64 duration_ms{}; // a turn item: how long the turn took
+    // The reader's task (Reader::tasks) this step started, or -1.
+    int task{-1};
 };
+
+// Work a step left running past its own call: a subagent, a background shell
+// command, a monitor. The reader keeps one per launch; later output checks,
+// events and the end record attach to it rather than adding rows.
+struct Task {
+    enum class Type { subagent, background, monitor };
+    Type type{Type::subagent};
+    // The CLI's id for it: Claude Code's agentId or task id, Codex's thread
+    // or process id, agy's conversation or task id. Empty until recorded.
+    QString id;
+    int item{-1};        // the step that started it
+    QString description; // what it is for, or its command
+    QString agent_type;  // a subagent's type or role
+    QString model;       // a subagent's model, when named
+    qint64 started_ms{};
+    qint64 seen_ms{}; // its newest sign of life in the conversation (a check, an event)
+    qint64 ended_ms{};
+    // Empty while no end is recorded; else completed, failed, killed or
+    // stopped as the CLI says.
+    QString status;
+    qint64 expires_ms{};  // a monitor's own expiry, or 0
+    int steps{-1};        // tool calls it made, when the CLI says
+    qint64 tokens{};      // tokens it used, when the CLI says
+    qint64 duration_ms{}; // as the CLI timed it, else 0
+    int exit_code{};
+    bool exited{};      // exit_code was recorded
+    int checks{};       // output checks and events attached to it
+    QString last_check; // the newest check's output or event, shortened
+    QString report;     // a subagent's final report, shortened
+    // Where its output (a background command) or its own conversation (a
+    // subagent, when the CLI names it) is written, or empty.
+    QString file;
+};
+// A task with no end recorded counts as running until its last sign of life
+// (`alive_ms`: its start, a check or event, or its own file's last write) is
+// this old, so one whose end was never written (the CLI quit) does not run
+// forever. A monitor also stops at its own expiry.
+inline constexpr qint64 task_silence_ms = 60 * 60 * 1000;
+[[nodiscard]] bool task_running(const Task& task, qint64 alive_ms, qint64 now_ms);
 
 // The model, effort and context use the agent last reported, read the same
 // way for every CLI so the bar shows the same things for each.
@@ -250,6 +291,7 @@ class Reader {
     [[nodiscard]] virtual Format format() const = 0;
     [[nodiscard]] const std::vector<Item>& items() const { return items_; }
     [[nodiscard]] const Status& status() const { return status_; }
+    [[nodiscard]] const std::vector<Task>& tasks() const { return tasks_; }
     // A prompt the person sent through lapis while the agent worked, for a
     // CLI that records no queue of its own (Codex, agy): it waits, shown as
     // queued, until the CLI records a prompt with its text. Then that prompt
@@ -262,8 +304,20 @@ class Reader {
     // Matches a prompt the CLI recorded (about to be pushed) against the
     // prompts sent; see note_sent.
     void taken(Item& prompt);
+    // Starts a task for its step (task.item, else the step about to be
+    // pushed); returns its index.
+    int start_task(Task task);
+    // The task the CLI calls `id`, or nullptr.
+    Task* task_named(const QString& id);
+    // Records its id once the CLI names it.
+    void name_task(int task, const QString& id);
+    // Records its end: `status` (completed, failed, killed, stopped) at `at_ms`.
+    // Returns the step that started it, or -1.
+    int end_task(Task& task, const QString& status, qint64 at_ms);
     std::vector<Item> items_;
     Status status_;
+    std::vector<Task> tasks_;
+    QHash<QString, int> task_ids_; // a task's CLI id -> its index
 
   private:
     struct Sent {
@@ -276,14 +330,36 @@ class Reader {
 
 // Folds Claude Code session JSONL records, in file order, into items. Tool
 // results attach to the tool call that asked for them; a subagent's records
-// (isSidechain) are skipped.
+// (isSidechain) are skipped unless the file is that subagent's own
+// (`sidechain`, <session>/subagents/agent-<id>.jsonl).
+// Subagents (Agent, Task), background commands (Bash run_in_background, or a
+// command moved to the background when it ran long) and monitors start
+// tasks. A <task-notification> ends one (its status, usage and result) or,
+// for a monitor's event, counts as a check; reading a background command's
+// output (BashOutput, TaskOutput, a Read or command naming its output file)
+// and stopping it (KillShell, TaskStop) attach to its task instead of
+// showing as steps, and SendMessage resuming a subagent runs it again.
 class ClaudeReader final : public Reader {
   public:
+    explicit ClaudeReader(bool sidechain = false) : sidechain_(sidechain) {}
     int add(const QByteArray& line) override;
     [[nodiscard]] Format format() const override { return Format::claude; }
 
   private:
     void push(Item item);
+    // A <task-notification>: ends or checks its task. Returns the step that
+    // started it, or -1.
+    int notified(const QString& raw);
+    // A tool call that checks or stops a task already running: folded into
+    // it (quiet) and remembered so its result attaches there.
+    void check_call(Item& item, const QString& name, const QJsonObject& input);
+    // A launch's or a check's result, from the record's toolUseResult.
+    int task_result(int task, const QJsonObject& result, const Item& step);
+    bool sidechain_{};
+    QHash<QString, int> launches_;  // a launching tool_use id -> its task
+    QHash<QString, int> checks_;    // a checking tool_use id -> the task it checks
+    QHash<QString, int> outputs_;   // a background command's output file -> its task
+    std::vector<int> open_outputs_; // those tasks, while they may still run
     // A slash or bash-mode command's output (<local-command-stdout>,
     // <bash-stdout> and their stderr), attached to the command it answers
     // when nothing else came between. Returns the item changed, or -1.
@@ -304,7 +380,12 @@ class ClaudeReader final : public Reader {
 };
 
 // Folds a Codex rollout (sessions/YYYY/MM/DD/rollout-*.jsonl, as Codex
-// 0.157 writes it) into items. The conversation comes from its finished
+// 0.157 writes it) into items. Subagents come from its collaboration items
+// (CollabAgentToolCall spawn_agent starts one per receiver thread; a later
+// call's agents_states or a SubAgentActivity "completed" ends it); a command
+// still running when exec_command yields starts a background task that its
+// CommandExecution item, written when the process exits, ends. The
+// conversation comes from its finished
 // items (event_msg item_completed), each written whole with its output, so a
 // step shows once it is done. task_started, task_complete and turn_aborted
 // bound and time the turns; turn_context, thread_settings_applied and
@@ -320,10 +401,19 @@ class CodexReader final : public Reader {
     void push(Item item);
     // One finished item (a payload.item) as zero or more items.
     void item(const QJsonObject& item, qint64 started_ms, qint64 completed_ms);
+    // A tool's output in the model-facing copy: Codex's exec_command result
+    // for a process still running ({session_id, wall_time_seconds, ...})
+    // starts a background task for it, or counts as a check of one.
+    int exec_output(const QJsonObject& payload);
+    // A CollabAgentToolCall: spawn_agent starts a subagent per receiver;
+    // any call's agents_states end those it reports done.
+    void collab(const QJsonObject& item, qint64 started_ms);
+    int ended_{-1}; // the first earlier step the line being read changed, or -1
     qint64 at_ms_{};
     QString record_;
-    QString turn_;         // the running turn's id, or empty between turns
-    bool turn_prompted_{}; // the running turn has its prompt
+    QString turn_;                     // the running turn's id, or empty between turns
+    bool turn_prompted_{};             // the running turn has its prompt
+    QHash<QString, QString> commands_; // a code-mode call's id -> the command it runs, if one
 };
 
 // Folds an Antigravity CLI transcript (brain/<conversation>/.system_generated
@@ -333,6 +423,11 @@ class CodexReader final : public Reader {
 // own messages. A turn ends at a response with text and no tool calls; the
 // file records no durations, so turns and steps are timed from their times.
 // The model and effort come from the settings change agy notes in a prompt.
+// invoke_subagent starts a task per subagent it created (its conversation
+// id); a message from that conversation, manage_subagents listing it idle or
+// killing it ends one. A run_command agy left running ("background task with
+// task id") starts a background task; manage_task checks attach to it and
+// the "Task id ... finished" system message ends it.
 class AntigravityReader final : public Reader {
   public:
     int add(const QByteArray& line) override;
@@ -343,9 +438,22 @@ class AntigravityReader final : public Reader {
     // A model step after the turn ended (a timer or background task woke
     // the agent) starts a turn of its own, with no row for its start.
     void wake(const QString& why);
+    // A tool call as its step, with what it means for subagents and tasks.
+    void call(const QJsonObject& call);
+    // A tool's result for the step at `at`; returns the first item changed.
+    int result(int at, const QJsonObject& record);
+    // A system message about a task or from a subagent; returns the step
+    // that started it, or -1.
+    int system_note(const QString& content);
     qint64 at_ms_{};
     QString record_;
-    std::vector<int> waiting_; // tool items awaiting their result, in call order
+    // Tool items awaiting their result, in call order, with the tool's name.
+    std::vector<int> waiting_;
+    QHash<int, QString> called_;
+    // An invoke_subagent step -> the tasks it started, in the order agy
+    // lists the conversations it created; a manage_task step -> the task it
+    // checks.
+    QHash<int, std::vector<int>> spawned_;
     bool turn_open_{};
     qint64 turn_since_ms_{};
     // When the running turn's last tool step was written, or 0: a person's
@@ -430,6 +538,13 @@ class TranscriptModel final : public QAbstractListModel {
     // Prompts sent mid-turn that the CLI has not recorded yet, oldest first
     // (Codex and agy; Claude Code's own queue shows as queued prompt rows).
     Q_PROPERTY(QStringList pendingPrompts READ pendingPrompts NOTIFY pendingChanged)
+    // The subagents and background tasks still running, oldest first, each
+    // as the task role describes it plus `item` (the step that started it).
+    // Kept current by the file and by tick().
+    Q_PROPERTY(QVariantList running READ running NOTIFY runningChanged)
+    // When the last turn ended (ms since the epoch) while work it started
+    // still runs, else 0: what "Waiting on 2 subagents" counts from.
+    Q_PROPERTY(double waitingSince READ waitingSince NOTIFY runningChanged)
   public:
     enum Role {
         KindRole = Qt::UserRole + 1,
@@ -454,10 +569,33 @@ class TranscriptModel final : public QAbstractListModel {
         SteeredRole,  // a prompt the CLI read mid-turn
         WaitedRole,   // steps it waited before being read, or -1
         ItemRole,     // the item's index, or -1 for a "Worked for" or live row
+        // The task a step started (a subagent, a background command): {type
+        // (subagent, background, monitor), description, agentType, model,
+        // since, ended, running, stale (no end recorded, too long silent),
+        // status, duration, steps, tokens, exit (-1 if none), checks,
+        // lastCheck, report}; null for other items.
+        TaskRole,
     };
     // An item's value for a role (not the layout's roles: expanded, inWork,
     // steps), shared by the thread and the live work box.
-    [[nodiscard]] static QVariant item_data(const transcript::Item& item, int index, int role);
+    [[nodiscard]] QVariant item_data(int index, int role) const;
+    // The same for any item, the task role aside (null).
+    [[nodiscard]] static QVariant item_value(const transcript::Item& item, int index, int role);
+    // An item's roles by name, as LiveStepsModel::entry gives them.
+    Q_INVOKABLE [[nodiscard]] QVariantMap itemEntry(int item) const;
+    // What an opened task step shows beyond its line, read when it is opened
+    // (and again while it runs): a subagent's own steps as entries (`steps`,
+    // each with the thread's roles, its own subagents one line each) and
+    // its final report (`report`); a background command's last lines of
+    // output (`output`). Empty where the CLI saved nothing to read.
+    Q_INVOKABLE [[nodiscard]] QVariantMap taskDetail(int item);
+    // Brings `running` up to date with the clock and the tasks' own files.
+    Q_INVOKABLE void tick();
+    // The clock tasks are judged by, for tests: 0 is the system's.
+    void setNow(qint64 now_ms) { now_ms_ = now_ms; }
+    [[nodiscard]] const QVariantList& running() const { return running_; }
+    [[nodiscard]] double waitingSince() const { return waiting_since_; }
+    [[nodiscard]] const std::vector<transcript::Task>& tasks() const { return reader_->tasks(); }
     [[nodiscard]] static QHash<int, QByteArray> role_names();
     explicit TranscriptModel(QObject* parent = nullptr);
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
@@ -588,8 +726,52 @@ class TranscriptModel final : public QAbstractListModel {
     void statusChanged();
     void liveChanged();
     void pendingChanged();
+    void runningChanged();
 
   private:
+    // A task's own file, as this conversation's CLI keeps it (a Claude Code
+    // subagent's transcript beside this one, a Codex child rollout, an agy
+    // child conversation, a background command's output), or empty.
+    [[nodiscard]] QString task_file(const transcript::Task& task) const;
+    // A task file read so far: its reader, fed what the file gained.
+    struct Child {
+        QString path;
+        std::unique_ptr<transcript::Reader> reader;
+        qint64 offset{};
+        QByteArray pending;
+        qint64 modified_ms{};
+    };
+    // The child for `path` (a subagent's own conversation) read up to date;
+    // nullptr when the file is missing.
+    Child* child(const QString& path, transcript::Format format);
+    std::vector<Child> children_; // most recent first, a few kept
+    // A Claude Code subagent's tool calls so far, counted from its file's
+    // bytes as it grows (cheaper than reading it); -1 when it is missing.
+    int counted_steps(const QString& path);
+    struct Count {
+        qint64 offset{};
+        int steps{};
+        QByteArray pending;
+    };
+    QHash<QString, Count> counts_;
+    [[nodiscard]] qint64 now() const;
+    // The task's newest sign of life, its own file's last write included.
+    [[nodiscard]] qint64 alive_ms(const transcript::Task& task) const;
+    [[nodiscard]] bool task_running(const transcript::Task& task) const;
+    [[nodiscard]] QVariantMap task_map(const transcript::Task& task) const;
+    void updateRunning();
+    // What a running subagent's own file says, by task index: its steps so
+    // far, and whether it came to rest (its last turn ended).
+    struct LiveTask {
+        int steps{-1};
+        bool rested{};
+    };
+    QHash<int, LiveTask> live_tasks_;
+    QVariantList running_;
+    double waiting_since_{};
+    qint64 now_ms_{};
+    // Task files found by search (Codex child rollouts), by task id.
+    mutable QHash<QString, QString> found_files_;
     // Shows the live turn's items in the live work box, or none.
     void showLive(int changed);
     void notePending();

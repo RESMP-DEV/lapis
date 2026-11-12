@@ -7,7 +7,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 
+#include <algorithm>
 #include <utility>
 
 namespace lapis::desktop::transcript {
@@ -252,14 +254,65 @@ void CodexReader::item(const QJsonObject& item, qint64 started_ms, qint64 comple
         if (text.isEmpty())
             return;
         const auto ms = took_ms(item, started_ms, completed_ms);
-        push(timed(make(Kind::thinking,
-                        ms >= 1000 ? QStringLiteral("Thought for %1").arg(duration_text(ms))
-                                   : QStringLiteral("Thought"),
-                        clip(text, body_chars))));
+        auto thought =
+            timed(make(Kind::thinking,
+                       ms >= 1000 ? QStringLiteral("Thought for %1").arg(duration_text(ms))
+                                  : QStringLiteral("Thought"),
+                       clip(text, body_chars)));
+        thought.duration_ms = ms;
+        push(std::move(thought));
     } else if (type == QLatin1String("CommandExecution")) {
         auto step = timed(command_item(item));
         step.duration_ms = took_ms(item, started_ms, completed_ms);
+        // A process that ran on after exec_command yielded is a background
+        // task already shown; its end lands on that step.
+        const auto process = item.value(QLatin1String("process_id"));
+        const auto id = QStringLiteral("process %1")
+                            .arg(process.isString() ? process.toString()
+                                                    : QString::number(process.toInteger()));
+        if (auto* task = task_named(id); task != nullptr && task->status.isEmpty()) {
+            auto& start = items_[static_cast<size_t>(task->item)];
+            start.body = step.body;
+            start.result = step.result;
+            start.result_lines = step.result_lines;
+            start.failed = step.failed;
+            start.duration_ms = step.duration_ms;
+            task->description = first_line(step.body);
+            task->last_check = step.result;
+            task->duration_ms = step.duration_ms;
+            if (const auto exit = item.value(QLatin1String("exit_code")); exit.isDouble()) {
+                task->exit_code = exit.toInt();
+                task->exited = true;
+            }
+            end_task(*task, step.failed ? QStringLiteral("failed") : QStringLiteral("completed"),
+                     completed_ms > 0 ? completed_ms : at_ms_);
+            ended_ = task->item;
+            return;
+        }
         push(std::move(step));
+    } else if (type == QLatin1String("CollabAgentToolCall")) {
+        collab(item, started_ms);
+    } else if (type == QLatin1String("SubAgentActivity")) {
+        // How a subagent's run went, as its parent heard: not a row.
+        if (auto* task = task_named(text_of(item, "agent_thread_id"))) {
+            const auto kind = text_of(item, "kind");
+            if (kind == QLatin1String("completed") || kind == QLatin1String("interrupted")) {
+                end_task(*task,
+                         kind == QLatin1String("completed") ? kind : QStringLiteral("stopped"),
+                         completed_ms > 0 ? completed_ms : at_ms_);
+            } else {
+                task->status.clear();
+                task->ended_ms = 0;
+                task->seen_ms = at_ms_;
+            }
+            ended_ = task->item;
+        }
+    } else if (type == QLatin1String("EnteredReviewMode")) {
+        const auto hint = text_of(item, "user_facing_hint");
+        push(make(Kind::notice, hint.isEmpty() ? QStringLiteral("Reviewing")
+                                               : QStringLiteral("Reviewing %1").arg(hint)));
+    } else if (type == QLatin1String("ExitedReviewMode")) {
+        push(make(Kind::notice, QStringLiteral("Review finished")));
     } else if (type == QLatin1String("FileChange")) {
         const auto changes = item.value(QLatin1String("changes")).toObject();
         const auto status = text_of(item, "status");
@@ -322,6 +375,156 @@ void CodexReader::item(const QJsonObject& item, qint64 started_ms, qint64 comple
     }
 }
 
+void CodexReader::collab(const QJsonObject& item, qint64 started_ms) {
+    const auto tool = text_of(item, "tool");
+    const auto status = text_of(item, "status");
+    const bool failed = status == QLatin1String("failed");
+    if (tool == QLatin1String("spawn_agent")) {
+        // One subagent per thread it made, each its own rollout.
+        auto agents = item.value(QLatin1String("receiver_agents")).toArray();
+        if (agents.isEmpty())
+            for (const auto& thread : item.value(QLatin1String("receiver_thread_ids")).toArray())
+                agents.append(QJsonObject{{QStringLiteral("thread_id"), thread}});
+        const auto prompt = text_of(item, "prompt");
+        if (agents.isEmpty())
+            agents.append(QJsonObject{});
+        for (const auto& value : std::as_const(agents)) {
+            const auto agent = value.toObject();
+            const auto name = text_of(agent, "agent_nickname");
+            Task task;
+            task.type = Task::Type::subagent;
+            task.id = text_of(agent, "thread_id");
+            task.description = !name.isEmpty() ? name : first_line(prompt);
+            task.agent_type = text_of(agent, "agent_role");
+            task.model = text_of(item, "model");
+            task.started_ms = started_ms > 0 ? started_ms : at_ms_;
+            task.seen_ms = at_ms_;
+            auto step =
+                make(Kind::tool, QStringLiteral("Subagent"), task.description, clip(prompt, 600));
+            step.at_ms = task.started_ms;
+            step.answered = true;
+            step.failed = failed;
+            step.task = start_task(std::move(task));
+            if (failed)
+                end_task(tasks_.back(), QStringLiteral("failed"), at_ms_);
+            push(std::move(step));
+        }
+    } else {
+        // wait_agent, close_agent, send_input...: a step of their own.
+        const auto verb = tool == QLatin1String("wait")              ? "Waited for"
+                          : tool == QLatin1String("close_agent")     ? "Closed"
+                          : tool == QLatin1String("interrupt_agent") ? "Interrupted"
+                          : tool == QLatin1String("list_agents")     ? "Listed"
+                                                                     : "Messaged";
+        QStringList names;
+        for (const auto& thread : item.value(QLatin1String("receiver_thread_ids")).toArray())
+            if (const auto* task = task_named(thread.toString()))
+                names << task->description;
+        auto step =
+            make(Kind::tool, QString::fromUtf8(verb),
+                 names.isEmpty() ? QStringLiteral("agents") : names.join(QStringLiteral(", ")),
+                 clip(text_of(item, "prompt"), 600));
+        step.at_ms = started_ms > 0 ? started_ms : at_ms_;
+        step.answered = true;
+        step.failed = failed;
+        // Input sent to a finished subagent runs it again.
+        if (tool == QLatin1String("send_input") || tool == QLatin1String("resume_agent") ||
+            tool == QLatin1String("followup_task"))
+            for (const auto& thread : item.value(QLatin1String("receiver_thread_ids")).toArray())
+                if (auto* task = task_named(thread.toString())) {
+                    task->status.clear();
+                    task->ended_ms = 0;
+                    task->seen_ms = at_ms_;
+                    ended_ = ended_ < 0 ? task->item : std::min(ended_, task->item);
+                }
+        push(std::move(step));
+    }
+    // What each agent's state was when the call finished: "running", or
+    // {"completed": its last message}, {"errored": why}, "shutdown".
+    const auto states = item.value(QLatin1String("agents_states")).toObject();
+    for (auto state = states.begin(); state != states.end(); ++state) {
+        auto* task = task_named(state.key());
+        if (task == nullptr)
+            continue;
+        QString ended;
+        if (state.value().isObject()) {
+            const auto done = state.value().toObject();
+            if (done.contains(QLatin1String("completed"))) {
+                ended = QStringLiteral("completed");
+                if (const auto said = done.value(QLatin1String("completed")).toString();
+                    !said.isEmpty())
+                    task->report = clip(said, result_preview_chars);
+            } else if (done.contains(QLatin1String("errored"))) {
+                ended = QStringLiteral("failed");
+                task->report =
+                    clip(done.value(QLatin1String("errored")).toString(), result_preview_chars);
+            }
+        } else {
+            const auto word = state.value().toString();
+            if (word == QLatin1String("shutdown") || word == QLatin1String("not_found") ||
+                word == QLatin1String("interrupted"))
+                ended = QStringLiteral("stopped");
+            else if (word == QLatin1String("completed"))
+                ended = word;
+        }
+        task->seen_ms = std::max(task->seen_ms, at_ms_);
+        if (!ended.isEmpty() && task->status.isEmpty()) {
+            end_task(*task, ended, at_ms_);
+            ended_ = ended_ < 0 ? task->item : std::min(ended_, task->item);
+        }
+    }
+}
+
+int CodexReader::exec_output(const QJsonObject& payload) {
+    // The output's text: a string, or {type, text} parts.
+    const auto output = payload.value(QLatin1String("output"));
+    QString text = output.isString() ? output.toString() : QString();
+    if (output.isArray())
+        text = texts(output.toArray());
+    // exec_command answers {chunk_id, output, session_id, wall_time_seconds,
+    // original_token_count} while the process runs on.
+    static const QRegularExpression running(
+        QStringLiteral(R"re("session_id"\s*:\s*(\d+)|Process running with session ID (\d+))re"));
+    const auto match = running.match(text);
+    if (!match.hasMatch() || (!text.contains(QLatin1String("wall_time_seconds")) &&
+                              !text.contains(QLatin1String("Process running"))))
+        return -1;
+    const auto id = QStringLiteral("process %1")
+                        .arg(match.captured(1).isEmpty() ? match.captured(2) : match.captured(1));
+    // The output it gave so far, shortened.
+    QString said;
+    static const QRegularExpression chunk(
+        QStringLiteral(R"re("output"\s*:\s*"((?:[^"\\]|\\.)*)")re"));
+    if (const auto part = chunk.match(text); part.hasMatch())
+        said = QJsonDocument::fromJson(QStringLiteral("[\"%1\"]").arg(part.captured(1)).toUtf8())
+                   .array()
+                   .at(0)
+                   .toString();
+    if (auto* task = task_named(id)) {
+        // write_stdin polling it: a check on the same step.
+        ++task->checks;
+        task->seen_ms = std::max(task->seen_ms, at_ms_);
+        if (!said.trimmed().isEmpty())
+            task->last_check = clip(without_escapes(said).trimmed(), result_preview_chars);
+        return task->item;
+    }
+    const auto command = commands_.take(text_of(payload, "call_id"));
+    Task task;
+    task.type = Task::Type::background;
+    task.id = id;
+    task.description = command.isEmpty() ? id : first_line(command);
+    task.started_ms = at_ms_;
+    task.seen_ms = at_ms_;
+    task.last_check = clip(without_escapes(said).trimmed(), result_preview_chars);
+    auto step = make(Kind::tool, QStringLiteral("Started in background"),
+                     command.isEmpty() ? id : clip(command, 2000));
+    step.answered = true;
+    step.task = start_task(std::move(task));
+    const int at = static_cast<int>(items_.size());
+    push(std::move(step));
+    return at;
+}
+
 int CodexReader::add(const QByteArray& line) {
     QJsonParseError error{};
     const auto document = QJsonDocument::fromJson(line, &error);
@@ -332,6 +535,7 @@ int CodexReader::add(const QByteArray& line) {
     const auto payload = record.value(QLatin1String("payload")).toObject();
     at_ms_ = time_ms(text_of(record, "timestamp"));
     const auto first = static_cast<int>(items_.size());
+    ended_ = -1;
 
     if (type == QLatin1String("turn_context")) {
         if (const auto model = text_of(payload, "model"); !model.isEmpty())
@@ -340,8 +544,43 @@ int CodexReader::add(const QByteArray& line) {
             status_.effort = effort;
         return -1;
     }
+    if (type == QLatin1String("response_item")) {
+        // The model-facing copies repeat the work, except what says a
+        // command runs on in the background, and the command it runs.
+        const auto kind = text_of(payload, "type");
+        if (kind == QLatin1String("custom_tool_call") || kind == QLatin1String("function_call")) {
+            QString command;
+            if (kind == QLatin1String("function_call")) {
+                if (text_of(payload, "name") == QLatin1String("exec_command"))
+                    command = text_of(
+                        QJsonDocument::fromJson(text_of(payload, "arguments").toUtf8()).object(),
+                        "cmd");
+            } else {
+                // Code mode: one tools.exec_command({cmd: "..."}) in the code.
+                const auto code = text_of(payload, "input");
+                static const QRegularExpression call(QStringLiteral(
+                    R"re(exec_command\(\{\s*cmd\s*:\s*(['"`])((?:\\.|(?!\1).)*)\1)re"));
+                auto calls = call.globalMatch(code);
+                if (calls.hasNext()) {
+                    const auto match = calls.next();
+                    if (!calls.hasNext())
+                        command = match.captured(2);
+                }
+            }
+            if (!command.isEmpty())
+                commands_.insert(text_of(payload, "call_id"), command);
+            return -1;
+        }
+        if (kind == QLatin1String("custom_tool_call_output") ||
+            kind == QLatin1String("function_call_output")) {
+            const int at = exec_output(payload);
+            commands_.remove(text_of(payload, "call_id"));
+            return at;
+        }
+        return -1;
+    }
     if (type != QLatin1String("event_msg"))
-        return -1; // response items repeat the work for the model; the rest is Codex's own
+        return -1; // the rest is Codex's own
     const auto event = text_of(payload, "type");
     if (event == QLatin1String("task_started")) {
         turn_ = text_of(payload, "turn_id");
@@ -385,6 +624,9 @@ int CodexReader::add(const QByteArray& line) {
         turn_.clear();
         turn_prompted_ = false;
     }
-    return static_cast<int>(items_.size()) > first ? first : -1;
+    const int added = static_cast<int>(items_.size()) > first ? first : -1;
+    if (ended_ >= 0)
+        return added < 0 ? ended_ : std::min(added, ended_);
+    return added;
 }
 } // namespace lapis::desktop::transcript

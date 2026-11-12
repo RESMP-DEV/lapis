@@ -5,11 +5,15 @@
 // file still being written is followed line by line.
 #include "transcript.hpp"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QTemporaryDir>
+#include <algorithm>
 #include <cstdio>
+#include <iterator>
 
 using lapis::desktop::TranscriptModel;
 using namespace lapis::desktop::transcript;
@@ -452,6 +456,189 @@ void antigravity_steering() {
                 layout.turns[0].parts[1].steps == 2,
             "agy: the steering prompt splits the turn's work");
 }
+void write_lines(const QString& path, const QStringList& lines) {
+    QDir().mkpath(QFileInfo(path).path());
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly), "fixture written");
+    for (const auto& line : lines)
+        file.write(line.toUtf8() + '\n');
+}
+
+// Made-up Codex records, in the shapes Codex 0.157.1's source gives its
+// collaboration items: two subagents spawned, one reported done by a wait,
+// the other by its activity; and a command still running when exec_command
+// yielded, polled once, then ended.
+const char* const kCodexWork[] = {
+    R"({"timestamp":"2026-11-11T16:00:00.000Z","type":"session_meta","payload":{"id":"parent-thread","source":"cli"}})",
+    R"({"timestamp":"2026-11-11T16:00:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}})",
+    R"({"timestamp":"2026-11-11T16:00:01.100Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"u1","content":[{"type":"text","text":"Split the parser"}]}}})",
+    R"({"timestamp":"2026-11-11T16:00:02.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","call_id":"c1","input":"const r = await tools.exec_command({cmd: \"npm test\", yield_time_ms: 1000});"}})",
+    R"({"timestamp":"2026-11-11T16:00:03.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c1","output":[{"type":"input_text","text":"{\"chunk_id\":\"a1\",\"wall_time_seconds\":1.0,\"session_id\":7,\"original_token_count\":3,\"output\":\"running 1\\n\"}"}]}})",
+    R"({"timestamp":"2026-11-11T16:00:04.000Z","type":"event_msg","payload":{"type":"item_completed","started_at_ms":1794412804000,"item":{"type":"CollabAgentToolCall","id":"k1","tool":"spawn_agent","status":"completed","sender_thread_id":"parent-thread","receiver_thread_ids":["child-1","child-2"],"receiver_agents":[{"thread_id":"child-1","agent_nickname":"Ada","agent_role":"explorer"},{"thread_id":"child-2","agent_nickname":"Bo"}],"prompt":"Map the lexer","model":"gpt-6-codex","agents_states":{"child-1":"running","child-2":"pending_init"}}}})",
+    R"({"timestamp":"2026-11-11T16:00:20.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c2","output":[{"type":"input_text","text":"{\"chunk_id\":\"a2\",\"wall_time_seconds\":5.0,\"session_id\":7,\"original_token_count\":3,\"output\":\"running 2\\n\"}"}]}})",
+    R"({"timestamp":"2026-11-11T16:01:00.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CollabAgentToolCall","id":"k2","tool":"wait","status":"completed","sender_thread_id":"parent-thread","receiver_thread_ids":["child-1"],"agents_states":{"child-1":{"completed":"The lexer is in lex.rs"}}}}})",
+    R"({"timestamp":"2026-11-11T16:01:30.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","id":"e1","process_id":"7","command":["/bin/zsh","-lc","npm test"],"cwd":"/work/demo","status":"failed","exit_code":1,"aggregated_output":"1 failed","duration":{"secs":87,"nanos":0}}}})",
+    R"({"timestamp":"2026-11-11T16:01:40.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"SubAgentActivity","id":"v1","kind":"completed","agent_thread_id":"child-2","agent_path":"/root/bo"}}})",
+    R"({"timestamp":"2026-11-11T16:01:41.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"m1","content":[{"type":"text","text":"Both are back."}]}}})",
+    R"({"timestamp":"2026-11-11T16:01:42.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","duration_ms":101000}})",
+};
+// The first subagent's own rollout: one command and its reply.
+const char* const kCodexChild[] = {
+    R"({"timestamp":"2026-11-11T16:00:05.000Z","type":"session_meta","payload":{"id":"child-1","source":{"subagent":{"thread_spawn":{"parent_thread_id":"parent-thread","depth":1}}}}})",
+    R"({"timestamp":"2026-11-11T16:00:05.100Z","type":"event_msg","payload":{"type":"task_started","turn_id":"c-turn"}})",
+    R"({"timestamp":"2026-11-11T16:00:05.200Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"cu","content":[{"type":"text","text":"Map the lexer"}]}}})",
+    R"({"timestamp":"2026-11-11T16:00:09.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","id":"ce","process_id":"9","command":["/bin/zsh","-lc","rg lex"],"cwd":"/work/demo","status":"completed","exit_code":0,"aggregated_output":"lex.rs","duration":{"secs":1,"nanos":0}}}})",
+    R"({"timestamp":"2026-11-11T16:00:50.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"cm","content":[{"type":"text","text":"The lexer is in lex.rs"}]}}})",
+    R"({"timestamp":"2026-11-11T16:00:51.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"c-turn","duration_ms":46000}})",
+};
+
+QStringList all(const char* const* lines, size_t count) {
+    QStringList out;
+    for (size_t i = 0; i < count; ++i)
+        out << QString::fromUtf8(lines[i]);
+    return out;
+}
+
+void codex_subagents_and_background() {
+    QTemporaryDir root;
+    const auto day = root.filePath(QStringLiteral("sessions/2026/11/11"));
+    const auto parent = day + QStringLiteral("/rollout-2026-11-11T10-00-00-parent-thread.jsonl");
+    write_lines(parent, all(kCodexWork, std::size(kCodexWork)));
+    write_lines(day + QStringLiteral("/rollout-2026-11-11T10-00-05-child-1.jsonl"),
+                all(kCodexChild, std::size(kCodexChild)));
+    TranscriptModel model;
+    model.setNow(
+        QDateTime::fromString(QStringLiteral("2026-11-11T16:02:00.000Z"), Qt::ISODateWithMs)
+            .toMSecsSinceEpoch());
+    model.setPath(parent);
+    model.loadNow();
+    const auto& tasks = model.tasks();
+    const auto& items = model.items();
+    require(tasks.size() == 3, "codex: a background process and two subagents");
+    if (tasks.size() != 3)
+        return;
+    require(tasks[0].type == Task::Type::background && tasks[0].id == "process 7" &&
+                tasks[0].checks == 1 && tasks[0].status == "failed" && tasks[0].exited &&
+                tasks[0].exit_code == 1 && tasks[0].duration_ms == 87000,
+            "codex: the yielded command, its poll and its end");
+    const auto& start = items[static_cast<size_t>(tasks[0].item)];
+    require(start.title == "Started in background" && start.body == "npm test" &&
+                start.result == "1 failed",
+            "codex: one step for it, its output attached");
+    require(std::ranges::count_if(items, [](const Item& item) { return item.title == "Ran"; }) == 0,
+            "codex: its end is no step of its own");
+    require(tasks[1].type == Task::Type::subagent && tasks[1].id == "child-1" &&
+                tasks[1].description == "Ada" && tasks[1].agent_type == "explorer" &&
+                tasks[1].status == "completed" && tasks[1].report == "The lexer is in lex.rs",
+            "codex: a subagent ended by a wait's states");
+    require(tasks[2].id == "child-2" && tasks[2].status == "completed",
+            "codex: a subagent ended by its activity");
+    require(model.running().isEmpty(), "codex: nothing runs once all have ended");
+    const auto detail = model.taskDetail(tasks[1].item);
+    const auto steps = detail.value(QStringLiteral("steps")).toList();
+    require(detail.value(QStringLiteral("found")).toBool() && steps.size() == 1 &&
+                steps[0].toMap().value(QStringLiteral("title")) == "Ran" &&
+                detail.value(QStringLiteral("report")).toString() == "The lexer is in lex.rs",
+            "codex: an opened subagent reads its own rollout");
+}
+
+// Made-up agy steps: invoke_subagent creating two subagents, a command agy
+// left running, checked once, then finished; one subagent's message and a
+// listing showing the other idle end them.
+const char* const kAgyWork[] = {
+    R"({"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-11T16:00:00Z","content":"<USER_REQUEST>\nSplit the parser\n</USER_REQUEST>"})",
+    R"({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:00:02Z","tool_calls":[{"name":"invoke_subagent","args":{"Subagents":[{"Role":"lexer mapper","Prompt":"Map the lexer","TypeName":"research","Model":"Gemini 4 Argon"},{"Role":"error checker","Prompt":"Check errors"}],"toolSummary":"Start two subagents"}},{"name":"run_command","args":{"CommandLine":"npm test","WaitMsBeforeAsync":1000,"toolSummary":"Run tests"}}]})",
+    R"({"step_index":2,"source":"MODEL","type":"GENERIC","status":"DONE","created_at":"2026-11-11T16:00:03Z","content":"Created At: 2026-11-11T10:00:02-06:00\nCompleted At: 2026-11-11T10:00:03-06:00\nCreated the following subagents:\n{\n  \"conversationId\":  \"conv-a\",\n  \"logAbsoluteUri\":  \"file:///x/conv-a/transcript.jsonl\"\n}\n{\n  \"conversationId\":  \"conv-b\",\n  \"logAbsoluteUri\":  \"file:///x/conv-b/transcript.jsonl\"\n}"})",
+    R"({"step_index":3,"source":"MODEL","type":"GENERIC","status":"RUNNING","created_at":"2026-11-11T16:00:04Z","content":"Tool is running as a background task with task id: `parent/task-1`\nTask Description: npm test\nTask logs are available at: file:///nowhere/task-1.log"})",
+    R"({"step_index":4,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:00:30Z","tool_calls":[{"name":"manage_task","args":{"Action":"status","TaskId":"parent/task-1","toolSummary":"Check tests"}}]})",
+    R"({"step_index":5,"source":"MODEL","type":"GENERIC","status":"DONE","created_at":"2026-11-11T16:00:31Z","content":"Status: RUNNING\n12 passed so far"})",
+    R"({"step_index":6,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:00:40Z","content":"Waiting on them."})",
+    R"({"step_index":7,"source":"SYSTEM","type":"SYSTEM_MESSAGE","status":"DONE","created_at":"2026-11-11T16:01:00Z","content":"<SYSTEM_MESSAGE>\nTask id \"parent/task-1\" finished with result:\nThe command exited with code 0.\n</SYSTEM_MESSAGE>"})",
+    R"({"step_index":8,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:01:05Z","content":"Tests pass."})",
+    R"({"step_index":9,"source":"SYSTEM","type":"SYSTEM_MESSAGE","status":"DONE","created_at":"2026-11-11T16:02:00Z","content":"<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-11T16:02:00Z sender=conv-a priority=MESSAGE_PRIORITY_HIGH\nThe lexer is in lex.go\n</SYSTEM_MESSAGE>"})",
+    R"({"step_index":10,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:02:05Z","tool_calls":[{"name":"manage_subagents","args":{"Action":"list","toolSummary":"List subagents"}}]})",
+    R"({"step_index":11,"source":"MODEL","type":"GENERIC","status":"DONE","created_at":"2026-11-11T16:02:06Z","content":"[{\"role\":\"error checker\",\"type\":\"research\",\"conversationId\":\"conv-b\",\"state\":\"idle\"}]"})",
+    R"({"step_index":12,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:02:10Z","content":"Both are done."})",
+};
+const char* const kAgyChild[] = {
+    R"({"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-11T16:00:03Z","content":"<USER_REQUEST>\nMap the lexer\n</USER_REQUEST>"})",
+    R"({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:00:10Z","tool_calls":[{"name":"view_file","args":{"AbsolutePath":"/work/demo/lex.go"}}]})",
+    R"({"step_index":2,"source":"MODEL","type":"GENERIC","status":"DONE","created_at":"2026-11-11T16:00:11Z","content":"package lex"})",
+    R"({"step_index":3,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:01:50Z","content":"The lexer is in lex.go"})",
+};
+
+void antigravity_subagents_and_background() {
+    QTemporaryDir root;
+    const auto parent =
+        root.filePath(QStringLiteral("brain/parent/.system_generated/logs/transcript_full.jsonl"));
+    write_lines(parent, all(kAgyWork, std::size(kAgyWork)));
+    const auto child =
+        root.filePath(QStringLiteral("brain/conv-b/.system_generated/logs/transcript_full.jsonl"));
+    TranscriptModel model;
+    model.setNow(
+        QDateTime::fromString(QStringLiteral("2026-11-11T16:00:50.000Z"), Qt::ISODateWithMs)
+            .toMSecsSinceEpoch());
+    model.setPath(parent);
+    model.loadNow();
+    const auto& tasks = model.tasks();
+    const auto& items = model.items();
+    require(tasks.size() == 3, "agy: two subagents and a background command");
+    if (tasks.size() != 3)
+        return;
+    require(tasks[0].type == Task::Type::subagent && tasks[0].id == "conv-a" &&
+                tasks[0].description == "lexer mapper" && tasks[0].agent_type == "research" &&
+                tasks[1].id == "conv-b" && tasks[1].description == "error checker",
+            "agy: each subagent by its role, named by its conversation");
+    require(items[static_cast<size_t>(tasks[1].item)].title == "Subagent",
+            "agy: each subagent its own step");
+    require(tasks[2].type == Task::Type::background && tasks[2].id == "parent/task-1" &&
+                items[static_cast<size_t>(tasks[2].item)].title == "Started in background",
+            "agy: a command left running");
+    require(tasks[2].checks == 1, "agy: checked once");
+    require(tasks[2].last_check == "The command exited with code 0.",
+            "agy: the newest check's output kept, the end's last");
+    require(std::ranges::count_if(
+                items, [](const Item& item) { return item.quiet && item.kind == Kind::tool; }) == 1,
+            "agy: the check is no row of its own");
+    require(tasks[2].status == "completed" && tasks[2].exited && tasks[2].exit_code == 0,
+            "agy: the finished message ends the command");
+    require(tasks[0].status == "completed" && tasks[0].report == "The lexer is in lex.go",
+            "agy: a subagent's message is its report and its end");
+    require(tasks[1].status == "completed", "agy: listed idle, a subagent has ended");
+    // Its own conversation opens to its steps.
+    write_lines(child, all(kAgyChild, std::size(kAgyChild)));
+    const auto detail = model.taskDetail(tasks[1].item);
+    const auto steps = detail.value(QStringLiteral("steps")).toList();
+    require(detail.value(QStringLiteral("found")).toBool() && steps.size() == 1 &&
+                steps[0].toMap().value(QStringLiteral("title")) == "Read" &&
+                detail.value(QStringLiteral("report")).toString() == "The lexer is in lex.go",
+            "agy: an opened subagent reads its own conversation");
+}
+
+// An agy subagent with no message yet runs until its own conversation
+// comes to rest (its turn ended with a reply).
+void antigravity_subagent_rests() {
+    QTemporaryDir root;
+    const auto parent =
+        root.filePath(QStringLiteral("brain/parent/.system_generated/logs/transcript_full.jsonl"));
+    write_lines(parent, all(kAgyWork, 3));
+    const auto child =
+        root.filePath(QStringLiteral("brain/conv-b/.system_generated/logs/transcript_full.jsonl"));
+    write_lines(child, all(kAgyChild, 3));
+    TranscriptModel model;
+    model.setNow(
+        QDateTime::fromString(QStringLiteral("2026-11-11T16:00:30.000Z"), Qt::ISODateWithMs)
+            .toMSecsSinceEpoch());
+    model.setPath(parent);
+    model.loadNow();
+    require(model.running().size() == 2, "agy: both subagents run");
+    QFile more(child);
+    require(more.open(QIODevice::Append), "agy: the child appends");
+    more.write(QByteArray(kAgyChild[3]) + '\n');
+    more.close();
+    model.tick();
+    require(model.running().size() == 1, "agy: one at rest has ended");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -465,6 +652,9 @@ int main(int argc, char** argv) {
     antigravity_bad_lines_are_ignored();
     antigravity_file_is_followed();
     antigravity_steering();
+    codex_subagents_and_background();
+    antigravity_subagents_and_background();
+    antigravity_subagent_rests();
     live_box_grows(kCodex, QStringLiteral("rollout-2026-11-10T10-00-00-live.jsonl"),
                    QStringLiteral("Also check the footer"));
     live_box_grows(kAntigravity, QStringLiteral("logs/transcript_full.jsonl"), {});

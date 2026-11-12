@@ -113,7 +113,7 @@ Item tool_item(const QJsonObject& call) {
     } else if (name == QLatin1String("read_url_content")) {
         step("Fetched", arg("Url"));
     } else if (name == QLatin1String("invoke_subagent")) {
-        step("Started agent", summary);
+        step("Subagent", summary);
     } else if (name == QLatin1String("manage_subagents")) {
         step("Managed agents", summary.isEmpty() ? arg("Action") : summary);
     } else if (name == QLatin1String("send_message")) {
@@ -174,6 +174,196 @@ void AntigravityReader::push(Item item) {
     items_.push_back(std::move(item));
 }
 
+void AntigravityReader::call(const QJsonObject& call) {
+    const auto name = text_of(call, "name");
+    const auto args = call.value(QLatin1String("args")).toObject();
+    auto item = tool_item(call);
+    const int at = static_cast<int>(items_.size());
+    std::vector<Item> more; // a step for each further subagent of one call
+    if (name == QLatin1String("invoke_subagent")) {
+        // Subagents: [{Model, Prompt, Role, TypeName, Workspace}], as a list
+        // or as its JSON text.
+        auto list = args.value(QLatin1String("Subagents"));
+        if (list.isString())
+            list = QJsonDocument::fromJson(list.toString().toUtf8()).array();
+        const auto subagents = list.toArray();
+        auto& tasks = spawned_[at];
+        for (qsizetype i = 0; i < std::max<qsizetype>(1, subagents.size()); ++i) {
+            const auto sub = subagents.isEmpty() ? QJsonObject{} : subagents.at(i).toObject();
+            Task task;
+            task.type = Task::Type::subagent;
+            const auto role = text_of(sub, "Role");
+            task.description = !role.isEmpty() ? role
+                               : !text_of(sub, "Prompt").isEmpty()
+                                   ? first_line(text_of(sub, "Prompt"))
+                                   : item.body;
+            task.agent_type = text_of(sub, "TypeName");
+            task.model = text_of(sub, "Model");
+            task.seen_ms = at_ms_;
+            task.item = at + static_cast<int>(i);
+            if (i == 0) {
+                if (subagents.size() > 1 || item.body.isEmpty())
+                    item.body = task.description;
+                item.detail = clip(text_of(sub, "Prompt"), 600);
+                item.task = start_task(std::move(task));
+                tasks.push_back(item.task);
+            } else {
+                auto extra = make(Kind::tool, QStringLiteral("Subagent"), task.description,
+                                  clip(text_of(sub, "Prompt"), 600));
+                extra.task = start_task(std::move(task));
+                tasks.push_back(extra.task);
+                more.push_back(std::move(extra));
+            }
+        }
+    } else if (name == QLatin1String("manage_task")) {
+        // A check on a background task folds into that task's step.
+        if (const int task = task_ids_.value(text_of(args, "TaskId"), -1); task >= 0) {
+            item.quiet = true;
+            spawned_[at] = {task};
+        }
+    }
+    waiting_.push_back(at);
+    called_.insert(at, name);
+    push(std::move(item));
+    for (auto& extra : more) {
+        extra.answered = true;
+        push(std::move(extra));
+    }
+}
+
+int AntigravityReader::result(int at, const QJsonObject& record) {
+    auto& step = items_[static_cast<size_t>(at)];
+    attach(step, record);
+    const auto name = called_.take(at);
+    const auto content = text_of(record, "content");
+    int changed = at;
+    const auto touched = [&changed](int item) { changed = std::min(changed, item); };
+    if (name == QLatin1String("invoke_subagent")) {
+        // "Created the following subagents:" and a {conversationId,
+        // logAbsoluteUri, workspaceUris} for each, in order.
+        static const QRegularExpression made(
+            QStringLiteral(R"re("conversationId"\s*:\s*"([^"]+)")re"));
+        const auto tasks = spawned_.take(at);
+        auto found = made.globalMatch(content);
+        for (const int task : tasks) {
+            if (!found.hasNext())
+                break;
+            name_task(task, found.next().captured(1));
+        }
+        if (step.failed)
+            for (const int task : tasks)
+                touched(
+                    end_task(tasks_[static_cast<size_t>(task)], QStringLiteral("failed"), at_ms_));
+        else {
+            step.result.clear();
+            step.result_lines = 0;
+        }
+    } else if (name == QLatin1String("run_command") &&
+               text_of(record, "status") == QLatin1String("RUNNING")) {
+        // "Tool is running as a background task with task id: `<id>`" and
+        // "Task logs are available at: file:///.../task-N.log".
+        static const QRegularExpression task_id(QStringLiteral(R"(task id: `([^`]+)`)"));
+        static const QRegularExpression logs(QStringLiteral(R"(available at: (\S+))"));
+        if (const auto id = task_id.match(content); id.hasMatch() && step.task < 0) {
+            Task task;
+            task.type = Task::Type::background;
+            task.id = id.captured(1);
+            task.item = at;
+            task.description = first_line(step.body);
+            task.started_ms = step.at_ms;
+            task.seen_ms = at_ms_;
+            if (const auto file = logs.match(content); file.hasMatch())
+                task.file = file.captured(1);
+            task.last_check = step.result;
+            step.task = start_task(std::move(task));
+            step.title = QStringLiteral("Started in background");
+            step.result.clear();
+            step.result_lines = 0;
+            step.duration_ms = 0;
+        }
+    } else if (name == QLatin1String("manage_task")) {
+        static const QRegularExpression checked(QStringLiteral(R"(task id: `?([^\s`]+/task-\d+))"));
+        Task* task = nullptr;
+        if (const auto checked_task = spawned_.take(at); !checked_task.empty())
+            task = &tasks_[static_cast<size_t>(checked_task.front())];
+        if (task == nullptr)
+            if (const auto id = checked.match(content); id.hasMatch())
+                task = task_named(id.captured(1));
+        if (task != nullptr) {
+            ++task->checks;
+            task->seen_ms = std::max(task->seen_ms, at_ms_);
+            task->last_check = step.result;
+            static const QRegularExpression exited(QStringLiteral(R"(exited with code (-?\d+))"));
+            if (const auto code = exited.match(content); code.hasMatch()) {
+                task->exit_code = code.captured(1).toInt();
+                task->exited = true;
+            }
+            if (task->status.isEmpty() && content.contains(QLatin1String("Status: DONE")))
+                end_task(*task,
+                         task->exited && task->exit_code != 0 ? QStringLiteral("failed")
+                                                              : QStringLiteral("completed"),
+                         at_ms_);
+            touched(task->item);
+        }
+    } else if (name == QLatin1String("manage_subagents")) {
+        // list: [{role, type, conversationId, transcript, state}]; an idle
+        // subagent is done. kill stops those it names.
+        static const QRegularExpression listed(
+            QStringLiteral(R"re("conversationId"\s*:\s*"([^"]+)"[^}]*?"state"\s*:\s*"([^"]+)")re"));
+        for (auto entries = listed.globalMatch(content); entries.hasNext();) {
+            const auto entry = entries.next();
+            if (auto* task = task_named(entry.captured(1))) {
+                task->seen_ms = std::max(task->seen_ms, at_ms_);
+                if (entry.captured(2) != QLatin1String("running") && task->status.isEmpty())
+                    touched(end_task(*task, QStringLiteral("completed"), at_ms_));
+            }
+        }
+    }
+    return changed;
+}
+
+int AntigravityReader::system_note(const QString& content) {
+    // `Task id "<conversation>/task-N" finished with result:` or `was
+    // canceled with result:`, then what it printed.
+    static const QRegularExpression finished(
+        QStringLiteral(R"re(Task id "([^"]+)" (finished|was canceled))re"));
+    if (const auto match = finished.match(content); match.hasMatch()) {
+        auto* task = task_named(match.captured(1));
+        if (task == nullptr || !task->status.isEmpty())
+            return -1;
+        static const QRegularExpression exited(QStringLiteral(R"(exited with code (-?\d+))"));
+        if (const auto code = exited.match(content); code.hasMatch()) {
+            task->exit_code = code.captured(1).toInt();
+            task->exited = true;
+        }
+        const auto rest = content.mid(match.capturedEnd())
+                              .section(QLatin1Char(':'), 1)
+                              .remove(QStringLiteral("</SYSTEM_MESSAGE>"));
+        if (!rest.trimmed().isEmpty())
+            task->last_check = clip(without_escapes(rest).trimmed(), result_preview_chars);
+        const bool canceled = match.captured(2) != QLatin1String("finished");
+        return end_task(*task,
+                        canceled                               ? QStringLiteral("stopped")
+                        : task->exited && task->exit_code != 0 ? QStringLiteral("failed")
+                                                               : QStringLiteral("completed"),
+                        at_ms_);
+    }
+    // "[Message] timestamp=... sender=<conversation> priority=...": a
+    // subagent's message to its parent, its report; it has finished.
+    static const QRegularExpression message(QStringLiteral(R"(\[Message\][^\n]*sender=(\S+))"));
+    if (const auto match = message.match(content); match.hasMatch()) {
+        auto* task = task_named(match.captured(1));
+        if (task == nullptr || task->type != Task::Type::subagent)
+            return -1;
+        const auto body = content.mid(content.indexOf(QLatin1Char('\n'), match.capturedEnd()) + 1);
+        task->report = clip(QString(body).remove(QStringLiteral("</SYSTEM_MESSAGE>")).trimmed(),
+                            result_preview_chars);
+        return task->status.isEmpty() ? end_task(*task, QStringLiteral("completed"), at_ms_)
+                                      : task->item;
+    }
+    return -1;
+}
+
 void AntigravityReader::wake(const QString& why) {
     auto item = make(Kind::notice, why);
     item.starts_turn = true;
@@ -221,6 +411,8 @@ int AntigravityReader::add(const QByteArray& line) {
         step_at_ms_ = 0;
         if (!steers) {
             waiting_.clear(); // results never written for calls before this
+            called_.clear();
+            spawned_.clear();
             turn_since_ms_ = at_ms_;
         }
         turn_open_ = true;
@@ -262,10 +454,8 @@ int AntigravityReader::add(const QByteArray& line) {
             push(make(Kind::thinking, QStringLiteral("Thought"), clip(thinking, body_chars)));
         if (!reply.isEmpty())
             push(make(Kind::reply, {}, clip(reply, body_chars)));
-        for (const auto& call : calls) {
-            waiting_.push_back(static_cast<int>(items_.size()));
-            push(tool_item(call.toObject()));
-        }
+        for (const auto& value : calls)
+            call(value.toObject());
         step_at_ms_ = calls.isEmpty() ? 0 : at_ms_;
         if (!reply.isEmpty() && calls.isEmpty()) {
             // Text with nothing left to do ends the turn.
@@ -282,11 +472,13 @@ int AntigravityReader::add(const QByteArray& line) {
             return -1;
         const int at = waiting_.front();
         waiting_.erase(waiting_.begin());
-        attach(items_[static_cast<size_t>(at)], record);
-        changed = at;
+        changed = result(at, record);
         if (turn_open_)
             step_at_ms_ = at_ms_;
     } else if (type == QLatin1String("SYSTEM_MESSAGE")) {
+        // A task's end or a subagent's report lands on the step that
+        // started it.
+        changed = system_note(content);
         // Notes for the model; one after the turn ended wakes the agent.
         if (!turn_open_) {
             auto why = content;

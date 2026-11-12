@@ -9,6 +9,7 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
@@ -240,8 +241,13 @@ Item tool_item(const QJsonObject& block) {
         item.body = std::move(target);
         item.detail = std::move(detail);
     };
+    // Claude Code has written run_in_background as true and as "true".
+    const auto background = input.value(QLatin1String("run_in_background"));
+    const bool in_background =
+        background.toBool() || background.toString() == QLatin1String("true");
     if (name == QLatin1String("Bash")) {
-        step("Ran", clip(text("command"), 2000), text("description"));
+        step(in_background ? "Started in background" : "Ran", clip(text("command"), 2000),
+             text("description"));
     } else if (name == QLatin1String("Read")) {
         step("Read", homeless(text("file_path")));
     } else if (name == QLatin1String("Write")) {
@@ -264,14 +270,15 @@ Item tool_item(const QJsonObject& block) {
     } else if (name == QLatin1String("Glob")) {
         step("Listed", text("pattern"), homeless(text("path")));
     } else if (name == QLatin1String("Agent") || name == QLatin1String("Task")) {
-        step("Started agent", text("description"), clip(text("prompt"), 600));
+        step("Subagent", text("description"), clip(text("prompt"), 600));
     } else if (name == QLatin1String("WebFetch")) {
         step("Fetched", text("url"));
     } else if (name == QLatin1String("WebSearch")) {
         step("Searched the web for", text("query"));
     } else if (name == QLatin1String("Monitor")) {
-        step("Watched",
-             text("description").isEmpty() ? first_line(text("command")) : text("description"));
+        step("Started in background",
+             text("description").isEmpty() ? first_line(text("command")) : text("description"),
+             clip(text("command"), 2000));
     } else if (name == QLatin1String("SendMessage")) {
         step("Messaged", text("to"), text("summary"));
     } else if (name == QLatin1String("ScheduleWakeup")) {
@@ -599,6 +606,45 @@ void Reader::taken(Item& prompt) {
     sent_.erase(sent_.begin(), match + 1);
 }
 
+int Reader::start_task(Task task) {
+    if (task.item < 0)
+        task.item = static_cast<int>(items_.size());
+    if (task.started_ms == 0)
+        task.started_ms = task.seen_ms;
+    tasks_.push_back(std::move(task));
+    const int at = static_cast<int>(tasks_.size()) - 1;
+    if (!tasks_.back().id.isEmpty())
+        task_ids_.insert(tasks_.back().id, at);
+    return at;
+}
+
+Task* Reader::task_named(const QString& id) {
+    const int at = id.isEmpty() ? -1 : task_ids_.value(id, -1);
+    return at < 0 ? nullptr : &tasks_[static_cast<size_t>(at)];
+}
+
+void Reader::name_task(int task, const QString& id) {
+    if (task < 0 || std::cmp_greater_equal(task, tasks_.size()) || id.isEmpty())
+        return;
+    tasks_[static_cast<size_t>(task)].id = id;
+    task_ids_.insert(id, task);
+}
+
+int Reader::end_task(Task& task, const QString& status, qint64 at_ms) {
+    task.status = status.isEmpty() ? QStringLiteral("completed") : status;
+    task.ended_ms = std::max(at_ms, task.started_ms);
+    task.seen_ms = std::max(task.seen_ms, task.ended_ms);
+    return task.item;
+}
+
+bool task_running(const Task& task, qint64 alive_ms, qint64 now_ms) {
+    if (!task.status.isEmpty())
+        return false;
+    if (task.expires_ms > 0 && now_ms >= task.expires_ms)
+        return false;
+    return now_ms - std::max({alive_ms, task.seen_ms, task.started_ms}) < task_silence_ms;
+}
+
 QString chart_style_folder() { return QDir::home().filePath(QStringLiteral(".lapis/visual")); }
 
 std::vector<Media> find_media(const QString& text, const QSet<QString>& skip, bool* missing) {
@@ -831,10 +877,11 @@ QString work_summary(const std::vector<Item>& items, int first, int last, int ex
         if (i == except)
             continue;
         const auto& item = items[static_cast<size_t>(i)];
-        if (item.kind != Kind::tool)
+        // A check folded into the task it checks is not work of its own.
+        if (item.kind != Kind::tool || item.quiet)
             continue;
         const auto& verb = item.title;
-        if (verb == QLatin1String("Ran"))
+        if (verb == QLatin1String("Ran") || verb == QLatin1String("Started in background"))
             ++commands;
         else if (verb == QLatin1String("Edited") || verb == QLatin1String("Wrote") ||
                  verb == QLatin1String("Deleted")) // Deleted: Codex's patches
@@ -846,7 +893,7 @@ QString work_summary(const std::vector<Item>& items, int first, int last, int ex
         else if (verb.startsWith(QLatin1String("Searched the web")) ||
                  verb == QLatin1String("Fetched"))
             ++web;
-        else if (verb == QLatin1String("Started agent"))
+        else if (verb == QLatin1String("Subagent"))
             ++agents;
         else
             ++tools;
@@ -967,9 +1014,10 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded, bool l
             auto& part = turn.parts[p];
             for (int i = part.first; i <= part.last; ++i) {
                 const auto& item = items[static_cast<size_t>(i)];
-                // A prompt sent mid-turn stays in view, not folded with the work.
+                // A prompt sent mid-turn stays in view, not folded with the
+                // work; a check folded into its task is not a step.
                 if (i != turn.final_reply && item.kind != Kind::turn && item.kind != Kind::prompt &&
-                    !item.dropped)
+                    !item.dropped && !item.quiet)
                     ++part.steps;
             }
             turn.steps += part.steps;
@@ -1124,6 +1172,149 @@ int ClaudeReader::command_output(const QString& raw) {
     return at;
 }
 
+void ClaudeReader::check_call(Item& item, const QString& name, const QJsonObject& input) {
+    const auto text = [&input](const char* key) {
+        return input.value(QLatin1String(key)).toString();
+    };
+    int task = -1;
+    if (name == QLatin1String("BashOutput"))
+        task = task_ids_.value(text("bash_id"), -1);
+    else if (name == QLatin1String("KillShell"))
+        task = task_ids_.value(text("shell_id"), -1);
+    else if (name == QLatin1String("TaskOutput") || name == QLatin1String("TaskStop"))
+        task = task_ids_.value(text("task_id").isEmpty() ? text("shell_id") : text("task_id"), -1);
+    else if (name == QLatin1String("Read"))
+        task = outputs_.value(text("file_path"), -1);
+    else if (name == QLatin1String("Bash") && !open_outputs_.empty() &&
+             text("command").contains(QLatin1String(".output"))) {
+        // A command that reads a running task's output file ("tail -5
+        // .../tasks/<id>.output"); only those still running are looked for,
+        // and ended ones leave.
+        std::erase_if(open_outputs_,
+                      [this](int at) { return !tasks_[static_cast<size_t>(at)].status.isEmpty(); });
+        const auto command = text("command");
+        for (const int at : open_outputs_)
+            if (command.contains(tasks_[static_cast<size_t>(at)].file)) {
+                task = at;
+                break;
+            }
+    }
+    if (task < 0)
+        return;
+    item.quiet = true;
+    checks_.insert(item.tool_id, task);
+}
+
+int ClaudeReader::task_result(int at, const QJsonObject& result, const Item& step) {
+    auto& task = tasks_[static_cast<size_t>(at)];
+    const auto text = [&result](const char* key) {
+        return result.value(QLatin1String(key)).toString();
+    };
+    switch (task.type) {
+    case Task::Type::subagent:
+        name_task(at, text("agentId"));
+        if (!text("resolvedModel").isEmpty())
+            task.model = text("resolvedModel");
+        if (task.file.isEmpty())
+            task.file = text("outputFile");
+        // A subagent run in the foreground answers with its whole run.
+        if (text("status") == QLatin1String("completed") ||
+            result.contains(QLatin1String("totalDurationMs"))) {
+            end_task(task, QStringLiteral("completed"), at_ms_);
+            task.duration_ms =
+                static_cast<qint64>(result.value(QLatin1String("totalDurationMs")).toDouble());
+            if (result.contains(QLatin1String("totalToolUseCount")))
+                task.steps = result.value(QLatin1String("totalToolUseCount")).toInt();
+            task.tokens =
+                static_cast<qint64>(result.value(QLatin1String("totalTokens")).toDouble());
+            task.report = step.result;
+        }
+        break;
+    case Task::Type::background: {
+        name_task(at, text("backgroundTaskId"));
+        // "Command running in background with ID: x. Output is being
+        // written to: /path ..."
+        static const QRegularExpression written(QStringLiteral(R"(written to: (\S+))"));
+        if (const auto match = written.match(step.result); match.hasMatch()) {
+            task.file = match.captured(1);
+            outputs_.insert(task.file, at);
+            open_outputs_.push_back(at);
+        }
+        break;
+    }
+    case Task::Type::monitor: {
+        name_task(at, text("taskId"));
+        const auto timeout =
+            static_cast<qint64>(result.value(QLatin1String("timeoutMs")).toDouble());
+        if (timeout > 0 && !result.value(QLatin1String("persistent")).toBool())
+            task.expires_ms = task.started_ms + timeout;
+        break;
+    }
+    }
+    if (step.failed && task.status.isEmpty())
+        end_task(task, QStringLiteral("failed"), at_ms_);
+    return task.item;
+}
+
+int ClaudeReader::notified(const QString& raw) {
+    const auto id = tagged(raw, u"task-id");
+    const auto status = tagged(raw, u"status");
+    const auto summary = tagged(raw, u"summary");
+    int at = id.isEmpty() ? -1 : task_ids_.value(id, -1);
+    if (at < 0) {
+        at = launches_.value(tagged(raw, u"tool-use-id"), -1);
+        name_task(at, id);
+    }
+    if (at < 0) {
+        // "2 background shell command tasks didn't finish before the
+        // previous session ended": none of those still open is running.
+        int first = -1;
+        if (summary.contains(QLatin1String("previous session")))
+            for (auto& task : tasks_)
+                if (task.type != Task::Type::subagent && task.status.isEmpty() &&
+                    task.started_ms <= at_ms_) {
+                    const int item = end_task(task, QStringLiteral("stopped"), at_ms_);
+                    first = first < 0 ? item : std::min(first, item);
+                }
+        return first;
+    }
+    auto& task = tasks_[static_cast<size_t>(at)];
+    task.seen_ms = std::max(task.seen_ms, at_ms_);
+    if (status.isEmpty()) {
+        // A monitor's event: one more check, the newest shown.
+        ++task.checks;
+        task.last_check = clip(tagged(raw, u"event"), result_preview_chars);
+        return task.item;
+    }
+    end_task(task, status, at_ms_);
+    const auto usage = tagged(raw, u"usage");
+    const auto number = [&usage](QStringView tag) {
+        bool ok = false;
+        const auto value = tagged(usage, tag).toLongLong(&ok);
+        return ok ? value : -1;
+    };
+    if (const auto steps = number(u"tool_uses"); steps >= 0)
+        task.steps = static_cast<int>(steps);
+    if (const auto tokens = number(u"subagent_tokens"); tokens > 0)
+        task.tokens = tokens;
+    else if (const auto total = number(u"total_tokens"); total > 0)
+        task.tokens = total;
+    if (const auto ms = number(u"duration_ms"); ms > 0)
+        task.duration_ms = ms;
+    if (task.type == Task::Type::subagent) {
+        if (const auto report = tagged(raw, u"result"); !report.isEmpty())
+            task.report = clip(report, result_preview_chars);
+    }
+    static const QRegularExpression exit_code(QStringLiteral(R"(exit code (-?\d+))"));
+    if (const auto match = exit_code.match(summary); match.hasMatch()) {
+        task.exit_code = match.captured(1).toInt();
+        task.exited = true;
+    }
+    if (task.file.isEmpty())
+        task.file = tagged(raw, u"output-file");
+    return task.item;
+}
+
 int ClaudeReader::add(const QByteArray& line) {
     // Claude Code's request logs and file snapshots are a quarter of a long
     // conversation's bytes and never shown: skip them by the type they lead
@@ -1141,7 +1332,7 @@ int ClaudeReader::add(const QByteArray& line) {
     if (error.error != QJsonParseError::NoError || !document.isObject())
         return -1;
     const auto record = document.object();
-    if (record.value(QLatin1String("isSidechain")).toBool())
+    if (!sidechain_ && record.value(QLatin1String("isSidechain")).toBool())
         return -1;
     const auto type = record.value(QLatin1String("type")).toString();
     record_ = record.value(QLatin1String("uuid")).toString();
@@ -1295,6 +1486,10 @@ int ClaudeReader::add(const QByteArray& line) {
             return;
         }
         if (raw.startsWith(QLatin1String("<task-notification>"))) {
+            // It ends (or, for a monitor's event, checks) its task, whose
+            // step shows the result when opened.
+            if (const int at = notified(raw); at >= 0)
+                changed = changed < 0 ? at : std::min(changed, at);
             // A background task waking the agent starts a turn of its own.
             auto summary = tagged(raw, u"summary");
             auto item =
@@ -1371,23 +1566,90 @@ int ClaudeReader::add(const QByteArray& line) {
                 push(make(Kind::reply, {}, clip(text.trimmed(), body_chars)));
         } else if (kind == QLatin1String("thinking") ||
                    kind == QLatin1String("redacted_thinking")) {
-            push(make(
+            auto thought = make(
                 Kind::thinking,
                 thought_ms > 0 ? QStringLiteral("Thought for %1").arg(duration_text(thought_ms))
                                : QStringLiteral("Thought"),
-                clip(block.value(QLatin1String("thinking")).toString().trimmed(), body_chars)));
+                clip(block.value(QLatin1String("thinking")).toString().trimmed(), body_chars));
+            thought.duration_ms = thought_ms;
+            push(std::move(thought));
         } else if (kind == QLatin1String("tool_use")) {
             auto item = tool_item(block);
+            const auto name = block.value(QLatin1String("name")).toString();
+            const auto input = block.value(QLatin1String("input")).toObject();
+            check_call(item, name, input);
+            const bool agent = name == QLatin1String("Agent") || name == QLatin1String("Task");
+            if (!item.quiet && (agent || item.title == QLatin1String("Started in background"))) {
+                Task task;
+                task.type = agent                              ? Task::Type::subagent
+                            : name == QLatin1String("Monitor") ? Task::Type::monitor
+                                                               : Task::Type::background;
+                // A subagent by its description; a command by itself (its
+                // description in its detail), a monitor by what it watches.
+                const auto said = input.value(QLatin1String("description")).toString();
+                task.description = agent || task.type == Task::Type::monitor || item.body.isEmpty()
+                                       ? said
+                                       : first_line(item.body);
+                if (task.description.isEmpty())
+                    task.description = first_line(item.body);
+                task.agent_type = input.value(QLatin1String("subagent_type")).toString();
+                task.model = input.value(QLatin1String("model")).toString();
+                task.seen_ms = at_ms_;
+                item.task = start_task(std::move(task));
+                launches_.insert(item.tool_id, item.task);
+            }
             tools_.insert(item.tool_id, static_cast<int>(items_.size()));
             push(std::move(item));
         } else if (kind == QLatin1String("tool_result")) {
-            const auto at = tools_.value(block.value(QLatin1String("tool_use_id")).toString(), -1);
+            const auto id = block.value(QLatin1String("tool_use_id")).toString();
+            const auto at = tools_.value(id, -1);
             if (at >= 0) {
                 auto& step = items_[static_cast<size_t>(at)];
                 attach_result(step, block);
                 if (step.at_ms > 0 && at_ms_ > step.at_ms)
                     step.duration_ms = at_ms_ - step.at_ms; // call to result
                 changed = changed < 0 ? at : std::min(changed, at);
+                const auto result = record.value(QLatin1String("toolUseResult")).toObject();
+                // A command that ran long and was moved to the background.
+                if (step.task < 0 && step.title == QLatin1String("Ran") &&
+                    !result.value(QLatin1String("backgroundTaskId")).toString().isEmpty()) {
+                    step.title = QStringLiteral("Started in background");
+                    Task task;
+                    task.type = Task::Type::background;
+                    task.item = at;
+                    task.description = first_line(step.body);
+                    task.started_ms = step.at_ms;
+                    task.seen_ms = at_ms_;
+                    step.task = start_task(std::move(task));
+                    launches_.insert(id, step.task);
+                }
+                if (const int launched = launches_.value(id, -1); launched >= 0) {
+                    task_result(launched, result, step);
+                    // "Async agent launched", "Command running in background
+                    // with ID ...": the task's own line says it.
+                    if (!step.failed) {
+                        step.result.clear();
+                        step.result_lines = 0;
+                    }
+                } else if (const int checked = checks_.value(id, -1); checked >= 0) {
+                    auto& task = tasks_[static_cast<size_t>(checked)];
+                    ++task.checks;
+                    task.seen_ms = std::max(task.seen_ms, at_ms_);
+                    task.last_check = step.result;
+                    const bool stops = step.title == QLatin1String("Stopped task") ||
+                                       step.body == QLatin1String("KillShell");
+                    if (task.status.isEmpty() && stops && !step.failed)
+                        end_task(task, QStringLiteral("stopped"), at_ms_);
+                    changed = std::min(changed, task.item);
+                }
+                // SendMessage to a finished subagent runs it again.
+                for (const auto key : {"resumedAgentId", "revivedAgentId"})
+                    if (auto* task = task_named(result.value(QLatin1String(key)).toString())) {
+                        task->status.clear();
+                        task->ended_ms = 0;
+                        task->seen_ms = at_ms_;
+                        changed = std::min(changed, task->item);
+                    }
             }
         } else if (kind == QLatin1String("image") || kind == QLatin1String("document")) {
             if (!meta)
@@ -1504,6 +1766,8 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
         case WaitedRole:
         case ItemRole:
             return -1;
+        case TaskRole:
+            return {};
         case QueuedRole:
         case FailedRole:
         case AnsweredRole:
@@ -1523,12 +1787,361 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
     case StepsRole:
         return 0;
     default:
-        return item_data(reader_->items()[static_cast<size_t>(row.item)], row.item, role);
+        return item_data(row.item, role);
     }
 }
 
-QVariant TranscriptModel::item_data(const transcript::Item& item, int index, int role) {
+QVariant TranscriptModel::item_data(int index, int role) const {
+    if (index < 0 || std::cmp_greater_equal(index, reader_->items().size()))
+        return {};
+    const auto& item = reader_->items()[static_cast<size_t>(index)];
+    if (role != TaskRole)
+        return item_value(item, index, role);
+    if (item.task < 0 || std::cmp_greater_equal(item.task, reader_->tasks().size()))
+        return {};
+    return task_map(reader_->tasks()[static_cast<size_t>(item.task)]);
+}
+
+namespace {
+QString task_type_name(transcript::Task::Type type) {
+    switch (type) {
+    case transcript::Task::Type::background:
+        return QStringLiteral("background");
+    case transcript::Task::Type::monitor:
+        return QStringLiteral("monitor");
+    case transcript::Task::Type::subagent:
+        break;
+    }
+    return QStringLiteral("subagent");
+}
+
+// A task's roles, `running` as judged elsewhere and `steps` as counted so far.
+QVariantMap task_values(const transcript::Task& task, bool running, int steps) {
+    const auto duration = task.duration_ms > 0 ? task.duration_ms
+                          : task.ended_ms > 0  ? task.ended_ms - task.started_ms
+                                               : 0;
+    return {{QStringLiteral("type"), task_type_name(task.type)},
+            {QStringLiteral("description"), task.description},
+            {QStringLiteral("agentType"), task.agent_type},
+            {QStringLiteral("model"), task.model},
+            {QStringLiteral("since"), static_cast<double>(task.started_ms)},
+            {QStringLiteral("ended"), static_cast<double>(task.ended_ms)},
+            {QStringLiteral("running"), running},
+            {QStringLiteral("stale"), !running && task.status.isEmpty()},
+            {QStringLiteral("status"), task.status},
+            {QStringLiteral("duration"), static_cast<double>(duration)},
+            {QStringLiteral("steps"), steps},
+            {QStringLiteral("tokens"), static_cast<double>(task.tokens)},
+            {QStringLiteral("exit"), task.exited ? task.exit_code : -1},
+            {QStringLiteral("checks"), task.checks},
+            {QStringLiteral("lastCheck"), task.last_check},
+            {QStringLiteral("report"), task.report}};
+}
+
+// The tool steps a conversation made (what a subagent's "N steps" counts).
+int tool_steps(const std::vector<transcript::Item>& items) {
+    return static_cast<int>(std::ranges::count_if(items, [](const transcript::Item& item) {
+        return item.kind == transcript::Kind::tool && !item.quiet;
+    }));
+}
+
+// The last lines of a file, read from its end.
+QString file_tail(const QString& path, int lines) {
+    QFile file(path);
+    if (path.isEmpty() || !file.open(QIODevice::ReadOnly))
+        return {};
+    constexpr qint64 window = 64 * 1024;
+    if (file.size() > window)
+        file.seek(file.size() - window);
+    auto text = transcript::detail::without_escapes(QString::fromUtf8(file.readAll())).trimmed();
+    auto rows = text.split(QLatin1Char('\n'));
+    if (rows.size() > lines)
+        rows = rows.mid(rows.size() - lines);
+    return transcript::detail::clip(rows.join(QLatin1Char('\n')), transcript::result_preview_chars);
+}
+} // namespace
+
+qint64 TranscriptModel::now() const {
+    return now_ms_ > 0 ? now_ms_ : QDateTime::currentMSecsSinceEpoch();
+}
+
+QString TranscriptModel::task_file(const transcript::Task& task) const {
+    using transcript::Format;
+    using transcript::Task;
+    const QFileInfo here(path_);
+    if (path_.isEmpty())
+        return {};
+    if (task.type != Task::Type::subagent || task.id.isEmpty()) {
+        // agy names its task logs as file:// URLs.
+        return task.file.startsWith(QLatin1String("file://")) ? QUrl(task.file).toLocalFile()
+                                                              : task.file;
+    }
+    switch (format()) {
+    case Format::claude: {
+        // <session>.jsonl's subagents live in <session>/subagents/.
+        const auto own = here.dir().filePath(
+            QStringLiteral("%1/subagents/agent-%2.jsonl").arg(here.completeBaseName(), task.id));
+        return QFileInfo::exists(own) ? own : task.file;
+    }
+    case Format::antigravity: {
+        // brain/<conversation>/.system_generated/logs/transcript_full.jsonl
+        auto brain = here.dir();
+        if (!brain.cdUp() || !brain.cdUp() || !brain.cdUp())
+            return {};
+        return brain.filePath(
+            QStringLiteral("%1/.system_generated/logs/transcript_full.jsonl").arg(task.id));
+    }
+    case Format::codex: {
+        // sessions/YYYY/MM/DD/rollout-<time>-<thread>.jsonl, the child's
+        // thread its own; the parent's day first, then every day once.
+        if (const auto found = found_files_.find(task.id);
+            found != found_files_.end() && !found->isEmpty())
+            return *found;
+        const auto pattern = QStringLiteral("rollout-*-%1.jsonl").arg(task.id);
+        const auto day = here.dir().entryList({pattern}, QDir::Files);
+        if (!day.isEmpty())
+            return found_files_[task.id] = here.dir().filePath(day.first());
+        if (found_files_.contains(task.id))
+            return {};
+        auto root = here.dir();
+        QString hit;
+        if (root.cdUp() && root.cdUp() && root.cdUp()) {
+            QDirIterator files(root.path(), {pattern}, QDir::Files, QDirIterator::Subdirectories);
+            if (files.hasNext())
+                hit = files.next();
+        }
+        return found_files_[task.id] = hit;
+    }
+    }
+    return {};
+}
+
+TranscriptModel::Child* TranscriptModel::child(const QString& path, transcript::Format format) {
+    if (path.isEmpty())
+        return nullptr;
+    auto hit = std::ranges::find_if(children_, [&path](const Child& c) { return c.path == path; });
+    if (hit == children_.end()) {
+        if (!QFileInfo::exists(path))
+            return nullptr;
+        Child fresh;
+        fresh.path = path;
+        children_.insert(children_.begin(), std::move(fresh));
+        if (children_.size() > 8)
+            children_.pop_back();
+        hit = children_.begin();
+    } else if (hit != children_.begin()) {
+        std::rotate(children_.begin(), hit, hit + 1);
+        hit = children_.begin();
+    }
+    auto& entry = *hit;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return nullptr;
+    if (!entry.reader || file.size() < entry.offset) {
+        // A subagent's own file holds only its records, all sidechain.
+        entry.reader = format == transcript::Format::claude
+                           ? std::make_unique<transcript::ClaudeReader>(true)
+                           : transcript::make_reader(format);
+        entry.offset = 0;
+        entry.pending.clear();
+    }
+    if (file.size() > entry.offset && file.seek(entry.offset)) {
+        const auto bytes = file.readAll();
+        entry.offset += bytes.size();
+        feed(*entry.reader, entry.pending, bytes);
+    }
+    entry.modified_ms = QFileInfo(path).lastModified().toMSecsSinceEpoch();
+    return &entry;
+}
+
+int TranscriptModel::counted_steps(const QString& path) {
+    QFile file(path);
+    if (path.isEmpty() || !file.open(QIODevice::ReadOnly))
+        return -1;
+    auto& count = counts_[path];
+    if (file.size() < count.offset)
+        count = {};
+    if (file.size() > count.offset && file.seek(count.offset)) {
+        auto bytes = count.pending + file.readAll();
+        count.offset = file.size();
+        const auto end = bytes.lastIndexOf('\n') + 1;
+        count.pending = bytes.mid(end);
+        // Each tool call is a "tool_use" block of an assistant record; the
+        // request logs repeat them and are skipped.
+        for (qsizetype start = 0; start < end;) {
+            const auto stop = bytes.indexOf('\n', start);
+            const auto line = QByteArrayView(bytes).sliced(start, stop - start);
+            if (!line.startsWith("{\"type\":\"api-request"))
+                count.steps += static_cast<int>(line.count("\"type\":\"tool_use\""));
+            start = stop + 1;
+        }
+    }
+    return count.steps;
+}
+
+qint64 TranscriptModel::alive_ms(const transcript::Task& task) const {
+    auto alive = std::max(task.seen_ms, task.started_ms);
+    if (const auto file = task_file(task); !file.isEmpty()) {
+        const QFileInfo info(file);
+        if (info.exists())
+            alive = std::max(alive, info.lastModified().toMSecsSinceEpoch());
+    }
+    return alive;
+}
+
+bool TranscriptModel::task_running(const transcript::Task& task) const {
+    if (!task.status.isEmpty())
+        return false;
+    const auto at = static_cast<int>(&task - reader_->tasks().data());
+    if (live_tasks_.value(at).rested)
+        return false;
+    return transcript::task_running(task, alive_ms(task), now());
+}
+
+QVariantMap TranscriptModel::task_map(const transcript::Task& task) const {
+    const bool running = task_running(task);
+    const auto at = static_cast<int>(&task - reader_->tasks().data());
+    const auto live = live_tasks_.find(at);
+    const int steps =
+        running && live != live_tasks_.end() && live->steps >= 0 ? live->steps : task.steps;
+    return task_values(task, running, steps);
+}
+
+void TranscriptModel::updateRunning() {
+    const auto& tasks = reader_->tasks();
+    QVariantList next;
+    std::vector<int> moved; // steps whose task started or stopped running
+    QSet<int> was;
+    for (const auto& entry : std::as_const(running_))
+        was.insert(entry.toMap().value(QStringLiteral("item")).toInt());
+    for (size_t i = 0; i < tasks.size(); ++i) {
+        const auto& task = tasks[i];
+        if (!task.status.isEmpty() || !transcript::task_running(task, alive_ms(task), now()))
+            continue;
+        if (task.type == transcript::Task::Type::subagent &&
+            format() == transcript::Format::claude) {
+            // Claude Code says when one ends; its steps so far are counted
+            // from its file's bytes, as it grows, without reading it whole.
+            if (const int steps = counted_steps(task_file(task)); steps >= 0)
+                live_tasks_[static_cast<int>(i)] = {steps, false};
+        } else if (task.type == transcript::Task::Type::subagent) {
+            // Its own conversation, read as it grows: the steps so far, and
+            // (for CLIs that do not say when one ends) whether it came to rest.
+            if (auto* own = child(task_file(task), format())) {
+                const auto& items = own->reader->items();
+                const bool rested = format() != transcript::Format::claude && !items.empty() &&
+                                    items.back().kind == transcript::Kind::turn;
+                live_tasks_[static_cast<int>(i)] = {tool_steps(items), rested};
+                if (rested)
+                    continue;
+            }
+        }
+        auto entry = task_map(task);
+        entry.insert(QStringLiteral("item"), task.item);
+        next.append(entry);
+    }
+    QSet<int> now_running;
+    for (const auto& entry : std::as_const(next))
+        now_running.insert(entry.toMap().value(QStringLiteral("item")).toInt());
+    double since = 0;
+    if (!next.isEmpty()) {
+        since = next.first().toMap().value(QStringLiteral("since")).toDouble();
+        if (!layout_.turns.empty() && layout_.turns.back().closed)
+            since = static_cast<double>(
+                reader_->items()[static_cast<size_t>(layout_.turns.back().last)].at_ms);
+    }
+    if (next == running_ && since == waiting_since_)
+        return;
+    running_ = std::move(next);
+    waiting_since_ = since;
+    // Steps whose task started or stopped running, or counted more steps,
+    // are drawn again.
+    int first = std::numeric_limits<int>::max();
+    for (const int item : std::as_const(was))
+        first = std::min(first, item);
+    for (const int item : std::as_const(now_running))
+        first = std::min(first, item);
+    if (first != std::numeric_limits<int>::max()) {
+        int from = -1, to = -1;
+        for (size_t row = 0; row < layout_.rows.size(); ++row)
+            if (layout_.rows[row].item >= first) {
+                from = from < 0 ? static_cast<int>(row) : from;
+                to = static_cast<int>(row);
+            }
+        if (from >= 0)
+            emit dataChanged(index(from), index(to), {TaskRole});
+        if (live_steps_.rowCount() > 0)
+            showLive(first);
+    }
+    emit runningChanged();
+}
+
+void TranscriptModel::tick() { updateRunning(); }
+
+QVariantMap TranscriptModel::taskDetail(int item) {
+    QVariantMap out;
+    if (item < 0 || std::cmp_greater_equal(item, reader_->items().size()))
+        return out;
+    const int at = reader_->items()[static_cast<size_t>(item)].task;
+    if (at < 0 || std::cmp_greater_equal(at, reader_->tasks().size()))
+        return out;
+    const auto& task = reader_->tasks()[static_cast<size_t>(at)];
+    out.insert(QStringLiteral("report"), task.report);
+    if (task.type != transcript::Task::Type::subagent) {
+        auto output = file_tail(task_file(task), transcript::result_preview_lines);
+        out.insert(QStringLiteral("output"), output.isEmpty() ? task.last_check : output);
+        return out;
+    }
+    auto* own = child(task_file(task), format());
+    if (own == nullptr)
+        return out;
+    const auto& items = own->reader->items();
+    // A finished subagent's last reply is its report; the rest are its steps.
+    int report = -1;
+    if (!task.status.isEmpty() || !task_running(task))
+        for (int i = static_cast<int>(items.size()) - 1; i >= 0 && report < 0; --i)
+            if (items[static_cast<size_t>(i)].kind == transcript::Kind::reply)
+                report = i;
+    if (report >= 0)
+        out.insert(QStringLiteral("report"), items[static_cast<size_t>(report)].body);
+    QVariantList steps;
+    const auto names = role_names();
+    const auto& child_tasks = own->reader->tasks();
+    for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+        const auto& step = items[static_cast<size_t>(i)];
+        if (i == report || step.dropped || step.quiet || step.kind == transcript::Kind::prompt ||
+            step.kind == transcript::Kind::turn)
+            continue;
+        QVariantMap entry;
+        for (auto name = names.cbegin(); name != names.cend(); ++name) {
+            if (name.key() != TaskRole) {
+                entry.insert(QString::fromUtf8(name.value()), item_value(step, i, name.key()));
+            } else if (step.task >= 0 && std::cmp_less(step.task, child_tasks.size())) {
+                // One level of nesting: a subagent's own subagents are lines.
+                const auto& inner = child_tasks[static_cast<size_t>(step.task)];
+                entry.insert(QStringLiteral("task"),
+                             task_values(inner,
+                                         transcript::task_running(inner, inner.seen_ms, now()),
+                                         inner.steps));
+            } else {
+                entry.insert(QStringLiteral("task"), QVariant());
+            }
+        }
+        steps.append(entry);
+    }
+    // The newest few hundred, which is more than anyone scrolls back through.
+    constexpr qsizetype kept = 400;
+    if (steps.size() > kept)
+        steps = steps.mid(steps.size() - kept);
+    out.insert(QStringLiteral("steps"), steps);
+    out.insert(QStringLiteral("found"), true);
+    return out;
+}
+
+QVariant TranscriptModel::item_value(const transcript::Item& item, int index, int role) {
     switch (role) {
+    case TaskRole:
+        return {};
     case InWorkRole:
     case ExpandedRole:
         return false;
@@ -1588,7 +2201,17 @@ QHash<int, QByteArray> TranscriptModel::role_names() {
         {RecordRole, "record"},     {ExpandedRole, "expanded"}, {InWorkRole, "inWork"},
         {StepsRole, "steps"},       {QueuedRole, "queued"},     {AtRole, "at"},
         {DurationRole, "duration"}, {SteeredRole, "steered"},   {WaitedRole, "waited"},
-        {ItemRole, "item"}};
+        {ItemRole, "item"},         {TaskRole, "task"}};
+}
+
+QVariantMap TranscriptModel::itemEntry(int item) const {
+    QVariantMap out;
+    if (item < 0 || std::cmp_greater_equal(item, reader_->items().size()))
+        return out;
+    const auto names = role_names();
+    for (auto name = names.cbegin(); name != names.cend(); ++name)
+        out.insert(QString::fromUtf8(name.value()), item_data(item, name.key()));
+    return out;
 }
 
 LiveStepsModel::LiveStepsModel(TranscriptModel* owner) : owner_(owner) {}
@@ -1600,8 +2223,7 @@ int LiveStepsModel::rowCount(const QModelIndex& parent) const {
 QVariant LiveStepsModel::data(const QModelIndex& index, int role) const {
     if (!index.isValid() || std::cmp_greater_equal(index.row(), items_.size()))
         return {};
-    const int at = items_[static_cast<size_t>(index.row())];
-    return TranscriptModel::item_data(owner_->items()[static_cast<size_t>(at)], at, role);
+    return owner_->item_data(items_[static_cast<size_t>(index.row())], role);
 }
 
 QHash<int, QByteArray> LiveStepsModel::roleNames() const { return TranscriptModel::role_names(); }
@@ -1710,6 +2332,7 @@ void TranscriptModel::relayout(int changed) {
     if (old_size != new_size)
         emit countChanged();
     showLive(changed);
+    updateRunning();
 }
 
 void TranscriptModel::showLive(int changed) {
@@ -2406,6 +3029,7 @@ void TranscriptModel::setPath(const QString& path) {
         pending_.clear();
     }
     expanded_.clear();
+    live_tasks_.clear();
     layout_ = transcript::lay_out(reader_->items(), expanded_, live_);
     endResetModel();
     emit pathChanged();
@@ -2414,6 +3038,7 @@ void TranscriptModel::setPath(const QString& path) {
     emit countChanged();
     noteStatus();
     showLive(0);
+    updateRunning();
     notePending();
     const bool warm = !reader_->items().empty() || offset_ > 0;
     auto* watcher = findChild<QFileSystemWatcher*>();
@@ -2460,6 +3085,7 @@ void TranscriptModel::apply(std::unique_ptr<transcript::Reader> reader, qint64 o
     const bool format_changed = reader->format() != reader_->format();
     beginResetModel();
     reader_ = std::move(reader);
+    live_tasks_.clear();
     layout_ = transcript::lay_out(reader_->items(), expanded_, live_);
     offset_ = offset;
     pending_ = std::move(pending);
@@ -2469,6 +3095,7 @@ void TranscriptModel::apply(std::unique_ptr<transcript::Reader> reader, qint64 o
     emit countChanged();
     noteStatus();
     showLive(0);
+    updateRunning();
     notePending();
     if (loading_) {
         loading_ = false;
