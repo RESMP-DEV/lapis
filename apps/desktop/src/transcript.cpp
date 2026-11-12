@@ -986,28 +986,28 @@ bool dialog_showing(const QStringList& screen) {
     return true;
 }
 
-bool composer_holds(const QStringList& screen, const QString& text, Format format) {
-    const QChar mark = format == Format::claude  ? QChar(0x276F) // ❯
-                       : format == Format::codex ? QChar(0x203A) // ›
-                                                 : QLatin1Char('>');
-    const auto first_line = text.trimmed().section(QLatin1Char('\n'), 0, 0).simplified();
-    if (first_line.isEmpty())
-        return false;
-    for (qsizetype row = screen.size() - 1; row >= std::max<qsizetype>(0, screen.size() - 16);
-         --row) {
-        const auto line = screen.at(row).trimmed();
-        if (!line.startsWith(mark))
-            continue;
-        // The box's row: what follows the mark, as typed.
-        const auto held = line.mid(1).simplified();
-        const auto n = std::min<qsizetype>({first_line.size(), held.size(), 40});
-        return n > 0 && (n == first_line.size() || n >= 8) &&
-               QStringView(held).left(n) == QStringView(first_line).left(n);
-    }
-    return false;
-}
+namespace {
+// The CLI's input box as its screen rows show it: the marked row and the
+// lines it holds (blank lines kept), or row -1 when none shows.
+struct InputBox {
+    qsizetype row = -1;
+    QStringList lines;
+};
 
-QString composer_text(const QStringList& screen, Format format) {
+// Observed under tmux against Claude Code 2.1.322, Codex 0.157.1 and agy
+// 1.5.7 (apps/desktop/tests/transcript_test.cpp, input_boxes_are_read):
+// - Claude Code: "❯" between two rules, continued lines indented.
+// - Codex: "›" with continued lines indented, a blank row, then its status
+//   line ("model · folder · title") and hint row at the screen's foot. A
+//   blank line in a draft is a blank row too. Its echoed prompts' "›" and
+//   its placeholder are faint, so a typed screen drops them.
+// - agy: ">" between two rules (its echoed prompts have a rule above but
+//   none under), blank lines in a draft kept as blank rows. Its placeholder
+//   ("Auto mode: ... (shift+tab to cycle)") is a colour, not faint.
+// agy draws inline, so on a short conversation its box sits high on the
+// screen: the search starts at the lowest row with text, not the screen's
+// last row.
+InputBox input_box(const QStringList& screen, Format format) {
     const QChar mark = format == Format::claude  ? QChar(0x276F) // ❯
                        : format == Format::codex ? QChar(0x203A) // ›
                                                  : QLatin1Char('>');
@@ -1020,26 +1020,90 @@ QString composer_text(const QStringList& screen, Format format) {
         const auto trimmed = row.trimmed();
         return !trimmed.isEmpty() && trimmed.at(0) == QChar(0x2500);
     };
-    for (qsizetype row = screen.size() - 1; row >= std::max<qsizetype>(0, screen.size() - 16);
-         --row) {
+    auto last = screen.size() - 1;
+    while (last >= 0 && screen.at(last).trimmed().isEmpty())
+        --last;
+    // Codex's footer after a blank row: its hint row, its status line
+    // (items joined by " · "), or anything on the screen's last two rows,
+    // where Codex keeps them.
+    const auto codex_footer = [&](qsizetype at) {
+        const auto& text = screen.at(at);
+        return hint.match(text).hasMatch() || text.contains(QStringLiteral(" · ")) ||
+               at >= screen.size() - 2;
+    };
+    for (qsizetype row = last; row >= std::max<qsizetype>(0, last - 15); --row) {
         const auto line = screen.at(row).trimmed();
         if (!line.startsWith(mark))
             continue;
         QStringList lines{line.mid(1).trimmed()};
+        qsizetype blanks = 0;
+        bool closed = false;
         for (auto next = row + 1; next < screen.size(); ++next) {
             const auto& below = screen.at(next);
-            if (below.trimmed().isEmpty() || rule(below) || !below.startsWith(QLatin1Char(' ')) ||
-                (format == Format::codex && hint.match(below).hasMatch()))
+            if (below.trimmed().isEmpty()) {
+                // Claude Code's box ends at its rule; a blank row is past it.
+                if (format == Format::claude)
+                    break;
+                ++blanks;
+                continue;
+            }
+            if (rule(below)) {
+                closed = true;
                 break;
+            }
+            if (!below.startsWith(QLatin1Char(' ')) ||
+                (format == Format::codex &&
+                 (blanks > 0 ? codex_footer(next) : hint.match(below).hasMatch())))
+                break;
+            for (; blanks > 0; --blanks)
+                lines << QString();
             lines << below.trimmed();
         }
-        auto text = lines.join(QLatin1Char('\n')).trimmed();
-        if (format == Format::codex && (text == QLatin1String("Ask Codex to do anything") ||
-                                        text == QLatin1String("Ask a follow-up question")))
-            return {};
-        return text;
+        // agy's box is closed by a rule; a marked row without one is a
+        // prompt it echoed, and its box is not showing.
+        if (format == Format::antigravity && !closed)
+            continue;
+        return {row, lines};
     }
     return {};
+}
+
+// A CLI's placeholder in an empty input box, which the screen may not draw
+// faint.
+bool placeholder(const QString& text, Format format) {
+    static const QRegularExpression agy_mode(
+        QStringLiteral(R"(^[A-Z][A-Za-z-]* mode: .+ \(shift\+tab to cycle\)$)"));
+    switch (format) {
+    case Format::codex:
+        return text == QLatin1String("Ask Codex to do anything") ||
+               text == QLatin1String("Ask a follow-up question");
+    case Format::antigravity:
+        return agy_mode.match(text).hasMatch();
+    case Format::claude:
+        break;
+    }
+    return false;
+}
+} // namespace
+
+bool composer_holds(const QStringList& screen, const QString& text, Format format) {
+    const auto first_line = text.trimmed().section(QLatin1Char('\n'), 0, 0).simplified();
+    if (first_line.isEmpty())
+        return false;
+    const auto box = input_box(screen, format);
+    if (box.row < 0)
+        return false;
+    // The box's row: what follows the mark, as typed.
+    const auto held = box.lines.first().simplified();
+    const auto n = std::min<qsizetype>({first_line.size(), held.size(), 40});
+    return n > 0 && (n == first_line.size() || n >= 8) &&
+           QStringView(held).left(n) == QStringView(first_line).left(n);
+}
+
+QString composer_text(const QStringList& screen, Format format) {
+    const auto box = input_box(screen, format);
+    auto text = box.lines.join(QLatin1Char('\n')).trimmed();
+    return placeholder(text, format) ? QString() : text;
 }
 
 bool steer_waiting(const QStringList& screen) {

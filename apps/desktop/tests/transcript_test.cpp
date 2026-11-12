@@ -395,9 +395,17 @@ void composers_are_read() {
 // Codex's waiting steer, which its send now waits for.
 void steer_is_seen() {
     using lapis::desktop::transcript::steer_waiting;
-    require(steer_waiting({QStringLiteral("• Working (4s)"),
-                           QStringLiteral("  Messages to be submitted after next tool call"),
-                           QStringLiteral("    ↳ fix it"), QStringLiteral("› ")}) &&
+    // The rows as Codex 0.157.1 drew them under tmux.
+    require(steer_waiting({QStringLiteral("• Working (10s • esc to interrupt) · 1 background "
+                                          "terminal running · /ps to view · /stop to close"),
+                           QString(),
+                           QStringLiteral("• Messages to be submitted after next tool call "
+                                          "(press esc to interrupt and send immediately)"),
+                           QStringLiteral("  ↳ steer word apple"), QString(), QString(),
+                           QStringLiteral("› Ask Codex to do anything")}) &&
+                !steer_waiting({QStringLiteral("• Queued follow-up inputs"),
+                                QStringLiteral("  ↳ queued word cherry"),
+                                QStringLiteral("    shift+← edit last queued message")}) &&
                 !steer_waiting({QStringLiteral("  Messages to be submitted at end of turn")}),
             "Codex's waiting steer is seen, its end-of-turn queue is not one");
 }
@@ -452,6 +460,179 @@ void input_boxes_are_read() {
                          qPrintable(composer_text(c.screen, c.format)));
             ++failures;
         }
+}
+
+// The input boxes as the real CLIs drew them in a 160x50 tmux pane (Claude
+// Code 2.1.322, Codex 0.157.1, agy 1.5.7), rows copied with the folder,
+// account and model names shortened. A "typed" screen is what
+// screenLines(true) gives: faint text as spaces, so Codex's placeholder and
+// the "›" of its echoed prompts are gone. Codex keeps its box at the
+// screen's foot; agy and Claude Code draw inline, high on a short screen.
+void real_input_boxes_are_read() {
+    using lapis::desktop::transcript::composer_holds;
+    using lapis::desktop::transcript::composer_text;
+    using lapis::desktop::transcript::Format;
+    constexpr int height = 50;
+    const QString wide(160, QChar(0x2500));
+    const QString narrow(60, QChar(0x2500));
+    const auto top = [&](QStringList rows) {
+        while (rows.size() < height)
+            rows << QString();
+        return rows;
+    };
+    const auto bottom = [&](const QStringList& rows) {
+        QStringList out;
+        while (out.size() + rows.size() < height)
+            out << QString();
+        return out + rows;
+    };
+    // Codex's footer: its status line, then its hint row (the hint's text
+    // goes while a draft is in the box; the warning stays).
+    const QString status = QStringLiteral("  Model low fast · ~/project · Run sleep command");
+    const QString hint = QStringLiteral("  ? for shortcuts") + QString(118, QLatin1Char(' ')) +
+                         QStringLiteral("⚠ 1 warning · f2 to view");
+    const QString draft_hint =
+        QString(135, QLatin1Char(' ')) + QStringLiteral("⚠ 1 warning · f2 to view");
+    const QString faded_box = QStringLiteral("›") + QString(25, QLatin1Char(' '));
+    const QString agy_footer = QStringLiteral("? for shortcuts") + QString(116, QLatin1Char(' ')) +
+                               QStringLiteral("auto · Model · low");
+    struct Case {
+        const char* name;
+        Format format;
+        QStringList screen;
+        QString held;
+    };
+    const std::vector<Case> cases{
+        {"Codex idle, placeholder faded", Format::codex,
+         bottom({QStringLiteral("  Tip: Paste an image to attach it to your next message."),
+                 QString(), faded_box, QString(), status, hint}),
+         {}},
+        {"Codex idle, placeholder as text", Format::codex,
+         bottom({QStringLiteral("› Ask Codex to do anything"), QString(), status, hint}),
+         {}},
+        {"Codex one-line draft", Format::codex,
+         bottom({QStringLiteral("› say ok"), QString(), status, draft_hint}),
+         QStringLiteral("say ok")},
+        {"Codex three-line draft", Format::codex,
+         bottom({QStringLiteral("› say ok"), QStringLiteral("  second line"),
+                 QStringLiteral("  third line"), QString(), status, draft_hint}),
+         QStringLiteral("say ok\nsecond line\nthird line")},
+        {"Codex draft with a blank line", Format::codex,
+         bottom({QStringLiteral("› para one"), QString(), QStringLiteral("  para two"), QString(),
+                 status, draft_hint}),
+         QStringLiteral("para one\n\npara two")},
+        {"Codex draft with a status line of one item", Format::codex,
+         bottom({QStringLiteral("› say ok"), QString(), QStringLiteral("  Model low fast"),
+                 draft_hint}),
+         QStringLiteral("say ok")},
+        {"Codex mid-turn, steer waiting, box faded", Format::codex,
+         bottom({QStringLiteral("  Run the shell command sleep 15, then reply with the one word "
+                                "done."),
+                 QString(),
+                 QStringLiteral("• Working (10s • esc to interrupt) · 1 background terminal "
+                                "running · /ps to view · /stop to close"),
+                 QString(),
+                 QStringLiteral("• Messages to be submitted after next tool call (press esc to "
+                                "interrupt and send immediately)"),
+                 QStringLiteral("  ↳ steer word apple"), QString(), QString(), faded_box,
+                 QString(), status, hint}),
+         {}},
+        {"Codex after Escape gave a queued message back", Format::codex,
+         bottom({QStringLiteral("■ Conversation interrupted - tell the model what to do "
+                                "differently."),
+                 QString(), QStringLiteral("› queued word cherry"), QString(), status, draft_hint}),
+         QStringLiteral("queued word cherry")},
+        {"agy idle, Auto mode placeholder", Format::antigravity,
+         top({QStringLiteral("  Antigravity CLI 1.5.7"), QString(), wide,
+              QStringLiteral("> Auto mode: edits & safe commands auto-approved (shift+tab to "
+                             "cycle)"),
+              wide, agy_footer}),
+         {}},
+        {"agy placeholder on a full screen", Format::antigravity,
+         bottom({QStringLiteral("  done grape"), QString(), wide,
+                 QStringLiteral("> Auto mode: edits & safe commands auto-approved (shift+tab to "
+                                "cycle)"),
+                 wide, agy_footer}),
+         {}},
+        {"agy idle, Plan mode placeholder", Format::antigravity,
+         top({wide, QStringLiteral("> Plan mode: research & plan only (shift+tab to cycle)"), wide,
+              agy_footer}),
+         {}},
+        {"agy idle, Accept-edits mode placeholder", Format::antigravity,
+         top({wide,
+              QStringLiteral("> Accept-edits mode: file edits auto-approved (shift+tab to cycle)"),
+              wide, agy_footer}),
+         {}},
+        {"agy idle, Default mode: an empty box", Format::antigravity,
+         top({wide, QStringLiteral(">"), wide, agy_footer}), {}},
+        {"agy one-line draft", Format::antigravity,
+         top({wide, QStringLiteral("> say ok"), wide, agy_footer}), QStringLiteral("say ok")},
+        {"agy three-line draft", Format::antigravity,
+         top({wide, QStringLiteral("> say ok"), QStringLiteral("  second line"),
+              QStringLiteral("  third line"), wide, agy_footer}),
+         QStringLiteral("say ok\nsecond line\nthird line")},
+        {"agy draft with a blank line", Format::antigravity,
+         top({wide, QStringLiteral("> para one"), QString(), QStringLiteral("  para two"), wide,
+              agy_footer}),
+         QStringLiteral("para one\n\npara two")},
+        {"agy mid-turn", Format::antigravity,
+         top({narrow,
+              QStringLiteral("> Run the shell command sleep 15, then reply with the one word "
+                             "done."),
+              QString(), QStringLiteral("○ Bash(sleep 15) (ctrl+o to expand)"),
+              QStringLiteral("⣟  Running command..."), wide, QStringLiteral(">"), wide,
+              QStringLiteral("esc to cancel")}),
+         {}},
+        {"agy mid-turn with a queued message", Format::antigravity,
+         top({narrow, QStringLiteral("> Run the shell command sleep 15."), QString(),
+              QStringLiteral("○ Bash(sleep 15) (ctrl+o to expand)"),
+              QStringLiteral("⡿  Running command..."),
+              QStringLiteral("▸ queued word apple (alt+m to send immediately)"), wide,
+              QStringLiteral(">"), wide, QStringLiteral("  Press up to edit queued messages")}),
+         {}},
+        {"agy after Escape gave two queued messages back", Format::antigravity,
+         top({narrow, QStringLiteral("> Run the shell command sleep 15."), QString(),
+              QStringLiteral("● Bash(sleep 15) (ctrl+o to expand)"), QString(),
+              QStringLiteral("  ⎿  Interrupted · What should Antigravity CLI do instead?"), wide,
+              QStringLiteral("> first queued"), QStringLiteral("  second queued"), wide}),
+         QStringLiteral("first queued\nsecond queued")},
+        {"agy with no box showing, only an echoed prompt", Format::antigravity,
+         top({narrow, QStringLiteral("> say ok"), QString(),
+              QStringLiteral("● Bash(sleep 15) (ctrl+o to expand)")}),
+         {}},
+    };
+    for (const auto& c : cases)
+        if (composer_text(c.screen, c.format) != c.held) {
+            std::fprintf(stderr, "FAIL: real input box %s: got \"%s\"\n", c.name,
+                         qPrintable(composer_text(c.screen, c.format)));
+            ++failures;
+        }
+
+    // Claude Code: a queued message shows above the box with its own ❯; the
+    // box is the one that counts.
+    const auto claude_queued =
+        top({QStringLiteral("❯ Run the shell command sleep 15, then reply with the one word done."),
+             QString(), QStringLiteral("❯ reply also with the word kiwi"),
+             QStringLiteral("  ctrl+x ctrl+s to send now"), QString(),
+             QStringLiteral("✻ Fermenting… (1s · thinking)"), QString(), wide,
+             QStringLiteral("❯ "), wide, QStringLiteral("  Model · ~/project"),
+             QStringLiteral("  ⏵⏵ bypass permissions on (shift+tab to cycle)")});
+    const auto claude_draft =
+        top({wide, QStringLiteral("❯ say ok"), QStringLiteral("  second line"), wide,
+             QStringLiteral("  Model · ~/project")});
+    require(
+        !composer_holds(claude_queued, QStringLiteral("reply also with the word kiwi"),
+                        Format::claude) &&
+            composer_holds(claude_draft, QStringLiteral("say ok\nsecond line"), Format::claude) &&
+            composer_text(claude_queued, Format::claude).isEmpty(),
+        "Claude Code's real box: a queued message above it is not in it");
+    // agy's echoed prompt is not its box: a prompt it took is not "held".
+    require(!composer_holds(top({narrow, QStringLiteral("> say ok"), QString(),
+                                 QStringLiteral("● Bash(sleep 15) (ctrl+o to expand)")}),
+                            QStringLiteral("say ok"), Format::antigravity) &&
+                composer_holds(top({wide, QStringLiteral("> say ok"), wide, agy_footer}),
+                               QStringLiteral("say ok"), Format::antigravity),
+            "agy's real box, high on a short screen, and not its echoed prompt");
 }
 
 // A record that joins several sent prompts (agy delivering its queue as one
@@ -1999,6 +2180,7 @@ int main(int argc, char** argv) {
     composers_are_read();
     steer_is_seen();
     input_boxes_are_read();
+    real_input_boxes_are_read();
     merged_records_take_every_prompt();
     queue_modes_follow_settings();
     sent_prompts_are_matched();

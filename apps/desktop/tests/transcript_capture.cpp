@@ -1145,7 +1145,12 @@ int check_bubble(QQuickView& view, QQuickItem* root, TranscriptModel& model,
         var t = { mark: mark, held: "", swallow: 0, presses: 0, sends: 0 };
         t.submit = function(text) { t.sends++; if (t.swallow > 0) { t.swallow--; t.held = text } return true };
         t.press = function() { t.presses++; if (t.swallow > 0) t.swallow--; else t.held = ""; return true };
-        t.screen = function() { return ["", t.mark + " " + t.held.split("\n")[0], ""] };
+        // The box between rules, as Claude Code and agy draw it (agy's
+        // needs the rule under it).
+        t.screen = function() {
+            var rule = "─".repeat(40);
+            return ["", rule, t.mark + " " + t.held.split("\n")[0], rule, ""]
+        };
         return t;
     }))"));
     const auto send = [&](const QString& text) {
@@ -1361,7 +1366,17 @@ int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
         t.type = function(text) { t.types.push(text); t.held = text; return true };
         t.send = function(bytes) {
             t.keys.push(bytes);
-            if (bytes === "\u0015" || bytes === "\u001bm") t.held = "";
+            if (bytes === "\u001bm") t.held = "";
+            // Control-U as the CLIs take it: clears the last line, or joins
+            // an empty one to the line above.
+            if (/^\u0015+$/.test(bytes)) {
+                for (var i = 0; i < bytes.length && t.held.length > 0; i++) {
+                    var lines = t.held.split("\n");
+                    if (lines[lines.length - 1].length > 0) lines[lines.length - 1] = "";
+                    else lines.pop();
+                    t.held = lines.join("\n");
+                }
+            }
             return true
         };
         t.interrupt = function() {
@@ -1373,7 +1388,11 @@ int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
         t.screen = function() {
             var rows = ["", "  working"];
             if (t.steer) rows.push("  Messages to be submitted after next tool call");
-            rows.push(t.mark + " " + t.held);
+            // The box: its lines, then the rule under it (agy's box needs one).
+            t.held.split("\n").forEach(function(line, i) {
+                rows.push((i === 0 ? t.mark + " " : "  ") + line)
+            });
+            rows.push("─".repeat(40));
             return rows
         };
         return t;
@@ -1578,21 +1597,22 @@ int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
         root->setProperty("followUps", QVariantList());
         if (name != QLatin1String("claude")) {
             input->setProperty("text", QStringLiteral("Mine"));
-            fake.setProperty("held", QStringLiteral("left in the box"));
+            fake.setProperty("held", QStringLiteral("left in the box\nand a second line"));
             const int submits = count("submits");
             key(Qt::Key_Return, Qt::NoModifier);
             expect(count("submits") == submits &&
                        input->property("text").toString() ==
-                           QStringLiteral("left in the box\n\nMine"),
+                           QStringLiteral("left in the box\nand a second line\n\nMine"),
                    what("leftover text comes into the bar, ahead of the message, unsent"));
             wait(100);
+            // Two lines take three presses, sent at once.
             expect(fake.property("held").toString().isEmpty() &&
-                       keys().endsWith(QStringLiteral("\u0015")) &&
+                       keys().endsWith(QStringLiteral("\u0015\u0015\u0015")) &&
                        !keys().contains(QStringLiteral("\u0003")) &&
                        !keys().contains(QStringLiteral("\u0004")),
                    what("the box is cleared with Control-U only"));
             key(Qt::Key_Return, Qt::NoModifier);
-            expect(last("submits") == QStringLiteral("left in the box\n\nMine"),
+            expect(last("submits") == QStringLiteral("left in the box\nand a second line\n\nMine"),
                    what("then Return sends both"));
         }
         root->setProperty("working", false);

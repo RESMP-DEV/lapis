@@ -199,7 +199,9 @@ until you press Return again. A record that holds several sent prompts at
 once (agy's queue delivered as one input, Claude Code's queue taken whole)
 retires each of their bubbles. Reading the input box is a heuristic over the
 screen's text: the lowest row led by the box's mark, its indented
-continuation, with faint text and Codex's placeholders left out.
+continuation, with faint text and Codex's and agy's placeholders left out
+(agy's box counts only with the rule it draws under it). A long line the
+CLI wraps comes back as several lines.
 
 When the agent reads it mid-turn it moves into the thread where it was read,
 above the box, marked **Steered · read after 3 more steps** (or just

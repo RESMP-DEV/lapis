@@ -300,13 +300,20 @@ FocusScope {
             model.forgetSent(held)
         clearAgentBox(held, 0)
     }
+    // Control-U clears the cursor's line, and on an empty line joins it to
+    // the one above: a draft of n lines takes 2n - 1 presses in Codex 0.157.1,
+    // agy 1.5.7 and Claude Code 2.1.322 (a wrapped line is one), and extra
+    // presses on an empty box do nothing. So each try sends what the text
+    // left needs, at most 16 bytes (TerminalSurface::max_chord_bytes).
     function clearAgentBox(held, tries) {
-        if (!sendKeys || !sendKeys("\u0015")) {
+        const left = tries === 0 ? held : heldText()
+        const presses = Math.max(1, Math.min(16, 2 * left.split("\n").length - 1))
+        if (!sendKeys || !sendKeys("\u0015".repeat(presses))) {
             heldIgnored = held
             return
         }
         after(400, () => heldText().length === 0, null, () => {
-            if (tries + 1 < 6) {
+            if (tries + 1 < 4) {
                 clearAgentBox(held, tries + 1)
             } else {
                 heldIgnored = held

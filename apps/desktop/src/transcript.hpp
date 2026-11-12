@@ -267,18 +267,24 @@ struct Piece {
 
 // Whether the CLI's input box still holds `text` after it was sent: the
 // lowest row led by the input box's mark (Claude Code ❯, Codex ›, agy >)
-// in the screen's last 16 rows starts with the text's first line (at most
-// its first 40 characters, spaces collapsed). A sent prompt the CLI took
-// leaves an empty box (or its placeholder) there; earlier copies of the
-// text above it, as the CLI shows what was sent, do not count.
+// in the 16 rows up from the screen's lowest row with text (agy's box sits
+// high on a short conversation) starts with the text's first line (at most
+// its first 40 characters, spaces collapsed). For agy the row counts only
+// when a rule closes the box under it; its echoed prompts have none. A sent
+// prompt the CLI took leaves an empty box (or its placeholder) there;
+// earlier copies of the text above it, as the CLI shows what was sent, do
+// not count.
 enum class Format;
 [[nodiscard]] bool composer_holds(const QStringList& screen, const QString& text, Format format);
-// What the CLI's input box holds, or empty: the same lowest marked row, then
-// the rows under it that continue it (indented, up to a rule, a blank row or
-// Codex's hint row), lines kept. A placeholder (Codex's "Ask Codex to do
-// anything", "Ask a follow-up question") counts as empty. Heuristic: read
-// from text alone, so a CLI's dimmed hint the screen does not mark as faint,
-// or a row the CLI draws differently from the fixtures, can be misread.
+// What the CLI's input box holds, or empty: the same marked row, then the
+// rows under it that continue it (indented, up to a rule, Codex's hint row,
+// or after a blank row Codex's status line or the screen's last two rows),
+// lines kept: a blank line in a Codex or agy draft is a blank row. A
+// placeholder (Codex's "Ask Codex to do anything", "Ask a follow-up
+// question"; agy's "<Mode> mode: ... (shift+tab to cycle)", drawn in a
+// colour rather than faint) counts as empty. A long line the CLI wraps reads
+// as several. Heuristic, observed against the CLIs' real screens under tmux
+// (see transcript.cpp); a layout they change can be misread.
 [[nodiscard]] QString composer_text(const QStringList& screen, Format format);
 // Whether Codex shows a steering message waiting ("Messages to be submitted
 // after next tool call"), which Escape then sends at once as a new turn.
