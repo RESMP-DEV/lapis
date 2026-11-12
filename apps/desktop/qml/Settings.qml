@@ -153,10 +153,14 @@ Dialog {
         return null
     }
 
+    // A theme change lands in one frame: controls ease only their own state
+    // changes (hover, press, selection), never the switch to a new palette.
+    property bool applyingTheme: false
     function applyTheme(name) {
         const theme = themeByName(name)
         if (!theme)
             return
+        applyingTheme = true
         paletteWindow = theme.surface
         paletteSurface = theme.card
         paletteBorder = theme.border
@@ -166,6 +170,7 @@ Dialog {
         paletteSelected = theme.focused
         paletteHover = theme.hoveredCard
         paletteFault = theme.fault
+        applyingTheme = false
     }
 
     Component.onCompleted: applyTheme(currentTheme)
@@ -199,11 +204,11 @@ Dialog {
         border.color: marked || focused ? settings.paletteAccent :
                       hovered ? settings.paletteMuted : settings.paletteBorder
         Behavior on color {
-            enabled: settings.motionEnabled
+            enabled: settings.motionEnabled && !settings.applyingTheme
             ColorAnimation { duration: settings.motionDuration; easing.type: Easing.OutCubic }
         }
         Behavior on border.color {
-            enabled: settings.motionEnabled
+            enabled: settings.motionEnabled && !settings.applyingTheme
             ColorAnimation { duration: settings.motionDuration; easing.type: Easing.OutCubic }
         }
     }

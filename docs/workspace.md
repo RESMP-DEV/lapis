@@ -11,8 +11,20 @@ in order, on from a category's last agent into the next category's first, and
 Command-1 to 9 still go to the first nine categories (a category's name shows
 its shortcut on hover). The agent on the stage has a leading edge in its
 category's colour and a faint fill of it, and the shown category's name is bold
-in its full colour while the others' are quieter. Larger terminal text makes the sidebar's
-names larger too. With nothing open, the stage lists what to do next (new
+in its full colour while the others' are quieter. The sidebar is a side panel
+rather than a thin rail: 240, 260 or 288 pixels wide for the minimal, compact
+and comfortable densities (240 in the factory view), never more than 30% of the
+window, with names a step larger than the rest of the chrome and taller rows.
+Larger terminal text makes the sidebar's names, rows and width larger too; a
+long name ends in an ellipsis and shows in full on hover. While a thread (the
+visual view) covers the stage, the sidebar, the gaps around the stage, the
+stage's frame, the category selector and the strip's frames take the thread's
+theme, so the panel reads as part of the same page; with a terminal showing
+they keep the window theme. Terminals keep their own colours either way. Hover,
+press, selection and status colours ease over one short 150 ms transition; a
+change of theme, of light or dark, or between a thread and a terminal lands at
+once everywhere, with no half-way colour, and nothing eases with reduced motion
+or a zero-duration theme. With nothing open, the stage lists what to do next (new
 agent, resume, terminal, reopen, the latest conversations and the categories
 that have agents), moved with up and down and run with Return, so nothing needs
 the mouse.
@@ -446,7 +458,9 @@ macOS**, which follows the Mac's appearance as it changes, and a preview. It
 switches the thread (its replies, code,
 its steps, the bar and the menus) and the window around it (sidebar,
 strip frames, dialogs) to your last light theme of each, and back to your last
-dark ones; terminals keep their own colors. A see-through picture drawn for
+dark ones; terminals keep their own colors. While the thread shows, the sidebar
+and the frames around the stage wear the thread's theme itself, so a light
+thread has a light sidebar beside it. A see-through picture drawn for
 the other kind of page (white strokes made for a dark thread) sits on a small
 card of that kind so its lines stay visible. Charts agents draw follow the
 mode too. No key is bound to it.

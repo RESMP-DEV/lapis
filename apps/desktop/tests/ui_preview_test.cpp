@@ -1334,8 +1334,11 @@ void check_stage_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     // Dragging a card along the strip reorders it.
     const auto order = strip_ids(workspace);
     auto* last_card = item(QStringLiteral("agentTab_") + order.constLast());
-    drag_visual(window, *item(QStringLiteral("agentTab_") + order[0]),
-                last_card->mapToScene(QPointF(last_card->width() - 4, last_card->height() / 2)));
+    // The last card's far edge, or the strip's own where the card runs past it.
+    const auto strip_right = scene_rect(*item(QStringLiteral("agentTabs"))).right() - 4;
+    auto drop_at = last_card->mapToScene(QPointF(last_card->width() - 4, last_card->height() / 2));
+    drop_at.setX(qMin(drop_at.x(), strip_right));
+    drag_visual(window, *item(QStringLiteral("agentTab_") + order[0]), drop_at);
     CHECK(strip_ids(workspace).constLast() == order[0]);
     CHECK(workspace.placeAgents({order[0]}, workspace.activeCategoryId(), 0));
     CHECK(strip_ids(workspace) == order);
@@ -2706,7 +2709,10 @@ int run_sidebar_ui_tests() {
                     .value<QColor>();
         return QColor();
     };
+    // Row colours ease (the window's colorDuration); read them settled.
+    const auto settled = [&] { pump(window->property("colorDuration").toInt() + 80); };
     const auto edge = [&](const QString& id) {
+        settled();
         return QQmlProperty::read(item(QStringLiteral("sidebarAgentEdge_") + id),
                                   QStringLiteral("color"))
             .value<QColor>();
@@ -2791,6 +2797,7 @@ int run_sidebar_ui_tests() {
     // The colour shows in the group's name: full for the shown group, the
     // quieter mix for the others. No number or square precedes the name.
     const auto name_color = [&](const QString& category) {
+        settled();
         return QQmlProperty::read(item(QStringLiteral("categoryName_") + category),
                                   QStringLiteral("color"))
             .value<QColor>();
@@ -2805,7 +2812,9 @@ int run_sidebar_ui_tests() {
         auto* header = item(QStringLiteral("category_") + build);
         auto* name = item(QStringLiteral("categoryName_") + build);
         auto* title = item(QStringLiteral("sidebarTitle_renderer"));
-        CHECK(name->mapToItem(header, QPointF()).x() <= 13);
+        // A little in from the panel's edge (sidebarInset), not a rail's tight margin.
+        CHECK(name->mapToItem(header, QPointF()).x() <=
+              window->property("sidebarInset").toInt() + 1);
         CHECK(qAbs(name->mapToScene(QPointF()).x() - title->mapToScene(QPointF()).x()) <= 1);
     }
 
@@ -3362,6 +3371,107 @@ void check_settings_window(QQuickWindow& window, lapis::desktop::AppWindow& prev
     wait_popup(*dialog, false);
 }
 
+// Beside a thread the sidebar, the window around the stage and the stage's
+// frame take the thread's theme (its recessed code tone for the panel, its
+// page for the stage, its text roles); with a terminal showing they keep the
+// window theme. A change of palette lands at once, with no eased half-way
+// colour, so each check reads right after the change. Captures, when asked
+// for, show the sidebar beside a thread in three themes and beside a terminal.
+void check_sidebar_theme(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                         lapis::desktop::Config& config_model, const QTemporaryDir& directory,
+                         const QString& captures) {
+    using namespace lapis::desktop;
+    const auto item = [&window](const QString& name) {
+        auto* found = find_visual(window.contentItem(), name);
+        if (found == nullptr)
+            throw std::runtime_error("missing item " + name.toStdString());
+        return found;
+    };
+    const auto color = [](QObject* object, const char* name) {
+        return QQmlProperty::read(object, QString::fromLatin1(name)).value<QColor>();
+    };
+    auto* rail = item(QStringLiteral("categoryRail"));
+    auto* stage = item(QStringLiteral("focusedPane"));
+    auto* view = item(QStringLiteral("visualView"));
+    auto* focused = workspace.focusedAgent();
+    CHECK(focused != nullptr);
+    auto* title = item(QStringLiteral("sidebarTitle_") + focused->agentId());
+
+    // The side panel's size: about 240/260/288 px by density at the default
+    // text size, never over 30% of the window.
+    const int rail_width = window.property("railWidth").toInt();
+    CHECK(rail_width >= 240 && rail_width <= 420);
+    CHECK(rail_width <= qRound(window.width() * 0.3));
+    CHECK(qAbs(rail->width() - rail_width) <= 1);
+    CHECK(window.property("sidebarFont").toInt() > window.property("chromeFont").toInt());
+    CHECK(window.property("sidebarRowHeight").toInt() >= 26);
+
+    // A terminal: the window theme.
+    CHECK(!view->isVisible());
+    CHECK(color(rail, "color") == window.property("surfaceColor").value<QColor>());
+    CHECK(color(&window, "color") == window.property("backgroundColor").value<QColor>());
+    CHECK(color(title, "color") == window.property("textColor").value<QColor>());
+
+    // A thread on the stage, with some conversation in it.
+    const auto path = directory.filePath(QStringLiteral("sidebar-thread.jsonl"));
+    QFile file(path);
+    CHECK(file.open(QIODevice::WriteOnly));
+    for (const char* line : kSettingsThread)
+        file.write(QByteArray(line) + '\n');
+    file.close();
+    auto* model = qobject_cast<TranscriptModel*>(workspace.transcript());
+    CHECK(model != nullptr);
+    model->setPath(path);
+    model->loadNow();
+    struct Expected {
+        const char* theme;
+        const char* panel; // the theme's code tone
+        const char* page;
+        const char* text;
+        const char* border;
+        bool light;
+    };
+    const Expected themes[] = {{"codex", "#111111", "#181818", "#ececec", "#303030", false},
+                               {"tokyo-night", "#16161e", "#1a1b26", "#c0caf5", "#292e42", false},
+                               {"claude-light", "#f1efe7", "#faf9f5", "#29261b", "#e2dfd4", true}};
+    view->setProperty("visible", true);
+    for (const auto& expected : themes) {
+        CHECK(config_model.setVisual(QStringLiteral("theme"), QString::fromLatin1(expected.theme)));
+        // No pump: the palette is already in place.
+        CHECK(color(rail, "color") == QColor(QString::fromLatin1(expected.panel)));
+        CHECK(color(&window, "color") == QColor(QString::fromLatin1(expected.panel)));
+        CHECK(color(stage, "color") == QColor(QString::fromLatin1(expected.page)));
+        // A hairline in the thread's border colour, not the focus accent.
+        CHECK(QQmlProperty::read(stage, QStringLiteral("border.color")).value<QColor>() ==
+              QColor(QString::fromLatin1(expected.border)));
+        CHECK(color(title, "color") == QColor(QString::fromLatin1(expected.text)));
+        CHECK((color(rail, "color").lightnessF() > 0.5) == expected.light);
+        // Readable: the names stand well apart from the panel.
+        CHECK(qAbs(color(title, "color").lightnessF() - color(rail, "color").lightnessF()) > 0.5);
+        pump(300);
+        if (!captures.isEmpty())
+            CHECK(window.grabWindow().save(QDir(captures).filePath(
+                QStringLiteral("sidebar-") + QString::fromLatin1(expected.theme) +
+                QStringLiteral(".png"))));
+    }
+
+    // Back to a terminal: the window theme again, at once.
+    CHECK(config_model.setVisual(QStringLiteral("theme"), QStringLiteral("codex")));
+    view->setProperty("visible", false);
+    CHECK(color(rail, "color") == window.property("surfaceColor").value<QColor>());
+    // A terminal with the keyboard keeps the accent frame.
+    CHECK(QQmlProperty::read(stage, QStringLiteral("border.color")).value<QColor>() ==
+          window.property("focusedBorderColor").value<QColor>());
+    CHECK(color(&window, "color") == window.property("backgroundColor").value<QColor>());
+    CHECK(color(title, "color") == window.property("textColor").value<QColor>());
+    pump(300);
+    if (!captures.isEmpty())
+        CHECK(window.grabWindow().save(
+            QDir(captures).filePath(QStringLiteral("sidebar-terminal.png"))));
+    model->setPath(QString());
+    CHECK(config_model.setVisual(QStringLiteral("theme"), QStringLiteral("terminal")));
+}
+
 // Light mode and the Settings window, on a config of its own.
 int run_settings_window_tests() {
     using namespace lapis::desktop;
@@ -3385,6 +3495,7 @@ int run_settings_window_tests() {
     pump(80);
     const auto captures = qEnvironmentVariable("LAPIS_SETTINGS_CAPTURE_DIR");
     check_appearance_toggle(*window, workspace, config_model, directory, captures);
+    check_sidebar_theme(*window, workspace, config_model, directory, captures);
     check_settings_window(*window, preview, config_model, captures);
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;

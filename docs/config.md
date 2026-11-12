@@ -92,7 +92,8 @@ thread theme is light when its name ends in `-light`; of the window themes,
 `daylight` is light. Choosing a theme of the other kind switches the mode to
 that kind. `theme` and the top-level `theme` record what shows now. A file
 without `appearance` shows what it did before, as dark or light by its thread
-theme.
+theme. While a thread covers the stage, the sidebar and the frames around the
+stage follow the thread's theme rather than the window's.
 
 ```json
 "visual": {"appearance": "system", "darkTheme": "terminal", "lightTheme": "claude-light", "darkWindowTheme": "oled", "lightWindowTheme": "daylight"}
