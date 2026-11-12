@@ -331,6 +331,20 @@ FocusScope {
         const file = ["Read", "Edited", "Wrote", "Deleted", "Viewed image"].indexOf(entry.title) >= 0
         return file && first.indexOf("/") >= 0 ? first.slice(first.lastIndexOf("/") + 1) : first
     }
+    // A thought's first sentence, as plain words (its markdown marks gone),
+    // for the one dim line it folds to; empty when it has no text.
+    function thoughtLine(text) {
+        const plain = (text || "").replace(/[*_`#>]+/g, "").trim()
+        const line = plain.split("\n")[0].trim()
+        const sentence = /^(.+?[.!?])(\s|$)/.exec(line)
+        return sentence ? sentence[1] : line
+    }
+    // A thought's text styled as markdown, a step smaller than replies.
+    readonly property var thoughtStyle: ({ sans: sansFamily, mono: monoFamily, size: stepSize,
+                                           codeSize: codeSize - 1, codeColor: codeColor,
+                                           linkColor: accentColor, inlineCodeColor: inlineCodeColor,
+                                           inlineCodeTextColor: mutedTextColor,
+                                           borderColor: borderColor, quoteColor: mutedTextColor })
     // Subagents and background tasks (a step's `task`): what follows the
     // step's target on its line, " · "-joined: its type and model (in the
     // running strip), how long it ran or has run, its steps or how it ended.
@@ -1285,6 +1299,8 @@ FocusScope {
             objectName: "step"
             readonly property var entry: parent ? parent.entry : null
             readonly property bool thinking: entry && entry.kind === "thinking"
+            // A thought folds to its first sentence, dimmed, in place of "Thought".
+            readonly property string thought: thinking ? root.thoughtLine(entry.body) : ""
             readonly property bool edit: entry && entry.diff.length > 0
             readonly property bool command: entry && entry.title === "Ran"
             // A subagent or background task this step started.
@@ -1319,9 +1335,11 @@ FocusScope {
                     }
                     Text {
                         id: verb
+                        visible: text.length > 0
                         anchors.verticalCenter: parent.verticalCenter
                         // "Subagent · <description>", "Started in background · <command>"
-                        text: step.entry ? step.entry.title + (step.task ? " ·" : "") : ""
+                        text: !step.entry || step.thought.length > 0 ? ""
+                              : step.entry.title + (step.task ? " ·" : "")
                         color: step.entry && step.entry.failed ? root.faultColor
                              : hover.containsMouse ? root.textColor : root.mutedTextColor
                         font.family: root.sansFamily
@@ -1333,11 +1351,15 @@ FocusScope {
                         anchors.verticalCenter: parent.verticalCenter
                         width: Math.min(implicitWidth, parent.width - verb.width - counts.width - took.width
                                                        - taskInfo.width - chevron.width - 42)
-                        text: step.entry && !step.thinking ? step.entry.body.split("\n")[0] : ""
+                        text: step.thinking ? step.thought
+                              : step.entry ? step.entry.body.split("\n")[0] : ""
                         elide: Text.ElideRight
-                        color: step.entry && step.entry.failed ? root.tint(root.faultColor, 0.85) : root.tint(root.textColor, 0.82)
-                        // A subagent's description and what a monitor watches read as prose.
-                        readonly property bool prose: !!step.task && step.task.type !== "background"
+                        color: step.thinking ? (hover.containsMouse ? root.textColor : root.tint(root.mutedTextColor, 0.9))
+                             : step.entry && step.entry.failed ? root.tint(root.faultColor, 0.85) : root.tint(root.textColor, 0.82)
+                        // A thought, a subagent's description and what a monitor
+                        // watches read as prose.
+                        readonly property bool prose: step.thinking
+                                                      || (!!step.task && step.task.type !== "background")
                         font.family: prose ? root.sansFamily : root.monoFamily
                         font.pixelSize: prose ? root.stepSize : root.codeSize
                     }
@@ -1365,8 +1387,8 @@ FocusScope {
                         id: took
                         // Hidden it has no text, so no width: a Row skips it,
                         // and the target's width can count it either way.
-                        visible: step.entry !== null && !step.thinking && !step.task
-                                 && step.entry.duration >= 1000
+                        visible: step.entry !== null && (!step.thinking || step.thought.length > 0)
+                                 && !step.task && step.entry.duration >= 1000
                         anchors.verticalCenter: parent.verticalCenter
                         text: visible ? root.durationLabel(step.entry.duration) : ""
                         color: root.tint(root.mutedTextColor, 0.75)
@@ -1397,12 +1419,33 @@ FocusScope {
     }
 
     // What an opened step shows: its description, its command, its diff,
-    // its output, or its thinking; an interim reply or note in full.
-    component StepDetail: Column {
-        id: detail
+    // its output, or its thinking; an interim reply or note in full. It sits
+    // a little in from its title row on a thin rule, a small gap under that
+    // row and a larger one before the next step, so it reads as that step's.
+    component StepDetail: Item {
+        id: stepDetail
         property var entry: null
         // Opened inside a subagent's own steps: its subagents stay lines.
         property bool nested: false
+        readonly property int gapAbove: 2
+        readonly property int gapBelow: Math.round(root.stepSize * 0.8)
+        implicitHeight: detail.height + gapAbove + gapBelow
+        height: implicitHeight
+        Rectangle {
+            objectName: "detailRule"
+            x: 3
+            y: stepDetail.gapAbove
+            width: 1
+            height: detail.height
+            color: root.borderColor
+        }
+        Column {
+        id: detail
+        x: Math.round(root.stepSize * 0.85)
+        y: stepDetail.gapAbove
+        width: stepDetail.width - x
+        readonly property var entry: stepDetail.entry
+        readonly property bool nested: stepDetail.nested
         readonly property bool thinking: entry !== null && entry.kind === "thinking"
         readonly property bool tool: entry !== null && entry.kind === "tool"
         readonly property bool edit: tool && entry.diff.length > 0
@@ -1497,12 +1540,34 @@ FocusScope {
             textColor: detail.tool && detail.entry.failed ? root.faultColor : root.tint(root.textColor, 0.75)
         }
         Selectable {
-            visible: detail.entry !== null && !detail.tool
+            visible: detail.entry !== null && !detail.tool && !detail.thinking
             width: parent.width
             text: !detail.entry ? "" : detail.entry.kind === "notice" || detail.entry.kind === "divider"
                                        ? detail.entry.title : detail.entry.body
-            color: detail.thinking ? root.mutedTextColor : root.tint(root.textColor, 0.9)
+            color: root.tint(root.textColor, 0.9)
             font.pixelSize: root.stepSize
+        }
+        // A thought in full, dim, its markdown laid out as replies are, a
+        // step smaller.
+        Selectable {
+            id: thoughtText
+            objectName: "thoughtText"
+            readonly property string source: detail.thinking ? detail.entry.body : ""
+            function restyle() {
+                if (root.model && source.length > 0)
+                    root.model.style(textDocument, source, root.thoughtStyle)
+            }
+            visible: source.length > 0
+            width: parent.width
+            textFormat: TextEdit.RichText
+            color: root.mutedTextColor
+            onSourceChanged: restyle()
+            Component.onCompleted: restyle()
+            Connections {
+                target: root
+                function onStyleKeyChanged() { thoughtText.restyle() }
+            }
+        }
         }
     }
 
@@ -1516,7 +1581,8 @@ FocusScope {
         property bool withKind: false // a subagent's type and model too
         signal clicked()
         readonly property var task: entry && entry.task ? entry.task : null
-        readonly property bool prose: entry !== null && (entry.kind === "reply"
+        readonly property string thought: entry && entry.kind === "thinking" ? root.thoughtLine(entry.body) : ""
+        readonly property bool prose: entry !== null && (entry.kind === "reply" || thought.length > 0
                                                          || (task !== null && task.type !== "background"))
         height: root.liveLineHeight
         Rectangle {
@@ -1547,7 +1613,7 @@ FocusScope {
                 id: stepLineVerb
                 visible: text.length > 0
                 anchors.verticalCenter: parent.verticalCenter
-                text: !stepLine.entry || stepLine.entry.kind === "reply" ? ""
+                text: !stepLine.entry || stepLine.entry.kind === "reply" || stepLine.thought.length > 0 ? ""
                       : stepLine.entry.title + (stepLine.task ? " ·" : "")
                 color: stepLine.entry && stepLine.entry.failed ? root.faultColor : root.mutedTextColor
                 font.family: root.sansFamily
@@ -1557,10 +1623,11 @@ FocusScope {
                 visible: text.length > 0
                 anchors.verticalCenter: parent.verticalCenter
                 width: Math.min(implicitWidth, parent.width - stepLineVerb.width - stepLineInfo.width - 24)
-                text: root.stepTarget(stepLine.entry)
+                text: stepLine.thought.length > 0 ? stepLine.thought : root.stepTarget(stepLine.entry)
                 elide: Text.ElideRight
                 textFormat: Text.PlainText
-                color: root.tint(root.textColor, stepLine.prose ? 0.78 : 0.82)
+                color: stepLine.thought.length > 0 ? root.tint(root.mutedTextColor, 0.85)
+                     : root.tint(root.textColor, stepLine.prose ? 0.78 : 0.82)
                 font.family: stepLine.prose ? root.sansFamily : root.monoFamily
                 font.pixelSize: stepLine.prose ? root.stepSize - 1 : root.codeSize - 1
             }
@@ -1971,6 +2038,7 @@ FocusScope {
                     footer: Text {
                         readonly property bool shown: root.model !== null && root.model.format === "claude"
                                                       && (liveList.count === 0 || root.liveLastAnswered)
+                                                      && !root.liveLastThought
                         width: liveList.width
                         height: shown || liveList.count === 0 ? root.liveLineHeight : 0
                         leftPadding: 12
@@ -1997,12 +2065,42 @@ FocusScope {
                         required property int item
                         required property var task
                         readonly property bool opened: root.liveOpenItem === item
-                        readonly property bool openable: kind !== "tool" || !!task || result.length > 0
+                        // A thought shows its own words, dimmed: the newest,
+                        // while it is the box's last line, flows over up to
+                        // all lines but one (its latest lines in view); an
+                        // older one is its first sentence.
+                        readonly property bool thinking: kind === "thinking"
+                        readonly property bool flowing: thinking && body.length > 0
+                                                        && index === liveList.count - 1
+                        readonly property bool openable: kind === "thinking" ? body.length > 0
+                                                         : kind !== "tool" || !!task || result.length > 0
                                                          || detail.length > 0 || diff.length > 0
                                                          || title === "Ran" || body.indexOf("\n") >= 0
                                                          || body.indexOf("/") >= 0
                         width: liveList.width
-                        height: root.liveLineHeight
+                        height: flowing ? Math.min(Math.max(1, flow.lineCount), root.liveBoxLines - 1)
+                                          * root.liveLineHeight
+                                        : root.liveLineHeight
+                        clip: flowing
+                        Text {
+                            id: flow
+                            objectName: "thoughtFlow"
+                            visible: line.flowing
+                            x: 12
+                            width: parent.width - 24
+                            // Its newest lines at the bottom, earlier ones cut
+                            // at the top.
+                            y: parent.height - height
+                            text: line.flowing ? line.body.replace(/[*_`#>]+/g, "") : ""
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                            lineHeightMode: Text.FixedHeight
+                            lineHeight: root.liveLineHeight
+                            verticalAlignment: Text.AlignVCenter
+                            color: root.tint(root.mutedTextColor, 0.85)
+                            font.family: root.sansFamily
+                            font.pixelSize: root.stepSize - 1
+                        }
                         Rectangle {
                             anchors.fill: parent
                             anchors.leftMargin: 4
@@ -2017,6 +2115,7 @@ FocusScope {
                             onClicked: root.liveOpenItem = line.opened ? -1 : line.item
                         }
                         Row {
+                            visible: !line.flowing
                             anchors.verticalCenter: parent.verticalCenter
                             x: 12
                             width: parent.width - 24
@@ -2031,7 +2130,8 @@ FocusScope {
                                 id: lineVerb
                                 visible: text.length > 0
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: line.kind === "reply" ? "" : line.title + (line.task ? " ·" : "")
+                                text: line.kind === "reply" || (line.thinking && line.body.length > 0) ? ""
+                                      : line.title + (line.task ? " ·" : "")
                                 color: line.failed ? root.faultColor : root.mutedTextColor
                                 font.family: root.sansFamily
                                 font.pixelSize: root.stepSize - 1
@@ -2042,12 +2142,13 @@ FocusScope {
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: Math.min(implicitWidth, parent.width - lineVerb.width - lineCounts.width
                                                 - lineTook.width - lineChevron.width - 46)
-                                text: root.stepTarget(line)
+                                text: line.thinking ? root.thoughtLine(line.body) : root.stepTarget(line)
                                 elide: Text.ElideRight
                                 textFormat: Text.PlainText
-                                color: line.kind === "reply" ? root.tint(root.textColor, 0.78)
+                                color: line.thinking ? root.tint(root.mutedTextColor, 0.85)
+                                     : line.kind === "reply" ? root.tint(root.textColor, 0.78)
                                      : root.tint(root.textColor, 0.82)
-                                readonly property bool prose: line.kind === "reply"
+                                readonly property bool prose: line.kind === "reply" || line.thinking
                                                               || (!!line.task && line.task.type !== "background")
                                 font.family: prose ? root.sansFamily : root.monoFamily
                                 font.pixelSize: prose ? root.stepSize - 1 : root.codeSize - 1
@@ -2066,7 +2167,8 @@ FocusScope {
                                 visible: text.length > 0
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: line.task ? root.taskLine(line.task, false).slice(1)
-                                      : line.kind === "tool" && line.duration >= 1000 ? root.durationLabel(line.duration) : ""
+                                      : (line.kind === "tool" || (line.thinking && line.body.length > 0))
+                                        && line.duration >= 1000 ? root.durationLabel(line.duration) : ""
                                 color: root.tint(root.mutedTextColor, 0.75)
                                 font.family: root.sansFamily
                                 font.pixelSize: root.stepSize - 2
@@ -2117,9 +2219,12 @@ FocusScope {
     }
     // The newest step in the box is done (or is not a tool call).
     property bool liveLastAnswered: false
+    // ...and is a thought with words, already flowing in the box.
+    property bool liveLastThought: false
     function checkLiveLast() {
         const last = liveSteps && liveSteps.count > 0 ? liveSteps.entry(liveSteps.count - 1) : null
         liveLastAnswered = last !== null && (last.kind !== "tool" || last.answered)
+        liveLastThought = last !== null && last.kind === "thinking" && last.body.length > 0
     }
     Connections {
         target: root.liveSteps

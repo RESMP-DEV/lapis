@@ -24,6 +24,10 @@ void add_lines(Item& item, QChar sign, const QString& text);
 // Sets a step's output: escapes removed, trimmed, its lines counted and the
 // preview bounded as for every CLI.
 void set_result(Item& item, const QString& output);
+// A thought as the view shows it: trimmed, runs of blank lines one paragraph
+// break, and agy's stock opening ("I'm thinking through how to approach
+// this.") dropped, so a thought of only that is empty.
+[[nodiscard]] QString thought_text(QString text);
 // Thinking and tool steps are drawn tight against one another.
 [[nodiscard]] bool is_step(Kind kind);
 // ms since the epoch for an ISO 8601 time ("2026-11-10T20:21:33Z", with or

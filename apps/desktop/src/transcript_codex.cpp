@@ -258,7 +258,7 @@ void CodexReader::item(const QJsonObject& item, qint64 started_ms, qint64 comple
             timed(make(Kind::thinking,
                        ms >= 1000 ? QStringLiteral("Thought for %1").arg(duration_text(ms))
                                   : QStringLiteral("Thought"),
-                       clip(text, body_chars)));
+                       clip(thought_text(text), body_chars)));
         thought.duration_ms = ms;
         push(std::move(thought));
     } else if (type == QLatin1String("CommandExecution")) {

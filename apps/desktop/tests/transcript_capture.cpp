@@ -554,10 +554,14 @@ int check_work(QQuickView& view, QQuickItem* root, TranscriptModel& model, const
     return failures == 0 ? 0 : 1;
 }
 
-// --open: the newest step whose verb starts with `verb` opened, in the live
-// box while it shows, else in its opened "Worked for", and shot there.
+// --open: the newest step whose verb starts with `verb` opened (the oldest
+// in its "Worked for" with a leading ^), in the live box while it shows,
+// else in its opened "Worked for", and shot there.
 QImage open_step(QQuickView& view, QQuickItem* root, TranscriptModel& model, QObject* list,
-                 const QString& verb) {
+                 QString verb) {
+    const bool oldest = verb.startsWith(QLatin1Char('^'));
+    if (oldest)
+        verb.remove(0, 1);
     const auto& steps = model.liveStepsModel();
     for (int row = steps.rowCount() - 1; row >= 0; --row)
         if (steps.data(steps.index(row), TranscriptModel::TitleRole).toString().startsWith(verb)) {
@@ -572,11 +576,15 @@ QImage open_step(QQuickView& view, QQuickItem* root, TranscriptModel& model, QOb
             QLatin1String("work"))
             continue;
         model.toggleWork(work);
-        for (int row = model.rowCount() - 1; row > work; --row) {
+        std::vector<int> matches;
+        for (int row = work + 1; row < model.rowCount(); ++row) {
             const auto index = model.index(row);
-            if (!model.data(index, TranscriptModel::InWorkRole).toBool() ||
-                !model.data(index, TranscriptModel::TitleRole).toString().startsWith(verb))
-                continue;
+            if (model.data(index, TranscriptModel::InWorkRole).toBool() &&
+                model.data(index, TranscriptModel::TitleRole).toString().startsWith(verb))
+                matches.push_back(row);
+        }
+        if (!matches.empty()) {
+            const int row = oldest ? matches.front() : matches.back();
             QMetaObject::invokeMethod(list, "positionViewAtIndex", Q_ARG(int, row),
                                       Q_ARG(int, 3 /* ListView.Center */));
             settle();

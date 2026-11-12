@@ -450,8 +450,10 @@ int AntigravityReader::add(const QByteArray& line) {
             return -1;
         if (!turn_open_)
             wake(QStringLiteral("The agent continued"));
+        // A thought of only agy's stock line stays a step with no text.
         if (!thinking.isEmpty())
-            push(make(Kind::thinking, QStringLiteral("Thought"), clip(thinking, body_chars)));
+            push(make(Kind::thinking, QStringLiteral("Thought"),
+                      clip(thought_text(thinking), body_chars)));
         if (!reply.isEmpty())
             push(make(Kind::reply, {}, clip(reply, body_chars)));
         for (const auto& value : calls)

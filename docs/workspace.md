@@ -108,6 +108,17 @@ the turn folds as above. While the conversation compacts (a `/compact`, or
 Claude Code's own when the context fills) the line reads **Compacting
 conversation for 1m 3s** with nothing under it.
 
+The model's thinking shows dimmed as it goes. While the newest step is a
+thought, it fills the rest of the box with its last lines (the box does not
+grow); an older thought is one dim line with its first sentence. In an opened
+"Worked for" a thought is the same one line with how long it took, and it opens
+to the whole thought as dim prose. A thought the CLI saved empty, or that is
+only agy's stock "I'm thinking through how to approach this.", is a plain
+**Thought** line that does not open; that stock line is also dropped from the
+front of a real thought, and runs of blank lines fold to one. An opened step
+(thought, command output, diff) sits a little in from the thread behind a thin
+rule, with more room below it than above.
+
 Subagents and background tasks are steps of their own. A subagent is one line,
 **Subagent · Map the lexer · 4m 10s · 23 steps**, running (with a dot) or done;
 clicking it opens how it went (its type, model, tokens), what it was asked, its

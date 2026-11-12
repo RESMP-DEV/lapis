@@ -639,6 +639,31 @@ void antigravity_subagent_rests() {
     model.tick();
     require(model.running().size() == 1, "agy: one at rest has ended");
 }
+// Thoughts as recorded: agy's stock opening dropped (a thought of only it
+// has no text), blank-line runs one paragraph break, for agy and Codex.
+void thoughts_are_clean() {
+    AntigravityReader agy;
+    for (
+        const char* line : {
+            R"({"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T16:00:00Z","content":"<USER_REQUEST>\nGo\n</USER_REQUEST>"})",
+            R"({"step_index":1,"type":"PLANNER_RESPONSE","created_at":"2026-11-11T16:00:01Z","thinking":"I'm thinking through how to approach this.\n\n\n\n**Plan**\n\n\n\nFirst look.\n  \n\nThen fix.\n\n"})",
+            R"({"step_index":2,"type":"PLANNER_RESPONSE","created_at":"2026-11-11T16:00:02Z","thinking":"I'm thinking through how to approach this."})",
+        })
+        (void)agy.add(line);
+    const auto& items = agy.items();
+    require(items.size() == 3 && items[1].kind == Kind::thinking &&
+                items[1].body == "**Plan**\n\nFirst look.\n\nThen fix.",
+            "agy: the stock opening goes, blank lines collapse");
+    require(items.size() == 3 && items[2].kind == Kind::thinking && items[2].body.isEmpty() &&
+                items[2].title == "Thought",
+            "agy: a thought of only the stock line is a step with no text");
+    CodexReader codex;
+    (void)codex.add(
+        R"({"timestamp":"2026-11-11T16:00:00.000Z","type":"event_msg","payload":{"type":"item_completed","started_at_ms":1794412800000,"completed_at_ms":1794412806000,"item":{"type":"Reasoning","id":"r","summary_text":["**Plan**\n\n\n\nRead first."]}}})");
+    require(codex.items().size() == 1 && codex.items()[0].body == "**Plan**\n\nRead first." &&
+                codex.items()[0].duration_ms == 6000,
+            "codex: a summary's blank lines collapse, its time kept");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -655,6 +680,7 @@ int main(int argc, char** argv) {
     codex_subagents_and_background();
     antigravity_subagents_and_background();
     antigravity_subagent_rests();
+    thoughts_are_clean();
     live_box_grows(kCodex, QStringLiteral("rollout-2026-11-10T10-00-00-live.jsonl"),
                    QStringLiteral("Also check the footer"));
     live_box_grows(kAntigravity, QStringLiteral("logs/transcript_full.jsonl"), {});

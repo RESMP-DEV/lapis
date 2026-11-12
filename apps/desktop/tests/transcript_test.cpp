@@ -1655,6 +1655,16 @@ void tasks_resume_and_end() {
             "a command that ran long becomes a background task from its start");
     require(tasks[1].status == "stopped", "a new session ends the commands left open");
 }
+// A Claude Code thought: trimmed, blank-line runs one break, its time kept.
+void thoughts_are_clean() {
+    ClaudeReader reader;
+    (void)reader.add(
+        R"({"type":"assistant","thinkingDurationMs":6400,"message":{"content":[{"type":"thinking","thinking":"\n\nRead the parser.\n\n\n\nThen split it.\n\n"}]}})");
+    const auto& items = reader.items();
+    require(items.size() == 1 && items[0].body == "Read the parser.\n\nThen split it." &&
+                items[0].duration_ms == 6400 && items[0].title == "Thought for 6s",
+            "a Claude thought is clean and timed");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1693,6 +1703,7 @@ int main(int argc, char** argv) {
     math_is_styled();
     subagents_and_background_work();
     tasks_resume_and_end();
+    thoughts_are_clean();
     if (failures == 0)
         std::puts("transcript: all checks passed");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

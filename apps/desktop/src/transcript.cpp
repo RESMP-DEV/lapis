@@ -153,6 +153,18 @@ void set_result(Item& item, const QString& output) {
         clip(lines.mid(0, result_preview_lines).join(QLatin1Char('\n')), result_preview_chars);
 }
 
+QString thought_text(QString text) {
+    text = text.trimmed();
+    // agy opens many thoughts with this line (and blank lines) before the
+    // real text, and some are only this line.
+    for (const auto& stock : {QStringLiteral("I'm thinking through how to approach this."),
+                              QStringLiteral("I’m thinking through how to approach this.")})
+        if (text.startsWith(stock))
+            text = text.mid(stock.size()).trimmed();
+    static const QRegularExpression blanks(QStringLiteral(R"(\n[ \t]*(?:\n[ \t]*)+)"));
+    return text.replace(blanks, QStringLiteral("\n\n"));
+}
+
 bool is_step(Kind kind) { return kind == Kind::tool || kind == Kind::thinking; }
 
 qint64 time_ms(const QString& stamp) {
@@ -1570,7 +1582,7 @@ int ClaudeReader::add(const QByteArray& line) {
                 Kind::thinking,
                 thought_ms > 0 ? QStringLiteral("Thought for %1").arg(duration_text(thought_ms))
                                : QStringLiteral("Thought"),
-                clip(block.value(QLatin1String("thinking")).toString().trimmed(), body_chars));
+                clip(thought_text(block.value(QLatin1String("thinking")).toString()), body_chars));
             thought.duration_ms = thought_ms;
             push(std::move(thought));
         } else if (kind == QLatin1String("tool_use")) {
