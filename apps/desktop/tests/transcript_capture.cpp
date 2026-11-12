@@ -6,6 +6,7 @@
 //
 //   lapis_transcript_capture --jsonl FILE --out SHEET.png [--bench]
 //   lapis_transcript_capture --jsonl FILE --send PROMPT --then RECORDS [--out PREFIX]
+#include "harness_models.hpp"
 #include "media_actions.hpp"
 #include "transcript.hpp"
 
@@ -2495,6 +2496,186 @@ int bench_switch(QQuickView& view, TranscriptModel& model, QObject* list, const 
     }
     return 0;
 }
+
+// --picker-checks: an agy agent on Gemini 4 Argon (Medium), as its records
+// say, and the bar's model picker over `agy models` as agy 1.5.7 lists it
+// plus a family and a level no lapis code names (Gemini 5 Neon, Ultra).
+const char* const kPickerRecord =
+    R"({"step_index":0,"type":"USER_INPUT","created_at":"2026-11-12T16:00:00Z","content":"<USER_REQUEST>hi</USER_REQUEST><USER_SETTINGS_CHANGE>The user changed setting `Model Selection` from None to Gemini 4 Argon (Medium). </USER_SETTINGS_CHANGE>"})";
+const char* const kPickerListing = "gemini-4-carbon-medium\tGemini 4 Carbon (Medium)\n"
+                                   "gemini-4-carbon-high\tGemini 4 Carbon (High)\n"
+                                   "gemini-4-carbon-low\tGemini 4 Carbon (Low)\n"
+                                   "gemini-4-argon-medium\tGemini 4 Argon (Medium)\n"
+                                   "gemini-4-argon-high\tGemini 4 Argon (High)\n"
+                                   "gemini-4-argon-low\tGemini 4 Argon (Low)\n"
+                                   "gemini-4-hydrogen-high\tGemini 4 Hydrogen (High)\n"
+                                   "gemini-4-hydrogen-xhigh\tGemini 4 Hydrogen (XHigh)\n"
+                                   "gemini-4-hydrogen-medium\tGemini 4 Hydrogen (Medium)\n"
+                                   "gemini-4-hydrogen-low\tGemini 4 Hydrogen (Low)\n"
+                                   "gemini-pro-orchestrator\tOrchestrator\n"
+                                   "gemini-3.8-flash-high\tGemini 3.8 Flash (High)\n"
+                                   "gemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)\n"
+                                   "gemini-3.8-flash-low\tGemini 3.8 Flash (Low)\n"
+                                   "claude-opus-5-5-low\tClaude Opus 5.5 (Low)\n"
+                                   "claude-opus-5-5-medium\tClaude Opus 5.5 (Medium)\n"
+                                   "claude-opus-5-5-high\tClaude Opus 5.5 (High)\n"
+                                   "claude-sonnet-5-5-low\tClaude Sonnet 5.5 (Low)\n"
+                                   "claude-sonnet-5-5-medium\tClaude Sonnet 5.5 (Medium)\n"
+                                   "claude-sonnet-5-5-high\tClaude Sonnet 5.5 (High)\n"
+                                   "gpt-oss-120b-medium\tGPT-OSS 120B (Medium)\n"
+                                   "gemini-5-neon-ultra\tGemini 5 Neon (Ultra)\n"
+                                   "gemini-5-neon-low\tGemini 5 Neon (Low)\n";
+
+// The picker shows every family once and scrolls, a family's pick sends its
+// level's own id, the label changes at once with no new record and
+// settles on the CLI's answer, a refusal is shown, and a model the list
+// does not have still shows as reported.
+int check_picker(QQuickView& view, QQuickItem* root, TranscriptModel& model,
+                 const QString& capture) {
+    int failures = 0;
+    const auto expect = [&failures](bool ok, const char* what) {
+        if (!ok) {
+            std::fprintf(stderr, "picker FAIL %s\n", what);
+            ++failures;
+        }
+    };
+    const auto text_of = [root](const char* name) {
+        auto* item = root->findChild<QObject*>(QString::fromLatin1(name));
+        return item ? item->property("label").toString() : QStringLiteral("<none>");
+    };
+    const auto levels = [root] { return root->property("currentEfforts").toStringList(); };
+    QQmlEngine::setObjectOwnership(root, QQmlEngine::CppOwnership);
+    auto sink = view.engine()
+                    ->evaluate(QStringLiteral(
+                        "(function (root) { const sink = [];"
+                        " root.modelChosen.connect((id, family, effort, label) =>"
+                        "   sink.push([id, family, effort, label].join('|')));"
+                        " root.effortChosen.connect(level => sink.push('effort|' + level));"
+                        " root.pickerOpened.connect(() => sink.push('opened'));"
+                        " return sink })"))
+                    .call({view.engine()->newQObject(root)});
+    const auto last = [&sink] {
+        const int length = sink.property(QStringLiteral("length")).toInt();
+        return length > 0 ? sink.property(static_cast<quint32>(length - 1)).toString() : QString();
+    };
+    root->setProperty("efforts", QStringList{QStringLiteral("low"), QStringLiteral("medium"),
+                                             QStringLiteral("high")});
+    const auto listing = QString::fromLatin1(kPickerListing);
+
+    // A list without the agent's model: shown as reported, fallback levels.
+    QStringList without;
+    for (const auto& line : listing.split(QLatin1Char('\n')))
+        if (!line.contains(QLatin1String("argon")))
+            without << line;
+    root->setProperty("models", lapis::desktop::picker_list(lapis::desktop::picker_models(
+                                    lapis::desktop::agy_models(without.join(QLatin1Char('\n'))))));
+    settle();
+    expect(text_of("visualModel") == QStringLiteral("Gemini 4 Argon"),
+           "a model the list lacks shows as the CLI reported it");
+    expect(levels() == QStringList({QStringLiteral("low"), QStringLiteral("medium"),
+                                    QStringLiteral("high")}),
+           "a model the list lacks offers the fallback levels");
+
+    const auto picker = lapis::desktop::picker_list(
+        lapis::desktop::picker_models(lapis::desktop::agy_models(listing)));
+    root->setProperty("models", picker);
+    settle();
+    expect(levels() == QStringList({QStringLiteral("low"), QStringLiteral("medium"),
+                                    QStringLiteral("high")}),
+           "Argon's own levels");
+
+    // The menu: every family once, scrolling in a short window.
+    auto* button = root->findChild<QObject*>(QStringLiteral("visualModel"));
+    auto* menu = root->findChild<QObject*>(QStringLiteral("visualModelMenu"));
+    expect(button != nullptr && menu != nullptr, "the model button and its menu");
+    if (button == nullptr || menu == nullptr)
+        return 1;
+    QMetaObject::invokeMethod(button, "triggered");
+    for (int i = 0; i < 20 && !menu->property("opened").toBool(); ++i) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        settle();
+    }
+    expect(last() == QStringLiteral("opened"), "opening the menu asks for the lists again");
+    expect(menu->property("opened").toBool(), "the menu opens");
+    const int count = menu->property("count").toInt();
+    QStringList labels;
+    for (int i = 0; i < count; ++i) {
+        QQuickItem* item = nullptr;
+        QMetaObject::invokeMethod(menu, "itemAt", Q_RETURN_ARG(QQuickItem*, item), Q_ARG(int, i));
+        if (item != nullptr)
+            labels << item->property("text").toString();
+    }
+    std::printf("picker: %d entries: %s\n", count, qPrintable(labels.join(QStringLiteral(", "))));
+    expect(count == picker.size() && labels.contains(QStringLiteral("Gemini 4 Hydrogen")) &&
+               labels.contains(QStringLiteral("Gemini 5 Neon")) &&
+               labels.count(QStringLiteral("Gemini 4 Hydrogen")) == 1,
+           "every family once, Hydrogen and the new one among them");
+    auto* list = menu->property("contentItem").value<QObject*>();
+    const auto height = menu->property("height").toReal();
+    std::printf("picker: menu %.0f px tall of %.0f, list scrolls: %s\n", height,
+                menu->property("implicitHeight").toReal(),
+                list && list->property("interactive").toBool() ? "yes" : "no");
+    const bool taller =
+        menu->property("implicitHeight").toReal() > menu->property("maxHeight").toReal();
+    expect(height <= menu->property("maxHeight").toReal() + 0.5 && list != nullptr &&
+               list->property("interactive").toBool() == taller,
+           "a list taller than the room it has is held to it and scrolls");
+    if (!capture.isEmpty()) {
+        settle();
+        expect(view.grabWindow().save(capture), "the open picker saved");
+    }
+    QMetaObject::invokeMethod(menu, "close");
+    settle();
+
+    // Hydrogen at the shown level, its own id sent; shown at once.
+    QMetaObject::invokeMethod(root, "chooseModel",
+                              Q_ARG(QVariant, QStringLiteral("gemini-4-hydrogen")));
+    expect(last() == QStringLiteral(
+                         "gemini-4-hydrogen-medium|gemini-4-hydrogen|medium|Gemini 4 Hydrogen"),
+           "Hydrogen sends its medium id");
+    const auto rows = model.rowCount();
+    model.choose(QStringLiteral("gemini-4-hydrogen"), QStringLiteral("medium"),
+                 QStringLiteral("Gemini 4 Hydrogen"), {});
+    settle();
+    expect(model.rowCount() == rows, "no new record");
+    expect(text_of("visualModel") == QStringLiteral("Gemini 4 Hydrogen…") &&
+               text_of("visualEffort") == QStringLiteral("Medium…"),
+           "the label changes at once, marked pending");
+    expect(levels() == QStringList({QStringLiteral("low"), QStringLiteral("medium"),
+                                    QStringLiteral("high"), QStringLiteral("xhigh")}),
+           "Hydrogen's levels, xhigh among them");
+    model.watchChoice({QStringLiteral("  Model set to Gemini 4 Hydrogen (Medium)")});
+    settle();
+    expect(text_of("visualModel") == QStringLiteral("Gemini 4 Hydrogen") &&
+               text_of("visualEffort") == QStringLiteral("Medium"),
+           "the CLI's answer settles it");
+
+    // A new family with a new level: its first level's id, then Ultra.
+    QMetaObject::invokeMethod(root, "chooseModel",
+                              Q_ARG(QVariant, QStringLiteral("gemini-5-neon")));
+    expect(last() == QStringLiteral("gemini-5-neon-low|gemini-5-neon|low|Gemini 5 Neon"),
+           "a new family sends its own level's id");
+    model.choose(QStringLiteral("gemini-5-neon"), QStringLiteral("low"),
+                 QStringLiteral("Gemini 5 Neon"), {});
+    settle();
+    expect(levels() == QStringList({QStringLiteral("low"), QStringLiteral("ultra")}),
+           "a new level is offered");
+    auto* efforts = root->findChild<QObject*>(QStringLiteral("visualEffortMenu"));
+    expect(efforts != nullptr, "the effort menu");
+    if (efforts != nullptr)
+        QMetaObject::invokeMethod(efforts, "chosen", Q_ARG(QString, QStringLiteral("ultra")));
+    expect(last() == QStringLiteral("effort|ultra"), "the new level is sent as /effort's level");
+    model.choose({}, QStringLiteral("ultra"), {}, {});
+    model.watchChoice({QStringLiteral(R"(Gemini 5 Neon has no "ultra" effort (available: low))")});
+    settle();
+    auto* refusal = root->findChild<QQuickItem*>(QStringLiteral("visualChoiceRefusal"));
+    expect(text_of("visualEffort") == QStringLiteral("Low") && refusal != nullptr &&
+               refusal->isVisible() &&
+               refusal->property("text").toString().contains(QStringLiteral("has no")),
+           "a refusal goes back and says why");
+    std::puts(failures == 0 ? "picker: all checks passed" : "picker: failed");
+    return failures == 0 ? 0 : 1;
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -2540,6 +2721,11 @@ int main(int argc, char** argv) {
     parser.addOption({"media-checks",
                       "Check a made-up reply's picture and file: click, drag out, right-click "
                       "menu and its actions (with --out, a capture of the open menu), then exit"});
+    parser.addOption({"picker-checks",
+                      "Check the bar's model and effort pickers over an agy listing with a new "
+                      "family and level: every entry, scrolling, the ids sent, the label at "
+                      "once and on the CLI's answer (with --out, a capture of the open "
+                      "picker), then exit"});
     parser.addOption({"panel", "Save only the panel whose caption starts with this", "caption"});
     parser.addOption({"open",
                       "Open the newest step whose verb starts with this in place (showing its "
@@ -2596,7 +2782,17 @@ int main(int argc, char** argv) {
     const bool switching = !switch_paths.isEmpty();
     const bool live_checks = parser.isSet("live-checks");
     const bool media_checks = parser.isSet("media-checks");
+    const bool picker_checks = parser.isSet("picker-checks");
     const bool checking = parser.isSet("check");
+    QFile picker_file(home.filePath(QStringLiteral("transcript_full.jsonl")));
+    if (picker_checks) {
+        if (!picker_file.open(QIODevice::WriteOnly)) {
+            std::fputs("could not write the picker fixture\n", stderr);
+            return 2;
+        }
+        picker_file.write(QByteArray(kPickerRecord) + '\n');
+        picker_file.flush();
+    }
     // --live-checks writes its own made-up running turn and appends to it.
     QFile live_file(home.filePath(QStringLiteral("live.jsonl")));
     QFile media_file(home.filePath(QStringLiteral("media.jsonl")));
@@ -2634,7 +2830,7 @@ int main(int argc, char** argv) {
                 if (!line.trimmed().isEmpty())
                     sent_records << line;
     }
-    if (!keys && !live_checks && !media_checks && !switching &&
+    if (!keys && !live_checks && !media_checks && !picker_checks && !switching &&
         (!parser.isSet("jsonl") || (!parser.isSet("out") && !parser.isSet("census") &&
                                     !parser.isSet("list") && !checking && !sending))) {
         std::fputs("--jsonl and --out are required\n", stderr);
@@ -2662,6 +2858,7 @@ int main(int argc, char** argv) {
     if (!switching) {
         model.setPath(live_checks || sending ? live_file.fileName()
                       : media_checks         ? media_file.fileName()
+                      : picker_checks        ? picker_file.fileName()
                                              : parser.value("jsonl"));
         model.loadNow();
     }
@@ -2841,6 +3038,8 @@ int main(int argc, char** argv) {
     }
     if (media_checks)
         return check_media(view, root, parser.value("out"));
+    if (picker_checks)
+        return check_picker(view, root, model, parser.value("out"));
     if (checking) {
         // The first screen, three evenly spaced, and the last, each timed
         // from the jump to the frame drawn.

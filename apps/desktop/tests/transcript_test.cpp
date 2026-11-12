@@ -740,7 +740,145 @@ void queue_modes_follow_settings() {
                                 QStringLiteral("high")} &&
                 efforts(QStringLiteral("claude")).size() == 5 &&
                 efforts(QStringLiteral("codex")).isEmpty(),
-            "agy offers only low, medium and high; Codex offers none");
+            "the fallback when a listing gives none: agy low to high, Claude Code five, Codex none");
+}
+
+// A model or effort picked in the bar shows at once, before any record:
+// pending until the CLI's screen (or agy's saved default) answers, back to
+// what showed before if the CLI refuses, and the records win once they
+// report a change.
+void choices_show_at_once() {
+    using lapis::desktop::transcript::Format;
+    using lapis::desktop::transcript::screen_choices;
+    using Kind = lapis::desktop::transcript::ScreenChoice::Kind;
+
+    // Each CLI's own lines, decorations before them skipped.
+    const auto claude = screen_choices(
+        {QStringLiteral("❯ /model sonnet"), QStringLiteral("  ⎿  Set model to Sonnet 5.5"),
+         QStringLiteral("  ⎿  Set effort level to xhigh (this session only)")},
+        Format::claude);
+    require(claude.size() == 2 && claude[0].kind == Kind::model &&
+                claude[0].model == QStringLiteral("claude-sonnet-5-5") &&
+                claude[1].kind == Kind::effort && claude[1].effort == QStringLiteral("xhigh"),
+            "Claude Code: its set lines");
+    const auto agy = screen_choices(
+        {QStringLiteral("> /model gemini-4-hydrogen-high"),
+         QStringLiteral("  Model set to Gemini 4 Hydrogen (High)"),
+         QStringLiteral("  Model already set to Gemini 4 Hydrogen (High)"),
+         QStringLiteral("  Effort set to xhigh"),
+         QStringLiteral(
+             R"(  ✗ Gemini 4 Carbon has no "xhigh" effort (available: low, medium, high))"),
+         QStringLiteral(R"(  Invalid model "gemini-9")")},
+        Format::antigravity);
+    require(agy.size() == 5 && agy[0].model == QStringLiteral("Gemini 4 Hydrogen") &&
+                agy[0].effort == QStringLiteral("high") && agy[1].kind == Kind::model &&
+                agy[2].kind == Kind::effort && agy[2].effort == QStringLiteral("xhigh") &&
+                agy[3].kind == Kind::refused && agy[4].kind == Kind::refused,
+            "agy: its set, already-set, effort and refusal lines");
+    const auto codex = screen_choices(
+        {QStringLiteral("• Model changed to gpt-6-sol high for this conversation")}, Format::codex);
+    require(codex.size() == 1 && codex[0].model == QStringLiteral("gpt-6-sol") &&
+                codex[0].effort == QStringLiteral("high"),
+            "Codex: its changed line");
+
+    QTemporaryDir home;
+    const auto settings = home.filePath(QStringLiteral("settings.json"));
+    const auto write = [](const QString& path, const QByteArray& text, bool append = false) {
+        QFile file(path);
+        if (file.open(append ? QIODevice::Append : QIODevice::WriteOnly))
+            file.write(text);
+    };
+    write(settings, R"json({"model":"Gemini 4 Argon (Medium)"})json");
+    const auto agy_path = home.filePath(QStringLiteral("transcript_full.jsonl"));
+    write(
+        agy_path,
+        R"({"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T16:00:00Z","content":"<USER_REQUEST>hi</USER_REQUEST><USER_SETTINGS_CHANGE>The user changed setting `Model Selection` from None to Gemini 4 Argon (Medium). </USER_SETTINGS_CHANGE>"})"
+        "\n");
+    TranscriptModel model;
+    model.setAntigravitySettings(settings);
+    model.setPath(agy_path);
+    model.loadNow();
+    require(model.shownModel() == QStringLiteral("Gemini 4 Argon") &&
+                model.shownEffort() == QStringLiteral("medium") && !model.choicePending(),
+            "agy: what the records report");
+
+    // The bar sends /model gemini-4-hydrogen-high: shown at once, no record.
+    const QStringList before{QStringLiteral("  Model set to Gemini 4 Argon (Medium)")};
+    model.choose(QStringLiteral("gemini-4-hydrogen"), QStringLiteral("high"),
+                 QStringLiteral("Gemini 4 Hydrogen"), before);
+    require(model.shownModel() == QStringLiteral("gemini-4-hydrogen") &&
+                model.shownEffort() == QStringLiteral("high") && model.choicePending(),
+            "a pick shows at once, pending");
+    model.watchChoice(before);
+    require(model.choicePending(), "what the screen already said is not the answer");
+    model.watchChoice(before +
+                      QStringList{QStringLiteral("  Model set to Gemini 4 Hydrogen (High)")});
+    require(model.shownModel() == QStringLiteral("Gemini 4 Hydrogen") &&
+                model.shownEffort() == QStringLiteral("high") && !model.choicePending() &&
+                model.model() == QStringLiteral("Gemini 4 Argon"),
+            "the screen's answer confirms it, named as the CLI names it; no record yet");
+
+    // An effort agy refuses goes back to what showed, with agy's reason.
+    const QStringList now{QStringLiteral("  Model set to Gemini 4 Hydrogen (High)")};
+    model.choose({}, QStringLiteral("xhigh"), {}, now);
+    require(model.shownEffort() == QStringLiteral("xhigh") && model.choicePending(),
+            "an effort pick shows at once");
+    model.watchChoice(now + QStringList{QStringLiteral(
+                                R"(Gemini 4 Hydrogen has no "xhigh" effort (available: low))")});
+    require(model.shownEffort() == QStringLiteral("high") &&
+                model.shownModel() == QStringLiteral("Gemini 4 Hydrogen") &&
+                model.choiceRefusal().contains(QStringLiteral("has no")) && !model.choicePending(),
+            "a refusal goes back to what showed and says why");
+
+    // A screen line missed: agy's saved default answers instead.
+    model.choose(QStringLiteral("gemini-5-neon"), QStringLiteral("ultra"),
+                 QStringLiteral("Gemini 5 Neon"), now);
+    write(settings, R"json({"model":"Gemini 5 Neon (Ultra)"})json");
+    model.watchChoice(now);
+    require(model.shownModel() == QStringLiteral("Gemini 5 Neon") &&
+                model.shownEffort() == QStringLiteral("ultra") && !model.choicePending() &&
+                model.choiceRefusal().isEmpty(),
+            "agy's new saved default confirms a model pick");
+
+    // Another conversation has its own; coming back shows this one's.
+    model.setPath({});
+    require(model.shownModel().isEmpty() && !model.choicePending(), "no choice elsewhere");
+    model.setPath(agy_path);
+    model.loadNow();
+    require(model.shownModel() == QStringLiteral("Gemini 5 Neon"), "kept per conversation");
+
+    // The next record reports a change: the records win again.
+    write(
+        agy_path,
+        R"({"step_index":1,"type":"USER_INPUT","created_at":"2026-11-11T16:01:00Z","content":"<USER_REQUEST>go</USER_REQUEST><USER_SETTINGS_CHANGE>The user changed setting `Model Selection` from Gemini 4 Argon (Medium) to Gemini 4 Carbon (Low). </USER_SETTINGS_CHANGE>"})"
+        "\n",
+        true);
+    model.readMore();
+    require(model.shownModel() == QStringLiteral("Gemini 4 Carbon") &&
+                model.shownEffort() == QStringLiteral("low"),
+            "a record reporting a change wins");
+
+    // Claude Code: its "Set model to" record answers as the screen would.
+    const auto claude_path = home.filePath(QStringLiteral("claude.jsonl"));
+    write(
+        claude_path,
+        R"({"type":"assistant","uuid":"a1","timestamp":"2026-11-11T16:00:00.000Z","message":{"model":"claude-opus-5-5","content":[{"type":"text","text":"hi"}]}})"
+        "\n");
+    TranscriptModel claude_model;
+    claude_model.setPath(claude_path);
+    claude_model.loadNow();
+    claude_model.choose(QStringLiteral("sonnet"), {}, {}, {});
+    require(claude_model.shownModel() == QStringLiteral("sonnet") && claude_model.choicePending(),
+            "Claude Code: a pick shows at once");
+    write(
+        claude_path,
+        R"({"type":"user","message":{"content":"<local-command-stdout>Set model to Sonnet 5.5</local-command-stdout>"}})"
+        "\n",
+        true);
+    claude_model.readMore();
+    require(claude_model.shownModel() == QStringLiteral("claude-sonnet-5-5") &&
+                !claude_model.choicePending(),
+            "Claude Code: its record of the change is shown");
 }
 
 // What the bar sent waits until the CLI records it, matched across the
@@ -2283,6 +2421,7 @@ int main(int argc, char** argv) {
     real_input_boxes_are_read();
     merged_records_take_every_prompt();
     queue_modes_follow_settings();
+    choices_show_at_once();
     sent_prompts_are_matched();
     queued_prompts_show();
     several_queued_prompts();

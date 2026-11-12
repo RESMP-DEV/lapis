@@ -50,13 +50,9 @@ void read_selection(const QString& content, Status& status) {
     const auto match = change.match(inside(content, u"USER_SETTINGS_CHANGE"));
     if (!match.hasMatch())
         return;
-    auto chosen = match.captured(1).trimmed();
-    static const QRegularExpression level(QStringLiteral(R"(^(.*?)\s*\(([^()]+)\)$)"));
-    if (const auto split = level.match(chosen); split.hasMatch()) {
-        chosen = split.captured(1);
-        auto effort = split.captured(2).toLower();
-        status.effort = effort == QLatin1String("extra high") ? QStringLiteral("xhigh") : effort;
-    }
+    const auto [chosen, effort] = split_level(match.captured(1));
+    if (!effort.isEmpty())
+        status.effort = effort;
     status.model = chosen;
     // Gemini models take a million tokens; others go by the usual table.
     status.window_tokens =

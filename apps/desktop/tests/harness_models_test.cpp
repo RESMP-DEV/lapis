@@ -154,6 +154,82 @@ void reads_each_cli_list() {
             "OMP: its default role first, its other roles, then its recent sessions' models");
 }
 
+// `agy models` as agy 1.5.7 prints it (id, tab, name), with a family and a
+// level no lapis code names: Neon, Ultra.
+const char* const kAgyListing = "gemini-4-carbon-medium\tGemini 4 Carbon (Medium)\n"
+                                "gemini-4-carbon-high\tGemini 4 Carbon (High)\n"
+                                "gemini-4-carbon-low\tGemini 4 Carbon (Low)\n"
+                                "gemini-4-hydrogen-high\tGemini 4 Hydrogen (High)\n"
+                                "gemini-4-hydrogen-xhigh\tGemini 4 Hydrogen (XHigh)\n"
+                                "gemini-4-hydrogen-medium\tGemini 4 Hydrogen (Medium)\n"
+                                "gemini-4-hydrogen-low\tGemini 4 Hydrogen (Low)\n"
+                                "gemini-pro-orchestrator\tOrchestrator\n"
+                                "claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\n"
+                                "gemini-5-neon-ultra\tGemini 5 Neon (Ultra)\n"
+                                "gemini-5-neon-low\tGemini 5 Neon (Low)\n"
+                                "gpt-oss-120b-medium\tGPT-OSS 120B (Medium)\n";
+
+QString levels_of(const lapis::desktop::PickerModel& model) {
+    QStringList levels;
+    for (const auto& level : model.levels)
+        levels << level.effort + (level.id.isEmpty() ? QString() : QLatin1Char('=') + level.id);
+    return levels.join(QLatin1Char(' '));
+}
+
+// The picker: agy's ids that join a model and a level are one family with
+// that family's own levels; anything else stays a model with the levels
+// its CLI lists for it. Nothing here names a model or a level.
+void groups_models_and_levels() {
+    const auto agy =
+        lapis::desktop::picker_models(lapis::desktop::agy_models(QString::fromLatin1(kAgyListing)));
+    QStringList entries;
+    for (const auto& model : agy)
+        entries << model.id + QLatin1Char('|') + model.name;
+    require(entries ==
+                QStringList({QStringLiteral("gemini-4-carbon|Gemini 4 Carbon"),
+                             QStringLiteral("gemini-4-hydrogen|Gemini 4 Hydrogen"),
+                             QStringLiteral("gemini-pro-orchestrator|Orchestrator"),
+                             QStringLiteral("claude-sonnet-4-6|Claude Sonnet 4.6 (Thinking)"),
+                             QStringLiteral("gemini-5-neon|Gemini 5 Neon"),
+                             QStringLiteral("gpt-oss-120b|GPT-OSS 120B")}),
+            "agy: each family once, in the listing's order; a bracket that is no level stays");
+    require(levels_of(agy[0]) == QStringLiteral("low=gemini-4-carbon-low "
+                                                "medium=gemini-4-carbon-medium "
+                                                "high=gemini-4-carbon-high"),
+            "agy: Carbon's levels in order, each with its own id");
+    require(levels_of(agy[1]) == QStringLiteral("low=gemini-4-hydrogen-low "
+                                                "medium=gemini-4-hydrogen-medium "
+                                                "high=gemini-4-hydrogen-high "
+                                                "xhigh=gemini-4-hydrogen-xhigh"),
+            "agy: Hydrogen alone has xhigh");
+    require(agy[2].levels.empty() && agy[3].levels.empty(),
+            "agy: the orchestrator and a model named with no level offer none");
+    require(levels_of(agy[4]) == QStringLiteral("low=gemini-5-neon-low ultra=gemini-5-neon-ultra"),
+            "agy: a new family with a new level, the unknown level after the known ones");
+
+    // Claude Code's and Codex's listings give each model's levels.
+    const auto claude =
+        lapis::desktop::picker_models(lapis::desktop::claude_models(json(R"json({"models": [
+        {"value": "default", "resolvedModel": "claude-opus-5-5", "displayName": "Default (recommended)",
+         "description": "Use the default model (currently Opus 5.5)", "supportedEffortLevels": ["low", "high"]},
+        {"value": "opus", "resolvedModel": "claude-opus-5-5", "displayName": "Opus",
+         "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"]},
+        {"value": "claude-fable-6-0", "resolvedModel": "claude-fable-6-0", "displayName": "Fable 6",
+         "supportedEffortLevels": ["low", "turbo"]}]})json")));
+    require(claude.size() == 3 && claude[1].id == QStringLiteral("opus") &&
+                claude[1].resolved == QStringLiteral("claude-opus-5-5") &&
+                levels_of(claude[1]) == QStringLiteral("low medium high xhigh max") &&
+                levels_of(claude[2]) == QStringLiteral("low turbo") &&
+                levels_of(claude[0]) == QStringLiteral("low high"),
+            "Claude: supportedEffortLevels and resolvedModel per model, new ones as listed");
+    const auto codex =
+        lapis::desktop::picker_models(lapis::desktop::codex_models(json(R"json({"data": [
+        {"model": "gpt-7", "displayName": "GPT-7", "isDefault": true, "supportedReasoningEfforts": [
+            {"reasoningEffort": "low"}, {"reasoningEffort": "ultra"}, {"reasoningEffort": "high"}]}]})json")));
+    require(codex.size() == 1 && levels_of(codex[0]) == QStringLiteral("low high ultra"),
+            "Codex: supportedReasoningEfforts per model");
+}
+
 template <typename Done> void wait_for(Done done, const char* what) {
     QElapsedTimer elapsed;
     elapsed.start();
@@ -265,6 +341,70 @@ cat >/dev/null
             "the pickers' order, without Gemini");
 }
 
+// A stand-in agy whose listing changes while lapis runs: a refresh shows
+// the new list, every entry of it (no cap), the workspace's revision moves
+// for the bindings, and a failed ask keeps the list it had.
+void refreshes_without_restart() {
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary directory");
+    const auto listing = dir.filePath(QStringLiteral("listing"));
+    const auto agy = dir.filePath(QStringLiteral("bin/agy"));
+    // Prints the listing file; "fail" in it is an error and no list.
+    write(agy, "#!/bin/sh\ncase \"$1\" in models) ;; *) exit 3 ;; esac\n"
+               "if grep -q fail \"" +
+                   listing.toUtf8() +
+                   "\"; then echo 'error: signed out' >&2; exit 1; fi\n"
+                   "cat \"" +
+                   listing.toUtf8() + "\"\n");
+    QFile::setPermissions(agy,
+                          QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    write(listing, "gemini-4-carbon-high\tGemini 4 Carbon (High)\n");
+    HarnessModels models(
+        [&](const QString& id) { return id == QLatin1String("agy") ? agy : QString(); },
+        dir.filePath(QStringLiteral("home")));
+    lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::fixture);
+    workspace.setHarnessModels(&models);
+    int changes = 0;
+    QObject::connect(&models, &HarnessModels::changed, [&] { ++changes; });
+    const auto agy_ids = [&] { return ids(models.models(QStringLiteral("agy"))); };
+
+    require(models.refreshIfOlder(), "the first ask goes out");
+    wait_for([&] { return !agy_ids().isEmpty(); }, "the first listing arrives");
+    require(agy_ids() == QStringList{QStringLiteral("gemini-4-carbon-high")}, "the first listing");
+    require(!models.refreshIfOlder(), "a list under a minute old is not asked for again");
+    const auto revision = workspace.modelsRevision();
+
+    write(listing, kAgyListing);
+    require(models.refreshIfOlder(0), "an older list is asked for again");
+    wait_for([&] { return agy_ids().size() == 12; }, "the changed listing arrives");
+    require(workspace.modelsRevision() > revision, "the workspace's bindings hear of it");
+    const auto picker = workspace.pickerModels(QStringLiteral("agy"));
+    QStringList names;
+    for (const auto& entry : picker)
+        names << entry.toMap().value(QStringLiteral("name")).toString();
+    require(names.contains(QStringLiteral("Gemini 4 Hydrogen")) &&
+                names.contains(QStringLiteral("Gemini 5 Neon")) && names.size() == 6,
+            "the picker has every family of the new listing");
+    QVariantList form;
+    for (const auto& item : workspace.availableHarnesses())
+        if (item.toMap().value(QStringLiteral("id")).toString() == QLatin1String("agy"))
+            form = item.toMap().value(QStringLiteral("models")).toList();
+    require(form.size() == HarnessModels::kMostShown,
+            "the new-agent form still shows the first few");
+
+    // A failed ask (an error, no list) keeps what was shown.
+    write(listing, "fail\n");
+    const auto before = changes;
+    require(models.refreshIfOlder(0), "asked again");
+    QElapsedTimer waited;
+    waited.start();
+    while (waited.elapsed() < 1500) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(5);
+    }
+    require(changes == before && agy_ids().size() == 12, "a failed ask keeps the previous list");
+}
+
 // Opt-in: what the installed CLIs list for this person.
 void show_live() {
     HarnessModels models(&lapis::desktop::harness_program, QDir::homePath());
@@ -296,8 +436,10 @@ int main(int argc, char** argv) {
             return 0;
         }
         reads_each_cli_list();
+        groups_models_and_levels();
         shares_harness_identity_and_configuration();
         asks_each_installed_cli();
+        refreshes_without_restart();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return 1;

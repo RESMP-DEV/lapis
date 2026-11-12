@@ -1134,35 +1134,63 @@ ApplicationWindow {
     }
     // Each CLI's commands for the visual view's model and effort pickers. A
     // CLI without an entry shows what it reports but offers no choices.
-    // The effort levels come from the transcript model (agy 1.5's /effort
-    // takes only low, medium and high).
+    // The models and each model's effort levels are what the CLI lists now
+    // (workspace.pickerModels, followed through modelsRevision); the
+    // transcript model's efforts() are the fallback for a model listed
+    // without levels.
     readonly property var visualCommands: ({
         claude: {
             model: id => "/model " + id,
             effort: level => "/effort " + level
         },
-        // Antigravity's /model and /effort take the choice directly (agy
-        // 1.5); Codex's /model opens a picker, so Codex offers no choices.
+        // Antigravity's /model takes a name, slug or label and /effort a
+        // level directly (agy 1.5.7); a family's model is sent as its
+        // level's own id. Codex's /model opens a picker, so Codex offers
+        // no choices.
         agy: {
             model: id => "/model " + id,
             effort: level => "/effort " + level
         }
     })
     function visualModels(agent) {
-        if (!agent || !visualCommands[agent.harnessId])
+        if (!agent || !visualCommands[agent.harnessId] || workspace.modelsRevision < 0)
             return []
-        const harness = workspace.availableHarnesses().find(h => h.id === agent.harnessId)
-        return harness && harness.models ? harness.models.map(m => ({id: m.id, name: m.name})) : []
+        return workspace.pickerModels(agent.harnessId)
     }
     function visualEfforts(agent) {
         const commands = agent ? visualCommands[agent.harnessId] : null
         return commands ? workspace.transcript.efforts(agent.harnessId) : []
     }
-    function visualCommand(kind, value) {
+    // `shown` and `effort`: what the bar shows at once for a model choice
+    // (the family and its level), `label` the CLI's name for it.
+    function visualCommand(kind, value, shown, effort, label) {
         const agent = liveTerminal.document
         const commands = agent ? visualCommands[agent.harnessId] : null
-        if (commands && commands[kind] && liveTerminal.submitText(commands[kind](value)))
-            watchVisualDialog(false)
+        if (!commands || !commands[kind])
+            return
+        const before = liveTerminal.screenLines()
+        if (!liveTerminal.submitText(commands[kind](value)))
+            return
+        if (kind === "model")
+            workspace.transcript.choose(shown, effort, label, before)
+        else
+            workspace.transcript.choose("", value, "", before)
+        visualChoiceTicks = 0
+        watchVisualDialog(false)
+    }
+    // The CLI's answer to a choice: its screen (and agy's saved default)
+    // read four times a second for up to 30 s while the choice is pending.
+    property int visualChoiceTicks: -1
+    Timer {
+        interval: 250
+        repeat: true
+        running: window.visualActive && window.visualChoiceTicks >= 0 && workspace.transcript.choicePending
+        onTriggered: {
+            if (++window.visualChoiceTicks > 120 || liveTerminal.document === null)
+                window.visualChoiceTicks = -1
+            else
+                workspace.transcript.watchChoice(liveTerminal.screenLines())
+        }
     }
     // A new agent from this conversation: up to a reply, or just before a
     // prompt with that prompt waiting in its input.
@@ -3711,8 +3739,11 @@ ApplicationWindow {
                     // makes the change, typed into its session.
                     models: window.visualActive ? window.visualModels(liveTerminal.document) : []
                     efforts: window.visualActive ? window.visualEfforts(liveTerminal.document) : []
-                    onModelChosen: function(id) { window.visualCommand("model", id) }
-                    onEffortChosen: function(level) { window.visualCommand("effort", level) }
+                    onModelChosen: function(id, family, effort, label) {
+                        window.visualCommand("model", id, family, effort, label)
+                    }
+                    onEffortChosen: function(level) { window.visualCommand("effort", level, "", "", "") }
+                    onPickerOpened: workspace.refreshModels()
                     onCommandSent: window.watchVisualDialog(false)
                     onDialogFound: window.watchVisualDialog(true)
                     onTerminalNeeded: window.toggleVisual()

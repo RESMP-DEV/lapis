@@ -447,6 +447,9 @@ class Workspace final : public QObject {
     Q_PROPERTY(QVariantList attentionInbox READ attentionInbox NOTIFY attentionInboxChanged)
     Q_PROPERTY(QVariantList factoryPipeline READ factoryPipeline NOTIFY factoryPipelineChanged)
     Q_PROPERTY(QVariantMap factorySummary READ factorySummary NOTIFY factoryPipelineChanged)
+    // Counts the CLIs' model lists changing; bindings that read
+    // availableHarnesses or pickerModels name it to follow them.
+    Q_PROPERTY(int modelsRevision READ modelsRevision NOTIFY modelsChanged)
   public:
     explicit Workspace(WorkspaceMode mode = WorkspaceMode::live, WorkspaceOptions options = {});
     ~Workspace() override;
@@ -454,6 +457,14 @@ class Workspace final : public QObject {
     [[nodiscard]] QString homeDirectory() const;
     Q_INVOKABLE [[nodiscard]] QVariantList availableHarnesses() const;
     [[nodiscard]] std::vector<ModelChoice> modelChoices(const QString& harness) const;
+    // The visual view's model picker for a CLI (picker_models over
+    // modelChoices): every entry, each {id, name, resolved, levels: [{effort,
+    // id}]}, a family's levels carrying the id that selects each.
+    Q_INVOKABLE [[nodiscard]] QVariantList pickerModels(const QString& harness) const;
+    // Asks the CLIs for their models again when the last ask is over a
+    // minute old (a picker opening); the answer arrives later.
+    Q_INVOKABLE void refreshModels();
+    [[nodiscard]] int modelsRevision() const { return models_revision_; }
     Q_INVOKABLE [[nodiscard]] QString displayPath(const QString& directory) const;
     [[nodiscard]] Agent* agent(const QString& id) const;
     // Development fixture v1 only. No calls are accepted in a live workspace.
@@ -512,7 +523,7 @@ class Workspace final : public QObject {
     Q_INVOKABLE [[nodiscard]] QVariantMap agentPlace(const QString& id) const;
     void setAgentDefaults(const AgentDefaults& defaults) { agent_defaults_ = defaults; }
     // Where the new-agent forms' model lists come from; lapis keeps it.
-    void setHarnessModels(const HarnessModels* models) { harness_models_ = models; }
+    void setHarnessModels(HarnessModels* models);
     // Starts an agent; returns its id, or "" with workspaceError(). Without
     // `select` the category's selection is left alone, so an agent started
     // from another device never takes the stage from a shown agent.
@@ -693,6 +704,7 @@ class Workspace final : public QObject {
     void attentionInboxChanged();
     void factoryPipelineChanged();
     void focusChanged();
+    void modelsChanged();
     // A Codex or Claude turn ended; terminal agents' output pauses do not count.
     // A new request for you arrives here too, once its attention is applied.
     void turnFinished(lapis::desktop::Agent* item);
@@ -721,7 +733,8 @@ class Workspace final : public QObject {
     QSet<QString> harness_updates_off_;
     AgentDefaults agent_defaults_;
     QString ssh_config_{QDir::home().filePath(QStringLiteral(".ssh/config"))};
-    const HarnessModels* harness_models_{};
+    HarnessModels* harness_models_{};
+    int models_revision_{};
     bool restore_agents_{};
     bool update_harnesses_{};
     bool headless_{};

@@ -264,8 +264,9 @@ What differs by CLI:
   written within ten minutes of a tool step in a running turn counts as
   steering it (later input starts a new turn). As for Codex, lapis shows it
   queued until agy records it. The toolbar's model and effort come from the
-  setting agy notes in a prompt, so a change from the menus shows from the
-  next prompt; the menus send `/model <id>` and `/effort <level>`. A turn
+  setting agy notes in a prompt; a choice from the menus shows at once (see
+  the toolbar below). The menus send `/model <id>`, the id `agy models`
+  lists for the family at the chosen level, and `/effort <level>`. A turn
   woken by a timer or a finished background task folds like one Claude Code's
   task notification woke. agy's checkpoint, which summarizes the steps before
   it, shows as a divider. invoke_subagent is a step per subagent it created,
@@ -307,11 +308,30 @@ press Return in the terminal**. The note goes once the box no longer holds the
 text. Prompts sent from the bar are never written to disk by lapis.
 
 The bar's toolbar is the same for every CLI: **+** attaches files or a folder,
-then the model and the effort (Low, Medium, High, Extra High, Max; Low,
-Medium and High for Antigravity, whose `/effort` takes no others) the agent
-last reported, each a menu that changes it by typing that CLI's own command
-(`/model`, `/effort` for Claude Code and Antigravity), and a ring with the context window's use
-written beside it ("21% · 206k / 1M"). Nothing in the view uses hover popups.
+then the model and the effort, each a menu that changes it by typing that
+CLI's own command (`/model`, `/effort` for Claude Code and Antigravity), and a
+ring with the context window's use written beside it ("21% · 206k / 1M").
+Nothing in the view uses hover popups.
+
+The model menu lists whatever the CLI lists now (the same lists as the
+new-agent form, see [agents](agents.md)), every entry, scrolling when it is
+taller than the room above the bar, so a model a CLI ships shows with no
+change to lapis. Opening it asks the CLIs again when their last answer is
+over a minute old, and lapis asks every ten minutes anyway; an ask that fails
+keeps the list it had. Antigravity lists one id per model and level
+(`gemini-4-hydrogen-xhigh`, "Gemini 4 Hydrogen (XHigh)"): the menu shows each
+model once and the effort menu only that model's levels, so Hydrogen offers
+Extra High and Carbon does not. Claude Code's and Codex's listings give each
+model's levels. A model the CLI lists with no levels offers none; one it does
+not list at all (or no list yet) shows as the CLI reported it, with
+Antigravity's Low to High or Claude Code's Low to Max as a fallback.
+
+A choice shows in the toolbar at once, with "…" until the CLI answers: the
+line it prints ("Model set to …", "Set effort level to …"), agy's saved
+default, or the next record. If the CLI refuses it (agy's "has no "xhigh"
+effort"), the toolbar goes back to what it showed and gives the CLI's reason
+beside it. Once the agent's records report a model or effort, they show
+again.
 Files attach by **+**, by dropping them on the thread, or by pasting (Finder
 files, or a screenshot saved as a PNG); each shows as a chip and is sent as an
 `@path` mention, so the CLI reads images as images and any other file or folder

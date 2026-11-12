@@ -26,7 +26,11 @@ hand. Besides key bindings and appearance it holds these:
 folder, the approval mode (`edits`, `auto` or `full`), models to offer, and, per
 machine in `machines`, a folder that differs. See [agents](agents.md). A CLI's
 list in `models` is shown as written, in that order, and its first model is
-preselected and passed to the CLI as its model.
+preselected and passed to the CLI as its model. The same list replaces the
+CLI's in the visual view's model menu; a name the CLI also lists keeps the
+CLI's name for it and its effort levels (Antigravity's `gemini-4-hydrogen-high`
+and `gemini-4-hydrogen-low` still show as one Gemini 4 Hydrogen with those two
+levels), and any other name shows as written with no levels of its own.
 
 `harnessArguments` adds your own flags to every new agent of a CLI, alongside
 lapis's selected model, approval mode and resume options. Configured approval

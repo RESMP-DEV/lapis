@@ -558,12 +558,55 @@ FocusScope {
     }
     readonly property alias composer: input
     // The same controls for every CLI: the models its agent can switch to
-    // ({id, name}), its effort levels, and what it reported last (from the
-    // model). The window turns a choice into that CLI's own command.
+    // (workspace.pickerModels: {id, name, resolved, levels: [{effort, id}]}),
+    // the fallback effort levels for a model its CLI lists none for, and
+    // what it shows now (the model's shownModel and shownEffort). The window
+    // turns a choice into that CLI's own command: `id` the model id to send
+    // (a family's level id), `family` and `effort` what to show at once.
     property var models: []
     property var efforts: []
-    signal modelChosen(string id)
+    signal modelChosen(string id, string family, string effort, string label)
     signal effortChosen(string level)
+    // The model menu opened: the window asks the CLIs for their lists again.
+    signal pickerOpened()
+    // The picker entry for a model as the agent or the person named it: by
+    // id, name, the API model an alias stands for, or a family's level id;
+    // else the entry whose id it holds ("opus" in "claude-opus-5-5").
+    function levelsOf(entry) { return entry && entry.levels ? entry.levels : [] }
+    function names(entry, id) {
+        return entry.id === id || entry.name === id || (entry.resolved && entry.resolved === id)
+               || levelsOf(entry).some(l => l.id === id)
+    }
+    function modelEntry(id) {
+        if (!id)
+            return null
+        return models.find(m => m.id !== "default" && names(m, id))
+               || models.find(m => names(m, id))
+               || models.find(m => m.id !== "default" && id.indexOf(m.id) >= 0) || null
+    }
+    readonly property var currentEntry: modelEntry(root.model ? root.model.shownModel : "")
+    // The current model's own levels; the fallback only for a model its CLI
+    // lists none for (no list yet, or a model the list does not have).
+    readonly property var currentEfforts: levelsOf(currentEntry).length > 0
+                                          ? levelsOf(currentEntry).map(l => l.effort)
+                                          : currentEntry && listsLevels ? [] : efforts
+    // Whether the CLI's list gives levels at all: then a model it lists with
+    // none (agy's orchestrator) offers none, rather than the fallback.
+    readonly property bool listsLevels: models.some(m => levelsOf(m).length > 0)
+    function chooseModel(id) {
+        const entry = models.find(m => m.id === id)
+        if (!entry)
+            return
+        const levels = levelsOf(entry).filter(l => l.id && l.id.length > 0)
+        if (levels.length === 0) {
+            modelChosen(entry.id, entry.id, "", entry.name)
+            return
+        }
+        // A family: the level shown now if it has it, else medium, else its first.
+        const shown = root.model ? root.model.shownEffort : ""
+        const level = levels.find(l => l.effort === shown) || levels.find(l => l.effort === "medium") || levels[0]
+        modelChosen(level.id, entry.id, level.effort, entry.name)
+    }
     // Files to send with the next message, as local paths.
     property var attachments: []
     function attach(path) {
@@ -572,11 +615,12 @@ FocusScope {
         attachments = attachments.concat([path])
     }
     function detach(path) { attachments = attachments.filter(p => p !== path) }
-    // Short model names, as the apps show them: "Opus 5.5", "Fable 5.1".
+    // Short model names, as the apps show them: "Opus 5.5", "Fable 5.1". A
+    // model the picker does not know shows as its CLI reported it.
     function modelLabel(id) {
-        for (let i = 0; i < models.length; ++i)
-            if (models[i].id === id && models[i].name)
-                return models[i].name
+        const entry = modelEntry(id)
+        if (entry && entry.name && entry.id !== "default" && (names(entry, id)))
+            return entry.name
         const m = /^claude-([a-z]+)-(\d+)(?:-(\d+))?/.exec(id || "")
         if (m)
             return m[1].charAt(0).toUpperCase() + m[1].slice(1) + " " + m[2] + (m[3] ? "." + m[3] : "")
@@ -1179,7 +1223,17 @@ FocusScope {
         id: choiceMenu
         property var choices: []
         property string current: ""
+        // Taller lists scroll (the Basic style's list turns interactive).
+        property real maxHeight: 100000
+        height: Math.min(implicitHeight, maxHeight)
         signal chosen(string id)
+        // Opens above `item`, its bottom kept there while its list lays out.
+        function openAbove(item) {
+            parent = item
+            x = 0
+            y = Qt.binding(() => -height - 6)
+            open()
+        }
         // As wide as its longest label, so none is cut short.
         TextMetrics {
             id: widest
@@ -3258,42 +3312,54 @@ FocusScope {
                         menuOpen: attachMenu.opened
                         onTriggered: attachMenu.popup(this, 0, -attachMenu.implicitHeight - 6)
                     }
+                    // A choice shows at once, with "…" until the CLI
+                    // confirms it (TranscriptModel::choicePending).
                     BarButton {
                         objectName: "visualModel"
-                        visible: root.model !== null && root.model.model.length > 0
-                        label: root.modelLabel(root.model ? root.model.model : "")
+                        visible: root.model !== null && (root.model.shownModel.length > 0 || root.models.length > 0)
+                        label: root.modelLabel(root.model ? root.model.shownModel : "")
+                               + (root.model && root.model.choicePending ? "…" : "")
                         menu: root.models.length > 0
                         menuOpen: modelMenu.opened
-                        onTriggered: if (root.models.length > 0) modelMenu.popup(this, 0, -modelMenu.implicitHeight - 6)
+                        onTriggered: if (root.models.length > 0) {
+                            root.pickerOpened()
+                            modelMenu.openAbove(this)
+                        }
                     }
                     BarButton {
                         objectName: "visualEffort"
-                        visible: root.efforts.length > 0 || (root.model !== null && root.model.effort.length > 0)
-                        label: (root.model && root.model.effort.length > 0
-                                ? root.effortLabel(root.model.effort)
+                        visible: root.currentEfforts.length > 0 || (root.model !== null && root.model.shownEffort.length > 0)
+                        label: (root.model && root.model.shownEffort.length > 0
+                                ? root.effortLabel(root.model.shownEffort) + (root.model.choicePending ? "…" : "")
                                 : qsTr("Effort"))
-                        menu: root.efforts.length > 0
+                        menu: root.currentEfforts.length > 0
                         menuOpen: effortMenu.opened
-                        onTriggered: if (root.efforts.length > 0) effortMenu.popup(this, 0, -effortMenu.implicitHeight - 6)
+                        onTriggered: if (root.currentEfforts.length > 0) effortMenu.openAbove(this)
+                    }
+                    // Why the CLI refused the last choice, in its own words.
+                    Text {
+                        objectName: "visualChoiceRefusal"
+                        visible: root.model !== null && root.model.choiceRefusal.length > 0
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.min(implicitWidth, Math.max(80, toolbar.width * 0.35))
+                        elide: Text.ElideRight
+                        text: root.model ? root.model.choiceRefusal : ""
+                        color: root.mutedTextColor
+                        font.family: root.sansFamily
+                        font.pixelSize: root.codeSize
                     }
                 }
                 ChoiceMenu {
                     id: modelMenu
+                    objectName: "visualModelMenu"
+                    // Every entry; a long list scrolls.
+                    maxHeight: Math.max(160, root.height * 0.6)
                     // The CLI's own default entry carries a sentence for a
                     // name; it is just "Default" here.
                     choices: root.models.map(m => ({ id: m.id, label: m.id === "default" ? qsTr("Default")
                                                                                          : (m.name || m.id) }))
-                    // The model the agent reports, matched to an entry by its
-                    // id or its family ("opus" in "claude-opus-5-5").
-                    current: {
-                        const running = root.model ? root.model.model : ""
-                        const exact = root.models.find(m => m.id === running)
-                        if (exact)
-                            return exact.id
-                        const family = root.models.find(m => m.id !== "default" && running.indexOf(m.id) >= 0)
-                        return family ? family.id : ""
-                    }
-                    onChosen: id => root.modelChosen(id)
+                    current: root.currentEntry ? root.currentEntry.id : ""
+                    onChosen: id => root.chooseModel(id)
                 }
                 ChoiceMenu {
                     id: attachMenu
@@ -3302,8 +3368,9 @@ FocusScope {
                 }
                 ChoiceMenu {
                     id: effortMenu
-                    choices: root.efforts.map(e => ({ id: e, label: root.effortLabel(e) }))
-                    current: root.model ? root.model.effort : ""
+                    objectName: "visualEffortMenu"
+                    choices: root.currentEfforts.map(e => ({ id: e, label: root.effortLabel(e) }))
+                    current: root.model ? root.model.shownEffort : ""
                     onChosen: id => root.effortChosen(id)
                 }
                 // How full the context window is: a ring, the share used and

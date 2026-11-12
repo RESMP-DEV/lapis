@@ -1138,12 +1138,98 @@ bool antigravity_sends_immediately(const QString& settings_path) {
 }
 
 QStringList efforts(const QString& harness) {
+    // FALLBACK only: the bar uses each model's own levels from its CLI's
+    // listing and comes here when that listing is empty (not yet answered,
+    // or the CLI failed to answer).
     if (harness == QLatin1String("claude"))
         return {QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high"),
                 QStringLiteral("xhigh"), QStringLiteral("max")};
     if (harness == QLatin1String("agy"))
         return {QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high")};
     return {};
+}
+
+Choice split_level(const QString& shown) {
+    static const QRegularExpression level(QStringLiteral(R"(^(.*?)\s*\(([^()]+)\)$)"));
+    const auto text = shown.trimmed();
+    const auto split = level.match(text);
+    if (!split.hasMatch() || split.captured(1).isEmpty())
+        return {.model = text, .effort = {}};
+    auto effort = split.captured(2).toLower().remove(QLatin1Char(' '));
+    if (effort == QLatin1String("extrahigh"))
+        effort = QStringLiteral("xhigh");
+    return {.model = split.captured(1), .effort = effort};
+}
+
+std::vector<ScreenChoice> screen_choices(const QStringList& screen, Format format) {
+    // A decoration the CLIs draw before a message: ⎿ • ● ✓ ✗ ! and spaces.
+    static const QRegularExpression lead(QStringLiteral(R"(^[^\p{L}]*)"));
+    static const QRegularExpression claude_model(
+        QStringLiteral(R"(^Set model to (.+?)(?: and saved.*| for this session.*)?$)"));
+    static const QRegularExpression claude_effort(QStringLiteral(R"(^Set effort level to (\S+))"));
+    static const QRegularExpression agy_model(
+        QStringLiteral(R"(^Model (?:already )?set to (.+?)\.?$)"));
+    static const QRegularExpression agy_effort(QStringLiteral(R"(^Effort set to (\S+?)\.?$)"));
+    static const QRegularExpression agy_refused(QStringLiteral(
+        R"re((?: has no ".+" effort \(available: |^Invalid model |^Unknown model ID: |^unknown model ))re"));
+    static const QRegularExpression codex_model(
+        QStringLiteral(R"(^Model changed to (\S+)(?: (\S+))?(?: for this conversation)?$)"));
+    std::vector<ScreenChoice> found;
+    for (const auto& row : screen) {
+        const auto text = QString(row).remove(lead).trimmed();
+        if (text.isEmpty())
+            continue;
+        ScreenChoice choice{
+            .kind = ScreenChoice::Kind::model, .model = {}, .effort = {}, .text = text};
+        switch (format) {
+        case Format::claude:
+            if (const auto set = claude_model.match(text); set.hasMatch()) {
+                const auto id = model_id(set.captured(1));
+                choice.model = id.isEmpty() ? set.captured(1).trimmed() : id;
+            } else if (const auto level = claude_effort.match(text); level.hasMatch()) {
+                choice.kind = ScreenChoice::Kind::effort;
+                choice.effort = level.captured(1);
+            } else {
+                continue;
+            }
+            break;
+        case Format::antigravity:
+            if (agy_refused.match(text).hasMatch()) {
+                choice.kind = ScreenChoice::Kind::refused;
+            } else if (const auto set = agy_model.match(text); set.hasMatch()) {
+                const auto split = split_level(set.captured(1));
+                choice.model = split.model;
+                choice.effort = split.effort;
+            } else if (const auto level = agy_effort.match(text); level.hasMatch()) {
+                choice.kind = ScreenChoice::Kind::effort;
+                choice.effort = level.captured(1).toLower();
+            } else {
+                continue;
+            }
+            break;
+        case Format::codex:
+            if (const auto set = codex_model.match(text); set.hasMatch()) {
+                choice.model = set.captured(1);
+                choice.effort = set.captured(2);
+            } else {
+                continue;
+            }
+            break;
+        }
+        found.push_back(std::move(choice));
+    }
+    return found;
+}
+
+QString antigravity_model_setting(const QString& settings_path) {
+    QFile file(settings_path);
+    constexpr qint64 most_bytes = qint64{1} << 20; // as antigravity_sends_immediately
+    if (!file.open(QIODevice::ReadOnly) || file.size() > most_bytes)
+        return {};
+    return QJsonDocument::fromJson(file.readAll())
+        .object()
+        .value(QLatin1String("model"))
+        .toString();
 }
 
 QString work_summary(const std::vector<Item>& items, int first, int last, int except) {
@@ -3458,15 +3544,146 @@ QStringList TranscriptModel::efforts(const QString& harness) const {
 
 void TranscriptModel::refreshQueueMode() {
     // Only agy's depends on a setting; a small file, read when asked.
-    const bool immediate =
-        format() == transcript::Format::antigravity &&
-        transcript::antigravity_sends_immediately(
-            QDir(conversation_owner::antigravity_home()).filePath(QStringLiteral("settings.json")));
+    const bool immediate = format() == transcript::Format::antigravity &&
+                           transcript::antigravity_sends_immediately(agySettingsPath());
     auto mode = transcript::queue_mode(format(), immediate);
     if (mode == queue_mode_)
         return;
     queue_mode_ = std::move(mode);
     emit queueModeChanged();
+}
+
+QString TranscriptModel::agySettingsPath() const {
+    return agy_settings_.isEmpty() ? QDir(conversation_owner::antigravity_home())
+                                         .filePath(QStringLiteral("settings.json"))
+                                   : agy_settings_;
+}
+
+// A choice stands while the records report what they did when it was made;
+// once they report something else (the next answer, Claude Code's "Set
+// model to" record), the records are shown again.
+const TranscriptModel::Chosen* TranscriptModel::chosen() const {
+    const auto found = chosen_.constFind(path_);
+    return found == chosen_.cend() ? nullptr : &found.value();
+}
+
+QString TranscriptModel::shownModel() const {
+    const auto* choice = chosen();
+    return choice && !choice->model.isEmpty() && choice->reported_model == model() ? choice->model
+                                                                                   : model();
+}
+
+QString TranscriptModel::shownEffort() const {
+    const auto* choice = chosen();
+    return choice && !choice->effort.isEmpty() && choice->reported_effort == effort()
+               ? choice->effort
+               : effort();
+}
+
+bool TranscriptModel::choicePending() const {
+    const auto* choice = chosen();
+    return choice && choice->pending &&
+           ((!choice->model.isEmpty() && choice->reported_model == model()) ||
+            (!choice->effort.isEmpty() && choice->reported_effort == effort()));
+}
+
+QString TranscriptModel::choiceRefusal() const {
+    // Until the next choice, or the records report a change.
+    const auto* choice = chosen();
+    return choice && choice->reported_model == model() && choice->reported_effort == effort()
+               ? choice->refusal
+               : QString();
+}
+
+namespace {
+QHash<QString, int> choice_lines(const std::vector<transcript::ScreenChoice>& choices) {
+    QHash<QString, int> lines;
+    for (const auto& choice : choices)
+        ++lines[choice.text];
+    return lines;
+}
+} // namespace
+
+void TranscriptModel::choose(const QString& model, const QString& effort, const QString& label,
+                             const QStringList& screen) {
+    if (path_.isEmpty() || (model.isEmpty() && effort.isEmpty()))
+        return;
+    auto& choice = chosen_[path_];
+    // An earlier choice the records have since moved past no longer shows.
+    if (choice.reported_model != this->model())
+        choice.model.clear();
+    if (choice.reported_effort != this->effort())
+        choice.effort.clear();
+    choice.reported_model = this->model();
+    choice.reported_effort = this->effort();
+    choice.before_model = choice.model;
+    choice.before_effort = choice.effort;
+    if (!model.isEmpty())
+        choice.model = model;
+    // A model sent with no level takes the CLI's own level for it, which
+    // the records or the screen will say.
+    choice.effort = effort;
+    choice.pending = true;
+    choice.refusal.clear();
+    choice.seen = choice_lines(transcript::screen_choices(screen, format()));
+    choice.setting = format() == transcript::Format::antigravity && !label.isEmpty()
+                         ? transcript::antigravity_model_setting(agySettingsPath())
+                         : QString();
+    emit statusChanged();
+}
+
+void TranscriptModel::watchChoice(const QStringList& screen) {
+    const auto found = chosen_.find(path_);
+    if (found == chosen_.end() || !found->pending)
+        return;
+    auto& choice = found.value();
+    // The newest line not already showing at the choice answers it.
+    auto seen = choice.seen;
+    const auto lines = transcript::screen_choices(screen, format());
+    std::optional<transcript::ScreenChoice> answer;
+    for (const auto& line : lines) {
+        if (seen.value(line.text) > 0)
+            --seen[line.text];
+        else
+            answer = line;
+    }
+    // agy's /model <name> saves the model as its default: a new saved
+    // default is the same answer when the screen's line was missed.
+    if (!answer && format() == transcript::Format::antigravity && !choice.model.isEmpty()) {
+        const auto setting = transcript::antigravity_model_setting(agySettingsPath());
+        if (!setting.isEmpty() && setting != choice.setting) {
+            const auto split = transcript::split_level(setting);
+            answer = transcript::ScreenChoice{.kind = transcript::ScreenChoice::Kind::model,
+                                              .model = split.model,
+                                              .effort = split.effort,
+                                              .text = setting};
+        }
+    }
+    if (!answer)
+        return;
+    choice.pending = false;
+    switch (answer->kind) {
+    case transcript::ScreenChoice::Kind::refused:
+        // What showed before the choice again, with the CLI's reason.
+        choice.model = choice.before_model;
+        choice.effort = choice.before_effort;
+        choice.refusal = answer->text;
+        break;
+    case transcript::ScreenChoice::Kind::model:
+        // What the CLI says it set, as it names it.
+        choice.model = answer->model;
+        choice.reported_model = model();
+        if (!answer->effort.isEmpty()) {
+            choice.effort = answer->effort;
+            choice.reported_effort = effort();
+        }
+        break;
+    case transcript::ScreenChoice::Kind::effort:
+        choice.effort = answer->effort;
+        choice.reported_effort = effort();
+        break;
+    }
+    emit statusChanged();
 }
 
 void TranscriptModel::forgetSent(const QString& text) {
@@ -3684,6 +3901,8 @@ void TranscriptModel::setPath(const QString& path) {
         if (tail_ && !loads_.contains(path))
             startLoad(path, format);
     }
+    // Each conversation shows its own choice (shownModel).
+    const bool chose = chosen_.contains(path_) || chosen_.contains(path);
     path_ = path;
     live_tasks_.clear();
     auto next = layoutNow();
@@ -3698,6 +3917,8 @@ void TranscriptModel::setPath(const QString& path) {
         emit loadingChanged();
     emit countChanged();
     noteStatus();
+    if (chose)
+        emit statusChanged();
     showLive(0);
     updateRunning();
     notePending();

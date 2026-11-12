@@ -1720,10 +1720,38 @@ std::vector<ModelChoice> Workspace::modelChoices(const QString& harness) const {
             continue;
         const auto known = std::find_if(found.begin(), found.end(),
                                         [&](const ModelChoice& model) { return model.id == name; });
-        picked.push_back(
-            {.id = name, .name = known == found.end() ? name : known->name, .isDefault = false});
+        if (known == found.end())
+            picked.push_back({.id = name, .name = name, .isDefault = false});
+        else
+            picked.push_back({.id = name,
+                              .name = known->name,
+                              .isDefault = false,
+                              .efforts = known->efforts,
+                              .resolved = known->resolved});
     }
     return picked;
+}
+
+void Workspace::setHarnessModels(HarnessModels* models) {
+    if (harness_models_ != nullptr)
+        harness_models_->disconnect(this);
+    harness_models_ = models;
+    if (models == nullptr)
+        return;
+    connect(models, &HarnessModels::changed, this, [this] {
+        ++models_revision_;
+        emit modelsChanged();
+    });
+    connect(models, &QObject::destroyed, this, [this] { harness_models_ = nullptr; });
+}
+
+void Workspace::refreshModels() {
+    if (harness_models_ != nullptr)
+        harness_models_->refreshIfOlder();
+}
+
+QVariantList Workspace::pickerModels(const QString& harness) const {
+    return picker_list(picker_models(modelChoices(harness)));
 }
 
 QVariantList Workspace::availableHarnesses() const {
@@ -1732,11 +1760,17 @@ QVariantList Workspace::availableHarnesses() const {
         if (!harness.offered)
             continue;
         QVariantList models;
+        // The new-agent form shows a CLI's first few (a configured list as
+        // written); the visual view's picker (pickerModels) shows them all.
+        const bool configured = !agent_defaults_.models.value(harness.id).isEmpty();
         if (harness.modelOption != HarnessModelOption::unsupported)
-            for (const auto& model : modelChoices(harness.id))
+            for (const auto& model : modelChoices(harness.id)) {
+                if (!configured && models.size() >= HarnessModels::kMostShown)
+                    break;
                 models.append(QVariantMap{{QStringLiteral("id"), model.id},
                                           {QStringLiteral("name"), model.name},
                                           {QStringLiteral("default"), model.isDefault}});
+            }
         result.append(
             QVariantMap{{QStringLiteral("id"), harness.id},
                         {QStringLiteral("name"), harness.label},

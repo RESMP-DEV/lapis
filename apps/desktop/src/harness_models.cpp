@@ -9,6 +9,7 @@
 #include <QJsonDocument>
 #include <QRegularExpression>
 #include <algorithm>
+#include <iterator>
 #include <optional>
 #include <utility>
 
@@ -18,7 +19,7 @@ constexpr qsizetype kLongestAnswer = qsizetype{4} * 1024 * 1024;
 constexpr int kNewestSessions = 40;
 constexpr qint64 kSessionHead = qint64{64} * 1024;
 
-// The CLI's default first, each model once, at most the number shown.
+// The CLI's default first, each model once.
 std::vector<ModelChoice> tidy(std::vector<ModelChoice> models) {
     std::stable_partition(models.begin(), models.end(),
                           [](const ModelChoice& model) { return model.isDefault; });
@@ -27,11 +28,25 @@ std::vector<ModelChoice> tidy(std::vector<ModelChoice> models) {
         const bool seen = std::any_of(unique.begin(), unique.end(), [&](const ModelChoice& other) {
             return other.id == model.id;
         });
-        if (!model.id.isEmpty() && !seen &&
-            static_cast<int>(unique.size()) < HarnessModels::kMostShown)
+        if (!model.id.isEmpty() && !seen)
             unique.push_back(std::move(model));
     }
     return unique;
+}
+
+// "(XHigh)", "(Extra High)", "(Medium)" as an id's level: "xhigh", "medium".
+QString level_named(QString shown) {
+    shown = shown.toLower().remove(QLatin1Char(' '));
+    return shown == QLatin1String("extrahigh") ? QStringLiteral("xhigh") : shown;
+}
+
+// Where a level sorts: the usual ones in order, any other after them.
+int level_rank(const QString& level) {
+    static const QStringList known{QStringLiteral("minimal"), QStringLiteral("low"),
+                                   QStringLiteral("medium"),  QStringLiteral("high"),
+                                   QStringLiteral("xhigh"),   QStringLiteral("max")};
+    const auto at = known.indexOf(level);
+    return at < 0 ? static_cast<int>(known.size()) : static_cast<int>(at);
 }
 
 // "provider/model" shown as the model, unless two providers offer one name.
@@ -64,32 +79,51 @@ std::vector<ModelChoice> codex_models(const QJsonObject& result) {
             continue;
         const auto id = model.value(QStringLiteral("model"))
                             .toString(model.value(QStringLiteral("id")).toString());
+        QStringList efforts;
+        for (const auto& level : model.value(QStringLiteral("supportedReasoningEfforts")).toArray())
+            if (const auto effort =
+                    level.toObject().value(QStringLiteral("reasoningEffort")).toString();
+                !effort.isEmpty())
+                efforts << effort;
         models.push_back({.id = id,
                           .name = model.value(QStringLiteral("displayName")).toString(id),
-                          .isDefault = model.value(QStringLiteral("isDefault")).toBool()});
+                          .isDefault = model.value(QStringLiteral("isDefault")).toBool(),
+                          .efforts = efforts,
+                          .resolved = {}});
     }
     return tidy(std::move(models));
 }
 
 // {"models": [{"value": "default", "displayName": "Default (recommended)",
 // "description": "Opus 5.5 · Best for everyday, complex tasks"}, {"value":
-// "opus", "displayName": "Opus 5.5"}, ...]}: the default is the model its
+// "opus", "displayName": "Opus 5.5", "resolvedModel": "claude-opus-5-5",
+// "supportedEffortLevels": ["low", ...]}, ...]}: the default is the model its
 // description names.
 std::vector<ModelChoice> claude_models(const QJsonObject& initialized) {
     std::vector<ModelChoice> models;
     QString default_name;
+    QStringList default_efforts;
+    QString default_resolved;
     for (const auto& item : initialized.value(QStringLiteral("models")).toArray()) {
         const auto model = item.toObject();
         const auto id = model.value(QStringLiteral("value")).toString();
         const auto name = model.value(QStringLiteral("displayName")).toString(id);
+        QStringList efforts;
+        for (const auto& level : model.value(QStringLiteral("supportedEffortLevels")).toArray())
+            if (!level.toString().isEmpty())
+                efforts << level.toString();
+        const auto resolved = model.value(QStringLiteral("resolvedModel")).toString();
         if (id == QLatin1String("default")) {
             default_name = model.value(QStringLiteral("description"))
                                .toString()
                                .section(QStringLiteral(" · "), 0, 0)
                                .trimmed();
+            default_efforts = efforts;
+            default_resolved = resolved;
             continue;
         }
-        models.push_back({.id = id, .name = name, .isDefault = false});
+        models.push_back(
+            {.id = id, .name = name, .isDefault = false, .efforts = efforts, .resolved = resolved});
     }
     const auto named = std::find_if(models.begin(), models.end(), [&](const ModelChoice& model) {
         return !default_name.isEmpty() && model.name == default_name;
@@ -97,8 +131,11 @@ std::vector<ModelChoice> claude_models(const QJsonObject& initialized) {
     if (named != models.end())
         named->isDefault = true;
     else if (!default_name.isEmpty())
-        models.insert(models.begin(),
-                      {.id = QStringLiteral("default"), .name = default_name, .isDefault = true});
+        models.insert(models.begin(), {.id = QStringLiteral("default"),
+                                       .name = default_name,
+                                       .isDefault = true,
+                                       .efforts = default_efforts,
+                                       .resolved = default_resolved});
     return tidy(std::move(models));
 }
 
@@ -182,6 +219,60 @@ std::vector<ModelChoice> omp_models(const QString& config, const QStringList& re
     return named_after_model(tidy(std::move(models)));
 }
 
+std::vector<PickerModel> picker_models(const std::vector<ModelChoice>& models) {
+    static const QRegularExpression bracketed(QStringLiteral(R"(^(.+?)\s*\(([^()]+)\)$)"));
+    std::vector<PickerModel> picked;
+    for (const auto& model : models) {
+        // "gemini-4-hydrogen-xhigh" named "Gemini 4 Hydrogen (XHigh)".
+        const auto named = bracketed.match(model.name.trimmed());
+        const auto level = named.hasMatch() ? level_named(named.captured(2)) : QString();
+        const bool joined = !level.isEmpty() && model.id.size() > level.size() + 1 &&
+                            model.id.endsWith(QLatin1Char('-') + level, Qt::CaseInsensitive);
+        if (!joined) {
+            PickerModel entry{
+                .id = model.id, .name = model.name, .resolved = model.resolved, .levels = {}};
+            for (const auto& effort : model.efforts)
+                entry.levels.push_back({.effort = effort, .id = {}});
+            picked.push_back(std::move(entry));
+            continue;
+        }
+        const auto family = model.id.left(model.id.size() - level.size() - 1);
+        auto found = std::find_if(picked.begin(), picked.end(), [&](const PickerModel& entry) {
+            return entry.id == family && !entry.levels.empty() &&
+                   !entry.levels.front().id.isEmpty();
+        });
+        if (found == picked.end()) {
+            picked.push_back(
+                {.id = family, .name = named.captured(1), .resolved = {}, .levels = {}});
+            found = std::prev(picked.end());
+        }
+        if (std::none_of(found->levels.begin(), found->levels.end(),
+                         [&](const PickerModel::Level& known) { return known.effort == level; }))
+            found->levels.push_back({.effort = level, .id = model.id});
+    }
+    for (auto& entry : picked)
+        std::stable_sort(entry.levels.begin(), entry.levels.end(),
+                         [](const PickerModel::Level& a, const PickerModel::Level& b) {
+                             return level_rank(a.effort) < level_rank(b.effort);
+                         });
+    return picked;
+}
+
+QVariantList picker_list(const std::vector<PickerModel>& models) {
+    QVariantList result;
+    for (const auto& model : models) {
+        QVariantList levels;
+        for (const auto& level : model.levels)
+            levels.append(QVariantMap{{QStringLiteral("effort"), level.effort},
+                                      {QStringLiteral("id"), level.id}});
+        result.append(QVariantMap{{QStringLiteral("id"), model.id},
+                                  {QStringLiteral("name"), model.name},
+                                  {QStringLiteral("resolved"), model.resolved},
+                                  {QStringLiteral("levels"), levels}});
+    }
+    return result;
+}
+
 namespace {
 QString home_setting(const char* variable, const QString& fallback) {
     const auto set = qEnvironmentVariable(variable);
@@ -261,7 +352,15 @@ HarnessModels::~HarnessModels() {
 
 void HarnessModels::start() { timer_.start(kFirstMs); }
 
+bool HarnessModels::refreshIfOlder(int ms) {
+    if (asked_.isValid() && !asked_.hasExpired(ms))
+        return false;
+    refresh();
+    return true;
+}
+
 void HarnessModels::refresh() {
+    asked_.start();
     ask(QStringLiteral("codex"), {QStringLiteral("app-server")},
         R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"lapis","version":"1"}}})"
         "\n");
@@ -327,10 +426,13 @@ void HarnessModels::ask(const QString& harness, const QStringList& arguments,
         if (found != asking_.end()) {
             const auto output = found->output;
             asking_.erase(found);
-            if (harness == QLatin1String("grok"))
-                set(harness, grok_models(QString::fromUtf8(output)));
-            else if (harness == QLatin1String("agy"))
-                set(harness, agy_models(QString::fromUtf8(output)));
+            // No list (a crash, a timeout, an error printed instead) keeps
+            // the one it had.
+            auto models = harness == QLatin1String("grok")  ? grok_models(QString::fromUtf8(output))
+                          : harness == QLatin1String("agy") ? agy_models(QString::fromUtf8(output))
+                                                            : std::vector<ModelChoice>{};
+            if (!models.empty())
+                set(harness, std::move(models));
         }
         process->deleteLater();
     });
@@ -370,7 +472,9 @@ void HarnessModels::answered(const QString& harness) {
                                        .toObject());
         }
         if (models) {
-            set(harness, std::move(*models));
+            // An empty answer keeps the list it had, as a failed ask does.
+            if (!models->empty())
+                set(harness, std::move(*models));
             if (process != nullptr)
                 process->kill(); // finished then removes it
             return;

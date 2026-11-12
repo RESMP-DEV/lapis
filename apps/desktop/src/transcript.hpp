@@ -319,9 +319,43 @@ enum class Format;
 // `queuedMessages` to "send-immediately"; absent, unreadable or any other
 // value is agy's default, Queue.
 [[nodiscard]] bool antigravity_sends_immediately(const QString& settings_path);
-// The effort levels the bar offers for a CLI by its id; empty for one whose
-// effort it does not change (agy 1.5 takes only low, medium and high).
+// FALLBACK effort levels for a CLI by its id, used only when the CLI's own
+// model listing gives none (Claude Code's initialize lists
+// supportedEffortLevels, Codex's model/list supportedReasoningEfforts, agy's
+// `agy models` one id per model and level); empty for one whose effort the
+// bar does not change.
 [[nodiscard]] QStringList efforts(const QString& harness);
+
+// "Gemini 4 Argon (Medium)" as the model and its effort, the way agy names a
+// model with its level: {"Gemini 4 Argon", "medium"}; "Extra High" and
+// "XHigh" are "xhigh". A name with no level in brackets is the model alone.
+struct Choice {
+    QString model;
+    QString effort;
+};
+[[nodiscard]] Choice split_level(const QString& shown);
+
+// What a CLI's screen says after a /model or /effort the bar typed, each
+// line that says one thing, top to bottom:
+//   Claude Code  "Set model to Opus 5.5", "Set effort level to high"
+//   agy 1.5      "Model set to X", "Model already set to X", "Effort set to
+//                high"; refused: "X has no "xhigh" effort (available: ...)",
+//                "Invalid model "x"", "Unknown model ID: x", "unknown model"
+//   Codex 0.157  "Model changed to gpt-6-sol high" (after its own picker)
+// Taken from the CLIs' own message strings (agy 1.5.7 and Codex 0.157.1
+// binaries, Claude Code's recorded command output); a decoration before the
+// text (⎿, •, ✓) is skipped. A layout or wording they change is not read.
+struct ScreenChoice {
+    enum class Kind { model, effort, refused };
+    Kind kind{};
+    QString model;  // as the CLI names it (Claude Code: its API id)
+    QString effort; // a level, when the line gives one
+    QString text;   // the line, trimmed
+};
+[[nodiscard]] std::vector<ScreenChoice> screen_choices(const QStringList& screen, Format format);
+// The model agy saves as its default (settings.json `model`, "Gemini 4
+// Argon (Medium)"), which its /model <name> also writes, or empty.
+[[nodiscard]] QString antigravity_model_setting(const QString& settings_path);
 
 // The CLIs whose saved conversations lapis reads, each with its own reader.
 enum class Format { claude, codex, antigravity };
@@ -650,6 +684,14 @@ class TranscriptModel final : public QAbstractListModel {
     // effort, and its context use against the model's window.
     Q_PROPERTY(QString model READ model NOTIFY statusChanged)
     Q_PROPERTY(QString effort READ effort NOTIFY statusChanged)
+    // What the bar shows: a model or effort the person just chose (choose)
+    // until the agent's records report a change, else what they reported.
+    // choicePending while nothing has confirmed the choice yet;
+    // choiceRefusal the line the CLI refused the last choice with.
+    Q_PROPERTY(QString shownModel READ shownModel NOTIFY statusChanged)
+    Q_PROPERTY(QString shownEffort READ shownEffort NOTIFY statusChanged)
+    Q_PROPERTY(bool choicePending READ choicePending NOTIFY statusChanged)
+    Q_PROPERTY(QString choiceRefusal READ choiceRefusal NOTIFY statusChanged)
     Q_PROPERTY(qint64 contextTokens READ contextTokens NOTIFY statusChanged)
     Q_PROPERTY(qint64 contextWindow READ contextWindow NOTIFY statusChanged)
     // When a /compact the person ran started (ms since the epoch) while it
@@ -825,8 +867,22 @@ class TranscriptModel final : public QAbstractListModel {
     Q_INVOKABLE [[nodiscard]] QString composerText(const QStringList& screen) const;
     // Whether Codex shows a steering message waiting (transcript::steer_waiting).
     Q_INVOKABLE [[nodiscard]] bool steerWaiting(const QStringList& screen) const;
-    // The effort levels the bar offers for a CLI by its id (transcript::efforts).
+    // The fallback effort levels for a CLI by its id (transcript::efforts).
     Q_INVOKABLE [[nodiscard]] QStringList efforts(const QString& harness) const;
+    // The bar typed a /model or /effort into this agent: shows `model`
+    // and/or `effort` (empty: unchanged) at once, pending, with `label` the
+    // CLI's own name for the choice ("Gemini 4 Hydrogen (High)"). `screen`
+    // is the terminal now, so what it already says is not taken as the
+    // answer. Kept per conversation file.
+    Q_INVOKABLE void choose(const QString& model, const QString& effort, const QString& label,
+                            const QStringList& screen);
+    // Reads the CLI's answer to the last choice (screen_choices; for agy its
+    // saved default too): a confirmation shows what the CLI says it set, a
+    // refusal goes back to the reported model or effort and sets
+    // choiceRefusal. The view calls it while choicePending.
+    Q_INVOKABLE void watchChoice(const QStringList& screen);
+    // agy's settings.json (tests point it elsewhere); empty: agy's own home.
+    void setAntigravitySettings(const QString& path) { agy_settings_ = path; }
     // Reads agy's queued-message setting again; see queueMode.
     Q_INVOKABLE void refreshQueueMode();
     [[nodiscard]] const QString& queueMode() const { return queue_mode_; }
@@ -871,6 +927,10 @@ class TranscriptModel final : public QAbstractListModel {
 
     [[nodiscard]] const QString& model() const { return reader_->status().model; }
     [[nodiscard]] const QString& effort() const { return reader_->status().effort; }
+    [[nodiscard]] QString shownModel() const;
+    [[nodiscard]] QString shownEffort() const;
+    [[nodiscard]] bool choicePending() const;
+    [[nodiscard]] QString choiceRefusal() const;
     [[nodiscard]] qint64 contextTokens() const { return reader_->status().context_tokens; }
     [[nodiscard]] double compactingSince() const {
         return static_cast<double>(reader_->status().compacting_since);
@@ -1009,6 +1069,22 @@ class TranscriptModel final : public QAbstractListModel {
     // ones; -1 until then.
     mutable int expand_from_{-1};
     QSet<int> opened_; // items whose step rows are opened (toggleStep)
+    // A model or effort the person chose in the bar, per conversation file:
+    // shown while the records still report what they did when it was chosen.
+    struct Chosen {
+        QString model, effort;
+        QString reported_model, reported_effort; // the records' at the choice
+        // What showed before the pending choice, shown again if it is refused.
+        QString before_model, before_effort;
+        bool pending{};
+        QString refusal;
+        QHash<QString, int> seen; // screen_choices lines already showing
+        QString setting;          // agy's saved default at the choice
+    };
+    QHash<QString, Chosen> chosen_;
+    QString agy_settings_;
+    [[nodiscard]] const Chosen* chosen() const;
+    [[nodiscard]] QString agySettingsPath() const;
     transcript::Layout layout_;
     // Conversations read recently stay parsed, so switching back to an agent
     // shows its thread at once and reads only what it wrote since.
