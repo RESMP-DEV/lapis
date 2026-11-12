@@ -612,13 +612,15 @@ QStringList Reader::sent() const {
     return out;
 }
 
-void Reader::carry_sent(const Reader& from) {
+void Reader::carry_sent(const Reader& from, bool fresh) {
     if (from.sent_.empty())
         return;
     // Where each was sent, found again by the record of the item before it
     // (the history above a tail moves every index); the end without one.
     const auto size = static_cast<int>(items_.size());
-    const auto place = [this, &from, size](int at) {
+    const auto place = [this, &from, size, fresh](int at) {
+        if (fresh)
+            return 0;
         if (at <= 0 || std::cmp_greater(at, from.items_.size()))
             return size;
         const auto& record = from.items_[static_cast<size_t>(at - 1)].record;
@@ -1104,6 +1106,15 @@ QString composer_text(const QStringList& screen, Format format) {
     const auto box = input_box(screen, format);
     auto text = box.lines.join(QLatin1Char('\n')).trimmed();
     return placeholder(text, format) ? QString() : text;
+}
+
+bool input_box_showing(const QStringList& screen, Format format) {
+    // The CLIs' own menus (trust, login, update, theme) mark their chosen
+    // line with the same glyph: "› 1. Yes, allow Codex ...", "❯ 1. Claude
+    // account". A marked numbered choice is a menu, not the input box.
+    static const QRegularExpression choice(QStringLiteral(R"(^\d{1,2}[.)]\s)"));
+    const auto box = input_box(screen, format);
+    return box.row >= 0 && !choice.match(box.lines.first()).hasMatch();
 }
 
 bool steer_waiting(const QStringList& screen) {
@@ -2305,7 +2316,11 @@ void TranscriptModel::drain() {
 }
 
 transcript::Format TranscriptModel::format_for(const QString& path) const {
-    return forced_format_ ? *forced_format_ : transcript::format_of(path);
+    if (forced_format_)
+        return *forced_format_;
+    if (path.isEmpty() && blank_format_)
+        return *blank_format_;
+    return transcript::format_of(path);
 }
 
 int TranscriptModel::rowCount(const QModelIndex& parent) const {
@@ -2948,7 +2963,8 @@ void TranscriptModel::setLive(bool live) {
 }
 
 void TranscriptModel::noteSent(const QString& text, bool queued) {
-    if (path_.isEmpty())
+    // Nothing shown; an agent whose CLI saved nothing yet still waits.
+    if (path_.isEmpty() && !blank_format_)
         return;
     if (queued)
         refreshQueueMode(); // agy's setting can change while it runs
@@ -3534,6 +3550,10 @@ QString TranscriptModel::composerText(const QStringList& screen) const {
     return transcript::composer_text(screen, format());
 }
 
+bool TranscriptModel::inputBoxShowing(const QStringList& screen) const {
+    return transcript::input_box_showing(screen, format());
+}
+
 bool TranscriptModel::steerWaiting(const QStringList& screen) const {
     return format() == transcript::Format::codex && transcript::steer_waiting(screen);
 }
@@ -3840,7 +3860,55 @@ bool read_on(const QString& path, transcript::Reader& reader, qint64& offset, QB
 } // namespace
 
 void TranscriptModel::setPath(const QString& path) {
-    if (path == path_)
+    // A path set directly (tools, tests) names no agent.
+    const bool was_blank = blank_format_.has_value();
+    shown_agent_.clear();
+    blank_format_.reset();
+    showPath(path, was_blank && path.isEmpty());
+}
+
+QVariantMap TranscriptModel::shown() const {
+    if (shown_agent_.isEmpty() && path_.isEmpty())
+        return {};
+    return {{QStringLiteral("agent"), shown_agent_},
+            {QStringLiteral("harness"),
+             blank_format_ ? transcript::format_name(*blank_format_) : QString()},
+            {QStringLiteral("path"), path_}};
+}
+
+void TranscriptModel::setShown(const QVariantMap& shown) {
+    const auto agent = shown.value(QStringLiteral("agent")).toString();
+    const auto path = shown.value(QStringLiteral("path")).toString();
+    const auto harness = shown.value(QStringLiteral("harness")).toString();
+    const auto blank = path.isEmpty() && !agent.isEmpty() ? transcript::format_named(harness)
+                                                          : std::nullopt;
+    if (agent == shown_agent_ && path == path_ && blank == blank_format_)
+        return;
+    // Prompts sent before this agent's CLI saved anything wait for it, kept
+    // apart from whatever shows next.
+    if (path_.isEmpty() && blank_format_ && !shown_agent_.isEmpty() && !reader_->sent().empty())
+        blank_sent_[shown_agent_] = reader_->clone();
+    const bool restart = path.isEmpty() && path_.isEmpty();
+    shown_agent_ = agent;
+    blank_format_ = blank;
+    showPath(path, restart);
+    const auto waiting = blank_sent_.find(agent);
+    if (agent.isEmpty() || waiting == blank_sent_.end())
+        return;
+    if (path.isEmpty()) {
+        if (waiting->second->format() == reader_->format())
+            reader_->carry_sent(*waiting->second);
+    } else {
+        // The file the CLI started: the prompts it already holds are taken.
+        reader_->carry_sent(*waiting->second, true);
+    }
+    blank_sent_.erase(waiting);
+    relayout(std::numeric_limits<int>::max());
+    notePending();
+}
+
+void TranscriptModel::showPath(const QString& path, bool force) {
+    if (path == path_ && !force)
         return;
     ++generation_;
     const bool was_loading = loading_;

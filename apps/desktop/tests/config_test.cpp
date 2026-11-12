@@ -802,9 +802,11 @@ void visual_settings_persist() {
     require(config.load() &&
                 config.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal") &&
                 config.visual().value(QStringLiteral("size")).toInt() == 0 &&
-                !config.visual().value(QStringLiteral("all")).toBool() &&
+                config.visual().value(QStringLiteral("all")).toBool() && config.visualAll() &&
+                Config::defaults().value(QStringLiteral("visual.all")).toBool() &&
                 config.visual().value(QStringLiteral("editor")) == QStringLiteral("auto"),
-            "visual defaults follow the terminal; files open in the first editor installed");
+            "visual defaults follow the terminal, every agent shows as a thread, and files "
+            "open in the first editor installed");
     require(config.setVisual(QStringLiteral("editor"), QStringLiteral("cursor")) &&
                 read_config(path)
                         .value(QStringLiteral("visual"))
@@ -839,8 +841,11 @@ void visual_settings_persist() {
     require(restored.load() &&
                 restored.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal") &&
                 restored.visual().value(QStringLiteral("size")).toInt() == 0 &&
-                !restored.visual().value(QStringLiteral("all")).toBool(),
+                restored.visual().value(QStringLiteral("all")).toBool(),
             "hand-edited visual values fall back");
+    static_cast<void>(write_config(QDir(directory.path()), R"({"visual":{"all":false}})"));
+    require(restored.load() && !restored.visualAll(),
+            "a config that says all: false keeps the terminals");
 }
 
 // visual.keepMB and visual.keepThreads are hand-written: whole numbers from

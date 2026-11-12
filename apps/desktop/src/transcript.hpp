@@ -10,6 +10,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -300,6 +301,12 @@ enum class Format;
 // as several. Heuristic, observed against the CLIs' real screens under tmux
 // (see transcript.cpp); a layout they change can be misread.
 [[nodiscard]] QString composer_text(const QStringList& screen, Format format);
+// Whether the CLI's input box shows at all (the marked row composer_text
+// reads): false while the CLI is still starting or a screen of its own
+// (a trust, login or update prompt) stands in its place. Same heuristic,
+// except a marked row that is a numbered choice ("› 1. Yes", the CLIs'
+// menus mark their chosen line with the input box's glyph) is a menu.
+[[nodiscard]] bool input_box_showing(const QStringList& screen, Format format);
 // Whether Codex shows a steering message waiting ("Messages to be submitted
 // after next tool call"), which Escape then sends at once as a new turn.
 [[nodiscard]] bool steer_waiting(const QStringList& screen);
@@ -413,8 +420,10 @@ class Reader {
     int drop_sent(const QString& text);
     // Takes over the prompts `from`, an earlier reading of the same
     // conversation (a tail this whole reading replaces), still waits for,
-    // less those this reading has recorded since.
-    void carry_sent(const Reader& from);
+    // less those this reading has recorded since. `fresh`: `from` read
+    // nothing because the file did not exist yet, so every prompt this
+    // reading holds came after the sends and may be one of them.
+    void carry_sent(const Reader& from, bool fresh = false);
 
   protected:
     Reader(const Reader&) = default; // for clone()
@@ -678,6 +687,12 @@ class LiveStepsModel final : public QAbstractListModel {
 class TranscriptModel final : public QAbstractListModel {
     Q_OBJECT
     Q_PROPERTY(QString path READ path WRITE setPath NOTIFY pathChanged)
+    // What the visual view shows, {agent, harness, path} (empty: nothing).
+    // With a path, that file, as `path`. With none the agent's CLI has saved
+    // nothing yet: an empty thread read as its CLI's format, whose prompts
+    // sent (noteSent) wait per agent and carry over into the file once it
+    // shows, retired there as the CLI records them.
+    Q_PROPERTY(QVariantMap shown READ shown WRITE setShown NOTIFY pathChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
     // What the agent last reported, the same for every CLI: its model, its
@@ -795,6 +810,8 @@ class TranscriptModel final : public QAbstractListModel {
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
     [[nodiscard]] const QString& path() const { return path_; }
     void setPath(const QString& path);
+    [[nodiscard]] QVariantMap shown() const;
+    void setShown(const QVariantMap& shown);
     [[nodiscard]] bool loading() const { return loading_; }
     // Reads what the file gained since the last read; called by the watcher
     // and by tests.
@@ -865,6 +882,8 @@ class TranscriptModel final : public QAbstractListModel {
                                                  const QString& text) const;
     // What this CLI's input box holds (transcript::composer_text), or empty.
     Q_INVOKABLE [[nodiscard]] QString composerText(const QStringList& screen) const;
+    // Whether this CLI's input box shows (transcript::input_box_showing).
+    Q_INVOKABLE [[nodiscard]] bool inputBoxShowing(const QStringList& screen) const;
     // Whether Codex shows a steering message waiting (transcript::steer_waiting).
     Q_INVOKABLE [[nodiscard]] bool steerWaiting(const QStringList& screen) const;
     // The fallback effort levels for a CLI by its id (transcript::efforts).
@@ -1133,6 +1152,14 @@ class TranscriptModel final : public QAbstractListModel {
     QTimer* catch_up_timer_{};
     QString path_;
     std::optional<transcript::Format> forced_format_;
+    // setShown: the agent shown, and with no file yet its CLI's format.
+    QString shown_agent_;
+    std::optional<transcript::Format> blank_format_;
+    // An agent with no file yet whose prompts sent still wait, while
+    // another agent or its file shows: its empty reader, by agent id.
+    std::map<QString, std::unique_ptr<transcript::Reader>> blank_sent_;
+    // Shows `path`; `force` makes even the same path (no file) start over.
+    void showPath(const QString& path, bool force);
     // Never null: an empty Claude Code reader until a path is set.
     std::unique_ptr<transcript::Reader> reader_;
     transcript::Status shown_status_;

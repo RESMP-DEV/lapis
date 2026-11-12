@@ -847,8 +847,10 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
         throw std::logic_error("session card count does not match the id table");
     for (std::size_t i = 0; i < items_.size(); ++i)
         items_[i]->setAgentId(QString::fromLatin1(ids[i]));
+    // Sample cards run no CLI: no harness, so the visual view leaves them
+    // on their terminals.
     for (const auto& item : items_) {
-        agents_.insert(item->agentId(), {active_category_, {}, {}});
+        agents_.insert(item->agentId(), {active_category_, {}, {}, {}});
         watch(item.get());
     }
     restoreSelection();
@@ -2244,15 +2246,17 @@ void Workspace::applyPins(const QHash<QString, QString>& pins) {
         error_ = error;
     }
 }
+bool Workspace::visualSupported(const QString& id) const {
+    const auto entry = agents_.constFind(id);
+    return entry != agents_.cend() && agentMachine(*entry).isEmpty() &&
+           (entry->harness == QLatin1String("claude") || pinnedHarness(entry->harness));
+}
 QString Workspace::conversationFile(const QString& id) {
     if (fixture_mode_)
         return fixture_files_.value(id);
-    const auto entry = agents_.constFind(id);
-    if (entry == agents_.cend() || !agentMachine(*entry).isEmpty())
+    if (!visualSupported(id))
         return {};
-    const auto& harness = entry->harness;
-    if (harness != QLatin1String("claude") && !pinnedHarness(harness))
-        return {};
+    const auto& harness = agents_.constFind(id)->harness;
     if (pinnedHarness(harness)) {
         // Codex names its conversation when its first turn ends; agy never
         // does. Until then the agent's own process says which it writes, and
@@ -2269,13 +2273,11 @@ QString Workspace::conversationFile(const QString& id) {
     return knownConversationFile(id);
 }
 QString Workspace::knownConversationFile(const QString& id) {
-    const auto entry = agents_.constFind(id);
-    if (entry == agents_.cend() || !agentMachine(*entry).isEmpty())
+    if (!visualSupported(id))
         return {};
+    const auto entry = agents_.constFind(id);
     const auto& harness = entry->harness;
     const bool codex = harness == QLatin1String("codex");
-    if (harness != QLatin1String("claude") && !pinnedHarness(harness))
-        return {};
     const auto conversation = agentConversation(id);
     // A conversation id is a UUID; anything else never names a file.
     if (QUuid::fromString(conversation).isNull())

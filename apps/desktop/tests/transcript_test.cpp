@@ -462,6 +462,81 @@ void input_boxes_are_read() {
         }
 }
 
+// Before a new agent's CLI shows its input box: nothing drawn yet, or a
+// screen of its own (trust, login, update) whose chosen line carries the
+// box's glyph. Made-up screens in the CLIs' shapes, not captures.
+void startup_screens_are_not_the_input_box() {
+    using lapis::desktop::transcript::dialog_showing;
+    using lapis::desktop::transcript::Format;
+    using lapis::desktop::transcript::input_box_showing;
+    const QString rule(66, QChar(0x2500));
+    struct Case {
+        const char* name;
+        Format format;
+        QStringList screen;
+        bool box;
+        bool dialog;
+    };
+    const std::vector<Case> cases{
+        {"nothing drawn yet", Format::claude, {QString(), QString()}, false, false},
+        {"Claude Code ready",
+         Format::claude,
+         {QStringLiteral(" * Welcome to Claude Code"), QString(), rule, QStringLiteral("❯ "), rule,
+          QStringLiteral("  ? for shortcuts")},
+         true,
+         false},
+        {"Claude Code folder trust",
+         Format::claude,
+         {rule, QStringLiteral(" Accessing workspace:"), QString(),
+          QStringLiteral(" /work/project"), QString(),
+          QStringLiteral(" Is this a project you created or one you trust?"), QString(),
+          QStringLiteral(" ❯ 1. Yes, I trust this folder"), QStringLiteral("   2. No, exit"),
+          QString(), QStringLiteral(" Enter to confirm · Esc to cancel")},
+         false,
+         true},
+        {"Claude Code login",
+         Format::claude,
+         {QStringLiteral(" Select login method:"), QString(),
+          QStringLiteral(" ❯ 1. Claude account with subscription"),
+          QStringLiteral("   2. Anthropic Console account")},
+         false,
+         false},
+        {"Codex ready",
+         Format::codex,
+         {QStringLiteral(">_ OpenAI Codex"), QString(), QStringLiteral("› Ask Codex to do anything"),
+          QString(), QStringLiteral("  ? for shortcuts")},
+         true,
+         false},
+        {"Codex folder trust",
+         Format::codex,
+         {QStringLiteral("> You are in /work/project"), QString(),
+          QStringLiteral("  Do you trust the contents of this directory?"), QString(),
+          QStringLiteral("› 1. Yes, continue"), QStringLiteral("  2. No, quit"), QString(),
+          QStringLiteral("  Press enter to continue")},
+         false,
+         false},
+        {"Codex update menu",
+         Format::codex,
+         {QStringLiteral("  Update available! 0.157.1 -> 0.158.0"), QString(),
+          QStringLiteral("› 1. Update now"), QStringLiteral("  2. Skip"),
+          QStringLiteral("  3. Skip until next version"), QString(),
+          QStringLiteral("  Press enter to continue")},
+         false,
+         false},
+        {"agy ready", Format::antigravity, {rule, QStringLiteral(">"), rule}, true, false},
+    };
+    for (const auto& c : cases) {
+        if (input_box_showing(c.screen, c.format) != c.box) {
+            std::fprintf(stderr, "FAIL: startup screen %s: input box %d\n", c.name, !c.box);
+            ++failures;
+        }
+        if (c.format == Format::claude && dialog_showing(c.screen) != c.dialog) {
+            std::fprintf(stderr, "FAIL: startup screen %s: dialog %d\n", c.name, !c.dialog);
+            ++failures;
+        }
+    }
+}
+
 // The input boxes as the real CLIs drew them in a 160x50 tmux pane (Claude
 // Code 2.1.322, Codex 0.157.1, agy 1.5.7), rows copied with the folder,
 // account and model names shortened. A "typed" screen is what
@@ -2418,6 +2493,7 @@ int main(int argc, char** argv) {
     composers_are_read();
     steer_is_seen();
     input_boxes_are_read();
+    startup_screens_are_not_the_input_box();
     real_input_boxes_are_read();
     merged_records_take_every_prompt();
     queue_modes_follow_settings();

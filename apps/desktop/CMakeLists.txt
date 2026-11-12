@@ -300,7 +300,11 @@ if(BUILD_TESTING)
     target_compile_definitions(lapis_factory_ui_tests PRIVATE
         LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
     add_test(NAME factory-ui COMMAND lapis_factory_ui_tests --background)
-    set_tests_properties(factory-ui PROPERTIES TIMEOUT 60 RESOURCE_LOCK "qt_gui"
+    # A new session opening on its thread, in the same offscreen window.
+    add_test(NAME visual-new-session COMMAND lapis_factory_ui_tests --background --new-session)
+    # Tab, Tab, Tab in the visual view's bar: fill, send, the next agent.
+    add_test(NAME visual-tab-flow COMMAND lapis_factory_ui_tests --background --tab-flow)
+    set_tests_properties(factory-ui visual-new-session visual-tab-flow PROPERTIES TIMEOUT 60 RESOURCE_LOCK "qt_gui"
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Basic")
 
     add_executable(lapis_tool_status_tests tests/tool_status_test.cpp)

@@ -5,13 +5,19 @@
 // link or a card and back, and the way back to categories. It never shows a
 // window, takes focus or touches the person's files.
 //
-//   lapis_factory_ui_tests --background [--capture DIR]
+//   lapis_factory_ui_tests --background [--new-session | --tab-flow] [--capture DIR]
 //
 // With --capture it saves factory_mode_overview.png, factory_drilldown_view.png
-// and classic_toggle_restored.png (1440x920) in DIR.
+// and classic_toggle_restored.png (1440x920) in DIR. --new-session checks a
+// new session opening on its thread instead (run_new_session), and saves
+// new_session_empty.png, new_session_first_send.png and
+// new_session_trust_screen.png (1200x800). --tab-flow checks Tab, Tab, Tab
+// in the thread's bar across agents (tab_flow::run_tab_flow), and saves
+// tab_flow_offer.png and tab_flow_nothing_waiting.png (1200x800).
 #include "app_window.hpp"
 #include "config.hpp"
 #include "terminal_surface.hpp"
+#include "transcript.hpp"
 #include "workspace.hpp"
 
 #include <QColor>
@@ -21,9 +27,14 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QGuiApplication>
+#include <QHash>
+#include <QInputMethodEvent>
 #include <QJsonDocument>
+#include <QJSEngine>
+#include <QJSValue>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QQmlEngine>
 #include <QMouseEvent>
 #include <QQuickItem>
 #include <QQuickStyle>
@@ -431,6 +442,7 @@ int run(const QString& captures) {
     until([&] { return !shown(*window, "factoryBoard") && !shown(*window, "factoryHeader"); },
           "the factory chrome goes");
     require(workspace.selectAgent("renderer"), "a worker on the classic stage");
+    // A sample card (no CLI behind it) keeps its terminal.
     until(
         [&] {
             return std::abs(item(*window, "focusedPane")->width() - classic_stage) < 2 &&
@@ -496,10 +508,529 @@ int run(const QString& captures) {
     return EXIT_SUCCESS;
 }
 
+// A Claude Code screen as a new session draws it, made up in its shape.
+QString claude_screen(const QString& body) {
+    return QStringLiteral(" * Welcome to Claude Code\r\n\r\n") + body;
+}
+QString claude_ready() {
+    const QString rule(60, QChar(0x2500));
+    return claude_screen(rule + QStringLiteral("\r\n❯ \r\n") + rule +
+                         QStringLiteral("\r\n  ? for shortcuts\r\n"));
+}
+QString claude_trust() {
+    const QString rule(60, QChar(0x2500));
+    return rule + QStringLiteral("\r\n Accessing workspace:\r\n\r\n /work/project\r\n\r\n"
+                                 " Is this a project you created or one you trust?\r\n\r\n"
+                                 " ❯ 1. Yes, I trust this folder\r\n   2. No, exit\r\n\r\n"
+                                 " Enter to confirm · Esc to cancel\r\n");
+}
+void show_screen(Agent& agent, const QString& content) {
+    lapis::session::Terminal terminal({100, 30});
+    terminal.feed(content.toStdString());
+    agent.applySnapshot(terminal.snapshot());
+}
+
+// A new session opens on its thread, never its terminal: an empty thread
+// before its CLI saved anything (no other agent's rows), the bar holding
+// what is typed while the CLI starts, a first prompt shown at once and the
+// file taking over when it appears, the terminal shown for the CLI's own
+// startup screen and covered again when it closes, with visual.all on by
+// default. Offscreen and software; fixture screens, never a real CLI.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+int run_new_session(const QString& captures) {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    Workspace workspace(WorkspaceMode::fixture);
+    require(workspace.addFixtureAgent("older", "Older thread", "general", "claude",
+                                      claude_trust()) &&
+                workspace.addFixtureAgent("fresh", "New Claude Code", "general", "claude",
+                                          claude_ready()) &&
+                workspace.addFixtureAgent("booting", "New Codex", "general", "codex", "") &&
+                workspace.addFixtureAgent("trust", "Untrusted folder", "general", "claude",
+                                          claude_trust()) &&
+                workspace.addFixtureAgent("plain", "Kept terminal", "general", "claude",
+                                          claude_ready()),
+            "sample agents");
+    for (const char* id : {"older", "fresh", "booting", "trust", "plain"})
+        report(*workspace.agent(id), Activity::idle);
+    const auto older = QDir(directory.path()).filePath("older.jsonl");
+    write(older, R"({"type":"user","uuid":"o-1","message":{"content":"An older question"}})"
+                 "\n"
+                 R"({"type":"assistant","uuid":"o-2","message":{"content":[{"type":"text","text":"An older answer."}]}})"
+                 "\n");
+    require(workspace.setFixtureConversation("older", older), "the older thread");
+
+    const auto config_path = QDir(directory.path()).filePath("lapis.json");
+    write(config_path, R"({"version": 1})");
+    Config config;
+    config.setSourcePathForTesting(config_path);
+    require(config.load() && config.visualAll(), "visual.all is on for a config without it");
+    require(workspace.selectAgent("older"), "an agent with a saved thread first");
+
+    AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+                                  .compact = false,
+                                  .screen = QString(),
+                                  .config = &config});
+    require(preview.load(), "the production window loads");
+    auto* window = preview.window();
+    require(window != nullptr, "the window exists");
+    window->resize(1200, 800);
+    window->show();
+    window->requestActivate();
+    pump(200);
+    auto* model = qobject_cast<TranscriptModel*>(workspace.transcript());
+    require(model != nullptr, "the thread's model");
+    const auto flag = [&](const char* name) { return window->property(name).toBool(); };
+    const auto text_of = [&](const char* name) {
+        return item(*window, QString::fromLatin1(name))->property("text").toString();
+    };
+
+    // An agent with a file shows its thread, as before. Its screen shows a
+    // dialog, which never uncovers it: only the person's own command does.
+    until([&] { return shown(*window, "visualView") && model->rowCount() > 0; },
+          "the older agent shows its thread");
+    pump(1500);
+    require(flag("visualCovers") && !flag("visualStartScreen"),
+            "a dialog on an agent with a file does not uncover its terminal");
+
+    // A new session: covered at once by an empty thread, no older rows.
+    require(workspace.selectAgent("fresh"), "the new Claude Code session");
+    until([&] { return flag("visualCovers") && shown(*window, "visualBlankState"); },
+          "the new session opens on its empty thread");
+    require(model->rowCount() == 0 && model->path().isEmpty() &&
+                model->formatName() == QStringLiteral("claude"),
+            "the empty thread shows nothing of the older agent's");
+    require(text_of("visualBlankTitle") == QStringLiteral("Claude Code"),
+            "it names the CLI");
+    until(
+        [&] {
+            return text_of("visualBlankStatus") == QStringLiteral("Ready for your first message");
+        },
+        "its input box shows, so it is ready");
+    require(!flag("visualStarting"), "the bar sends");
+    QVariant entries;
+    require(QMetaObject::invokeMethod(window, "commandEntries", Q_RETURN_ARG(QVariant, entries)),
+            "read the palette");
+    bool offered = false;
+    for (const auto& value : entries.toList()) {
+        const auto entry = value.toMap();
+        offered = offered || (entry.value("id").toString() == "toggleVisual" &&
+                              entry.value("label").toString() == "Show terminal" &&
+                              entry.value("enabled").toBool());
+    }
+    require(offered, "Commands offers its terminal");
+    const auto save = [&](const char* name) {
+        if (captures.isEmpty())
+            return;
+        pump(250);
+        const auto path = QDir(captures).filePath(QString::fromLatin1(name));
+        require(window->grabWindow().save(path), "save " + path.toStdString());
+        std::cout << "factory_ui_test: saved " << name << '\n';
+    };
+    save("new_session_empty.png");
+
+    // The first prompt goes through the bar's own send (the fixture has no
+    // live terminal, so a stand-in takes what would be typed into it),
+    // shows at once, the file is looked for twice a second, and the thread
+    // takes over when the CLI saves it.
+    auto* view = item(*window, "visualView");
+    auto* input = qvariant_cast<QQuickItem*>(view->property("composer"));
+    require(input != nullptr, "the bar's text field");
+    auto* engine = qmlEngine(view);
+    require(engine != nullptr, "the window's engine");
+    auto typed = engine->evaluate(QStringLiteral(
+        "(function() { var sent = []; var f = function(text) { sent.push(text); return true };"
+        " f.sent = sent; return f })()"));
+    require(typed.isCallable(), "a stand-in terminal");
+    view->setProperty("submit", QVariant::fromValue(typed));
+    input->setProperty("text", QStringLiteral("Summarize the README"));
+    require(QMetaObject::invokeMethod(view, "send"), "press Send");
+    require(typed.property("sent").property(0).toString() == QStringLiteral("Summarize the README"),
+            "the prompt goes to the terminal: " +
+                view->property("notice").toString().toStdString());
+    require(input->property("text").toString().isEmpty(), "the bar clears");
+    until([&] { return flag("visualFirstSend") && shown(*window, "pendingPrompt"); },
+          "the first prompt shows as pending");
+    require(!shown(*window, "visualBlankState"), "the empty state gives way to it");
+    save("new_session_first_send.png");
+    const auto fresh = QDir(directory.path()).filePath("fresh.jsonl");
+    write(fresh, R"({"type":"user","uuid":"f-1","message":{"content":"Summarize the README"}})"
+                 "\n");
+    require(workspace.setFixtureConversation("fresh", fresh), "the CLI saves its first record");
+    QElapsedTimer takeover;
+    takeover.start();
+    until([&] { return model->path() == fresh && model->rowCount() > 0; },
+          "the thread takes over from its file");
+    require(takeover.elapsed() < 1500,
+            "the file is found within a second: " + std::to_string(takeover.elapsed()) + " ms");
+    require(model->pendingPrompts().isEmpty() && !flag("visualFirstSend") &&
+                !shown(*window, "visualBlankState") && flag("visualCovers"),
+            "the recorded prompt leaves pending and the thread stays covering");
+
+    // A CLI still starting: nothing drawn, the bar holds what is typed.
+    require(workspace.selectAgent("booting"), "the new Codex session");
+    until([&] { return flag("visualCovers") && flag("visualStarting"); },
+          "a starting CLI still opens on its thread");
+    require(model->rowCount() == 0 && model->formatName() == QStringLiteral("codex"),
+            "an empty Codex thread");
+    require(text_of("visualBlankTitle") == QStringLiteral("Codex") &&
+                text_of("visualBlankStatus") == QStringLiteral("Starting…"),
+            "it says the CLI is starting");
+    input->setProperty("text", QStringLiteral("Run the sweep"));
+    require(QMetaObject::invokeMethod(view, "send"), "press Send");
+    require(input->property("text").toString() == QStringLiteral("Run the sweep") &&
+                model->pendingPrompts().isEmpty() &&
+                view->property("notice").toString().contains(QStringLiteral("still starting")),
+            "nothing goes to a CLI that is not ready; the message stays in the bar");
+    input->setProperty("text", QString());
+
+    // A trust prompt in place of the input box: the terminal shows, with a
+    // note, and the thread covers again once the input box is back.
+    require(workspace.selectAgent("trust"), "a new session on a trust prompt");
+    until([&] { return flag("visualStartScreen") && !flag("visualCovers"); },
+          "the CLI's own startup screen uncovers the terminal");
+    require(shown(*window, "liveTerminal") && !shown(*window, "visualView") &&
+                shown(*window, "visualDialogNote"),
+            "the terminal shows with a note why");
+    require(model->pendingPrompts().isEmpty(), "lapis typed nothing into it");
+    save("new_session_trust_screen.png");
+    show_screen(*workspace.agent("trust"), claude_ready());
+    until([&] { return flag("visualCovers") && !flag("visualStartScreen"); },
+          "answered, the thread covers the terminal again");
+    require(shown(*window, "visualBlankState") && !shown(*window, "visualDialogNote"),
+            "the empty thread is back");
+
+    // A person's own "Show terminal" still wins, and a sample shell (no
+    // CLI the view reads) shows its terminal.
+    require(workspace.selectAgent("plain"), "another new session");
+    until([&] { return flag("visualCovers"); }, "on its thread");
+    require(QMetaObject::invokeMethod(window, "toggleVisual"), "Show terminal");
+    until([&] { return !flag("visualActive") && !shown(*window, "visualView"); },
+          "the person's choice shows the terminal");
+    require(workspace.selectAgent("shell"), "a sample agent no reader knows");
+    pump(300);
+    require(!flag("visualActive") && !shown(*window, "visualView"),
+            "an agent with no CLI the view reads shows its terminal");
+    require(workspace.selectAgent("plain"), "back to the kept terminal");
+    pump(300);
+    require(!flag("visualActive"), "the choice holds for this run");
+
+    require(preview.diagnostics().isEmpty(),
+            "QML diagnostics: " + preview.diagnostics().toStdString());
+    std::cout << "factory_ui_test: new sessions PASS (offscreen/software fixture screens; not a "
+                 "real CLI's startup, native input or GPU acceptance)\n";
+    return EXIT_SUCCESS;
+}
+
 } // namespace
+
+namespace tab_flow {
+// A stand-in for NextPrompt with its QML surface and its bookkeeping: an
+// offer goes once it is used (Tab typed it), a "sent" use needs that earlier
+// use of the same offer, and an impression counts once per offer. It never
+// runs the helper or calls a model; it records what the window reports.
+class Guesses final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(int revision READ revision NOTIFY changed)
+    Q_PROPERTY(bool enabled READ enabled NOTIFY changed)
+    Q_PROPERTY(double confidentThreshold READ confidentThreshold CONSTANT)
+    Q_PROPERTY(int failureStreak READ failureStreak CONSTANT)
+    Q_PROPERTY(QString lastFailure READ lastFailure CONSTANT)
+  public:
+    struct Offer {
+        QString text;
+        QString key;
+        bool seen{};
+    };
+    void offer(const QString& id, const QString& text, const QString& key) {
+        offers_.insert(id, {text, key, false});
+        ++revision_;
+        emit changed();
+    }
+    [[nodiscard]] const QStringList& events() const { return events_; }
+    [[nodiscard]] int revision() const { return revision_; }
+    [[nodiscard]] static bool enabled() { return true; }
+    [[nodiscard]] static double confidentThreshold() { return 0.45; }
+    [[nodiscard]] static int failureStreak() { return 0; }
+    [[nodiscard]] static QString lastFailure() { return {}; }
+    Q_INVOKABLE [[nodiscard]] static bool guesses(const QString& cli) {
+        return cli == QLatin1String("claude") || cli == QLatin1String("codex") ||
+               cli == QLatin1String("omp");
+    }
+    Q_INVOKABLE [[nodiscard]] QString suggestion(const QString& id) const {
+        return offers_.value(id).text;
+    }
+    Q_INVOKABLE [[nodiscard]] static double confidence(const QString&) { return 0.5; }
+    Q_INVOKABLE [[nodiscard]] QString offerKey(const QString& id) const {
+        return offers_.value(id).key;
+    }
+    Q_INVOKABLE [[nodiscard]] QVariantMap readyAgents() const {
+        QVariantMap ready;
+        for (auto offer = offers_.cbegin(); offer != offers_.cend(); ++offer)
+            ready.insert(offer.key(), offer->seen);
+        return ready;
+    }
+    Q_INVOKABLE void seenOffer(const QVariantMap& identity) {
+        const auto id = identity.value(QStringLiteral("session")).toString();
+        const auto key = identity.value(QStringLiteral("offer")).toString();
+        auto offer = offers_.find(id);
+        if (offer == offers_.end() || key.isEmpty() || offer->key != key || offer->seen)
+            return;
+        offer->seen = true;
+        events_.append(QStringLiteral("seen ") + key);
+    }
+    Q_INVOKABLE void used(const QString& id, bool sent, int, const QString& key = {}) {
+        if (sent) {
+            if (!filled_.contains(id) || (!key.isEmpty() && filled_.value(id) != key))
+                return;
+            events_.append(QStringLiteral("sent ") + filled_.value(id));
+            return;
+        }
+        const auto offer = offers_.value(id);
+        if (offer.text.isEmpty() || (!key.isEmpty() && offer.key != key))
+            return;
+        events_.append(QStringLiteral("filled ") + offer.key);
+        filled_.insert(id, offer.key);
+        offers_.remove(id);
+        ++revision_;
+        emit changed();
+    }
+  signals:
+    void changed();
+
+  private:
+    QHash<QString, Offer> offers_;
+    QHash<QString, QString> filled_;
+    QStringList events_;
+    int revision_{};
+};
+
+using namespace lapis::desktop;
+
+QByteArray claude_thread(const char* question, const char* answer) {
+    return QByteArray(R"({"type":"user","uuid":"u","message":{"content":")") + question +
+           R"("}})" + "\n" +
+           R"({"type":"assistant","uuid":"a","message":{"content":[{"type":"text","text":")" +
+           answer + R"("}]}})" + "\n";
+}
+
+// Tab in the visual view's bar, as the owner uses it: Tab takes the guess,
+// Tab again sends it unchanged, and Tab on an empty bar moves to the agent
+// that most needs the person, with the bar's keyboard and that agent's guess
+// ready, so the chain goes on. Edited text never goes on a Tab, a held Tab
+// repeats nothing, a request is never answered, an IME composition keeps
+// Tab, and with nobody else waiting a quiet note says so. Offscreen and
+// software; fixture agents, a stand-in predictor and a stand-in terminal.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+int run_tab_flow(const QString& captures) {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    Workspace workspace(WorkspaceMode::fixture);
+    require(workspace.addFixtureAgent("alpha", "Alpha", "general", "claude", "") &&
+                workspace.addFixtureAgent("beta", "Beta", "general", "claude", "") &&
+                workspace.addFixtureAgent("gamma", "Gamma", "general", "agy", "") &&
+                workspace.addFixtureAgent("busy", "Busy", "general", "codex", ""),
+            "sample agents");
+    for (const char* id : {"alpha", "beta", "busy"}) {
+        const auto path = QDir(directory.path()).filePath(QString::fromLatin1(id) + ".jsonl");
+        write(path, claude_thread("Fix the parser", "Done: the parser handles tabs."));
+        require(workspace.setFixtureConversation(QString::fromLatin1(id), path),
+                std::string("a thread for ") + id);
+    }
+    QDir(directory.path()).mkpath("gamma");
+    const auto gamma = QDir(directory.path()).filePath("gamma/transcript_full.jsonl");
+    const auto prompt =
+        step(0, "USER_INPUT", "content", "<USER_REQUEST>\nMigrate\n</USER_REQUEST>");
+    write(gamma, QJsonDocument(prompt).toJson(QJsonDocument::Compact) + '\n');
+    require(workspace.setFixtureConversation("gamma", gamma), "a thread for gamma");
+    report(*workspace.agent("alpha"), Activity::turn_completed);
+    report(*workspace.agent("beta"), Activity::turn_completed);
+    report(*workspace.agent("busy"), Activity::working);
+    // A fixture request stands for the agent's state only without a status
+    // report (Agent::attentionCount).
+    require(workspace.requestAttention({"gamma", "gate-g", "Approve: run migrate"}) &&
+                workspace.agent("gamma")->statusKind() == "waiting",
+            "gamma's request");
+    Guesses guesses;
+    guesses.offer("alpha", "Run the tests", "alpha:1");
+    guesses.offer("beta", "Ship it", "beta:1");
+
+    const auto config_path = QDir(directory.path()).filePath("lapis.json");
+    write(config_path, R"({"version": 1})");
+    Config config;
+    config.setSourcePathForTesting(config_path);
+    require(config.load() && config.visualAll(), "visual.all is on");
+    require(workspace.selectAgent("alpha"), "start on alpha");
+
+    AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+                                  .compact = false,
+                                  .screen = QString(),
+                                  .config = &config,
+                                  .nextPrompt = &guesses});
+    require(preview.load(), "the production window loads");
+    auto* window = preview.window();
+    require(window != nullptr, "the window exists");
+    window->resize(1200, 800);
+    window->show();
+    window->requestActivate();
+    pump(200);
+    const auto flag = [&](const char* name) { return window->property(name).toBool(); };
+    const auto save = [&](const char* name) {
+        if (captures.isEmpty())
+            return;
+        pump(250);
+        const auto path = QDir(captures).filePath(QString::fromLatin1(name));
+        require(window->grabWindow().save(path), "save " + path.toStdString());
+        std::cout << "factory_ui_test: saved " << name << '\n';
+    };
+    auto* view = item(*window, "visualView");
+    auto* input = qvariant_cast<QQuickItem*>(view->property("composer"));
+    require(input != nullptr, "the bar's text field");
+    until([&] { return flag("visualCovers") && shown(*window, "visualView"); },
+          "alpha shows as its thread");
+    require(QMetaObject::invokeMethod(window, "visualFocus"), "the bar takes the keyboard");
+    until([&] { return input->hasActiveFocus(); }, "the bar has the keyboard");
+
+    // The terminal underneath, standing in: what the bar sends, by agent.
+    auto* engine = qmlEngine(view);
+    require(engine != nullptr, "the window's engine");
+    auto submit = engine->evaluate(QStringLiteral(
+        "(function() { var sent = []; var f = function(text) { sent.push(text); return true };"
+        " f.sent = sent; return f })()"));
+    require(submit.isCallable(), "a stand-in terminal");
+    view->setProperty("submit", QVariant::fromValue(submit));
+    const auto sent = [&] {
+        QStringList out;
+        const auto list = submit.property("sent");
+        for (int i = 0, n = list.property("length").toInt(); i < n; ++i)
+            out.append(list.property(static_cast<quint32>(i)).toString());
+        return out;
+    };
+    const auto focused = [&] {
+        const auto* agent = workspace.focusedAgent();
+        return agent != nullptr ? agent->agentId() : QString();
+    };
+    const auto text = [&] { return input->property("text").toString(); };
+    const auto key = [&](int code, bool repeat = false, const QString& typed = {}) {
+        QKeyEvent press(QEvent::KeyPress, code, Qt::NoModifier, typed, repeat);
+        QKeyEvent release(QEvent::KeyRelease, code, Qt::NoModifier, typed, repeat);
+        QCoreApplication::sendEvent(window, &press);
+        QCoreApplication::sendEvent(window, &release);
+        pump(30);
+    };
+    const auto tab = [&](bool repeat = false) { key(Qt::Key_Tab, repeat); };
+    const auto state = [&] {
+        return " (agent " + focused().toStdString() + ", text \"" + text().toStdString() +
+               "\", suggestion \"" + view->property("suggestion").toString().toStdString() +
+               "\", notice \"" + view->property("notice").toString().toStdString() +
+               "\", sent [" + sent().join("|").toStdString() + "], events [" +
+               guesses.events().join("|").toStdString() + "], bar focus " +
+               std::to_string(input->hasActiveFocus()) + ")";
+    };
+
+    // Alpha offers its guess in the empty bar, and the hint says what Tab does.
+    until([&] { return view->property("suggestion").toString() == "Run the tests"; },
+          "alpha's guess shows" + state());
+    until([&] { return guesses.events().contains("seen alpha:1"); },
+          "the bar's guess counts as seen" + state());
+    require(item(*window, "visualHint")->property("text").toString() ==
+                "Tab to use · again to send · then the next agent",
+            "the hint names the round" + state());
+    save("tab_flow_offer.png");
+
+    // Tab 1: the guess, editable, in the bar.
+    tab();
+    require(text() == "Run the tests" && sent().isEmpty(), "Tab 1 fills the guess" + state());
+    require(guesses.events().contains("filled alpha:1"), "Tab 1 is logged as used" + state());
+    // A held Tab repeats nothing: no send.
+    tab(true);
+    tab(true);
+    require(sent().isEmpty() && text() == "Run the tests", "auto-repeat does not send" + state());
+
+    // Tab 2: unchanged, it goes to alpha.
+    tab();
+    require(sent() == QStringList{"Run the tests"}, "Tab 2 sends the guess" + state());
+    require(text().isEmpty() && focused() == "alpha", "the bar clears, still on alpha" + state());
+    require(guesses.events().contains("sent alpha:1"), "Tab 2 is logged as sent" + state());
+    tab(true);
+    pump(100);
+    require(focused() == "alpha", "auto-repeat does not move on" + state());
+
+    // Tab 3: the agent that most needs the person (gamma's request), with the
+    // bar's keyboard. Its CLI gets no guesses; Tab still moves.
+    tab();
+    until([&] { return focused() == "gamma"; }, "Tab 3 moves to the request" + state());
+    until([&] { return flag("visualCovers") && input->hasActiveFocus(); },
+          "gamma's bar has the keyboard" + state());
+    require(view->property("waiting").toBool(), "gamma waits on its request" + state());
+
+    // On a request Tab neither fills nor answers: an empty bar moves on.
+    tab();
+    until([&] { return focused() == "beta"; }, "Tab on a request moves on" + state());
+    require(sent().size() == 1, "nothing was sent to the request" + state());
+    until([&] { return input->hasActiveFocus(); }, "beta's bar has the keyboard" + state());
+    until([&] { return view->property("suggestion").toString() == "Ship it"; },
+          "beta's guess is offered at once" + state());
+
+    // Edited after Tab, even back to the guess's words, the text waits for
+    // Return.
+    tab();
+    require(text() == "Ship it" && guesses.events().contains("filled beta:1"),
+            "Tab fills beta's guess" + state());
+    require(item(*window, "visualHint")->property("text").toString() == "Tab or Return to send",
+            "the hint says Tab sends it" + state());
+    key(Qt::Key_Exclam, false, QStringLiteral("!"));
+    require(text() == "Ship it!", "typed into the guess" + state());
+    tab();
+    require(sent().size() == 1 && text() == "Ship it!" && focused() == "beta",
+            "Tab never sends edited text" + state());
+    key(Qt::Key_Backspace);
+    require(text() == "Ship it", "the edit undone" + state());
+    tab();
+    require(sent().size() == 1 && text() == "Ship it" && focused() == "beta",
+            "Tab never sends text the person touched" + state());
+    require(!guesses.events().contains("sent beta:1"), "nor logs it as sent" + state());
+    key(Qt::Key_Exclam, false, QStringLiteral("!"));
+    key(Qt::Key_Return);
+    require(sent().size() == 2 && sent().at(1) == "Ship it!" && text().isEmpty(),
+            "Return sends the edited text" + state());
+    require(!guesses.events().contains("sent beta:1"),
+            "a Return send is not a Tab send" + state());
+
+    // An IME composition keeps Tab: no move.
+    QInputMethodEvent compose(QStringLiteral("ni"), {});
+    QCoreApplication::sendEvent(input, &compose);
+    pump(30);
+    require(input->property("preeditText").toString() == "ni", "a composition in the bar");
+    tab();
+    require(focused() == "beta", "Tab during a composition does not move" + state());
+    QInputMethodEvent cancel(QString(), {});
+    QCoreApplication::sendEvent(input, &cancel);
+    pump(30);
+
+    // Nobody else waiting: Tab stays and says so.
+    require(workspace.resolveAttention({"gamma", "gate-g", {}}), "gamma's request answered");
+    pump(50);
+    tab();
+    pump(100);
+    require(focused() == "beta" && sent().size() == 2, "nothing waiting: Tab stays" + state());
+    require(view->property("notice").toString() == "Nothing else is waiting",
+            "and says nothing else waits" + state());
+    save("tab_flow_nothing_waiting.png");
+
+    require(preview.diagnostics().isEmpty(),
+            "QML diagnostics: " + preview.diagnostics().toStdString());
+    std::cout << "factory_ui_test: tab flow PASS (offscreen/software; stand-in predictor and "
+                 "terminal; not native input, IME or GPU acceptance)\n";
+    return EXIT_SUCCESS;
+}
+} // namespace tab_flow
+#include "factory_ui_test.moc"
 
 int main(int argc, char** argv) {
     QString captures;
+    bool new_session = false;
+    bool tab_chain = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         if (argument == "--background")
@@ -508,7 +1039,16 @@ int main(int argc, char** argv) {
             captures = QString::fromLocal8Bit(argv[++index]);
             continue;
         }
-        std::cerr << "Usage: lapis_factory_ui_tests [--background] [--capture DIR]\n";
+        if (argument == "--new-session") {
+            new_session = true;
+            continue;
+        }
+        if (argument == "--tab-flow") {
+            tab_chain = true;
+            continue;
+        }
+        std::cerr << "Usage: lapis_factory_ui_tests [--background] [--new-session | --tab-flow] "
+                     "[--capture DIR]\n";
         return EXIT_FAILURE;
     }
     qputenv("QT_QPA_PLATFORM", "offscreen");
@@ -529,7 +1069,9 @@ int main(int argc, char** argv) {
     try {
         require(QGuiApplication::platformName() == QStringLiteral("offscreen"),
                 "offscreen platform only");
-        return run(captures);
+        return tab_chain     ? tab_flow::run_tab_flow(captures)
+               : new_session ? run_new_session(captures)
+                             : run(captures);
     } catch (const std::exception& error) {
         std::cerr << "factory_ui_test: " << error.what() << '\n';
         return EXIT_FAILURE;

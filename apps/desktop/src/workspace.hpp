@@ -568,6 +568,11 @@ class Workspace final : public QObject {
     // an agent on another machine, a CLI the view cannot read, or before the
     // CLI saved anything.
     Q_INVOKABLE [[nodiscard]] QString conversationFile(const QString& id);
+    // Whether the visual view can show this agent as a thread: a Claude
+    // Code, Codex or Antigravity agent on this Mac, whose file
+    // conversationFile finds once its CLI saved something. Before that the
+    // view shows an empty thread.
+    Q_INVOKABLE [[nodiscard]] bool visualSupported(const QString& id) const;
     // Copies an agent's conversation up to `record` (a saved record's uuid;
     // `before` stops just ahead of it) into a new conversation beside it and
     // returns the new id for resumeAgent, or empty.
