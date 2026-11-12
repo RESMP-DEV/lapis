@@ -785,6 +785,264 @@ class TranscriptTests(Homes):
         self.assertEqual(next_prompt.PROMPT_ARMS, ("base", "checks"))
 
 
+class WallTests(Homes):
+    """`nextPrompt.separate` and `off`: made-up folders under a temporary root.
+
+    Beside the shared fixture (c1 records no folder; x9 and omp1 work in
+    `work`), sessions work in `work/client` (walled), `work/clientele` (a name
+    that only starts like it), `dev/app` (outside) and `private` (off)."""
+
+    WHEN = "2026-09-28T10:05:00Z"
+
+    def setUp(self):
+        super().setUp()
+        self.client = self.root / "work" / "client"
+        self.clientele = self.root / "work" / "clientele"
+        self.app = self.root / "dev" / "app"
+        self.private = self.root / "private"
+        for folder in (self.client / "sub", self.clientele, self.app, self.private):
+            folder.mkdir(parents=True)
+        self.claude_session("out1", self.app, "outside work", "2026-09-28T10:01:00Z")
+        self.claude_session("in1", self.client, "client plan", "2026-09-28T10:02:00Z")
+        self.claude_session(
+            "pre1", self.clientele, "clientele note", "2026-09-28T10:01:30Z"
+        )
+        self.claude_session("off1", self.private, "off note", "2026-09-28T10:02:30Z")
+        # Codex records its folder per turn too; a turn moved into the wall.
+        write_lines(
+            self.codex / "sessions" / "2026" / "09" / "28" / "rollout-in2.jsonl",
+            [
+                {
+                    "type": "session_meta",
+                    "payload": {"id": "in2", "cwd": str(self.client / "sub")},
+                },
+                {"type": "turn_context", "payload": {"cwd": str(self.client)}},
+                codex_message("user", "client sub task", "2026-09-28T10:03:30Z"),
+                codex_message("assistant", "Done.", "2026-09-28T10:03:40Z"),
+            ],
+        )
+
+    def claude_session(self, name, folder, text, stamp, other=None):
+        """A Claude Code conversation working in `folder` (and `other`)."""
+        texts = [text] if isinstance(text, str) else text
+        stamps = [stamp] if isinstance(stamp, str) else stamp
+        entries = []
+        for typed_text, when in zip(texts, stamps):
+            entries.append(claude_user(typed_text, when, cwd=str(folder)))
+            entries.append(dict(claude_agent("Done.", when), cwd=str(other or folder)))
+        return write_lines(self.claude / "projects" / "-x" / (name + ".jsonl"), entries)
+
+    def walls(self, separate=(), off=()):
+        return json.dumps(
+            {"separate": [str(f) for f in separate], "off": [str(f) for f in off]}
+        )
+
+    def context(self, conversation, walls="", cli="claude", folder="", indexed=True):
+        """The context for a guess: through the private index, or as a remote
+        helper reads it (no index)."""
+        arguments = next_prompt.argparse.Namespace(
+            cli=cli, conversation=conversation, folder=folder, walls=walls
+        )
+        runtime = self.root / "runtime"
+        runtime.mkdir(exist_ok=True)
+        installed = runtime / "next_prompt.py"
+        installed.write_text("")
+        script = str(installed) if indexed else "<stdin>"
+        when = next_prompt.utc_timestamp(self.WHEN)
+        with patch.object(next_prompt, "__file__", script):
+            with patch.object(next_prompt.time, "time", return_value=when):
+                return next_prompt.command_context(arguments)
+
+    def recent(self, context):
+        return sorted(r["text"] for r in context["recent"])
+
+    def test_an_outside_session_sees_nothing_from_inside(self):
+        walls = self.walls(separate=[self.client])
+        for indexed in (True, False):
+            with self.subTest(indexed=indexed):
+                context = self.context("out1", walls, indexed=indexed)
+                self.assertEqual(context["wall"], "")
+                # c1 records no folder, so it is left out too.
+                self.assertEqual(
+                    self.recent(context),
+                    ["check the disk", "clientele note", "off note", "run the suite"],
+                )
+
+    def test_an_inside_session_sees_only_inside(self):
+        walls = self.walls(separate=[self.client])
+        for indexed in (True, False):
+            with self.subTest(indexed=indexed):
+                context = self.context("in1", walls, indexed=indexed)
+                self.assertEqual(context["wall"], "s0")
+                self.assertEqual(self.recent(context), ["client sub task"])
+                inner = self.context("in2", walls, cli="codex", indexed=indexed)
+                self.assertEqual(inner["wall"], "s0")
+                self.assertEqual(self.recent(inner), ["client plan"])
+
+    def test_a_session_whose_folder_is_unknown_is_left_out(self):
+        walls = self.walls(separate=[self.client])
+        # c1 records no folder: out of every other guess, and its own guess
+        # sees no other session.
+        outside = self.context("out1", walls)
+        self.assertNotIn("go", self.recent(outside))
+        unknown = self.context("c1", walls)
+        self.assertEqual((unknown["wall"], unknown["recent"]), ("?", []))
+        # The folder lapis started it in stands in when none is recorded.
+        placed = self.context("c1", walls, folder=str(self.app))
+        self.assertEqual(placed["wall"], "")
+        # A conversation recorded in two zones is unknown, both ways.
+        self.claude_session(
+            "both", self.app, "straddles", "2026-09-28T10:04:00Z", other=self.client
+        )
+        self.assertNotIn("straddles", self.recent(self.context("out1", walls)))
+        self.assertNotIn("straddles", self.recent(self.context("in1", walls)))
+        self.assertEqual(self.context("both", walls)["recent"], [])
+
+    def test_a_folder_matches_by_component_not_by_prefix(self):
+        walls = self.walls(separate=[self.client])
+        self.assertIn("clientele note", self.recent(self.context("out1", walls)))
+        self.assertNotIn("clientele note", self.recent(self.context("in1", walls)))
+        self.assertEqual(self.context("pre1", walls)["wall"], "")
+        zones = next_prompt.parse_walls(walls)
+        self.assertEqual(next_prompt.zone_of([str(self.clientele)], zones), "")
+        self.assertEqual(next_prompt.zone_of([str(self.client / "sub")], zones), "s0")
+        self.assertEqual(next_prompt.zone_of(["relative/client"], zones), "?")
+        self.assertEqual(next_prompt.zone_of([], zones), "?")
+
+    def test_symlinks_and_home_are_resolved(self):
+        alias = self.root / "alias"
+        alias.symlink_to(self.client)
+        self.claude_session("via", alias, "through a link", "2026-09-28T10:04:00Z")
+        walls = self.walls(separate=[self.client])
+        self.assertEqual(self.context("via", walls)["wall"], "s0")
+        self.assertNotIn("through a link", self.recent(self.context("out1", walls)))
+        with patch.dict(os.environ, {"HOME": str(self.root)}):
+            home = next_prompt.parse_walls(json.dumps({"separate": ["~/work/client"]}))
+            self.assertEqual(next_prompt.zone_of([str(alias / "x")], home), "s0")
+            self.assertEqual(next_prompt.zone_of(["~/work/client"], home), "s0")
+        # Nested entries: the deepest holds the session.
+        nested = next_prompt.parse_walls(
+            self.walls(separate=[self.root / "work", self.client])
+        )
+        self.assertEqual(next_prompt.zone_of([str(self.client)], nested), "s1")
+        self.assertEqual(next_prompt.zone_of([str(self.clientele)], nested), "s0")
+
+    def test_an_off_folder_is_never_guessed_or_shown(self):
+        walls = self.walls(separate=[self.client], off=[self.private])
+        off = self.context("off1", walls)
+        self.assertEqual((off["wall"], off["recent"]), ("o0", []))
+        for name in ("out1", "in1"):
+            self.assertNotIn("off note", self.recent(self.context(name, walls)))
+        zones = next_prompt.parse_walls(walls)
+        self.assertFalse(next_prompt.guessable("o0", zones))
+        self.assertFalse(next_prompt.guessable("?", zones))
+        self.assertTrue(
+            next_prompt.guessable(
+                "?", next_prompt.parse_walls(self.walls(separate=[self.client]))
+            )
+        )
+        # The replay's samples: an off conversation is never sampled, and its
+        # prompts are not in another sample's recent ones.
+        self.claude_session(
+            "off2",
+            self.private,
+            ["off a", "off b", "off c"],
+            ["2026-09-28T10:00:00Z", "2026-09-28T10:01:00Z", "2026-09-28T10:02:00Z"],
+        )
+        self.claude_session(
+            "out2",
+            self.app,
+            ["out a", "out b", "out c"],
+            ["2026-09-28T10:00:30Z", "2026-09-28T10:01:30Z", "2026-09-28T10:03:00Z"],
+        )
+
+        def sample(walls):
+            with patch.object(next_prompt, "__file__", "<stdin>"):
+                found = next_prompt.command_sample(
+                    next_prompt.argparse.Namespace(
+                        count=50, since="", seed=1, exclude=[], walls=walls
+                    )
+                )
+            return {
+                item["actual"]: [r["text"] for r in item["recent"]]
+                for item in found["items"]
+            }
+
+        self.assertEqual(set(sample("")), {"off c", "out c"})
+        self.assertIn("off b", sample("")["out c"])
+        walled = sample(walls)
+        self.assertEqual(set(walled), {"out c"})
+        self.assertFalse(any(t.startswith("off") for t in walled["out c"]))
+        self.assertIn("outside work", walled["out c"])
+
+    def test_no_walls_leave_the_context_as_it_was(self):
+        """Absent or empty lists: the same context, every session included."""
+        before = self.context("out1")
+        for walls in ("", self.walls(), '{"separate": [], "off": []}', "not json"):
+            with self.subTest(walls=walls):
+                self.assertEqual(self.context("out1", walls), before)
+        self.assertNotIn("wall", before)
+        self.assertEqual(
+            self.recent(before),
+            [
+                "check the disk",
+                "client plan",
+                "client sub task",
+                "clientele note",
+                "fix the paste bug",
+                "go",
+                "off note",
+                "run the suite",
+            ],
+        )
+        bundle = {"context": before, "agents": [], "target": self.WHEN, "time": "t"}
+        self.assertEqual(
+            next_prompt.render(bundle, fence="f"),
+            next_prompt.render(dict(bundle, context=self.context("out1", "")), "f"),
+        )
+
+    def test_an_index_from_before_folders_is_read_again(self):
+        folder = self.root / "runtime"
+        folder.mkdir()
+        files = next_prompt.pair_index(str(folder))
+        path = str(self.root / "claude" / "projects" / "-x" / "in1.jsonl")
+        self.assertEqual(files[path]["folders"], [str(self.client)])
+        index = folder / next_prompt.INDEX_NAME
+        saved = json.loads(index.read_text())
+        for entry in saved["files"].values():
+            entry.pop("folders")
+        index.write_text(json.dumps(saved))
+        # Unread within the budget: unknown, so walled out.
+        stale = next_prompt.pair_index(str(folder), budget=-1)
+        zones = next_prompt.parse_walls(self.walls(separate=[self.client]))
+        when = next_prompt.utc_timestamp(self.WHEN)
+        self.assertEqual(
+            next_prompt.recent_prompts("", before=when, files=stale, walls=zones),
+            [],
+        )
+        self.assertEqual(
+            next_prompt.pair_index(str(folder))[path]["folders"], [str(self.client)]
+        )
+
+    def test_the_replay_passes_the_configured_walls(self):
+        config = self.root / "lapis.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "nextPrompt": {
+                        "separate": ["~/work/client", "relative", 3],
+                        "off": ["/x/private"],
+                    }
+                }
+            )
+        )
+        with patch.dict(os.environ, {"LAPIS_CONFIG": str(config)}):
+            self.assertEqual(
+                json.loads(next_prompt.config_walls()),
+                {"separate": ["~/work/client"], "off": ["/x/private"]},
+            )
+
+
 class ModelTests(unittest.TestCase):
     def test_the_prompt_holds_the_screen_the_other_agents_and_recent_prompts(self):
         text = next_prompt.render(

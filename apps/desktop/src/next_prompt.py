@@ -427,6 +427,124 @@ def folder_path(folder):
     return os.path.realpath(os.path.expanduser(folder)) if folder else ""
 
 
+# Folder walls (`nextPrompt.separate` and `nextPrompt.off`). A session's zone
+# is "" outside every listed folder, "s<i>" inside separate entry i (the
+# deepest that holds it), "o<i>" inside off entry i (off wins), or "?" when
+# its folder cannot be determined or its recorded folders disagree. With a
+# list set, one session's prompts reach another's guess only within one known
+# zone that is not off; with none, every zone is "" and nothing is walled.
+WALL_LIMIT = 64
+WALL_CHARS = 1024
+UNKNOWN_ZONE = "?"
+
+
+def wall_list(value):
+    """Listed folders as written: absolute or `~`, bounded, others dropped.
+
+    The desktop cleans the list the same way and passes it, so the indices in
+    a zone name the same entries on both sides."""
+    if not isinstance(value, list):
+        return []
+    kept = []
+    for entry in value:
+        if len(kept) >= WALL_LIMIT:
+            break
+        if not isinstance(entry, str):
+            continue
+        entry = entry.strip()
+        if (
+            not entry
+            or len(entry) > WALL_CHARS
+            or not (entry.startswith("/") or entry == "~" or entry.startswith("~/"))
+        ):
+            continue
+        kept.append(entry)
+    return kept
+
+
+def parse_walls(text):
+    """`--walls` JSON ({"separate": [...], "off": [...]}), resolved here.
+
+    Each listed folder is resolved on the machine the helper runs on (`~` is
+    that machine's home; symlinks are followed). Absent or malformed: none."""
+    try:
+        value = json.loads(text) if text else {}
+    except (TypeError, ValueError):
+        value = {}
+    if not isinstance(value, dict):
+        value = {}
+    return {
+        kind: [folder_path(entry) for entry in wall_list(value.get(kind))]
+        for kind in ("separate", "off")
+    }
+
+
+def walled(walls):
+    return bool(walls and (walls.get("separate") or walls.get("off")))
+
+
+def inside(path, folder):
+    """Whether resolved `path` is `folder` or below it, by whole components."""
+    if folder == "/":
+        return path.startswith("/")
+    return path == folder or path.startswith(folder + "/")
+
+
+def path_zone(path, walls):
+    for index, folder in enumerate(walls.get("off", [])):
+        if inside(path, folder):
+            return "o{}".format(index)
+    best = None
+    for index, folder in enumerate(walls.get("separate", [])):
+        if inside(path, folder) and (best is None or len(folder) > best[1]):
+            best = (index, len(folder))
+    return "s{}".format(best[0]) if best else ""
+
+
+def zone_of(folders, walls):
+    """The zone of a session that recorded these working folders."""
+    if not walled(walls):
+        return ""
+    zones = set()
+    for folder in folders:
+        folder = (folder or "").strip()
+        if len(folder) > 1 and folder[0] == folder[-1] and folder[0] in "'\"":
+            folder = folder[1:-1]
+        if not (folder.startswith("/") or folder.startswith("~")):
+            return UNKNOWN_ZONE
+        zones.add(path_zone(folder_path(folder), walls))
+    return zones.pop() if len(zones) == 1 else UNKNOWN_ZONE
+
+
+def transcript_folders(path):
+    """Every working folder a transcript records, in first-seen order.
+
+    Claude Code puts `cwd` on its entries, Codex on `session_meta` and each
+    `turn_context` payload, OMP on its `session` entry. The transcript's own
+    path (Claude Code's project slug, say) is never used: it is lossy."""
+    found = []
+    for entry in transcript(path):
+        payload = entry.get("payload")
+        for holder in (entry, payload if isinstance(payload, dict) else {}):
+            cwd = holder.get("cwd")
+            if isinstance(cwd, str) and cwd.strip() and cwd not in found:
+                found.append(cwd)
+    return found
+
+
+def guessable(zone, walls):
+    """Whether a session in `zone` may be guessed for at all: never inside an
+    off folder, nor where its folder is unknown while an off list is set."""
+    if not walled(walls):
+        return True
+    return not zone.startswith("o") and not (zone == UNKNOWN_ZONE and walls.get("off"))
+
+
+def visible(source, target):
+    """Whether a session in zone `source` may inform a guess in `target`."""
+    return source == target and target != UNKNOWN_ZONE and not target.startswith("o")
+
+
 def find_transcript(cli, conversation, folder):
     """Resolve a named conversation; use the folder only when no id is known."""
     if conversation and not CONVERSATION.match(conversation):
@@ -505,17 +623,32 @@ def history(turns, limit=CONTEXT_CHARS):
     return list(reversed(kept))
 
 
-def recent_prompts(skip, hours=RECENT_HOURS, limit=20, before=None, files=None):
+def recent_prompts(
+    skip, hours=RECENT_HOURS, limit=20, before=None, files=None, walls=None, zone=""
+):
     """The person's prompts to other conversations in the window before the
     target message. `files` is an up-to-date pair_index(); without it this
-    falls back to reading the transcripts, which is slower."""
+    falls back to reading the transcripts, which is slower. With `walls`, only
+    conversations in the target's `zone` count (see visible)."""
     end = before if before is not None else time.time()
     cutoff = end - hours * 3600
     found = []
+    if walled(walls) and (zone == UNKNOWN_ZONE or zone.startswith("o")):
+        return []
     if files is not None:
         for name, entry in files.items():
             if name == skip:
                 continue
+            if walled(walls):
+                folders = entry.get("folders")
+                source = (
+                    zone_of(folders, walls)
+                    if isinstance(folders, list)
+                    and all(isinstance(f, str) for f in folders)
+                    else UNKNOWN_ZONE
+                )
+                if not visible(source, zone):
+                    continue
             for stamp, folder, text in entry.get("prompts", []):
                 try:
                     when = utc_timestamp(stamp)
@@ -541,6 +674,11 @@ def recent_prompts(skip, hours=RECENT_HOURS, limit=20, before=None, files=None):
                     continue
                 if cli == "omp" and not omp_interactive(omp_meta(path)):
                     continue
+                turns = turns_of(cli, path)
+                if walled(walls) and not visible(
+                    zone_of(transcript_folders(path), walls), zone
+                ):
+                    continue
                 folder = (
                     os.path.basename(os.path.dirname(path))
                     if cli == "claude"
@@ -548,7 +686,7 @@ def recent_prompts(skip, hours=RECENT_HOURS, limit=20, before=None, files=None):
                     if cli == "omp"
                     else ""
                 )
-                for turn in turns_of(cli, path):
+                for turn in turns:
                     if turn["role"] != "person":
                         continue
                     try:
@@ -578,14 +716,19 @@ def command_context(arguments):
     # mtime older than the file, so the next index scan reads it again.
     stamp = os.path.getmtime(path)
     turns = turns_of(arguments.cli, path)
+    folders = transcript_folders(path)
     prompts = [t for t in turns if t["role"] == "person"]
     shown = history(turns)
     now = time.time()
+    walls = parse_walls(getattr(arguments, "walls", ""))
+    # The conversation's own recorded folders decide its zone; the folder
+    # lapis started it in stands in only when the transcript records none.
+    zone = zone_of(folders or ([arguments.folder] if arguments.folder else []), walls)
     folder = index_folder()
     files = None
-    if folder is not None:
+    if folder is not None and visible(zone, zone):
         try:
-            files = pair_index(folder, parsed={path: (stamp, turns)})
+            files = pair_index(folder, parsed={path: (stamp, turns, folders)})
         except OSError:
             files = None
     result = {
@@ -593,8 +736,10 @@ def command_context(arguments):
         "conversation_id": transcript_conversation_id(arguments.cli, path),
         "turn": len(prompts),
         "turns": shown,
-        "recent": recent_prompts(path, before=now, files=files),
+        "recent": recent_prompts(path, before=now, files=files, walls=walls, zone=zone),
     }
+    if walled(walls):
+        result["wall"] = zone
     replies = [t for t in turns if t["role"] == "agent" and t.get("time")]
     if replies:
         try:
@@ -685,11 +830,19 @@ def command_sample(arguments):
     since = arguments.since or ""
     oldest = utc_timestamp(since) if since else 0
     exclude = set(arguments.exclude or ())
+    walls = parse_walls(getattr(arguments, "walls", ""))
+    zones = {}
     eligible = []
     for cli, path in paths:
         if os.path.getmtime(path) < oldest or any(e and e in path for e in exclude):
             continue
         turns = turns_of(cli, path)
+        if walled(walls):
+            zones[path] = zone_of(transcript_folders(path), walls)
+            # An off conversation is never sampled: its prompts would reach
+            # the model the replay asks.
+            if not guessable(zones[path], walls):
+                continue
         seen = 0
         for index, turn in enumerate(turns):
             if turn["role"] != "person":
@@ -718,7 +871,13 @@ def command_sample(arguments):
             before = utc_timestamp(target["time"])
         except (ValueError, TypeError):
             pass
-        recent = recent_prompts(path, before=before, files=files) if before else []
+        recent = (
+            recent_prompts(
+                path, before=before, files=files, walls=walls, zone=zones.get(path, "")
+            )
+            if before
+            else []
+        )
         replies = [t for t in turns[:index] if t["role"] == "agent" and t.get("time")]
         returned = 0
         if before and replies:
@@ -764,11 +923,12 @@ def pair_index(folder, now=None, budget=INDEX_SECONDS, parsed=None):
     """The person's past prompts on this Mac, cached in `folder` and brought
     up to date within `budget` seconds a call, newest transcripts first.
 
-    `parsed` maps a transcript path to the (mtime, turns) its caller already
-    read; an entry whose mtime still matches uses that parse, so the scan
-    order costs no second read of the conversation. Tool output stays in the
-    transcripts; the index holds only prompts (an older cache may still carry
-    past exchanges as "pairs", which nothing reads)."""
+    `parsed` maps a transcript path to the (mtime, turns[, folders]) its
+    caller already read; an entry whose mtime still matches uses that parse,
+    so the scan order costs no second read of the conversation. Tool output
+    stays in the transcripts; the index holds only prompts and the working
+    folders each transcript records (an older cache may still carry past
+    exchanges as "pairs", which nothing reads)."""
     now = now or time.time()
     path = os.path.join(folder, INDEX_NAME)
     try:
@@ -802,9 +962,10 @@ def pair_index(folder, now=None, budget=INDEX_SECONDS, parsed=None):
         if isinstance(entry, dict) and entry.pop("snippets", None) is not None:
             changed = True
     for name, (cli, stamp) in sorted(found.items(), key=lambda f: -f[1][1]):
-        if files.get(name, {}).get("mtime") == stamp and "prompts" in files.get(
-            name, {}
-        ):
+        # An entry cached before folders were recorded is read again; until
+        # then its zone is unknown, so a wall leaves it out.
+        known = files.get(name, {})
+        if known.get("mtime") == stamp and "prompts" in known and "folders" in known:
             continue
         if time.time() - started > budget:
             break
@@ -816,14 +977,17 @@ def pair_index(folder, now=None, budget=INDEX_SECONDS, parsed=None):
             interactive = omp_interactive(omp_meta(name))
         ready = parsed.get(name) if parsed else None
         if not interactive:
-            turns = []
+            turns, folders = [], []
         elif ready and ready[0] == stamp:
             turns = ready[1]
+            folders = ready[2] if len(ready) > 2 else transcript_folders(name)
         else:
             turns = turns_of(cli, name)
+            folders = transcript_folders(name)
         files[name] = {
             "mtime": stamp,
             "prompts": transcript_prompts(cli, name, turns),
+            "folders": folders,
         }
         changed = True
     if changed or len(files) != len(index["files"]):
@@ -1095,8 +1259,8 @@ def clean_providers(value):
     return cleaned
 
 
-def config_providers():
-    """`nextPrompt.providers` from lapis.json, when no chain was passed."""
+def config_section():
+    """lapis.json's `nextPrompt` object, or {}."""
     explicit = os.environ.get("LAPIS_CONFIG")
     home = os.environ.get("LAPIS_HOME") or os.path.expanduser("~/.lapis")
     path = explicit or os.path.join(home, "lapis.json")
@@ -1104,10 +1268,23 @@ def config_providers():
         with open(path, encoding="utf-8") as file:
             config = json.load(file)
     except (OSError, ValueError):
-        return []
+        return {}
     section = config.get("nextPrompt") if isinstance(config, dict) else None
-    return (
-        clean_providers(section.get("providers")) if isinstance(section, dict) else []
+    return section if isinstance(section, dict) else {}
+
+
+def config_providers():
+    """`nextPrompt.providers` from lapis.json, when no chain was passed."""
+    return clean_providers(config_section().get("providers"))
+
+
+def config_walls():
+    """`nextPrompt.separate` and `nextPrompt.off` from lapis.json, as the
+    `--walls` JSON the context and sample modes take (folders unresolved, so
+    another machine resolves `~` as its own home)."""
+    section = config_section()
+    return json.dumps(
+        {kind: wall_list(section.get(kind)) for kind in ("separate", "off")}
     )
 
 
@@ -1433,6 +1610,10 @@ def main(argv=None):
     context.add_argument("--conversation", default="")
     context.add_argument("--answered", type=int, default=-1)
     context.add_argument("--folder", default="")
+    # {"separate": [folders], "off": [folders]}, resolved where this runs.
+    # Absent: no walls (the desktop passes its settings; lapis.json is not
+    # read here, so a remote machine and this Mac behave alike).
+    context.add_argument("--walls", default="")
     actual = modes.add_parser("actual")
     actual.add_argument("--cli", choices=("claude", "codex", "omp"), required=True)
     actual.add_argument("--conversation", required=True)
@@ -1442,6 +1623,7 @@ def main(argv=None):
     sample.add_argument("--since", default="")
     sample.add_argument("--seed", type=int, default=0)
     sample.add_argument("--exclude", nargs="*")
+    sample.add_argument("--walls", default="")
     predict_mode = modes.add_parser("predict")
     predict_mode.add_argument("--model", default="claude-opus-5-5")
     predict_mode.add_argument("--effort", default="")
