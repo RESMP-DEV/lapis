@@ -695,10 +695,28 @@ FocusScope {
         footer: liveFooter
         onCountChanged: if (root.following) Qt.callLater(positionViewAtEnd)
         onContentHeightChanged: if (root.following) Qt.callLater(positionViewAtEnd)
+        // Always drawn while the thread is taller than the view, so there is
+        // something to see and grab; it brightens under the pointer.
         ScrollBar.vertical: ScrollBar {
-            policy: ScrollBar.AsNeeded
+            id: threadBar
+            objectName: "visualScrollBar"
+            policy: list.contentHeight > list.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+            width: 14
+            padding: 3
+            minimumSize: 0.06
             // Following would pull the view back to the end mid-drag.
             onPressedChanged: root.following = !pressed && list.atYEnd
+            contentItem: Rectangle {
+                objectName: "visualScrollThumb"
+                implicitWidth: 8
+                radius: width / 2
+                color: root.textColor
+                opacity: threadBar.pressed ? 0.6 : threadBar.hovered ? 0.45 : 0.22
+            }
+            background: Rectangle {
+                color: root.textColor
+                opacity: threadBar.hovered || threadBar.pressed ? 0.06 : 0
+            }
         }
 
         // One delegate per kind, so a row scrolled out is reused by the next
