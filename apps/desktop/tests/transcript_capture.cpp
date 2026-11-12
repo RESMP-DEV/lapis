@@ -36,13 +36,18 @@
 #include <QSet>
 #include <QTemporaryDir>
 #include <QThreadPool>
+#include <QTimer>
 #include <QWheelEvent>
 #include <algorithm>
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach/mach.h>
 #endif
+#include <cstdint>
 #include <cstdio>
+#include <map>
+#include <string>
+#include <sys/resource.h>
 #include <vector>
 
 using lapis::desktop::TranscriptModel;
@@ -384,6 +389,194 @@ int check_live(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile
         std::fprintf(stderr, "live FAIL rows: %s\n", qPrintable(overlap));
     expect(overlaps.empty(), "no row of the thread overlaps the next");
     std::puts(failures == 0 ? "live: all checks passed" : "live: failed");
+    return failures == 0 ? 0 : 1;
+}
+
+// --media-checks: a made-up reply with a see-through diagram standing alone
+// and a PDF named in a sentence, written by write_media_fixture.
+void write_media_fixture(const QString& folder, QFile& file) {
+    QImage diagram(360, 180, QImage::Format_ARGB32);
+    diagram.fill(Qt::transparent);
+    QPainter paint(&diagram);
+    paint.setRenderHint(QPainter::Antialiasing);
+    paint.setPen(QPen(QColor("#e8e8e8"), 3)); // drawn for a dark page
+    paint.drawRoundedRect(QRectF(20, 50, 110, 70), 10, 10);
+    paint.drawRoundedRect(QRectF(230, 50, 110, 70), 10, 10);
+    paint.drawLine(QPointF(130, 85), QPointF(228, 85));
+    paint.drawLine(QPointF(216, 75), QPointF(228, 85));
+    paint.drawLine(QPointF(216, 95), QPointF(228, 85));
+    paint.end();
+    const auto picture = QDir(folder).filePath(QStringLiteral("diagram.png"));
+    (void)diagram.save(picture);
+    QFile pdf(QDir(folder).filePath(QStringLiteral("report.pdf")));
+    if (pdf.open(QIODevice::WriteOnly))
+        pdf.write("%PDF-1.4\n");
+    // Named from the home folder (the capture's own), as agents often do.
+    const auto reply = QStringLiteral("The flow, as drawn:\n\n~/diagram.png\n\nThe full write-up "
+                                      "is in ~/report.pdf for later.");
+    const QJsonObject prompt{{"type", "user"},
+                             {"uuid", "p1"},
+                             {"timestamp", "2026-11-11T16:00:00.000Z"},
+                             {"message", QJsonObject{{"content", "Draw the flow"}}}};
+    const QJsonObject answer{
+        {"type", "assistant"},
+        {"uuid", "a1"},
+        {"timestamp", "2026-11-11T16:00:02.000Z"},
+        {"message",
+         QJsonObject{{"content", QJsonArray{QJsonObject{{"type", "text"}, {"text", reply}}}}}}};
+    for (const auto& record : {prompt, answer})
+        file.write(QJsonDocument(record).toJson(QJsonDocument::Compact) + '\n');
+    file.write(R"({"type":"system","subtype":"turn_duration","durationMs":2000})"
+               "\n");
+    file.flush();
+}
+
+void press(QQuickView& view, QQuickItem* item, QPointF offset, Qt::MouseButton button,
+           Qt::KeyboardModifiers modifiers, QEvent::Type type) {
+    const auto at = item->mapToScene(offset);
+    // A move names no button of its own, only the one held.
+    QMouseEvent event(type, at, at, view.mapToGlobal(at.toPoint()),
+                      type == QEvent::MouseMove ? Qt::NoButton : button,
+                      type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::MouseButtons(button),
+                      modifiers);
+    QCoreApplication::sendEvent(&view, &event);
+}
+
+// Media in the thread: a click opens the file, a drag carries it out (and
+// is not also a click), and a right-click or Control-click opens its menu,
+// whose actions reach the file. Recorders stand in for the clipboard, the
+// Finder and the drag, so nothing leaves the process.
+int check_media(QQuickView& view, QQuickItem* root, const QString& capture) {
+    int failures = 0;
+    const auto expect = [&failures](bool ok, const char* what) {
+        if (!ok) {
+            std::fprintf(stderr, "media FAIL %s\n", what);
+            ++failures;
+        }
+    };
+    lapis::desktop::MediaActions actions;
+    std::vector<std::pair<QString, QString>> launched;
+    actions.setLauncherForTesting([&launched](const QString& action, const QString& path) {
+        launched.emplace_back(action, path);
+        return true;
+    });
+    std::unique_ptr<QMimeData> copied;
+    actions.setClipboardForTesting(
+        [&copied](std::unique_ptr<QMimeData> data) { copied = std::move(data); });
+    std::unique_ptr<QMimeData> dragged;
+    int drags = 0;
+    actions.setDraggerForTesting([&](std::unique_ptr<QMimeData> data, const QImage&) {
+        dragged = std::move(data);
+        ++drags;
+        return true;
+    });
+    root->setProperty("mediaActions", QVariant::fromValue(static_cast<QObject*>(&actions)));
+    auto* list = root->property("list").value<QQuickItem*>();
+    QMetaObject::invokeMethod(list, "positionViewAtEnd");
+    settle();
+    auto items = named(root, "mediaItem");
+    expect(items.size() == 2, "the diagram in place and the PDF under the reply");
+    if (items.size() != 2)
+        return 1;
+    auto* picture = items.front();
+    auto* card = items.back();
+    const auto middle = [](QQuickItem* item) {
+        return QPointF(item->width() / 2, item->height() / 2);
+    };
+
+    // A plain click opens the picture.
+    press(view, picture, middle(picture), Qt::LeftButton, Qt::NoModifier, QEvent::MouseButtonPress);
+    press(view, picture, middle(picture), Qt::LeftButton, Qt::NoModifier,
+          QEvent::MouseButtonRelease);
+    settle();
+    expect(launched.size() == 1 && launched.back().first == QLatin1String("open") &&
+               launched.back().second.endsWith(QLatin1String("diagram.png")),
+           "a click opens the picture");
+
+    // A drag carries the file and its pixels, and opens nothing.
+    press(view, picture, middle(picture), Qt::LeftButton, Qt::NoModifier, QEvent::MouseButtonPress);
+    for (int step = 1; step <= 8; ++step)
+        press(view, picture, middle(picture) + QPointF(step * 6, step * 2), Qt::LeftButton,
+              Qt::NoModifier, QEvent::MouseMove);
+    press(view, picture, middle(picture) + QPointF(48, 16), Qt::LeftButton, Qt::NoModifier,
+          QEvent::MouseButtonRelease);
+    settle();
+    std::printf("media: %d drag(s) from one gesture\n", drags);
+    expect(drags == 1, "a drag starts one file drag");
+    expect(dragged && dragged->urls().size() == 1 &&
+               dragged->urls().front().toLocalFile().endsWith(QLatin1String("diagram.png")) &&
+               dragged->hasImage(),
+           "the drag carries the file URL and the picture");
+    expect(launched.size() == 1, "a drag is not also a click");
+    // The card drags as its file.
+    press(view, card, middle(card), Qt::LeftButton, Qt::NoModifier, QEvent::MouseButtonPress);
+    for (int step = 1; step <= 8; ++step)
+        press(view, card, middle(card) + QPointF(step * 6, 0), Qt::LeftButton, Qt::NoModifier,
+              QEvent::MouseMove);
+    press(view, card, middle(card) + QPointF(48, 0), Qt::LeftButton, Qt::NoModifier,
+          QEvent::MouseButtonRelease);
+    settle();
+    expect(drags == 2 && dragged && !dragged->hasImage() &&
+               dragged->urls().front().toLocalFile().endsWith(QLatin1String("report.pdf")),
+           "a card drags as its file alone");
+
+    // The right-click menu, made on the first one.
+    expect(root->findChild<QObject*>(QStringLiteral("mediaMenu")) == nullptr,
+           "no menu before a right-click");
+    press(view, picture, QPointF(40, 40), Qt::RightButton, Qt::NoModifier,
+          QEvent::MouseButtonPress);
+    press(view, picture, QPointF(40, 40), Qt::RightButton, Qt::NoModifier,
+          QEvent::MouseButtonRelease);
+    settle();
+    auto* menu = root->findChild<QObject*>(QStringLiteral("mediaMenu"));
+    expect(menu != nullptr, "a media menu");
+    if (menu == nullptr)
+        return 1;
+    const auto item = [root](const char* name) {
+        return root->findChild<QObject*>(QString::fromLatin1(name));
+    };
+    expect(menu->property("visible").toBool(), "a right-click opens the menu");
+    expect(item("mediaCopy") &&
+               item("mediaCopy")->property("text").toString() == QLatin1String("Copy Image"),
+           "a picture offers Copy Image");
+    for (const char* name : {"mediaOpen", "mediaReveal", "mediaCopyPath", "mediaSaveAs"})
+        expect(item(name) && item(name)->property("enabled").toBool(), name);
+    for (QElapsedTimer opened; !opened.isValid() || opened.elapsed() < 300;) {
+        if (!opened.isValid())
+            opened.start();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    }
+    if (!capture.isEmpty())
+        (void)view.grabWindow().save(capture);
+    QMetaObject::invokeMethod(item("mediaCopy"), "click");
+    settle();
+    expect(copied && copied->hasImage() && copied->urls().size() == 1,
+           "Copy Image puts the picture and the file on the clipboard");
+    expect(!menu->property("visible").toBool(), "choosing closes the menu");
+    press(view, picture, QPointF(40, 40), Qt::RightButton, Qt::NoModifier,
+          QEvent::MouseButtonPress);
+    press(view, picture, QPointF(40, 40), Qt::RightButton, Qt::NoModifier,
+          QEvent::MouseButtonRelease);
+    settle();
+    QMetaObject::invokeMethod(item("mediaReveal"), "click");
+    settle();
+    expect(launched.size() == 2 && launched.back().first == QLatin1String("reveal"),
+           "Show in Finder selects the file");
+
+    // Control-click on the card: a file's menu.
+    press(view, card, middle(card), Qt::LeftButton, Qt::ControlModifier, QEvent::MouseButtonPress);
+    press(view, card, middle(card), Qt::LeftButton, Qt::ControlModifier,
+          QEvent::MouseButtonRelease);
+    settle();
+    expect(menu->property("visible").toBool(), "a Control-click opens the menu");
+    expect(item("mediaCopy")->property("text").toString() == QLatin1String("Copy File"),
+           "a file offers Copy File");
+    expect(launched.size() == 2, "a Control-click does not open the file");
+    QMetaObject::invokeMethod(item("mediaCopyPath"), "click");
+    settle();
+    expect(copied && copied->text().endsWith(QLatin1String("report.pdf")) && !copied->hasImage(),
+           "Copy Path copies the path as text");
+    std::puts(failures == 0 ? "media: all checks passed" : "media: failed");
     return failures == 0 ? 0 : 1;
 }
 
@@ -1336,194 +1529,6 @@ QImage open_step(QQuickView& view, QQuickItem* root, TranscriptModel& model, QOb
     return view.grabWindow();
 }
 
-// --media-checks: a made-up reply with a see-through diagram standing alone
-// and a PDF named in a sentence, written by write_media_fixture.
-void write_media_fixture(const QString& folder, QFile& file) {
-    QImage diagram(360, 180, QImage::Format_ARGB32);
-    diagram.fill(Qt::transparent);
-    QPainter paint(&diagram);
-    paint.setRenderHint(QPainter::Antialiasing);
-    paint.setPen(QPen(QColor("#e8e8e8"), 3)); // drawn for a dark page
-    paint.drawRoundedRect(QRectF(20, 50, 110, 70), 10, 10);
-    paint.drawRoundedRect(QRectF(230, 50, 110, 70), 10, 10);
-    paint.drawLine(QPointF(130, 85), QPointF(228, 85));
-    paint.drawLine(QPointF(216, 75), QPointF(228, 85));
-    paint.drawLine(QPointF(216, 95), QPointF(228, 85));
-    paint.end();
-    const auto picture = QDir(folder).filePath(QStringLiteral("diagram.png"));
-    (void)diagram.save(picture);
-    QFile pdf(QDir(folder).filePath(QStringLiteral("report.pdf")));
-    if (pdf.open(QIODevice::WriteOnly))
-        pdf.write("%PDF-1.4\n");
-    // Named from the home folder (the capture's own), as agents often do.
-    const auto reply = QStringLiteral("The flow, as drawn:\n\n~/diagram.png\n\nThe full write-up "
-                                      "is in ~/report.pdf for later.");
-    const QJsonObject prompt{{"type", "user"},
-                             {"uuid", "p1"},
-                             {"timestamp", "2026-11-11T16:00:00.000Z"},
-                             {"message", QJsonObject{{"content", "Draw the flow"}}}};
-    const QJsonObject answer{
-        {"type", "assistant"},
-        {"uuid", "a1"},
-        {"timestamp", "2026-11-11T16:00:02.000Z"},
-        {"message",
-         QJsonObject{{"content", QJsonArray{QJsonObject{{"type", "text"}, {"text", reply}}}}}}};
-    for (const auto& record : {prompt, answer})
-        file.write(QJsonDocument(record).toJson(QJsonDocument::Compact) + '\n');
-    file.write(R"({"type":"system","subtype":"turn_duration","durationMs":2000})"
-               "\n");
-    file.flush();
-}
-
-void press(QQuickView& view, QQuickItem* item, QPointF offset, Qt::MouseButton button,
-           Qt::KeyboardModifiers modifiers, QEvent::Type type) {
-    const auto at = item->mapToScene(offset);
-    // A move names no button of its own, only the one held.
-    QMouseEvent event(type, at, at, view.mapToGlobal(at.toPoint()),
-                      type == QEvent::MouseMove ? Qt::NoButton : button,
-                      type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::MouseButtons(button),
-                      modifiers);
-    QCoreApplication::sendEvent(&view, &event);
-}
-
-// Media in the thread: a click opens the file, a drag carries it out (and
-// is not also a click), and a right-click or Control-click opens its menu,
-// whose actions reach the file. Recorders stand in for the clipboard, the
-// Finder and the drag, so nothing leaves the process.
-int check_media(QQuickView& view, QQuickItem* root, const QString& capture) {
-    int failures = 0;
-    const auto expect = [&failures](bool ok, const char* what) {
-        if (!ok) {
-            std::fprintf(stderr, "media FAIL %s\n", what);
-            ++failures;
-        }
-    };
-    lapis::desktop::MediaActions actions;
-    std::vector<std::pair<QString, QString>> launched;
-    actions.setLauncherForTesting([&launched](const QString& action, const QString& path) {
-        launched.emplace_back(action, path);
-        return true;
-    });
-    std::unique_ptr<QMimeData> copied;
-    actions.setClipboardForTesting(
-        [&copied](std::unique_ptr<QMimeData> data) { copied = std::move(data); });
-    std::unique_ptr<QMimeData> dragged;
-    int drags = 0;
-    actions.setDraggerForTesting([&](std::unique_ptr<QMimeData> data, const QImage&) {
-        dragged = std::move(data);
-        ++drags;
-        return true;
-    });
-    root->setProperty("mediaActions", QVariant::fromValue(static_cast<QObject*>(&actions)));
-    auto* list = root->property("list").value<QQuickItem*>();
-    QMetaObject::invokeMethod(list, "positionViewAtEnd");
-    settle();
-    auto items = named(root, "mediaItem");
-    expect(items.size() == 2, "the diagram in place and the PDF under the reply");
-    if (items.size() != 2)
-        return 1;
-    auto* picture = items.front();
-    auto* card = items.back();
-    const auto middle = [](QQuickItem* item) {
-        return QPointF(item->width() / 2, item->height() / 2);
-    };
-
-    // A plain click opens the picture.
-    press(view, picture, middle(picture), Qt::LeftButton, Qt::NoModifier, QEvent::MouseButtonPress);
-    press(view, picture, middle(picture), Qt::LeftButton, Qt::NoModifier,
-          QEvent::MouseButtonRelease);
-    settle();
-    expect(launched.size() == 1 && launched.back().first == QLatin1String("open") &&
-               launched.back().second.endsWith(QLatin1String("diagram.png")),
-           "a click opens the picture");
-
-    // A drag carries the file and its pixels, and opens nothing.
-    press(view, picture, middle(picture), Qt::LeftButton, Qt::NoModifier, QEvent::MouseButtonPress);
-    for (int step = 1; step <= 8; ++step)
-        press(view, picture, middle(picture) + QPointF(step * 6, step * 2), Qt::LeftButton,
-              Qt::NoModifier, QEvent::MouseMove);
-    press(view, picture, middle(picture) + QPointF(48, 16), Qt::LeftButton, Qt::NoModifier,
-          QEvent::MouseButtonRelease);
-    settle();
-    std::printf("media: %d drag(s) from one gesture\n", drags);
-    expect(drags == 1, "a drag starts one file drag");
-    expect(dragged && dragged->urls().size() == 1 &&
-               dragged->urls().front().toLocalFile().endsWith(QLatin1String("diagram.png")) &&
-               dragged->hasImage(),
-           "the drag carries the file URL and the picture");
-    expect(launched.size() == 1, "a drag is not also a click");
-    // The card drags as its file.
-    press(view, card, middle(card), Qt::LeftButton, Qt::NoModifier, QEvent::MouseButtonPress);
-    for (int step = 1; step <= 8; ++step)
-        press(view, card, middle(card) + QPointF(step * 6, 0), Qt::LeftButton, Qt::NoModifier,
-              QEvent::MouseMove);
-    press(view, card, middle(card) + QPointF(48, 0), Qt::LeftButton, Qt::NoModifier,
-          QEvent::MouseButtonRelease);
-    settle();
-    expect(drags == 2 && dragged && !dragged->hasImage() &&
-               dragged->urls().front().toLocalFile().endsWith(QLatin1String("report.pdf")),
-           "a card drags as its file alone");
-
-    // The right-click menu, made on the first one.
-    expect(root->findChild<QObject*>(QStringLiteral("mediaMenu")) == nullptr,
-           "no menu before a right-click");
-    press(view, picture, QPointF(40, 40), Qt::RightButton, Qt::NoModifier,
-          QEvent::MouseButtonPress);
-    press(view, picture, QPointF(40, 40), Qt::RightButton, Qt::NoModifier,
-          QEvent::MouseButtonRelease);
-    settle();
-    auto* menu = root->findChild<QObject*>(QStringLiteral("mediaMenu"));
-    expect(menu != nullptr, "a media menu");
-    if (menu == nullptr)
-        return 1;
-    const auto item = [root](const char* name) {
-        return root->findChild<QObject*>(QString::fromLatin1(name));
-    };
-    expect(menu->property("visible").toBool(), "a right-click opens the menu");
-    expect(item("mediaCopy") &&
-               item("mediaCopy")->property("text").toString() == QLatin1String("Copy Image"),
-           "a picture offers Copy Image");
-    for (const char* name : {"mediaOpen", "mediaReveal", "mediaCopyPath", "mediaSaveAs"})
-        expect(item(name) && item(name)->property("enabled").toBool(), name);
-    for (QElapsedTimer opened; !opened.isValid() || opened.elapsed() < 300;) {
-        if (!opened.isValid())
-            opened.start();
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    }
-    if (!capture.isEmpty())
-        (void)view.grabWindow().save(capture);
-    QMetaObject::invokeMethod(item("mediaCopy"), "click");
-    settle();
-    expect(copied && copied->hasImage() && copied->urls().size() == 1,
-           "Copy Image puts the picture and the file on the clipboard");
-    expect(!menu->property("visible").toBool(), "choosing closes the menu");
-    press(view, picture, QPointF(40, 40), Qt::RightButton, Qt::NoModifier,
-          QEvent::MouseButtonPress);
-    press(view, picture, QPointF(40, 40), Qt::RightButton, Qt::NoModifier,
-          QEvent::MouseButtonRelease);
-    settle();
-    QMetaObject::invokeMethod(item("mediaReveal"), "click");
-    settle();
-    expect(launched.size() == 2 && launched.back().first == QLatin1String("reveal"),
-           "Show in Finder selects the file");
-
-    // Control-click on the card: a file's menu.
-    press(view, card, middle(card), Qt::LeftButton, Qt::ControlModifier, QEvent::MouseButtonPress);
-    press(view, card, middle(card), Qt::LeftButton, Qt::ControlModifier,
-          QEvent::MouseButtonRelease);
-    settle();
-    expect(menu->property("visible").toBool(), "a Control-click opens the menu");
-    expect(item("mediaCopy")->property("text").toString() == QLatin1String("Copy File"),
-           "a file offers Copy File");
-    expect(launched.size() == 2, "a Control-click does not open the file");
-    QMetaObject::invokeMethod(item("mediaCopyPath"), "click");
-    settle();
-    expect(copied && copied->text().endsWith(QLatin1String("report.pdf")) && !copied->hasImage(),
-           "Copy Path copies the path as text");
-    std::puts(failures == 0 ? "media: all checks passed" : "media: failed");
-    return failures == 0 ? 0 : 1;
-}
-
 // Messages Qt and QML log while the view is checked.
 QStringList& logged() {
     static QStringList messages;
@@ -1748,6 +1753,191 @@ double percentile(std::vector<double> values, double p) {
     const auto at = static_cast<size_t>(p * static_cast<double>(values.size() - 1));
     return values[at];
 }
+
+double ms_of(const QElapsedTimer& timer) { return static_cast<double>(timer.nsecsElapsed()) / 1e6; }
+
+// The model side of a cold load, file by file, with no view: reading the
+// bytes, parsing and folding the lines, and laying the thread out.
+void switch_breakdown(const QStringList& paths) {
+    namespace t = lapis::desktop::transcript;
+    std::printf("breakdown (no view): MB, records, items, rows, read ms, parse+fold ms, lay out "
+                "ms, tail (1 MB) ms and rows, copy ms, kept MB\n");
+    for (const auto& path : paths) {
+        QElapsedTimer timer;
+        timer.start();
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly))
+            continue;
+        const auto bytes = file.readAll();
+        const double read = ms_of(timer);
+        timer.restart();
+        auto reader = t::make_reader(t::format_of(path));
+        int records = 0;
+        for (qsizetype start = 0, end = bytes.indexOf('\n'); end >= 0;
+             start = end + 1, end = bytes.indexOf('\n', start)) {
+            reader->add(bytes.sliced(start, end - start));
+            ++records;
+        }
+        const double parse = ms_of(timer);
+        timer.restart();
+        const auto layout = t::lay_out(reader->items(), {});
+        const double lay = ms_of(timer);
+        timer.restart();
+        const auto tail = t::read_file(path, reader->format(), TranscriptModel::tail_bytes);
+        auto tail_layout = t::lay_out(tail.reader->items(), {});
+        if (tail.tail)
+            t::trim_to_turns(tail_layout);
+        const double tail_ms = ms_of(timer);
+        timer.restart();
+        const auto copy = reader->clone();
+        const double copy_ms = ms_of(timer);
+        std::printf("  %-11s %7.1f %7d %7zu %7zu %8.1f %8.1f %8.1f %8.1f %5zu %6.1f %7.1f\n",
+                    qPrintable(t::format_name(reader->format())),
+                    static_cast<double>(bytes.size()) / 1e6, records, reader->items().size(),
+                    layout.rows.size(), read, parse, lay, tail_ms, tail_layout.rows.size(), copy_ms,
+                    static_cast<double>(reader->footprint()) / (1024.0 * 1024.0));
+    }
+}
+
+// --switch: shows the conversations one after another as the app does when
+// the person selects another agent, and times each switch: the path set
+// (the model's own work on the GUI thread), rows to show, the list laid
+// out at the end (delegates made and styled), the first frame drawn, and
+// the full history ready. The longest single pass of the event loop during
+// a switch is the GUI thread's worst stall. Patterns: each file once (the
+// first visit), a walk through all of them twice (Command-Shift-bracket),
+// back and forth between two, and random picks.
+int bench_switch(QQuickView& view, TranscriptModel& model, QObject* list, const QStringList& paths,
+                 int idle_s, int pairs) {
+    struct Times {
+        double call{}, content{}, laid{}, frame{}, settled{}, stall{};
+        bool loaded_at_once{};
+    };
+    std::map<std::string, std::vector<Times>> phases;
+    std::vector<std::string> order;
+    const double start_footprint = footprint_mb();
+    double peak_footprint = start_footprint;
+    bool stale = false;
+    const auto run = [&](const std::string& phase, int index) {
+        const auto& path = paths.at(index);
+        if (phases.find(phase) == phases.end())
+            order.push_back(phase);
+        Times times;
+        QElapsedTimer timer;
+        timer.start();
+        model.setPath(path);
+        times.call = ms_of(timer);
+        times.stall = times.call;
+        times.loaded_at_once = !model.loading();
+        // Rows of another conversation never show under this one's path.
+        const auto pass = [&] {
+            QElapsedTimer one;
+            one.start();
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 2);
+            times.stall = std::max(times.stall, ms_of(one));
+        };
+        while (model.rowCount() == 0 && model.loading() && timer.elapsed() < 60000)
+            pass();
+        times.content = ms_of(timer);
+        const auto draw = [&] {
+            QMetaObject::invokeMethod(list, "forceLayout");
+            QMetaObject::invokeMethod(list, "positionViewAtEnd");
+            QMetaObject::invokeMethod(list, "forceLayout");
+            QMetaObject::invokeMethod(list, "positionViewAtEnd");
+        };
+        QElapsedTimer one;
+        one.start();
+        draw();
+        times.stall = std::max(times.stall, ms_of(one));
+        times.laid = ms_of(timer);
+        (void)view.grabWindow();
+        times.frame = ms_of(timer);
+        while (model.loading() && timer.elapsed() < 60000)
+            pass();
+        if (times.frame < ms_of(timer)) {
+            draw();
+            (void)view.grabWindow();
+        }
+        times.settled = ms_of(timer);
+        if (model.path() != path)
+            stale = true;
+        phases[phase].push_back(times);
+        peak_footprint = std::max(peak_footprint, footprint_mb());
+        // A short dwell, as a person reads before moving on.
+        for (QElapsedTimer dwell; !dwell.isValid() || dwell.elapsed() < 30;) {
+            if (!dwell.isValid())
+                dwell.start();
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        }
+    };
+    const int n = static_cast<int>(paths.size());
+    for (int i = 0; i < n; ++i)
+        run("first visit", i);
+    for (int round = 0; round < 2; ++round)
+        for (int i = 0; i < n; ++i)
+            run("walk all", i);
+    for (int i = 0; i < pairs && n >= 2; ++i)
+        run("back and forth", n - 1 - (i % 2));
+    std::uint32_t seed = 12345;
+    for (int i = 0; i < 40; ++i) {
+        seed = seed * 1664525u + 1013904223u;
+        run("random", static_cast<int>((seed >> 8) % static_cast<std::uint32_t>(n)));
+    }
+    std::printf("switch: %d conversations (offscreen, software scene graph), ms\n", n);
+    std::printf("  %-15s %4s %5s  %-18s %-18s %-18s %-18s %-18s %-18s\n", "phase", "n", "warm",
+                "path set p50/p95", "content p50/p95", "laid out p50/p95", "frame p50/p95",
+                "settled p50/p95", "stall p50/max");
+    for (const auto& phase : order) {
+        const auto& all = phases[phase];
+        std::vector<double> call, content, laid, frame, settled, stall;
+        int warm = 0;
+        for (const auto& t : all) {
+            call.push_back(t.call);
+            content.push_back(t.content);
+            laid.push_back(t.laid);
+            frame.push_back(t.frame);
+            settled.push_back(t.settled);
+            stall.push_back(t.stall);
+            warm += t.loaded_at_once ? 1 : 0;
+        }
+        const auto pair = [](const std::vector<double>& v, double high) {
+            return QStringLiteral("%1 / %2")
+                .arg(percentile(v, 0.5), 0, 'f', 1)
+                .arg(percentile(v, high), 0, 'f', 1);
+        };
+        std::printf("  %-15s %4zu %5d  %-18s %-18s %-18s %-18s %-18s %-18s\n", phase.c_str(),
+                    all.size(), warm, qPrintable(pair(call, 0.95)), qPrintable(pair(content, 0.95)),
+                    qPrintable(pair(laid, 0.95)), qPrintable(pair(frame, 0.95)),
+                    qPrintable(pair(settled, 0.95)), qPrintable(pair(stall, 1.0)));
+    }
+    std::printf("  footprint before %.0f MB, now %.0f MB, peak seen %.0f MB; %d kept, estimated "
+                "%.0f MB\n",
+                start_footprint, footprint_mb(), peak_footprint, model.keptCount(),
+                static_cast<double>(model.keptBytes()) / (1024.0 * 1024.0));
+    if (idle_s > 0) {
+        // Idle with the conversations warm: the process's own CPU time.
+        rusage before{};
+        getrusage(RUSAGE_SELF, &before);
+        // A real event loop that sleeps between events, as the app's does.
+        QEventLoop idle;
+        QTimer::singleShot(idle_s * 1000, &idle, &QEventLoop::quit);
+        idle.exec();
+        rusage after{};
+        getrusage(RUSAGE_SELF, &after);
+        const auto cpu = [](const rusage& r) {
+            return static_cast<double>(r.ru_utime.tv_sec + r.ru_stime.tv_sec) +
+                   static_cast<double>(r.ru_utime.tv_usec + r.ru_stime.tv_usec) / 1e6;
+        };
+        std::printf("  idle %d s: cpu %.3f s (%.2f%% of one core)\n", idle_s,
+                    cpu(after) - cpu(before),
+                    100.0 * (cpu(after) - cpu(before)) / static_cast<double>(idle_s));
+    }
+    if (stale) {
+        std::puts("  a switch ended on another conversation's path");
+        return 1;
+    }
+    return 0;
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1818,8 +2008,32 @@ int main(int argc, char** argv) {
                       "--then to a copy of its file, checking the thread's rows at each moment",
                       "text"});
     parser.addOption({"then", "With --send, the CLI's records to append (a JSONL file)", "file"});
+    parser.addOption({"switch",
+                      "Time switching among the conversations listed in this file (one path a "
+                      "line) as selecting agents does; prints timings, sizes and counts only",
+                      "file"});
+    parser.addOption({"breakdown", "With --switch, first time each file's read, parse and lay "
+                                   "out with no view"});
+    parser.addOption(
+        {"idle", "With --switch, then measure idle CPU for this many seconds", "s", "0"});
+    parser.addOption(
+        {"pairs", "With --switch, switches back and forth between the last two", "n", "20"});
     parser.process(app);
     const bool keys = parser.isSet("keys");
+    QStringList switch_paths;
+    if (parser.isSet("switch")) {
+        QFile list_file(parser.value("switch"));
+        if (!list_file.open(QIODevice::ReadOnly)) {
+            std::fputs("could not read the --switch list\n", stderr);
+            return 2;
+        }
+        for (const auto& line : QString::fromUtf8(list_file.readAll()).split(QLatin1Char('\n')))
+            if (!line.trimmed().isEmpty())
+                switch_paths << line.trimmed();
+        if (parser.isSet("breakdown"))
+            switch_breakdown(switch_paths);
+    }
+    const bool switching = !switch_paths.isEmpty();
     const bool live_checks = parser.isSet("live-checks");
     const bool media_checks = parser.isSet("media-checks");
     const bool checking = parser.isSet("check");
@@ -1860,7 +2074,7 @@ int main(int argc, char** argv) {
                 if (!line.trimmed().isEmpty())
                     sent_records << line;
     }
-    if (!keys && !live_checks && !media_checks &&
+    if (!keys && !live_checks && !media_checks && !switching &&
         (!parser.isSet("jsonl") || (!parser.isSet("out") && !parser.isSet("census") &&
                                     !parser.isSet("list") && !checking && !sending))) {
         std::fputs("--jsonl and --out are required\n", stderr);
@@ -1885,10 +2099,12 @@ int main(int argc, char** argv) {
         }
         model.setFormat(format);
     }
-    model.setPath(live_checks || sending ? live_file.fileName()
-                  : media_checks         ? media_file.fileName()
-                                         : parser.value("jsonl"));
-    model.loadNow();
+    if (!switching) {
+        model.setPath(live_checks || sending ? live_file.fileName()
+                      : media_checks         ? media_file.fileName()
+                                             : parser.value("jsonl"));
+        model.loadNow();
+    }
     const auto load_ms = load_timer.elapsed();
     std::printf("format %s\n", qPrintable(model.formatName()));
     Check check;
@@ -2033,6 +2249,9 @@ int main(int argc, char** argv) {
     }
     if (keys)
         return check_keys(view, root);
+    if (switching)
+        return bench_switch(view, model, list, switch_paths, parser.value("idle").toInt(),
+                            parser.value("pairs").toInt());
     if (live_checks) {
         const int live = check_live(view, root, model, live_file);
         const int work = check_work(view, root, model, home.path());
