@@ -66,6 +66,26 @@ together. Categories drag up and down the sidebar. Commands and an agent's menu
 (a right-click on its row or card) rename, reorder or move an agent without
 restarting it.
 
+## Closing an agent
+
+Command-W (or **Close** on a card or in the agent's menu) closes the agent in
+front. A running agent is confirmed first. Once you close it, the agent is gone
+at once from the sidebar, the strip, the stage, the factory board, the counts
+and the visual view, and its right neighbour (or its left one at the end of
+the category) takes the stage, as if it had already ended. Its session service
+ends the process in the background: a hangup, then SIGTERM at 1.5 s and
+SIGKILL at 3 s. An agent that has already ended, or one that cannot be reached
+and that you agree to abandon, is simply removed.
+
+Until the process ends, `runtime/workspace.json` lists the agent under
+`closing` rather than with the agents, so quitting or restarting lapis mid-close
+does not bring it back: the next window drops it once its service is gone, and
+reattaches out of sight to a service still running and asks it again. If the
+close fails (the service refuses it, as one older than closing from lapis
+does, or the process is still running 10 seconds later) the agent returns to
+its place in the sidebar, still running, with an error saying so; it does not
+take the stage.
+
 ## Commands
 
 **Commands** (Command-Shift-P) searches every action with its shortcut. It holds
