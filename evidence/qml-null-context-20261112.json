@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-12T00:46:35Z",
+  "agent": "Codex triage parent with read-only QML null-context audit",
+  "base_revision": "f67c7d67847a5bc73d6e40fd17c4490e7488f098",
+  "source_revision": "35b4a7785e9714a51ab8062e1fb80dec5f770d65",
+  "runtime_validation_revision": "35b4a7785e9714a51ab8062e1fb80dec5f770d65",
+  "original_pr_head": "b67af0be2199cb47092030b4984ba9f44484a710",
+  "scope": "PR 208 always-exposed QML services replayed over the repaired private-file branch and hardened to publish explicit null values.",
+  "changed_source_manifest": {
+    "algorithm": "shasum -a 256 of: git diff --binary --full-index f67c7d67847a5bc73d6e40fd17c4490e7488f098..35b4a7785e9714a51ab8062e1fb80dec5f770d65 -- ':(exclude)evidence/*'",
+    "digest": "a3b8477aef8b0be8abc58d6d766ac97d657f6f1e90ab6ce8d73107722be2ce70",
+    "changed_paths": 8
+  },
+  "validation": [
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py check",
+      "result": "passed; dev build, all dev CTests, clang-format, Cppcheck and every dev clang-tidy partition at the committed source",
+      "receipt": "build/reports/dev/receipt.json"
+    },
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py build",
+      "result": "configure, build, all 40 enabled desktop/session CTests and clang-format passed before the unrelated recorded desktop static baseline failed later partitions",
+      "receipt": "build/reports/desktop/receipt.json"
+    },
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py ui-review --json",
+      "result": "passed at source revision 35b4a7785e9714a51ab8062e1fb80dec5f770d65 with a clean tree; all background UI, shortcut and terminal-input cases passed",
+      "receipt": "build/reports/ui-review/20261112T004528Z-jezil9nv/receipt.json"
+    }
+  ],
+  "repair_summary": [
+    "Publish each optional QObject through QVariant::fromValue so the context stores an explicit null even where Qt overload behavior might differ.",
+    "Add window-state coverage that loads real Main.qml and requires every optional service property to be valid and null with no diagnostics.",
+    "Keep config always backed by an in-memory defaults-only Config and remove typeof guards from QML."
+  ],
+  "non_claims": [
+    "The pinned-Qt audit did not reproduce property removal for setContextProperty(name, nullptr); this receipt claims explicit-null hardening and coverage, not a fixed Qt removal defect.",
+    "No native macOS GUI input or GPU presentation was exercised; UI review ran offscreen with the software scene graph.",
+    "The unrelated current-main desktop static baseline remains defective and is not claimed fixed."
+  ]
+}

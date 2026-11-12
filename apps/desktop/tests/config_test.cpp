@@ -19,6 +19,7 @@
 #include <QList>
 #include <QPair>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QThread>
 #include <array>
@@ -1008,6 +1009,62 @@ void config_reloads_when_edited_elsewhere() {
             "alert choices are written beside the rest of the config");
 }
 
+// A window built without a config owns a defaults-only one. It never reads,
+// watches or writes a file, even the one LAPIS_CONFIG names, and its changes
+// stay in memory.
+void defaults_only_touches_no_file() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    const QDir dir(directory.path());
+    const QByteArray contents = R"({"version": 1, "theme": "amber", "previewsVisible": false})";
+    const QString path = write_config(dir, contents);
+    const QByteArray previous = qgetenv("LAPIS_CONFIG");
+    const bool had_previous = qEnvironmentVariableIsSet("LAPIS_CONFIG");
+    qputenv("LAPIS_CONFIG", QFile::encodeName(path));
+    const auto restore = qScopeGuard([&] {
+        if (had_previous)
+            qputenv("LAPIS_CONFIG", previous);
+        else
+            qunsetenv("LAPIS_CONFIG");
+    });
+    {
+        Config config{Config::DefaultsOnly{}};
+        require(!config.fileBacked() && config.sourcePath().isEmpty(),
+                "a defaults-only config names no file");
+        require(config.themeName() == QStringLiteral("lapis") && config.previewsVisible() &&
+                    config.diagnostic().isEmpty(),
+                "a defaults-only config starts from the built-in defaults, not the file");
+        require(config.sequences(QStringLiteral("openSettings")) == default_settings_shortcuts(),
+                "a defaults-only config has the default bindings");
+        require(config.setTheme(QStringLiteral("graphite")) &&
+                    config.themeName() == QStringLiteral("graphite"),
+                "a change applies in memory");
+        require(config.setPreviewsVisible(false) && !config.previewsVisible() &&
+                    config.diagnostic().isEmpty(),
+                "a change reports no save failure");
+        // An edit to the file is not watched.
+        QSaveFile replacement(path);
+        require(replacement.open(QIODevice::WriteOnly), "replace the config");
+        replacement.write(R"({"version": 1, "theme": "oled"})");
+        require(replacement.commit(), "commit the replacement");
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < 400) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        require(config.themeName() == QStringLiteral("graphite"), "the file is not watched");
+        require(!config.reload() && config.themeName() == QStringLiteral("lapis") &&
+                    config.diagnostic().isEmpty(),
+                "a reload returns to the defaults without reading the file");
+        require(read_config(path).value(QStringLiteral("theme")).toString() ==
+                        QStringLiteral("oled") &&
+                    dir.entryList(QDir::Files | QDir::Hidden) ==
+                        QStringList{QStringLiteral("lapis.json")},
+                "nothing is written beside the named file");
+    }
+}
+
 // Settings of retired features load without a diagnostic, and saving another
 // setting leaves them exactly as written.
 void retired_plan_settings_survive() {
@@ -1063,6 +1120,7 @@ int main(int argc, char** argv) {
         remote_settings_are_transactional();
         config_reloads_when_edited_elsewhere();
         retired_plan_settings_survive();
+        defaults_only_touches_no_file();
     } catch (const std::exception& error) {
         std::cerr << "config_test: " << error.what() << '\n';
         return 1;

@@ -12,6 +12,8 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QPoint>
+#include <QQmlContext>
+#include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
@@ -73,6 +75,20 @@ void show(AppWindow& view) {
     require(view.load(), "load actual workspace QML");
     require(view.window() != nullptr, "workspace has a native window");
     await([&] { return view.window()->isExposed(); }, "workspace window exposed");
+}
+
+void optional_qml_services_are_null(Workspace& workspace, const QTemporaryDir& temp) {
+    AppWindow view(workspace, options(temp.filePath(QStringLiteral("null-services.json"))));
+    show(view);
+    const QQmlContext* context = QQmlEngine::contextForObject(view.window());
+    require(context != nullptr, "workspace window has a QML context");
+    for (const char* name :
+         {"alerts", "tools", "desktop", "conversations", "terminals", "nextPrompt", "guiState"}) {
+        const QVariant service = context->contextProperty(QString::fromLatin1(name));
+        require(service.isValid() && service.isNull(), "optional QML service is a valid null");
+    }
+    require(view.diagnostics().isEmpty(), "null QML services do not diagnose a load failure");
+    require(view.window()->close(), "close null-service fixture");
 }
 
 void save_normal_window(Workspace& workspace, const QString& path) {
@@ -272,6 +288,7 @@ int main(int argc, char** argv) {
                              .launch = {},
                              .storagePath = temp.filePath(QStringLiteral("workspace.json"))});
         require(workspace.agents().isEmpty(), "live fixture starts no agents or shell services");
+        optional_qml_services_are_null(workspace, temp);
         remembered_geometry_and_offscreen_restore(workspace, temp);
         isolated_modes_leave_geometry_untouched(workspace, temp);
         unsafe_paths_are_preserved(workspace, temp);

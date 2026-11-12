@@ -18,13 +18,18 @@ ApplicationWindow {
     color: backgroundColor
     title: windowTitle
 
-    // Theme colors come from the config. Without one, the stage uses a dark
-    // command-deck palette. Selection is a thin accent edge, not a second surface.
+    // Context objects: workspace, app and config are always objects (a window
+    // given no config gets a defaults-only one). The optional services below
+    // are an object or null, never undefined; check the xAvailable flag.
+    readonly property bool alertsAvailable: alerts !== null
+    readonly property bool nextPromptAvailable: nextPrompt !== null
+
+    // Theme colors come from the config. Without a matching theme, the stage
+    // uses a dark command-deck palette. Selection is a thin accent edge, not a second surface.
     // focusedBorderColor only marks where keyboard input goes; activity,
     // attention (pending requests) and fault (lost connection, errors) are
     // separate meanings and are always paired with a shape or text cue.
-    readonly property var appearance: (typeof config !== "undefined" && config !== null) ?
-                                          config.themes.find(function(theme) { return theme.name === config.themeName }) : null
+    readonly property var appearance: config.themes.find(function(theme) { return theme.name === config.themeName })
     readonly property color backgroundColor: appearance ? appearance.background : "#070b10"
     readonly property color surfaceColor: appearance ? appearance.surface : "#101820"
     readonly property color cardColor: appearance ? appearance.card : "#15202b"
@@ -45,7 +50,7 @@ ApplicationWindow {
     // One fixed-width family for the terminal and every machine readout (paths,
     // shortcut hints, states, counts). Human names and prose use the UI face.
     readonly property string monoFamily: liveTerminal.resolvedFontFamily
-    readonly property int terminalFontSize: (typeof config !== "undefined" && config !== null) ? config.terminalFontSize : 14
+    readonly property int terminalFontSize: config.terminalFontSize
     // Composition and paste own the keyboard until they finish.
     readonly property bool terminalBusy: liveTerminal.composing || liveTerminal.pasting ||
                                         sideSurface.composing || sideSurface.pasting
@@ -59,21 +64,18 @@ ApplicationWindow {
             return Math.max(12, Math.round(font.pointSize * 96 / 72))
         return 13
     }
-    readonly property string densityMode: (typeof config !== "undefined" && config !== null) ?
-                                              config.densityName : "comfortable"
+    readonly property string densityMode: config.densityName
     readonly property int chromeFont: densityMode === "minimal" ? Math.max(12, uiFont - 1) : uiFont
     readonly property int readoutFont: Math.max(11, chromeFont - 1)
     readonly property int railWidth: densityMode === "minimal" ? 148 : densityMode === "compact" ? 168 : 196
     readonly property int tabHeight: Math.max(32, chromeFont + (densityMode === "minimal" ? 16 : densityMode === "compact" ? 20 : 24))
-    property bool transientSidebarVisible: true
-    property bool transientPreviewsVisible: true
-    readonly property bool previewsEnabled: typeof config !== "undefined" && config !== null ? config.previewsVisible : transientPreviewsVisible
+    readonly property bool previewsEnabled: config.previewsVisible
     // The agent strip under the stage is the category's navigation: live
     // previews in tab order. Short windows get shorter cards, not fewer.
     readonly property int stripHeight: height < 640 ? 96 :
                                        densityMode === "minimal" ? 112 : densityMode === "compact" ? 128 : 144
     readonly property bool stripShown: previewsEnabled && workspace.categoryAgents.length > 0
-    readonly property bool sidebarExpanded: typeof config !== "undefined" && config !== null ? config.sidebarVisible : transientSidebarVisible
+    readonly property bool sidebarExpanded: config.sidebarVisible
     readonly property bool narrow: width < 860
     // Zero-duration themes and reduced motion change state instantly.
     readonly property bool motionEnabled: !app.reducedMotion && active && visible && motionDuration > 0
@@ -132,11 +134,9 @@ ApplicationWindow {
     signal keyboardOwnershipReady()
 
     function bindings(action) {
-        if (typeof config !== "undefined" && config !== null) {
-            const configured = config.shortcutBindings[action]
-            if (configured && configured.length > 0)
-                return configured
-        }
+        const configured = config.shortcutBindings[action]
+        if (configured && configured.length > 0)
+            return configured
         return fallbackSequences(action)
     }
 
@@ -232,23 +232,17 @@ ApplicationWindow {
     }
     function toggleSidebar() {
         if (!interactionArmed) return
-        if (typeof config !== "undefined" && config !== null)
-            config.setSidebarVisible(!sidebarExpanded)
-        else
-            transientSidebarVisible = !transientSidebarVisible
+        config.setSidebarVisible(!sidebarExpanded)
     }
     function togglePreviews() {
         if (!interactionArmed) return
-        if (typeof config !== "undefined" && config !== null)
-            config.setPreviewsVisible(!previewsEnabled)
-        else
-            transientPreviewsVisible = !transientPreviewsVisible
+        config.setPreviewsVisible(!previewsEnabled)
     }
     function openCommandsDialog() {
         if (!interactionArmed) return
         commandsDialog.open()
     }
-    readonly property bool conversationsAvailable: typeof conversations !== "undefined" && conversations !== null
+    readonly property bool conversationsAvailable: conversations !== null
     function openResumeDialog() {
         if (!interactionArmed || dialogsVisible() || !conversationsAvailable) return
         resumeDialog.open()
@@ -321,7 +315,7 @@ ApplicationWindow {
     // Command-` (or Control-`): a plain shell on this Mac or an ssh host,
     // beside the agents, for a quick command; never an agent. Command-~
     // picks the machine.
-    readonly property bool terminalsAvailable: typeof terminals !== "undefined" && terminals !== null
+    readonly property bool terminalsAvailable: terminals !== null
     property bool sideTerminalOpen: false
     property string lastTerminalMachine: ""
     function toggleTerminal() {
@@ -375,7 +369,7 @@ ApplicationWindow {
     }
     // A named window property prevents the pane's own `tools` model from
     // resolving as the context object and forming an engine binding loop.
-    readonly property var toolStatus: typeof tools !== "undefined" ? tools : null
+    readonly property var toolStatus: tools
     readonly property bool toolsAvailable: toolStatus !== null
     // Built when a dialog that lists them is open: as a property it would be
     // rebuilt, and the closed lists' delegates with it, on every switch.
@@ -406,8 +400,7 @@ ApplicationWindow {
             hasAgent ? qsTr("Only for a Claude Code agent on this Mac, once its conversation is saved") : needAgent,
             () => window.toggleVisual())
         add("toggleVisualAll", window.visualAll ? qsTr("Show terminals for all agents") : qsTr("Show visual view for all agents"), "",
-            typeof config !== "undefined" && config !== null, qsTr("Not available here"),
-            () => window.toggleVisualAll())
+            true, "", () => window.toggleVisualAll())
         add("textBigger", qsTr("Bigger text"), "textBigger", true, "", () => window.changeTextSize(1))
         add("textSmaller", qsTr("Smaller text"), "textSmaller", true, "", () => window.changeTextSize(-1))
         add("textReset", qsTr("Default text size"), "textReset", true, "", () => window.changeTextSize(0))
@@ -441,7 +434,7 @@ ApplicationWindow {
         // session that cannot be joined; nothing else reclaims a replaced view.
         add("reconnect", qsTr("Reconnect agent"), "", window.recoveryAvailable(), qsTr("The selected agent is already connected or opening"), () => agent.reconnect())
         add("appearance", qsTr("Appearance"), "openSettings", true, "", () => window.openSettingsDialog())
-        add("reloadConfig", qsTr("Reload configuration"), "reloadConfig", typeof config !== "undefined" && config !== null, qsTr("No configuration in this fixture"), () => config.reload())
+        add("reloadConfig", qsTr("Reload configuration"), "reloadConfig", config.fileBacked, qsTr("No configuration in this fixture"), () => config.reload())
         const mac = Qt.platform.os === "osx"
         add("closeWindow", qsTr("Close window (lapis keeps running)"), "closeWindow", mac, qsTr("Only on the Mac"), () => window.close())
         add("minimizeWindow", qsTr("Minimize window"), "minimizeWindow", true, "", () => window.showMinimized())
@@ -634,8 +627,8 @@ ApplicationWindow {
     property string lastMode: ""
     property var lastModels: ({})
     // The window's own choices outlive a restart of the window (guiState;
-    // absent in fixtures): the new-agent form's and the side terminal's.
-    readonly property var windowMemory: typeof guiState !== "undefined" ? guiState : null
+    // null in fixtures): the new-agent form's and the side terminal's.
+    readonly property var windowMemory: guiState
     // QML initializes its properties after the state is loaded; remember only
     // after recall has read it, or those writes would erase loaded choices.
     property bool windowMemoryReady: false
@@ -854,7 +847,7 @@ ApplicationWindow {
     // this Mac as a thread; visualAgents holds this run's per-agent choices,
     // which win over it until lapis restarts or "all" is switched again.
     property var visualAgents: ({})
-    readonly property var visualSettings: (typeof config !== "undefined" && config !== null) ? config.visual : ({})
+    readonly property var visualSettings: config.visual
     readonly property bool visualAll: visualSettings.all === true
     readonly property bool visualWanted: {
         const agent = workspace.focusedAgent
@@ -933,8 +926,6 @@ ApplicationWindow {
         visualFocus()
     }
     function toggleVisualAll() {
-        if (typeof config === "undefined" || config === null)
-            return
         visualAgents = ({})
         config.setVisual("all", !visualAll)
         visualFocus()
@@ -1093,11 +1084,9 @@ ApplicationWindow {
             return
         workspace.placeCategory(draggedCategory, from < targetIndex ? targetIndex - 1 : targetIndex)
     }
-    readonly property bool desktopAvailable: typeof desktop !== "undefined" && desktop !== null
+    readonly property bool desktopAvailable: desktop !== null
     // Command-plus, minus and zero: the terminal text size, saved to the config.
     function changeTextSize(delta) {
-        if (typeof config === "undefined" || config === null)
-            return
         const next = delta === 0 ? config.terminalFontSizeDefault : config.terminalFontSize + delta
         config.setTerminalFontSize(Math.max(config.terminalFontSizeMinimum,
                                             Math.min(config.terminalFontSizeMaximum, next)))
@@ -1457,7 +1446,7 @@ ApplicationWindow {
         enabled: window.shortcutsArmed
         autoRepeat: false
         onActivated: {
-            if (typeof config !== "undefined" && config !== null)
+            if (config.fileBacked)
                 config.reload()
         }
     }
@@ -1691,25 +1680,24 @@ ApplicationWindow {
 
     Settings {
         id: settingsDialog
-        themeModel: (typeof config !== "undefined" && config !== null) ? config.themes : []
-        densityModel: (typeof config !== "undefined" && config !== null) ? config.densities :
-                                                                            ["comfortable", "compact", "minimal"]
-        currentTheme: (typeof config !== "undefined" && config !== null) ? config.themeName : "lapis"
+        themeModel: config.themes
+        densityModel: config.densities
+        currentTheme: config.themeName
         currentDensity: window.densityMode
-        configPath: (typeof config !== "undefined" && config !== null) ? config.sourcePath : ""
-        configDiagnostic: (typeof config !== "undefined" && config !== null) ? config.diagnostic : ""
+        configPath: config.sourcePath
+        configDiagnostic: config.diagnostic
         shortcutHint: window.shortcutText("openSettings")
         fontFamilies: app.monospaceFamilies
-        fontFamily: (typeof config !== "undefined" && config !== null) ? config.terminalFontFamily : ""
+        fontFamily: config.terminalFontFamily
         resolvedFontFamily: window.monoFamily
         fontSize: liveTerminal.fontPixelSize
-        fontSizeMinimum: (typeof config !== "undefined" && config !== null) ? config.terminalFontSizeMinimum : 14
-        fontSizeMaximum: (typeof config !== "undefined" && config !== null) ? config.terminalFontSizeMaximum : 14
-        fontSizeDefault: (typeof config !== "undefined" && config !== null) ? config.terminalFontSizeDefault : 14
+        fontSizeMinimum: config.terminalFontSizeMinimum
+        fontSizeMaximum: config.terminalFontSizeMaximum
+        fontSizeDefault: config.terminalFontSizeDefault
         motionDuration: window.motionDuration
         motionEnabled: window.motionEnabled
-        finishSound: (typeof config !== "undefined" && config !== null) ? config.finishSound : true
-        keepAwake: (typeof config !== "undefined" && config !== null) ? config.keepAwake : true
+        finishSound: config.finishSound
+        keepAwake: config.keepAwake
         loginAvailable: window.desktopAvailable && desktop.launchAtLoginAvailable
         launchAtLogin: window.desktopAvailable && desktop.launchAtLogin
         updatesAvailable: window.desktopAvailable && desktop.updatesAvailable
@@ -1723,32 +1711,17 @@ ApplicationWindow {
                        : []
         visual: window.visualSettings
         visualSize: visualView.fontSize
-        onVisualChosen: function(key, value) {
-            if (typeof config !== "undefined" && config !== null)
-                config.setVisual(key, value)
-        }
+        onVisualChosen: function(key, value) { config.setVisual(key, value) }
         onLaunchAtLoginChosen: function(on) { if (window.desktopAvailable) desktop.setLaunchAtLogin(on) }
         onCheckUpdates: if (window.desktopAvailable) desktop.checkForUpdates()
-        onFinishSoundChosen: function(on) { if (typeof config !== "undefined" && config !== null) config.setFinishSound(on) }
-        onKeepAwakeChosen: function(on) { if (typeof config !== "undefined" && config !== null) config.setKeepAwake(on) }
-        onChimePlayed: function(needsYou) { if (typeof alerts !== "undefined" && alerts !== null) alerts.preview(needsYou) }
+        onFinishSoundChosen: function(on) { config.setFinishSound(on) }
+        onKeepAwakeChosen: function(on) { config.setKeepAwake(on) }
+        onChimePlayed: function(needsYou) { if (window.alertsAvailable) alerts.preview(needsYou) }
         onClosed: app.deferTerminalFocus()
-        onFontFamilyChosen: function(name) {
-            if (typeof config !== "undefined" && config !== null)
-                config.setTerminalFontFamily(name)
-        }
-        onFontSizeChosen: function(pixels) {
-            if (typeof config !== "undefined" && config !== null)
-                config.setTerminalFontSize(pixels)
-        }
-        onThemeChosen: function(name) {
-            if (typeof config !== "undefined" && config !== null)
-                config.setTheme(name)
-        }
-        onDensityChosen: function(name) {
-            if (typeof config !== "undefined" && config !== null)
-                config.setDensity(name)
-        }
+        onFontFamilyChosen: function(name) { config.setTerminalFontFamily(name) }
+        onFontSizeChosen: function(pixels) { config.setTerminalFontSize(pixels) }
+        onThemeChosen: function(name) { config.setTheme(name) }
+        onDensityChosen: function(name) { config.setDensity(name) }
     }
 
     StageDialog {
@@ -2806,7 +2779,7 @@ ApplicationWindow {
                         objectName: "visualAllAgents"
                         text: qsTr("All agents")
                         selected: window.visualAll
-                        enabled: window.interactionArmed && typeof config !== "undefined" && config !== null
+                        enabled: window.interactionArmed
                         Layout.fillWidth: true
                         Layout.preferredWidth: 1
                         onClicked: window.toggleVisualAll()
@@ -3050,11 +3023,11 @@ ApplicationWindow {
                             ? workspace.agentFolder(liveTerminal.document.agentId) : ""
                     slashCommands: liveTerminal.document !== null && liveTerminal.document.harnessId === "claude"
                     onSuggestionFilled: {
-                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null && liveTerminal.document)
+                        if (window.nextPromptAvailable && liveTerminal.document)
                             nextPrompt.used(liveTerminal.document.agentId, false, 0, liveTerminal.suggestionKey)
                     }
                     onSuggestionSent: {
-                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null && liveTerminal.document)
+                        if (window.nextPromptAvailable && liveTerminal.document)
                             nextPrompt.used(liveTerminal.document.agentId, true, 0, liveTerminal.suggestionKey)
                     }
                     // The same picker for every CLI; each CLI's own command
@@ -3118,9 +3091,9 @@ ApplicationWindow {
                     width: Math.max(0, stage.width - 2 * stage.inset)
                     height: Math.max(0, stage.height - 2 * stage.inset)
                     document: workspace.focusedAgent
-                    fontFamily: (typeof config !== "undefined" && config !== null) ? config.terminalFontFamily : ""
+                    fontFamily: config.terminalFontFamily
                     fontPixelSize: window.terminalFontSize
-                    scrollToBottomOnTyping: (typeof config !== "undefined" && config !== null) ? config.scrollToBottomOnTyping : true
+                    scrollToBottomOnTyping: config.scrollToBottomOnTyping
                     visible: document !== null
                     enabled: visible
                     // A history page stays interactive for the wheel, selection and
@@ -3134,7 +3107,7 @@ ApplicationWindow {
                     // waits for a prompt (never over a request): Tab types it
                     // for you to edit, Tab again sends it, and Tab with nothing
                     // offered moves to the next agent that needs you.
-                    readonly property bool predicting: typeof nextPrompt !== "undefined" && nextPrompt !== null
+                    readonly property bool predicting: window.nextPromptAvailable
                                                        && nextPrompt.enabled && document !== null
                     tabFlow: predicting && nextPrompt.guesses(document.harnessId)
                     suggestion: predicting && nextPrompt.revision >= 0 && !document.historyActive
@@ -3144,11 +3117,11 @@ ApplicationWindow {
                                          && nextPrompt.confidence(document.agentId) >=
                                          nextPrompt.confidentThreshold
                     onSuggestionSeen: (agentId, offerKey) => {
-                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null)
+                        if (window.nextPromptAvailable)
                             nextPrompt.seenOffer({session: agentId, offer: offerKey})
                     }
                     onSuggestionUsed: (agentId, offerKey, sent, typedFirst) => {
-                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null)
+                        if (window.nextPromptAvailable)
                             nextPrompt.used(agentId, sent, typedFirst, offerKey)
                     }
                     // Follows every offer, even one with the same words as the last.
@@ -3784,7 +3757,7 @@ ApplicationWindow {
                         width: parent.width - 12
                         height: parent.height - y - 6
                         document: agentTab.modelData
-                        fontFamily: (typeof config !== "undefined" && config !== null) ? config.terminalFontFamily : ""
+                        fontFamily: config.terminalFontFamily
                         fontPixelSize: window.terminalFontSize
                         interactive: false
                         enabled: false
@@ -3882,7 +3855,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 document: window.terminalsAvailable ? terminals.current : null
-                fontFamily: (typeof config !== "undefined" && config !== null) ? config.terminalFontFamily : ""
+                fontFamily: config.terminalFontFamily
                 fontPixelSize: window.terminalFontSize
                 visible: sidePanel.visible && document !== null
                 enabled: visible

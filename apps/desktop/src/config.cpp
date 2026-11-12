@@ -368,7 +368,15 @@ Config::Config(QObject* parent) : QObject(parent) {
     watch();
 }
 
+// No source path, so nothing below can name a file to read, watch or write.
+Config::Config(DefaultsOnly, QObject* parent) : QObject(parent), file_backed_(false) {
+    connect(this, &Config::changed, this, &Config::diagnosticChanged);
+    apply_defaults();
+}
+
 void Config::watch() {
+    if (!file_backed_)
+        return;
     if (!watcher_.files().isEmpty())
         watcher_.removePaths(watcher_.files());
     if (!watcher_.directories().isEmpty())
@@ -515,6 +523,10 @@ bool Config::load() {
     apply_defaults();
     diagnostic_.clear();
     loaded_ = false;
+    if (!file_backed_) {
+        emit changed();
+        return false;
+    }
     QString path_reason;
     if (!config_path_is_regular(source_path_, &path_reason)) {
         diagnostic_ = QStringLiteral("%1 not read: %2; using built-in defaults")
@@ -1071,6 +1083,12 @@ bool Config::persist() {
         emit changed();
         return false;
     };
+    // A defaults-only config keeps the change in memory, as a save would.
+    if (!file_backed_) {
+        diagnostic_.clear();
+        emit changed();
+        return true;
+    }
     QLockFile writer(config_lock_path(source_path_));
     if (!writer.tryLock(0))
         return fail(QStringLiteral("configuration is busy or its lock is not writable"));

@@ -119,8 +119,15 @@ class Config final : public QObject {
     // its color theme and reading and code fonts by name, its text size in
     // pixels (0 follows the terminal's), and whether every agent shows it.
     Q_PROPERTY(QVariantMap visual READ visual NOTIFY changed)
+    // False for a defaults-only config: it has no file to reload.
+    Q_PROPERTY(bool fileBacked READ fileBacked CONSTANT)
   public:
     explicit Config(QObject* parent = nullptr);
+    // Built-in defaults that read, watch and write no file. Changes apply in
+    // memory only. A window given no config uses one, so QML always has one.
+    struct DefaultsOnly {};
+    explicit Config(DefaultsOnly, QObject* parent = nullptr);
+    [[nodiscard]] bool fileBacked() const { return file_backed_; }
 
     // Re-read the file, keeping defaults for anything missing or invalid.
     // Returns true when the file parsed and was applied.
@@ -130,6 +137,8 @@ class Config final : public QObject {
     // Point the config at another file. Used by tests so they never touch the
     // user's real lapis.json; not part of the QML surface.
     void setSourcePathForTesting(const QString& path) {
+        if (!file_backed_)
+            return;
         source_path_ = path;
         watch();
     }
@@ -258,6 +267,7 @@ class Config final : public QObject {
     QHash<QString, QStringList> harness_arguments_;
     QSet<QString> harness_updates_off_;
     bool loaded_{};
+    bool file_backed_{true};
     bool sidebar_visible_{true};
     bool previews_visible_{true};
     bool finish_sound_{true};
