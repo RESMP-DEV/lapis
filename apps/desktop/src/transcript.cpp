@@ -1,6 +1,7 @@
 #include "transcript.hpp"
 
 #include "code_highlight.hpp"
+#include "conversation_owner.hpp"
 #include "platform/published_task.hpp"
 #include "slash_commands.hpp"
 #include "transcript_math.hpp"
@@ -965,6 +966,31 @@ bool composer_holds(const QStringList& screen, const QString& text, Format forma
                QStringView(held).left(n) == QStringView(first_line).left(n);
     }
     return false;
+}
+
+QString queue_mode(Format format, bool agy_immediate) {
+    switch (format) {
+    case Format::codex:
+        return QStringLiteral("steer");
+    case Format::antigravity:
+        return agy_immediate ? QStringLiteral("immediate") : QStringLiteral("turn-end");
+    case Format::claude:
+        break;
+    }
+    return QStringLiteral("queue");
+}
+
+bool antigravity_sends_immediately(const QString& settings_path) {
+    QFile file(settings_path);
+    // A settings file is a few kilobytes; a larger one is not agy's.
+    constexpr qint64 most_bytes = qint64{1} << 20;
+    if (!file.open(QIODevice::ReadOnly) || file.size() > most_bytes)
+        return false;
+    const auto value = QJsonDocument::fromJson(file.readAll())
+                           .object()
+                           .value(QLatin1String("queuedMessages"))
+                           .toString();
+    return value == QLatin1String("send-immediately");
 }
 
 QString work_summary(const std::vector<Item>& items, int first, int last, int except) {
@@ -2647,6 +2673,8 @@ void TranscriptModel::setLive(bool live) {
 void TranscriptModel::noteSent(const QString& text, bool queued) {
     if (path_.isEmpty())
         return;
+    if (queued)
+        refreshQueueMode(); // agy's setting can change while it runs
     reader_->note_sent(text, queued);
     notePending();
 }
@@ -3214,6 +3242,19 @@ bool TranscriptModel::composerHolds(const QStringList& screen, const QString& te
     return transcript::composer_holds(screen, text, format());
 }
 
+void TranscriptModel::refreshQueueMode() {
+    // Only agy's depends on a setting; a small file, read when asked.
+    const bool immediate =
+        format() == transcript::Format::antigravity &&
+        transcript::antigravity_sends_immediately(
+            QDir(conversation_owner::antigravity_home()).filePath(QStringLiteral("settings.json")));
+    auto mode = transcript::queue_mode(format(), immediate);
+    if (mode == queue_mode_)
+        return;
+    queue_mode_ = std::move(mode);
+    emit queueModeChanged();
+}
+
 QVariantMap TranscriptModel::fonts() const {
     // New York and SF Mono ship with macOS but are hidden from the font list;
     // loading the files gives them names the view can ask for.
@@ -3430,6 +3471,7 @@ void TranscriptModel::setPath(const QString& path) {
     showLive(0);
     updateRunning();
     notePending();
+    refreshQueueMode();
     auto* watcher = findChild<QFileSystemWatcher*>();
     if (watcher == nullptr) {
         watcher = new QFileSystemWatcher(this);

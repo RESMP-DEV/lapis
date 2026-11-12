@@ -1285,6 +1285,157 @@ int check_bubble(QQuickView& view, QQuickItem* root, TranscriptModel& model,
     return failures;
 }
 
+// Sending mid-turn, for each CLI (agy in both of its `queuedMessages`
+// modes, from settings.json in the capture's throwaway home), against a
+// stand-in terminal that records what reaches the agent: the waiting
+// bubble's label. `out`, when given, saves the bubble states as PNGs.
+int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
+                   const QString& folder, const QString& out) {
+    int failures = 0;
+    const auto expect = [&failures](bool ok, const QString& what) {
+        if (!ok) {
+            std::fprintf(stderr, "send now FAIL %s\n", qPrintable(what));
+            ++failures;
+        }
+    };
+    auto* input = root->findChild<QQuickItem*>(QStringLiteral("visualComposer"));
+    if (input == nullptr)
+        return 1;
+    auto* list = root->property("list").value<QQuickItem*>();
+    const auto key = [&view](int code, Qt::KeyboardModifiers mods) {
+        QKeyEvent press(QEvent::KeyPress, code, mods);
+        QKeyEvent release(QEvent::KeyRelease, code, mods);
+        QCoreApplication::sendEvent(&view, &press);
+        QCoreApplication::sendEvent(&view, &release);
+        settle();
+    };
+    // The thread at its end, as following leaves it once a frame has laid
+    // the footer out.
+    const auto to_end = [&view, list] {
+        (void)view.grabWindow();
+        QMetaObject::invokeMethod(list, "positionViewAtEnd");
+        settle();
+        (void)view.grabWindow();
+    };
+    // The visible items named `name` anywhere in the view (the thread's
+    // footer and the bar), and their texts top to bottom.
+    const auto anywhere = [root](const char* name) {
+        std::vector<QQuickItem*> found;
+        const auto walk = [&found, name](auto&& self, QQuickItem* item) -> void {
+            if (!item->isVisible())
+                return;
+            if (item->objectName() == QLatin1String(name) && item->height() > 0)
+                found.push_back(item);
+            for (auto* child : item->childItems())
+                self(self, child);
+        };
+        walk(walk, root);
+        return found;
+    };
+    const auto shown_texts = [&anywhere](const char* name) {
+        auto items = anywhere(name);
+        std::ranges::sort(items, [](QQuickItem* a, QQuickItem* b) {
+            return a->mapToScene({0, 0}).y() < b->mapToScene({0, 0}).y();
+        });
+        QStringList texts;
+        for (auto* item : items)
+            texts << item->property("text").toString();
+        return texts;
+    };
+    QJSValue terminal = view.engine()->evaluate(QStringLiteral(R"((function(mark) {
+        var t = { mark: mark, held: "", submits: [], interrupts: 0 };
+        t.submit = function(text) { t.submits.push(text); return true };
+        t.interrupt = function() { t.interrupts++; return true };
+        t.press = function() { return true };
+        t.screen = function() { return ["", "  working", t.mark + " " + t.held] };
+        return t;
+    }))"));
+    const auto agy_settings =
+        QDir::home().filePath(QStringLiteral(".gemini/antigravity-cli/settings.json"));
+    QDir().mkpath(QFileInfo(agy_settings).path());
+    struct Case {
+        const char* name;
+        const char* format;
+        const char* mode; // agy's queuedMessages, or null
+        QString queued;   // the waiting bubble's label
+    };
+    const std::vector<Case> cases{
+        {"claude", "claude", nullptr, QStringLiteral("Queued · read at the next step")},
+        {"codex", "codex", nullptr, QStringLiteral("Steering · read after the current step")},
+        {"agy-queue", "antigravity", "queue", QStringLiteral("Queued · sent when this turn ends")},
+        {"agy-immediate", "antigravity", "send-immediately",
+         QStringLiteral("Sent · read at the next step")},
+    };
+    const auto fixtures = sent_fixtures();
+    for (const auto& c : cases) {
+        const QString name = QString::fromLatin1(c.name);
+        const auto what = [&name](const char* text) {
+            return QStringLiteral("%1: %2").arg(name, QString::fromLatin1(text));
+        };
+        const auto shoot = [&](const char* state) {
+            if (out.isEmpty())
+                return;
+            to_end();
+            (void)view.grabWindow().save(
+                QStringLiteral("%1-sendnow-%2-%3.png").arg(out, name, QString::fromLatin1(state)));
+        };
+        if (c.mode != nullptr) {
+            QFile settings(agy_settings);
+            if (!settings.open(QIODevice::WriteOnly))
+                return 1;
+            settings.write(QByteArray(R"({"queuedMessages":")") + c.mode + "\"}");
+        }
+        const auto& fixture = *std::ranges::find_if(fixtures, [&c](const SentFixture& f) {
+            return qstrcmp(f.format, c.format) == 0;
+        });
+        // A turn running: its prompt and a step recorded, no reply yet.
+        QFile file(QDir(folder).filePath(QStringLiteral("sendnow-%1.jsonl").arg(name)));
+        if (!file.open(QIODevice::WriteOnly))
+            return 1;
+        for (const auto& records : {fixture.before, fixture.prompt, fixture.step})
+            for (const auto& line : records)
+                file.write(line + '\n');
+        file.flush();
+        const QString mark = name == QLatin1String("claude")  ? QStringLiteral("❯")
+                             : name == QLatin1String("codex") ? QStringLiteral("›")
+                                                              : QStringLiteral(">");
+        auto fake = terminal.call({QJSValue(mark)});
+        root->setProperty("submit", QVariant::fromValue(fake.property("submit")));
+        root->setProperty("interrupt", QVariant::fromValue(fake.property("interrupt")));
+        root->setProperty("pressReturn", QVariant::fromValue(fake.property("press")));
+        root->setProperty("screen", QVariant::fromValue(fake.property("screen")));
+        root->setProperty("sizeSetting", 15);
+        model.setFormat(lapis::desktop::transcript::format_named(QString::fromLatin1(c.format)));
+        model.setPath(file.fileName());
+        model.loadNow();
+        root->setProperty("working", true);
+        settle();
+        const auto last = [&fake](const char* field) {
+            const auto list = fake.property(field);
+            const auto n = list.property("length").toUInt();
+            return n > 0 ? list.property(n - 1).toString() : QString();
+        };
+
+        // Return mid-turn: the CLI's own label under the bubble.
+        input->forceActiveFocus();
+        input->setProperty("text", QStringLiteral("Plain return"));
+        key(Qt::Key_Return, Qt::NoModifier);
+        expect(last("submits") == QLatin1String("Plain return"), what("Return sends with Return"));
+        expect(shown_texts("pendingLabel") == QStringList{c.queued},
+               what("the waiting bubble's label"));
+        shoot("queued");
+        root->setProperty("working", false);
+        input->setProperty("text", QString());
+        settle();
+    }
+    QFile::remove(agy_settings);
+    for (const char* name : {"interrupt", "pressReturn", "screen"})
+        root->setProperty(name, QVariant());
+    root->setProperty("submit", QVariant());
+    std::puts(failures == 0 ? "send now: all checks passed" : "send now: failed");
+    return failures;
+}
+
 // A made-up running Claude Code turn with subagents and a background
 // command, timed from now: `ago` seconds before it.
 QString stamp(int ago) {
@@ -2422,6 +2573,7 @@ int main(int argc, char** argv) {
         const int live = check_live(view, root, model, live_file);
         const int work = check_work(view, root, model, home.path());
         const int bubbles = check_bubble(view, root, model, home.path());
+        const int send_now = check_send_now(view, root, model, home.path(), parser.value("out"));
         const int overlaps = check_sent_after_reply(view, root, model, home.path());
         std::puts(overlaps == 0 ? "sent after a reply: all checks passed"
                                 : "sent after a reply: failed");
@@ -2429,7 +2581,8 @@ int main(int argc, char** argv) {
         std::puts(ended == 0 ? "working after the turn ended: all checks passed"
                              : "working after the turn ended: failed");
         const int swapped = check_swapped(view, root, model, home.path());
-        return live == 0 && work == 0 && bubbles == 0 && overlaps == 0 && ended == 0 && swapped == 0
+        return live == 0 && work == 0 && bubbles == 0 && send_now == 0 && overlaps == 0 &&
+                       ended == 0 && swapped == 0
                    ? 0
                    : 1;
     }

@@ -131,7 +131,12 @@ FocusScope {
         function onRowsInserted() { root.pendingCommand = "" }
         function onModelReset() { root.pendingCommand = "" }
     }
-    onWorkingChanged: if (working) { pendingCommand = ""; sentAt = 0 }
+    onWorkingChanged: if (working) {
+        pendingCommand = ""
+        sentAt = 0
+        if (model)
+            model.refreshQueueMode() // agy's setting, for this turn's sends
+    }
     // The turn a sent prompt started has ended in the file.
     onTurnEndedChanged: if (turnEnded) sentAt = 0
     // The prompt last sent, checked once it should have been taken: an
@@ -182,6 +187,21 @@ FocusScope {
                     && root.model.pendingPrompts.indexOf(root.unsentText.replace(/\s+/g, " ").trim()) < 0)
                 root.unsentText = ""
         }
+    }
+
+    // How the agent's CLI takes a message sent mid-turn (verified by hand
+    // against Claude Code 2.1.322, Codex 0.157.1 and agy 1.5.7): Claude Code
+    // queues it for its next step, Codex steers the turn once the running
+    // step ends, agy holds it until the turn ends or reads it at its next
+    // step as its `queuedMessages` setting says.
+    readonly property string cli: model ? model.format : ""
+    readonly property string queueMode: model ? model.queueMode : "queue"
+    // The quiet line under a waiting prompt, as its CLI will treat it.
+    function queuedLabel() {
+        return queueMode === "steer" ? qsTr("Steering · read after the current step")
+             : queueMode === "turn-end" ? qsTr("Queued · sent when this turn ends")
+             : queueMode === "immediate" ? qsTr("Sent · read at the next step")
+             : qsTr("Queued · read at the next step")
     }
     // Subagents and background tasks still running (model.running), and
     // whether they keep the agent's work going after its turn ended.
@@ -383,7 +403,7 @@ FocusScope {
         if (!entry)
             return ""
         if (entry.queued)
-            return qsTr("Queued · the agent reads it at its next step")
+            return queuedLabel()
         if (!entry.steered)
             return ""
         return entry.waited < 0 ? qsTr("Steered")
@@ -2619,11 +2639,12 @@ FocusScope {
             }
         }
         Text {
+            objectName: "pendingLabel"
             anchors.right: parent.right
             anchors.rightMargin: 6
             visible: text.length > 0
             text: parent.unsent ? qsTr("Not sent yet · press Return in the terminal")
-                : modelData.queued ? qsTr("Queued · the agent reads it at its next step") : ""
+                : modelData.queued ? root.queuedLabel() : ""
             color: parent.unsent ? root.faultColor : root.mutedTextColor
             font.family: root.sansFamily
             font.pixelSize: root.codeSize - 1

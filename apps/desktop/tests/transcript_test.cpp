@@ -392,6 +392,58 @@ void composers_are_read() {
             "a few letters or no screen do not");
 }
 
+// How each CLI takes a message sent mid-turn: agy's from its settings file,
+// read from a throwaway home.
+void queue_modes_follow_settings() {
+    using lapis::desktop::transcript::antigravity_sends_immediately;
+    using lapis::desktop::transcript::Format;
+    using lapis::desktop::transcript::queue_mode;
+    QTemporaryDir home;
+    const auto saved = qgetenv("HOME");
+    qputenv("HOME", home.path().toUtf8());
+    const QDir agy(home.filePath(QStringLiteral(".gemini/antigravity-cli")));
+    QDir().mkpath(agy.path());
+    const auto settings = agy.filePath(QStringLiteral("settings.json"));
+    const auto write = [&settings](const QByteArray& text) {
+        QFile file(settings);
+        if (file.open(QIODevice::WriteOnly))
+            file.write(text);
+    };
+    require(!antigravity_sends_immediately(settings), "no settings file: agy queues");
+    write(R"({"queuedMessages":"queue"})");
+    require(!antigravity_sends_immediately(settings), "Queue: agy queues");
+    write(R"({"theme":"dark","queuedMessages":"send-immediately"})");
+    require(antigravity_sends_immediately(settings), "send-immediately is read");
+    write("{not json");
+    require(!antigravity_sends_immediately(settings), "a broken file is agy's default");
+    require(queue_mode(Format::claude, true) == "queue" &&
+                queue_mode(Format::codex, true) == "steer" &&
+                queue_mode(Format::antigravity, false) == "turn-end" &&
+                queue_mode(Format::antigravity, true) == "immediate",
+            "each CLI's mode");
+
+    // The model reads agy's setting for an agy conversation, again when asked.
+    write(R"({"queuedMessages":"queue"})");
+    const auto path = home.filePath(QStringLiteral("transcript_full.jsonl"));
+    {
+        QFile file(path);
+        if (file.open(QIODevice::WriteOnly))
+            file.write(
+                R"({"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T16:00:00Z","content":"<USER_REQUEST>hi</USER_REQUEST>"})"
+                "\n");
+    }
+    TranscriptModel model;
+    model.setPath(path);
+    model.loadNow();
+    require(model.queueMode() == "turn-end", "an agy conversation in Queue mode");
+    write(R"({"queuedMessages":"send-immediately"})");
+    model.refreshQueueMode();
+    require(model.queueMode() == "immediate", "the setting is read again when asked");
+    model.setPath({});
+    require(model.queueMode() == "queue", "no conversation: Claude Code's");
+    qputenv("HOME", saved);
+}
+
 // What the bar sent waits until the CLI records it, matched across the
 // CLI's own rewriting (spaces, @path mentions), in order.
 void sent_prompts_are_matched() {
@@ -1827,6 +1879,7 @@ int main(int argc, char** argv) {
     notices_and_attachments();
     dialogs_are_seen();
     composers_are_read();
+    queue_modes_follow_settings();
     sent_prompts_are_matched();
     queued_prompts_show();
     several_queued_prompts();

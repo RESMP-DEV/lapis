@@ -273,6 +273,16 @@ struct Piece {
 // text above it, as the CLI shows what was sent, do not count.
 enum class Format;
 [[nodiscard]] bool composer_holds(const QStringList& screen, const QString& text, Format format);
+// How a CLI takes a message sent while it works (TranscriptModel::queueMode):
+// Claude Code queues it and reads it at its next step ("queue"); Codex steers
+// the turn with it once the running step ends ("steer"); agy holds it until
+// the turn ends ("turn-end", its default) or reads it at its next step
+// ("immediate") as its settings' `queuedMessages` says.
+[[nodiscard]] QString queue_mode(Format format, bool agy_immediate);
+// Whether agy's settings file (settings.json in its home) sets
+// `queuedMessages` to "send-immediately"; absent, unreadable or any other
+// value is agy's default, Queue.
+[[nodiscard]] bool antigravity_sends_immediately(const QString& settings_path);
 
 // The CLIs whose saved conversations lapis reads, each with its own reader.
 enum class Format { claude, codex, antigravity };
@@ -623,6 +633,10 @@ class TranscriptModel final : public QAbstractListModel {
     Q_PROPERTY(QStringList pendingPrompts READ pendingPrompts NOTIFY pendingChanged)
     // The same as {text, queued}: queued when sent while the agent worked.
     Q_PROPERTY(QVariantList pendingEntries READ pendingEntries NOTIFY pendingChanged)
+    // How this CLI takes a message sent mid-turn (transcript::queue_mode):
+    // "queue", "steer", "turn-end" or "immediate". agy's setting is read
+    // again on refreshQueueMode() (the view calls it when a turn starts).
+    Q_PROPERTY(QString queueMode READ queueMode NOTIFY queueModeChanged)
     // The subagents and background tasks still running, oldest first, each
     // as the task role describes it plus `item` (the step that started it).
     // Kept current by the file and by tick().
@@ -761,6 +775,9 @@ class TranscriptModel final : public QAbstractListModel {
     // transcript::composer_holds): a prompt sent but not taken.
     Q_INVOKABLE [[nodiscard]] bool composerHolds(const QStringList& screen,
                                                  const QString& text) const;
+    // Reads agy's queued-message setting again; see queueMode.
+    Q_INVOKABLE void refreshQueueMode();
+    [[nodiscard]] const QString& queueMode() const { return queue_mode_; }
     // When the last turn's prompt was written (ms since the epoch) while that
     // turn is still open, else 0: what "Working for" counts from.
     Q_INVOKABLE [[nodiscard]] double runningSince() const;
@@ -865,8 +882,10 @@ class TranscriptModel final : public QAbstractListModel {
     void turnOpenChanged();
     void pendingChanged();
     void runningChanged();
+    void queueModeChanged();
 
   private:
+    QString queue_mode_{QStringLiteral("queue")};
     // A task's own file, as this conversation's CLI keeps it (a Claude Code
     // subagent's transcript beside this one, a Codex child rollout, an agy
     // child conversation, a background command's output), or empty.
