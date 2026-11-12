@@ -388,6 +388,28 @@ whole history by p95 0.79 s. Idle CPU with 19 kept: 0.25% of a core. The
 footprint with all 20 kept was 489 to 774 MB across runs (320 to 435 MB
 before with six). Native GPU presentation and a real window are not measured.
 
+### Factory view
+
+The factory view is a window mode over the same workspace, not a second
+workspace: the stage shows the orchestrator agent's thread, and every other
+agent sits in one of four stages on a board beside it. `Workspace` owns the
+model (`workspace_factory.cpp`); the stage rules are a pure function
+(`factory_state.hpp`). A separate judge model may write
+`factory_state.json` beside the registry; lapis only reads it (bounded, a
+symlink refused) and watches the folder so an atomic replace reloads.
+Live state wins over a verdict: a pending request or a waiting agent always
+means Needs You and a working or connecting one In Progress; an `in_progress`
+verdict on a turn no longer running is stale; a settled verdict holds only until the agent's settled status changes after
+`judgedAtMs` (the first status after connecting is not a change, so a restart
+does not discard verdicts). Unjudged agents get a deterministic stage, and
+only an explicit `keepNeeded: false` marks one safe to close. Nothing is
+closed automatically. The orchestrator is a registry pin (`homeAgent`), else
+a sticky automatic choice of the most recently active local agy agent, so it
+never follows the stage. Inspecting a worker selects it on the one stage;
+keyboard ownership follows the existing focus rules, and agent links in the
+thread are resolved by `resolveAgentLink` without touching the transcript
+model.
+
 ### Storage, credentials, and diagnostics
 
 Tracked `lapis.json` contains defaults only. Private workspace, window, and

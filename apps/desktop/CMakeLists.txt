@@ -19,6 +19,7 @@ if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
 endif()
 add_library(lapis_desktop_core STATIC
     src/workspace.cpp src/workspace.hpp src/category_colors.hpp
+    src/workspace_factory.cpp src/factory_state.cpp src/factory_state.hpp
     src/harness_catalog.cpp src/harness_catalog.hpp
     src/workspace_control.cpp src/workspace_control.hpp
     src/alerts.cpp src/alerts.hpp
@@ -95,7 +96,7 @@ if(APPLE)
     target_link_libraries(lapis_desktop PRIVATE "-framework AppKit")
 endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_core Qt6::QuickControls2)
-qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml qml/SettingsPreview.qml)
+qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml qml/SettingsPreview.qml qml/FactoryBoard.qml)
 # A development bundle has its own identity, so macOS never mistakes it for
 # the installed app: `open` would otherwise bring the installed lapis forward,
 # and the two would share notification and preference state.
@@ -284,6 +285,22 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_config_tests PRIVATE lapis_project_options lapis_desktop_core)
     add_test(NAME config COMMAND lapis_config_tests)
     set_tests_properties(config PROPERTIES TIMEOUT 20)
+
+    # The factory view: the judge's file, stage rules, the orchestrator and
+    # the workspace requests; and its window, always offscreen and software.
+    add_executable(lapis_factory_tests tests/factory_test.cpp)
+    target_link_libraries(lapis_factory_tests PRIVATE lapis_project_options lapis_desktop_core)
+    add_test(NAME factory COMMAND lapis_factory_tests)
+    set_tests_properties(factory PROPERTIES TIMEOUT 30
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(lapis_factory_ui_tests tests/factory_ui_test.cpp)
+    target_link_libraries(lapis_factory_ui_tests PRIVATE lapis_project_options lapis_desktop_core
+        Qt6::QuickControls2)
+    target_compile_definitions(lapis_factory_ui_tests PRIVATE
+        LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
+    add_test(NAME factory-ui COMMAND lapis_factory_ui_tests --background)
+    set_tests_properties(factory-ui PROPERTIES TIMEOUT 60 RESOURCE_LOCK "qt_gui"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Basic")
 
     add_executable(lapis_tool_status_tests tests/tool_status_test.cpp)
     target_link_libraries(lapis_tool_status_tests PRIVATE lapis_project_options lapis_desktop_core)

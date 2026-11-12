@@ -24,6 +24,7 @@ all under Keys. Terminal Control chords stay with the agent.
 | Command-` or Control-` | Show or hide the side terminal |
 | Command-~ | Pick the side terminal's machine |
 | Command-B | Hide or show the sidebar of categories and their agents |
+| Command-Shift-F | Switch between the [factory view](workspace.md#factory-view) and categories |
 
 ## Terminal
 

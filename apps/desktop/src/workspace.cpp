@@ -735,6 +735,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
       headless_(options.headless), update_timeout_ms_(std::max(qint64{1}, options.updateTimeoutMs)),
       fixture_mode_(mode == WorkspaceMode::fixture) {
     transcript_ = new TranscriptModel(this);
+    setupFactory();
     // Before selecting clears the arriving agent's unseen mark, so a choice
     // is recorded with the state the person chose from.
     choice_settle_.setSingleShot(true);
@@ -783,6 +784,9 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
                 ? QDir(rootDirectory()).filePath(QStringLiteral("runtime/workspace.json"))
                 : QFileInfo(options.storagePath).absoluteFilePath();
         restore();
+        // The factory judge writes its verdicts beside the registry.
+        setFactoryStatePath(QDir(QFileInfo(storage_path_).absolutePath())
+                                .filePath(QStringLiteral("factory_state.json")));
         // Tab's move log lives beside the registry, owner-only.
         tab_ranker_ = std::make_unique<TabRanker>(QFileInfo(storage_path_).absolutePath());
         restoreSelection();
@@ -1147,6 +1151,7 @@ void Workspace::noteStructuralFocus() {
     last_focus_id_ = focused != nullptr ? focused->agentId() : QString{};
 }
 void Workspace::watch(Agent* item) {
+    watchFactory(item);
     // Its unseen mark and whether it is at work outlive a window (GuiState).
     connect(item, &Agent::unseenChanged, this, &Workspace::marksChanged);
     connect(item, &Agent::statusChanged, this, &Workspace::marksChanged);
@@ -2032,11 +2037,14 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
     }
     for (const auto& kept : unreadable_agents_)
         agents.append(kept);
-    const auto data = QJsonDocument(QJsonObject{{"version", 2},
-                                                {"activeCategory", active_category_},
-                                                {"categories", groups},
-                                                {"agents", agents}})
-                          .toJson(QJsonDocument::Compact);
+    QJsonObject root{{"version", 2},
+                     {"activeCategory", active_category_},
+                     {"categories", groups},
+                     {"agents", agents}};
+    // The factory view's pinned orchestrator; earlier builds ignore it.
+    if (!home_agent_id_.isEmpty())
+        root.insert(QStringLiteral("homeAgent"), home_agent_id_);
+    const auto data = QJsonDocument(root).toJson(QJsonDocument::Compact);
     if (data.size() > qint64{1024} * 1024)
         return saveError(QStringLiteral("Workspace metadata exceeds the 1 MiB limit."));
     QString failure;
@@ -2203,6 +2211,8 @@ void Workspace::applyPins(const QHash<QString, QString>& pins) {
     }
 }
 QString Workspace::conversationFile(const QString& id) {
+    if (fixture_mode_)
+        return fixture_files_.value(id);
     const auto entry = agents_.constFind(id);
     if (entry == agents_.cend() || !agentMachine(*entry).isEmpty())
         return {};
@@ -3021,6 +3031,9 @@ void Workspace::restore() {
         if (std::none_of(categories_.begin(), categories_.end(),
                          [&](const auto& category) { return category.id == active_category_; }))
             active_category_ = categories_.front().id;
+        if (const auto home = root.value(QStringLiteral("homeAgent")).toString();
+            agents_.contains(home))
+            home_agent_id_ = home;
         connectRestoredAgents();
     } catch (const std::exception& error) {
         items_.clear();

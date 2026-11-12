@@ -206,6 +206,8 @@ ApplicationWindow {
             return mac ? ["Meta+`", "Ctrl+`"] : ["Ctrl+`"]
         if (action === "chooseTerminal")
             return mac ? ["Meta+Shift+`", "Meta+~"] : ["Ctrl+Shift+~", "Ctrl+~"]
+        if (action === "toggleFactory")
+            return [mac ? "Meta+Shift+F" : "Ctrl+Shift+F"]
         return []
     }
 
@@ -428,6 +430,11 @@ ApplicationWindow {
             true, "", () => window.toggleVisualAll())
         add("toggleAppearance", window.visualSettings.light ? qsTr("Switch to dark mode") : qsTr("Switch to light mode"), "",
             true, "", () => window.toggleAppearance())
+        add("toggleFactory", qsTr("Toggle Factory view"), "toggleFactory", true, "", () => window.toggleFactory(),
+            qsTr("factory pipeline orchestrator classic"))
+        add("pinFactoryHome", qsTr("Pin agent as Factory orchestrator"), "",
+            hasAgent && workspace.homeAgentId !== agent.agentId, needAgent,
+            () => workspace.setHomeAgent(agent.agentId))
         add("textBigger", qsTr("Bigger text"), "textBigger", true, "", () => window.changeTextSize(1))
         add("textSmaller", qsTr("Smaller text"), "textSmaller", true, "", () => window.changeTextSize(-1))
         add("textReset", qsTr("Default text size"), "textReset", true, "", () => window.changeTextSize(0))
@@ -788,12 +795,32 @@ ApplicationWindow {
             workspace.closeAgent(session.agentId, false)
             return
         }
+        confirmCloseAgent(session)
+    }
+    function confirmCloseAgent(session) {
         closeAgentDialog.agentId = session.agentId
         closeAgentDialog.harnessId = session.harnessId
-        closeAgentDialog.agentName = session.agentName
+        closeAgentDialog.agentName = session.agentName || session.title
         closeAgentDialog.place = workspace.displayPath(session.directory)
         closeAgentDialog.reachable = session.reachable
         openFresh(closeAgentDialog)
+    }
+    // Close from the factory board. The judge's Safe to close (or an agent
+    // that has already ended) closes in one click; any other running agent is
+    // confirmed first. Fixture agents are never live, so fixture mode asks the
+    // same way a live agent would.
+    function closeFactoryAgent(id, safeToClose) {
+        if (terminalBusy)
+            return
+        const session = workspace.agents.find(a => a.agentId === id)
+        if (!session || session.closing)
+            return
+        const running = session.live ? session.connectionState !== "ended" : workspace.fixtureMode
+        if (safeToClose || !running) {
+            workspace.closeAgent(id, false)
+            return
+        }
+        confirmCloseAgent(session)
     }
 
     function openCategoryDialog(mode) {
@@ -916,6 +943,9 @@ ApplicationWindow {
         const agent = workspace.focusedAgent
         if (agent === null)
             return false
+        // The factory view's orchestrator always shows as its thread.
+        if (factoryHomeShown && agent.agentId === factoryHomeId)
+            return true
         const choice = visualAgents[agent.agentId]
         return choice === undefined ? visualAll : choice
     }
@@ -1000,6 +1030,107 @@ ApplicationWindow {
         visualAgents = ({})
         config.setVisual("all", !visualAll)
         visualFocus()
+    }
+    // Factory view (visual.factory): one orchestrator conversation fills the
+    // stage beside the pipeline board. A board card, an agent link in the
+    // thread or the sidebar shows a worker for a look, with a bar back.
+    readonly property bool factoryMode: visualSettings.factory === true
+    property string factoryInspectAgentId: ""
+    readonly property bool factoryInspecting: factoryMode && factoryInspectAgentId.length > 0
+    readonly property var factoryHome: workspace.effectiveHomeAgent
+    readonly property string factoryHomeId: factoryHome ? factoryHome.agentId : ""
+    readonly property bool factoryHomeShown: factoryMode && !factoryInspecting
+    property bool factoryBoardCollapsed: false
+    // The inspected worker's board entry (stage and receipt for the bar).
+    readonly property var factoryInspected: {
+        if (!factoryInspecting)
+            return null
+        const items = workspace.factoryPipeline
+        for (let i = 0; i < items.length; ++i)
+            if (items[i].agentId === factoryInspectAgentId)
+                return items[i]
+        return null
+    }
+    function factoryStageLabel(stage) {
+        return stage === "needs_you" ? qsTr("Needs You")
+             : stage === "in_progress" ? qsTr("In Progress")
+             : stage === "landed" ? qsTr("Landed") : qsTr("Idle")
+    }
+    function factoryStageColor(stage) {
+        return stage === "needs_you" ? attentionColor : stage === "in_progress" ? activityColor
+             : stage === "landed" ? plentyColor : mutedTextColor
+    }
+    function toggleFactory() {
+        if (!interactionArmed)
+            return
+        const next = !factoryMode
+        factoryInspectAgentId = ""
+        config.setVisual("factory", next)
+        if (next)
+            showFactoryHome()
+        visualFocus()
+    }
+    function showFactoryHome() {
+        factoryInspectAgentId = ""
+        if (factoryHomeId.length > 0
+                && (workspace.focusedAgent === null || workspace.focusedAgent.agentId !== factoryHomeId))
+            workspace.selectAgent(factoryHomeId)
+    }
+    function backToFactory() {
+        showFactoryHome()
+        visualFocus()
+    }
+    function inspectFactoryAgent(id) {
+        if (!factoryMode || id.length === 0 || id === factoryHomeId) {
+            showFactoryHome()
+            return
+        }
+        factoryInspectAgentId = id
+        workspace.selectAgent(id)
+        visualFocus()
+    }
+    // A worker's terminal rather than its thread, to answer it there.
+    function openFactoryTerminal(id) {
+        inspectFactoryAgent(id)
+        if (factoryInspectAgentId === id && visualActive)
+            toggleVisual()
+    }
+    function factoryDetails(id) {
+        inspectFactoryAgent(id)
+        if (workspace.focusedAgent !== null && workspace.focusedAgent.attentionCount > 0)
+            openAttentionDialog()
+    }
+    // A link in the thread that names an agent opens it; true when handled.
+    function openFactoryLink(link) {
+        const internal = /^(lapis|conversation):/i.test(link)
+        const id = workspace.resolveAgentLink(link)
+        if (id.length === 0)
+            return internal
+        if (factoryMode)
+            inspectFactoryAgent(id)
+        else
+            workspace.selectAgent(id)
+        return true
+    }
+    // Choosing another agent anywhere while in the factory view inspects it;
+    // choosing the orchestrator goes back.
+    Connections {
+        target: workspace
+        function onFocusChanged() {
+            if (!window.factoryMode)
+                return
+            const agent = workspace.focusedAgent
+            const id = agent ? agent.agentId : ""
+            if (id === window.factoryHomeId)
+                window.factoryInspectAgentId = ""
+            else if (id.length > 0)
+                window.factoryInspectAgentId = id
+        }
+        function onHomeAgentChanged() {
+            if (window.factoryHomeShown)
+                Qt.callLater(window.showFactoryHome)
+        }
+        Component.onCompleted: if (window.factoryMode) Qt.callLater(window.showFactoryHome)
     }
     // Each CLI's commands for the visual view's model and effort pickers. A
     // CLI without an entry shows what it reports but offers no choices.
@@ -1230,6 +1361,14 @@ ApplicationWindow {
         enabled: window.shortcutsArmed
         autoRepeat: false
         onActivated: window.togglePreviews()
+    }
+    Shortcut {
+        objectName: "factoryShortcut"
+        sequences: window.bindings("toggleFactory")
+        context: Qt.WindowShortcut
+        enabled: window.shortcutsArmed
+        autoRepeat: false
+        onActivated: window.toggleFactory()
     }
     Shortcut {
         objectName: "sidebarShortcut"
@@ -3111,6 +3250,24 @@ ApplicationWindow {
                         ToolTip.text: qsTr("Show every Claude Code, Codex and Antigravity agent on this Mac as a thread")
                     }
                 }
+                // Factory view: the orchestrator's thread and the pipeline
+                // board, or back to categories. Its own row, so no label
+                // clips at the narrowest rail.
+                CommandButton {
+                    objectName: "visualFactoryMode"
+                    text: window.factoryMode ? qsTr("Factory · on") : qsTr("Factory")
+                    hint: window.shortcutText("toggleFactory")
+                    hintWhenRoom: true
+                    selected: window.factoryMode
+                    enabled: window.interactionArmed
+                    Layout.fillWidth: true
+                    onClicked: window.toggleFactory()
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 600
+                    ToolTip.text: window.factoryMode
+                                  ? qsTr("Back to categories and per-agent views")
+                                  : qsTr("One orchestrator conversation beside every agent's pipeline stage")
+                }
                 CommandsButton {
                     objectName: categoryRail.visible ? "commandsButton" : "railCommands"
                     Layout.fillWidth: true
@@ -3281,6 +3438,209 @@ ApplicationWindow {
                 }
             }
 
+            // The factory view's bar: the orchestrator (and its picker), the
+            // pipeline's counts and the way back to categories.
+            Rectangle {
+                id: factoryHeader
+                objectName: "factoryHeader"
+                visible: window.factoryHomeShown
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.max(34, window.chromeFont + 20)
+                color: window.surfaceColor
+                border.color: window.borderColor
+                border.width: 1
+                radius: window.chromeRadius
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 6
+                    spacing: 8
+                    Rectangle {
+                        width: 3
+                        Layout.preferredHeight: parent.height - 14
+                        radius: 1
+                        color: window.focusedBorderColor
+                    }
+                    PlainText {
+                        text: qsTr("FACTORY")
+                        color: window.focusedBorderColor
+                        font.pixelSize: window.readoutFont
+                        font.weight: Font.Bold
+                        font.letterSpacing: 1.6
+                    }
+                    ComboBox {
+                        id: factoryHomeSelector
+                        objectName: "factoryHomeSelector"
+                        Accessible.name: qsTr("Orchestrator")
+                        enabled: window.interactionArmed || popup.visible
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 270
+                        Layout.maximumWidth: 320
+                        Layout.minimumWidth: 160
+                        implicitHeight: Math.max(26, window.chromeFont + 12)
+                        leftPadding: 0
+                        rightPadding: indicator.width + 14
+                        indicator: PlainText {
+                            x: factoryHomeSelector.width - width - 8
+                            y: (factoryHomeSelector.height - height) / 2
+                            text: "▾"
+                            color: window.mutedTextColor
+                            font.pixelSize: window.chromeFont
+                        }
+                        model: workspace.agents
+                        textRole: "title"
+                        font.pixelSize: window.chromeFont
+                        currentIndex: workspace.agents.indexOf(window.factoryHome)
+                        onActivated: function(index) {
+                            const chosen = workspace.agents[index]
+                            if (chosen)
+                                workspace.setHomeAgent(chosen.agentId)
+                        }
+                        background: Rectangle {
+                            radius: window.chromeRadius
+                            color: factoryHomeSelector.hovered ? window.hoveredCardColor : window.cardColor
+                            border.width: 1
+                            border.color: window.borderColor
+                        }
+                        contentItem: RowLayout {
+                            spacing: 6
+                            PlainText {
+                                objectName: "factoryHomeTitle"
+                                leftPadding: 8
+                                text: window.factoryHome ? window.factoryHome.title : qsTr("No agent")
+                                color: window.textColor
+                                font.pixelSize: window.chromeFont
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                            }
+                            PlainText {
+                                objectName: "factoryHomePin"
+                                text: workspace.homeAgentId.length > 0 ? qsTr("pinned")
+                                      : window.factoryHome && window.factoryHome.harnessId === "agy" ? qsTr("auto · agy")
+                                      : qsTr("auto")
+                                color: window.mutedTextColor
+                                font.family: window.monoFamily
+                                font.pixelSize: window.sidebarReadout
+                            }
+                        }
+                        delegate: ItemDelegate {
+                            id: homeOption
+                            required property var modelData
+                            width: factoryHomeSelector.width
+                            text: modelData.title
+                            font.pixelSize: window.chromeFont
+                            onClicked: {
+                                workspace.setHomeAgent(modelData.agentId)
+                                factoryHomeSelector.popup.close()
+                            }
+                            contentItem: PlainText {
+                                text: homeOption.text + "  ·  " + homeOption.modelData.harnessId
+                                color: window.textColor
+                                elide: Text.ElideRight
+                            }
+                            background: Rectangle {
+                                color: homeOption.hovered ? window.hoveredCardColor : window.cardColor
+                            }
+                        }
+                        popup.background: Rectangle {
+                            color: window.cardColor
+                            border.color: window.borderColor
+                        }
+                    }
+                    PlainText {
+                        objectName: "factoryHeaderSummary"
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: implicitWidth + 4
+                        Layout.minimumWidth: 120
+                        elide: Text.ElideRight
+                        readonly property var summary: window.factoryMode ? workspace.factorySummary : ({})
+                        text: qsTr("%1 need you · %2 running · %3 landed · %4 idle")
+                              .arg(summary.needsYou || 0).arg(summary.inProgress || 0)
+                              .arg(summary.landed || 0).arg(summary.idleCull || 0)
+                        color: window.mutedTextColor
+                        font.family: window.monoFamily
+                        font.pixelSize: window.sidebarReadout
+                    }
+                    CommandButton {
+                        objectName: "exitFactory"
+                        text: qsTr("Classic view")
+                        implicitHeight: Math.max(26, window.chromeFont + 12)
+                        enabled: window.interactionArmed
+                        onClicked: window.toggleFactory()
+                    }
+                }
+            }
+            // A worker shown from the factory view: one click back.
+            Rectangle {
+                id: backToFactoryBar
+                objectName: "backToFactoryBar"
+                visible: window.factoryInspecting
+                Layout.fillWidth: true
+                Layout.preferredHeight: 30
+                color: backHover.hovered ? window.hoveredCardColor : window.surfaceColor
+                border.color: backHover.hovered ? window.focusedBorderColor : window.borderColor
+                border.width: 1
+                radius: window.chromeRadius
+                Accessible.role: Accessible.Button
+                Accessible.name: backLabel.text
+                HoverHandler { id: backHover; cursorShape: Qt.PointingHandCursor }
+                TapHandler {
+                    enabled: window.interactionArmed
+                    onTapped: window.backToFactory()
+                }
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 10
+                    spacing: 10
+                    PlainText {
+                        id: backLabel
+                        text: qsTr("← Back to Factory (%1)").arg(window.factoryHome ? window.factoryHome.title : qsTr("orchestrator"))
+                        color: window.focusedBorderColor
+                        font.pixelSize: window.chromeFont
+                        font.weight: Font.DemiBold
+                    }
+                    PlainText {
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        elide: Text.ElideRight
+                        text: workspace.focusedAgent ? workspace.focusedAgent.title : ""
+                        color: window.textColor
+                        font.pixelSize: window.chromeFont
+                    }
+                    Rectangle {
+                        id: backStagePill
+                        objectName: "backToFactoryStage"
+                        visible: window.factoryInspected !== null
+                        // Not "stage": that names the stage pane in this file.
+                        readonly property string stageId: window.factoryInspected ? window.factoryInspected.stage : ""
+                        readonly property color accent: window.factoryStageColor(stageId)
+                        implicitWidth: backStageText.implicitWidth + 14
+                        implicitHeight: 20
+                        radius: 10
+                        color: Qt.rgba(accent.r, accent.g, accent.b, 0.16)
+                        border.color: accent
+                        PlainText {
+                            id: backStageText
+                            anchors.centerIn: parent
+                            text: window.factoryStageLabel(backStagePill.stageId)
+                            color: window.textColor
+                            font.pixelSize: window.sidebarReadout
+                            font.weight: Font.DemiBold
+                        }
+                    }
+                    PlainText {
+                        visible: text.length > 0
+                        text: window.factoryInspected && window.factoryInspected.receipt ? window.factoryInspected.receipt : ""
+                        color: window.plentyColor
+                        font.family: window.monoFamily
+                        font.pixelSize: window.sidebarReadout
+                    }
+                }
+            }
+
             Rectangle {
                 id: stage
                 objectName: "focusedPane"
@@ -3355,6 +3715,75 @@ ApplicationWindow {
                     onTerminalNeeded: window.toggleVisual()
                     onDismissed: window.toggleVisual()
                     onEditRequested: function(record, text) { window.forkVisual(record, true, text) }
+                    openLink: link => window.openFactoryLink(link)
+                    // Room above the orchestrator's composer for the gate strip.
+                    composerInset: homeAttentionInbox.wanted ? Math.round(window.chromeFont * 2.4) + 6 : 0
+                }
+                // Requests other agents wait on, right above the orchestrator's
+                // composer; a chip shows that agent.
+                Rectangle {
+                    id: homeAttentionInbox
+                    objectName: "homeAttentionInbox"
+                    readonly property var entries: window.factoryHomeShown ? workspace.attentionInbox : []
+                    readonly property bool wanted: window.factoryHomeShown && entries.length > 0
+                    parent: visualView.accessory
+                    anchors.fill: parent
+                    visible: wanted && window.visualCovers
+                    radius: window.chromeRadius + 4
+                    color: Qt.rgba(window.attentionColor.r, window.attentionColor.g, window.attentionColor.b, 0.1)
+                    border.width: 1
+                    border.color: window.attentionColor
+                    clip: true
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 6
+                        spacing: 8
+                        PlainText {
+                            text: "◆"
+                            color: window.attentionColor
+                            font.pixelSize: window.readoutFont
+                        }
+                        PlainText {
+                            text: qsTr("%n gate(s) waiting", "", homeAttentionInbox.entries.length)
+                            color: window.textColor
+                            font.pixelSize: window.readoutFont
+                            font.weight: Font.DemiBold
+                        }
+                        Repeater {
+                            model: homeAttentionInbox.entries.slice(0, 3)
+                            delegate: Rectangle {
+                                id: gateChip
+                                required property var modelData
+                                objectName: "homeAttentionChip_" + modelData.agentId
+                                Layout.maximumWidth: 260
+                                implicitWidth: gateText.implicitWidth + 16
+                                implicitHeight: Math.round(window.readoutFont * 1.9)
+                                Layout.minimumWidth: 60
+                                radius: height / 2
+                                color: gateHover.hovered ? window.hoveredCardColor : window.cardColor
+                                border.color: gateHover.hovered ? window.attentionColor : window.borderColor
+                                PlainText {
+                                    id: gateText
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 8
+                                    anchors.rightMargin: 8
+                                    verticalAlignment: Text.AlignVCenter
+                                    elide: Text.ElideRight
+                                    text: gateChip.modelData.title
+                                          + (gateChip.modelData.reason ? " · " + gateChip.modelData.reason : "")
+                                    color: window.textColor
+                                    font.pixelSize: window.sidebarReadout
+                                }
+                                HoverHandler { id: gateHover; cursorShape: Qt.PointingHandCursor }
+                                TapHandler {
+                                    enabled: window.interactionArmed
+                                    onTapped: window.openFactoryTerminal(gateChip.modelData.agentId)
+                                }
+                            }
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
                 }
                 Binding {
                     target: workspace.transcript
@@ -4108,6 +4537,30 @@ ApplicationWindow {
                     }
                 }
             }
+        }
+
+        // The factory view's pipeline: about 40% of the room beside the
+        // sidebar, or a narrow column of counts when collapsed.
+        FactoryBoard {
+            id: factoryBoard
+            readonly property real room: window.width - 16
+                                         - (categoryRail.visible ? categoryRail.width + 8 : 0)
+            visible: window.factoryHomeShown
+            theme: window
+            // Read only in the factory view, so the classic view never
+            // rebuilds hidden cards on each status change.
+            items: window.factoryMode ? workspace.factoryPipeline : []
+            summary: window.factoryMode ? workspace.factorySummary : ({})
+            collapsed: window.factoryBoardCollapsed
+            interactive: window.interactionArmed
+            Layout.fillHeight: true
+            Layout.preferredWidth: collapsed ? 46 : Math.max(280, Math.round(room * 0.4))
+            Layout.maximumWidth: Layout.preferredWidth
+            onCollapseToggled: window.factoryBoardCollapsed = !window.factoryBoardCollapsed
+            onInspectRequested: id => window.inspectFactoryAgent(id)
+            onOpenTerminalRequested: id => window.openFactoryTerminal(id)
+            onDetailsRequested: id => window.factoryDetails(id)
+            onCloseRequested: (id, safeToClose) => window.closeFactoryAgent(id, safeToClose)
         }
     }
     // The side terminal: over the stage's right half, above the agents.
