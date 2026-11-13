@@ -20,12 +20,14 @@ import os
 import random
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import urllib.error
 import urllib.request
+import uuid
 from datetime import datetime, timezone
 
 # Tags and notes the CLIs add as user turns, which nobody typed. Tag notes are
@@ -153,6 +155,22 @@ CLI_TIMEOUT_SECONDS = 120
 PROVIDER_BUDGET_SECONDS = 150
 # Pool entries tried before the ordered entries take over.
 POOL_ATTEMPTS = 2
+# A Claude Code entry's session hook (`sessionHook`, or the top-level default):
+# a command the person's account setup needs before a headless call, run with
+# Claude Code's SessionStart JSON on stdin. At most this many arguments, each
+# shorter than HOOK_CHARS, and this long to finish.
+HOOK_ARGUMENTS = 8
+HOOK_CHARS = 512
+HOOK_SECONDS = 10
+# Claude Code's own retries of a refused request (its documented
+# CLAUDE_CODE_MAX_RETRIES, 10 by default): a gateway that keeps refusing
+# would otherwise spend the whole entry's time in backoff.
+CLAUDE_RETRIES = "2"
+# Antigravity keeps every print-mode call as a conversation folder named by
+# its id under `<app data>/brain/`; a guess's own is removed once read.
+AGY_ID = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 ENV_FILE = os.path.expanduser("~/.env_vars")
 
 
@@ -1247,10 +1265,27 @@ def bounded_seconds(entry, default, high):
     return default
 
 
-def clean_cli(entry):
+def clean_hook(value):
+    """A session hook (1 to HOOK_ARGUMENTS non-empty strings, each shorter
+    than HOOK_CHARS), or None for anything else."""
+    if (
+        not isinstance(value, list)
+        or not 1 <= len(value) <= HOOK_ARGUMENTS
+        or not all(
+            isinstance(part, str) and part.strip() and len(part) < HOOK_CHARS
+            for part in value
+        )
+    ):
+        return None
+    return list(value)
+
+
+def clean_cli(entry, hook=None):
     """A CLI entry ({cli, model}, optionally name, label, effort and
     timeoutSeconds), or None. It names no url and no key: the CLI runs on
-    the plan it is signed in to."""
+    the plan it is signed in to. A Claude Code entry also keeps its
+    `sessionHook`; one that names none takes `hook`, the default, and one
+    whose own is invalid has none."""
     cli = entry.get("cli")
     model = str(entry.get("model", "")).strip()[:100]
     effort = entry.get("effort", "")
@@ -1275,19 +1310,25 @@ def clean_cli(entry):
     label = str(entry.get("label") or "").strip()[:60]
     if label:
         provider["label"] = label
+    if cli == "claude":
+        own = clean_hook(entry["sessionHook"]) if "sessionHook" in entry else hook
+        if own:
+            provider["sessionHook"] = own
     return provider
 
 
-def clean_providers(value):
-    """A validated, bounded entry list; invalid entries are dropped."""
+def clean_providers(value, hook=None):
+    """A validated, bounded entry list; invalid entries are dropped. `hook`
+    is the session hook of Claude Code entries that name none."""
     if not isinstance(value, list):
         return []
+    hook = clean_hook(hook)
     cleaned = []
     for entry in value[:PROVIDER_LIMIT]:
         if not isinstance(entry, dict):
             continue
         if "cli" in entry:
-            provider = clean_cli(entry)
+            provider = clean_cli(entry, hook)
             if provider:
                 cleaned.append(provider)
             continue
@@ -1343,8 +1384,10 @@ def config_section():
 
 def config_providers(key="providers"):
     """`nextPrompt.providers` (or `random`) from lapis.json, when no chain
-    was passed."""
-    return clean_providers(config_section().get(key))
+    was passed, `nextPrompt.sessionHook` the default of its Claude Code
+    entries."""
+    section = config_section()
+    return clean_providers(section.get(key), section.get("sessionHook"))
 
 
 def config_walls():
@@ -1455,18 +1498,79 @@ def plan_environment(cli="claude"):
         for name, value in configured.items():
             if isinstance(name, str) and isinstance(value, (str, int, float)):
                 environment[name] = str(value)
+    environment["CLAUDE_CODE_MAX_RETRIES"] = CLAUDE_RETRIES
     return environment
 
 
+class HookError(RuntimeError):
+    """The session hook failed, so the model call was not made."""
+
+
+def work_folder(bundle):
+    """The folder of the agent a guess is for, when it is on this Mac and
+    exists here; else ""."""
+    agent = bundle.get("agent") if isinstance(bundle, dict) else None
+    if not isinstance(agent, dict) or agent.get("machine"):
+        return ""
+    text = str(agent.get("folder") or "").strip()
+    if len(text) > 1 and text[0] == text[-1] and text[0] in "'\"":
+        text = text[1:-1]
+    path = os.path.expanduser(text)
+    if not os.path.isabs(path) or not os.path.isdir(path):
+        return ""
+    return os.path.normpath(path)
+
+
+def run_session_hook(hook, session, folder, environment, timeout):
+    """Run `hook` (an argument list, `~` expanded in the first, no shell)
+    with Claude Code's SessionStart JSON for `session` in `folder` on stdin.
+    Its output is ignored; a non-zero exit, a timeout or a hook that cannot
+    start raises HookError."""
+    command = [os.path.expanduser(hook[0])] + list(hook[1:])
+    payload = json.dumps(
+        {
+            "hook_event_name": "SessionStart",
+            "session_id": session,
+            "cwd": folder,
+            "source": "startup",
+        }
+    )
+    try:
+        run = subprocess.run(
+            command,
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=max(0.1, min(HOOK_SECONDS, timeout)),
+            env=environment,
+            cwd=folder,
+        )
+    except subprocess.TimeoutExpired:
+        raise HookError("session hook timed out") from None
+    except OSError as error:
+        raise HookError("session hook could not start: " + type(error).__name__) from None
+    if run.returncode != 0:
+        lines = [line for line in run.stderr.splitlines() if line.strip()]
+        raise HookError(
+            "session hook exited {}{}".format(
+                run.returncode, ": " + lines[-1].strip()[:80] if lines else ""
+            )
+        )
+
+
 # What a failure was, from its message: the log keeps this and a cleaned
-# first line, so a run of failures can be told apart afterwards.
+# first line, so a run of failures can be told apart afterwards. A usage or
+# rate limit (`limit`) benches a CLI entry for a while; an overloaded or
+# unavailable service (`overloaded`) is transient. `hook` (a failed session
+# hook) is set by the exception, not the message.
 FAILURE_KINDS = (
     (
         "limit",
-        re.compile(
-            r"limit|quota|rate.?limit|\b429\b|overloaded|\b529\b|resource.?exhausted",
-            re.I,
-        ),
+        re.compile(r"limit|quota|\b429\b|resource.?exhausted", re.I),
+    ),
+    (
+        "overloaded",
+        re.compile(r"overloaded|\b529\b|\b503\b|service.?unavailable", re.I),
     ),
     ("auth", re.compile(r"auth|log ?in|credential|\b40[13]\b|expired|forbidden", re.I)),
     ("timeout", re.compile(r"timed? ?out|timeout", re.I)),
@@ -1489,7 +1593,9 @@ def failure(error):
     lines = [line.strip() for line in str(error).splitlines() if line.strip()]
     text = lines[0] if lines else type(error).__name__
     text = HOME_PATH.sub("~", EMAIL.sub("<email>", SECRETISH.sub("<redacted>", text)))
-    if isinstance(error, subprocess.TimeoutExpired):
+    if isinstance(error, HookError):
+        kind = "hook"
+    elif isinstance(error, subprocess.TimeoutExpired):
         kind = "timeout"
     else:
         kind = next(
@@ -1498,9 +1604,16 @@ def failure(error):
     return {"error": text[:160], "kind": kind}
 
 
-def ask(system, prompt, model, effort="", claude="claude", timeout=150):
-    """One answer from the model through the Claude Code CLI, tools off."""
+def ask(
+    system, prompt, model, effort="", claude="claude", timeout=150, hook=None, folder=""
+):
+    """One answer from the model through the Claude Code CLI, tools off, as
+    a fresh session id. With a session `hook`, the hook runs first for that
+    id and `folder` (the guessed agent's, else the call's own), within
+    `timeout`; the call is never made after a failed hook."""
+    started = time.time()
     environment = plan_environment()
+    session = str(uuid.uuid4())
     command = [
         claude,
         "-p",
@@ -1516,19 +1629,23 @@ def ask(system, prompt, model, effort="", claude="claude", timeout=150):
         system,
         "--output-format",
         "json",
+        "--session-id",
+        session,
     ]
     if effort:
         command += ["--effort", effort]
     # An empty folder of its own: nothing to read, nothing left behind.
-    with tempfile.TemporaryDirectory(prefix="lapis-guess-") as folder:
+    with tempfile.TemporaryDirectory(prefix="lapis-guess-") as own:
+        if hook:
+            run_session_hook(hook, session, folder or own, environment, timeout)
         run = subprocess.run(
             command,
             input=prompt,
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=max(0.1, timeout - (time.time() - started)),
             env=environment,
-            cwd=folder,
+            cwd=own,
         )
     try:
         envelope = json.loads(run.stdout)
@@ -1644,6 +1761,51 @@ def ask_codex(system, prompt, model, effort="", codex="codex", timeout=75):
     return text, 0
 
 
+def agy_stores():
+    """Where Antigravity keeps its conversations (`<app data>/brain`)."""
+    home = os.path.expanduser("~/.gemini")
+    return [
+        os.path.join(home, "antigravity-cli", "brain"),
+        os.path.join(home, "antigravity", "brain"),
+    ]
+
+
+def forget_agy_conversation(envelope, stores=None):
+    """Remove the conversation folder an Antigravity print-mode call saved,
+    when its output names the conversation: only a real directory directly
+    under one of `stores` whose name is that id. Returns the removed path,
+    or ""."""
+    if not isinstance(envelope, dict):
+        return ""
+    found = next(
+        (
+            envelope[key]
+            for key in ("conversation_id", "session_id")
+            if isinstance(envelope.get(key), str)
+        ),
+        "",
+    )
+    if not AGY_ID.match(found):
+        return ""
+    for store in agy_stores() if stores is None else stores:
+        if not os.path.isdir(store):
+            continue
+        target = os.path.join(store, found)
+        if (
+            os.path.islink(target)
+            or not os.path.isdir(target)
+            or os.path.dirname(os.path.realpath(target)) != os.path.realpath(store)
+            or os.path.basename(os.path.realpath(target)) != found
+        ):
+            continue
+        try:
+            shutil.rmtree(target)
+        except OSError:
+            return ""
+        return target
+    return ""
+
+
 def ask_agy(system, prompt, model, effort="", agy="agy", timeout=75):
     """One answer from Antigravity's print mode on the person's plan: the
     model chosen for this call only (never `/model`, which changes the
@@ -1652,7 +1814,9 @@ def ask_agy(system, prompt, model, effort="", agy="agy", timeout=75):
     `--effort` is passed only when it does not. Antigravity has no per-call
     system prompt option, so the instructions lead the message. Every flag
     comes before `--print`, which takes the message whether it is a switch
-    or takes a value."""
+    or takes a value. Antigravity saves every call as a conversation, with
+    no option not to; when its output names that conversation, its folder
+    is removed once the answer is read (forget_agy_conversation)."""
     command = [agy, "--model", model]
     if effort and not model.endswith("-" + effort):
         command += ["--effort", effort]
@@ -1683,6 +1847,8 @@ def ask_agy(system, prompt, model, effort="", agy="agy", timeout=75):
     except ValueError:
         lines = json_lines(run.stdout)
         envelope = lines[-1] if lines else None
+    # Read; the call's saved conversation, when its output names it, goes.
+    forget_agy_conversation(envelope)
     text = None
     if isinstance(envelope, dict):
         error = envelope.get("error")
@@ -1709,8 +1875,9 @@ def ask_agy(system, prompt, model, effort="", agy="agy", timeout=75):
     return text.strip(), cost
 
 
-def ask_entry(entry, system, prompt, timeout, programs):
-    """(text, cost) from one configured entry: an endpoint or a CLI."""
+def ask_entry(entry, system, prompt, timeout, programs, folder=""):
+    """(text, cost) from one configured entry: an endpoint or a CLI.
+    `folder` is the guessed agent's, for a Claude Code entry's hook."""
     cli = entry.get("cli")
     if not cli:
         return ask_provider(entry, system, prompt, timeout=timeout)
@@ -1718,7 +1885,16 @@ def ask_entry(entry, system, prompt, timeout, programs):
     model = entry.get("model", "")
     effort = entry.get("effort", "")
     if cli == "claude":
-        text, envelope = ask(system, prompt, model, effort, program, timeout)
+        text, envelope = ask(
+            system,
+            prompt,
+            model,
+            effort,
+            program,
+            timeout,
+            entry.get("sessionHook"),
+            folder,
+        )
         return text, cost_of(envelope.get("total_cost_usd"))
     if cli == "codex":
         return ask_codex(system, prompt, model, effort, program, timeout)
@@ -1756,9 +1932,11 @@ def predict_providers(
     pool=(),
     seed=None,
     programs=None,
+    folder="",
 ):
     """The first entry with a readable answer: up to POOL_ATTEMPTS drawn at
-    random from `pool`, then `providers` in order.
+    random from `pool`, then `providers` in order. `folder` is the guessed
+    agent's (see work_folder).
 
     Each entry has its own time (its timeoutSeconds, a repair attempt
     included), and the ordered entries after it keep theirs, so a slow entry
@@ -1790,7 +1968,12 @@ def predict_providers(
                     last, kind = RuntimeError("its time ran out"), "timeout"
                 break
             try:
-                text, cost = ask_entry(provider, system, prompt, remaining, programs)
+                text, cost = ask_entry(
+                    provider, system, prompt, remaining, programs, folder
+                )
+            except HookError as error:
+                last, kind = error, "hook"
+                break
             except ValueError as error:
                 # Malformed JSON or an empty completion: one repair attempt on
                 # this entry before the plan moves on.
@@ -1862,10 +2045,13 @@ def predict(
     pool=None,
     seed=None,
     programs=None,
+    hook=None,
 ):
     """A guess from the configured entries (`pool` drawn from, then
     `providers` in order), or without any, one Claude Code CLI call with
-    `model` and `effort`. `programs` maps a CLI kind to its executable."""
+    `model` and `effort` (and session `hook`). `programs` maps a CLI kind to
+    its executable."""
+    folder = work_folder(bundle)
     system = SYSTEM.format(priors=priors(), categories=", ".join(CATEGORIES))
     if arm == "wide":
         system += WIDE
@@ -1884,6 +2070,7 @@ def predict(
             pool or [],
             seed,
             dict({"claude": claude}, **(programs or {})),
+            folder,
         )
         if "candidates" in result:
             result["prompt_arm"] = prompt_arm
@@ -1891,7 +2078,15 @@ def predict(
     last = None
     for _ in range(2):
         try:
-            text, envelope = ask(system, prompt, model, effort, claude)
+            text, envelope = ask(
+                system,
+                prompt,
+                model,
+                effort,
+                claude,
+                hook=clean_hook(hook),
+                folder=folder,
+            )
         except (
             RuntimeError,
             OSError,
@@ -1928,9 +2123,15 @@ def command_predict(arguments):
     if arguments.providers is None and arguments.pool is None:
         providers = config_providers()
         pool = config_providers("random")
+        hook = config_section().get("sessionHook")
     else:
+        # The desktop's entries already carry their hooks.
         providers = passed(arguments.providers or "[]")
         pool = passed(arguments.pool or "[]")
+        try:
+            hook = json.loads(arguments.session_hook or "null")
+        except ValueError:
+            hook = None
     return predict(
         bundle,
         arguments.model,
@@ -1943,6 +2144,7 @@ def command_predict(arguments):
         pool,
         arguments.seed,
         {"claude": arguments.claude, "codex": arguments.codex, "agy": arguments.agy},
+        hook,
     )
 
 
@@ -1982,6 +2184,9 @@ def main(argv=None):
     # the single CLI call.
     predict_mode.add_argument("--providers", default=None)
     predict_mode.add_argument("--pool", default=None)
+    # The single CLI call's session hook, a JSON argument list (entries
+    # carry their own).
+    predict_mode.add_argument("--session-hook", default=None)
     # The pool draw's seed, recorded by the caller; absent: unseeded.
     predict_mode.add_argument("--seed", type=int, default=None)
     # The whole plan's share of the caller's time budget, in seconds.

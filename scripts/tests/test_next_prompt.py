@@ -15,6 +15,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -1211,6 +1212,12 @@ class ModelTests(unittest.TestCase):
     def test_a_failure_says_what_it_was_without_secrets(self):
         cases = {
             "Claude AI usage limit reached|1760000000": "limit",
+            "API Error: 429 rate_limit_error": "limit",
+            "RESOURCE_EXHAUSTED": "limit",
+            "Quota exceeded for this project": "limit",
+            "API Error: 529 overloaded_error": "overloaded",
+            "API Error: 503 upstream refused": "overloaded",
+            "Service Unavailable": "overloaded",
             "API Error: 401 OAuth token has expired": "auth",
             "Connection refused": "network",
             "Expecting value: line 1 column 1": "malformed",
@@ -1230,6 +1237,12 @@ class ModelTests(unittest.TestCase):
         self.assertNotIn("second line", cleaned)
         self.assertEqual(
             next_prompt.failure(subprocess.TimeoutExpired("x", 1))["kind"], "timeout"
+        )
+        self.assertEqual(
+            next_prompt.failure(next_prompt.HookError("session hook timed out"))[
+                "kind"
+            ],
+            "hook",
         )
 
     def test_prompts_that_were_taken_guesses_are_marked(self):
@@ -1726,12 +1739,18 @@ model = argv[argv.index("--model") + 1] if "--model" in argv else ""
 with open(os.path.join(folder, "calls.jsonl"), "a") as log:
     log.write(json.dumps({{"cli": {cli!r}, "argv": argv, "stdin": stdin,
         "cwd": os.getcwd(),
+        "retries": os.environ.get("CLAUDE_CODE_MAX_RETRIES"),
         "metered": [n for n in {metered!r} if n in os.environ]}}) + "\\n")
 with open(os.path.join(folder, "behave.json")) as file:
-    mode = json.load(file).get(model, "answer")
+    behave = json.load(file)
+mode = behave.get(model, "answer")
 answer = {answer!r}
 if mode == "sleep":
     time.sleep(10)
+if mode == "overloaded":
+    print(json.dumps({{"type": "result", "is_error": True,
+        "result": "API Error: 529 overloaded_error"}}))
+    sys.exit(1)
 if mode == "limit":
     if {cli!r} == "claude":
         print(json.dumps({{"type": "result", "is_error": True,
@@ -1754,9 +1773,31 @@ if {cli!r} == "codex":
     print(json.dumps({{"type": "item.completed",
         "item": {{"type": "agent_message", "text": answer}}}}))
 elif {cli!r} == "agy":
-    print(json.dumps({{"type": "result", "is_error": False, "result": answer}}))
+    envelope = {{"type": "result", "is_error": False, "result": answer}}
+    if behave.get("agy_id"):
+        envelope["session_id"] = behave["agy_id"]
+    print(json.dumps(envelope))
 else:
     print(json.dumps({{"type": "result", "result": answer, "total_cost_usd": 0.05}}))
+"""
+
+# A session hook: it logs what it was given beside the CLI calls, then
+# behaves as hook.json says ({"exit": code, "sleep": seconds}).
+FAKE_HOOK = """#!{python}
+import json, os, sys, time
+folder = {folder!r}
+stdin = sys.stdin.read()
+with open(os.path.join(folder, "calls.jsonl"), "a") as log:
+    log.write(json.dumps({{"cli": "hook", "argv": sys.argv[1:], "stdin": stdin,
+        "cwd": os.getcwd()}}) + "\\n")
+try:
+    with open(os.path.join(folder, "hook.json")) as file:
+        behave = json.load(file)
+except OSError:
+    behave = {{}}
+time.sleep(behave.get("sleep", 0))
+print("registered")
+sys.exit(behave.get("exit", 0))
 """
 
 
@@ -1782,6 +1823,11 @@ class ChainTests(unittest.TestCase):
             )
             fake.chmod(0o700)
             self.programs[cli] = str(fake)
+        self.hook = self.folder / "register"
+        self.hook.write_text(
+            FAKE_HOOK.format(python=sys.executable, folder=str(self.folder))
+        )
+        self.hook.chmod(0o700)
         environment = {name: "placeholder" for name in next_prompt.METERED}
         environment["CLAUDE_CONFIG_DIR"] = str(self.folder)  # no settings there
         patcher = patch.dict(os.environ, environment)
@@ -1800,17 +1846,23 @@ class ChainTests(unittest.TestCase):
             return []
         return [json.loads(line) for line in path.read_text().splitlines()]
 
-    def guess(self, providers=(), pool=(), seed=None, budget=None):
+    def guess(
+        self, providers=(), pool=(), seed=None, budget=None, agent=None, hook=None
+    ):
+        bundle = {"context": {"turns": [{"role": "agent", "text": "Done."}]}}
+        if agent is not None:
+            bundle["agent"] = agent
         return next_prompt.predict(
-            {"context": {"turns": [{"role": "agent", "text": "Done."}]}},
+            bundle,
             "unused-model",
             "",
             self.programs["claude"],
-            providers=next_prompt.clean_providers(list(providers)),
+            providers=next_prompt.clean_providers(list(providers), hook),
             budget=budget or next_prompt.PROVIDER_BUDGET_SECONDS,
-            pool=next_prompt.clean_providers(list(pool)),
+            pool=next_prompt.clean_providers(list(pool), hook),
             seed=seed,
             programs=self.programs,
+            hook=hook,
         )
 
     def http(self, status=200):
@@ -2075,6 +2127,236 @@ class ChainTests(unittest.TestCase):
             json.dumps({"context": {}}) + "\n",
         )
         self.assertEqual((output["provider"], output["drawn"]), ("x", ["x"]))
+
+    def hook_behaves(self, **behave):
+        (self.folder / "hook.json").write_text(json.dumps(behave))
+
+    def test_every_claude_call_is_a_fresh_bounded_session(self):
+        self.guess([self.fable])
+        self.guess([self.fable])
+        first, second = [c["argv"] for c in self.calls()]
+        ids = [a[a.index("--session-id") + 1] for a in (first, second)]
+        self.assertNotEqual(ids[0], ids[1])
+        for value in ids:
+            self.assertEqual(str(uuid.UUID(value)), value)
+        self.assertIn("--no-session-persistence", first)
+        self.assertEqual(self.calls()[0]["retries"], next_prompt.CLAUDE_RETRIES)
+
+    def test_the_session_hook_registers_the_calls_session_first(self):
+        work = Path(tempfile.mkdtemp(prefix="lapis-work-"))
+        self.addCleanup(shutil.rmtree, work)
+        entry = dict(self.fable, sessionHook=[str(self.hook), "hook"])
+        result = self.guess([entry], agent={"folder": str(work), "machine": ""})
+        self.assertEqual(result["provider"], "fable")
+        hook, call = self.calls()
+        self.assertEqual((hook["cli"], call["cli"]), ("hook", "claude"))
+        self.assertEqual(hook["argv"], ["hook"])
+        session = call["argv"][call["argv"].index("--session-id") + 1]
+        self.assertEqual(
+            json.loads(hook["stdin"]),
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": session,
+                "cwd": str(work),
+                "source": "startup",
+            },
+        )
+        self.assertEqual(os.path.realpath(hook["cwd"]), os.path.realpath(work))
+        self.assertTrue(
+            Path(call["cwd"]).name.startswith("lapis-guess-"),
+            "the call itself still runs in an empty folder of its own",
+        )
+
+    def test_a_remote_or_unknown_folder_gives_the_hook_the_calls_folder(self):
+        entry = dict(self.fable, sessionHook=[str(self.hook)])
+        for agent in (
+            {"folder": "/srv/project", "machine": "remote"},
+            {"folder": str(self.folder / "missing"), "machine": ""},
+            {"folder": "relative/path"},
+            None,
+        ):
+            (self.folder / "calls.jsonl").unlink(missing_ok=True)
+            self.guess([entry], agent=agent)
+            hook, call = self.calls()
+            self.assertEqual(
+                os.path.realpath(json.loads(hook["stdin"])["cwd"]), hook["cwd"]
+            )
+            self.assertEqual(hook["cwd"], call["cwd"])
+            self.assertTrue(Path(hook["cwd"]).name.startswith("lapis-guess-"))
+
+    def test_a_failed_hook_skips_the_call_and_the_chain_moves_on(self):
+        entry = dict(self.fable, sessionHook=[str(self.hook)])
+        self.hook_behaves(exit=3)
+        result = self.guess([entry, self.opus])
+        self.assertEqual(result["provider"], "opus")
+        self.assertEqual(result["failures"], [{"provider": "fable", "kind": "hook"}])
+        self.assertEqual(
+            [c["cli"] for c in self.calls()],
+            ["hook", "claude"],
+            "no model call after the failed hook",
+        )
+        models = [c["argv"][c["argv"].index("--model") + 1] for c in self.calls()[1:]]
+        self.assertEqual(models, ["claude-opus-5-5"])
+
+    def test_a_slow_hook_is_cut_at_its_own_time(self):
+        entry = dict(self.fable, sessionHook=[str(self.hook)])
+        self.hook_behaves(sleep=5)
+        started = time.time()
+        with patch.object(next_prompt, "HOOK_SECONDS", 1):
+            result = self.guess([entry, self.opus])
+        self.assertLess(time.time() - started, 4)
+        self.assertEqual(result["failures"], [{"provider": "fable", "kind": "hook"}])
+        self.assertEqual(result["provider"], "opus")
+        missing = dict(self.fable, sessionHook=[str(self.folder / "absent")])
+        failed = self.guess([missing])
+        self.assertEqual(failed["kind"], "hook")
+
+    def test_the_default_hook_applies_to_claude_entries_only(self):
+        default = [str(self.hook), "hook"]
+        cleaned = next_prompt.clean_providers(
+            [
+                self.fable,
+                dict(self.opus, sessionHook=["/own/register"]),
+                dict(self.opus, name="none", sessionHook=[]),
+                dict(self.opus, name="bad", sessionHook="/not/a/list"),
+                {"cli": "codex", "model": "gpt-6-astra", "sessionHook": default},
+                {"cli": "agy", "model": "gemini-4-carbon-high"},
+            ],
+            default,
+        )
+        self.assertEqual(
+            [entry.get("sessionHook") for entry in cleaned],
+            [default, ["/own/register"], None, None, None, None],
+        )
+        for bad in (
+            [],
+            [""],
+            ["  "],
+            ["x"] * 9,
+            ["x" * 512],
+            [1],
+            "register",
+            {"argv": ["x"]},
+        ):
+            self.assertIsNone(next_prompt.clean_hook(bad), bad)
+        self.assertEqual(next_prompt.clean_hook(["x"] * 8), ["x"] * 8)
+        self.assertEqual(next_prompt.clean_hook(["x" * 511]), ["x" * 511])
+        self.assertEqual(
+            next_prompt.clean_providers([self.fable], ["x"] * 9)[0].get("sessionHook"),
+            None,
+            "an invalid default is no default",
+        )
+
+    def test_the_default_hook_reaches_config_entries_and_the_single_call(self):
+        config = self.folder / "lapis.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "nextPrompt": {
+                        "sessionHook": [str(self.hook)],
+                        "random": [self.fable],
+                        "providers": [self.opus],
+                    }
+                }
+            )
+        )
+        with patch.dict(os.environ, {"LAPIS_CONFIG": str(config)}):
+            self.assertEqual(
+                [p.get("sessionHook") for p in next_prompt.config_providers("random")],
+                [[str(self.hook)]],
+            )
+            self.assertEqual(
+                next_prompt.config_providers()[0]["sessionHook"], [str(self.hook)]
+            )
+        result = self.guess(hook=[str(self.hook), "hook"])
+        self.assertIn("candidates", result)
+        hook, call = self.calls()
+        self.assertEqual((hook["cli"], hook["argv"]), ("hook", ["hook"]))
+        self.assertEqual(
+            json.loads(hook["stdin"])["session_id"],
+            call["argv"][call["argv"].index("--session-id") + 1],
+        )
+        (self.folder / "calls.jsonl").unlink()
+        output = io_run(
+            [
+                "predict",
+                "--claude",
+                self.programs["claude"],
+                "--providers",
+                "[]",
+                "--session-hook",
+                json.dumps([str(self.hook)]),
+            ],
+            json.dumps({"context": {}}) + "\n",
+        )
+        self.assertIn("candidates", output)
+        self.assertEqual([c["cli"] for c in self.calls()], ["hook", "claude"])
+        self.hook_behaves(exit=1)
+        (self.folder / "calls.jsonl").unlink()
+        failed = self.guess(hook=[str(self.hook)])
+        self.assertEqual(failed["kind"], "hook")
+        self.assertEqual([c["cli"] for c in self.calls()], ["hook"])
+
+    def test_an_overload_is_transient_not_a_limit(self):
+        self.behave({"claude-fable-5-2": "overloaded"})
+        result = self.guess([self.fable, self.opus])
+        self.assertEqual(
+            result["failures"], [{"provider": "fable", "kind": "overloaded"}]
+        )
+
+    def agy_store(self):
+        store = self.folder / "store" / "brain"
+        store.mkdir(parents=True)
+        return store
+
+    def test_antigravitys_saved_conversation_is_removed_by_its_id(self):
+        store = self.agy_store()
+        own = "0f8fad5b-d9cb-469f-a165-70867728950e"
+        other = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+        for name in (own, other):
+            (store / name).mkdir()
+            (store / name / "transcript.pb").write_text("x")
+        self.behave({"agy_id": own})
+        with patch.object(next_prompt, "agy_stores", return_value=[str(store)]):
+            result = self.guess([{"cli": "agy", "model": "gemini-4-carbon-high"}])
+        self.assertIn("candidates", result)
+        self.assertEqual(sorted(p.name for p in store.iterdir()), [other])
+
+    def test_antigravity_cleanup_refuses_anything_but_its_own_folder(self):
+        store = self.agy_store()
+        outside = self.folder / "outside"
+        outside.mkdir()
+        (outside / "keep").write_text("x")
+        linked = "11111111-2222-4333-8444-555555555555"
+        (store / linked).symlink_to(outside, target_is_directory=True)
+        plain = "22222222-2222-4333-8444-555555555555"
+        (store / plain).write_text("a file, not a conversation")
+        sibling = "33333333-2222-4333-8444-555555555555"
+        (store / sibling).mkdir()
+        stores = [str(store)]
+        forget = next_prompt.forget_agy_conversation
+        for envelope in (
+            {"session_id": "../outside"},
+            {"session_id": str(outside)},
+            {"session_id": "."},
+            {"session_id": ""},
+            {"session_id": linked},
+            {"session_id": plain},
+            {"session_id": "44444444-2222-4333-8444-555555555555"},
+            {"result": "no id"},
+            None,
+            [sibling],
+        ):
+            self.assertEqual(forget(envelope, stores), "", envelope)
+        self.assertTrue((outside / "keep").exists())
+        self.assertTrue((store / linked).is_symlink())
+        self.assertTrue((store / plain).is_file())
+        self.assertTrue((store / sibling).is_dir())
+        self.assertEqual(
+            forget({"conversation_id": sibling}, [str(self.folder / "absent"), *stores]),
+            str(store / sibling),
+        )
+        self.assertFalse((store / sibling).exists())
 
 
 def io_run(argv, stdin):
