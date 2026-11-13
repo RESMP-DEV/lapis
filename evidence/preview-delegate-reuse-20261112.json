@@ -4,6 +4,7 @@
   "agent": "Codex performance parent with three read-only audit subagents",
   "base_revision": "2b20f8d5371187bb377e2c1a2154207918140c72",
   "source_revision": "d33e25c2d2ce75a84701bf5771acdcf35bf907ad",
+  "runtime_validation_revision": "412d8fe3697a37a8e20d22501becedf9180fd6dc",
   "source_dirty": false,
   "scope": "Warm category-switch latency after in-category strip navigation, reduced by rebinding delegates already pooled by scrolling while retaining the bounded, noninteractive preview contract.",
   "environment": {
@@ -90,7 +91,7 @@
   "validation": [
     {
       "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py check",
-      "result": "passed at source revision 6807f9908543b7cd61786b10747d12c970b030f7 with a clean tree",
+      "result": "passed at receipt head 412d8fe3697a37a8e20d22501becedf9180fd6dc with a clean tree",
       "receipt": "build/reports/dev/receipt.json"
     },
     {
@@ -100,8 +101,8 @@
     },
     {
       "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py ui-review --json",
-      "result": "passed at source revision 6807f9908543b7cd61786b10747d12c970b030f7 with a clean tree; all background UI, shortcut and terminal-input cases passed",
-      "receipt": "build/reports/ui-review/20261112T064545Z-hiyn9lor/receipt.json"
+      "result": "passed at receipt head 412d8fe3697a37a8e20d22501becedf9180fd6dc with a clean tree; all background UI, shortcut and terminal-input cases passed, including the pooled-viewer regression",
+      "receipt": "build/reports/ui-review/20261113T044105Z-hu_h5n7x/receipt.json"
     }
   ],
   "setup_failures": [
