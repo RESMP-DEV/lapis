@@ -387,4 +387,14 @@ bool Workspace::setFixtureConversation(const QString& id, const QString& file) {
     return true;
 }
 
+bool Workspace::setFixtureLaunch(const QString& id, const QString& program,
+                                 const QStringList& arguments) {
+    if (!fixture_mode_ || !agents_.contains(id))
+        return false;
+    auto& launch = agents_[id].launch;
+    launch.program = program;
+    launch.arguments = arguments;
+    return true;
+}
+
 } // namespace lapis::desktop

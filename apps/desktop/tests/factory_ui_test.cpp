@@ -26,6 +26,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QHash>
 #include <QInputMethodEvent>
@@ -517,6 +518,13 @@ QString claude_ready() {
     return claude_screen(rule + QStringLiteral("\r\n❯ \r\n") + rule +
                          QStringLiteral("\r\n  ? for shortcuts\r\n"));
 }
+// The same, with a welcome line naming its model as Claude Code's box does.
+QString claude_welcome(const QString& line) {
+    const QString rule(60, QChar(0x2500));
+    return claude_screen(QStringLiteral(" ") + line + QStringLiteral("\r\n\r\n") + rule +
+                         QStringLiteral("\r\n❯ \r\n") + rule +
+                         QStringLiteral("\r\n  ? for shortcuts\r\n"));
+}
 QString claude_trust() {
     const QString rule(60, QChar(0x2500));
     return rule + QStringLiteral("\r\n Accessing workspace:\r\n\r\n /work/project\r\n\r\n"
@@ -549,10 +557,54 @@ int run_new_session(const QString& captures) {
             workspace.addFixtureAgent("trust", "Untrusted folder", "general", "claude",
                                       claude_trust()) &&
             workspace.addFixtureAgent("plain", "Kept terminal", "general", "claude",
+                                      claude_ready()) &&
+            workspace.addFixtureAgent("defaulted", "No model given", "general", "claude",
+                                      claude_ready()) &&
+            workspace.addFixtureAgent("welcome", "Welcome names it", "general", "claude",
+                                      claude_welcome(QStringLiteral("Sonnet 5.5 · Claude Max"))) &&
+            workspace.addFixtureAgent("remote", "On another machine", "general", "claude",
                                       claude_ready()),
         "sample agents");
-    for (const char* id : {"older", "fresh", "booting", "trust", "plain"})
+    for (const char* id :
+         {"older", "fresh", "booting", "trust", "plain", "defaulted", "welcome", "remote"})
         report(*workspace.agent(id), Activity::idle);
+    // What each was started with, as a saved agent keeps it (never run): a
+    // model and level, Codex's -m and -c, none, and a remote command there.
+    require(workspace.setFixtureLaunch("fresh", QStringLiteral("claude"),
+                                       {QStringLiteral("--model"), QStringLiteral("opus"),
+                                        QStringLiteral("--effort"), QStringLiteral("xhigh")}) &&
+                workspace.setFixtureLaunch(
+                    "booting", QStringLiteral("codex"),
+                    {QStringLiteral("-m"), QStringLiteral("gpt-6-sol"), QStringLiteral("-c"),
+                     QStringLiteral("model_reasoning_effort=high")}) &&
+                workspace.setFixtureLaunch(
+                    "remote", QStringLiteral("/usr/bin/ssh"),
+                    {QStringLiteral("-o"), QStringLiteral("ControlPath=none"),
+                     QStringLiteral("-t"), QStringLiteral("box"),
+                     QStringLiteral(
+                         R"(cd '/work/x' && s=0199a000-0000-7000-8000-00000000c0de && )"
+                         R"(o=--session-id && { exec "${SHELL:-/bin/sh}" -lic )"
+                         R"('claude --model opus --effort high '"$o $s"; })")}),
+            "launch commands");
+    // Claude Code's model list from a stand-in CLI: its default entry names
+    // Fable 5.2, and "opus" is an alias for claude-opus-5-5.
+    const auto stand_in = QDir(directory.path()).filePath("bin/claude");
+    QDir().mkpath(QFileInfo(stand_in).absolutePath());
+    write(stand_in,
+          "#!/bin/sh\nread -r line\n"
+          R"sh(echo '{"type":"control_response","response":{"subtype":"success","request_id":"models","response":{"models":[)sh"
+          R"sh({"value":"default","displayName":"Default (recommended)","description":"Fable 5.2 · Best for everyday tasks","resolvedModel":"claude-fable-5-2","supportedEffortLevels":["low","medium","high"]},)sh"
+          R"sh({"value":"opus","displayName":"Opus 5.5","resolvedModel":"claude-opus-5-5","supportedEffortLevels":["low","high","xhigh","max"]}]}}}')sh"
+          "\ncat >/dev/null\n");
+    QFile::setPermissions(stand_in, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                        QFileDevice::ExeOwner);
+    HarnessModels models(
+        [&](const QString& id) { return id == QLatin1String("claude") ? stand_in : QString(); },
+        QDir(directory.path()).filePath("home"));
+    models.refresh();
+    until([&] { return !models.models(QStringLiteral("claude")).empty(); },
+          "the stand-in's model list");
+    workspace.setHarnessModels(&models);
     const auto older = QDir(directory.path()).filePath("older.jsonl");
     write(
         older,
@@ -609,6 +661,23 @@ int run_new_session(const QString& captures) {
         },
         "its input box shows, so it is ready");
     require(!flag("visualStarting"), "the bar sends");
+    // The bar names the model and level it was started with, from the
+    // start: the menu's names, its tick and that model's levels, not pending.
+    const auto label_of = [&](const char* name) {
+        return item(*window, QString::fromLatin1(name))->property("label").toString();
+    };
+    const auto bar = [&] { return label_of("visualModel") + " / " + label_of("visualEffort"); };
+    auto* thread_view = item(*window, "visualView");
+    const auto ticked = [&] {
+        return thread_view->property("currentEntry").toMap().value("id").toString();
+    };
+    until([&] { return bar() == "Opus 5.5 / Extra High"; },
+          "a new session shows its launch model and level: " + bar().toStdString());
+    require(ticked() == "opus" &&
+                thread_view->property("currentEfforts").toStringList() ==
+                    QStringList({"low", "high", "xhigh", "max"}) &&
+                !model->choicePending(),
+            "the menu ticks it and offers its levels before any reply");
     QVariant entries;
     require(QMetaObject::invokeMethod(window, "commandEntries", Q_RETURN_ARG(QVariant, entries)),
             "read the palette");
@@ -653,6 +722,7 @@ int run_new_session(const QString& captures) {
     until([&] { return flag("visualFirstSend") && shown(*window, "pendingPrompt"); },
           "the first prompt shows as pending");
     require(!shown(*window, "visualBlankState"), "the empty state gives way to it");
+    require(bar() == "Opus 5.5 / Extra High", "through the first send: " + bar().toStdString());
     save("new_session_first_send.png");
     const auto fresh = QDir(directory.path()).filePath("fresh.jsonl");
     write(fresh, R"({"type":"user","uuid":"f-1","message":{"content":"Summarize the README"}})"
@@ -667,6 +737,19 @@ int run_new_session(const QString& captures) {
     require(model->pendingPrompts().isEmpty() && !flag("visualFirstSend") &&
                 !shown(*window, "visualBlankState") && flag("visualCovers"),
             "the recorded prompt leaves pending and the thread stays covering");
+    require(model->model().isEmpty() && bar() == "Opus 5.5 / Extra High",
+            "the file holds no reply yet: still what it was started with");
+    // The reply reports the alias's API id: no change in the bar.
+    {
+        QFile file(fresh);
+        require(file.open(QIODevice::Append), "append the reply");
+        file.write(
+            R"({"type":"assistant","uuid":"f-2","effort":"xhigh","message":{"model":"claude-opus-5-5","content":[{"type":"text","text":"It is a README."}]}})"
+            "\n");
+    }
+    until([&] { return model->model() == "claude-opus-5-5"; }, "the reply is read");
+    require(bar() == "Opus 5.5 / Extra High" && ticked() == "opus",
+            "the reported API id keeps the same name and tick: " + bar().toStdString());
 
     // A CLI still starting: nothing drawn, the bar holds what is typed.
     require(workspace.selectAgent("booting"), "the new Codex session");
@@ -684,6 +767,44 @@ int run_new_session(const QString& captures) {
                 view->property("notice").toString().contains(QStringLiteral("still starting")),
             "nothing goes to a CLI that is not ready; the message stays in the bar");
     input->setProperty("text", QString());
+    require(bar() == "gpt-6-sol / High" && shown(*window, "visualModel"),
+            "Codex: its -m and level, never the agent shown before: " + bar().toStdString());
+
+    // Started with no model: Claude Code's default entry names it, and the
+    // menu ticks that entry.
+    require(workspace.selectAgent("defaulted"), "a Claude Code started with no model");
+    until([&] { return bar() == "Fable 5.2 / Effort"; },
+          "its CLI's listed default: " + bar().toStdString());
+    require(ticked() == "default" && !model->choicePending() &&
+                thread_view->property("currentEfforts").toStringList() ==
+                    QStringList({"low", "medium", "high"}),
+            "the default entry is ticked with its levels");
+    // A pick before its file exists shows pending and stays with the agent.
+    model->choose(QStringLiteral("opus"), QStringLiteral("low"), {}, {});
+    until([&] { return bar() == "Opus 5.5… / Low…"; },
+          "a pick before any file shows at once: " + bar().toStdString());
+    // Its start screen names a model: that, over the listed default.
+    require(workspace.selectAgent("welcome"), "a Claude Code whose welcome names its model");
+    until([&] { return bar() == "Sonnet 5.5 / Effort"; },
+          "what its screen says: " + bar().toStdString());
+    require(workspace.selectAgent("defaulted"), "back");
+    until([&] { return bar() == "Opus 5.5… / Low…"; },
+          "the pick is still that agent's: " + bar().toStdString());
+    const auto defaulted = QDir(directory.path()).filePath("defaulted.jsonl");
+    write(defaulted, R"({"type":"user","uuid":"d-1","message":{"content":"Go"}})"
+                     "\n");
+    require(workspace.setFixtureConversation("defaulted", defaulted), "its CLI saves a file");
+    until([&] { return model->path() == defaulted; }, "the file shows");
+    require(bar() == "Opus 5.5… / Low…", "the pick carries into the file: " + bar().toStdString());
+
+    // A remote agent: the words of its command there.
+    const auto remote = QDir(directory.path()).filePath("remote.jsonl");
+    write(remote, R"({"type":"user","uuid":"r-1","message":{"content":"Go"}})"
+                  "\n");
+    require(workspace.setFixtureConversation("remote", remote), "the remote agent's mirror");
+    require(workspace.selectAgent("remote"), "the remote agent");
+    until([&] { return model->path() == remote && bar() == "Opus 5.5 / High"; },
+          "a remote agent's launch model and level: " + bar().toStdString());
 
     // A trust prompt in place of the input box: the terminal shows, with a
     // note, and the thread covers again once the input box is back.

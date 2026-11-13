@@ -1,4 +1,5 @@
 #include "harness_models.hpp"
+#include "transcript.hpp"
 #include "workspace.hpp"
 
 #include <QCoreApplication>
@@ -428,6 +429,162 @@ void show_live() {
 }
 } // namespace
 
+namespace {
+// What an agent runs before its file says: its launch words (local, and the
+// words of a remote command there), else its CLI's default here; never a
+// remote machine's default. Stand-in CLIs, never a real one.
+void knows_what_an_agent_runs() {
+    using lapis::desktop::launched_model;
+    const auto words = [](const char* text) {
+        return QString::fromUtf8(text).split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    };
+    const auto launched = [](const char* model, const char* effort) {
+        return lapis::desktop::LaunchedModel{QString::fromUtf8(model), QString::fromUtf8(effort)};
+    };
+    require(launched_model(QStringLiteral("claude"),
+                           words("--dangerously-skip-permissions --model opus --effort xhigh")) ==
+                launched("opus", "xhigh"),
+            "Claude Code: --model and --effort");
+    require(launched_model(QStringLiteral("claude"),
+                           words("--model=sonnet --model claude-fable-5-2[1m] --effort=low")) ==
+                launched("claude-fable-5-2[1m]", "low"),
+            "the last one wins, = forms too");
+    require(launched_model(QStringLiteral("claude"), words("--resume abc -- --model opus")) ==
+                launched("", ""),
+            "nothing after --");
+    require(launched_model(QStringLiteral("codex"),
+                           words("-c notify=x -m gpt-6-sol -c model_reasoning_effort=high")) ==
+                launched("gpt-6-sol", "high"),
+            "Codex: -m and its effort setting");
+    require(launched_model(QStringLiteral("codex"),
+                           {QStringLiteral("--config"), QStringLiteral("model=\"gpt-6-astra\""),
+                            QStringLiteral("--config=model_reasoning_effort='low'")}) ==
+                launched("gpt-6-astra", "low"),
+            "Codex: a model and level set as TOML");
+    require(launched_model(QStringLiteral("agy"), words("--model gemini-4-hydrogen-xhigh")) ==
+                launched("gemini-4-hydrogen-xhigh", ""),
+            "agy: its model id");
+    require(launched_model(QStringLiteral("codex"), words("resume 0199a000")) == launched("", ""),
+            "none given");
+
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary directory");
+    QHash<QString, QString> programs;
+    const auto fake = [&](const QString& name, const QByteArray& body) {
+        const auto path = dir.filePath(QStringLiteral("bin/") + name);
+        write(path, "#!/bin/sh\n" + body);
+        QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                        QFileDevice::ExeOwner);
+        programs.insert(name, path);
+    };
+    fake(QStringLiteral("claude"), R"sh(read -r line
+case "$line" in *initialize*) ;; *) exit 3 ;; esac
+echo '{"type":"control_response","response":{"subtype":"success","request_id":"models","response":{"models":[{"value":"default","displayName":"Default (recommended)","description":"Fable 5.2 · Best for everyday tasks","resolvedModel":"claude-fable-5-2"},{"value":"opus","displayName":"Opus 5.5","resolvedModel":"claude-opus-5-5","supportedEffortLevels":["low","high","xhigh"]}]}}}'
+cat >/dev/null
+)sh");
+    fake(QStringLiteral("codex"), R"(read -r line
+echo '{"id":1,"result":{}}'
+read -r line
+read -r line
+case "$line" in *model/list*) ;; *) exit 3 ;; esac
+echo '{"id":2,"result":{"data":[{"model":"gpt-6-sol","displayName":"GPT-6 Sol"},{"model":"gpt-6-astra","displayName":"GPT-6 Astra","isDefault":true}]}}'
+cat >/dev/null
+)");
+    fake(QStringLiteral("agy"), "case \"$1\" in models) ;; *) exit 3 ;; esac\n"
+                                "printf 'gemini-4-hydrogen-high\\tGemini 4 Hydrogen (High)\\n"
+                                "gemini-4-hydrogen-xhigh\\tGemini 4 Hydrogen (XHigh)\\n'\n");
+    const auto home = dir.filePath(QStringLiteral("home"));
+    QDir().mkpath(home);
+    HarnessModels models([&](const QString& id) { return programs.value(id); }, home);
+    models.refresh();
+    wait_for(
+        [&] {
+            return !models.models(QStringLiteral("claude")).empty() &&
+                   !models.models(QStringLiteral("codex")).empty() &&
+                   !models.models(QStringLiteral("agy")).empty();
+        },
+        "the stand-in lists arrive");
+
+    lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::fixture);
+    workspace.setHarnessModels(&models);
+    auto* transcript = qobject_cast<lapis::desktop::TranscriptModel*>(workspace.transcript());
+    require(transcript != nullptr, "the workspace's thread");
+    const auto settings = dir.filePath(QStringLiteral("agy-settings.json"));
+    transcript->setAntigravitySettings(settings);
+    const auto add = [&](const char* id, const char* harness, const QString& program,
+                         const QStringList& arguments) {
+        require(workspace.addFixtureAgent(QString::fromUtf8(id), QString::fromUtf8(id),
+                                          QStringLiteral("general"), QString::fromUtf8(harness),
+                                          {}) &&
+                    workspace.setFixtureLaunch(QString::fromUtf8(id), program, arguments),
+                "a fixture agent");
+    };
+    const auto known = [&](const char* id) {
+        const auto map = workspace.agentModel(QString::fromUtf8(id));
+        return QStringList{map.value(QStringLiteral("model")).toString(),
+                           map.value(QStringLiteral("effort")).toString(),
+                           map.value(QStringLiteral("resolved")).toString(),
+                           map.value(QStringLiteral("from")).toString()};
+    };
+    const auto expect = [](const char* model, const char* effort, const char* resolved,
+                           const char* from) {
+        return QStringList{QString::fromUtf8(model), QString::fromUtf8(effort),
+                           QString::fromUtf8(resolved), QString::fromUtf8(from)};
+    };
+    add("alias", "claude", programs.value(QStringLiteral("claude")),
+        words("--model opus --effort xhigh"));
+    require(known("alias") == expect("opus", "xhigh", "claude-opus-5-5", "launch"),
+            "a local Claude Code started with an alias: its API id from the list");
+    add("plain", "claude", programs.value(QStringLiteral("claude")),
+        words("--dangerously-skip-permissions"));
+    require(known("plain") == expect("claude-fable-5-2", "", "", "list"),
+            "none given: the model Claude Code's default entry names");
+    add("codex", "codex", programs.value(QStringLiteral("codex")),
+        words("-c model_reasoning_effort=medium"));
+    require(known("codex") == expect("gpt-6-astra", "medium", "", "list"),
+            "Codex with a level only: its listed default and that level");
+    add("codex-sol", "codex", programs.value(QStringLiteral("codex")), words("-m gpt-6-sol"));
+    require(known("codex-sol") == expect("gpt-6-sol", "", "", "launch"), "Codex's -m");
+    add("agy-id", "agy", programs.value(QStringLiteral("agy")),
+        words("--model gemini-4-hydrogen-xhigh"));
+    require(known("agy-id") == expect("gemini-4-hydrogen-xhigh", "xhigh", "Gemini 4 Hydrogen",
+                                      "launch"),
+            "agy: its level from the id, its family's name as its file reports it");
+    add("agy-saved", "agy", programs.value(QStringLiteral("agy")), {});
+    require(known("agy-saved") ==
+                expect("gemini-4-hydrogen-high", "high", "Gemini 4 Hydrogen", "list"),
+            "agy with no saved default: the first entry");
+    write(settings, R"json({"model":"Gemini 4 Hydrogen (XHigh)"})json");
+    require(known("agy-saved") ==
+                expect("gemini-4-hydrogen-xhigh", "xhigh", "Gemini 4 Hydrogen", "settings"),
+            "agy's saved default, as its level's id");
+
+    // Remote: the words inside the ssh command, quoted as lapis writes them.
+    const QStringList ssh_options{QStringLiteral("-o"), QStringLiteral("ControlPath=none")};
+    const auto remote_claude =
+        QStringLiteral(R"(cd '/work/x' && s=0199a000-0000-7000-8000-00000000c0de && )"
+                       R"(o=--session-id && { exec "${SHELL:-/bin/sh}" -lic )"
+                       R"('export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-0}"; )"
+                       R"(claude --model '\''opus[1m]'\'' --effort high '"$o $s"; })");
+    add("remote", "claude", QStringLiteral("/usr/bin/ssh"),
+        ssh_options + QStringList{QStringLiteral("-t"), QStringLiteral("box"), remote_claude});
+    require(known("remote") == expect("opus[1m]", "high", "", "launch"),
+            "a remote Claude Code's launch words inside its ssh command");
+    const auto remote_codex = QStringLiteral(
+        R"(cd '/work/x' && exec "${SHELL:-/bin/sh}" -lic 'codex -m gpt-6-sol -c model_reasoning_effort=low')");
+    add("remote-codex", "codex", QStringLiteral("/usr/bin/ssh"),
+        ssh_options + QStringList{QStringLiteral("-t"), QStringLiteral("box"), remote_codex});
+    require(known("remote-codex") == expect("gpt-6-sol", "low", "", "launch"),
+            "a remote Codex's launch words");
+    const auto remote_plain = QStringLiteral(
+        R"(cd '/work/x' && exec "${SHELL:-/bin/sh}" -lic 'codex')");
+    add("remote-plain", "codex", QStringLiteral("/usr/bin/ssh"),
+        ssh_options + QStringList{QStringLiteral("-t"), QStringLiteral("box"), remote_plain});
+    require(workspace.agentModel(QStringLiteral("remote-plain")).isEmpty(),
+            "a remote agent with no model: this Mac's default is not that machine's");
+}
+} // namespace
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
@@ -440,6 +597,7 @@ int main(int argc, char** argv) {
         shares_harness_identity_and_configuration();
         asks_each_installed_cli();
         refreshes_without_restart();
+        knows_what_an_agent_runs();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return 1;

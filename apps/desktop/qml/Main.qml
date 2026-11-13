@@ -1160,6 +1160,8 @@ ApplicationWindow {
             visualStartAgent = agent.agentId
         }
         const screen = liveTerminal.screenLines()
+        // The model its start screen names, when lapis gave it none.
+        workspace.transcript.readStartScreen(screen)
         const known = workspace.transcript.dialogShowing(screen)
         if (!known && workspace.transcript.inputBoxShowing(screen)) {
             visualStartTicks = 0
@@ -3976,10 +3978,15 @@ ApplicationWindow {
                     property: "shown"
                     // Nothing is read or watched while no agent shows as a
                     // thread; an agent with no file yet shows an empty one.
+                    // `started`: the model and effort it runs before its
+                    // file says (Workspace.agentModel), again when the
+                    // CLIs' lists change.
                     value: window.visualActive
                            ? ({ agent: workspace.focusedAgent.agentId,
                                 harness: workspace.focusedAgent.harnessId,
-                                path: window.visualFile })
+                                path: window.visualFile,
+                                started: workspace.modelsRevision >= 0
+                                         ? workspace.agentModel(workspace.focusedAgent.agentId) : ({}) })
                            : ({})
                 }
 
