@@ -131,6 +131,14 @@ void records_are_private() {
                 record->session_id == QStringLiteral("s-1") &&
                 record->source == lapis::session::ResumeSource::observer,
             "a written record preserves observer provenance");
+    lapis::session::write_resume_record(endpoint, {QStringLiteral("claude"), QStringLiteral("s-r"),
+                                                   lapis::session::ResumeSource::relayed});
+    const auto relayed = lapis::session::read_resume_record(endpoint);
+    require(relayed && relayed->session_id == QStringLiteral("s-r") &&
+                relayed->source == lapis::session::ResumeSource::relayed,
+            "a session relayed from another machine keeps its provenance");
+    lapis::session::write_resume_record(endpoint, {QStringLiteral("claude"), QStringLiteral("s-1"),
+                                                   lapis::session::ResumeSource::observer});
     const auto record_path = endpoint + QStringLiteral(".resume");
     QFile foreign_case(record_path);
     require(foreign_case.open(QIODevice::WriteOnly | QIODevice::Truncate),

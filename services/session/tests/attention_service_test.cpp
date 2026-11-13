@@ -414,6 +414,60 @@ void omp_turns_arrive_through_the_terminal() {
     require(Access::notify_turn_completed(service));
 }
 
+// A Claude Code agent on another machine reports its session through hooks
+// relayed in its terminal. The service records it as `relayed`, follows a
+// /clear (SessionEnd, then a new SessionStart), and printed checkpoints cannot
+// replace it.
+void remote_claude_sessions_are_recorded_as_relayed() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-relayed-XXXXXX")};
+    require(directory.isValid());
+    require(QFile::setPermissions(directory.path(),
+                                  QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    // The transport is recognised by its program's name: ssh.
+    const auto program = directory.filePath(QStringLiteral("ssh"));
+    require(QFile::link(QStringLiteral("/bin/cat"), program));
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = program,
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    const QByteArray nonce("0123456789abcdef0123456789abcdef");
+    const auto frame = [&nonce](const char* event, const QString& session) {
+        const QJsonObject source{{"hook_event_name", event},
+                                 {"session_id", session},
+                                 {"source", "startup"}};
+        return "\x1b]7717;lapis-event;" + nonce + ";" +
+               QJsonDocument(source).toJson(QJsonDocument::Compact).toBase64() + "\x07";
+    };
+    const auto first = QStringLiteral("5e550000-0000-4000-8000-000000000001");
+    const auto cleared = QStringLiteral("5e550000-0000-4000-8000-000000000002");
+    Access::receive(service,
+                    "\x1b]7717;lapis-init;claude;" + nonce + "\x07" + frame("SessionStart", first));
+    // The observer publishes after the transport callback returns.
+    require(wait_for([&] { return Access::resume(service).session_id == first; }));
+    require(Access::resume(service).agent == QStringLiteral("claude") &&
+            Access::resume(service).source == ResumeSource::relayed);
+    auto saved = read_resume_record(endpoint);
+    require(saved && saved->session_id == first && saved->source == ResumeSource::relayed);
+    Access::receive(service, frame("SessionEnd", first) + frame("SessionStart", cleared));
+    require(wait_for([&] { return Access::resume(service).session_id == cleared; }));
+    saved = read_resume_record(endpoint);
+    require(saved && saved->session_id == cleared && saved->source == ResumeSource::relayed);
+    // A checkpoint printed into the terminal cannot replace it.
+    const QJsonObject printed{
+        {"version", 1}, {"agent", "claude"}, {"session_id", "5e550000-0000-4000-8000-0000000000ff"}};
+    Access::receive(service, "\x1b]1337;SetUserVar=agent_checkpoint=" +
+                                 QJsonDocument(printed).toJson(QJsonDocument::Compact).toBase64() +
+                                 "\x07");
+    QCoreApplication::processEvents();
+    require(Access::resume(service).session_id == cleared &&
+            Access::resume(service).source == ResumeSource::relayed);
+}
+
 void parser_carries_a_split_synchronized_marker() {
     using Access = lapis::session::AttentionServiceTestAccess;
     const QByteArray begin = QByteArrayLiteral("\x1b[?2026h");
@@ -902,6 +956,7 @@ int main(int argc, char** argv) {
         filtered_output_still_records_pty_timing();
         local_codex_turns_arrive_through_notify();
         omp_turns_arrive_through_the_terminal();
+        remote_claude_sessions_are_recorded_as_relayed();
         parser_carries_a_split_synchronized_marker();
         adjacent_updates_do_not_hide_a_finished_frame();
         a_first_burst_of_text_settles_before_it_is_shown();

@@ -264,6 +264,15 @@ if(BUILD_TESTING)
     add_test(NAME workspace-closing COMMAND lapis_workspace_tests --case closing)
     set_tests_properties(workspace-closing PROPERTIES TIMEOUT 90
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    # Claude Code agents on another machine: conversation identity and the
+    # mirrored thread, against a stand-in ssh that runs everything here in a
+    # fixture home; windowless, and nothing connects anywhere.
+    add_executable(lapis_remote_thread_tests tests/remote_thread_test.cpp)
+    target_link_libraries(lapis_remote_thread_tests PRIVATE lapis_project_options lapis_desktop_core)
+    add_dependencies(lapis_remote_thread_tests lapis_session_service)
+    add_test(NAME remote-thread COMMAND lapis_remote_thread_tests)
+    set_tests_properties(remote-thread PROPERTIES TIMEOUT 120
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     # These launch the real desktop host or QML windows. On a Mac someone is
     # using they would show windows, so they run only on request.
     set_tests_properties(workspace workspace-remote-hooks workspace-retired-plans

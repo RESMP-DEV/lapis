@@ -348,8 +348,10 @@ class SessionService final : public QObject {
     // A hook relayed through the terminal: from another machine, from lapis's
     // OMP extension, or from a local Codex agent's notify program. The service
     // owns the attention state as for a local agent. A remote launch names its
-    // conversation in its own command, so only a local Codex agent's notify
-    // event records a resume identity (see note_codex_thread).
+    // first conversation in its own command; the Claude Code session its hooks
+    // report (which /clear and /resume change) is recorded as `relayed`, so
+    // the desktop knows the current one and restarts resume it. Only a local
+    // Codex agent's notify event records a Codex identity (note_codex_thread).
     void receive_terminal_hook(const TerminalHookEvent& hook) {
         if (hook.cli == QLatin1String("claude")) {
             if (!claude_observer_) {
@@ -357,8 +359,11 @@ class SessionService final : public QObject {
                     identity_.session_id.toHex().toStdString(), "claude-code");
                 claude_observer_ = std::make_unique<lapis::claude::Observer>(
                     *claude_state_, lapis::claude::Observer::Transport::terminal);
-                connect(claude_observer_.get(), &lapis::claude::Observer::changed, this,
-                        [this] { observer_changed(); });
+                connect(claude_observer_.get(), &lapis::claude::Observer::changed, this, [this] {
+                    note_conversation(QStringLiteral("claude"), claude_observer_->sessionId(),
+                                      ResumeSource::relayed);
+                    observer_changed();
+                });
             }
             claude_observer_->receiveRelayed(hook.source);
         } else if (hook.cli == QLatin1String("codex")) {
@@ -493,6 +498,7 @@ class SessionService final : public QObject {
         // older Codex/Claude legacy record.
         if (source == ResumeSource::terminal &&
             (codex_notify_ || claude_observer_ || resume_.source == ResumeSource::observer ||
+             resume_.source == ResumeSource::relayed ||
              (resume_.source == ResumeSource::legacy && observer_backed_agent(checkpoint_agent_))))
             return;
         if (!valid_resume_identity(session_id) ||

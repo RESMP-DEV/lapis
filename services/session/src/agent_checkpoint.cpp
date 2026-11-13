@@ -238,10 +238,14 @@ std::optional<ResumeRecord> read_resume_record(const QString& endpoint) {
         return std::nullopt;
     if (version == 2) {
         const auto source = object.value(QStringLiteral("source")).toString();
-        if (source != QStringLiteral("observer") && source != QStringLiteral("terminal"))
+        if (source == QStringLiteral("observer"))
+            record.source = ResumeSource::observer;
+        else if (source == QStringLiteral("terminal"))
+            record.source = ResumeSource::terminal;
+        else if (source == QStringLiteral("relayed"))
+            record.source = ResumeSource::relayed;
+        else
             return std::nullopt;
-        record.source =
-            source == QStringLiteral("observer") ? ResumeSource::observer : ResumeSource::terminal;
     } else {
         // Written before lapis recorded how the identity was learned.
         record.source = ResumeSource::legacy;
@@ -260,7 +264,9 @@ void write_resume_record(const QString& endpoint, const ResumeRecord& record) {
         {"version", 2},
         {"agent", record.agent},
         {"session_id", record.session_id},
-        {"source", record.source == ResumeSource::observer ? "observer" : "terminal"}};
+        {"source", record.source == ResumeSource::observer  ? "observer"
+                   : record.source == ResumeSource::relayed ? "relayed"
+                                                            : "terminal"}};
     QString error;
     if (!posix::write_private_file(path, QJsonDocument(object).toJson(QJsonDocument::Compact),
                                    &error))

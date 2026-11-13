@@ -377,6 +377,41 @@ const QRegularExpression& remoteConversation() {
         R"( && s=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) && )"));
     return marker;
 }
+// The process pattern a remote Claude Code command stops before starting:
+// `p="[-]-(resume|session-id) $s"`, or, once followRemoteConversation moved
+// it, `p="[-]-(resume|session-id) ($s|<previous>)"`.
+const QRegularExpression& remoteStopPattern() {
+    static const QRegularExpression pattern(QStringLiteral(
+        R"re(p="\[-\]-\(resume\|session-id\) (?:\$s|\(\$s\|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\))")re"));
+    return pattern;
+}
+// Points a remote Claude Code command at `conversation`, the session its
+// hooks last reported (after /clear or /resume there), so a restart or a
+// reconnect resumes the conversation shown rather than the one the agent
+// first started with. The process launched for the previous id still carries
+// that id in its arguments, so the command keeps stopping it too: one
+// conversation never has two writers. False when the command has no `s=`
+// marker or `conversation` is not a UUID; the command is then unchanged.
+bool followRemoteConversation(QString& command, const QString& conversation) {
+    if (QUuid::fromString(conversation).toString(QUuid::WithoutBraces) != conversation ||
+        conversation != conversation.toLower())
+        return false;
+    const auto marker = remoteConversation().match(command);
+    if (!marker.hasMatch())
+        return false;
+    const auto previous = marker.captured(1);
+    if (previous == conversation)
+        return true;
+    // A command saved before the stop pattern existed only has its id moved.
+    QString moved = command;
+    if (const auto stop = remoteStopPattern().match(command, marker.capturedEnd(0));
+        stop.hasMatch())
+        moved.replace(stop.capturedStart(0), stop.capturedLength(0),
+                      QStringLiteral(R"re(p="[-]-(resume|session-id) ($s|%1)")re").arg(previous));
+    moved.replace(marker.capturedStart(1), marker.capturedLength(1), conversation);
+    command = moved;
+    return true;
+}
 QString newConversation() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
 // A remote agent's machine and the command ssh runs there:
 // `ssh [-o option]... -t <machine> <command>`.
@@ -1497,6 +1532,12 @@ QString Workspace::agentConversation(const QString& id) const {
     const auto record = session::read_resume_record(entry->endpoint);
     if (record && record->agent == entry->harness && resumable(*record, entry->harness))
         return record->session_id;
+    // A Claude Code agent on another machine before its hooks reported a
+    // session: the one its command starts or resumes (`s=<id>`).
+    if (const auto remote = remoteCommand(entry->launch);
+        remote && entry->harness == QLatin1String("claude"))
+        if (const auto marker = remoteConversation().match(remote->second); marker.hasMatch())
+            return marker.captured(1);
     return entry->conversation.isEmpty() ? entry->managed_resume_identity : entry->conversation;
 }
 bool Workspace::moveAgent(const QString& id, const QString& categoryId) {
@@ -2857,6 +2898,18 @@ auto Workspace::restoredLaunch(const AgentRecord& agent, QString* diagnostic)
         ResumeLaunch plan{std::move(launch), agent.managed_resume_index,
                           agent.managed_resume_identity};
         auto record = session::read_resume_record(agent.endpoint);
+        // A remote Claude Code agent resumes the session its hooks last
+        // reported, by rewriting the id its command names; nothing is added
+        // to ssh's own arguments, and nothing is checked on this Mac's disk
+        // (the command looks for the transcript on that machine).
+        if (remoteCommand(plan.launch)) {
+            if (agent.harness == QLatin1String("claude") && record &&
+                record->agent == agent.harness && record->source != session::ResumeSource::terminal)
+                followRemoteConversation(plan.launch.arguments.last(), record->session_id);
+            applyStartupDefaults(agent, plan);
+            plan.launch = session::validate_launch(plan.launch);
+            return plan;
+        }
         // With no record from the CLI, the conversation lapis pinned from the
         // agent's own process (an agy agent's, always) is the one to resume.
         if (!record && !agent.conversation.isEmpty())
