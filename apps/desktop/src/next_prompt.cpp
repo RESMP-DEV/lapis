@@ -129,9 +129,30 @@ void add_label(QJsonObject& clean, const QJsonObject& entry) {
     clean.insert(QStringLiteral("label"), label);
 }
 
+// A session hook, as next_prompt.py's clean_hook: 1 to 8 non-empty strings,
+// each shorter than 512 characters; anything else is none.
+QStringList clean_hook(const QJsonValue& value) {
+    constexpr qsizetype kHookArguments = 8;
+    constexpr qsizetype kHookChars = 512;
+    if (!value.isArray())
+        return {};
+    const auto parts = value.toArray();
+    if (parts.isEmpty() || parts.size() > kHookArguments)
+        return {};
+    QStringList hook;
+    for (const auto& part : parts) {
+        if (!part.isString() || part.toString().trimmed().isEmpty() ||
+            part.toString().size() >= kHookChars)
+            return {};
+        hook << part.toString();
+    }
+    return hook;
+}
+
 // A CLI entry, as next_prompt.py's clean_cli: no url and no key, since the CLI
-// runs on the plan it is signed in to.
-std::optional<QJsonObject> clean_cli(const QJsonObject& entry) {
+// runs on the plan it is signed in to. A Claude Code entry keeps its own
+// `sessionHook`, else takes `hook` (the default); an invalid own one is none.
+std::optional<QJsonObject> clean_cli(const QJsonObject& entry, const QStringList& hook) {
     static const QStringList kinds{QStringLiteral("claude"), QStringLiteral("codex"),
                                    QStringLiteral("agy")};
     static const QStringList efforts{QStringLiteral("low"), QStringLiteral("medium"),
@@ -153,14 +174,21 @@ std::optional<QJsonObject> clean_cli(const QJsonObject& entry) {
     if (!effort.isEmpty())
         clean.insert(QStringLiteral("effort"), effort);
     add_label(clean, entry);
+    if (cli.toString() == QLatin1String("claude")) {
+        const auto own = entry.contains(QStringLiteral("sessionHook"))
+                             ? clean_hook(entry.value(QStringLiteral("sessionHook")))
+                             : hook;
+        if (!own.isEmpty())
+            clean.insert(QStringLiteral("sessionHook"), QJsonArray::fromStringList(own));
+    }
     return clean;
 }
 
 // One validated entry, or nothing for a malformed one. A rounded timeout or
 // token count means the same here as in the helper's own parsing.
-std::optional<QJsonObject> clean_provider(const QJsonObject& provider) {
+std::optional<QJsonObject> clean_provider(const QJsonObject& provider, const QStringList& hook) {
     if (provider.contains(QStringLiteral("cli")))
-        return clean_cli(provider);
+        return clean_cli(provider, hook);
     const auto url = provider.value(QStringLiteral("url")).toString().trimmed();
     const auto model = provider.value(QStringLiteral("model")).toString().trimmed();
     if ((!url.startsWith(QLatin1String("http://")) && !url.startsWith(QLatin1String("https://"))) ||
@@ -190,8 +218,9 @@ std::optional<QJsonObject> clean_provider(const QJsonObject& provider) {
     return clean;
 }
 
-// `providers` or `random`: at most 8 valid entries each.
-QJsonArray parse_entries(const QJsonObject& object, const QString& key) {
+// `providers` or `random`: at most 8 valid entries each, `hook` the session
+// hook of Claude Code entries that name none.
+QJsonArray parse_entries(const QJsonObject& object, const QString& key, const QStringList& hook) {
     QJsonArray kept;
     const auto list = object.value(key);
     if (!list.isArray())
@@ -199,7 +228,7 @@ QJsonArray parse_entries(const QJsonObject& object, const QString& key) {
     for (const auto& entry : list.toArray()) {
         if (kept.size() >= 8)
             break;
-        if (const auto clean = clean_provider(entry.toObject()))
+        if (const auto clean = clean_provider(entry.toObject(), hook))
             kept.append(*clean);
     }
     return kept;
@@ -435,8 +464,9 @@ NextPromptSettings parse_next_prompt(const QJsonValue& value) {
     settings.effort = object.value(QStringLiteral("effort")).toString().trimmed().left(20);
     if (const auto cap = object.value(QStringLiteral("maxPerHour")); cap.isDouble())
         settings.maxPerHour = std::max(0, cap.toInt());
-    settings.providers = parse_entries(object, QStringLiteral("providers"));
-    settings.random = parse_entries(object, QStringLiteral("random"));
+    settings.sessionHook = clean_hook(object.value(QStringLiteral("sessionHook")));
+    settings.providers = parse_entries(object, QStringLiteral("providers"), settings.sessionHook);
+    settings.random = parse_entries(object, QStringLiteral("random"), settings.sessionHook);
     parse_context_arms(object, settings);
     parse_prompt_arms(object, settings);
     if (const auto minutes = object.value(QStringLiteral("returnMinutes")); minutes.isDouble())
@@ -850,6 +880,7 @@ struct PredictArguments {
     QString prompt_arm;
     QJsonArray providers;
     QJsonArray pool;
+    QStringList session_hook; // the single CLI call's; entries carry their own
     int seed{};
     int budget{};
 };
@@ -873,6 +904,9 @@ QStringList predict_arguments(const PredictArguments& args) {
     if (!args.pool.isEmpty())
         arguments << QStringLiteral("--pool") << compact(args.pool) << QStringLiteral("--seed")
                   << QString::number(args.seed);
+    if (!args.session_hook.isEmpty())
+        arguments << QStringLiteral("--session-hook")
+                  << compact(QJsonArray::fromStringList(args.session_hook));
     arguments << QStringLiteral("--budget-seconds") << QString::number(args.budget);
     return arguments;
 }
@@ -984,6 +1018,7 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
                                               .prompt_arm = arms_made.prompt,
                                               .providers = providers,
                                               .pool = pool,
+                                              .session_hook = settings_.sessionHook,
                                               .seed = seed,
                                               .budget = budget});
     start(
@@ -1132,6 +1167,8 @@ void NextPrompt::failed(const QString& id, const Agent& agent, Stage stage, cons
         ++failure_streak_;
         static const QHash<QString, QString> plain{
             {QStringLiteral("limit"), QStringLiteral("a model usage limit")},
+            {QStringLiteral("overloaded"), QStringLiteral("an overloaded model service")},
+            {QStringLiteral("hook"), QStringLiteral("the session hook")},
             {QStringLiteral("auth"), QStringLiteral("a model sign-in")},
             {QStringLiteral("timeout"), QStringLiteral("timeouts")},
             {QStringLiteral("network"), QStringLiteral("the network")},

@@ -756,8 +756,28 @@ void providerChainKeepsItsOwnRoute() {
         const auto arguments = helper_arguments();
         const auto at = arguments.indexOf(QStringLiteral("--providers"));
         require(at > 0 && arguments.value(at + 1) == QLatin1String("[]") &&
-                    !arguments.contains(QStringLiteral("--endpoint")),
+                    !arguments.contains(QStringLiteral("--endpoint")) &&
+                    !arguments.contains(QStringLiteral("--session-hook")),
                 "no chain keeps the CLI route");
+    }
+    // The single CLI call is given the default session hook.
+    settings = on();
+    settings.sessionHook = {QStringLiteral("~/bin/register"), QStringLiteral("hook")};
+    next.setSettings(settings);
+    const auto before_hook = events(log).size();
+    next.seen(QStringLiteral("a"));
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] {
+                const auto all = events(log);
+                return all.size() > before_hook &&
+                       all.last().value(QStringLiteral("event")) == QLatin1String("predicted");
+            }),
+            "the CLI's guess with a hook is made");
+    {
+        const auto arguments = helper_arguments();
+        const auto at = arguments.indexOf(QStringLiteral("--session-hook"));
+        require(at > 0 && arguments.value(at + 1) == QLatin1String(R"(["~/bin/register","hook"])"),
+                "the single call is given the session hook");
     }
     // The chain replaces the CLI call, so a Mac without the CLI still guesses.
     write(root.filePath(QStringLiteral("no-claude")), "yes");
@@ -841,6 +861,63 @@ void mixedEntriesParse() {
             "labels read as the CLIs name their models");
 }
 
+// A session hook: the top-level default reaches Claude Code entries that name
+// none; an entry's own replaces it, and an invalid own one leaves the entry
+// without a hook. Other CLIs and endpoints never carry one.
+void sessionHooksParse() {
+    const auto settings = lapis::desktop::parse_next_prompt(QJsonDocument::fromJson(R"({
+        "sessionHook": ["~/bin/register", "hook"],
+        "random": [
+            {"name": "fable", "cli": "claude", "model": "claude-fable-5-2"},
+            {"name": "own", "cli": "claude", "model": "m", "sessionHook": ["/own/register"]},
+            {"name": "none", "cli": "claude", "model": "m", "sessionHook": []},
+            {"name": "bad", "cli": "claude", "model": "m", "sessionHook": "/not/a/list"},
+            {"name": "astra", "cli": "codex", "model": "gpt-6-astra",
+             "sessionHook": ["/own/register"]},
+            {"name": "carbon", "cli": "agy", "model": "gemini-4-carbon-high"}
+        ],
+        "providers": [{"name": "openrouter", "url": "https://openrouter.test/api/v1",
+                       "model": "m", "sessionHook": ["/own/register"]}]})")
+                                                                .object());
+    const QStringList hook{QStringLiteral("~/bin/register"), QStringLiteral("hook")};
+    require(settings.sessionHook == hook, "the default hook is read");
+    const auto hook_of = [](const QJsonArray& entries, qsizetype index) {
+        return entries.at(index).toObject().value(QStringLiteral("sessionHook"));
+    };
+    require(settings.random.size() == 6, "an invalid hook keeps its entry");
+    require(hook_of(settings.random, 0).toArray() == QJsonArray::fromStringList(hook) &&
+                hook_of(settings.random, 1).toArray() ==
+                    QJsonArray{QStringLiteral("/own/register")} &&
+                hook_of(settings.random, 2).isUndefined() &&
+                hook_of(settings.random, 3).isUndefined() &&
+                hook_of(settings.random, 4).isUndefined() &&
+                hook_of(settings.random, 5).isUndefined() &&
+                hook_of(settings.providers, 0).isUndefined(),
+            "the default reaches Claude Code entries without their own");
+    const auto again = lapis::desktop::parse_next_prompt(
+        QJsonObject{{QStringLiteral("random"), settings.random}});
+    require(again.random == settings.random, "a hook round-trips on its entry");
+    for (const auto* bad : {R"([])", R"([""])", R"(["  "])", R"([1])", R"("register")",
+                            R"(["a","b","c","d","e","f","g","h","i"])"}) {
+        const auto parsed = lapis::desktop::parse_next_prompt(QJsonDocument::fromJson(
+            QByteArray(R"({"sessionHook": )") + bad +
+            R"(, "providers": [{"cli": "claude", "model": "m"}]})")
+                                                                  .object());
+        require(parsed.sessionHook.isEmpty() && parsed.providers.size() == 1 &&
+                    !parsed.providers.at(0).toObject().contains(QStringLiteral("sessionHook")),
+                "an invalid default is no default");
+    }
+    const auto long_part = QString(511, QLatin1Char('x'));
+    require(lapis::desktop::parse_next_prompt(
+                QJsonObject{{QStringLiteral("sessionHook"), QJsonArray{long_part}}})
+                    .sessionHook == QStringList{long_part},
+            "511 characters is under the bound");
+    require(lapis::desktop::parse_next_prompt(
+                QJsonObject{{QStringLiteral("sessionHook"), QJsonArray{long_part + 'x'}}})
+                .sessionHook.isEmpty(),
+            "512 characters is not");
+}
+
 void budgetsFollowThePlan() {
     using lapis::desktop::predict_budget_seconds;
     using lapis::desktop::predict_watchdog_ms;
@@ -894,6 +971,16 @@ void cooldownsSkipFailedEntries() {
     cooldown.observe(failed("fable", "limit"), {}, cli, 4000);
     cooldown.observe({}, QStringLiteral("fable"), cli, 4001);
     require(!cooldown.cooling(QStringLiteral("fable"), 4002), "an answer clears a cool-down");
+    // An overload or a failed hook is transient: the short skip after two.
+    for (const auto* kind : {"overloaded", "hook"}) {
+        cooldown.observe(failed("fable", kind), {}, cli, 5000);
+        require(!cooldown.cooling(QStringLiteral("fable"), 5001), "one transient failure");
+        cooldown.observe(failed("fable", kind), {}, cli, 6000);
+        require(cooldown.cooling(QStringLiteral("fable"), 6000 + EntryCooldown::repeat_ms - 1) &&
+                    !cooldown.cooling(QStringLiteral("fable"), 6000 + EntryCooldown::repeat_ms),
+                "two transient failures: 2 minutes, not 15");
+        cooldown.observe({}, QStringLiteral("fable"), cli, 7000);
+    }
 }
 
 // A guess through the pool and the chain: the plan passed to the helper, what
@@ -1775,6 +1862,7 @@ int main(int argc, char** argv) {
         repeatsWaitUntilShown();
         providerChainKeepsItsOwnRoute();
         mixedEntriesParse();
+        sessionHooksParse();
         budgetsFollowThePlan();
         cooldownsSkipFailedEntries();
         poolGuessesShowTheirAuthor();

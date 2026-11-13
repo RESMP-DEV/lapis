@@ -42,8 +42,18 @@ struct NextPromptSettings {
     // `timeoutSeconds`. `random` is a pool: up to two of its entries are
     // drawn at random per guess, then `providers` are tried in order. Any
     // failure moves to the next entry; see next_prompt.py's predict_providers.
+    // A Claude Code entry may also name `sessionHook`, an argument list run
+    // before each of its calls (see sessionHook below); an invalid one is
+    // dropped and the entry kept without a hook.
     QJsonArray providers;
     QJsonArray random;
+    // The default session hook of Claude Code entries that name none, and of
+    // the single CLI call: a command the person's account setup needs before
+    // a headless call (1 to 8 non-empty strings, each under 512 characters,
+    // `~` expanded in the first, no shell). It gets Claude Code's
+    // SessionStart JSON for the call's session id on stdin; a failure or 10 s
+    // without finishing fails the entry (kind `hook`) without the call.
+    QStringList sessionHook;
     // The live comparison: the context the helper adds (`contextArms`, base
     // or wide; see next_prompt.py), picked at random and recorded on the
     // guess. wide is an opt-in five-candidate arm: the first is shown and all
@@ -84,8 +94,9 @@ struct NextPromptSettings {
 
 // Entries that failed recently sit out the next guesses, so a guess does not
 // pay their timeout again: after a usage or rate limit a CLI entry sits out
-// 15 minutes; after two failures in a row of any other kind (or a limit at an
-// endpoint) an entry sits out 2 minutes. An answer from the entry clears it.
+// 15 minutes; after two failures in a row of any other kind (an overloaded
+// service, a failed session hook, a timeout, or a limit at an endpoint) an
+// entry sits out 2 minutes. An answer from the entry clears it.
 // Kept in memory: a restart tries every entry again once.
 class EntryCooldown {
   public:
