@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-13T21:46:00Z",
+  "recorded_at": "2026-11-13T21:52:04Z",
   "agent": "Codex",
   "base_revision": "db9f97835165f345a39aa4513468ba7cd4f39d9e",
-  "source_revision": "a6db63ec2584c6e11e838cbb64371c2810acfead",
+  "source_revision": "432261d0cbbceb1a19fb0532f1477f9b223ade46",
   "changed_source_manifest": {
     "algorithm": "sha256(git diff --binary base_revision..source_revision -- ':(exclude)evidence/*')",
-    "digest": "ad92bdd179da0794664e178d37322e1350511a70277033fdf4caa8f3c8f8cf3a",
+    "digest": "688ec6fe3b7de68f9d941b0ac6627579e5db00cb859c7e5b546055a1cf0ddaef",
     "changed_paths": 16
   },
   "scope": "Remove verified dead or stale cleanup surfaces without changing user-facing behavior.",
