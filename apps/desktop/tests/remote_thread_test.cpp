@@ -642,14 +642,17 @@ Item {
     width: 900; height: 700
     property var sent: []
     property var asked: []
+    property bool remote: true
     property alias view: view
     Transcript {
         id: view
         anchors.fill: parent
         canSend: true
+        agent: remote ? "far" : "here"
         submit: text => { sent = sent.concat([text]); return true }
-        upload: path => { asked = asked.concat([path]); return { token: "t" + asked.length } }
-        uploadMachine: "buildbox"
+        upload: remote ? (path => { asked = asked.concat([path]); return { token: "t" + asked.length } })
+                       : null
+        uploadMachine: remote ? "buildbox" : ""
     }
 }
 )",
@@ -710,6 +713,23 @@ Item {
     call("detach", {second});
     call("send");
     require(sent().size() == 2 && !sent().last().contains(second), "without it, it sends");
+
+    // The bar is shared between agents: a file attached for an agent here
+    // never goes to the remote one, nor a copy there to an agent here.
+    root->setProperty("remote", false);
+    const auto here = QStringLiteral("/Users/someone/Desktop/local.txt");
+    call("attach", {here});
+    root->setProperty("remote", true);
+    input->setProperty("text", QStringLiteral("for the remote one"));
+    call("send");
+    require(sent().size() == 2, "a file here is never mentioned to the remote agent");
+    call("detach", {here});
+    call("attach", {mac});
+    call("uploadFinished", {QStringLiteral("t3"), there, QString()});
+    root->setProperty("remote", false);
+    input->setProperty("text", QStringLiteral("for the local one"));
+    call("send");
+    require(sent().size() == 2, "a copy there is never mentioned to an agent here");
 }
 
 // The mirrors' disk budget removes the least recently shown conversations,

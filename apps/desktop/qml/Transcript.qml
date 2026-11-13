@@ -658,7 +658,8 @@ FocusScope {
             return false
         }
         const next = Object.assign({}, uploads)
-        next[path] = { token: started.token, local: path, progress: 0, error: "" }
+        next[path] = { token: started.token, local: path, progress: 0, error: "",
+                       agent: root.agent, machine: root.uploadMachine }
         uploads = next
         return true
     }
@@ -696,14 +697,27 @@ FocusScope {
         }
         const entry = next[shown]
         delete next[shown]
-        next[remote] = { token: "", local: entry.local, progress: 1, error: "" }
+        next[remote] = Object.assign({}, entry, { token: "", progress: 1 })
         uploads = next
         attachments = attachments.map(p => p === shown ? remote : p)
     }
-    // False, with the reason said, while a copy is on its way or failed.
+    // False, with the reason said, while a copy is on its way or failed, or
+    // when an attachment was made for another agent: the bar is shared, and
+    // a file here must never reach a remote agent (nor a copy there another).
     function attachmentsSendable() {
         for (const shown of attachments) {
             const entry = uploads[shown]
+            const name = (entry ? entry.local : shown).split("/").pop()
+            if (root.upload && (!entry || entry.agent !== root.agent)) {
+                root.say(qsTr("Not sent: %1 is not on %2 · remove it and attach it again")
+                         .arg(name).arg(root.uploadMachine))
+                return false
+            }
+            if (!root.upload && entry) {
+                root.say(qsTr("Not sent: %1 was copied for an agent on %2 · remove it")
+                         .arg(name).arg(entry.machine))
+                return false
+            }
             if (entry && entry.error.length > 0) {
                 root.say(qsTr("Not sent: %1 is not on %2 · remove it or attach it again")
                          .arg(entry.local.split("/").pop()).arg(root.uploadMachine))
