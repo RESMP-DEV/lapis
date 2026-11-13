@@ -433,8 +433,8 @@ void Config::apply_defaults() {
     // As in a browser, Command-W closes what is in front (the side terminal's
     // panel, else the focused agent) and the window only when the category has
     // no agent left; Command-Shift-W closes the window. On the Mac a closed
-    // window only hides and lapis keeps running. Command-M minimizes. As in a browser, Command-T
-    // opens an agent (a tab) and Command-N a category (a window). Categories answer to both the
+    // window only hides and lapis keeps running. Command-M minimizes. Command-T
+    // opens an agent and Command-N a category. Categories answer to both the
     // original Command-Option-left/right and the vertical Command-Shift-up/down.
     bindings_ = {
         {QStringLiteral("quit"), {modifier + QStringLiteral("Q")}},

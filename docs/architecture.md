@@ -8,7 +8,7 @@ review, qualify, or constrain the next slice, it does not belong here.
 
 ## Product scope
 
-Lapis is a local macOS workspace for supervising live CLI agents. Correct
+lapis is a local macOS workspace for supervising live CLI agents. Correct
 terminal behavior, stable session identity, explicit attention decisions, and
 durable process ownership come before additional integrations. The supported
 early-access objective is a signed Apple Silicon app that can install, launch
@@ -97,7 +97,7 @@ profile. The research basis is
 evidence only: no CEF archive was fetched or executed for that receipt.
 
 The ladder below is ordered and non-collapsing. Passing one checkpoint does not
-promote the next, and no checkpoint makes Lapis a general-purpose browser.
+promote the next, and no checkpoint makes lapis a general-purpose browser.
 
 | Checkpoint | Bounded slice | Exit evidence |
 | --- | --- | --- |
@@ -105,7 +105,7 @@ promote the next, and no checkpoint makes Lapis a general-purpose browser.
 | W1: headless vertical slice | After R1 and R4 close, add `services/web/` with one service-owned engine tree and isolated per-view request contexts. Register the deterministic bootstrap host-side for new documents, with a heartbeat and explicit degraded state. Expose only `status`, `open`, `navigate`, `snapshot`, `click`, `wait`, and `close` over a private versioned socket; the CLI emits one bounded JSON envelope and meaningful exit codes. Snapshots carry content-derived refs that the service re-resolves at action time; a changed page returns a stale-ref diff. | Real local fixtures, including full navigation and SPA-style route change, pass through the CLI without a GUI. A deliberately broken bootstrap makes injection health explicit; malformed/stale actions never execute. |
 | W2: GUI compositing | Add a `WebSurface` beside the terminal surface. Upload bounded dirty BGRA regions through public Qt scene-graph interfaces, use the same focus/IME ownership policy, and keep previews throttled, non-interactive, and never view-resizing. | Background Qt and native macOS input evidence cover typing, IME, selection, and refusal while the user owns input; terminal latency gates do not regress. |
 | W3: attention and approvals | Register `adapter_id` `web`; classify login/captcha, form submission, download, upload, clipboard, payment, and navigation-risk actions. Decision tokens bind the current view, navigation epoch, target, and arguments. | Risky fixture actions block for an explicit user decision and retire only that request. Page text can request attention but never act or redirect focus. |
-| W4: credential import and isolation | Permit explicit user-initiated import only. Start with a `storageState` interchange file; Chromium-family disk import requires a later reviewed probe under Lapis' final code signing. Cookies and storage enter one in-memory isolated context before first navigation, are never exposed by a verb/event/receipt, and are never copied as a profile directory. | User-consented fixture login passes; fixture credential bytes appear in no CLI output, event, log, or receipt; cross-view isolation and revocation/destruction tests pass. |
+| W4: credential import and isolation | Permit explicit user-initiated import only. Start with a `storageState` interchange file; Chromium-family disk import requires a later reviewed probe under lapis' final code signing. Cookies and storage enter one in-memory isolated context before first navigation, are never exposed by a verb/event/receipt, and are never copied as a profile directory. | User-consented fixture login passes; fixture credential bytes appear in no CLI output, event, log, or receipt; cross-view isolation and revocation/destruction tests pass. |
 | W5: workload and publication | Exercise the assembled package with eight concurrent web views under controlled navigation/output load, then record memory, frame/action latency, and idle cost. Complete dependency notices, inventory/SBOM, and the pin/update policy. | One candidate-scoped receipt reports p50/p95/p99 and recovery on service/GUI restart. A 32-view workload is a later separate scale claim. |
 
 CEF is the only current W0 candidate because the research found its public
@@ -296,7 +296,7 @@ to the installed binary/version and request kind actually exercised.
 
 Only desktop focus policy assigns keyboard ownership. Agent output can request
 attention but cannot redirect input. Typing, held keys, paste, IME composition,
-selection, dragging, and modal work defer automatic focus changes. Lapis never
+selection, dragging, and modal work defer automatic focus changes. lapis never
 splits a paste or composition or steals OS focus while another application is
 active.
 

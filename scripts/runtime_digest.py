@@ -117,13 +117,10 @@ def guesses(runtime, since):
 
 
 def ultratab(runtime, since):
-    composed = Counter(
-        e.get("event") for e in records(runtime, "ultratab_compose.jsonl", since)
-    )
     answers = Counter(
         e.get("how") for e in records(runtime, "ultratab_answers.jsonl", since)
     )
-    return {"composed": dict(composed), "answers": dict(answers)}
+    return {"answers": dict(answers)}
 
 
 def tab(runtime, since):
@@ -204,9 +201,8 @@ def lines(report):
             f" {counts['used']} taken"
             + (f" ({taken:.0%})" if taken is not None else "")
         )
-    composed = u["composed"].get("composed", 0) + u["composed"].get("fallback", 0)
     answered = sum(u["answers"].values())
-    out.append(f"ultra tab: {answered} answers, {composed} cards composed")
+    out.append(f"ultra tab: {answered} answers")
     out.append(
         f"tab: {t['tab_moves']} Tab moves, {t['choices']} choices; focus by "
         + ", ".join(f"{k} {v}" for k, v in t["agent_focus_by"].items())

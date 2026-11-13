@@ -127,9 +127,4 @@ QString harness_program(const QString& id) {
     const auto* harness = find_harness(id);
     return harness ? harnessExecutable(*harness) : QString();
 }
-
-QString harness_label(const QString& id) {
-    const auto* harness = find_harness(id);
-    return harness ? harness->label : id;
-}
 } // namespace lapis::desktop
