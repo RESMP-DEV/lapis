@@ -45,9 +45,6 @@ struct HarnessDescriptor {
 // The installed program of a known CLI, or empty when it is not found on this
 // Mac or the id is unknown.
 [[nodiscard]] QString harness_program(const QString& id);
-// A known CLI's name as people call it ("Claude", "Codex"), or an unknown id
-// itself.
-[[nodiscard]] QString harness_label(const QString& id);
 
 } // namespace lapis::desktop
 

@@ -95,6 +95,17 @@ class DigestTest(unittest.TestCase):
             guesses = runtime_digest.digest(runtime, 24)["guesses"]
             self.assertEqual((guesses["predicted"], guesses["attempts"]), (1, 1))
 
+    def test_ultratab_reports_retired_deck_answers_without_compose_counts(self):
+        with tempfile.TemporaryDirectory() as runtime:
+            Path(runtime, "ultratab_answers.jsonl").write_text(
+                json.dumps({"how": "skipped", "t": stamp(20)}) + "\n"
+            )
+            report = runtime_digest.digest(runtime, 24)
+            self.assertEqual(report["ultratab"], {"answers": {"skipped": 1}})
+            self.assertIn(
+                "ultra tab: 1 answers", "\n".join(runtime_digest.lines(report))
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

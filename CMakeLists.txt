@@ -12,7 +12,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(cmake/ProjectOptions.cmake)
 
-option(LAPIS_BUILD_DESKTOP "Build the live desktop preview and local session service" OFF)
+option(LAPIS_BUILD_DESKTOP "Build the desktop app; the session service is always built" OFF)
 option(LAPIS_PACKAGE "Build the desktop as the downloadable app (see scripts/package_macos.py)" OFF)
 
 include(CTest)
