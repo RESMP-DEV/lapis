@@ -3659,6 +3659,7 @@ ApplicationWindow {
                     required property int index
                     property bool pooled
                     property int poolCount
+                    property alias pulseRunning: unseenPulse.running
                     ListView.onPooled: {
                         pooled = true
                         ++poolCount
@@ -3705,7 +3706,8 @@ ApplicationWindow {
                         border.color: window.textColor
                         opacity: 0.85
                         SequentialAnimation on opacity {
-                            running: unseenCue.visible && window.motionEnabled
+                            id: unseenPulse
+                            running: unseenCue.visible && !agentTab.pooled && window.motionEnabled
                             loops: Animation.Infinite
                             alwaysRunToEnd: false
                             NumberAnimation { from: 0.85; to: 0.2; duration: 900; easing.type: Easing.InOutSine }

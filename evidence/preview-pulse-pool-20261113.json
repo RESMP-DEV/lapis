@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-13T04:56:20Z",
+  "agent": "Codex performance parent",
+  "base_revision": "d07db1246da70743fa51219ed7322cb3af874b9a",
+  "source_revision": "0f3252d7af8cdd9f3716f14b915bc573cffcbef1",
+  "runtime_validation_revision": "0f3252d7af8cdd9f3716f14b915bc573cffcbef1",
+  "source_dirty": false,
+  "scope": "Pause an unseen agent-card pulse while its ListView delegate is pooled and resume it through binding on reuse.",
+  "changed_source_manifest": {
+    "algorithm": "shasum -a 256 of: git diff --binary --full-index d07db1246da70743fa51219ed7322cb3af874b9a..0f3252d7af8cdd9f3716f14b915bc573cffcbef1 -- ':(exclude)evidence/*'",
+    "digest": "e65b862b05618a41dca19e718692855f4e67aa1b4c881c638801736bd891e7e2",
+    "changed_paths": 2
+  },
+  "validation": [
+    {
+      "command": "QT_QPA_PLATFORM=offscreen QT_QUICK_CONTROLS_STYLE=Basic build/desktop/apps/desktop/lapis_ui_preview_tests --background",
+      "result": "passed; the pooled unseen pulse pauses while the cue remains active and resumes when the delegate is unpooled"
+    },
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py check",
+      "result": "passed at source revision 0f3252d7af8cdd9f3716f14b915bc573cffcbef1 with a clean tree",
+      "receipt": "build/reports/dev/receipt.json"
+    },
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py ui-review --json",
+      "result": "passed at source revision 0f3252d7af8cdd9f3716f14b915bc573cffcbef1 with a clean tree",
+      "receipt": "build/reports/ui-review/20261113T045530Z-ghyftwyg/receipt.json"
+    }
+  ],
+  "non_claims": [
+    "No animation-timing or native GPU presentation measurement is claimed; this is lifecycle correctness for pooled delegates.",
+    "The offscreen/software UI run does not exercise native macOS input."
+  ]
+}
