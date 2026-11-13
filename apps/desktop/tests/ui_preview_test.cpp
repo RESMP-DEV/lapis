@@ -7,6 +7,7 @@
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include "terminals.hpp"
+#include "transport/local_protocol.hpp"
 #include "workspace.hpp"
 #include <QAccessible>
 #include <QElapsedTimer>
@@ -2371,6 +2372,45 @@ int run_strip_ui_tests() {
     }
     CHECK(wait_for([&] { return focused_id(workspace) == QStringLiteral("shell"); }, 5000));
     capture("strip");
+
+    // A card pooled by scrolling keeps its shell for reuse but must stop being
+    // a terminal viewer until ListView hands that shell to an on-screen card.
+    auto* pooled_card = item(QStringLiteral("agentTab_agent"));
+    auto* pooled_agent =
+        QQmlProperty::read(pooled_card, QStringLiteral("modelData")).value<Agent*>();
+    CHECK(pooled_agent == workspace.agent(QStringLiteral("agent")));
+    const auto pool_events = [](QQuickItem* parent, auto&& visit) -> int {
+        int count = parent->property("poolCount").toInt();
+        for (auto* child : parent->childItems())
+            count += visit(child, visit);
+        return count;
+    };
+    CHECK(pool_events(strip, pool_events) > 0);
+    CHECK(pooled_card->property("pooled").toBool() == false);
+    const auto pooled_decoded = pooled_agent->decodedScreens();
+    CHECK(pooled_card->setProperty("pooled", true));
+    pump(30);
+    CHECK(!item(QStringLiteral("previewTerminal_agent"))->isVisible());
+    {
+        lapis::session::Terminal source{{4, 2}};
+        source.feed("pooled\n");
+        namespace wire = lapis::session::wire;
+        pooled_agent->offerSnapshot(wire::encode_snapshot(source.snapshot()));
+    }
+    pump(350);
+    CHECK(pooled_agent->decodedScreens() == pooled_decoded);
+    CHECK(pooled_card->setProperty("pooled", false));
+    pump(30);
+    auto* reused_card = item(QStringLiteral("agentTab_agent"));
+    CHECK(reused_card == pooled_card && reused_card->property("pooled").toBool() == false);
+    CHECK(item(QStringLiteral("previewTerminal_agent"))->isVisible());
+    {
+        lapis::session::Terminal source{{4, 2}};
+        source.feed("reused\n");
+        namespace wire = lapis::session::wire;
+        pooled_agent->offerSnapshot(wire::encode_snapshot(source.snapshot()));
+    }
+    CHECK(wait_for([&] { return pooled_agent->decodedScreens() > pooled_decoded; }, 5000));
 
     // A finished turn pulses an unselected card; the selected agent never does.
     CHECK(workspace.selectAgent(QStringLiteral("renderer")));

@@ -458,9 +458,9 @@ std::unique_ptr<lapis::desktop::InteractionRecorder> recorder(Workspace& workspa
 #endif
 
 QJsonObject measure(const Options& options, const QTemporaryDir& home) {
-    // Match the product: registry replacement churn stays outside the watched
-    // config directory instead of waking lapis.json's watcher on every switch.
-    QDir().mkpath(home.filePath(QStringLiteral("runtime")));
+    // Match the product: registry replacement churn stays below the directory
+    // watched for lapis.json, so its parent-directory watcher stays quiet.
+    require(QDir().mkpath(home.filePath(QStringLiteral("runtime"))), "create runtime directory");
     lapis::desktop::WorkspaceOptions workspace_options;
     workspace_options.storagePath = home.filePath(QStringLiteral("runtime/workspace.json"));
     Workspace workspace(lapis::desktop::WorkspaceMode::live, workspace_options);
@@ -469,7 +469,7 @@ QJsonObject measure(const Options& options, const QTemporaryDir& home) {
     config.setSourcePathForTesting(home.filePath(QStringLiteral("lapis.json")));
     workspace.setLaunchSize(QSize(160, 48));
     const auto folder = home.filePath(QStringLiteral("work"));
-    QDir().mkpath(folder);
+    require(QDir().mkpath(folder), "create work directory");
     start_agents(workspace, options, folder);
     const auto close_agents = qScopeGuard([&workspace] {
         for (const auto& value : workspace.agents())
@@ -526,9 +526,10 @@ int run(int argc, char** argv) {
     require(home.isValid(), "private LAPIS_HOME");
     const auto owner_only = QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner;
     QFile::setPermissions(home.path(), owner_only);
-    QDir().mkpath(home.filePath(QStringLiteral("runtime")));
+    require(QDir().mkpath(home.filePath(QStringLiteral("runtime"))),
+            "create private runtime directory");
     QFile::setPermissions(home.filePath(QStringLiteral("runtime")), owner_only);
-    QDir().mkpath(home.filePath(QStringLiteral("bin")));
+    require(QDir().mkpath(home.filePath(QStringLiteral("bin"))), "create private bin directory");
     write_agent(home.filePath(QStringLiteral("bin/opencode")));
     qputenv("LAPIS_HOME", home.path().toUtf8());
     qputenv("PATH", home.filePath(QStringLiteral("bin")).toUtf8() + ':' + qgetenv("PATH"));

@@ -3550,8 +3550,8 @@ ApplicationWindow {
                 // Hidden cards release their surfaces; off-screen ones are not
                 // kept, so only what is visible renders.
                 model: visible ? workspace.categoryAgents : []
-                // A category model reset repurposes visible cards instead of
-                // rebuilding every preview terminal while off-screen ones stay pooled.
+                // Cards pooled by scrolling can be rebound after a model reset;
+                // the reset itself still releases the visible delegates.
                 reuseItems: true
                 cacheBuffer: 0
                 highlight: null
@@ -3657,6 +3657,13 @@ ApplicationWindow {
                     id: agentTab
                     required property var modelData
                     required property int index
+                    property bool pooled
+                    property int poolCount
+                    ListView.onPooled: {
+                        pooled = true
+                        ++poolCount
+                    }
+                    ListView.onReused: pooled = false
                     readonly property bool marked: workspace.focusedAgent !== null
                                                    && workspace.focusedAgent.agentId === modelData.agentId
                     readonly property bool picked: window.isAgentSelected(modelData.agentId)
@@ -3759,6 +3766,7 @@ ApplicationWindow {
                         y: agentHeader.y + agentHeader.height + 4
                         width: parent.width - 12
                         height: parent.height - y - 6
+                        visible: !agentTab.pooled
                         document: agentTab.modelData
                         fontFamily: config.terminalFontFamily
                         fontPixelSize: window.terminalFontSize
