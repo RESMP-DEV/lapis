@@ -548,6 +548,17 @@ def acceptance(events):
                 conversation=e.get("conversation", ""),
                 turn=e.get("turn", 0),
                 candidates=candidates,
+                # Who answered, and which pool entry was drawn first (the
+                # unbiased comparison: a draw's guess counts for that draw
+                # even when a fallback answered it).
+                answered="{} | {} | {}".format(
+                    e.get("provider") or "cli",
+                    e.get("model") or "?",
+                    e.get("effort") or "default",
+                ),
+                drawn=str((e.get("drawn") or [None])[0] or ""),
+                cost=e.get("cost") if isinstance(e.get("cost"), (int, float)) else None,
+                ms=e.get("ms") if isinstance(e.get("ms"), int) else None,
             )
         elif kind == "seen":
             offer["seen"] = True
@@ -573,6 +584,7 @@ def acceptance(events):
                 "invalid helper JSON",
                 "helper unavailable",
                 "helper failed",
+                "no model CLI on this Mac",
             }
             raw = e.get("error")
             reason = raw if isinstance(raw, str) and raw in known else "helper failed"
@@ -690,6 +702,28 @@ def acceptance(events):
                 [o for o in part if o["category"] == "correct"], part
             ),
         }
+    # Who answered (provider | model | effort), and the pool's first draw.
+    report["by_answerer"] = by_group(offers, "answered", rate)
+    report["by_first_draw"] = by_group(
+        {k: o for k, o in offers.items() if o.get("drawn")}, "drawn", rate
+    )
+    fallbacks = defaultdict(int)
+    excluded = defaultdict(int)
+    for e in events:
+        if e.get("event") in ("predicted", "failed"):
+            for failure in e.get("fallbacks") or []:
+                if isinstance(failure, dict):
+                    fallbacks[
+                        "{}: {}".format(failure.get("provider"), failure.get("kind"))
+                    ] += 1
+        if e.get("event") in ("predicted", "failed", "skipped"):
+            for left in e.get("excluded") or []:
+                if isinstance(left, dict):
+                    excluded[
+                        "{}: {}".format(left.get("provider"), left.get("why"))
+                    ] += 1
+    report["fallbacks"] = dict(sorted(fallbacks.items(), key=lambda kv: -kv[1]))
+    report["excluded"] = dict(sorted(excluded.items(), key=lambda kv: -kv[1]))
     # A return guesses again: was the fresh guess made, and then used? An
     # older record's `keep` return kept its old guess and is left out.
     reguesses = sorted(
@@ -738,6 +772,29 @@ def acceptance(events):
             }
         )
     return offers, report
+
+
+def by_group(offers, field, rate):
+    """Predicted offers split by `field`: seen, used, acceptance, cost, time."""
+    groups = defaultdict(list)
+    for o in offers.values():
+        if "shown" in o:
+            groups[o.get(field) or "none"].append(o)
+    split = {}
+    for name, part in sorted(groups.items()):
+        part_seen = [o for o in part if o["shown"] and o["seen"]]
+        part_used = [o for o in part_seen if o["used"]]
+        costs = [o["cost"] for o in part if o.get("cost") is not None]
+        times = sorted(o["ms"] for o in part if o.get("ms") is not None)
+        split[name] = {
+            "predicted": len(part),
+            "seen": len(part_seen),
+            "used": len(part_used),
+            "acceptance": rate(part_used, part_seen),
+            "cost": round(sum(costs), 4) if costs else None,
+            "median_ms": times[len(times) // 2] if times else None,
+        }
+    return split
 
 
 def log_files(path):

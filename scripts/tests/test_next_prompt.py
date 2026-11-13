@@ -2319,6 +2319,76 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(report["by_prompt_arm"]["base"]["top_guess_words_median"], 11)
         self.assertEqual(report["by_prompt_arm"]["base"]["acceptance"], 0.0)
 
+    def test_guesses_are_split_by_who_answered_and_the_first_draw(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        def predicted(key, provider, model, effort, drawn, **extra):
+            return dict(
+                event="predicted",
+                offer=key,
+                shown=True,
+                provider=provider,
+                model=model,
+                effort=effort,
+                drawn=drawn,
+                candidates=[{"text": "go", "p": 0.5}],
+                **extra,
+            )
+
+        events = [
+            predicted(
+                "a:1",
+                "fable",
+                "claude-fable-5-2",
+                "high",
+                ["fable", "astra"],
+                cost=0.04,
+                ms=21000,
+            ),
+            {"event": "seen", "offer": "a:1"},
+            {"event": "used", "offer": "a:1"},
+            # Fable was drawn first but hit its limit; Astra answered.
+            predicted(
+                "a:2",
+                "astra",
+                "gpt-6-astra",
+                "high",
+                ["fable", "astra"],
+                fallbacks=[{"provider": "fable", "kind": "limit"}],
+                ms=30000,
+            ),
+            {"event": "seen", "offer": "a:2"},
+            predicted(
+                "a:3",
+                "astra",
+                "gpt-6-astra",
+                "high",
+                ["astra", "carbon"],
+                excluded=[{"provider": "fable", "why": "cooling"}],
+            ),
+            # A record from before the pool: the single CLI call.
+            dict(
+                event="predicted",
+                offer="a:4",
+                shown=True,
+                model="claude-opus-5-5",
+                candidates=[{"text": "go", "p": 0.5}],
+            ),
+        ]
+        _, report = next_prompt_eval.acceptance(events)
+        fable = report["by_answerer"]["fable | claude-fable-5-2 | high"]
+        self.assertEqual((fable["seen"], fable["used"], fable["cost"]), (1, 1, 0.04))
+        self.assertEqual(
+            report["by_answerer"]["astra | gpt-6-astra | high"]["predicted"], 2
+        )
+        self.assertIn("cli | claude-opus-5-5 | default", report["by_answerer"])
+        self.assertEqual(report["by_first_draw"]["fable"]["predicted"], 2)
+        self.assertEqual(report["by_first_draw"]["fable"]["acceptance"], 0.5)
+        self.assertEqual(report["by_first_draw"]["astra"]["predicted"], 1)
+        self.assertEqual(report["fallbacks"], {"fable: limit": 1})
+        self.assertEqual(report["excluded"], {"fable: cooling": 1})
+
     def test_context_arms_and_returns_are_reported_from_old_and_new_records(self):
         sys.path.insert(0, str(ROOT / "scripts"))
         import next_prompt_eval
