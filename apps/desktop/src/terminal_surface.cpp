@@ -1702,7 +1702,22 @@ RowText row_text(const session::TerminalSnapshot& snapshot, int row, bool typed 
 bool printable_url_character(char32_t value) {
     return QChar::isPrint(value) && QChar::category(value) != QChar::Other_Format;
 }
+
+// A composer message holding an @ mention (an attached file, or one typed).
+bool has_mention(const QString& text) {
+    static const QRegularExpression mention(QStringLiteral(R"((?:^|\s)@\S)"));
+    return mention.match(text).hasMatch();
+}
 } // namespace
+
+QString TerminalSurface::composerWireText(const QString& text) {
+    // Claude Code 2.1.323 opens its file completion for a mention at the
+    // cursor, and that menu takes the next Return; a space after the
+    // mention leaves it closed.
+    static const QRegularExpression last_mention(QStringLiteral(R"((?:^|\s)@\S+$)"));
+    return last_mention.match(text).hasMatch() ? text + QLatin1Char(' ') : text;
+}
+bool TerminalSurface::composerReturnsLater(const QString& text) { return has_mention(text); }
 
 void TerminalSurface::setSuggestion(const QString& suggestion) {
     if (suggestion_ == suggestion)
@@ -1993,7 +2008,11 @@ bool TerminalSurface::composerPaste(const QString& text, bool submit) {
     if (!document_ || text.trimmed().isEmpty() || !document_->live() || !document_->reachable() ||
         document_->attentionPending() || pasting_ || window() == nullptr || !window()->isActive())
         return false;
-    const QByteArray bytes = text.toUtf8();
+    const QByteArray bytes = composerWireText(text).toUtf8();
+    // Claude Code 2.1.323 drops a Return that arrives within a few tens of
+    // milliseconds of a paste naming a file, so a message with a mention
+    // goes as the paste, then its own Return once the paste has settled.
+    const bool return_later = submit && composerReturnsLater(text);
     if (bytes.size() > session::wire::max_paste_bytes) {
         emit pasteRefused(
             tr("This message is %1; lapis sends up to %2 at a time.")
@@ -2006,15 +2025,39 @@ bool TerminalSurface::composerPaste(const QString& text, bool submit) {
     }
     clearSelection();
     returnProgramToBottom();
-    const auto request = document_->requestPaste(bytes, submit);
+    const auto request = document_->requestPaste(bytes, submit && !return_later);
     interaction::paste(this, text, request != 0, "composer");
     if (request == 0) {
         emit pasteRefused(document_->activity());
         return false;
     }
+    if (return_later)
+        returnAfterPaste(request);
     typed_since_arrival_ = false;
     filled_.reset();
     return true;
+}
+
+void TerminalSurface::returnAfterPaste(quint64 request) {
+    // The Return belongs to the agent the paste went to, whichever shows by
+    // then, and follows only a paste the service queued. It is skipped when a
+    // request has come up meanwhile, so it never answers a dialog; the
+    // composer's check then finds the text still in the box.
+    const QPointer<Agent> owner = document_;
+    const auto connection = std::make_shared<QMetaObject::Connection>();
+    *connection = connect(
+        owner.data(), &Agent::pasteResult, owner.data(),
+        [owner, request, connection](quint64 id, bool queued, bool, const QString&) {
+            if (id != request)
+                return;
+            QObject::disconnect(*connection);
+            if (!queued || !owner)
+                return;
+            QTimer::singleShot(composer_return_ms, owner.data(), [owner] {
+                if (owner && owner->live() && owner->reachable() && !owner->attentionPending())
+                    static_cast<void>(owner->sendKey(session::TerminalKey::enter, {}));
+            });
+        });
 }
 
 bool TerminalSurface::composerKeysAccepted() const {

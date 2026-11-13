@@ -139,7 +139,19 @@ class TerminalSurface : public QQuickItem {
     // Sends text and Return to the agent from a composer that holds the
     // keyboard instead of this surface (the visual view's bar). Refused while
     // the agent waits on a request, so typed text never answers a dialog.
+    // Text holding an @ mention goes as the paste and then, composer_return_ms
+    // after the service queued it, its own Return (composerReturnsLater);
+    // other text goes with its Return in one write.
     Q_INVOKABLE bool submitText(const QString& text);
+    // What submitText and typeText paste for `text`: a space after a mention
+    // that ends it, so the CLI's file completion does not open and take the
+    // Return (Claude Code 2.1.323).
+    [[nodiscard]] static QString composerWireText(const QString& text);
+    // Whether submitText sends `text`'s Return separately, after the paste.
+    [[nodiscard]] static bool composerReturnsLater(const QString& text);
+    // Claude Code 2.1.323 took a Return 120 ms after such a paste and lost
+    // one 30 ms after it (under tmux); this leaves room for a loaded machine.
+    static constexpr int composer_return_ms = 350;
     // The same paste with no Return after it: the composer puts text in the
     // agent's input box for a key that sends it differently (agy's Alt-M).
     Q_INVOKABLE bool typeText(const QString& text);
@@ -370,6 +382,8 @@ class TerminalSurface : public QQuickItem {
     quint64 pasteTextRequest(const QString& text, std::optional<bool> submit);
     // submitText and typeText: the composer's paste, with or without Return.
     bool composerPaste(const QString& text, bool submit);
+    // The Return for paste `request`, sent once the service queued it.
+    void returnAfterPaste(quint64 request);
     // Whether a key the composer sends would reach the agent now.
     [[nodiscard]] bool composerKeysAccepted() const;
     void reportSeen();
