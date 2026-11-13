@@ -978,6 +978,186 @@ void choices_show_at_once() {
             "Claude Code: its record of the change is shown");
 }
 
+// A new session's bar names what its agent runs before the file says:
+// what it was started with, else its start screen, else the CLI's default;
+// an alias keeps its name when the file reports its API id; a pick made
+// before the file exists shows pending and carries into the file; each
+// agent shows its own. Fixture screens are written in the CLIs' shapes, not
+// captured from them.
+void started_model_shows_first() {
+    using lapis::desktop::transcript::Format;
+    using lapis::desktop::transcript::same_model;
+    using lapis::desktop::transcript::screen_model;
+
+    // Start screens.
+    const auto claude_screen = screen_model(
+        {QStringLiteral("╭─── Claude Code v2.1.319 ───────────────────────╮"),
+         QStringLiteral("│                 Welcome back!                  │"),
+         QStringLiteral("│   Opus 5.5 (1M context) · Claude Max           │"),
+         QStringLiteral("│   ~/work/project                               │")},
+        Format::claude);
+    require(claude_screen.model == QStringLiteral("claude-opus-5-5[1m]") &&
+                claude_screen.effort.isEmpty(),
+            "Claude Code's welcome box names its model");
+    require(screen_model({QStringLiteral("│ Sonnet 5.5 · API Usage Billing │")}, Format::claude)
+                    .model == QStringLiteral("claude-sonnet-5-5"),
+            "Claude Code on an API key");
+    require(screen_model({QStringLiteral("  Read 3 files · 2 edits")}, Format::claude)
+                .model.isEmpty(),
+            "a line with a dot that names no model is not read");
+    const auto codex_screen = screen_model(
+        {QStringLiteral("╭───────────────────────────────────────────────╮"),
+         QStringLiteral("│ >_ OpenAI Codex (v0.157.1)                    │"),
+         QStringLiteral("│                                               │"),
+         QStringLiteral("│ model:     gpt-6-codex high   /model to change │"),
+         QStringLiteral("│ directory: ~/work/project                     │")},
+        Format::codex);
+    require(codex_screen.model == QStringLiteral("gpt-6-codex") &&
+                codex_screen.effort == QStringLiteral("high"),
+            "Codex's header names its model and level");
+    require(screen_model({QStringLiteral("│ model: gpt-6-codex │")}, Format::codex)
+                .effort.isEmpty(),
+            "a header without a level");
+    require(screen_model({QStringLiteral("model: gpt-6-codex")}, Format::antigravity)
+                .model.isEmpty(),
+            "agy's screen is not read for it");
+
+    // The same model by another name.
+    require(same_model(QStringLiteral("opus"), QStringLiteral("claude-opus-5-5"),
+                       QStringLiteral("claude-opus-5-5")) &&
+                same_model(QStringLiteral("claude-fable-5-2[1m]"), {},
+                           QStringLiteral("claude-fable-5-2")) &&
+                same_model(QStringLiteral("opus[1m]"), QStringLiteral("claude-opus-5-5[1m]"),
+                           QStringLiteral("claude-opus-5-5")) &&
+                !same_model(QStringLiteral("claude-fable-5-2"), {},
+                            QStringLiteral("claude-fable-5-2[1m]")) &&
+                !same_model(QStringLiteral("opus"), QStringLiteral("claude-opus-5-5"),
+                            QStringLiteral("claude-sonnet-5-5")),
+            "an alias, a context suffix, and a different model");
+
+    QTemporaryDir home;
+    const auto write = [](const QString& path, const QByteArray& text, bool append = false) {
+        QFile file(path);
+        if (file.open(append ? QIODevice::Append : QIODevice::WriteOnly))
+            file.write(text);
+    };
+    const auto shown = [](const QString& agent, const QString& harness, const QString& path,
+                          const QVariantMap& started) {
+        return QVariantMap{{QStringLiteral("agent"), agent},
+                           {QStringLiteral("harness"), harness},
+                           {QStringLiteral("path"), path},
+                           {QStringLiteral("started"), started}};
+    };
+    const auto started = [](const char* model, const char* effort, const char* resolved,
+                            const char* from) {
+        return QVariantMap{{QStringLiteral("model"), QString::fromUtf8(model)},
+                           {QStringLiteral("effort"), QString::fromUtf8(effort)},
+                           {QStringLiteral("resolved"), QString::fromUtf8(resolved)},
+                           {QStringLiteral("from"), QString::fromUtf8(from)}};
+    };
+
+    // Started with an alias and a level: shown before any file, through a
+    // file holding only the prompt, and unchanged when the reply reports the
+    // alias's API id.
+    TranscriptModel model;
+    int changes = 0;
+    QObject::connect(&model, &TranscriptModel::statusChanged, [&changes] { ++changes; });
+    model.setShown(shown(QStringLiteral("a"), QStringLiteral("claude"), {},
+                         started("opus", "xhigh", "claude-opus-5-5", "launch")));
+    require(model.shownModel() == QStringLiteral("opus") &&
+                model.shownEffort() == QStringLiteral("xhigh") && !model.choicePending(),
+            "a new session shows the model and level it was started with, not pending");
+    const auto file = home.filePath(QStringLiteral("a.jsonl"));
+    write(file, R"({"type":"user","uuid":"u1","message":{"content":"hi"}})"
+                "\n");
+    model.setShown(shown(QStringLiteral("a"), QStringLiteral("claude"), file,
+                         started("opus", "xhigh", "claude-opus-5-5", "launch")));
+    model.loadNow();
+    require(model.model().isEmpty() && model.shownModel() == QStringLiteral("opus") &&
+                model.shownEffort() == QStringLiteral("xhigh"),
+            "through the first turn, before a reply");
+    write(
+        file,
+        R"({"type":"assistant","uuid":"a1","effort":"xhigh","message":{"model":"claude-opus-5-5","content":[{"type":"text","text":"hello"}]}})"
+        "\n",
+        true);
+    model.readMore();
+    require(model.model() == QStringLiteral("claude-opus-5-5") &&
+                model.shownModel() == QStringLiteral("opus") &&
+                model.shownEffort() == QStringLiteral("xhigh"),
+            "the reply reports the same model by its API id: the name stays");
+
+    // Another agent shows its own, never the previous one's.
+    model.setShown(shown(QStringLiteral("b"), QStringLiteral("codex"), {}, {}));
+    require(model.shownModel().isEmpty() && model.shownEffort().isEmpty(),
+            "an agent with nothing known shows nothing of the one before");
+    // Started without a model: the default lapis found, then what its start
+    // screen says (no further reads once known), never pending.
+    model.setShown(shown(QStringLiteral("b"), QStringLiteral("codex"), {},
+                         started("gpt-6-astra", "", "", "list")));
+    require(model.shownModel() == QStringLiteral("gpt-6-astra") && !model.choicePending(),
+            "the CLI's listed default before its screen says");
+    changes = 0;
+    model.readStartScreen({QStringLiteral("│ model:     gpt-6-codex high   /model to change │")});
+    require(changes == 1 && model.shownModel() == QStringLiteral("gpt-6-codex") &&
+                model.shownEffort() == QStringLiteral("high"),
+            "its start screen beats the listed default");
+    model.readStartScreen({QStringLiteral("│ model:     gpt-6-sol low   /model to change │")});
+    require(changes == 1 && model.shownModel() == QStringLiteral("gpt-6-codex"),
+            "read once");
+
+    // A pick before the file exists: shown pending, kept by agent, carried
+    // into the file when it shows, where the reply settles it.
+    model.setShown(shown(QStringLiteral("c"), QStringLiteral("claude"), {},
+                         started("claude-fable-5-2[1m]", "high", "", "launch")));
+    require(model.shownModel() == QStringLiteral("claude-fable-5-2[1m]"), "a third agent");
+    model.choose(QStringLiteral("sonnet"), QStringLiteral("low"), {}, {});
+    require(model.shownModel() == QStringLiteral("sonnet") &&
+                model.shownEffort() == QStringLiteral("low") && model.choicePending(),
+            "a pick before any file shows at once, pending");
+    model.setShown(shown(QStringLiteral("a"), QStringLiteral("claude"), file,
+                         started("opus", "xhigh", "claude-opus-5-5", "launch")));
+    require(model.shownModel() == QStringLiteral("opus") && !model.choicePending(),
+            "the pick stays with its agent");
+    model.setShown(shown(QStringLiteral("c"), QStringLiteral("claude"), {},
+                         started("claude-fable-5-2[1m]", "high", "", "launch")));
+    require(model.shownModel() == QStringLiteral("sonnet") && model.choicePending(),
+            "and is there when it shows again");
+    const auto third = home.filePath(QStringLiteral("c.jsonl"));
+    write(third, R"({"type":"user","uuid":"u1","message":{"content":"go"}})"
+                 "\n");
+    model.setShown(shown(QStringLiteral("c"), QStringLiteral("claude"), third,
+                         started("claude-fable-5-2[1m]", "high", "", "launch")));
+    model.loadNow();
+    require(model.shownModel() == QStringLiteral("sonnet") &&
+                model.shownEffort() == QStringLiteral("low") && model.choicePending(),
+            "the pick carries into the file once it shows");
+    write(
+        third,
+        R"({"type":"assistant","uuid":"a1","effort":"low","message":{"model":"claude-sonnet-5-5","content":[{"type":"text","text":"ok"}]}})"
+        "\n",
+        true);
+    model.readMore();
+    require(model.shownModel() == QStringLiteral("claude-sonnet-5-5") &&
+                model.shownEffort() == QStringLiteral("low") && !model.choicePending(),
+            "the file's report wins once it comes");
+
+    // A file reporting another model than it was started with wins.
+    const auto fourth = home.filePath(QStringLiteral("d.jsonl"));
+    write(
+        fourth,
+        R"({"type":"assistant","uuid":"a1","message":{"model":"claude-haiku-5-0","content":[{"type":"text","text":"ok"}]}})"
+        "\n");
+    model.setShown(shown(QStringLiteral("d"), QStringLiteral("claude"), fourth,
+                         started("opus", "xhigh", "claude-opus-5-5", "launch")));
+    model.loadNow();
+    require(model.shownModel() == QStringLiteral("claude-haiku-5-0") &&
+                model.shownEffort().isEmpty(),
+            "a different reported model wins, without the other model's level");
+    model.setPath({});
+    require(model.shownModel().isEmpty(), "a path set directly names no agent");
+}
+
 // What the bar sent waits until the CLI records it, matched across the
 // CLI's own rewriting (spaces, @path mentions), in order.
 void sent_prompts_are_matched() {
@@ -2520,6 +2700,7 @@ int main(int argc, char** argv) {
     merged_records_take_every_prompt();
     queue_modes_follow_settings();
     choices_show_at_once();
+    started_model_shows_first();
     sent_prompts_are_matched();
     queued_prompts_show();
     several_queued_prompts();

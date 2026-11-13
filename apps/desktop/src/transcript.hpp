@@ -369,6 +369,23 @@ struct ScreenChoice {
 // The model agy saves as its default (settings.json `model`, "Gemini 4
 // Argon (Medium)"), which its /model <name> also writes, or empty.
 [[nodiscard]] QString antigravity_model_setting(const QString& settings_path);
+// The model (and effort) a CLI's start screen names, for an agent lapis
+// started without a model, or empty when no line says it:
+//   Claude Code  its welcome box's "Opus 5.5 (1M context) · Claude Max"
+//                (a model name, then " · " and a plan or "API ..."), as the
+//                API id ("claude-opus-5-5[1m]")
+//   Codex        its header's "model: gpt-6-codex high  /model to change"
+// Written from the CLIs' layouts as they were known, not checked against
+// every version: a line that does not fit is not read, and nothing is
+// guessed. agy's start screen names no model; its settings do.
+[[nodiscard]] Choice screen_model(const QStringList& screen, Format format);
+// Whether `reported` (what a conversation file says) is the model `named`
+// (an alias or id lapis started the agent with, `resolved` the API id the
+// CLI's list gives for it): the same id, the alias's API id, or either
+// without a context suffix ("claude-opus-5-5" for "opus[1m]") when the
+// report carries none. Then the name it was started with keeps showing.
+[[nodiscard]] bool same_model(const QString& named, const QString& resolved,
+                              const QString& reported);
 
 // The CLIs whose saved conversations lapis reads, each with its own reader.
 enum class Format { claude, codex, antigravity };
@@ -697,7 +714,9 @@ class TranscriptModel final : public QAbstractListModel {
     // With a path, that file, as `path`. With none the agent's CLI has saved
     // nothing yet: an empty thread read as its CLI's format, whose prompts
     // sent (noteSent) wait per agent and carry over into the file once it
-    // shows, retired there as the CLI records them.
+    // shows, retired there as the CLI records them. An optional `started`
+    // ({model, effort, resolved, from}, Workspace::agentModel) is what the
+    // agent runs until its file reports it.
     Q_PROPERTY(QVariantMap shown READ shown WRITE setShown NOTIFY pathChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
@@ -706,7 +725,10 @@ class TranscriptModel final : public QAbstractListModel {
     Q_PROPERTY(QString model READ model NOTIFY statusChanged)
     Q_PROPERTY(QString effort READ effort NOTIFY statusChanged)
     // What the bar shows: a model or effort the person just chose (choose)
-    // until the agent's records report a change, else what they reported.
+    // until the agent's records report a change, else what they reported;
+    // before they report anything, what the agent was started with or its
+    // CLI's default (shown's `started`, or its start screen). A report of
+    // the same model by its API id keeps the name it was started with.
     // choicePending while nothing has confirmed the choice yet;
     // choiceRefusal the line the CLI refused the last choice with.
     Q_PROPERTY(QString shownModel READ shownModel NOTIFY statusChanged)
@@ -911,7 +933,8 @@ class TranscriptModel final : public QAbstractListModel {
     // and/or `effort` (empty: unchanged) at once, pending, with `label` the
     // CLI's own name for the choice ("Gemini 4 Hydrogen (High)"). `screen`
     // is the terminal now, so what it already says is not taken as the
-    // answer. Kept per conversation file.
+    // answer. Kept per conversation file; before the agent's CLI saved one,
+    // per agent, carried into the file when it shows.
     Q_INVOKABLE void choose(const QString& model, const QString& effort, const QString& label,
                             const QStringList& screen);
     // Reads the CLI's answer to the last choice (screen_choices; for agy its
@@ -919,8 +942,17 @@ class TranscriptModel final : public QAbstractListModel {
     // refusal goes back to the reported model or effort and sets
     // choiceRefusal. The view calls it while choicePending.
     Q_INVOKABLE void watchChoice(const QStringList& screen);
+    // A start screen of the shown agent's CLI (screen_model), read while it
+    // has no conversation file: when lapis started it without a model, the
+    // model it names is kept for that agent and shown until the file
+    // reports one. Cheap once known: later screens are not read.
+    Q_INVOKABLE void readStartScreen(const QStringList& screen);
     // agy's settings.json (tests point it elsewhere); empty: agy's own home.
     void setAntigravitySettings(const QString& path) { agy_settings_ = path; }
+    // agy's saved default model (antigravity_model_setting), read now.
+    [[nodiscard]] QString antigravityModelSetting() const {
+        return transcript::antigravity_model_setting(agySettingsPath());
+    }
     // Reads agy's queued-message setting again; see queueMode.
     Q_INVOKABLE void refreshQueueMode();
     [[nodiscard]] const QString& queueMode() const { return queue_mode_; }
@@ -1131,9 +1163,24 @@ class TranscriptModel final : public QAbstractListModel {
         QHash<QString, int> seen; // screen_choices lines already showing
         QString setting;          // agy's saved default at the choice
     };
+    // By file; one made before the agent's CLI saved a file is kept by
+    // agent (choiceKey) and moves to the file when it shows.
     QHash<QString, Chosen> chosen_;
+    [[nodiscard]] QString choiceKey() const;
     QString agy_settings_;
     [[nodiscard]] const Chosen* chosen() const;
+    // What the shown agent runs before its file reports it (setShown's
+    // `started`): {model, effort, resolved, from}. `from` is "launch" (its
+    // launch arguments), "settings" or "list" (its CLI's default), or empty.
+    struct Started {
+        QString model, effort, resolved, from;
+        bool operator==(const Started&) const = default;
+    };
+    Started started_;
+    // The model a start screen named, by agent (readStartScreen).
+    QHash<QString, transcript::Choice> screen_models_;
+    // started_, with a model the screen named in place of a CLI default.
+    [[nodiscard]] Started known() const;
     [[nodiscard]] QString agySettingsPath() const;
     transcript::Layout layout_;
     // Conversations read recently stay parsed, so switching back to an agent

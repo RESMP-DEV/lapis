@@ -1269,6 +1269,43 @@ std::vector<ScreenChoice> screen_choices(const QStringList& screen, Format forma
     return found;
 }
 
+Choice screen_model(const QStringList& screen, Format format) {
+    // Box edges and the CLIs' marks before the text.
+    static const QRegularExpression lead(QStringLiteral(R"(^[^\p{L}]*)"));
+    static const QRegularExpression trail(QStringLiteral(R"([\s│|╮╯]*$)"));
+    static const QRegularExpression claude_line(QStringLiteral(
+        R"(^((?:[A-Z][a-z]+) \d+(?:\.\d+)?(?: \(1M context\))?) · (?:Claude|API)\b)"));
+    static const QRegularExpression codex_line(QStringLiteral(
+        R"(^model:\s+([A-Za-z0-9][A-Za-z0-9._:/-]*)(?:\s+(minimal|low|medium|high|xhigh|max))?(?:\s|$))"));
+    for (const auto& row : screen) {
+        const auto text = QString(row).remove(lead).remove(trail);
+        if (text.isEmpty())
+            continue;
+        if (format == Format::claude) {
+            if (const auto match = claude_line.match(text); match.hasMatch())
+                if (const auto id = model_id(match.captured(1)); !id.isEmpty())
+                    return {.model = id, .effort = {}};
+        } else if (format == Format::codex) {
+            if (const auto match = codex_line.match(text); match.hasMatch())
+                return {.model = match.captured(1), .effort = match.captured(2)};
+        }
+    }
+    return {};
+}
+
+bool same_model(const QString& named, const QString& resolved, const QString& reported) {
+    if (named.isEmpty() || reported.isEmpty())
+        return false;
+    if (reported == named || (!resolved.isEmpty() && reported == resolved))
+        return true;
+    // "claude-opus-5-5[1m]" is "claude-opus-5-5" with its context suffix.
+    static const QRegularExpression suffix(QStringLiteral(R"(\[[^\[\]]*\]$)"));
+    if (suffix.match(reported).hasMatch())
+        return false;
+    const auto bare = [](QString id) { return id.remove(suffix); };
+    return bare(named) == reported || (!resolved.isEmpty() && bare(resolved) == reported);
+}
+
 QString antigravity_model_setting(const QString& settings_path) {
     QFile file(settings_path);
     constexpr qint64 most_bytes = qint64{1} << 20; // as antigravity_sends_immediately
@@ -3648,22 +3685,61 @@ QString TranscriptModel::agySettingsPath() const {
 // A choice stands while the records report what they did when it was made;
 // once they report something else (the next answer, Claude Code's "Set
 // model to" record), the records are shown again.
+QString TranscriptModel::choiceKey() const {
+    if (!path_.isEmpty() || shown_agent_.isEmpty())
+        return path_;
+    return QStringLiteral("agent:") + shown_agent_;
+}
+
 const TranscriptModel::Chosen* TranscriptModel::chosen() const {
-    const auto found = chosen_.constFind(path_);
+    const auto key = choiceKey();
+    if (key.isEmpty())
+        return nullptr;
+    const auto found = chosen_.constFind(key);
     return found == chosen_.cend() ? nullptr : &found.value();
+}
+
+TranscriptModel::Started TranscriptModel::known() const {
+    auto started = started_;
+    if (started.from == QLatin1String("launch") || shown_agent_.isEmpty())
+        return started;
+    // What the CLI's own start screen said beats a default lapis looked up.
+    const auto screen = screen_models_.constFind(shown_agent_);
+    if (screen == screen_models_.cend() || screen->model.isEmpty())
+        return started;
+    if (screen->model != started.model)
+        started.resolved.clear();
+    started.model = screen->model;
+    if (!screen->effort.isEmpty() || started.effort.isEmpty())
+        started.effort = screen->effort;
+    started.from = QStringLiteral("screen");
+    return started;
 }
 
 QString TranscriptModel::shownModel() const {
     const auto* choice = chosen();
-    return choice && !choice->model.isEmpty() && choice->reported_model == model() ? choice->model
-                                                                                   : model();
+    if (choice && !choice->model.isEmpty() && choice->reported_model == model())
+        return choice->model;
+    // Before the records report a model, what it was started with; after,
+    // that name while they report the same model by its API id, so the
+    // label does not change for the same model.
+    const auto started = known();
+    if (model().isEmpty() || transcript::same_model(started.model, started.resolved, model()))
+        return started.model.isEmpty() ? model() : started.model;
+    return model();
 }
 
 QString TranscriptModel::shownEffort() const {
     const auto* choice = chosen();
-    return choice && !choice->effort.isEmpty() && choice->reported_effort == effort()
-               ? choice->effort
-               : effort();
+    if (choice && !choice->effort.isEmpty() && choice->reported_effort == effort())
+        return choice->effort;
+    if (!effort().isEmpty())
+        return effort();
+    // The level it was started with, while it still runs that model.
+    const auto started = known();
+    return model().isEmpty() || transcript::same_model(started.model, started.resolved, model())
+               ? started.effort
+               : QString();
 }
 
 bool TranscriptModel::choicePending() const {
@@ -3692,9 +3768,10 @@ QHash<QString, int> choice_lines(const std::vector<transcript::ScreenChoice>& ch
 
 void TranscriptModel::choose(const QString& model, const QString& effort, const QString& label,
                              const QStringList& screen) {
-    if (path_.isEmpty() || (model.isEmpty() && effort.isEmpty()))
+    const auto key = choiceKey();
+    if (key.isEmpty() || (model.isEmpty() && effort.isEmpty()))
         return;
-    auto& choice = chosen_[path_];
+    auto& choice = chosen_[key];
     // An earlier choice the records have since moved past no longer shows.
     if (choice.reported_model != this->model())
         choice.model.clear();
@@ -3719,7 +3796,7 @@ void TranscriptModel::choose(const QString& model, const QString& effort, const 
 }
 
 void TranscriptModel::watchChoice(const QStringList& screen) {
-    const auto found = chosen_.find(path_);
+    const auto found = chosen_.find(choiceKey());
     if (found == chosen_.end() || !found->pending)
         return;
     auto& choice = found.value();
@@ -3769,6 +3846,17 @@ void TranscriptModel::watchChoice(const QStringList& screen) {
         choice.reported_effort = effort();
         break;
     }
+    emit statusChanged();
+}
+
+void TranscriptModel::readStartScreen(const QStringList& screen) {
+    if (shown_agent_.isEmpty() || !path_.isEmpty() || started_.from == QLatin1String("launch") ||
+        screen_models_.contains(shown_agent_))
+        return;
+    const auto named = transcript::screen_model(screen, format());
+    if (named.model.isEmpty())
+        return;
+    screen_models_.insert(shown_agent_, named);
     emit statusChanged();
 }
 
@@ -3930,7 +4018,11 @@ void TranscriptModel::setPath(const QString& path) {
     const bool was_blank = blank_format_.has_value();
     shown_agent_.clear();
     blank_format_.reset();
+    const bool had_started = started_ != Started{};
+    started_ = {};
     showPath(path, was_blank && path.isEmpty());
+    if (had_started)
+        emit statusChanged();
 }
 
 QVariantMap TranscriptModel::shown() const {
@@ -3948,8 +4040,30 @@ void TranscriptModel::setShown(const QVariantMap& shown) {
     const auto harness = shown.value(QStringLiteral("harness")).toString();
     const auto blank = path.isEmpty() && !agent.isEmpty() ? transcript::format_named(harness)
                                                           : std::nullopt;
-    if (agent == shown_agent_ && path == path_ && blank == blank_format_)
+    const auto given = shown.value(QStringLiteral("started")).toMap();
+    Started started;
+    if (!agent.isEmpty())
+        started = {.model = given.value(QStringLiteral("model")).toString(),
+                   .effort = given.value(QStringLiteral("effort")).toString(),
+                   .resolved = given.value(QStringLiteral("resolved")).toString(),
+                   .from = given.value(QStringLiteral("from")).toString()};
+    if (agent == shown_agent_ && path == path_ && blank == blank_format_) {
+        // The same conversation; its CLI's list may have answered since.
+        if (started != started_) {
+            started_ = std::move(started);
+            emit statusChanged();
+        }
         return;
+    }
+    started_ = std::move(started);
+    // A choice made before the CLI saved a file is that file's once it shows.
+    if (const auto waiting = chosen_.find(QStringLiteral("agent:") + agent);
+        !agent.isEmpty() && !path.isEmpty() && waiting != chosen_.end()) {
+        const auto choice = waiting.value();
+        chosen_.erase(waiting);
+        if (!chosen_.contains(path))
+            chosen_.insert(path, choice);
+    }
     // Prompts sent before this agent's CLI saved anything wait for it, kept
     // apart from whatever shows next.
     if (path_.isEmpty() && blank_format_ && !shown_agent_.isEmpty() && !reader_->sent().empty())
@@ -3958,6 +4072,8 @@ void TranscriptModel::setShown(const QVariantMap& shown) {
     shown_agent_ = agent;
     blank_format_ = blank;
     showPath(path, restart);
+    // This agent's started model and choice, never the one shown before.
+    emit statusChanged();
     const auto waiting = blank_sent_.find(agent);
     if (agent.isEmpty() || waiting == blank_sent_.end())
         return;
