@@ -11,7 +11,8 @@ Add this to `~/.lapis/lapis.json`:
 {"nextPrompt": {"auto": true}}
 ```
 
-The other settings are `model` (`claude-opus-5-5`), `effort` and `maxPerHour`
+The other settings are `model` (`claude-opus-5-5`), `effort` (`low`, `medium`,
+`high`, `xhigh` or `max`; empty leaves Claude Code's own) and `maxPerHour`
 (60). Each prediction
 attempt takes the route your agents take: the `env` in `~/.claude/settings.json`
 (a plan gateway, say) applies, while API keys, custom endpoints and
@@ -20,20 +21,64 @@ the call uses the account in this Mac's keychain. An attempt
 may retry a malformed answer once, so `maxPerHour` bounds attempts rather than
 individual provider requests.
 
-`providers` replaces that CLI call with an ordered list of
-OpenAI-compatible endpoints, tried first to last:
+### Several models
+
+`providers` replaces that single call with an ordered list of entries, tried
+first to last, and `random` adds a pool to draw from first. Each entry is
+either a coding-plan CLI or an OpenAI-compatible endpoint:
 
 ```json
-{"nextPrompt": {"providers": [
-  {"name": "primary", "url": "http://gpu-host:8317/v1",
-   "model": "deepseek-v4.1", "apiKeyEnv": "PRIMARY_KEY", "timeoutSeconds": 20,
-   "allowInsecureHttp": true},
-  {"name": "fallback", "url": "https://openrouter.ai/api/v1",
-   "model": "deepseek/deepseek-v4.1-flash-1017", "apiKeyEnv": "OPENROUTER_API_KEY"}
-]}}
+{"nextPrompt": {
+  "random": [
+    {"name": "fable", "cli": "claude", "model": "claude-fable-5-2", "effort": "high"},
+    {"name": "astra", "cli": "codex", "model": "gpt-6-astra", "effort": "high",
+     "label": "GPT-6 Astra · high"},
+    {"name": "carbon", "cli": "agy", "model": "gemini-4-carbon-high", "effort": "high"}
+  ],
+  "providers": [
+    {"name": "primary", "url": "http://gpu-host:8317/v1",
+     "model": "deepseek-v4.1", "apiKeyEnv": "PRIMARY_KEY", "timeoutSeconds": 20,
+     "allowInsecureHttp": true},
+    {"name": "fallback", "url": "https://openrouter.ai/api/v1",
+     "model": "deepseek/deepseek-v4.1-flash-1017", "apiKeyEnv": "OPENROUTER_API_KEY"}
+  ]}}
 ```
 
-`url` and `model` are required; `name` defaults to the model. `apiKeyEnv` names
+A CLI entry names `cli` (`claude`, `codex` or `agy`) and `model`, and
+optionally `effort` (`low` to `max`); it has no `url` or key, and an entry that
+mixes the two shapes, names another CLI or another effort is dropped. It runs
+the CLI on this Mac on the plan that CLI is signed in to, with every metered
+key, endpoint and cloud-account variable removed, once, in an empty folder of
+its own:
+
+- Claude Code: the call above, `claude -p --model M --effort E --tools ""
+  --setting-sources "" --strict-mcp-config --no-session-persistence
+  --system-prompt … --output-format json`.
+- Codex: `codex exec --model M -c model_reasoning_effort=E --sandbox read-only
+  --ephemeral --ignore-user-config --ignore-rules --skip-git-repo-check --cd
+  <folder> --color never --json --output-last-message <file> -`, so neither
+  `config.toml` (its MCP servers, hooks and profiles) nor rules load and no
+  session is saved. Codex has no per-call system prompt, so the instructions
+  lead the message on stdin.
+- Antigravity: `agy --model M --output-format json --mode plan --sandbox
+  --disable-slash-commands --print-timeout Ns --print <message>`. The model is
+  chosen for that call only; `/model`, which changes your default, is never
+  used. An Antigravity model id carries its thinking level
+  (`gemini-4-carbon-high`), so `--effort` is passed only when the id does not
+  end in it. Antigravity has no per-call system prompt either, and saves the
+  conversation as it saves any other.
+
+Each guess draws up to two entries from `random` at random (every order
+equally likely, entries cooling down left out), then tries `providers` in
+order. Without `random`, the ordered list alone; without either, the single
+Claude Code call.
+
+`label` is the author shown beside the guess (in the visual view's bar, and
+after the Tab key in the terminal when the row has room). It defaults to the
+model and effort: `Fable 5.2 · high`, `GPT-6 Astra · high`, `Gemini 4 Carbon ·
+high`. A guess whose author is not known shows none.
+
+An endpoint entry needs `url` and `model`; `name` defaults to the model. `apiKeyEnv` names
 a variable read from the process environment, then `~/.env_vars`; the key is
 never stored in `lapis.json`. Without it the request carries no
 `Authorization` header, for a local endpoint. The key is sent only to the
@@ -42,16 +87,40 @@ endpoint it is configured for: a redirect does not carry it. A keyed
 `allowInsecureHttp: true`, since cleartext would expose the key and the
 prompt text to the network path; loopback endpoints and `https://` are
 unaffected.
-`timeoutSeconds` defaults to 30 (1 to 60), `maxTokens` to 4096 (128 to 8192)
-and `temperature` to 0 (0 to 2). An unreachable host, a missing key or an
-HTTP error moves to the next provider at once; an unreadable answer is asked
-once more on the same provider, and two unreadable answers move on. If all
-fail, the guess records the chain of failures. The whole chain shares the
-guess's time budget: it stops asking providers 150 seconds in, before the app
-gives up on the guess, so a provider that never answers cannot keep the next
-one from being tried. The answering `provider` and its `model` are in
-`next_prompt.jsonl`. `[]` or no `providers` keeps the CLI route, and the
-top-level `model` and `effort` then apply as before.
+An endpoint's `maxTokens` defaults to 4096 (128 to 8192) and `temperature`
+to 0 (0 to 2).
+
+`timeoutSeconds` is an entry's own time, a repair attempt included: 30 by
+default for an endpoint (1 to 60), 75 for a CLI (1 to 120). A timeout, an
+error or non-zero exit, a usage or rate limit, a failed sign-in or an
+unreachable host moves to the next entry at once, and a limited call is never
+repeated at once; an unreadable or empty answer is asked once more on the same
+entry, and two move on. If all fail, the guess records each entry's failure.
+
+A guess's model time is its entries' timeouts added up (the two slowest pool
+entries, since either may be drawn, and every ordered entry), at most 150
+seconds; the app stops the helper 30 seconds after that, at most 180 as
+before. The ordered entries after the one being asked keep their own time, so
+a slow first pick shortens the second pick, never the last resort: with five
+CLI entries at 75 seconds and an endpoint at 30, the first draw has 75, the
+second 45 and the endpoint 30. The single Claude Code call keeps 150 seconds.
+
+An entry that failed sits out the next guesses: after a CLI's usage or rate
+limit, 15 minutes; after two failures in a row of any other kind (or two
+limits at an endpoint), 2 minutes. An answer from it clears that, as does
+restarting lapis. A CLI that is not on this Mac sits out too. When every entry
+sits out, the guess is skipped (`reason: cooling`) without counting against
+`maxPerHour`.
+
+Each `predicted` record in `next_prompt.jsonl` keeps who answered (`provider`,
+`model`, `effort` and the shown `author`), the call's `cost` (Claude Code's
+reported cost or the endpoint's usage cost; Codex and Antigravity report
+none), `ms`, the pool's `drawn` order and its `seed`, the entries that failed
+first (`fallbacks`: `provider` and `kind` only) and the ones left out
+(`excluded`: `provider` and `why`, `cooling` or `missing`). A failed guess
+keeps the same lists. `scripts/next_prompt_eval.py log` splits use by who
+answered and by the first draw, which compares the pool's models without
+favouring the ones that answer when others fail.
 
 Settings of finished experiments are ignored, and an older `lapis.json` may keep
 them: `experiment` and `experimentModels` (a second model), `localEndpoint` and

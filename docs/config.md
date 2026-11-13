@@ -268,7 +268,12 @@ longer read or written.
   limit resets); a file that still has them loads, and lapis leaves them as
   written. Each CLI uses the sign-in its machine already has.
 - `nextPrompt` turns on guessed next prompts; see [suggestions](suggestions.md).
-  `nextPrompt.separate` and `nextPrompt.off` (lists of folders, absolute or
+  `nextPrompt.model` and `nextPrompt.effort` (`low` to `max`) choose the
+  single Claude Code call; `nextPrompt.providers` (ordered) and
+  `nextPrompt.random` (a pool drawn from first) replace it with coding-plan
+  CLIs (`claude`, `codex`, `agy`) and OpenAI-compatible endpoints, each with
+  its own `timeoutSeconds` and the `label` shown on its guesses; see
+  [several models](suggestions.md#several-models). `nextPrompt.separate` and `nextPrompt.off` (lists of folders, absolute or
   `~`, empty by default) keep agents in those folders out of other agents'
   guesses, and give `off` folders no guesses at all; see
   [keeping folders apart](suggestions.md#keeping-folders-apart).
