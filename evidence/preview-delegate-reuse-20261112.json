@@ -3,12 +3,13 @@
   "recorded_at": "2026-11-12T06:47:20Z",
   "agent": "Codex performance parent with three read-only audit subagents",
   "base_revision": "2b20f8d5371187bb377e2c1a2154207918140c72",
-  "source_revision": "6807f9908543b7cd61786b10747d12c970b030f7",
+  "source_revision": "d33e25c2d2ce75a84701bf5771acdcf35bf907ad",
   "source_dirty": false,
-  "scope": "Category-switch latency reduced by reusing visible agent-card delegates while retaining the bounded, noninteractive preview contract.",
+  "scope": "Warm category-switch latency after in-category strip navigation, reduced by rebinding delegates already pooled by scrolling while retaining the bounded, noninteractive preview contract.",
   "environment": {
     "platform": "darwin",
     "architecture": "arm64",
+    "cpu": "Apple M4 Max",
     "os": "macOS 26.7.1 (25G313)",
     "compiler": "Homebrew clang 23.1.5",
     "cmake": "4.4.5",
@@ -17,42 +18,45 @@
   },
   "changed_source_manifest": {
     "algorithm": "shasum -a 256 of: git diff --binary --full-index 2b20f8d5371187bb377e2c1a2154207918140c72..6807f9908543b7cd61786b10747d12c970b030f7",
-    "digest": "d463f652d06445677dc21b1a8a7b5d6c77600dd2c59e609d4e31a18877466be3",
-    "changed_paths": 3
+    "digest": "e48fae7d6fa4ae4555f355dc3ee6fc663349c506658457664fca36d65afb8654",
+    "changed_paths": 4
   },
   "benchmark": {
     "binary": "build/desktop/apps/desktop/lapis_switch_benchmark",
-    "binary_sha256": "fd6e5c245a28c7b1212032c03a948f56b131c0aebfdfac5750d3899b2d626dc8",
+    "candidate_binary_sha256": "310e62c8a4ef0ab9f38045a6f040df185ae49ddd13d386bbec9137056a4952b7",
     "command": "lapis_switch_benchmark --agents 32 --categories 4 --switches 300 --warmup 40 --gap-ms 60 --output <ignored-build-receipt>",
     "layout": "Both comparison states use runtime/workspace.json so atomic registry replacement does not wake the lapis.json directory watcher.",
-    "baseline_state": "Current main with corrected benchmark storage layout and delegate reuse disabled",
-    "candidate_state": "6807f990 with ListView reuseItems enabled",
+    "baseline_state": "d33e25c2 with ListView reuseItems disabled in the source QML",
+    "baseline_binary_sha256": "9574ffb1e554e4394fdce01550db7da2a6012b98104d16688108e0b8f58631c2",
+    "baseline_build_relationship": "Separate binary rebuilt from d33e25c2 with only the source QML reuseItems line removed; benchmark resources are linked into the binary.",
+    "candidate_state": "d33e25c2 with ListView reuseItems and pooled-viewer gating enabled",
     "baseline_runs_ms": [
-      {"agent_p50": 11.760542154312134, "agent_p95": 24.31920886039734, "category_p50": 72.11470818519592, "category_p95": 82.59112501144409, "category_p99": 94.4149169921875},
-      {"agent_p50": 11.743541955947876, "agent_p95": 24.926207780838013, "category_p50": 71.55033302307129, "category_p95": 84.01987504959106, "category_p99": 89.96645879745483},
-      {"agent_p50": 11.881832838058472, "agent_p95": 24.160583019256592, "category_p50": 71.73800015449524, "category_p95": 83.89520788192749, "category_p99": 88.12254095077515}
+      {"agent_p50": 11.86791706085205, "agent_p95": 24.359416961669922, "category_p50": 72.21299982070923, "category_p95": 85.2525417804718, "category_p99": 87.58899998664856},
+      {"agent_p50": 12.013542175292969, "agent_p95": 24.687291860580444, "category_p50": 71.97954201698303, "category_p95": 84.59508299827576, "category_p99": 85.2109169960022},
+      {"agent_p50": 12.0002920627594, "agent_p95": 23.99779200553894, "category_p50": 72.43816709518433, "category_p95": 82.05774998664856, "category_p99": 84.39487481117249}
     ],
     "candidate_runs_ms": [
-      {"agent_p50": 12.880000114440918, "agent_p95": 23.31958293914795, "category_p50": 58.12666702270508, "category_p95": 75.02804207801819, "category_p99": 83.37704205513},
-      {"agent_p50": 12.439040899276733, "agent_p95": 22.64645791053772, "category_p50": 53.162708044052124, "category_p95": 72.18795800209045, "category_p99": 83.53558301925659},
-      {"agent_p50": 12.394958019256592, "agent_p95": 24.53462505340576, "category_p50": 52.81699991226196, "category_p95": 77.83783411979675, "category_p99": 83.75345802307129}
+      {"agent_p50": 12.712709188461304, "agent_p95": 22.026665925979614, "category_p50": 53.18008303642273, "category_p95": 71.29875016212463, "category_p99": 79.19737505912781},
+      {"agent_p50": 11.943666934967041, "agent_p95": 22.591541051864624, "category_p50": 57.390583992004395, "category_p95": 78.60000014305115, "category_p99": 80.36337494850159},
+      {"agent_p50": 12.609375, "agent_p95": 23.469249963760376, "category_p50": 56.584625005722046, "category_p95": 75.35795903205872, "category_p99": 79.95362496376038}
     ],
-    "median_baseline_ms": {"agent_p50": 11.760542154312134, "agent_p95": 24.31920886039734, "category_p50": 71.73800015449524, "category_p95": 83.89520788192749, "category_p99": 89.96645879745483},
-    "median_candidate_ms": {"agent_p50": 12.439040899276733, "agent_p95": 23.31958293914795, "category_p50": 53.162708044052124, "category_p95": 75.02804207801819, "category_p99": 83.53558301925659},
+    "median_baseline_ms": {"agent_p50": 12.0002920627594, "agent_p95": 24.359416961669922, "category_p50": 72.21299982070923, "category_p95": 84.59508299827576, "category_p99": 85.2109169960022},
+    "median_candidate_ms": {"agent_p50": 12.609375, "agent_p95": 22.591541051864624, "category_p50": 56.584625005722046, "category_p95": 75.35795903205872, "category_p99": 79.95362496376038},
     "deltas": {
-      "category_p50_percent": -25.8932,
-      "category_p95_percent": -10.5693,
-      "category_p99_percent": -7.1481,
-      "agent_p50_percent": 5.7693,
-      "agent_p95_percent": -4.1104
+      "category_p50_percent": -21.6421,
+      "category_p95_percent": -10.9192,
+      "category_p99_percent": -6.1697,
+      "agent_p50_percent": 5.0756,
+      "agent_p95_percent": -7.2575
     },
+    "measurement_sequence": "Each category sample follows an agent-key switch in the same loop; those strip-navigation switches can pool off-screen delegates before the category model reset. Visible delegates are released by the reset; only delegates already in the reuse pool can be rebound.",
     "raw_receipts": [
-      "build/performance/paired-baseline/switch-1.json",
-      "build/performance/paired-baseline/switch-2.json",
-      "build/performance/paired-baseline/switch-3.json",
-      "build/performance/final-exact/switch-1.json",
-      "build/performance/final-exact/switch-2.json",
-      "build/performance/final-exact/switch-3.json"
+      "build/performance/pooled-gate-baseline/switch-1.json",
+      "build/performance/pooled-gate-baseline/switch-2.json",
+      "build/performance/pooled-gate-baseline/switch-3.json",
+      "build/performance/pooled-gate/switch-1.json",
+      "build/performance/pooled-gate/switch-2.json",
+      "build/performance/pooled-gate/switch-3.json"
     ]
   },
   "attribution": {
@@ -108,7 +112,8 @@
   ],
   "non_claims": [
     "This is an offscreen/software scene-graph switch measurement, not native GPU presentation or physical key-to-pixel latency.",
-    "Agent-key p50 rose 5.77% in the paired runs while agent p95 improved 4.11%; the accepted tradeoff targets the much larger category-switch tail.",
+    "The category result is a warm-pool measurement after in-category strip navigation. No direct or cold category-switch improvement is claimed, and visible delegates are released by a model reset rather than reused.",
+    "Agent-key p50 rose 5.08% in the paired runs while agent p95 improved 7.26%; the accepted tradeoff targets the much larger category-switch tail.",
     "The preview-disabled run is attribution evidence only and changed the product feature under test.",
     "No sustained-output, memory, native GPU, or physical-presentation claim is made."
   ]
