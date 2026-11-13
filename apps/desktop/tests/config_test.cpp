@@ -902,7 +902,12 @@ void settings_write_known_keys() {
         QDir(directory.path()),
         R"({"keybindings":{"quit":["Meta+Q"]},"custom":1,)"
         R"("newAgent":{"machines":{"box":{"folder":"~/w"}},"models":{"codex":["m1"]}},)"
-        R"("nextPrompt":{"model":"x","providers":[],"separate":["~/work/client"],)"
+        R"("nextPrompt":{"model":"x","providers":[{"name":"opus","cli":"claude",)"
+        R"("model":"claude-opus-5-5","effort":"high","timeoutSeconds":75},)"
+        R"({"name":"openrouter","url":"https://openrouter.test/api/v1","model":"d",)"
+        R"("apiKeyEnv":"OPENROUTER_API_KEY","timeoutSeconds":30}],)"
+        R"("random":[{"cli":"codex","model":"gpt-6-astra","effort":"high",)"
+        R"("label":"GPT-6 Astra · high"}],"separate":["~/work/client"],)"
         R"("off":["~/work/private"]}})");
     Config config;
     config.setSourcePathForTesting(path);
@@ -937,8 +942,15 @@ void settings_write_known_keys() {
         "custom": 1,
         "newAgent": {"machines": {"box": {"folder": "~/w"}}, "models": {"codex": ["m1"]},
                      "harness": "codex", "folder": "~/dev", "mode": "edits"},
-        "nextPrompt": {"model": "x", "providers": [], "separate": ["~/work/client"],
-                       "off": ["~/work/private"], "auto": true},
+        "nextPrompt": {"model": "x",
+                       "providers": [{"name": "opus", "cli": "claude", "model": "claude-opus-5-5",
+                                      "effort": "high", "timeoutSeconds": 75},
+                                     {"name": "openrouter",
+                                      "url": "https://openrouter.test/api/v1", "model": "d",
+                                      "apiKeyEnv": "OPENROUTER_API_KEY", "timeoutSeconds": 30}],
+                       "random": [{"cli": "codex", "model": "gpt-6-astra", "effort": "high",
+                                   "label": "GPT-6 Astra · high"}],
+                       "separate": ["~/work/client"], "off": ["~/work/private"], "auto": true},
         "harnessUpdates": {"omp": false},
         "interactionLog": {"enabled": true},
         "tabAway": {"overdueHours": 6},
@@ -967,6 +979,11 @@ void settings_write_known_keys() {
                 config.nextPrompt().off == QStringList{QStringLiteral("~/work/private")} &&
                 config.interactionLog().enabled && config.tabAway().overdueHours == 6,
             "the settings apply at once");
+    require(
+        config.nextPrompt().providers.size() == 2 && config.nextPrompt().random.size() == 1 &&
+            config.nextPrompt().random.at(0).toObject().value(QStringLiteral("label")).toString() ==
+                QStringLiteral("GPT-6 Astra · high"),
+        "a mixed chain and a pool load, and are written back as they were");
 
     // Turning updates back on removes the key rather than writing true;
     // bad values are refused.

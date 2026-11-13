@@ -780,6 +780,306 @@ void providerChainKeepsItsOwnRoute() {
     QFile::remove(root.filePath(QStringLiteral("no-claude")));
 }
 
+void mixedEntriesParse() {
+    using lapis::desktop::model_label;
+    const auto settings = lapis::desktop::parse_next_prompt(QJsonDocument::fromJson(R"({
+        "random": [
+            {"name": "fable", "cli": "claude", "model": "claude-fable-5-2", "effort": "high"},
+            {"name": "astra", "cli": "codex", "model": "gpt-6-astra", "effort": "high",
+             "label": "Astra", "timeoutSeconds": 999},
+            {"cli": "agy", "model": "gemini-4-carbon-high", "timeoutSeconds": 0},
+            {"cli": "grok", "model": "m"},
+            {"cli": "claude", "model": ""},
+            {"cli": "claude", "model": "m", "effort": "turbo"},
+            {"cli": "claude", "model": "m", "url": "https://a.test/v1"},
+            {"cli": "codex", "model": "m", "apiKeyEnv": "K"}
+        ],
+        "providers": [
+            {"name": "opus", "cli": "claude", "model": "claude-opus-5-5", "effort": "medium"},
+            {"name": "openrouter", "url": "https://openrouter.test/api/v1",
+             "model": "deepseek/deepseek-v4.1-flash-1017", "apiKeyEnv": "OPENROUTER_API_KEY",
+             "timeoutSeconds": 30}
+        ]})")
+                                                                .object());
+    const auto at = [](const QJsonArray& entries, qsizetype index, const char* key) {
+        return entries.at(index).toObject().value(QLatin1String(key));
+    };
+    require(settings.random.size() == 3, "valid CLI entries are kept, malformed ones dropped");
+    require(at(settings.random, 0, "cli") == QLatin1String("claude") &&
+                at(settings.random, 0, "timeoutSeconds").toInt() == 75 &&
+                at(settings.random, 0, "effort") == QLatin1String("high") &&
+                at(settings.random, 0, "label") == QStringLiteral("Fable 5.2 · high") &&
+                !settings.random.at(0).toObject().contains(QStringLiteral("url")),
+            "a CLI entry: no url or key, a 75 s default, a label from its model");
+    require(at(settings.random, 1, "timeoutSeconds").toInt() == 120 &&
+                at(settings.random, 1, "label") == QLatin1String("Astra") &&
+                at(settings.random, 2, "timeoutSeconds").toInt() == 1 &&
+                at(settings.random, 2, "name") == QLatin1String("gemini-4-carbon-high"),
+            "a CLI timeout is clamped to 1..120; a label given is kept");
+    require(settings.providers.size() == 2 &&
+                at(settings.providers, 0, "cli") == QLatin1String("claude") &&
+                at(settings.providers, 1, "url") ==
+                    QLatin1String("https://openrouter.test/api/v1") &&
+                at(settings.providers, 1, "timeoutSeconds").toInt() == 30 &&
+                at(settings.providers, 1, "label") == QLatin1String("deepseek-v4.1-flash-1017"),
+            "an ordered chain mixes CLI and endpoint entries");
+    // The cleaned settings read back as themselves: what lapis.json keeps.
+    const auto again = lapis::desktop::parse_next_prompt(
+        QJsonObject{{QStringLiteral("random"), settings.random},
+                    {QStringLiteral("providers"), settings.providers}});
+    require(again.random == settings.random && again.providers == settings.providers,
+            "the entries round-trip");
+    require(model_label(QStringLiteral("claude-fable-5-2"), QStringLiteral("high")) ==
+                    QStringLiteral("Fable 5.2 · high") &&
+                model_label(QStringLiteral("claude-opus-5-5"), {}) == QLatin1String("Opus 5.5") &&
+                model_label(QStringLiteral("gpt-6-astra"), QStringLiteral("high")) ==
+                    QStringLiteral("GPT-6 Astra · high") &&
+                model_label(QStringLiteral("gemini-4-hydrogen-high"), QStringLiteral("high")) ==
+                    QStringLiteral("Gemini 4 Hydrogen · high") &&
+                model_label(QStringLiteral("claude-sonnet-4-5-20250929"), {}) ==
+                    QLatin1String("Sonnet 4.5"),
+            "labels read as the CLIs name their models");
+}
+
+void budgetsFollowThePlan() {
+    using lapis::desktop::predict_budget_seconds;
+    using lapis::desktop::predict_watchdog_ms;
+    const auto entry = [](int seconds) {
+        return QJsonObject{{QStringLiteral("timeoutSeconds"), seconds}};
+    };
+    require(predict_budget_seconds({}, {}) == 150 && predict_watchdog_ms(150) == 180000,
+            "the single CLI call keeps 150 s and its 180 s watchdog");
+    require(predict_budget_seconds({}, {entry(30)}) == 30 && predict_watchdog_ms(30) == 60000,
+            "one endpoint: its 30 s, stopped 30 s after");
+    require(predict_budget_seconds({}, {entry(60), entry(60), entry(30)}) == 150,
+            "an ordered chain: the sum of its timeouts");
+    require(predict_budget_seconds({entry(75), entry(75), entry(75), entry(75), entry(75)},
+                                   {entry(30)}) == 150,
+            "two pool draws and the last resort, capped at 150 s");
+    require(predict_budget_seconds({entry(10), entry(40), entry(20)}, {entry(5)}) == 65,
+            "the two slowest pool entries are budgeted, as either may be drawn");
+    require(predict_watchdog_ms(predict_budget_seconds({entry(120), entry(120)}, {entry(60)})) ==
+                180000,
+            "the watchdog never exceeds 180 s");
+}
+
+void cooldownsSkipFailedEntries() {
+    lapis::desktop::EntryCooldown cooldown;
+    using lapis::desktop::EntryCooldown;
+    const QSet<QString> cli{QStringLiteral("fable"), QStringLiteral("opus")};
+    const auto failed = [](const char* name, const char* kind) {
+        return QJsonArray{QJsonObject{{QStringLiteral("provider"), QLatin1String(name)},
+                                      {QStringLiteral("kind"), QLatin1String(kind)}}};
+    };
+    cooldown.observe(failed("fable", "limit"), QStringLiteral("opus"), cli, 1000);
+    require(cooldown.cooling(QStringLiteral("fable"), 1000 + EntryCooldown::limit_ms - 1) &&
+                !cooldown.cooling(QStringLiteral("fable"), 1000 + EntryCooldown::limit_ms) &&
+                !cooldown.cooling(QStringLiteral("opus"), 1000),
+            "a CLI's usage limit sits it out 15 minutes");
+    cooldown.observe(failed("openrouter", "limit"), {}, cli, 1000);
+    require(!cooldown.cooling(QStringLiteral("openrouter"), 1001),
+            "one endpoint limit is not a cool-down");
+    cooldown.observe(failed("openrouter", "limit"), {}, cli, 2000);
+    require(cooldown.cooling(QStringLiteral("openrouter"), 2000 + EntryCooldown::repeat_ms - 1) &&
+                !cooldown.cooling(QStringLiteral("openrouter"), 2000 + EntryCooldown::repeat_ms),
+            "two failures in a row: 2 minutes");
+    cooldown.observe(failed("opus", "timeout"), {}, cli, 3000);
+    cooldown.observe({}, QStringLiteral("opus"), cli, 3001);
+    cooldown.observe(failed("opus", "timeout"), {}, cli, 3002);
+    require(!cooldown.cooling(QStringLiteral("opus"), 3003), "an answer resets the count");
+    cooldown.observe(failed("opus", "budget"), {}, cli, 3004);
+    cooldown.observe(failed("opus", "budget"), {}, cli, 3005);
+    require(!cooldown.cooling(QStringLiteral("opus"), 3006),
+            "an entry the plan had no time for did not fail");
+    cooldown.observe(failed("fable", "limit"), {}, cli, 4000);
+    cooldown.observe({}, QStringLiteral("fable"), cli, 4001);
+    require(!cooldown.cooling(QStringLiteral("fable"), 4002), "an answer clears a cool-down");
+}
+
+// A guess through the pool and the chain: the plan passed to the helper, what
+// the log keeps, the author shown, the cool-down of a limited entry, and the
+// author through a saved and restored offer.
+void poolGuessesShowTheirAuthor() {
+    QTemporaryDir directory;
+    const QDir root(directory.path());
+    require(root.mkpath(QStringLiteral("bin")), "fixture bin");
+    standIns(root);
+    write(root.filePath(QStringLiteral("context.reply")),
+          R"({"conversation": "c1", "turn": 2, "turns": [{"role": "agent", "text": "Done."}]})");
+    write(root.filePath(QStringLiteral("predict.reply")),
+          R"({"category": "approve", "candidates": [{"text": "go", "p": 0.8}], "ms": 900,
+              "provider": "carbon", "model": "gemini-4-carbon-high", "effort": "high",
+              "label": "Gemini 4 Carbon · high", "cost": 0.02, "drawn": ["fable", "carbon"],
+              "failures": [{"provider": "fable", "kind": "limit"}]})");
+    const auto log = root.filePath(QStringLiteral("next.jsonl"));
+    const auto lookup = [](const QString&) -> std::optional<NextPrompt::Agent> {
+        return NextPrompt::Agent{{},
+                                 QStringLiteral("~/x"),
+                                 QStringLiteral("claude"),
+                                 QStringLiteral("c1"),
+                                 QStringLiteral("t"),
+                                 QStringLiteral("lapis"),
+                                 QStringLiteral("> |")};
+    };
+    // No Codex on this Mac: its entry is left out and logged as missing.
+    const auto program = [&root](const QString& name) {
+        return name == QLatin1String("codex") ? QString()
+                                              : root.filePath(QStringLiteral("bin/") + name);
+    };
+    auto settings = lapis::desktop::parse_next_prompt(QJsonDocument::fromJson(R"({
+        "auto": true, "contextArms": ["base"],
+        "random": [
+            {"name": "fable", "cli": "claude", "model": "claude-fable-5-2", "effort": "high"},
+            {"name": "carbon", "cli": "agy", "model": "gemini-4-carbon-high", "effort": "high"},
+            {"name": "astra", "cli": "codex", "model": "gpt-6-astra", "effort": "high"}],
+        "providers": [{"name": "openrouter", "url": "https://openrouter.test/api/v1",
+                       "model": "deepseek", "timeoutSeconds": 30}]})")
+                                                          .object());
+    const auto arguments = [&root] {
+        return QString::fromUtf8(read(root.filePath(QStringLiteral("predict.args"))))
+            .split(QLatin1Char('\n'));
+    };
+    const auto value_of = [](const QStringList& words, const char* flag) {
+        const auto at = words.indexOf(QLatin1String(flag));
+        return at < 0 ? QString() : words.value(at + 1);
+    };
+    QJsonObject saved;
+    {
+        NextPrompt next(lookup, [] { return QJsonArray{}; }, program, {root.path(), log});
+        next.setSettings(settings);
+        next.turnFinished(QStringLiteral("a"));
+        require(waitFor([&] { return !next.suggestion(QStringLiteral("a")).isEmpty(); }),
+                "a pool guess is offered");
+        require(next.author(QStringLiteral("a")) == QStringLiteral("Gemini 4 Carbon · high") &&
+                    next.offerState(QStringLiteral("a")).value(QStringLiteral("author")) ==
+                        QStringLiteral("Gemini 4 Carbon · high"),
+                "the guess carries who wrote it");
+        auto words = arguments();
+        const auto pool = QJsonDocument::fromJson(value_of(words, "--pool").toUtf8()).array();
+        require(pool.size() == 2 && !value_of(words, "--seed").isEmpty() &&
+                    value_of(words, "--agy") == root.filePath(QStringLiteral("bin/agy")) &&
+                    !words.contains(QStringLiteral("--codex")) &&
+                    value_of(words, "--budget-seconds") == QLatin1String("150"),
+                "the pool without the missing CLI, a seed, the programs and the budget");
+        const auto event = events(log).last();
+        const auto excluded = event.value(QStringLiteral("excluded")).toArray();
+        require(
+            event.value(QStringLiteral("provider")) == QLatin1String("carbon") &&
+                event.value(QStringLiteral("model")) == QLatin1String("gemini-4-carbon-high") &&
+                event.value(QStringLiteral("effort")) == QLatin1String("high") &&
+                event.value(QStringLiteral("author")) == QStringLiteral("Gemini 4 Carbon · high") &&
+                event.value(QStringLiteral("cost")).toDouble() == 0.02 &&
+                event.value(QStringLiteral("ms")).toInt() == 900 &&
+                event.value(QStringLiteral("drawn")).toArray().size() == 2 &&
+                event.value(QStringLiteral("seed")).isDouble() &&
+                event.value(QStringLiteral("fallbacks")).toArray() ==
+                    QJsonArray{QJsonObject{{QStringLiteral("provider"), QStringLiteral("fable")},
+                                           {QStringLiteral("kind"), QStringLiteral("limit")}}} &&
+                excluded ==
+                    QJsonArray{QJsonObject{{QStringLiteral("provider"), QStringLiteral("astra")},
+                                           {QStringLiteral("why"), QStringLiteral("missing")}}},
+            "the record says who answered, at what cost, and what failed or sat out");
+        saved = next.saveState();
+        require(saved.value(QStringLiteral("offers"))
+                        .toObject()
+                        .value(QStringLiteral("a"))
+                        .toObject()
+                        .value(QStringLiteral("author")) ==
+                    QStringLiteral("Gemini 4 Carbon · high"),
+                "the author is saved with the offer");
+
+        // Fable hit its usage limit: the next guess leaves it out of the draw.
+        next.seen(QStringLiteral("a"));
+        next.turnFinished(QStringLiteral("a"));
+        require(waitFor([&] {
+                    return events(log).last().value(QStringLiteral("event")) ==
+                               QLatin1String("predicted") &&
+                           events(log).last().value(QStringLiteral("offer")) !=
+                               saved.value(QStringLiteral("offers"))
+                                   .toObject()
+                                   .value(QStringLiteral("a"))
+                                   .toObject()
+                                   .value(QStringLiteral("key"));
+                }),
+                "a second guess");
+        words = arguments();
+        const auto second = QJsonDocument::fromJson(value_of(words, "--pool").toUtf8()).array();
+        require(second.size() == 1 &&
+                    second.at(0).toObject().value(QStringLiteral("name")) ==
+                        QLatin1String("carbon") &&
+                    events(log)
+                        .last()
+                        .value(QStringLiteral("excluded"))
+                        .toArray()
+                        .contains(QJsonObject{{QStringLiteral("provider"), QStringLiteral("fable")},
+                                              {QStringLiteral("why"), QStringLiteral("cooling")}}),
+                "a limited CLI entry sits out the next draw, and the record says so");
+
+        // Every entry cooling: no attempt is made, and the skip is logged.
+        write(root.filePath(QStringLiteral("predict.reply")),
+              R"({"error": "all failed", "kind": "limit", "failures": [
+                  {"provider": "carbon", "kind": "limit"},
+                  {"provider": "openrouter", "kind": "timeout"}]})");
+        // Seen, so each turn is guessed rather than held back as a repeat.
+        next.seen(QStringLiteral("a"));
+        next.turnFinished(QStringLiteral("a"));
+        require(waitFor([&] {
+                    return events(log).last().value(QStringLiteral("event")) ==
+                           QLatin1String("failed");
+                }),
+                "a failed guess");
+        require(events(log).last().value(QStringLiteral("fallbacks")).toArray().size() == 2,
+                "a failure lists what each entry hit");
+        write(root.filePath(QStringLiteral("predict.reply")),
+              R"({"error": "all failed", "kind": "timeout", "failures": [
+                  {"provider": "openrouter", "kind": "timeout"}]})");
+        next.turnFinished(QStringLiteral("a"));
+        require(waitFor([&] {
+                    return events(log).size() >= 2 &&
+                           events(log).at(events(log).size() - 2).value(QStringLiteral("event")) ==
+                               QLatin1String("failed") &&
+                           events(log).last().value(QStringLiteral("event")) ==
+                               QLatin1String("failed");
+                }),
+                "a second failed guess");
+        QFile::remove(root.filePath(QStringLiteral("predict.args")));
+        next.turnFinished(QStringLiteral("a"));
+        require(waitFor([&] {
+                    return events(log).last().value(QStringLiteral("reason")) ==
+                           QLatin1String("cooling");
+                }),
+                "with every entry cooling the guess is skipped");
+        require(!QFileInfo::exists(root.filePath(QStringLiteral("predict.args"))),
+                "and no helper is run");
+    }
+    // A restarted window shows the restored offer with its author; an offer
+    // saved without one shows none.
+    write(root.filePath(QStringLiteral("context.reply")), R"({"conversation": "c1", "turn": 2})");
+    {
+        NextPrompt next(lookup, [] { return QJsonArray{}; }, program, {root.path(), log});
+        next.setSettings(settings);
+        next.restoreState(saved);
+        require(waitFor([&] { return !next.suggestion(QStringLiteral("a")).isEmpty(); }),
+                "the saved offer comes back");
+        require(next.author(QStringLiteral("a")) == QStringLiteral("Gemini 4 Carbon · high"),
+                "with its author");
+    }
+    auto anonymous = saved;
+    auto offers = anonymous.value(QStringLiteral("offers")).toObject();
+    auto offer = offers.value(QStringLiteral("a")).toObject();
+    offer.remove(QStringLiteral("author"));
+    offers.insert(QStringLiteral("a"), offer);
+    anonymous.insert(QStringLiteral("offers"), offers);
+    {
+        NextPrompt next(lookup, [] { return QJsonArray{}; }, program, {root.path(), log});
+        next.setSettings(settings);
+        next.restoreState(anonymous);
+        require(waitFor([&] { return !next.suggestion(QStringLiteral("a")).isEmpty(); }),
+                "an older saved offer comes back");
+        require(next.author(QStringLiteral("a")).isEmpty(), "with no author to show");
+    }
+}
+
 void outcomesCompareWhatWasSent() {
     QTemporaryDir directory;
     const QDir root(directory.path());
@@ -1263,8 +1563,8 @@ void wallSettingsAndZones() {
                                                  "~other/x"],
                                     "off": "not a list"})")
             .object());
-    require(listed.separate == QStringList({QStringLiteral("~/work/client"),
-                                            QStringLiteral("/srv/a")}) &&
+    require(listed.separate ==
+                    QStringList({QStringLiteral("~/work/client"), QStringLiteral("/srv/a")}) &&
                 listed.off.isEmpty() && listed.walled(),
             "absolute and ~ folders are kept, trimmed; anything else is dropped");
 
@@ -1282,7 +1582,8 @@ void wallSettingsAndZones() {
     settings.off = {root.filePath(QStringLiteral("private"))};
     const auto zone = [&settings, &root](const QString& machine, const QString& folder) {
         return lapis::desktop::folder_zone(
-            settings, machine, folder.startsWith(QLatin1Char('/')) ? folder : root.filePath(folder));
+            settings, machine,
+            folder.startsWith(QLatin1Char('/')) ? folder : root.filePath(folder));
     };
     require(zone({}, QStringLiteral("work/client/sub")) == QLatin1String("s1") &&
                 zone({}, QStringLiteral("work/clientele")) == QLatin1String("s0") &&
@@ -1386,8 +1687,8 @@ void foldersAreWalled() {
         };
         require(waitFor(ended), "the guess is logged");
         Guess made;
-        made.predicted = events(log).last().value(QStringLiteral("event")) ==
-                         QLatin1String("predicted");
+        made.predicted =
+            events(log).last().value(QStringLiteral("event")) == QLatin1String("predicted");
         const auto bundle =
             QJsonDocument::fromJson(read(root.filePath(QStringLiteral("predict.stdin")))).object();
         for (const auto& agent : bundle.value(QStringLiteral("agents")).toArray()) {
@@ -1405,12 +1706,10 @@ void foldersAreWalled() {
     // No lists: every agent, and the helper's arguments as before.
     next.setSettings(on());
     const auto open = guess(QStringLiteral("out"), nullptr);
-    require(open.predicted && open.titles == QStringList({QStringLiteral("out"),
-                                                          QStringLiteral("in"),
-                                                          QStringLiteral("pre"),
-                                                          QStringLiteral("off"),
-                                                          QStringLiteral("unknown"),
-                                                          QStringLiteral("far")}),
+    require(open.predicted &&
+                open.titles == QStringList({QStringLiteral("out"), QStringLiteral("in"),
+                                            QStringLiteral("pre"), QStringLiteral("off"),
+                                            QStringLiteral("unknown"), QStringLiteral("far")}),
             "without walls every agent is shown");
     require(!open.context.contains(QStringLiteral("--walls")), "and no walls are passed");
 
@@ -1442,13 +1741,11 @@ void foldersAreWalled() {
     // Off: not read at all when lapis knows, not predicted when the helper says.
     const auto off = guess(QStringLiteral("off"), "o0");
     require(!off.predicted && off.context.isEmpty() &&
-                events(log).last().value(QStringLiteral("reason")) ==
-                    QLatin1String("off_folder"),
+                events(log).last().value(QStringLiteral("reason")) == QLatin1String("off_folder"),
             "an agent in an off folder is not even read");
     const auto moved = guess(QStringLiteral("out"), "o0");
     require(!moved.predicted && !moved.context.isEmpty() &&
-                events(log).last().value(QStringLiteral("reason")) ==
-                    QLatin1String("off_folder"),
+                events(log).last().value(QStringLiteral("reason")) == QLatin1String("off_folder"),
             "a conversation recorded in an off folder is read, never predicted");
     const auto unknown = guess(QStringLiteral("unknown"), "?");
     require(!unknown.predicted, "with an off list, an unknown folder is not guessed");
@@ -1477,6 +1774,10 @@ int main(int argc, char** argv) {
         predictsAndOffers();
         repeatsWaitUntilShown();
         providerChainKeepsItsOwnRoute();
+        mixedEntriesParse();
+        budgetsFollowThePlan();
+        cooldownsSkipFailedEntries();
+        poolGuessesShowTheirAuthor();
         outcomesCompareWhatWasSent();
         savedEntriesRespectRestoreBounds();
         restoredStateIsChecked();
