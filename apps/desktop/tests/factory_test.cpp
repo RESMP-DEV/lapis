@@ -108,6 +108,31 @@ void parses_the_judge_file() {
     require(!factory::parse("{").loaded && !factory::parse(R"({"version": 2})").loaded &&
                 !factory::parse("[]").loaded,
             "a broken or newer file is not read");
+    const auto emoji = QString::fromUtf8("\xF0\x9F\x98\x80");
+    const auto agent_with_key = [&emoji](int repeats) {
+        return QJsonObject{
+            {QStringLiteral("version"), 1},
+            {QStringLiteral("agents"),
+             QJsonObject{{emoji.repeated(repeats),
+                          QJsonObject{{QStringLiteral("stage"), QStringLiteral("landed")}}}}}};
+    };
+    const auto within_bytes =
+        factory::parse(QJsonDocument(agent_with_key(16)).toJson(QJsonDocument::Compact));
+    const auto beyond_bytes =
+        factory::parse(QJsonDocument(agent_with_key(17)).toJson(QJsonDocument::Compact));
+    require(within_bytes.agents.size() == 1 && beyond_bytes.agents.isEmpty(),
+            "agent keys are bounded by UTF-8 bytes, not UTF-16 units");
+    const auto without_time = factory::parse(
+        QJsonDocument(QJsonObject{{QStringLiteral("version"), 1},
+                                  {QStringLiteral("agents"),
+                                   QJsonObject{{QStringLiteral("a"),
+                                                QJsonObject{{QStringLiteral("stage"),
+                                                             QStringLiteral("landed")}}}}}})
+            .toJson(QJsonDocument::Compact));
+    require(without_time.agents.value(QStringLiteral("a")).judged_at_ms == 0 &&
+                !factory::verdict_current(factory::Live{"idle", false, 0, 0, 1'000},
+                                          without_time.agents.value(QStringLiteral("a"))),
+            "a verdict with no timestamp is never current");
     require(!factory::read(QStringLiteral("/nonexistent/factory_state.json")).loaded,
             "a missing file is no state");
 }
@@ -117,7 +142,8 @@ void merges_live_state() {
     const qint64 now = 10'000'000;
     require(factory::fallback_stage(Live{"waiting", true, 0, 0, now}) == "needs_you" &&
                 factory::fallback_stage(Live{"working", false, 0, 0, now}) == "in_progress" &&
-                factory::fallback_stage(Live{"finished", false, 0, 0, now}) == "landed" &&
+                factory::fallback_stage(Live{"finished", false, 0, 0, now}) == "idle_cull" &&
+                factory::fallback_stage(Live{"finished", false, now - 1000, 0, now}) == "landed" &&
                 factory::fallback_stage(Live{"idle", false, 0, now - 1000, now}) == "landed" &&
                 factory::fallback_stage(Live{"idle", false, 0, 0, now}) == "idle_cull" &&
                 factory::fallback_stage(
@@ -147,8 +173,8 @@ void merges_live_state() {
             "a mid-turn verdict on an idle agent is stale");
     require(factory::stage(Live{"idle", false, 0, now - 1000, now}, &running) == "landed",
             "a mid-turn verdict on a turn that just ended falls back to landed");
-    require(factory::stage(Live{"finished", false, 0, 0, now}, &running) == "landed",
-            "a mid-turn verdict on a finished agent falls back to landed");
+    require(factory::stage(Live{"finished", false, 0, 0, now}, &running) == "idle_cull",
+            "a mid-turn verdict on a finished agent with no time falls back to idle");
     require(factory::stage(Live{"ended", false, 0, 0, now}, &running) == "idle_cull",
             "a mid-turn verdict on an ended agent falls back to idle");
     require(factory::stage(Live{"working", false, 0, 0, now}, &running) == "in_progress",
@@ -158,6 +184,21 @@ void merges_live_state() {
             "the judge can read a question in a finished reply");
     require(factory::stage(Live{"working", false, 0, 0, now}, &asks) == "in_progress",
             "a running turn beats an older question verdict");
+}
+
+void automatic_home_waits_for_activity() {
+    Workspace workspace(WorkspaceMode::fixture);
+    require(workspace.addFixtureAgent("first-agy", "First", "general", "agy", "first\r\n") &&
+                workspace.addFixtureAgent("second-agy", "Second", "general", "agy", "second\r\n"),
+            "two local Antigravity agents");
+    require(workspace.effectiveHomeAgent() == workspace.agent("first-agy"),
+            "without activity the registry order is only a provisional choice");
+    report(*workspace.agent("second-agy"), lapis::session::attention::Activity::working);
+    require(workspace.effectiveHomeAgent() == workspace.agent("second-agy"),
+            "the first agent with activity becomes the automatic orchestrator");
+    report(*workspace.agent("first-agy"), lapis::session::attention::Activity::working);
+    require(workspace.effectiveHomeAgent() == workspace.agent("second-agy"),
+            "an automatic choice with activity stays sticky");
 }
 
 // The exact object the factory judge writes, extra fields included.
@@ -273,8 +314,7 @@ void pipeline_from_file_and_live_state(const QString& folder) {
                 stage_of(workspace, "shell") == "idle_cull",
             "the judge's stages, and the fallback for an agent it omits");
     require(item_for(workspace, "renderer").value("judged").toBool() &&
-                item_for(workspace, "renderer").value("headline").toString() ==
-                    "Text shaping pass",
+                item_for(workspace, "renderer").value("headline").toString() == "Text shaping pass",
             "a mid-turn verdict on a running turn is current");
     const auto notes = item_for(workspace, "notes");
     require(!notes.value("keepNeeded").toBool() && notes.value("judged").toBool() &&
@@ -306,23 +346,30 @@ void pipeline_from_file_and_live_state(const QString& folder) {
     report(*workspace.agent("checks"), lapis::session::attention::Activity::working);
     require(stage_of(workspace, "checks") == "in_progress",
             "an agent that starts working after its verdict is in progress");
-    require(workspace.requestAttention({"notes", "approve-1", "Approve the migration"}),
-            "a fixture request");
+    const auto stale = item_for(workspace, "checks");
+    require(!stale.value("judged").toBool() && stale.value("receipt").toString().isEmpty() &&
+                stale.value("judgedAtMs").toLongLong() == 0,
+            "a stale verdict hides its receipt and judgement time");
+    require(workspace.requestAttention({"service", "approve-service", "Choose rendering"}) &&
+                workspace.requestAttention({"notes", "approve-2", "Approve the migration"}),
+            "fixture requests");
     pump(5);
-    require(stage_of(workspace, "notes") == "needs_you" &&
-                item_for(workspace, "notes").value("attentionPending").toBool(),
-            "a request moves the agent to Needs you");
+    require(stage_of(workspace, "service") == "needs_you" &&
+                stage_of(workspace, "notes") == "needs_you",
+            "requests move agents to Needs you");
     const auto inbox = workspace.attentionInbox();
-    require(inbox.size() == 1 && inbox.front().toMap().value("agentId").toString() == "notes" &&
-                inbox.front().toMap().value("reason").toString() == "Approve the migration",
-            "the orchestrator's gate strip lists the request");
-    require(workspace.resolveAttention({"notes", "approve-1", {}}), "resolve the request");
+    require(inbox.size() == 2 && inbox.front().toMap().value("agentId").toString() == "service" &&
+                inbox.back().toMap().value("agentId").toString() == "notes",
+            "the gate strip keeps the first pending request first");
+    require(workspace.resolveAttention({"service", "approve-service", {}}),
+            "resolve the first request");
+    require(workspace.resolveAttention({"notes", "approve-2", {}}), "resolve the second request");
     pump(5);
     require(workspace.attentionInbox().isEmpty(), "a resolved request leaves the strip");
-
     // A changed verdict reloads.
     auto next = agents;
-    next.insert("service", verdict("landed", true, "Service fix merged", "", "9d1e44f", now));
+    next.insert("service", verdict("landed", true, "Service fix merged", "", "9d1e44f",
+                                   QDateTime::currentMSecsSinceEpoch() + 1));
     write_file(path, QJsonDocument(QJsonObject{{"version", 1},
                                                {"updatedAtMs", now},
                                                {"judgeModel", "claude-haiku-5-5"},
@@ -339,6 +386,13 @@ void pipeline_from_file_and_live_state(const QString& folder) {
                 workspace.resolveAgentLink("lapis://agent/missing").isEmpty() &&
                 workspace.resolveAgentLink("https://example.com").isEmpty(),
             "agent links resolve by id or unique prefix");
+
+    int home_notifications = 0;
+    QObject::connect(&workspace, &Workspace::homeAgentChanged,
+                     [&home_notifications] { ++home_notifications; });
+    require(workspace.setHomeAgent("carbon-7a1") && workspace.homeAgentId() == "carbon-7a1" &&
+                home_notifications == 1,
+            "pinning the automatic orchestrator still publishes the pin");
 
     // Pinning another orchestrator moves it off the board.
     require(workspace.setHomeAgent("renderer") && workspace.homeAgentId() == "renderer" &&
@@ -481,6 +535,7 @@ int main(int argc, char** argv) {
         QDir(directory.path()).mkpath("config");
         parses_the_judge_file();
         merges_live_state();
+        automatic_home_waits_for_activity();
         parses_real_judge_output_schema();
         pipeline_from_file_and_live_state(QDir(directory.path()).filePath("fixture"));
         // The registry's folder must be private, as QTemporaryDir makes it.

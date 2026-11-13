@@ -333,23 +333,23 @@ int run(const QString& captures) {
                 !item(*window, "factoryHomeTitle")->property("truncated").toBool(),
             "the orchestrator's title is not elided: width " +
                 std::to_string(item(*window, "factoryHomeTitle")->width()) + " of " +
-                std::to_string(item(*window, "factoryHomeTitle")->implicitWidth()) +
-                ", header " + std::to_string(item(*window, "factoryHeader")->width()) +
-                ", selector " + std::to_string(item(*window, "factoryHomeSelector")->width()) +
-                ", summary " + std::to_string(item(*window, "factoryHeaderSummary")->width()) +
-                " of " + std::to_string(item(*window, "factoryHeaderSummary")->implicitWidth()) +
-                ", pin " + std::to_string(item(*window, "factoryHomePin")->implicitWidth()) +
-                ", exit " + std::to_string(item(*window, "exitFactory")->width()));
+                std::to_string(item(*window, "factoryHomeTitle")->implicitWidth()) + ", header " +
+                std::to_string(item(*window, "factoryHeader")->width()) + ", selector " +
+                std::to_string(item(*window, "factoryHomeSelector")->width()) + ", summary " +
+                std::to_string(item(*window, "factoryHeaderSummary")->width()) + " of " +
+                std::to_string(item(*window, "factoryHeaderSummary")->implicitWidth()) + ", pin " +
+                std::to_string(item(*window, "factoryHomePin")->implicitWidth()) + ", exit " +
+                std::to_string(item(*window, "exitFactory")->width()));
     require(item(*window, "factoryHeaderSummary")->property("text").toString() ==
                     "2 need you · 2 running · 2 landed · 2 idle" &&
                 !item(*window, "factoryHeaderSummary")->property("truncated").toBool(),
             "the header's counts are not elided");
     {
         auto* scroller = item(*window, "factoryScroller");
-        for (const char* name : {"factoryBadge_shell", "factoryInspect_shell", "factoryClose_shell"}) {
+        for (const char* name :
+             {"factoryBadge_shell", "factoryInspect_shell", "factoryClose_shell"}) {
             auto* control = item(*window, QString::fromLatin1(name));
-            const auto bottom =
-                control->mapToItem(scroller, QPointF(0, control->height())).y();
+            const auto bottom = control->mapToItem(scroller, QPointF(0, control->height())).y();
             require(control->isVisible() && bottom <= scroller->height(),
                     std::string(name) + " is clipped at the board's bottom");
         }

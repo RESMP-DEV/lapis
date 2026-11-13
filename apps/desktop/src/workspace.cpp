@@ -1170,12 +1170,17 @@ void Workspace::watch(Agent* item) {
     connect(item, &Agent::attentionArrived, this, [this, item] {
         auto& known = known_requests_[item->agentId()];
         const auto ids = item->attentionRequestIds();
+        const bool had_pending = std::any_of(
+            ids.begin(), ids.end(), [&known](const QString& id) { return known.contains(id); });
         const bool fresh = std::any_of(ids.begin(), ids.end(),
                                        [&known](const QString& id) { return !known.contains(id); });
         if (known.size() > 256)
             known.clear();
         for (const auto& id : ids)
             known.insert(id);
+        // The inbox orders by the first request still pending, not each new one.
+        if (!had_pending)
+            waiting_since_.insert(item->agentId(), QDateTime::currentMSecsSinceEpoch());
         emit needsYou(item, fresh ? markNeedsYou(item, Need::request) : QStringLiteral("repeat"));
         emit turnFinished(item);
     });
@@ -1202,9 +1207,6 @@ void Workspace::watch(Agent* item) {
                    (now == QLatin1String("finished") || now == QLatin1String("idle"))) {
             waiting_since_.insert(id, at);
         }
-    });
-    connect(item, &Agent::attentionArrived, this, [this, item] {
-        waiting_since_.insert(item->agentId(), QDateTime::currentMSecsSinceEpoch());
     });
     // The category's request count follows the agent's (the mark follows
     // attentionArrived above).

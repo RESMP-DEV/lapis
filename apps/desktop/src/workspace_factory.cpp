@@ -72,8 +72,9 @@ void Workspace::publishFactory() {
     factory_dirty_ = true;
     const auto* home = effectiveHomeAgent();
     const auto home_id = home != nullptr ? home->agentId() : QString{};
-    if (home_id != published_home_id_) {
+    if (home_id != published_home_id_ || home_agent_id_ != published_pin_id_) {
         published_home_id_ = home_id;
+        published_pin_id_ = home_agent_id_;
         emit homeAgentChanged();
     }
     emit factoryPipelineChanged();
@@ -112,14 +113,15 @@ void Workspace::reloadFactoryState() {
     if (next.loaded == factory_state_.loaded &&
         next.updated_at_ms == factory_state_.updated_at_ms &&
         next.judge_model == factory_state_.judge_model &&
-        next.agents.keys() == factory_state_.agents.keys() && next.loaded) {
-        // The folder changes for every file in it; only a new verdict publishes.
+        next.agents.size() == factory_state_.agents.size() && next.loaded) {
+        // QHash order is not identity: compare each entry by key and value.
         bool same = true;
         for (auto it = next.agents.cbegin(); it != next.agents.cend() && same; ++it) {
-            const auto& old = factory_state_.agents[it.key()];
-            same = old.stage == it->stage && old.keep_needed == it->keep_needed &&
-                   old.headline == it->headline && old.reason == it->reason &&
-                   old.receipt == it->receipt && old.judged_at_ms == it->judged_at_ms;
+            const auto old = factory_state_.agents.constFind(it.key());
+            same = old != factory_state_.agents.cend() && old->stage == it->stage &&
+                   old->keep_needed == it->keep_needed && old->headline == it->headline &&
+                   old->reason == it->reason && old->receipt == it->receipt &&
+                   old->judged_at_ms == it->judged_at_ms;
         }
         if (same)
             return;
@@ -141,7 +143,7 @@ QString Workspace::factoryAutoHome() const {
         any_agy = any_agy || agy(item->agentId());
     // A choice made before stays while it is open, unless it was the stage
     // agent and an agy agent has appeared since.
-    if (!auto_home_id_.isEmpty() && agent(auto_home_id_) != nullptr &&
+    if (auto_home_at_ > 0 && !auto_home_id_.isEmpty() && agent(auto_home_id_) != nullptr &&
         (agy(auto_home_id_) || !any_agy))
         return auto_home_id_;
     QString best;
@@ -160,7 +162,13 @@ QString Workspace::factoryAutoHome() const {
     }
     if (best.isEmpty() && focusedAgent() != nullptr)
         best = focusedAgent()->agentId();
-    auto_home_id_ = best;
+    if (best_at > 0 && !best.isEmpty() && agy(best)) {
+        auto_home_id_ = best;
+        auto_home_at_ = best_at;
+    } else {
+        auto_home_id_.clear();
+        auto_home_at_ = 0;
+    }
     return best;
 }
 
@@ -230,9 +238,6 @@ void Workspace::rebuildFactory() const {
     factory_dirty_ = false;
     const auto now = QDateTime::currentMSecsSinceEpoch();
     const auto* home = effectiveHomeAgent();
-    QHash<QString, QString> category_names;
-    for (const auto& category : categories_)
-        category_names.insert(category.id, category.name);
     struct Row {
         int rank;
         bool safe; // idle and judged safe to close: first in its stage
@@ -259,7 +264,7 @@ void Workspace::rebuildFactory() const {
             const factory::Live live{.status_kind = item->statusKind(),
                                      .attention_pending = item->attentionPending(),
                                      .changed_at_ms = factory_changed_at_.value(id),
-                                     .finished_at_ms = waiting_since_.value(id),
+                                     .finished_at_ms = waiting_since_.value(id, item->neededAtMs()),
                                      .now_ms = now};
             const auto verdict = factory_state_.agents.constFind(id);
             const auto* judged =
@@ -298,8 +303,8 @@ void Workspace::rebuildFactory() const {
                             {"judged", current},
                             {"headline", current ? judged->headline : QString{}},
                             {"reason", current ? judged->reason : QString{}},
-                            {"receipt", judged != nullptr ? judged->receipt : QString{}},
-                            {"judgedAtMs", judged != nullptr ? judged->judged_at_ms : qint64{0}}};
+                            {"receipt", current ? judged->receipt : QString{}},
+                            {"judgedAtMs", current ? judged->judged_at_ms : qint64{0}}};
             const int rank = stage_rank(stage);
             if (rank < 4)
                 ++counts[rank];

@@ -972,8 +972,10 @@ class Workspace final : public QObject {
     bool fixture_mode_{};
     // Factory view state (workspace_factory.cpp).
     QString home_agent_id_;
-    mutable QString auto_home_id_; // the automatic orchestrator, once chosen
+    mutable QString auto_home_id_;  // the automatic orchestrator, once chosen
+    mutable qint64 auto_home_at_{}; // when that choice last showed activity
     QString published_home_id_;
+    QString published_pin_id_;
     QString factory_state_path_;
     factory::State factory_state_;
     QFileSystemWatcher* factory_watcher_{};
