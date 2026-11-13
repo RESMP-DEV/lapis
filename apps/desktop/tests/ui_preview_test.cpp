@@ -1475,10 +1475,13 @@ void check_composition_navigation(lapis::desktop::Workspace& workspace,
     terminal.forceActiveFocus();
     QCoreApplication::sendEvent(&terminal, &composition);
     CHECK(terminal.composing());
-    auto* selector =
-        find_visual(preview.window()->contentItem(), QStringLiteral("categorySelector"));
-    CHECK(selector != nullptr && selector->isVisible());
-    click_visual(*preview.window(), *selector);
+    // A narrow window names the agent over the stage; clicking the name
+    // does nothing to the keyboard, the agent or the category.
+    auto* title = find_visual(preview.window()->contentItem(), QStringLiteral("stageTitle"));
+    CHECK(title != nullptr && title->isVisible());
+    auto* commands = find_visual(preview.window()->contentItem(), QStringLiteral("commandsButton"));
+    CHECK(commands == nullptr || !commands->isVisible());
+    click_visual(*preview.window(), *title);
     CHECK(workspace.focusedAgent() == document);
     CHECK(workspace.activeCategoryId() == category);
     CHECK(terminal.composing() && terminal.hasActiveFocus());
@@ -1740,10 +1743,10 @@ int run_attention_ui_tests() {
             CHECK(window->size() == size);
             check_stage_bounds(*window, *terminal);
             auto* rail = find_visual(window->contentItem(), QStringLiteral("categoryRail"));
-            auto* selector = find_visual(window->contentItem(), QStringLiteral("categorySelector"));
-            CHECK(rail != nullptr && selector != nullptr);
+            auto* title = find_visual(window->contentItem(), QStringLiteral("stageTitle"));
+            CHECK(rail != nullptr && title != nullptr);
             CHECK(rail->isVisible() == (size.width() >= 860));
-            CHECK(selector->isVisible() == (size.width() < 860));
+            CHECK(title->isVisible() == (size.width() < 860));
             CHECK(terminal->document() == selected);
             auto* tabs = find_visual(window->contentItem(), QStringLiteral("agentTabs"));
             auto* selected_tab = find_visual(window->contentItem(),
@@ -1948,9 +1951,13 @@ int run_attention_ui_tests() {
     QGuiApplication::setFont(larger_font);
     pump(80);
     check_stage_bounds(*window, *terminal);
+    // The narrow window has no Commands button over its stage; the shortcut
+    // still opens Commands, inside the window.
     auto* menu_button = find_visual(window->contentItem(), QStringLiteral("commandsButton"));
-    CHECK(menu_button != nullptr && menu_button->isVisible());
-    click_visual(*window, *menu_button);
+    CHECK(menu_button == nullptr || !menu_button->isVisible());
+    const auto open_commands = lapis::desktop::Config().sequences(QStringLiteral("openCommands"));
+    CHECK(!open_commands.isEmpty());
+    send_binding(*window, open_commands.front());
     auto* menu = window->findChild<QObject*>(QStringLiteral("commandsDialog"));
     CHECK(menu != nullptr);
     wait_popup(*menu, true);
@@ -3483,6 +3490,146 @@ void check_sidebar_theme(QQuickWindow& window, lapis::desktop::Workspace& worksp
     CHECK(config_model.setVisual(QStringLiteral("theme"), QStringLiteral("terminal")));
 }
 
+// The sidebar hidden: no category bar and no Commands button over the stage,
+// only the focused agent's title after a mark in its category's colour,
+// muted in the thread's theme (the window's with a terminal), following the
+// focused agent; the stage starts close under it.
+void check_hidden_sidebar_title(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                                lapis::desktop::Config& config_model,
+                                const QTemporaryDir& directory, const QString& captures) {
+    using namespace lapis::desktop;
+    const auto item = [&window](const QString& name) {
+        auto* found = find_visual(window.contentItem(), name);
+        if (found == nullptr)
+            throw std::runtime_error("missing item " + name.toStdString());
+        return found;
+    };
+    const auto color = [](QObject* object, const char* name) {
+        return QQmlProperty::read(object, QString::fromLatin1(name)).value<QColor>();
+    };
+    auto* title = item(QStringLiteral("stageTitle"));
+    auto* text = item(QStringLiteral("stageTitleText"));
+    auto* mark = item(QStringLiteral("stageTitleMark"));
+    auto* stage = item(QStringLiteral("focusedPane"));
+    auto* view = item(QStringLiteral("visualView"));
+    auto* focused = workspace.focusedAgent();
+    CHECK(focused != nullptr);
+    const auto sidebar_title = [&] {
+        return item(QStringLiteral("sidebarTitle_") + workspace.focusedAgent()->agentId())
+            ->property("text")
+            .toString();
+    };
+    // The mark's expected colour: the focused agent's category's hue in the
+    // palette beside the stage.
+    const auto category_hue = [&] {
+        auto group = QQmlProperty::read(&window, QStringLiteral("stageTitleGroup"));
+        if (group.canConvert<QJSValue>())
+            group = group.value<QJSValue>().toVariant();
+        const auto name = group.toMap().value(QStringLiteral("color"));
+        CHECK(!name.toString().isEmpty());
+        QVariant hue;
+        CHECK(QMetaObject::invokeMethod(&window, "categoryTone", Q_RETURN_ARG(QVariant, hue),
+                                        Q_ARG(QVariant, name),
+                                        Q_ARG(QVariant, QQmlProperty::read(&window, "chrome"))));
+        return hue.value<QColor>();
+    };
+    const auto stage_top = [&] { return stage->mapToScene(QPointF(0, 0)).y(); };
+
+    // Sidebar shown: no title line, the stage at the window's margin.
+    CHECK(!title->isVisible());
+    const auto top_with_sidebar = stage_top();
+
+    CHECK(config_model.setSidebarVisible(false));
+    wait_sidebar(window, config_model, false);
+    pump(80);
+    CHECK(title->isVisible());
+    CHECK(text->property("text").toString() == sidebar_title());
+    CHECK(color(mark, "color") == category_hue());
+    CHECK(color(text, "color") == window.property("mutedTextColor").value<QColor>());
+    CHECK(find_visual(window.contentItem(), QStringLiteral("categorySelector")) == nullptr);
+    auto* commands = find_visual(window.contentItem(), QStringLiteral("commandsButton"));
+    CHECK(commands == nullptr || !commands->isVisible());
+    // One quiet line: no taller than about two lines of chrome text, and the
+    // stage starts under it.
+    const int chrome_font = window.property("chromeFont").toInt();
+    CHECK(title->height() <= chrome_font * 2);
+    CHECK(stage_top() >= title->y() + title->height() - 1);
+    CHECK(stage_top() <= title->height() + 1);
+    CHECK(stage_top() > top_with_sidebar);
+    // It takes no keyboard.
+    CHECK(!title->hasActiveFocus() && !title->activeFocusOnTab());
+    pump(300);
+    if (!captures.isEmpty())
+        CHECK(window.grabWindow().save(
+            QDir(captures).filePath(QStringLiteral("hidden-sidebar-terminal.png"))));
+
+    // A thread on the stage: its theme's muted text.
+    const auto path = directory.filePath(QStringLiteral("hidden-sidebar-thread.jsonl"));
+    QFile file(path);
+    CHECK(file.open(QIODevice::WriteOnly));
+    for (const char* line : kSettingsThread)
+        file.write(QByteArray(line) + '\n');
+    file.close();
+    auto* model = qobject_cast<TranscriptModel*>(workspace.transcript());
+    CHECK(model != nullptr);
+    model->setPath(path);
+    model->loadNow();
+    view->setProperty("visible", true);
+    for (const char* theme : {"codex", "claude-light"}) {
+        CHECK(config_model.setVisual(QStringLiteral("theme"), QString::fromLatin1(theme)));
+        CHECK(color(text, "color") == color(view, "mutedTextColor"));
+        CHECK(color(mark, "color") == category_hue());
+        pump(300);
+        if (!captures.isEmpty())
+            CHECK(window.grabWindow().save(
+                QDir(captures).filePath(QStringLiteral("hidden-sidebar-") +
+                                        QString::fromLatin1(theme) + QStringLiteral(".png"))));
+    }
+
+    // A long title in a narrow window (which hides the sidebar too) is cut
+    // short on its one line.
+    const auto id = focused->agentId();
+    const auto old_title = focused->title();
+    const auto old_size = window.size();
+    CHECK(workspace.renameAgent(
+        id,
+        QStringLiteral("Rewrite the config loader so legacy keys are read once, then dropped")));
+    window.resize(640, old_size.height());
+    pump(120);
+    CHECK(title->isVisible());
+    CHECK(text->property("text").toString() == sidebar_title());
+    // Names stop at 80 characters, so one fits a 640 px window at the usual
+    // text size; past the room it would end in an ellipsis on its one line.
+    CHECK(text->property("elide").toInt() == 1 /* Text.ElideRight */);
+    CHECK(text->width() <= title->width() - 80);
+    CHECK(text->height() <= title->height());
+    if (!captures.isEmpty())
+        CHECK(window.grabWindow().save(
+            QDir(captures).filePath(QStringLiteral("hidden-sidebar-long-title.png"))));
+    window.resize(old_size);
+    pump(80);
+    CHECK(workspace.renameAgent(id, old_title));
+
+    // It follows the focused agent.
+    const auto agents = workspace.categoryAgents();
+    if (agents.size() > 1) {
+        auto* other = agents.back().value<Agent*>();
+        if (other != nullptr && other != workspace.focusedAgent() &&
+            workspace.selectAgent(other->agentId())) {
+            pump(80);
+            CHECK(text->property("text").toString() == sidebar_title());
+            CHECK(workspace.selectAgent(id));
+        }
+    }
+
+    view->setProperty("visible", false);
+    model->setPath(QString());
+    CHECK(config_model.setVisual(QStringLiteral("theme"), QStringLiteral("terminal")));
+    CHECK(config_model.setSidebarVisible(true));
+    wait_sidebar(window, config_model, true);
+    CHECK(!title->isVisible());
+}
+
 // Light mode and the Settings window, on a config of its own.
 int run_settings_window_tests() {
     using namespace lapis::desktop;
@@ -3507,6 +3654,7 @@ int run_settings_window_tests() {
     const auto captures = qEnvironmentVariable("LAPIS_SETTINGS_CAPTURE_DIR");
     check_appearance_toggle(*window, workspace, config_model, directory, captures);
     check_sidebar_theme(*window, workspace, config_model, directory, captures);
+    check_hidden_sidebar_title(*window, workspace, config_model, directory, captures);
     check_settings_window(*window, preview, config_model, captures);
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;

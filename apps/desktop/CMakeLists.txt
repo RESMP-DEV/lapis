@@ -53,6 +53,7 @@ add_library(lapis_desktop_core STATIC
     src/transcript.cpp src/transcript.hpp src/transcript_parts.hpp
     src/transcript_codex.cpp src/transcript_antigravity.cpp
     src/transcript_math.cpp src/transcript_math.hpp
+    src/transcript_table.cpp src/transcript_table.hpp
     src/code_highlight.cpp src/code_highlight.hpp
     src/slash_commands.cpp src/slash_commands.hpp)
 target_include_directories(lapis_desktop_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -176,6 +177,9 @@ if(BUILD_TESTING)
     add_executable(lapis_transcript_tests tests/transcript_test.cpp)
     target_link_libraries(lapis_transcript_tests PRIVATE lapis_project_options lapis_desktop_core)
     add_test(NAME transcript COMMAND lapis_transcript_tests)
+    add_executable(lapis_transcript_table_tests tests/transcript_table_test.cpp)
+    target_link_libraries(lapis_transcript_table_tests PRIVATE lapis_project_options lapis_desktop_core)
+    add_test(NAME transcript-table COMMAND lapis_transcript_table_tests)
     set_tests_properties(transcript PROPERTIES TIMEOUT 20)
     # The other CLIs' readers, against the synthetic conversations in tests/visual.
     add_executable(lapis_transcript_clis_tests tests/transcript_clis_test.cpp)

@@ -6,6 +6,7 @@
 #include "slash_commands.hpp"
 #include "transcript_math.hpp"
 #include "transcript_parts.hpp"
+#include "transcript_table.hpp"
 #include <QClipboard>
 #include <QColor>
 #include <QDateTime>
@@ -473,9 +474,30 @@ std::vector<Piece> pieces(const QString& markdown, bool* missing) {
         add_prose(prose.mid(from));
         prose.clear();
     };
+    // A table runs from its header to the first blank line or line without
+    // a pipe.
+    QStringList table;
+    const auto flush_table = [&] {
+        if (!table.isEmpty())
+            out.push_back({false, {}, table.join(QLatin1Char('\n')), {}, true});
+        table.clear();
+    };
     for (const auto& line : markdown.split(QLatin1Char('\n'))) {
         const auto trimmed = line.trimmed();
         if (fence.isEmpty()) {
+            if (!table.isEmpty()) {
+                if (!trimmed.isEmpty() && trimmed.contains(QLatin1Char('|'))) {
+                    table << line;
+                    continue;
+                }
+                flush_table();
+            }
+            if (!prose.isEmpty() && table_delimiter(line) && table_header(prose.last(), line)) {
+                const auto header = prose.takeLast();
+                flush_prose();
+                table = QStringList{header, line};
+                continue;
+            }
             if (trimmed.startsWith(QLatin1String("```")) ||
                 trimmed.startsWith(QLatin1String("~~~"))) {
                 flush_prose();
@@ -498,6 +520,7 @@ std::vector<Piece> pieces(const QString& markdown, bool* missing) {
     }
     if (!fence.isEmpty()) // an unclosed block still reads as code
         out.push_back({true, language, code.join(QLatin1Char('\n')), {}});
+    flush_table();
     flush_prose();
     return out;
 }
@@ -3119,6 +3142,7 @@ const TranscriptModel::ReplyParts& TranscriptModel::reply_parts(const QString& m
             QVariantMap{{QStringLiteral("code"), piece.code},
                         {QStringLiteral("language"), piece.language},
                         {QStringLiteral("text"), piece.text},
+                        {QStringLiteral("table"), piece.table},
                         {QStringLiteral("media"),
                          media ? QVariant(media_map(piece.media)) : QVariant::fromValue(nullptr)}});
     }
@@ -3148,8 +3172,47 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
     // The reply is put together in a document of its own, which nothing
     // lays out, and then copied into the view's in one edit: the view lays
     // the text out once, not after the import and again after the styling.
-    QTextDocument& shown = *target->textDocument();
     QTextDocument document;
+    transcript::detail::compose(document, markdown, style);
+
+    // Tables left in prose (inside a list or quote; a reply's own tables are
+    // pieces of their own): a thin grid in the theme's quiet border color,
+    // roomy cells and a bolder header. (Qt Quick draws only a table's whole
+    // grid, not rules per cell or full cell backgrounds.)
+    const auto size = std::max(8, style.value(QStringLiteral("size")).toInt());
+    const auto border = style.value(QStringLiteral("borderColor")).value<QColor>();
+    QTextCursor cursor(&document);
+    cursor.beginEditBlock();
+    for (auto* frame : document.rootFrame()->childFrames()) {
+        auto* table = qobject_cast<QTextTable*>(frame);
+        if (table == nullptr)
+            continue;
+        auto format = table->format();
+        format.setBorderCollapse(true);
+        format.setBorder(1);
+        format.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+        if (border.isValid())
+            format.setBorderBrush(border);
+        format.setCellSpacing(0);
+        format.setCellPadding(size * 0.5);
+        format.setTopMargin(size * 0.3);
+        format.setBottomMargin(size * 0.3);
+        table->setFormat(format);
+        for (int column = 0; column < table->columns(); ++column) {
+            QTextCursor header_cell = table->cellAt(0, column).firstCursorPosition();
+            header_cell.setPosition(table->cellAt(0, column).lastPosition(),
+                                    QTextCursor::KeepAnchor);
+            QTextCharFormat bold;
+            bold.setFontWeight(QFont::DemiBold);
+            header_cell.mergeCharFormat(bold);
+        }
+    }
+    cursor.endEditBlock();
+    transcript::detail::present(*target->textDocument(), document, style);
+}
+
+void transcript::detail::compose(QTextDocument& document, const QString& markdown,
+                                 const QVariantMap& style) {
     document.setUndoRedoEnabled(false);
     const auto size = std::max(8, style.value(QStringLiteral("size")).toInt());
     const auto code_size = std::max(8, style.value(QStringLiteral("codeSize")).toInt());
@@ -3263,36 +3326,6 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
         found.mergeCharFormat(format);
     }
 
-    // Tables: a thin grid in the theme's quiet border color, roomy cells and
-    // a bolder header. (Qt Quick draws only a table's whole grid, not rules
-    // per cell or full cell backgrounds, so a rows-only look is not
-    // available here.)
-    const auto border = style.value(QStringLiteral("borderColor")).value<QColor>();
-    for (auto* frame : document.rootFrame()->childFrames()) {
-        auto* table = qobject_cast<QTextTable*>(frame);
-        if (table == nullptr)
-            continue;
-        auto format = table->format();
-        format.setBorderCollapse(true);
-        format.setBorder(1);
-        format.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
-        if (border.isValid())
-            format.setBorderBrush(border);
-        format.setCellSpacing(0);
-        format.setCellPadding(size * 0.5);
-        format.setTopMargin(size * 0.3);
-        format.setBottomMargin(size * 0.3);
-        table->setFormat(format);
-        for (int column = 0; column < table->columns(); ++column) {
-            QTextCursor header_cell = table->cellAt(0, column).firstCursorPosition();
-            header_cell.setPosition(table->cellAt(0, column).lastPosition(),
-                                    QTextCursor::KeepAnchor);
-            QTextCharFormat bold;
-            bold.setFontWeight(QFont::DemiBold);
-            header_cell.mergeCharFormat(bold);
-        }
-    }
-
     // A quote reads quieter than the reply around it.
     const auto quote = style.value(QStringLiteral("quoteColor")).value<QColor>();
     if (quote.isValid())
@@ -3306,7 +3339,12 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
                 quoted.mergeCharFormat(format);
             }
     cursor.endEditBlock();
+}
 
+void transcript::detail::present(QTextDocument& shown, const QTextDocument& document,
+                                 const QVariantMap& style) {
+    QFont base(style.value(QStringLiteral("sans")).toString());
+    base.setPixelSize(std::max(8, style.value(QStringLiteral("size")).toInt()));
     shown.setUndoRedoEnabled(false);
     shown.clear(); // before the font changes, so the old text is not laid out again
     shown.setDefaultFont(base);

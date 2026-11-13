@@ -164,6 +164,19 @@ ApplicationWindow {
     readonly property bool stripShown: previewsEnabled && workspace.categoryAgents.length > 0
     readonly property bool sidebarExpanded: config.sidebarVisible
     readonly property bool narrow: width < 860
+    // The title line over the stage while the sidebar is hidden: the
+    // focused agent's category (from the sidebar's groups) and its title as
+    // its sidebar row gives it; the active category's name with no agent.
+    readonly property bool stageTitleShown: narrow || !sidebarExpanded
+    readonly property int stageTitleHeight: Math.round(chromeFont * 1.8)
+    readonly property var stageTitleGroup: {
+        const agent = workspace.focusedAgent
+        const id = agent ? agentCategory(agent.agentId) : workspace.activeCategoryId
+        return sidebarGroups.find(entry => entry.id === id) ?? null
+    }
+    readonly property string stageTitleText: workspace.focusedAgent
+        ? agentTabTitle(workspace.focusedAgent, stageTitleGroup ? stageTitleGroup.agents : undefined)
+        : activeCategoryName
     // Zero-duration themes and reduced motion change state instantly.
     readonly property bool motionEnabled: !app.reducedMotion && active && visible && motionDuration > 0
     readonly property bool inputBlocked: transitionLock
@@ -179,7 +192,6 @@ ApplicationWindow {
             || renameAgentDialog.visible
             || agentMenu.visible
             || categoryMenu.visible
-            || (categorySelector.popup !== null && categorySelector.popup.visible)
     // Dialogs block input. Composition and paste do not open a dialog, but they
     // still own the keyboard, so shortcuts and chrome clicks stay inert.
     readonly property bool interactionArmed: !inputBlocked && !terminalBusy
@@ -629,9 +641,8 @@ ApplicationWindow {
         }
         return ids
     }
-    // Recall number for categories reachable by a category1-9 shortcut: shown in
-    // the narrow window's category selector; the sidebar's names show the
-    // shortcut on hover.
+    // Recall number for categories reachable by a category1-9 shortcut; the
+    // sidebar's names show the shortcut on hover.
     function categoryRecall(index) {
         return index < 9 && bindings("category" + (index + 1)).length > 0 ? String(index + 1) : ""
     }
@@ -752,9 +763,7 @@ ApplicationWindow {
         if (attentionDialog.visible || agentDialog.visible || categoryDialog.visible
                 || renameAgentDialog.visible || settingsDialog.visible || closeAgentDialog.visible)
             return
-        if (menusVisible() || (categorySelector.popup !== null && categorySelector.popup.visible)) {
-            if (categorySelector.popup !== null && categorySelector.popup.visible)
-                categorySelector.popup.close()
+        if (menusVisible()) {
             openFresh(settingsDialog)
             return
         }
@@ -1521,8 +1530,6 @@ ApplicationWindow {
                                keyboardOwnershipReady()
                                app.deferTerminalFocus()
                            }
-    onNarrowChanged: if (!narrow && categorySelector.popup !== null && categorySelector.popup.visible)
-                         categorySelector.popup.close()
 
     Shortcut {
         objectName: "commandsShortcut"
@@ -2941,9 +2948,53 @@ ApplicationWindow {
         }
     }
 
+    // With the sidebar hidden (Command-B, or a window too narrow for it) the
+    // top of the window names the agent on the stage, quietly: its
+    // category's colour as a small mark, then the title its sidebar row
+    // shows. Text in the gap above the stage, no bar or button: it takes no
+    // keyboard and no clicks, and hovering names the category.
+    Item {
+        id: stageTitle
+        objectName: "stageTitle"
+        visible: window.stageTitleShown && window.stageTitleText.length > 0
+        x: 8
+        width: window.width - 16
+        height: window.stageTitleHeight
+        Row {
+            anchors.centerIn: parent
+            spacing: Math.round(window.chromeFont * 0.5)
+            Rectangle {
+                objectName: "stageTitleMark"
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.round(window.chromeFont * 0.55)
+                height: width
+                radius: width / 2
+                color: window.categoryTone(window.stageTitleGroup ? window.stageTitleGroup.color : "",
+                                           window.chrome)
+                ColorEase on color {}
+            }
+            PlainText {
+                objectName: "stageTitleText"
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.min(implicitWidth, stageTitle.width - 80)
+                text: window.stageTitleText
+                color: window.chrome.muted
+                font.pixelSize: window.chromeFont
+                elide: Text.ElideRight
+                ColorEase on color {}
+            }
+        }
+        HoverHandler { id: stageTitleHover }
+        ToolTip.visible: stageTitleHover.hovered && window.stageTitleGroup !== null
+        ToolTip.delay: 600
+        ToolTip.text: window.stageTitleGroup ? window.stageTitleGroup.name : ""
+    }
+
     RowLayout {
         anchors.fill: parent
         anchors.margins: 8
+        // The stage starts under the agent's title when the sidebar is hidden.
+        anchors.topMargin: window.stageTitleShown ? window.stageTitleHeight : 8
         spacing: 8
 
         Rectangle {
@@ -3461,7 +3512,7 @@ ApplicationWindow {
                                   : qsTr("One orchestrator conversation beside every agent's pipeline stage")
                 }
                 CommandsButton {
-                    objectName: categoryRail.visible ? "commandsButton" : "railCommands"
+                    objectName: "commandsButton"
                     tones: window.chrome
                     Layout.fillWidth: true
                     Layout.bottomMargin: 0
@@ -3474,133 +3525,6 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 6
-
-            RowLayout {
-                id: categoryBar
-                visible: window.narrow || !window.sidebarExpanded
-                Layout.fillWidth: true
-                spacing: 6
-
-                ComboBox {
-                    id: categorySelector
-                    objectName: "categorySelector"
-                    visible: window.narrow || !window.sidebarExpanded
-                    enabled: window.interactionArmed || popup.visible
-                    Layout.fillWidth: true
-                    implicitHeight: window.tabHeight
-                    model: workspace.categories
-                    textRole: "name"
-                    font.pixelSize: window.chromeFont
-                    currentIndex: {
-                        const index = window.categoryIndex(workspace.activeCategoryId)
-                        if (index >= 0)
-                            return index
-                        return workspace.categories.length > 0 ? 0 : -1
-                    }
-                    onActivated: function(index) { window.selectCategoryByIndex(index) }
-
-                    // Same group grammar as the rail: a leading edge for the active
-                    // group, and a count of requests waiting in the hidden groups.
-                    // The top bar beside a thread takes its theme, as the sidebar does.
-                    background: Rectangle {
-                        radius: window.chromeRadius
-                        color: categorySelector.hovered ? window.chrome.hover : window.chrome.panel
-                        border.width: 1
-                        border.color: window.chrome.border
-                        ColorEase on color {}
-                        Rectangle {
-                            x: 1
-                            width: 2
-                            height: parent.height - 10
-                            anchors.verticalCenter: parent.verticalCenter
-                            color: window.chrome.accent
-                        }
-                    }
-                    contentItem: Item {
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 10
-                            anchors.rightMargin: 28
-                            spacing: 8
-                            PlainText {
-                                text: window.activeCategoryName
-                                color: window.chrome.text
-                                font.pixelSize: window.chromeFont
-                                font.weight: Font.DemiBold
-                                elide: Text.ElideRight
-                                verticalAlignment: Text.AlignVCenter
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                            }
-                        }
-                    }
-                    indicator: PlainText {
-                        x: categorySelector.width - width - 8
-                        y: (categorySelector.height - height) / 2
-                        text: "▾"
-                        color: window.chrome.muted
-                        font.pixelSize: window.chromeFont
-                    }
-                    delegate: ItemDelegate {
-                        id: categoryOption
-                        required property var modelData
-                        required property int index
-                        width: categorySelector.width
-                        text: modelData.name
-                        font.pixelSize: window.chromeFont
-                        hoverEnabled: true
-                        onClicked: {
-                            workspace.selectCategory(modelData.id)
-                            categorySelector.popup.close()
-                        }
-                        contentItem: RowLayout {
-                            spacing: 8
-                            PlainText {
-                                text: window.categoryRecall(categoryOption.index)
-                                visible: text.length > 0
-                                color: window.mutedTextColor
-                                font.family: window.monoFamily
-                                font.pixelSize: window.readoutFont
-                                leftPadding: 4
-                            }
-                            PlainText {
-                                text: categoryOption.text
-                                color: window.textColor
-                                font.weight: categoryOption.modelData.id === workspace.activeCategoryId ?
-                                                 Font.DemiBold : Font.Normal
-                                elide: Text.ElideRight
-                                verticalAlignment: Text.AlignVCenter
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                            }
-                        }
-                        background: Rectangle {
-                            color: categoryOption.hovered ? window.hoveredCardColor : window.cardColor
-                            Rectangle {
-                                width: 2
-                                height: parent.height
-                                color: categoryOption.modelData.id === workspace.activeCategoryId ?
-                                           window.focusedBorderColor : "transparent"
-                            }
-                        }
-                    }
-
-                    popup.background: Rectangle {
-                        color: window.cardColor
-                        border.color: window.borderColor
-                        border.width: 1
-                    }
-                    popup.onOpened: {
-                        const limit = Math.max(120, window.height - 80)
-                        if (categorySelector.popup.height > limit)
-                            categorySelector.popup.height = limit
-                    }
-                }
-                CommandsButton {
-                    objectName: categoryBar.visible ? "commandsButton" : "barCommands"
-                    tones: window.chrome
-                }
-            }
 
             Rectangle {
                 objectName: "workspaceErrorBanner"

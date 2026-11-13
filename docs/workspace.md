@@ -18,7 +18,7 @@ window, with names a step larger than the rest of the chrome and taller rows.
 Larger terminal text makes the sidebar's names, rows and width larger too; a
 long name ends in an ellipsis and shows in full on hover. While a thread (the
 visual view) covers the stage, the sidebar, the gaps around the stage, the
-stage's frame, the category selector and the strip's frames take the thread's
+stage's frame, the agent's title over the stage and the strip's frames take the thread's
 theme, so the panel reads as part of the same page; with a terminal showing
 they keep the window theme. Terminals keep their own colours either way. Hover,
 press, selection and status colours ease over one short 150 ms transition; a
@@ -34,7 +34,14 @@ eight colours (grey, blue, red, yellow, green, pink, purple, cyan) by its place
 in the list until you choose one under **Colour** in its menu (a right-click on
 its name); a chosen colour is kept with the category in `runtime/workspace.json`
 in the lapis folder. A narrow
-window, or Command-B, hides the sidebar and shows a category selector instead.
+window (under 860 pixels), or Command-B, hides the sidebar. The top of the
+window then holds one quiet line instead: a dot in the agent's category colour
+and the agent's title as its sidebar row names it (the category's name when no
+agent is open), muted, in the space above the stage. It is not a button and
+takes no clicks or keyboard; hovering it names the category. Commands still
+opens with its shortcut, and categories change with Command-1 to 9, the next
+and previous category shortcuts, the same entries in Commands, or by showing
+the sidebar again.
 
 The strip of live previews under the stage is off unless you turn it on with
 **Show agent previews** in Commands (or `previewsVisible` in
@@ -425,8 +432,21 @@ message in the bar. A request the agent raises does not do this; it waits in
 the terminal as before.
 
 Code in replies is colored by its language with Tokyo Night's palette (its Day
-variant on light themes), as are the commands steps ran. Tables get a quiet
-grid and a bold header; quotes read quieter than the reply. Math in replies
+variant on light themes), as are the commands steps ran. Quotes read quieter
+than the reply. A table is sized from its text: a column whose cells fit in
+24 characters keeps that width and never wraps (labels, ids, numbers, status
+words); the other columns start at 20 characters (or their longest word, up to
+32) and share what is left by how much text each holds, none wider than 64
+characters. A table wider than the reading column grows past it, centred on
+it, up to the thread's full width; wider still, it scrolls sideways in its own
+frame (a sideways swipe or its scroll bar) while up-and-down
+gestures keep scrolling the thread. Cells are set at 0.9 of the reply's size
+with 1.35 line spacing and tight padding; the header is semibold on a faint
+tint over a firmer rule, hairlines separate the rows, a first column of short
+labels is a little heavier, and a column of numbers, percents or amounts
+aligns right (colons in the delimiter row win). Code, bold, links and `<br>`
+work in cells as in prose, and paths break at their slashes. Copy on the reply
+copies the table's Markdown. Math in replies
 (`$...$` and `\(...\)` in a sentence, `$$...$$` and `\[...\]` on their own) is
 set as text: Greek letters and symbols, real superscripts and subscripts,
 fractions as `(a + b)/(c + d)`, roots, and italic variables, with display
