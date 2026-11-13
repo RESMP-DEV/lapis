@@ -2379,6 +2379,9 @@ int run_strip_ui_tests() {
     auto* pooled_agent =
         QQmlProperty::read(pooled_card, QStringLiteral("modelData")).value<Agent*>();
     CHECK(pooled_agent == workspace.agent(QStringLiteral("agent")));
+    finish_turn(*pooled_agent);
+    pump(30);
+    CHECK(pooled_agent->unseen() && pooled_card->property("pulseRunning").toBool());
     const auto pool_events = [](QQuickItem* parent, auto&& visit) -> int {
         int count = parent->property("poolCount").toInt();
         for (auto* child : parent->childItems())
@@ -2391,6 +2394,8 @@ int run_strip_ui_tests() {
     CHECK(pooled_card->setProperty("pooled", true));
     pump(30);
     CHECK(!item(QStringLiteral("previewTerminal_agent"))->isVisible());
+    CHECK(item(QStringLiteral("unseenCue_agent"))->isVisible());
+    CHECK(!pooled_card->property("pulseRunning").toBool());
     {
         lapis::session::Terminal source{{4, 2}};
         source.feed("pooled\n");
@@ -2404,6 +2409,7 @@ int run_strip_ui_tests() {
     auto* reused_card = item(QStringLiteral("agentTab_agent"));
     CHECK(reused_card == pooled_card && reused_card->property("pooled").toBool() == false);
     CHECK(item(QStringLiteral("previewTerminal_agent"))->isVisible());
+    CHECK(pooled_card->property("pulseRunning").toBool());
     {
         lapis::session::Terminal source{{4, 2}};
         source.feed("reused\n");
