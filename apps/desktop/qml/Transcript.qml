@@ -883,7 +883,12 @@ FocusScope {
     readonly property var proseStyle: ({ sans: sansFamily, mono: monoFamily, size: fontSize, codeSize: codeSize,
                                          codeColor: codeColor, linkColor: accentColor,
                                          inlineCodeColor: inlineCodeColor, inlineCodeTextColor: inlineCodeTextColor,
-                                         borderColor: borderColor, quoteColor: mutedTextColor })
+                                         borderColor: borderColor, quoteColor: mutedTextColor,
+                                         headerColor: tableHeaderColor })
+    // A table's header: the body's text a step toward the muted tone, so
+    // its weight, not a second color, sets it apart.
+    readonly property color tableHeaderColor: Qt.tint(textColor,
+                                                      Qt.rgba(mutedTextColor.r, mutedTextColor.g, mutedTextColor.b, 0.5))
     // Code inside a sentence stays quiet, as it is read often: a faint step
     // from the page toward the raised surface (never the darker code well)
     // and text one step dimmer than the body's.
@@ -1089,15 +1094,23 @@ FocusScope {
     WheelHandler {
         target: null
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-        onWheel: function(event) {
-            const step = event.pixelDelta.y !== 0 ? event.pixelDelta.y
-                                                  : event.angleDelta.y / 120 * root.fontSize * 4
-            const top = list.originY
-            const bottom = Math.max(top, list.originY + list.contentHeight - list.height)
-            list.contentY = Math.max(top, Math.min(bottom, list.contentY - step))
-            root.following = list.contentY >= bottom - 2
-        }
+        onWheel: function(event) { root.scrollThread(event) }
     }
+    // Scrolls the thread by a wheel or trackpad event's vertical part (a
+    // table scrolling sideways passes its events on here).
+    function scrollThread(event) {
+        const step = event.pixelDelta.y !== 0 ? event.pixelDelta.y
+                                              : event.angleDelta.y / 120 * root.fontSize * 4
+        if (step === 0)
+            return
+        const top = list.originY
+        const bottom = Math.max(top, list.originY + list.contentHeight - list.height)
+        list.contentY = Math.max(top, Math.min(bottom, list.contentY - step))
+        root.following = list.contentY >= bottom - 2
+    }
+    // The widest a table may be: the thread's width less its margins, past
+    // the reading column.
+    readonly property int tableRoom: list.width - 56
 
     // Read-only text that selects with the mouse and copies with Command-C.
     component Selectable: TextEdit {
@@ -1861,7 +1874,8 @@ FocusScope {
                 delegate: Loader {
                     required property var modelData
                     width: reply.width
-                    sourceComponent: modelData.media ? mediaPiece : modelData.code ? codePiece : prosePiece
+                    sourceComponent: modelData.media ? mediaPiece : modelData.code ? codePiece
+                                     : modelData.table ? tablePiece : prosePiece
                     property var piece: modelData
                 }
             }
@@ -1906,6 +1920,139 @@ FocusScope {
             Connections {
                 target: root
                 function onStyleKeyChanged() { prose.restyle() }
+            }
+        }
+    }
+
+    // A reply's table: columns fit to their text by the model (styleTable),
+    // as wide as the text asks up to the thread's width, so a wide table
+    // leaves the reading column centred on it; wider still, it scrolls
+    // sideways in its frame and never squeezes a column below its minimum.
+    // The header's tint and the rules between rows are drawn behind the
+    // text, which stays one selectable document.
+    Component {
+        id: tablePiece
+        Item {
+            id: tableBox
+            objectName: "replyTable"
+            readonly property string source: parent && parent.piece ? parent.piece.text : ""
+            readonly property real room: Math.max(width, root.tableRoom)
+            property var fit: ({ width: 0, rows: [], header: false })
+            readonly property bool fitted: fit.width > 0
+            readonly property var rows: fitted ? fit.rows : []
+            readonly property bool overflow: fitted && fit.width > room - 2
+            readonly property real maxScroll: Math.max(0, fit.width - (frame.width - 2))
+            property real scrollX: 0
+            implicitHeight: frame.height
+            function refit() {
+                if (!root.model)
+                    return
+                fit = root.model.styleTable(cells.textDocument, source, root.proseStyle, room - 2)
+                scrollX = Math.max(0, Math.min(scrollX, maxScroll))            }
+            onSourceChanged: refit()
+            onRoomChanged: refit()
+            Component.onCompleted: refit()
+            Connections {
+                target: root
+                function onStyleKeyChanged() { tableBox.refit() }
+            }
+
+            Item {
+                id: frame
+                objectName: "replyTableFrame"
+                width: tableBox.fitted ? Math.min(tableBox.fit.width + 2, tableBox.room) : tableBox.width
+                // In the reading column when it fits there, else centred on it.
+                x: width <= tableBox.width ? 0 : Math.round((tableBox.width - width) / 2)
+                height: cells.height + 2 + (tableBox.overflow ? sideBar.height : 0)
+                readonly property int radius: 6
+
+                // The header row: a faint tint of the text's color.
+                Rectangle {
+                    visible: tableBox.fit.header === true && tableBox.rows.length > 1
+                    x: 1
+                    y: 1 + (visible ? tableBox.rows[0] : 0)
+                    width: frame.width - 2
+                    height: visible ? tableBox.rows[1] - tableBox.rows[0] : 0
+                    topLeftRadius: frame.radius - 1
+                    topRightRadius: frame.radius - 1
+                    color: root.tint(root.textColor, root.lightPage ? 0.035 : 0.05)
+                }
+                // A hairline between rows; under the header, a firmer one.
+                Repeater {
+                    model: Math.max(0, tableBox.rows.length - 2)
+                    Rectangle {
+                        required property int index
+                        x: 1
+                        y: 1 + Math.round(tableBox.rows[index + 1])
+                        width: frame.width - 2
+                        height: 1
+                        color: index === 0 && tableBox.fit.header
+                               ? Qt.tint(root.borderColor, root.tint(root.textColor, 0.22))
+                               : root.tint(root.borderColor, 0.75)
+                    }
+                }
+                Item {
+                    x: 1
+                    y: 1
+                    width: frame.width - 2
+                    height: cells.height
+                    clip: tableBox.overflow
+                    Selectable {
+                        id: cells
+                        objectName: "replyTableText"
+                        x: -tableBox.scrollX
+                        // The room, or the table when wider: the width the
+                        // model laid the document out at, so it is not laid
+                        // out again for a new width.
+                        width: tableBox.fitted || tableBox.fit.rows !== undefined
+                               ? Math.max(tableBox.fit.width, tableBox.room - 2) : frame.width - 2
+                        textFormat: TextEdit.RichText
+                    }
+                }
+                Rectangle {
+                    visible: tableBox.fitted
+                    anchors.fill: parent
+                    radius: frame.radius
+                    color: "transparent"
+                    border.width: 1
+                    border.color: root.borderColor
+                }
+                ScrollBar {
+                    id: sideBar
+                    objectName: "replyTableScrollBar"
+                    visible: tableBox.overflow
+                    orientation: Qt.Horizontal
+                    x: 1
+                    width: frame.width - 2
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 1
+                    height: 12
+                    padding: 3
+                    policy: ScrollBar.AlwaysOn
+                    size: tableBox.fitted ? (frame.width - 2) / tableBox.fit.width : 1
+                    position: tableBox.fitted ? tableBox.scrollX / tableBox.fit.width : 0
+                    onPositionChanged: if (pressed) tableBox.scrollX = Math.max(0, Math.min(tableBox.maxScroll, position * tableBox.fit.width))
+                    contentItem: Rectangle {
+                        implicitHeight: 6
+                        radius: height / 2
+                        color: root.textColor
+                        opacity: sideBar.pressed ? 0.6 : sideBar.hovered ? 0.45 : 0.22
+                    }
+                }
+                // Sideways gestures scroll the table; the up-and-down part
+                // still scrolls the thread.
+                WheelHandler {
+                    target: null
+                    enabled: tableBox.overflow
+                    orientation: Qt.Horizontal
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    onWheel: function(event) {
+                        const step = event.pixelDelta.x !== 0 ? event.pixelDelta.x
+                                                              : event.angleDelta.x / 120 * root.fontSize * 4
+                        tableBox.scrollX = Math.max(0, Math.min(tableBox.maxScroll, tableBox.scrollX - step))
+                        root.scrollThread(event)
+                    }
+                }
             }
         }
     }

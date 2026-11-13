@@ -416,8 +416,21 @@ message in the bar. A request the agent raises does not do this; it waits in
 the terminal as before.
 
 Code in replies is colored by its language with Tokyo Night's palette (its Day
-variant on light themes), as are the commands steps ran. Tables get a quiet
-grid and a bold header; quotes read quieter than the reply. Math in replies
+variant on light themes), as are the commands steps ran. Quotes read quieter
+than the reply. A table is sized from its text: a column whose cells fit in
+24 characters keeps that width and never wraps (labels, ids, numbers, status
+words); the other columns start at 20 characters (or their longest word, up to
+32) and share what is left by how much text each holds, none wider than 64
+characters. A table wider than the reading column grows past it, centred on
+it, up to the thread's full width; wider still, it scrolls sideways in its own
+frame (a sideways swipe or its scroll bar) while up-and-down
+gestures keep scrolling the thread. Cells are set at 0.9 of the reply's size
+with 1.35 line spacing and tight padding; the header is semibold on a faint
+tint over a firmer rule, hairlines separate the rows, a first column of short
+labels is a little heavier, and a column of numbers, percents or amounts
+aligns right (colons in the delimiter row win). Code, bold, links and `<br>`
+work in cells as in prose, and paths break at their slashes. Copy on the reply
+copies the table's Markdown. Math in replies
 (`$...$` and `\(...\)` in a sentence, `$$...$$` and `\[...\]` on their own) is
 set as text: Greek letters and symbols, real superscripts and subscripts,
 fractions as `(a + b)/(c + d)`, roots, and italic variables, with display

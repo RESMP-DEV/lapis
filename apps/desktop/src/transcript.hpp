@@ -1,5 +1,7 @@
 #ifndef LAPIS_DESKTOP_TRANSCRIPT_HPP
 #define LAPIS_DESKTOP_TRANSCRIPT_HPP
+#include "transcript_table.hpp"
+
 #include <QAbstractListModel>
 #include <QByteArray>
 #include <QHash>
@@ -225,12 +227,15 @@ struct Media {
 // a path to media that exists (bare, in backticks, or a Markdown image or
 // link to it, starting at the line's first column) is a media piece in its
 // place, so a picture shows where the reply names it; `text` keeps the
-// paragraph as written. `missing` is set as for find_media.
+// paragraph as written. A table outside lists and quotes is a piece of its
+// own too (`table`, its rows as written), laid out wider than the prose.
+// `missing` is set as for find_media.
 struct Piece {
     bool code{};
     QString language;
     QString text;
     Media media; // set (path not empty) for a media piece
+    bool table{};
 };
 [[nodiscard]] std::vector<Piece> pieces(const QString& markdown, bool* missing = nullptr);
 
@@ -831,6 +836,15 @@ class TranscriptModel final : public QAbstractListModel {
     // sentence), linkColor, borderColor and quoteColor.
     Q_INVOKABLE void style(QQuickTextDocument* target, const QString& markdown,
                            const QVariantMap& style) const;
+    // Lays a reply's table (a `table` piece) into a TextEdit's document as
+    // style() lays prose, in the cells' tighter type, with its columns fit
+    // to `available` pixels by transcript::table_widths. Measuring is kept
+    // per table and font; a document that already shows the table only has
+    // its columns refit. Returns {width: the table's, rows: each row's top
+    // and the last one's bottom, header: whether row 0 is a header}; width
+    // 0 when the text holds no table (it is then laid out as prose).
+    Q_INVOKABLE QVariantMap styleTable(QQuickTextDocument* target, const QString& markdown,
+                                       const QVariantMap& style, qreal available) const;
     // Underlines the links to `link` in a styled document, and no others;
     // an empty link clears them. Called as the pointer moves over links.
     Q_INVOKABLE void hoverLink(QQuickTextDocument* target, const QString& link) const;
@@ -1179,6 +1193,9 @@ class TranscriptModel final : public QAbstractListModel {
     static constexpr qsizetype kept_replies = 256;
     mutable QHash<QString, ReplyParts> replies_;
     mutable ReplyParts unsettled_;
+    // Tables' measured columns, by text and fonts (styleTable).
+    static constexpr qsizetype kept_tables = 256;
+    mutable QHash<QString, std::vector<transcript::TableColumn>> table_columns_;
 };
 } // namespace lapis::desktop
 #endif
