@@ -69,6 +69,57 @@ QString read_text(const QString& path, qint64 longest) {
 }
 } // namespace
 
+LaunchedModel launched_model(const QString& harness, const QStringList& words) {
+    const bool claude = harness == QLatin1String("claude");
+    const bool codex = harness == QLatin1String("codex");
+    // A TOML string value as Codex's -c takes it: "x" or 'x', else as is.
+    const auto toml = [](QString value) {
+        value = value.trimmed();
+        if (value.size() >= 2 && (value.front() == QLatin1Char('"') ||
+                                  value.front() == QLatin1Char('\'')) &&
+            value.back() == value.front())
+            value = value.mid(1, value.size() - 2);
+        return value;
+    };
+    LaunchedModel found;
+    for (qsizetype at = 0; at < words.size(); ++at) {
+        const auto& word = words.at(at);
+        if (word == QLatin1String("--"))
+            break;
+        const bool more = at + 1 < words.size();
+        // "--model X" or "--model=X"; the value, or nullopt.
+        const auto option = [&](const char* name) -> std::optional<QString> {
+            const auto flag = QLatin1String(name);
+            if (word == flag && more)
+                return words.at(++at);
+            if (word.startsWith(flag + QLatin1Char('=')))
+                return word.mid(flag.size() + 1);
+            return std::nullopt;
+        };
+        if (auto model = option("--model")) {
+            found.model = *model;
+        } else if (!claude && word == QLatin1String("-m") && more) {
+            found.model = words.at(++at);
+        } else if (claude) {
+            if (auto effort = option("--effort"))
+                found.effort = *effort;
+        } else if (codex) {
+            auto setting = option("--config");
+            if (!setting && word == QLatin1String("-c") && more)
+                setting = words.at(++at);
+            if (!setting)
+                continue;
+            const auto key = setting->section(QLatin1Char('='), 0, 0).trimmed();
+            const auto value = toml(setting->section(QLatin1Char('='), 1));
+            if (key == QLatin1String("model"))
+                found.model = value;
+            else if (key == QLatin1String("model_reasoning_effort"))
+                found.effort = value;
+        }
+    }
+    return found;
+}
+
 // {"data": [{"model": "gpt-6-astra", "displayName": "GPT-6-Astra",
 // "isDefault": true, "hidden": false}]}
 std::vector<ModelChoice> codex_models(const QJsonObject& result) {

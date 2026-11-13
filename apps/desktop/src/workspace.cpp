@@ -586,6 +586,32 @@ void addRemoteHooks(session::LaunchSpec& launch, const QString& harness) {
         return;
     launch.arguments.last() = line.left(start) + shellWord(hooked) + line.mid(end);
 }
+// The words an agent's CLI starts with: a local agent's arguments, or for a
+// remote one the words of the login shell's command (the shell word after
+// `-lic `, each word in it as shellWord wrote it). Only read for its model
+// and effort options; a word of the hook preamble may come out split.
+QStringList launchWords(const session::LaunchSpec& launch) {
+    const auto remote = remoteCommand(launch);
+    if (!remote)
+        return launch.arguments;
+    const auto& line = remote->second;
+    const QString lead = QStringLiteral("-lic ");
+    const auto start = line.indexOf(lead) + lead.size();
+    if (start < lead.size() || start >= line.size())
+        return {};
+    const auto inner = unquotedWord(line.mid(start, shellWordEnd(line, start) - start));
+    QStringList words;
+    for (qsizetype at = 0; at < inner.size();) {
+        if (inner.at(at) == QLatin1Char(' ')) {
+            ++at;
+            continue;
+        }
+        const auto end = shellWordEnd(inner, at);
+        words << unquotedWord(inner.mid(at, end - at));
+        at = end;
+    }
+    return words;
+}
 // Options every agent's ssh starts with. Its own connection: one shared
 // through the user's ControlMaster ends with the ssh that opened it, so
 // closing one agent ended every other session to that machine. Keepalives end
@@ -1829,6 +1855,71 @@ void Workspace::refreshModels() {
 
 QVariantList Workspace::pickerModels(const QString& harness) const {
     return picker_list(picker_models(modelChoices(harness)));
+}
+
+QVariantMap Workspace::agentModel(const QString& id) const {
+    const auto entry = agents_.constFind(id);
+    if (entry == agents_.cend())
+        return {};
+    const auto& harness = entry->harness;
+    const bool agy = harness == QLatin1String("agy");
+    const auto choices = modelChoices(harness);
+    const auto picker = agy ? picker_models(choices) : std::vector<PickerModel>{};
+    auto launched = launched_model(harness, launchWords(entry->launch));
+    QString from = launched.model.isEmpty() ? QString() : QStringLiteral("launch");
+    if (launched.model.isEmpty() && !remoteCommand(entry->launch)) {
+        // The CLI's own default, as this Mac's CLI has it.
+        if (agy) {
+            auto* transcript = qobject_cast<TranscriptModel*>(transcript_);
+            const auto saved =
+                transcript ? transcript->antigravityModelSetting() : QString();
+            const auto split = transcript::split_level(saved);
+            // "Gemini 4 Hydrogen (XHigh)" as the id of that family's level.
+            QString chosen = split.model;
+            for (const auto& model : picker)
+                if (model.name == split.model) {
+                    chosen = model.id;
+                    for (const auto& level : model.levels)
+                        if (level.effort == split.effort && !level.id.isEmpty())
+                            chosen = level.id;
+                }
+            if (!chosen.isEmpty()) {
+                launched = {.model = chosen, .effort = split.effort};
+                from = QStringLiteral("settings");
+            }
+        }
+        if (from.isEmpty() && !choices.empty()) {
+            const auto preselected =
+                std::find_if(choices.begin(), choices.end(),
+                             [](const ModelChoice& model) { return model.isDefault; });
+            const auto& model = preselected != choices.end() ? *preselected : choices.front();
+            // Claude Code's "default" entry stands for the model it names.
+            const auto named = model.id == QLatin1String("default") ? model.resolved : model.id;
+            if (!named.isEmpty()) {
+                launched.model = named;
+                from = QStringLiteral("list");
+            }
+        }
+    }
+    if (from.isEmpty() && launched.effort.isEmpty())
+        return {};
+    QString resolved;
+    for (const auto& model : choices)
+        if (model.id == launched.model)
+            resolved = model.resolved;
+    // An agy model id names its level: that is its effort, and its file
+    // reports the family by name.
+    for (const auto& model : picker)
+        for (const auto& level : model.levels)
+            if (!level.id.isEmpty() && level.id == launched.model) {
+                if (launched.effort.isEmpty())
+                    launched.effort = level.effort;
+                resolved = model.name;
+            }
+    return {{QStringLiteral("model"), launched.model},
+            {QStringLiteral("effort"), launched.effort},
+            {QStringLiteral("resolved"), resolved},
+            {QStringLiteral("from"), from}};
 }
 
 QVariantList Workspace::availableHarnesses() const {

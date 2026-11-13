@@ -56,6 +56,22 @@ struct PickerModel {
 // The same for QML: [{id, name, resolved, levels: [{effort, id}]}].
 [[nodiscard]] QVariantList picker_list(const std::vector<PickerModel>& models);
 
+// The model and effort an agent's command line starts its CLI with, from its
+// words (a local agent's arguments, or the words of a remote agent's command
+// there), the last one given winning and nothing after "--":
+//   claude  --model X, --model=X, --effort E, --effort=E
+//   codex   -m X, --model X, --model=X, -c|--config model=X and
+//           model_reasoning_effort=E (a quoted TOML string too)
+//   agy and the others  their model option (-m, --model, --model=); agy's
+//           level is part of its model id
+// Empty where the words give none: the CLI then runs its own default.
+struct LaunchedModel {
+    QString model;
+    QString effort;
+    bool operator==(const LaunchedModel&) const = default;
+};
+[[nodiscard]] LaunchedModel launched_model(const QString& harness, const QStringList& words);
+
 // What each CLI says it can use, with its default first and the rest in the
 // CLI's order, or most recently used first where the CLI keeps a record.
 [[nodiscard]] std::vector<ModelChoice> codex_models(const QJsonObject& result);

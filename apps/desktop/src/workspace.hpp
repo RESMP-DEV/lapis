@@ -463,6 +463,17 @@ class Workspace final : public QObject {
     // modelChoices): every entry, each {id, name, resolved, levels: [{effort,
     // id}]}, a family's levels carrying the id that selects each.
     Q_INVOKABLE [[nodiscard]] QVariantList pickerModels(const QString& harness) const;
+    // What an agent runs before its conversation file reports it, for the
+    // visual view's bar (TranscriptModel's shown `started`): {model, effort,
+    // resolved, from}. From its launch words first (launched_model; a
+    // remote agent's command there too; an agy model id's level as its
+    // effort), `from` "launch". With no model there, a local agent's CLI
+    // default: agy's saved default (`from` "settings"), else the entry its
+    // list marks default, else the first the new-agent form would preselect
+    // (`from` "list"). A remote agent's CLI default is that machine's and
+    // is not looked up here. `resolved` is the API id the CLI's list gives
+    // the model. Empty when nothing is known.
+    Q_INVOKABLE [[nodiscard]] QVariantMap agentModel(const QString& id) const;
     // Asks the CLIs for their models again when the last ask is over a
     // minute old (a picker opening); the answer arrives later.
     Q_INVOKABLE void refreshModels();
@@ -734,6 +745,9 @@ class Workspace final : public QObject {
     bool addFixtureAgent(const QString& id, const QString& title, const QString& category,
                          const QString& harness, const QString& content);
     bool setFixtureConversation(const QString& id, const QString& file);
+    // The command a fixture agent was started with, as a saved agent keeps
+    // it (agentModel reads it); never run.
+    bool setFixtureLaunch(const QString& id, const QString& program, const QStringList& arguments);
     void setFactoryStatePath(const QString& path);
   signals:
     void homeAgentChanged();
