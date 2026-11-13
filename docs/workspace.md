@@ -18,7 +18,7 @@ window, with names a step larger than the rest of the chrome and taller rows.
 Larger terminal text makes the sidebar's names, rows and width larger too; a
 long name ends in an ellipsis and shows in full on hover. While a thread (the
 visual view) covers the stage, the sidebar, the gaps around the stage, the
-stage's frame, the category selector and the strip's frames take the thread's
+stage's frame, the agent's title over the stage and the strip's frames take the thread's
 theme, so the panel reads as part of the same page; with a terminal showing
 they keep the window theme. Terminals keep their own colours either way. Hover,
 press, selection and status colours ease over one short 150 ms transition; a
@@ -34,7 +34,14 @@ eight colours (grey, blue, red, yellow, green, pink, purple, cyan) by its place
 in the list until you choose one under **Colour** in its menu (a right-click on
 its name); a chosen colour is kept with the category in `runtime/workspace.json`
 in the lapis folder. A narrow
-window, or Command-B, hides the sidebar and shows a category selector instead.
+window (under 860 pixels), or Command-B, hides the sidebar. The top of the
+window then holds one quiet line instead: a dot in the agent's category colour
+and the agent's title as its sidebar row names it (the category's name when no
+agent is open), muted, in the space above the stage. It is not a button and
+takes no clicks or keyboard; hovering it names the category. Commands still
+opens with its shortcut, and categories change with Command-1 to 9, the next
+and previous category shortcuts, the same entries in Commands, or by showing
+the sidebar again.
 
 The strip of live previews under the stage is off unless you turn it on with
 **Show agent previews** in Commands (or `previewsVisible` in
