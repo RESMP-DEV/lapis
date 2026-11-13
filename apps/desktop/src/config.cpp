@@ -778,6 +778,7 @@ void Config::load_visual(const QJsonObject& root) {
     };
     visual_keep_mb_ = number("keepMB", 1024, 65536);
     visual_keep_threads_ = number("keepThreads", 32, 1000);
+    visual_remote_cache_mb_ = number("remoteCacheMB", 2048, 1024 * 1024);
 
     // Light mode. Each kind's theme must be of that kind; a missing or wrong
     // one falls back to the built-in choice, or to what shows now.

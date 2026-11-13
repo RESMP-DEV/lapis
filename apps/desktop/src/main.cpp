@@ -870,6 +870,7 @@ int main(int argc, char** argv) {
             workspace.setTabAway(config.tabAway());
             workspace.setVisualKeep(config.visualKeepMB(), config.visualKeepThreads(),
                                     config.visualAll());
+            workspace.setRemoteCacheMB(config.visualRemoteCacheMB());
         };
         configure();
         QObject::connect(&config, &Config::changed, &workspace, configure);

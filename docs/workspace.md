@@ -122,7 +122,9 @@ conversation the CLI saves on this Mac (Claude Code's transcript, Codex's
 rollout under `~/.codex/sessions`, Antigravity's
 `~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs/transcript_full.jsonl`)
 and follows it as the agent works; anything it does not recognize shows as a
-plain block. Agents on other machines show their terminal only.
+plain block. A Claude Code agent on another machine shows its thread too
+([below](#agents-on-other-machines)); other CLIs over ssh show their terminal
+only.
 
 A new agent opens on its thread, not its terminal. Until its CLI saves its
 first message the thread is empty, with the CLI's name, its folder and
@@ -273,7 +275,8 @@ CLI holds until the turn ends becomes the next turn's prompt, with no mark.
 
 Above **Commands** in the sidebar, **This agent** switches the selected agent
 between its terminal and the thread, and **All agents** shows every Claude
-Code, Codex and Antigravity agent on this Mac as a thread (on by default, and
+Code, Codex and Antigravity agent on this Mac, and every Claude Code agent over
+ssh, as a thread (on by default, and
 saved, so it survives a restart). A per-agent choice wins over **All agents** until lapis
 restarts or **All agents** is switched again. Both are also in Commands. The
 terminal keeps running underneath but takes no input while covered; Escape
@@ -517,8 +520,61 @@ mode too. No key is bound to it.
 Settings has a **Reading view** section: a theme (Match terminal, Tokyo Night,
 Codex, Claude, Graphite, Black, Claude light, Codex light), a reading font
 (System, Serif, Avenir Next, Helvetica Neue), a code font and a text size, which
-follows the terminal font unless set. Agents on other machines and other CLIs
-are not supported yet.
+follows the terminal font unless set. Codex and Antigravity agents on other
+machines, and other CLIs, are not supported yet.
+
+### Agents on other machines
+
+A Claude Code agent started over ssh shows its thread as one on this Mac does.
+Its conversation file stays on that machine; while its thread shows, lapis
+runs a small helper there that streams the file into a private copy here,
+`runtime/remote/<machine>/<conversation>.jsonl` beside the workspace registry
+(`~/.lapis/runtime` for the downloaded app; folders 0700, files 0600), and the
+thread reads that copy. The helper is sent each time on ssh's standard input
+to that machine's `python3` (3.6 or later; nothing is installed there and it
+writes nothing there), with `BatchMode`, so it never asks for a password. It
+follows the conversation the agent's hooks last reported, so a `/clear` or
+`/resume` there moves the thread to the new conversation. Appends usually
+arrive within milliseconds.
+
+- **Loading.** Until the first bytes arrive the empty thread reads **Loading
+  the conversation from buildbox…**; a conversation not saved there yet reads
+  **No conversation saved on buildbox yet**. A file over 4 MB shows its last
+  megabytes first (cut at a line start), which keep following the agent,
+  while the whole file copies in order; the thread then moves to the whole
+  copy, at its end.
+- **Kept.** The copy stays after you look away: showing the thread again
+  shows it at once and then copies only what is new (the helper checks the
+  file is the same one: its inode, first 4 KiB and size; a replaced or
+  truncated file is copied again). Copies are trimmed to `visual.remoteCacheMB`
+  ([config](config.md#visual-view)), least recently shown first. Threads not
+  shown are not followed: a helper runs only while its thread shows, and
+  stops about 15 seconds after.
+- **When it cannot.** With nothing copied yet, a failure shows the terminal
+  and a note says why: **python3 is not installed on buildbox**, **ssh to
+  buildbox needs a password or a key it cannot use without asking**, or **Lost
+  the connection to buildbox (retrying)**; **This agent** in the sidebar says
+  the same. With a copy, the thread stays and reads **Reconnecting to buildbox
+  · the thread may be behind**. lapis retries after 2, 5, 10, 20, 30 and
+  60 seconds while the thread is wanted, resuming at the copy's size.
+- **Paths are that machine's.** The folder the thread names is the agent's
+  folder there (`~/proj`), never resolved on this Mac. Command-click opens only
+  web links, never a file here that happens to share the name; a picture or
+  file named by its path in a reply shows as text (pictures inside the
+  conversation itself still show). Background tasks show without their output
+  or liveness from their files, and a subagent opens to its line and report
+  but not its own steps (its file is not copied). **Edit** on a prompt is not
+  offered. The slash-command list is Claude Code's own, without the commands
+  and skills on that machine (type them; they work). The model and effort
+  menus work, typing into the terminal as always.
+- **Attachments are copied there first.** A file you attach or paste is
+  copied into `~/.cache/lapis/attachments/` on that machine (private to you,
+  under a random name that keeps its extension, at most 20 MB each), and the
+  message names that copy, never the file on this Mac. The chip shows
+  **copying 40%** until it is there; the message stays in the bar until every
+  copy is there, and a failed copy says why and stays until you remove it. This
+  folder is the only thing lapis writes on another machine; clearing it is
+  safe once the agent has read the files.
 
 ## Factory view
 

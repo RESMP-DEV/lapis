@@ -45,7 +45,11 @@ The form's **Machine** row offers this Mac and the hosts in your ssh config (lef
 and right arrows, while up and down choose the CLI). On another machine the agent
 runs over ssh in that machine's `newAgent` folder, else its home, in its login
 shell. When such a Claude Code agent's connection drops (the Mac changed
-networks or slept), lapis reconnects it and it resumes its conversation. It
+networks or slept), lapis reconnects it and it resumes its conversation: the
+one its hooks last reported, so after a `/clear` or `/resume` there it is the
+new one, not the one the agent started with (a restart or reload does the
+same). Its thread shows in the visual view, copied from that machine
+([agents on other machines](workspace.md#agents-on-other-machines)). It
 keeps retrying while the machine is unreachable, retries at once when the Mac
 joins a network, and an agent restored at login before the network is up
 connects when it can. A window that loses its own attachment to a running

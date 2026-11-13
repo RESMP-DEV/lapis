@@ -2507,7 +2507,8 @@ QString TranscriptModel::task_file(const transcript::Task& task) const {
     using transcript::Format;
     using transcript::Task;
     const QFileInfo here(path_);
-    if (path_.isEmpty())
+    // A remote thread's task files are on that machine: not mirrored.
+    if (path_.isEmpty() || remote())
         return {};
     if (task.type != Task::Type::subagent || task.id.isEmpty()) {
         // agy names its task logs as file:// URLs.
@@ -3158,10 +3159,14 @@ const TranscriptModel::ReplyParts& TranscriptModel::reply_parts(const QString& m
 }
 
 QVariantList TranscriptModel::pieces(const QString& markdown) const {
+    if (remote())
+        return remotePieces(markdown);
     return reply_parts(markdown).pieces;
 }
 
 QVariantList TranscriptModel::replyMedia(const QString& markdown) const {
+    if (remote())
+        return {};
     return reply_parts(markdown).media;
 }
 
@@ -3368,10 +3373,15 @@ void transcript::detail::present(QTextDocument& shown, const QTextDocument& docu
 }
 
 QVariantList TranscriptModel::slashCommands(const QString& harness, const QString& folder) const {
+    // Another machine's commands and skills are not on this Mac: the CLI's own.
+    if (remote())
+        return slash_commands(harness, {}, {});
     return slash_commands(harness, QDir::homePath(), folder);
 }
 
 QVariantList TranscriptModel::media(const QString& text) const {
+    if (remote())
+        return {};
     QVariantList out;
     for (const auto& item : transcript::find_media(text))
         out.append(media_map(item));
@@ -3484,7 +3494,9 @@ void TranscriptModel::hoverLink(QQuickTextDocument* target, const QString& link)
 
 QString TranscriptModel::pathAt(QQuickTextDocument* source, int position,
                                 const QString& folder) const {
-    if (source == nullptr || source->textDocument() == nullptr)
+    // A remote thread's paths are that machine's; a same-named file here
+    // must never open.
+    if (source == nullptr || source->textDocument() == nullptr || remote())
         return {};
     return transcript::path_at(source->textDocument()->toPlainText(), position, folder);
 }
@@ -3527,6 +3539,8 @@ QVariantList TranscriptModel::editors() const {
 }
 
 bool TranscriptModel::openPath(const QString& target, const QString& choice) const {
+    if (remote()) // another machine's path: nothing here opens for it
+        return false;
     static const QRegularExpression line(QStringLiteral(R"((:\d+){1,2}$)"));
     const auto suffix = line.match(target).captured(0);
     auto path = target.left(target.size() - suffix.size());
@@ -4358,5 +4372,49 @@ void TranscriptModel::noteStatus() {
         return;
     shown_status_ = reader_->status();
     emit statusChanged();
+}
+
+// Remote threads (remote_threads.hpp) ----------------------------------------
+
+QVariantList TranscriptModel::remotePieces(const QString& markdown) const {
+    // Prose and code as pieces() splits them, with no media: a path a reply
+    // names is that machine's, so it is never looked up here and stays text.
+    QVariantList out;
+    QStringList lines;
+    QString fence;
+    QString language;
+    const auto add = [&out](bool code, const QString& kind, const QString& text) {
+        if (!code && text.trimmed().isEmpty())
+            return;
+        out.append(QVariantMap{{QStringLiteral("code"), code},
+                               {QStringLiteral("language"), kind},
+                               {QStringLiteral("text"), code ? text : text.trimmed()},
+                               {QStringLiteral("media"), QVariant::fromValue(nullptr)}});
+    };
+    for (const auto& line : markdown.split(QLatin1Char('\n'))) {
+        const auto trimmed = line.trimmed();
+        if (fence.isEmpty()) {
+            if (trimmed.startsWith(QLatin1String("```")) ||
+                trimmed.startsWith(QLatin1String("~~~"))) {
+                add(false, {}, lines.join(QLatin1Char('\n')));
+                lines.clear();
+                qsizetype length = 0;
+                while (length < trimmed.size() && trimmed[length] == trimmed[0])
+                    ++length;
+                fence = trimmed.left(length);
+                language = trimmed.mid(length).trimmed().section(QLatin1Char(' '), 0, 0);
+                continue;
+            }
+            lines << line;
+        } else if (trimmed.startsWith(fence) && trimmed.mid(fence.size()).trimmed().isEmpty()) {
+            add(true, language, lines.join(QLatin1Char('\n')));
+            lines.clear();
+            fence.clear();
+        } else {
+            lines << line;
+        }
+    }
+    add(!fence.isEmpty(), language, lines.join(QLatin1Char('\n')));
+    return out;
 }
 } // namespace lapis::desktop

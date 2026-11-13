@@ -11,6 +11,7 @@
 #include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -721,8 +722,12 @@ class TranscriptModel final : public QAbstractListModel {
     // name unless a tool chose one (setFormat).
     Q_PROPERTY(QString format READ formatName NOTIFY pathChanged)
     // Claude Code conversations can be forked from a message (Edit); the
-    // others cannot yet.
+    // others cannot yet, nor one mirrored from another machine.
     Q_PROPERTY(bool forkable READ forkable NOTIFY pathChanged)
+    // The conversation shown is an agent's on another machine (a mirror, see
+    // remote_threads.hpp): paths it names are that machine's, so nothing
+    // here is looked up, opened or shown for them.
+    Q_PROPERTY(bool remote READ remote NOTIFY pathChanged)
     // Whether liveLines and dialogShowing know this CLI's terminal layout
     // (Claude Code's input box); for the others liveLines is empty and the
     // view never peeks at a dialog.
@@ -976,7 +981,16 @@ class TranscriptModel final : public QAbstractListModel {
     [[nodiscard]] const std::vector<transcript::Item>& items() const { return reader_->items(); }
     [[nodiscard]] int turnCount() const { return static_cast<int>(layout_.turns.size()); }
     [[nodiscard]] QString formatName() const { return transcript::format_name(format()); }
-    [[nodiscard]] bool forkable() const { return format() == transcript::Format::claude; }
+    [[nodiscard]] bool forkable() const {
+        return format() == transcript::Format::claude && !remote();
+    }
+    // Whether the agent shown, or the file, is another machine's (the
+    // workspace says which); false until told.
+    using RemoteCheck = std::function<bool(const QString& agent, const QString& path)>;
+    void setRemoteCheck(RemoteCheck check) { remote_check_ = std::move(check); }
+    [[nodiscard]] bool remote() const {
+        return remote_check_ && remote_check_(shown_agent_, path_);
+    }
     [[nodiscard]] bool screenKnown() const { return format() == transcript::Format::claude; }
     // Reads every later path as `format` whatever its name (for tools that
     // show a file saved elsewhere); nullopt goes back to the name. Applies
@@ -1036,6 +1050,9 @@ class TranscriptModel final : public QAbstractListModel {
     void queueModeChanged();
 
   private:
+    RemoteCheck remote_check_;
+    // A reply's pieces for a remote thread: no media, a path stays text.
+    [[nodiscard]] QVariantList remotePieces(const QString& markdown) const;
     QString queue_mode_{QStringLiteral("queue")};
     // A task's own file, as this conversation's CLI keeps it (a Claude Code
     // subagent's transcript beside this one, a Codex child rollout, an agy

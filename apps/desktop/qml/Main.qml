@@ -509,7 +509,9 @@ ApplicationWindow {
                                  ? workspace.conversationFile(agent.agentId) : ""
         add("toggleVisual", window.visualActive ? qsTr("Show terminal") : qsTr("Show visual view"), "",
             window.visualActive || window.visualSupported || conversationFile.length > 0,
-            hasAgent ? qsTr("Only for a Claude Code, Codex or Antigravity agent on this Mac") : needAgent,
+            hasAgent ? (workspace.visualUnavailable(agent.agentId)
+                        || qsTr("Only for a Claude Code, Codex or Antigravity agent on this Mac, or Claude Code over ssh"))
+                     : needAgent,
             () => window.toggleVisual())
         add("toggleVisualAll", window.visualAll ? qsTr("Show terminals for all agents") : qsTr("Show visual view for all agents"), "",
             true, "", () => window.toggleVisualAll())
@@ -1042,8 +1044,26 @@ ApplicationWindow {
     }
     // A Claude Code, Codex or Antigravity agent on this Mac can show as a
     // thread (Workspace::visualSupported), from the moment it opens.
-    readonly property bool visualSupported: workspace.focusedAgent !== null
+    // A Claude Code agent over ssh shows its conversation mirrored from that
+    // machine (RemoteThreads); visualProbe moves when its mirror changes.
+    readonly property bool visualSupported: workspace.focusedAgent !== null && visualProbe >= 0
                                             && workspace.visualSupported(workspace.focusedAgent.agentId)
+    // The shown agent's mirror ({} for an agent on this Mac): machine, phase,
+    // reason, status, cached, behind.
+    readonly property var remoteThread: workspace.focusedAgent !== null && visualProbe >= 0
+                                        ? workspace.remoteThreadState(workspace.focusedAgent.agentId) : ({})
+    // The ssh host the shown agent runs on, "" on this Mac.
+    readonly property string remoteMachine: workspace.focusedAgent !== null
+                                            ? workspace.agentPlace(workspace.focusedAgent.agentId).machine || "" : ""
+    Connections {
+        target: workspace
+        function onRemoteThreadChanged(agentId) {
+            if (workspace.focusedAgent !== null && workspace.focusedAgent.agentId === agentId)
+                window.visualProbe += 1
+        }
+        function onAttachmentProgress(token, fraction) { visualView.uploadProgress(token, fraction) }
+        function onAttachmentUploaded(token, remote, error) { visualView.uploadFinished(token, remote, error) }
+    }
     // The file appears once the CLI saves its first message; until then the
     // check repeats while the thread is wanted, and the thread shows empty
     // (visualBlank). A Codex or Antigravity agent's keeps being checked, so
@@ -3476,7 +3496,9 @@ ApplicationWindow {
                         ToolTip.visible: hovered
                         ToolTip.delay: 600
                         ToolTip.text: enabled ? qsTr("Switch this agent between its terminal and the thread")
-                                              : qsTr("Only for a Claude Code, Codex or Antigravity agent on this Mac")
+                                              : (workspace.focusedAgent !== null && window.visualProbe >= 0
+                                                 && workspace.visualUnavailable(workspace.focusedAgent.agentId))
+                                                || qsTr("Only for a Claude Code, Codex or Antigravity agent on this Mac, or Claude Code over ssh")
                     }
                     CommandButton {
                         objectName: "visualAllAgents"
@@ -3834,8 +3856,20 @@ ApplicationWindow {
                     starting: window.visualBlank && window.visualStarting
                     editor: window.visualSettings.editor || "auto"
                     screen: () => liveTerminal.screenLines()
+                    // On another machine, its folder there (never resolved here).
                     folder: window.visualActive && liveTerminal.document
-                            ? workspace.agentFolder(liveTerminal.document.agentId) : ""
+                            ? workspace.visualFolder(liveTerminal.document.agentId) : ""
+                    // A remote conversation still loading says so; once its
+                    // CLI is up, a conversation not saved there yet too.
+                    blankStatus: window.remoteThread.phase === "connecting"
+                                 || window.remoteThread.phase === "following"
+                                 || (window.remoteThread.phase === "waiting" && !window.visualStarting)
+                                 ? (window.remoteThread.status || "") : ""
+                    // Attachments for an agent on another machine are copied
+                    // there first (Workspace.uploadAttachment).
+                    upload: window.remoteMachine.length > 0 && liveTerminal.document
+                            ? (path => workspace.uploadAttachment(liveTerminal.document.agentId, path)) : null
+                    uploadMachine: window.remoteMachine
                     harness: liveTerminal.document !== null ? liveTerminal.document.harnessId : ""
                     slashCommands: ["claude", "codex", "agy"].indexOf(harness) >= 0
                     // The experiment's record, as the terminal's Tab keeps it:
@@ -3967,6 +4001,35 @@ ApplicationWindow {
                         text: window.visualStartScreen && !window.visualDialog
                               ? qsTr("The agent's own screen · answer it here; the thread returns at its input box")
                               : qsTr("The agent's own dialog · the thread returns when it closes")
+                        color: window.mutedTextColor
+                        font.pixelSize: 12
+                    }
+                }
+                // A remote agent's thread: behind while its connection is
+                // back on the way (a cached copy shows), or why the terminal
+                // shows instead of a thread that cannot load.
+                Rectangle {
+                    objectName: "remoteThreadNote"
+                    readonly property bool behind: window.visualCovers && window.remoteThread.behind === true
+                    readonly property bool missing: window.visualWanted && !window.visualActive
+                                                    && (window.remoteThread.reason || "").length > 0
+                    z: 4
+                    visible: behind || missing
+                    x: liveTerminal.x + (liveTerminal.width - width) / 2
+                    y: liveTerminal.y + 8
+                    width: Math.min(remoteThreadText.implicitWidth + 20, liveTerminal.width - 20)
+                    height: remoteThreadText.implicitHeight + 10
+                    radius: 6
+                    color: window.cardColor
+                    border.color: window.borderColor
+                    Text {
+                        id: remoteThreadText
+                        anchors.centerIn: parent
+                        width: Math.min(implicitWidth, liveTerminal.width - 40)
+                        elide: Text.ElideRight
+                        text: parent.behind
+                              ? qsTr("Reconnecting to %1 · the thread may be behind").arg(window.remoteMachine)
+                              : qsTr("No thread: %1 · showing the terminal").arg(window.remoteThread.reason || "")
                         color: window.mutedTextColor
                         font.pixelSize: 12
                     }

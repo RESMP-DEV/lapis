@@ -891,6 +891,18 @@ void visual_keep_budget_parses() {
     static_cast<void>(write_config(dir, R"({"visual":{"theme":"terminal"}})"));
     require(config.load() && config.visualKeepMB() == 1024 && config.visualKeepThreads() == 32,
             "a reload without the keys restores the defaults");
+    // visual.remoteCacheMB, the remote mirrors' disk budget, parses the same
+    // way: 2048 MB unless a whole number up to 1048576 is written.
+    require(config.visualRemoteCacheMB() == 2048, "the remote cache defaults to 2048 MB");
+    const std::array remote_cases{std::pair{R"({"remoteCacheMB": 64})", 64},
+                                  std::pair{R"({"remoteCacheMB": 0})", 0},
+                                  std::pair{R"({"remoteCacheMB": -3})", 2048},
+                                  std::pair{R"({"remoteCacheMB": "9"})", 2048}};
+    for (const auto& [visual, mb] : remote_cases) {
+        static_cast<void>(write_config(dir, QByteArray(R"({"visual":)") + visual + "}"));
+        require(config.load() && config.visualRemoteCacheMB() == mb,
+                "visual.remoteCacheMB parses as documented");
+    }
 }
 
 // Golden file for Settings: every setting it changes lands on its own

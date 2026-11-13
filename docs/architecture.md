@@ -393,6 +393,36 @@ whole history by p95 0.79 s. Idle CPU with 19 kept: 0.25% of a core. The
 footprint with all 20 kept was 489 to 774 MB across runs (320 to 435 MB
 before with six). Native GPU presentation and a real window are not measured.
 
+### Remote threads
+
+Decision (2026-11-13): a Claude Code agent on another machine shows its thread
+by mirroring its conversation file to this Mac and parsing the mirror locally
+with the same `TranscriptModel`. `RemoteThreads` (owned by `Workspace`, GUI
+thread) runs one helper per shown conversation: `remote_thread.py`, sent on
+ssh's standard input to that machine's `python3` (`ssh -o BatchMode=yes -o
+ConnectTimeout=10 -o ControlPath=none -o ServerAliveInterval=15 -o
+ServerAliveCountMax=4 -T -- <host> python3 - follow ...`, the precedent Tab's
+remote helper set), which streams length-prefixed frames (hello, tail, data,
+reset, missing, error) into `<runtime>/remote/<host>/<id>.jsonl`. It resumes
+at the mirror's size after checking the file's inode, first 4 KiB and size;
+a file over 4 MB sends its end first into `<id>.tail.jsonl`, shown until the
+mirror has caught up past it. The conversation is the one the agent's hooks
+last reported through its terminal, a `relayed` resume record the session
+service now keeps, which also makes restarts resume it by rewriting the
+remote command's `s=<id>`. Paths in a remote thread are never resolved on this
+Mac (`TranscriptModel::remote`): no media lookup, no Command-click on files,
+no task files, no fork; attachments are uploaded to the agent's machine
+first, the only thing lapis writes there. Alternatives rejected: a parser
+running remotely would duplicate the three readers in Python, drift from
+them, and send rows rather than records, losing the kept-thread cache; a
+mounted folder (sshfs or similar) needs software installed on the Mac and the
+machine, blocks the GUI thread on network stalls through ordinary file reads,
+and gives no change notification; a new port or daemon would leave something
+running there. Measured on a LAN earlier: an append reaches an open channel in
+2 to 3 ms (p50), an ssh connect takes about 0.3 s and 4 MiB copies in 0.07 s;
+transcripts reach 444 MB, hence the tail first. Codex and Antigravity agents
+over ssh still show their terminal.
+
 ### Factory view
 
 The factory view is a window mode over the same workspace, not a second

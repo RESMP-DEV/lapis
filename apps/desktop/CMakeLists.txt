@@ -30,6 +30,7 @@ add_library(lapis_desktop_core STATIC
     src/platform/process_files.cpp src/platform/process_files.hpp
     src/terminals.cpp src/terminals.hpp
     src/next_prompt.cpp src/next_prompt.hpp
+    src/remote_threads.cpp src/remote_threads.hpp
     src/tab_ranker.cpp src/tab_ranker.hpp
     src/agent_state.cpp src/agent_state.hpp
     src/harness_models.cpp src/harness_models.hpp
@@ -75,6 +76,10 @@ endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/next_prompt.py)
 file(READ src/next_prompt.py LAPIS_NEXT_PROMPT_SCRIPT)
 configure_file(src/next_prompt_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/next_prompt_script.hpp" @ONLY)
+# The remote thread helper, sent to another machine's python3 on stdin.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/remote_thread.py)
+file(READ src/remote_thread.py LAPIS_REMOTE_THREAD_SCRIPT)
+configure_file(src/remote_thread_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/remote_thread_script.hpp" @ONLY)
 target_include_directories(lapis_desktop_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(lapis_desktop_core PRIVATE lapis_project_options lapis_session_platform
     lapis_claude_adapter lapis_terminal_hook_relay
@@ -268,6 +273,18 @@ if(BUILD_TESTING)
     add_test(NAME workspace-closing COMMAND lapis_workspace_tests --case closing)
     set_tests_properties(workspace-closing PROPERTIES TIMEOUT 90
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    # Claude Code agents on another machine: conversation identity and the
+    # mirrored thread, against a stand-in ssh that runs everything here in a
+    # fixture home; windowless, and nothing connects anywhere.
+    add_executable(lapis_remote_thread_tests tests/remote_thread_test.cpp)
+    target_link_libraries(lapis_remote_thread_tests PRIVATE lapis_project_options lapis_desktop_core
+        Qt6::QuickControls2)
+    target_compile_definitions(lapis_remote_thread_tests PRIVATE
+        LAPIS_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/qml")
+    add_dependencies(lapis_remote_thread_tests lapis_session_service)
+    add_test(NAME remote-thread COMMAND lapis_remote_thread_tests)
+    set_tests_properties(remote-thread PROPERTIES TIMEOUT 120
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Basic")
     # These launch the real desktop host or QML windows. On a Mac someone is
     # using they would show windows, so they run only on request.
     set_tests_properties(workspace workspace-remote-hooks workspace-retired-plans

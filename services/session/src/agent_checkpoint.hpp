@@ -12,8 +12,12 @@ namespace lapis::session {
 // How a conversation's identity was learned: printed by the agent's session
 // hook (terminal), by lapis's own Claude observer or Codex notify program, or
 // before lapis recorded which (legacy, a version 1 record). Printed output
-// never replaces an identity the observer learned.
-enum class ResumeSource : std::uint8_t { terminal, observer, legacy };
+// never replaces an identity the observer learned. `relayed` is a Claude Code
+// session id an agent on another machine reported through its hooks, relayed
+// in nonce-authenticated terminal frames (terminal_hooks.hpp): it follows
+// /clear and /resume there, and names a conversation on that machine, never
+// one saved on this Mac.
+enum class ResumeSource : std::uint8_t { terminal, observer, legacy, relayed };
 
 struct ResumeRecord {
     QString agent;      // CLI name, for example "claude"
