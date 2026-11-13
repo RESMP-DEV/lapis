@@ -2014,6 +2014,14 @@ bool TerminalSurface::submitText(const QString& text) {
     return true;
 }
 
+bool TerminalSurface::pressReturn() {
+    if (!document_ || !document_->live() || !document_->reachable() ||
+        document_->attentionPending() || document_->historyActive() || pasting_ ||
+        window() == nullptr || !window()->isActive())
+        return false;
+    return document_->sendKey(session::TerminalKey::enter, {});
+}
+
 QStringList TerminalSurface::screenLines() const {
     QStringList rows;
     if (!document_)

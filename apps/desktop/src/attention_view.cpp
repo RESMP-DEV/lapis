@@ -85,9 +85,10 @@ QString Agent::statusLabel() const {
                                                  : QStringLiteral("Quiet");
     if (kind == QStringLiteral("working"))
         return QStringLiteral("Working");
-    // An agent waiting on an answer reads as a finished turn: it is yours to
-    // look at, and it pinged as one.
-    if (kind == QStringLiteral("waiting") || kind == QStringLiteral("finished"))
+    // A pending request blocks the agent until you answer in its terminal.
+    if (kind == QStringLiteral("waiting"))
+        return QStringLiteral("Needs your answer");
+    if (kind == QStringLiteral("finished"))
         return QStringLiteral("Turn finished");
     if (kind == QStringLiteral("idle"))
         return QStringLiteral("Ready");
@@ -115,6 +116,20 @@ QString Agent::attentionDiagnostic() const {
 int Agent::attentionCount() const {
     return attention_ ? static_cast<int>(attention_->requests.size())
                       : static_cast<int>(requests_.size());
+}
+QStringList Agent::attentionRequestIds() const {
+    if (!attention_)
+        return requests_.keys();
+    QStringList ids;
+    for (const auto& item : attention_->requests) {
+        const auto& id = item.pending.request.id;
+        const auto* number = std::get_if<std::int64_t>(&id);
+        ids.append(number ? QStringLiteral("n") + QString::number(*number)
+                          : QStringLiteral("s") +
+                                QString::fromLatin1(
+                                    QByteArray::fromStdString(std::get<std::string>(id)).toHex()));
+    }
+    return ids;
 }
 QString Agent::attentionReason() const {
     if (!attention_)

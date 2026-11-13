@@ -1,8 +1,8 @@
 # Keys
 
 These are the macOS defaults. Linux uses Control-Shift in place of Command.
-Every binding can be changed in [config](config.md), and Appearance lists them
-all. Terminal Control chords stay with the agent.
+Every binding can be changed in [config](config.md), and Settings lists them
+all under Keys. Terminal Control chords stay with the agent.
 
 ## Agents and categories
 
@@ -15,7 +15,7 @@ all. Terminal Control chords stay with the agent.
 | Command-O | Resume a past Claude Code or Codex conversation |
 | Command-1 to 9 | Go to one of the first nine categories |
 | Command-] / [, Command-Shift-J / K, Command-Shift-Up / Down, Command-Option-Left / Right | Next or previous category |
-| Command-Shift-[ / ] | Previous or next agent in the category, in strip order |
+| Command-Shift-[ / ] | Previous or next agent in the sidebar's order, on into the neighbouring category (empty ones are passed over) and around |
 
 ## Stage
 
@@ -23,7 +23,8 @@ all. Terminal Control chords stay with the agent.
 | --- | --- |
 | Command-` or Control-` | Show or hide the side terminal |
 | Command-~ | Pick the side terminal's machine |
-| Command-B | Hide or show the category sidebar |
+| Command-B | Hide or show the sidebar of categories and their agents |
+| Command-Shift-F | Switch between the [factory view](workspace.md#factory-view) and categories |
 
 ## Terminal
 
@@ -40,7 +41,7 @@ all. Terminal Control chords stay with the agent.
 | Keys | Does |
 | --- | --- |
 | Command-Shift-P | Commands |
-| Command-comma | Appearance |
+| Command-comma | Settings |
 | Command-R | Reload `lapis.json` |
 | Command-M | Minimize |
 | Command-Shift-W | Close the window (lapis keeps running) |

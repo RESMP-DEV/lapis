@@ -115,6 +115,8 @@ QByteArray WorkspaceControl::answer(const QByteArray& line) {
         {"settings", &WorkspaceControl::settings},
         {"changeSettings", &WorkspaceControl::settings},
         {"handover", &WorkspaceControl::handover},
+        {"factory", &WorkspaceControl::factory},
+        {"setHomeAgent", &WorkspaceControl::factory},
     });
     const auto kind = request.value(QStringLiteral("request")).toString();
     for (const auto& [name, handler] : handlers)
@@ -135,6 +137,24 @@ QByteArray WorkspaceControl::harnesses(const QString& /*kind*/, const QJsonObjec
          {QStringLiteral("harnesses"),
           QJsonArray::fromVariantList(workspace_.availableHarnesses())},
          {QStringLiteral("defaults"), QJsonObject::fromVariantMap(workspace_.agentDefaults())}});
+}
+
+QByteArray WorkspaceControl::factory(const QString& kind, const QJsonObject& request) {
+    if (kind == QStringLiteral("setHomeAgent")) {
+        const auto id = request.value(QStringLiteral("id"));
+        if (!id.isString())
+            return refusal(QStringLiteral("Missing id"));
+        if (!workspace_.setHomeAgent(id.toString()))
+            return refused();
+    }
+    const auto* home = workspace_.effectiveHomeAgent();
+    return reply(
+        {{QStringLiteral("ok"), true},
+         {QStringLiteral("homeAgentId"), workspace_.homeAgentId()},
+         {QStringLiteral("effectiveHomeAgentId"), home != nullptr ? home->agentId() : QString{}},
+         {QStringLiteral("summary"), QJsonObject::fromVariantMap(workspace_.factorySummary())},
+         {QStringLiteral("items"), QJsonArray::fromVariantList(workspace_.factoryPipeline())},
+         {QStringLiteral("attention"), QJsonArray::fromVariantList(workspace_.attentionInbox())}});
 }
 
 QByteArray WorkspaceControl::handover(const QString& /*kind*/, const QJsonObject& /*request*/) {

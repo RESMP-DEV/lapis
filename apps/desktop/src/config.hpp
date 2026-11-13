@@ -6,6 +6,7 @@
 #include "tab_ranker.hpp"
 #include <QFileSystemWatcher>
 #include <QHash>
+#include <QJsonObject>
 #include <QJsonValue>
 #include <QKeyCombination>
 #include <QObject>
@@ -51,6 +52,9 @@ struct Theme {
     const char* plenty{};
     int corner_radius{2};
     int motion_ms{100};
+    // Dark text on a light surface: the window theme light mode uses, and
+    // the one that takes the darker category colours.
+    bool light{};
     bool mono_chrome{};
     double heading_tracking{1.0};
 };
@@ -121,6 +125,11 @@ class Config final : public QObject {
     Q_PROPERTY(QVariantMap visual READ visual NOTIFY changed)
     // False for a defaults-only config: it has no file to reload.
     Q_PROPERTY(bool fileBacked READ fileBacked CONSTANT)
+    // The settings Settings changes through setSetting, by dotted path:
+    // newAgent.harness, newAgent.folder, newAgent.mode, nextPrompt.auto,
+    // interactionLog.enabled, tabAway.overdueHours, and harnessUpdatesOff (the
+    // CLIs not updated automatically).
+    Q_PROPERTY(QVariantMap settings READ settings NOTIFY changed)
   public:
     explicit Config(QObject* parent = nullptr);
     // Built-in defaults that read, watch and write no file. Changes apply in
@@ -220,6 +229,38 @@ class Config final : public QObject {
     // Sets one visual-view key (theme, font, codeFont, size or all) and
     // saves; an invalid value is refused and nothing changes.
     Q_INVOKABLE bool setVisual(const QString& key, const QVariant& value);
+    // Light or dark reading: "dark", "light" or "system" (follows macOS).
+    // It picks the visual view's theme and the window's from the person's
+    // last choice of each kind (visual.darkTheme, lightTheme, darkWindowTheme,
+    // lightWindowTheme); terminal colors never change. Choosing a theme of
+    // the other kind switches to that kind. Saved; an unknown mode is refused.
+    Q_INVOKABLE bool setAppearance(const QString& mode);
+    [[nodiscard]] const QString& appearance() const { return appearance_; }
+    // Whether light mode shows now (for "system", whether macOS is light).
+    [[nodiscard]] bool lightShown() const;
+    // macOS's own appearance, which "system" follows. The window feeds it
+    // from the platform's color scheme; tests set it directly. Not saved.
+    Q_INVOKABLE void setSystemDark(bool dark);
+    // A visual-view theme is light when its name ends in "-light".
+    [[nodiscard]] static bool visualThemeLight(const QString& name);
+    // Sets one setting kept in a section of its own (see `settings`), or
+    // harnessUpdates.<cli> (false keeps that CLI's version), and saves. Only
+    // the section changed is written; the rest of it (machines, models,
+    // providers...) stays as written. An invalid value is refused.
+    Q_INVOKABLE bool setSetting(const QString& path, const QVariant& value);
+    [[nodiscard]] QVariantMap settings() const;
+    // Every setting Settings shows, at its built-in value, by the names
+    // visual(), settings() and the properties above use; for Reset.
+    Q_INVOKABLE [[nodiscard]] static QVariantMap defaults();
+    // visual.keepMB and visual.keepThreads: how much memory and how many
+    // conversations the visual view keeps parsed besides the shown one, so
+    // switching agents shows their threads at once. Hand-written only.
+    [[nodiscard]] int visualKeepMB() const { return visual_keep_mb_; }
+    [[nodiscard]] int visualKeepThreads() const { return visual_keep_threads_; }
+    [[nodiscard]] bool visualAll() const { return visual_all_; }
+    // visual.factory: the window shows the factory view (one orchestrator
+    // conversation and the pipeline board) instead of categories.
+    [[nodiscard]] bool visualFactory() const { return visual_factory_; }
     [[nodiscard]] const AgentDefaults& agentDefaults() const { return agent_defaults_; }
     // {"nextPrompt": {...}}: when and how lapis predicts the next prompt.
     [[nodiscard]] const NextPromptSettings& nextPrompt() const { return next_prompt_; }
@@ -269,7 +310,7 @@ class Config final : public QObject {
     bool loaded_{};
     bool file_backed_{true};
     bool sidebar_visible_{true};
-    bool previews_visible_{true};
+    bool previews_visible_{false};
     bool finish_sound_{true};
     QString alert_sound_file_;
     QString finish_sound_file_;
@@ -280,9 +321,31 @@ class Config final : public QObject {
     QString visual_code_font_{QStringLiteral("system")};
     int visual_size_{};
     bool visual_all_{};
+    bool visual_factory_{};
+    int visual_keep_mb_{1024};
+    int visual_keep_threads_{32};
     // What Command-click on a file path in the visual view opens it with:
     // vscode, cursor, zed, textedit, system, or auto (the first installed).
     QString visual_editor_{QStringLiteral("auto")};
+    // Light mode: the mode and the last theme of each kind, for the visual
+    // view and the window. visual_theme_ and theme_ hold what shows now.
+    QString appearance_{QStringLiteral("dark")};
+    QString visual_dark_theme_{QStringLiteral("terminal")};
+    QString visual_light_theme_{QStringLiteral("claude-light")};
+    QString window_dark_theme_{QStringLiteral("lapis")};
+    QString window_light_theme_{QStringLiteral("daylight")};
+    bool system_dark_{true};
+    // Shows the remembered themes of the kind the mode now asks for.
+    void apply_appearance();
+    // Remembers a chosen theme as its kind's, switching the mode to that kind
+    // when the other kind shows.
+    void choose_kind(bool light);
+    void follow_system_appearance();
+    // The sections setSetting edits, as last read, and the ones it changed
+    // since the last save: only those are written back.
+    QJsonObject sections_;
+    QSet<QString> touched_;
+    void parse_sections();
     AgentDefaults agent_defaults_;
     NextPromptSettings next_prompt_;
     InteractionLogSettings interaction_log_;

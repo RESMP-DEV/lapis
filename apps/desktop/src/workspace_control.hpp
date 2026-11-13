@@ -21,8 +21,10 @@ class Workspace;
 // "renameAgent" (id, title), "placeAgent" (id, category, index),
 // "restartAgent" (id), "openTerminal" (machine, "" for this Mac),
 // "closeTerminal" (id), "settings", "changeSettings" (settings: the names
-// and values to change) and "handover", which only the windowless host
-// honours.
+// and values to change), "factory" (the factory view: homeAgentId,
+// effectiveHomeAgentId, summary, items and attention), "setHomeAgent" (id,
+// "" to unpin; answers as "factory") and "handover", which only the
+// windowless host honours.
 class WorkspaceControl final : public QObject {
     Q_OBJECT
   public:
@@ -42,6 +44,8 @@ class WorkspaceControl final : public QObject {
     [[nodiscard]] static QString path(const QString& registry);
     // Asks the windowless host holding this registry to let a window have it.
     static bool requestHandover(const QString& registry);
+    // One request line answered without a socket, for tests.
+    QByteArray answerForTesting(const QByteArray& line) { return answer(line); }
 
   signals:
     void handoverRequested();
@@ -57,6 +61,7 @@ class WorkspaceControl final : public QObject {
     QByteArray terminal(const QString& kind, const QJsonObject& request);
     QByteArray settings(const QString& kind, const QJsonObject& request);
     QByteArray handover(const QString& kind, const QJsonObject& request);
+    QByteArray factory(const QString& kind, const QJsonObject& request);
     // Refuses with the workspace's reason, which then leaves the window: the
     // phone asked, so the phone shows it.
     QByteArray refused();

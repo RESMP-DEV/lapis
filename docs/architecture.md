@@ -306,6 +306,16 @@ request never approves it. No current adapter routes a response: every agent
 takes its answers in its own terminal, and the service refuses a decision an
 older desktop sends.
 
+The window draws status, not attention: an agent's mark shows what it is doing
+(working, done, waiting on an answer, lost, unknown, ended) and never whether
+the person looked at it (decided Nov 11, 2026, after unseen dots and counts
+re-flagged agents the owner had already read). The desktop still keeps one
+unseen mark per agent for Tab, the chime and `agent_state.json`, owned by
+`Workspace` (the rule is written above `Workspace::looking` in `workspace.cpp`):
+a finished turn or new request marks it once unless the person is looking
+(stage agent, window active, input within two minutes); looking by any path
+clears it for good; transient statuses and reconnects never re-mark a seen turn.
+
 ### Terminal rendering and pacing
 
 The service screen is authoritative; desktop snapshots are replaceable caches.
@@ -337,6 +347,71 @@ the deadline; they never queue stale snapshots or tax the first event of a
 burst with a full interval. Debounce is a separate named feature where waiting
 for quiet is intentional. Hidden panels stop drawing while their output remains
 bounded and consumable. Static scenes sleep.
+
+### Visual view loading and switching
+
+One `TranscriptModel` is re-pointed at the selected agent's conversation file;
+the desktop keeps one list view over it. Switching never waits for a parse:
+
+- **Kept threads.** Every conversation read stays parsed (its reader, file
+  offset, opened work and scroll place) while it fits `visual.keepMB` (default
+  1024 MB, counted as about three times the text the reader holds, which is
+  what the process footprint was measured to grow by) and `visual.keepThreads`
+  (default 32), least recently shown first out; the shown one is never let go.
+  Showing a kept one reads only the bytes its CLI wrote since.
+- **Cold threads.** A conversation not kept shows its end at once: about the
+  last 1 MB, read on the GUI thread (1 to 10 ms measured), further back up to
+  4 MB until it holds two turns' starts, shown from its second turn so no turn
+  is missing records before its prompt (Codex readings start at a turn's
+  `task_started`). The whole file is read on a pool thread, plus an 8 MB tail
+  first when the file is over 16 MB and the first tail is short; the whole
+  reading replaces the tail in one reset while the view keeps its place.
+- **Read ahead.** With `visual.all`, about four seconds after launch the
+  workspace hands the model every local agent's conversation, most recently
+  written first; one low-priority thread reads them whole, one at a time,
+  only into room the budget has (never pushing out one the person showed).
+  Every 5 s one kept conversation whose file grew is brought up to date on
+  that thread from a copy of its reader, only the new bytes.
+- **Making rows.** Before the rows are replaced the view gives the list no
+  height and no cache buffer, so the reset makes no delegates; placing the
+  view at its end (or its kept place) and then restoring the height makes only
+  the rows on screen. The 2000 px cache fills back in 250 ms later. A reply is
+  styled in a scratch document and copied into its row's document in one edit,
+  so its text is laid out once.
+
+Measured with `lapis_transcript_capture --switch` over 20 local
+conversations (16 Claude Code, 2 Codex, 2 Antigravity, 9 to 358 MB, 1.86 GB
+in all), offscreen with software rendering, on a machine under other load
+(load average 16 to 33; runs vary by up to 2x). In the quieter run, a switch
+to a kept thread reaches its first frame at p50 28 to 40 ms, p95 39 to 46 ms;
+before, a switch among 20 agents missed the six-thread cache and was blank for
+p50 175 ms, p95 0.84 s, and switching between two kept threads was p50 16 ms,
+p95 97 ms. A thread not read yet shows its end at p50 34 ms, p95 54 ms, the
+whole history by p95 0.79 s. Idle CPU with 19 kept: 0.25% of a core. The
+footprint with all 20 kept was 489 to 774 MB across runs (320 to 435 MB
+before with six). Native GPU presentation and a real window are not measured.
+
+### Factory view
+
+The factory view is a window mode over the same workspace, not a second
+workspace: the stage shows the orchestrator agent's thread, and every other
+agent sits in one of four stages on a board beside it. `Workspace` owns the
+model (`workspace_factory.cpp`); the stage rules are a pure function
+(`factory_state.hpp`). A separate judge model may write
+`factory_state.json` beside the registry; lapis only reads it (bounded, a
+symlink refused) and watches the folder so an atomic replace reloads.
+Live state wins over a verdict: a pending request or a waiting agent always
+means Needs You and a working or connecting one In Progress; an `in_progress`
+verdict on a turn no longer running is stale; a settled verdict holds only until the agent's settled status changes after
+`judgedAtMs` (the first status after connecting is not a change, so a restart
+does not discard verdicts). Unjudged agents get a deterministic stage, and
+only an explicit `keepNeeded: false` marks one safe to close. Nothing is
+closed automatically. The orchestrator is a registry pin (`homeAgent`), else
+a sticky automatic choice of the most recently active local agy agent, so it
+never follows the stage. Inspecting a worker selects it on the one stage;
+keyboard ownership follows the existing focus rules, and agent links in the
+thread are resolved by `resolveAgentLink` without touching the transcript
+model.
 
 ### Storage, credentials, and diagnostics
 

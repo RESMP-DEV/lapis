@@ -91,8 +91,11 @@ void SeenScreens::restoreState(const QJsonObject& state) {
 
 void SeenScreens::sample() {
     const auto* shown = workspace_.focusedAgent();
-    if (shown != nullptr && looking_(shown))
-        see(shown);
+    if (shown == nullptr || !looking_(shown))
+        return;
+    see(shown);
+    // Back at the Mac with the agent on the stage: that is looking at it.
+    workspace_.noteLooking(QStringLiteral("present"));
 }
 
 bool SeenScreens::unchanged(const Agent* item) const {
@@ -107,10 +110,9 @@ bool SeenScreens::unchanged(const Agent* item) const {
     return found != seen_.cend() && *found == fingerprint(item);
 }
 
-Alerts::Alerts(Workspace& workspace, const Config& config, Player play, Looking looking,
-               QObject* parent)
-    : QObject(parent), config_(config), play_(std::move(play)), looking_(std::move(looking)) {
-    connect(&workspace, &Workspace::turnFinished, this, &Alerts::finished);
+Alerts::Alerts(Workspace& workspace, const Config& config, Player play, QObject* parent)
+    : QObject(parent), config_(config), play_(std::move(play)) {
+    connect(&workspace, &Workspace::needsYou, this, &Alerts::finished);
 }
 
 void Alerts::preview(bool needsYou) {
@@ -126,27 +128,33 @@ bool Alerts::ring(Chime chime) {
     return true;
 }
 
-void Alerts::finished(Agent* item) {
-    if (!config_.finishSound())
-        return record(item, "finished", "chime off");
-    if (looking_(item)) {
+// Only the moment an agent becomes unseen may chime; the workspace decided
+// that (Workspace::needsYou), so a turn already looked at never chimes again.
+void Alerts::finished(Agent* item, const QString& outcome) {
+    if (outcome == QLatin1String("looking")) {
         if (seen_ != nullptr)
             seen_->see(item);
-        return record(item, "finished", "quiet: you are looking at it");
+        return record(item, outcome, "quiet: you are looking at it");
     }
-    if (seen_ != nullptr && seen_->unchanged(item))
-        return record(item, "finished", "quiet: nothing new since you looked");
-    record(item, "finished", ring(Chime::finished) ? "chimed" : "quiet: another chime just played");
+    if (!config_.finishSound())
+        return record(item, outcome, "chime off");
+    if (outcome == QLatin1String("unchanged"))
+        return record(item, outcome, "quiet: nothing new since you looked");
+    if (outcome != QLatin1String("marked"))
+        return record(item, outcome, "quiet: already waiting on you");
+    record(item, outcome, ring(Chime::finished) ? "chimed" : "quiet: another chime just played");
 }
 
-void Alerts::record(const Agent* item, const char* event, const char* decision) const {
+void Alerts::record(const Agent* item, const QString& outcome, const char* decision) const {
     if (!log_ || item == nullptr)
         return;
     log_({{"at", QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
           {"agent", item->title()},
+          {"id", item->agentId()},
           {"cli", item->agentName()},
-          {"event", QLatin1String(event)},
+          {"event", QStringLiteral("finished")},
           {"kind", QStringLiteral("chime")},
+          {"mark", outcome},
           {"decision", QLatin1String(decision)}});
 }
 

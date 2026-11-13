@@ -385,8 +385,8 @@ QQuickItem* find_item(QQuickItem* root, const QString& name) {
     return nullptr;
 }
 
-// The production window, offscreen: a click on a strip card names the card's
-// agent.
+// The production window, offscreen: a click on an agent's sidebar row names
+// the row's agent.
 void production_window_is_described() {
     Fixture fixture;
     fixture.recorder->setSettings({.enabled = true});
@@ -403,8 +403,8 @@ void production_window_is_described() {
     const auto sessions = fixture.workspace.categoryAgents();
     require(!sessions.isEmpty(), "the preview has agents");
     const auto id = sessions.front().value<lapis::desktop::Agent*>()->agentId();
-    auto* card = find_item(window->contentItem(), QStringLiteral("cardPress_") + id);
-    require(card != nullptr, "the strip card exists");
+    auto* card = find_item(window->contentItem(), QStringLiteral("sidebarPress_") + id);
+    require(card != nullptr, "the sidebar row exists");
     const auto at = card->mapToScene(QPointF(card->width() / 2, card->height() / 2));
     QMouseEvent press(QEvent::MouseButtonPress, at, at, Qt::LeftButton, Qt::LeftButton,
                       Qt::NoModifier);
@@ -431,9 +431,9 @@ void production_window_is_described() {
     const auto mouse = of_kind(lines, QStringLiteral("mouse"));
     require(mouse.size() == 2, "a press and a release");
     const auto target = mouse[0].value("target").toObject();
-    require(target.value("area") == "strip" && target.value("session") == id &&
+    require(target.value("area") == "sidebar" && target.value("session") == id &&
                 mouse[0].value("button") == "left",
-            "the click names the strip and the card's agent");
+            "the click names the sidebar and the row's agent");
 }
 
 // Microseconds of GUI-thread time per key event, recording against not.

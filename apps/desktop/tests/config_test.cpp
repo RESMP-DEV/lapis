@@ -6,6 +6,7 @@
 // choice survive a restart.
 #include "config.hpp"
 
+#include <QColor>
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -22,7 +23,9 @@
 #include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QThread>
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -668,6 +671,40 @@ void advertised_names_are_accepted() {
         const QString name = entry.toMap().value(QStringLiteral("name")).toString();
         require(!name.isEmpty(), "each advertised theme needs a name");
         require(config.setTheme(name), "every advertised theme must be accepted");
+        // Category names are written in their colour, full for the shown
+        // group and quieter for the rest: both keep text contrast (4.5:1)
+        // on the sidebar's surface and the window background, and the full
+        // colour's lines and edges keep a mark's 3:1 on cards too.
+        const auto map = entry.toMap();
+        const auto colors = map.value(QStringLiteral("categoryColors")).toMap();
+        const auto quiet = map.value(QStringLiteral("categoryQuietColors")).toMap();
+        require(colors.size() == 8 && quiet.keys() == colors.keys(),
+                "every theme resolves the eight category colours and their quiet names");
+        const auto luminance = [](const QColor& color) {
+            const auto channel = [](double value) {
+                return value <= 0.03928 ? value / 12.92 : std::pow((value + 0.055) / 1.055, 2.4);
+            };
+            return 0.2126 * channel(color.redF()) + 0.7152 * channel(color.greenF()) +
+                   0.0722 * channel(color.blueF());
+        };
+        const auto contrast = [&](const QVariant& color, const char* surface) {
+            const auto ground =
+                luminance(QColor(map.value(QString::fromLatin1(surface)).toString()));
+            const auto ink = luminance(QColor(color.toString()));
+            return (std::max(ink, ground) + 0.05) / (std::min(ink, ground) + 0.05);
+        };
+        for (auto hue = colors.cbegin(); hue != colors.cend(); ++hue) {
+            for (const auto* surface : {"surface", "background"}) {
+                require(contrast(hue.value(), surface) >= 4.5,
+                        "category names keep text contrast on every theme");
+                require(contrast(quiet.value(hue.key()), surface) >= 4.5,
+                        "quiet category names keep text contrast on every theme");
+            }
+            require(contrast(hue.value(), "card") >= 3.0,
+                    "category colours keep 3:1 contrast on cards");
+            require(quiet.value(hue.key()) != hue.value(),
+                    "a quiet name differs from the full one");
+        }
     }
     // The final iteration leaves the last advertised name selected, and the
     // enumeration agrees with the string names written to the file.
@@ -683,12 +720,14 @@ void sidebar_preference_and_commands() {
     Config config;
     config.setSourcePathForTesting(path);
     require(config.load() && config.sidebarVisible(), "sidebar defaults visible");
+    // The sidebar navigates; the preview strip is opt-in.
+    require(!config.previewsVisible(), "previews default hidden");
     QList<QPair<bool, bool>> observed;
     QObject::connect(&config, &Config::changed, &config,
                      [&] { observed.append({config.sidebarVisible(), config.previewsVisible()}); });
     require(config.setSidebarVisible(false), "hide sidebar persists");
-    require(config.setPreviewsVisible(false), "hide previews persists");
-    require(observed == QList<QPair<bool, bool>>{{false, true}, {false, false}},
+    require(config.setPreviewsVisible(true), "show previews persists");
+    require(observed == QList<QPair<bool, bool>>{{false, false}, {false, true}},
             "successful visibility saves emit each settled state once");
     Config restored;
     restored.setSourcePathForTesting(path);
@@ -706,7 +745,7 @@ void sidebar_preference_and_commands() {
         for (const auto& binding : bindings)
             require(QKeySequence(binding)[0] != paste, "workspace shortcuts must not steal paste");
     }
-    require(!restored.previewsVisible(), "hidden previews survive restart");
+    require(restored.previewsVisible(), "shown previews survive restart");
     observed.clear();
     QObject::connect(&restored, &Config::changed, &restored, [&] {
         observed.append({restored.sidebarVisible(), restored.previewsVisible()});
@@ -714,10 +753,20 @@ void sidebar_preference_and_commands() {
     static_cast<void>(write_config(QDir(directory.path()), "{broken"));
     require(!restored.setSidebarVisible(true) && !restored.sidebarVisible(),
             "failed sidebar save rolls back");
-    require(!restored.setPreviewsVisible(true) && !restored.previewsVisible(),
+    require(!restored.setPreviewsVisible(false) && restored.previewsVisible(),
             "failed preview save rolls back");
-    require(observed == QList<QPair<bool, bool>>{{false, false}, {false, false}},
+    require(observed == QList<QPair<bool, bool>>{{false, true}, {false, true}},
             "failed visibility saves never publish tentative values");
+    // A file an earlier lapis wrote with either value keeps it.
+    for (const bool shown : {true, false}) {
+        const auto earlier =
+            write_config(QDir(directory.path()),
+                         shown ? R"({"previewsVisible": true})" : R"({"previewsVisible": false})");
+        Config kept;
+        kept.setSourcePathForTesting(earlier);
+        require(kept.load() && kept.previewsVisible() == shown,
+                "an explicit previewsVisible keeps its value");
+    }
 }
 
 void typing_scroll_preference_persists() {
@@ -792,6 +841,266 @@ void visual_settings_persist() {
                 restored.visual().value(QStringLiteral("size")).toInt() == 0 &&
                 !restored.visual().value(QStringLiteral("all")).toBool(),
             "hand-edited visual values fall back");
+}
+
+// visual.keepMB and visual.keepThreads are hand-written: whole numbers from
+// 0 to their limits (65536 MB, 1000 threads) are taken, and anything else
+// (missing, negative, too large, fractional or not a number) keeps the
+// default of 1024 MB and 32 threads.
+void visual_keep_budget_parses() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "keep budget fixture directory");
+    const QDir dir(directory.path());
+    Config config;
+    config.setSourcePathForTesting(write_config(dir, R"({})"));
+    require(config.load() && config.visualKeepMB() == 1024 && config.visualKeepThreads() == 32,
+            "the keep budget defaults to 1024 MB and 32 threads");
+    struct Case {
+        const char* name;
+        QByteArray visual;
+        int mb;
+        int threads;
+    };
+    const std::array cases{
+        Case{"in range", R"({"keepMB": 512, "keepThreads": 8})", 512, 8},
+        Case{"zero keeps none", R"({"keepMB": 0, "keepThreads": 0})", 0, 0},
+        Case{"the limits", R"({"keepMB": 65536, "keepThreads": 1000})", 65536, 1000},
+        Case{"past the limits", R"({"keepMB": 65537, "keepThreads": 1001})", 1024, 32},
+        Case{"negative", R"({"keepMB": -1, "keepThreads": -5})", 1024, 32},
+        Case{"fractional", R"({"keepMB": 1.5, "keepThreads": 2.5})", 1024, 32},
+        Case{"strings", R"({"keepMB": "512", "keepThreads": "8"})", 1024, 32},
+        Case{"booleans and null", R"({"keepMB": true, "keepThreads": null})", 1024, 32},
+        Case{"huge", R"({"keepMB": 1e300, "keepThreads": 4294967296})", 1024, 32},
+        Case{"one bad, one good", R"({"keepMB": "lots", "keepThreads": 4})", 1024, 4},
+    };
+    for (const auto& c : cases) {
+        static_cast<void>(write_config(dir, R"({"visual":)" + c.visual + "}"));
+        if (!config.load() || config.visualKeepMB() != c.mb ||
+            config.visualKeepThreads() != c.threads) {
+            std::cerr << "visual keep case \"" << c.name << "\": keepMB " << config.visualKeepMB()
+                      << ", keepThreads " << config.visualKeepThreads() << '\n';
+            require(false, "visual.keepMB and visual.keepThreads parse as documented");
+        }
+    }
+    // A reload without them goes back to the defaults.
+    static_cast<void>(write_config(dir, R"({"visual":{"theme":"terminal"}})"));
+    require(config.load() && config.visualKeepMB() == 1024 && config.visualKeepThreads() == 32,
+            "a reload without the keys restores the defaults");
+}
+
+// Golden file for Settings: every setting it changes lands on its own
+// lapis.json key, beside hand-written keys left as they were.
+void settings_write_known_keys() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "golden fixture directory");
+    const auto path = write_config(
+        QDir(directory.path()),
+        R"({"keybindings":{"quit":["Meta+Q"]},"custom":1,)"
+        R"("newAgent":{"machines":{"box":{"folder":"~/w"}},"models":{"codex":["m1"]}},)"
+        R"("nextPrompt":{"model":"x","providers":[]}})");
+    Config config;
+    config.setSourcePathForTesting(path);
+    config.setSystemDark(true);
+    require(config.load(), "golden fixture loads");
+    const auto set = [&config](const char* key, const QVariant& value) {
+        require(config.setSetting(QString::fromLatin1(key), value), key);
+    };
+    require(config.setTheme(QStringLiteral("graphite")) &&
+                config.setDensity(QStringLiteral("compact")) && config.setSidebarVisible(false) &&
+                config.setPreviewsVisible(false) && config.setScrollToBottomOnTyping(false) &&
+                config.setTerminalFontFamily(QStringLiteral("Menlo")) &&
+                config.setTerminalFontSize(16) && config.setFinishSound(false) &&
+                config.setKeepAwake(false),
+            "window settings save");
+    require(config.setVisual(QStringLiteral("font"), QStringLiteral("serif")) &&
+                config.setVisual(QStringLiteral("codeFont"), QStringLiteral("menlo")) &&
+                config.setVisual(QStringLiteral("size"), 18) &&
+                config.setVisual(QStringLiteral("all"), true) &&
+                config.setVisual(QStringLiteral("editor"), QStringLiteral("zed")) &&
+                config.setVisual(QStringLiteral("theme"), QStringLiteral("tokyo-night")),
+            "reading view settings save");
+    set("newAgent.harness", QStringLiteral("codex"));
+    set("newAgent.folder", QStringLiteral("~/dev"));
+    set("newAgent.mode", QStringLiteral("edits"));
+    set("harnessUpdates.omp", false);
+    set("nextPrompt.auto", true);
+    set("interactionLog.enabled", true);
+    set("tabAway.overdueHours", 6);
+    const auto expected = QJsonDocument::fromJson(R"({
+        "keybindings": {"quit": ["Meta+Q"]},
+        "custom": 1,
+        "newAgent": {"machines": {"box": {"folder": "~/w"}}, "models": {"codex": ["m1"]},
+                     "harness": "codex", "folder": "~/dev", "mode": "edits"},
+        "nextPrompt": {"model": "x", "providers": [], "auto": true},
+        "harnessUpdates": {"omp": false},
+        "interactionLog": {"enabled": true},
+        "tabAway": {"overdueHours": 6},
+        "theme": "graphite",
+        "density": "compact",
+        "sidebarVisible": false,
+        "previewsVisible": false,
+        "scrollToBottomOnTyping": false,
+        "terminalFont": {"size": 16, "family": "Menlo"},
+        "alerts": {"finished": false},
+        "keepAwake": false,
+        "visual": {"theme": "tokyo-night", "font": "serif", "codeFont": "menlo", "size": 18,
+                   "all": true, "editor": "zed", "appearance": "dark",
+                   "darkTheme": "tokyo-night", "lightTheme": "claude-light",
+                   "darkWindowTheme": "graphite", "lightWindowTheme": "daylight"},
+        "version": 1
+    })")
+                              .object();
+    require(read_config(path) == expected, "the saved file matches the golden file");
+    require(config.agentDefaults().harness == QStringLiteral("codex") &&
+                config.agentDefaults().machineFolders.value(QStringLiteral("box")) ==
+                    QStringLiteral("~/w") &&
+                config.harnessUpdatesOff().contains(QStringLiteral("omp")) &&
+                config.nextPrompt().automatic && config.nextPrompt().model == QStringLiteral("x") &&
+                config.interactionLog().enabled && config.tabAway().overdueHours == 6,
+            "the settings apply at once");
+
+    // Turning updates back on removes the key rather than writing true;
+    // bad values are refused.
+    set("harnessUpdates.omp", true);
+    require(read_config(path).value(QStringLiteral("harnessUpdates")).toObject().isEmpty(),
+            "updating again leaves no key");
+    require(!config.setSetting(QStringLiteral("newAgent.mode"), QStringLiteral("yolo")) &&
+                !config.setSetting(QStringLiteral("tabAway.overdueHours"), -1) &&
+                !config.setSetting(QStringLiteral("nextPrompt.auto"), QStringLiteral("yes")) &&
+                !config.setSetting(QStringLiteral("nextPrompt.model"), QStringLiteral("y")) &&
+                !config.setSetting(QStringLiteral("harnessUpdates.Bad Name"), false),
+            "unknown paths and bad values are refused");
+    set("newAgent.folder", QString());
+    require(!read_config(path)
+                 .value(QStringLiteral("newAgent"))
+                 .toObject()
+                 .contains(QStringLiteral("folder")),
+            "an empty folder removes the key");
+
+    // A section Settings did not just change is never rewritten from memory:
+    // an edit made since stays.
+    auto edited = read_config(path);
+    auto next = edited.value(QStringLiteral("nextPrompt")).toObject();
+    next.insert(QStringLiteral("maxPerHour"), 5);
+    edited.insert(QStringLiteral("nextPrompt"), next);
+    static_cast<void>(
+        write_config(QDir(directory.path()), QJsonDocument(edited).toJson(QJsonDocument::Compact)));
+    require(config.setKeepAwake(true), "an unrelated save");
+    require(read_config(path)
+                    .value(QStringLiteral("nextPrompt"))
+                    .toObject()
+                    .value(QStringLiteral("maxPerHour"))
+                    .toInt() == 5,
+            "an untouched section stays as edited");
+    const auto defaults = Config::defaults();
+    require(defaults.value(QStringLiteral("theme")) == QStringLiteral("lapis") &&
+                defaults.value(QStringLiteral("visual.appearance")) == QStringLiteral("dark") &&
+                defaults.value(QStringLiteral("terminalFont.size")).toInt() == 14 &&
+                defaults.value(QStringLiteral("tabAway.overdueHours")).toDouble() == 4 &&
+                !defaults.value(QStringLiteral("nextPrompt.auto")).toBool(),
+            "built-in values for Reset");
+}
+
+// Light mode: one switch moves the thread and the window to the person's
+// last theme of the other kind, and back; "system" follows macOS live
+// without writing the file; a file from before it shows what it did.
+void appearance_switches_kinds() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "appearance fixture directory");
+    const auto path = write_config(QDir(directory.path()), R"({"theme":"oled"})");
+    Config config;
+    config.setSourcePathForTesting(path);
+    config.setSystemDark(true);
+    const auto shown = [&config] {
+        return config.themeName() + QLatin1Char('/') +
+               config.visual().value(QStringLiteral("theme")).toString();
+    };
+    require(config.load() && config.appearance() == QStringLiteral("dark") &&
+                shown() == QStringLiteral("oled/terminal") && !config.lightShown(),
+            "a file without the mode stays dark as it was");
+    require(config.setAppearance(QStringLiteral("light")) &&
+                shown() == QStringLiteral("daylight/claude-light") && config.lightShown(),
+            "light mode shows the light window and thread");
+    auto saved = read_config(path);
+    auto visual = saved.value(QStringLiteral("visual")).toObject();
+    require(visual.value(QStringLiteral("appearance")) == QStringLiteral("light") &&
+                visual.value(QStringLiteral("darkWindowTheme")) == QStringLiteral("oled") &&
+                visual.value(QStringLiteral("lightWindowTheme")) == QStringLiteral("daylight") &&
+                visual.value(QStringLiteral("darkTheme")) == QStringLiteral("terminal") &&
+                visual.value(QStringLiteral("lightTheme")) == QStringLiteral("claude-light") &&
+                saved.value(QStringLiteral("theme")) == QStringLiteral("daylight") &&
+                visual.value(QStringLiteral("theme")) == QStringLiteral("claude-light"),
+            "the mode and each kind's theme are saved under visual");
+    require(config.setVisual(QStringLiteral("theme"), QStringLiteral("codex-light")) &&
+                config.appearance() == QStringLiteral("light"),
+            "a light theme in light mode stays light");
+    require(config.setVisual(QStringLiteral("theme"), QStringLiteral("tokyo-night")) &&
+                config.appearance() == QStringLiteral("dark") &&
+                shown() == QStringLiteral("oled/tokyo-night"),
+            "a dark theme switches to dark mode, window included");
+    require(config.setTheme(QStringLiteral("graphite")) &&
+                shown() == QStringLiteral("graphite/tokyo-night"),
+            "a dark window theme is the dark one");
+    require(config.setAppearance(QStringLiteral("light")) &&
+                shown() == QStringLiteral("daylight/codex-light"),
+            "light mode returns to the last light themes");
+    require(config.setAppearance(QStringLiteral("dark")) &&
+                shown() == QStringLiteral("graphite/tokyo-night"),
+            "dark mode returns to the last dark themes");
+    require(!config.setAppearance(QStringLiteral("dim")) &&
+                config.appearance() == QStringLiteral("dark"),
+            "an unknown mode is refused");
+    Config restored;
+    restored.setSourcePathForTesting(path);
+    restored.setSystemDark(true);
+    require(restored.load() && restored.themeName() == QStringLiteral("graphite") &&
+                restored.visual().value(QStringLiteral("lightTheme")) ==
+                    QStringLiteral("codex-light"),
+            "both kinds survive a restart");
+
+    // Match macOS follows the platform's appearance as it changes, unsaved.
+    require(config.setAppearance(QStringLiteral("system")) && !config.lightShown(),
+            "system while macOS is dark");
+    const auto before = read_config(path);
+    config.setSystemDark(false);
+    require(config.lightShown() && shown() == QStringLiteral("daylight/codex-light"),
+            "macOS turning light shows light mode");
+    config.setSystemDark(true);
+    require(shown() == QStringLiteral("graphite/tokyo-night"), "and dark again");
+    require(read_config(path) == before, "following macOS writes nothing");
+    config.setSystemDark(false);
+    require(config.setTheme(QStringLiteral("lapis")) &&
+                config.appearance() == QStringLiteral("dark") &&
+                shown() == QStringLiteral("lapis/tokyo-night"),
+            "a dark theme chosen while macOS is light switches to dark for good");
+    Config system;
+    system.setSourcePathForTesting(
+        write_config(QDir(directory.path()),
+                     R"({"visual":{"appearance":"system","lightTheme":"codex-light"}})"));
+    system.setSystemDark(false);
+    require(system.load() &&
+                system.visual().value(QStringLiteral("theme")) == QStringLiteral("codex-light"),
+            "a saved system mode loads as macOS shows");
+
+    // A file from before light mode that already read in a light theme.
+    static_cast<void>(write_config(QDir(directory.path()),
+                                   R"({"theme":"oled","visual":{"theme":"claude-light"}})"));
+    Config mixed;
+    mixed.setSourcePathForTesting(path);
+    require(mixed.load() && mixed.appearance() == QStringLiteral("light") &&
+                mixed.themeName() == QStringLiteral("oled") &&
+                mixed.visual().value(QStringLiteral("theme")) == QStringLiteral("claude-light"),
+            "an older light thread in a dark window shows as it did");
+    require(mixed.setAppearance(QStringLiteral("dark")) &&
+                mixed.themeName() == QStringLiteral("oled") &&
+                mixed.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal"),
+            "and switches to dark with its own window theme kept");
+    static_cast<void>(write_config(
+        QDir(directory.path()),
+        R"({"visual":{"appearance":"light","lightTheme":"tokyo-night","lightWindowTheme":"oled"}})"));
+    require(mixed.load() && mixed.themeName() == QStringLiteral("daylight") &&
+                mixed.visual().value(QStringLiteral("theme")) == QStringLiteral("claude-light"),
+            "a theme of the wrong kind in a slot falls back");
 }
 
 // The terminal font is validated, written immediately, restored on restart and
@@ -1016,7 +1325,7 @@ void defaults_only_touches_no_file() {
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
     const QDir dir(directory.path());
-    const QByteArray contents = R"({"version": 1, "theme": "amber", "previewsVisible": false})";
+    const QByteArray contents = R"({"version": 1, "theme": "amber", "previewsVisible": true})";
     const QString path = write_config(dir, contents);
     const QByteArray previous = qgetenv("LAPIS_CONFIG");
     const bool had_previous = qEnvironmentVariableIsSet("LAPIS_CONFIG");
@@ -1031,7 +1340,7 @@ void defaults_only_touches_no_file() {
         Config config{Config::DefaultsOnly{}};
         require(!config.fileBacked() && config.sourcePath().isEmpty(),
                 "a defaults-only config names no file");
-        require(config.themeName() == QStringLiteral("lapis") && config.previewsVisible() &&
+        require(config.themeName() == QStringLiteral("lapis") && !config.previewsVisible() &&
                     config.diagnostic().isEmpty(),
                 "a defaults-only config starts from the built-in defaults, not the file");
         require(config.sequences(QStringLiteral("openSettings")) == default_settings_shortcuts(),
@@ -1039,7 +1348,7 @@ void defaults_only_touches_no_file() {
         require(config.setTheme(QStringLiteral("graphite")) &&
                     config.themeName() == QStringLiteral("graphite"),
                 "a change applies in memory");
-        require(config.setPreviewsVisible(false) && !config.previewsVisible() &&
+        require(config.setPreviewsVisible(true) && config.previewsVisible() &&
                     config.diagnostic().isEmpty(),
                 "a change reports no save failure");
         // An edit to the file is not watched.
@@ -1099,6 +1408,9 @@ int main(int argc, char** argv) {
         sidebar_preference_and_commands();
         typing_scroll_preference_persists();
         visual_settings_persist();
+        visual_keep_budget_parses();
+        appearance_switches_kinds();
+        settings_write_known_keys();
         selection_persists();
         symbolic_link_config_updates_target();
         appearance_preserves_json_and_bad_files();

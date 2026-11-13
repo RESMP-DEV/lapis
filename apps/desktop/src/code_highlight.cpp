@@ -8,7 +8,21 @@
 
 namespace lapis::desktop::code {
 namespace {
-enum class Family { code, python, shell, markup, json, yaml, ini, css, diff, markdown, tex, sql };
+enum class Family {
+    plain,
+    code,
+    python,
+    shell,
+    markup,
+    json,
+    yaml,
+    ini,
+    css,
+    diff,
+    markdown,
+    tex,
+    sql
+};
 
 QSet<QString> words(const char* list) {
     const auto parts = QString::fromLatin1(list).split(QLatin1Char(' '), Qt::SkipEmptyParts);
@@ -31,11 +45,10 @@ struct Language {
     QSet<QString> types;
     QSet<QString> constants;
     QSet<QString> builtins;
-    bool capital_types{}; // Capitalized names are types
-    bool preprocessor{};  // a line starting with # is a directive
-    bool backticks{};     // `...` is a string that can span lines
-    bool triple_quotes{}; // Python's """ and '''
-    bool single_quotes{true};
+    bool capital_types{};    // Capitalized names are types
+    bool preprocessor{};     // a line starting with # is a directive
+    bool backticks{};        // `...` is a string that can span lines
+    bool triple_quotes{};    // Python's """ and '''
     bool lifetimes{};        // Rust's 'a
     bool case_insensitive{}; // SQL
 };
@@ -251,13 +264,10 @@ QHash<QString, Language> table() {
     return t;
 }
 
-const Language& generic() {
-    static const Language l = [] {
-        auto g =
-            make(Family::code, {QStringLiteral("#"), QStringLiteral("//")}, "", "", misc_constants);
-        g.single_quotes = false; // prose-like output: "don't" is not a string
-        return g;
-    }();
+// Text, logs, output and any fence lapis does not know: no colors at all,
+// and no guessing a language from what the fence holds.
+const Language& plain() {
+    static const Language l = make(Family::plain, {});
     return l;
 }
 
@@ -365,10 +375,12 @@ const Language& language(const QString& name) {
     static const QHash<QString, Language> languages = table();
     const auto key = name.trimmed().toLower();
     const auto found = languages.constFind(key);
-    return found == languages.constEnd() ? generic() : *found;
+    return found == languages.constEnd() ? plain() : *found;
 }
 
 std::vector<Span> tokenize(const QString& s, const Language& l, int& state) {
+    if (l.family == Family::plain)
+        return {};
     Spans out;
     const int n = static_cast<int>(s.size());
     if (l.family == Family::diff) {
@@ -490,7 +502,7 @@ std::vector<Span> tokenize(const QString& s, const Language& l, int& state) {
             }
         }
         // Strings.
-        const bool quote = c == QLatin1Char('"') || (c == QLatin1Char('\'') && l.single_quotes) ||
+        const bool quote = c == QLatin1Char('"') || c == QLatin1Char('\'') ||
                            (c == QLatin1Char('`') && l.backticks);
         if (quote) {
             if (l.lifetimes && c == QLatin1Char('\'') && i + 2 < n && word_start(s[i + 1]) &&

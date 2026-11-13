@@ -1,10 +1,13 @@
 #include "config.hpp"
 #include "app_paths.hpp"
+#include "category_colors.hpp"
 
+#include <QColor>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -15,6 +18,7 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QSignalBlocker>
+#include <QStyleHints>
 #include <QVariantMap>
 #include <algorithm>
 #include <array>
@@ -84,7 +88,7 @@ constexpr std::array<Theme, 7> kThemes = {{
      .border = "#c6cbd4",
      .focused_border = "#4a5bd4",
      .text = "#14181f",
-     .muted_text = "#5d6675",
+     .muted_text = "#545d6b", // 4.8:1 even on the selected row
      .attention = "#c8342c",
      .attention_text = "#ffffff",
      .activity = "#0a6558",
@@ -92,6 +96,7 @@ constexpr std::array<Theme, 7> kThemes = {{
      .plenty = "#2f8f4e",
      .corner_radius = 6,
      .motion_ms = 140,
+     .light = true,
      .heading_tracking = 0.5},
     {.name = "solarized",
      .label = "Solarized",
@@ -366,12 +371,14 @@ Config::Config(QObject* parent) : QObject(parent) {
     connect(&watcher_, &QFileSystemWatcher::directoryChanged, &settle_,
             qOverload<>(&QTimer::start));
     watch();
+    follow_system_appearance();
 }
 
 // No source path, so nothing below can name a file to read, watch or write.
 Config::Config(DefaultsOnly, QObject* parent) : QObject(parent), file_backed_(false) {
     connect(this, &Config::changed, this, &Config::diagnosticChanged);
     apply_defaults();
+    follow_system_appearance();
 }
 
 void Config::watch() {
@@ -502,21 +509,23 @@ void Config::apply_defaults() {
     bindings_.insert(QStringLiteral("openCommands"), {QStringLiteral("Ctrl+Shift+P")});
 #endif
     sidebar_visible_ = true;
-    previews_visible_ = true;
+    previews_visible_ = false;
     finish_sound_ = true;
     alert_sound_file_.clear();
     finish_sound_file_.clear();
     keep_awake_ = true;
+    // The window theme first: light mode remembers it as its kind's.
+    theme_ = QStringLiteral("lapis");
     load_visual({});
     // Each CLI lists its own models (HarnessModels) unless the config names some.
-    agent_defaults_ = {};
+    sections_ = {};
+    touched_.clear();
+    parse_sections();
     terminal_font_family_.clear();
     harness_arguments_.clear();
-    harness_updates_off_.clear();
     terminal_font_size_ = kTerminalFontSizeDefault;
     scroll_to_bottom_on_typing_ = true;
     density_ = CardDensity::Comfortable;
-    theme_ = QStringLiteral("lapis");
 }
 
 bool Config::load() {
@@ -568,7 +577,9 @@ bool Config::load() {
     }
     const QJsonObject root = document.object();
     sidebar_visible_ = root.value(QStringLiteral("sidebarVisible")).toBool(true);
-    previews_visible_ = root.value(QStringLiteral("previewsVisible")).toBool(true);
+    // The sidebar navigates; the strip of live previews is opt-in. A file
+    // that already says either way keeps its choice.
+    previews_visible_ = root.value(QStringLiteral("previewsVisible")).toBool(false);
     scroll_to_bottom_on_typing_ = root.value(QStringLiteral("scrollToBottomOnTyping")).toBool(true);
     const QJsonObject keys = root.value(QStringLiteral("keybindings")).toObject();
     int applied = 0;
@@ -602,17 +613,17 @@ bool Config::load() {
 
     load_terminal_font(root.value(QStringLiteral("terminalFont")));
     load_harness_arguments(root.value(QStringLiteral("harnessArguments")));
-    load_harness_updates(root.value(QStringLiteral("harnessUpdates")));
     load_alerts(root);
     load_visual(root);
-    load_agent_defaults(root.value(QStringLiteral("newAgent")));
     // Retired features' settings: "usage" and the older top-level "showUsage"
     // (the plan usage meter), "accounts" (lapis-managed plans) and
     // "limitResets" (automatic limit resets). A file that still has them
     // loads, and saving leaves them as written.
-    next_prompt_ = parse_next_prompt(root.value(QStringLiteral("nextPrompt")));
-    interaction_log_ = parse_interaction_log(root.value(QStringLiteral("interactionLog")));
-    tab_away_ = parse_tab_away(root.value(QStringLiteral("tabAway")));
+    for (const char* name :
+         {"newAgent", "harnessUpdates", "nextPrompt", "interactionLog", "tabAway"})
+        if (root.contains(QLatin1String(name)))
+            sections_.insert(QLatin1String(name), root.value(QLatin1String(name)));
+    parse_sections();
 
     known_contents_ = contents;
     loaded_ = true;
@@ -755,7 +766,100 @@ void Config::load_visual(const QJsonObject& root) {
     const int size = visual.value(QStringLiteral("size")).toInt();
     visual_size_ = visual_size(size) ? size : 0;
     visual_all_ = visual.value(QStringLiteral("all")).toBool();
+    visual_factory_ = visual.value(QStringLiteral("factory")).toBool();
     visual_editor_ = name("editor", "auto");
+    // A missing or out-of-range number keeps the default.
+    const auto number = [&visual](const char* key, int fallback, int most) {
+        const auto value = visual.value(QLatin1String(key));
+        const int n = value.toInt(-1);
+        return value.isDouble() && n >= 0 && n <= most ? n : fallback;
+    };
+    visual_keep_mb_ = number("keepMB", 1024, 65536);
+    visual_keep_threads_ = number("keepThreads", 32, 1000);
+
+    // Light mode. Each kind's theme must be of that kind; a missing or wrong
+    // one falls back to the built-in choice, or to what shows now.
+    const bool showing_light = visualThemeLight(visual_theme_);
+    const bool window_light = theme_for(theme_).light;
+    const auto slot = [&visual](const char* key, bool light, const QString& fallback) {
+        const auto value = visual.value(QLatin1String(key)).toString();
+        return visual_name(value) && visualThemeLight(value) == light ? value : fallback;
+    };
+    visual_dark_theme_ =
+        slot("darkTheme", false, showing_light ? QStringLiteral("terminal") : visual_theme_);
+    visual_light_theme_ =
+        slot("lightTheme", true, showing_light ? visual_theme_ : QStringLiteral("claude-light"));
+    const auto window_slot = [&visual](const char* key, bool light, const QString& fallback) {
+        const auto value = visual.value(QLatin1String(key)).toString();
+        return theme_exists(value) && theme_for(value).light == light ? value : fallback;
+    };
+    window_dark_theme_ =
+        window_slot("darkWindowTheme", false, window_light ? QStringLiteral("lapis") : theme_);
+    window_light_theme_ =
+        window_slot("lightWindowTheme", true, window_light ? theme_ : QStringLiteral("daylight"));
+    const auto mode = visual.value(QStringLiteral("appearance")).toString();
+    if (mode == QLatin1String("dark") || mode == QLatin1String("light") ||
+        mode == QLatin1String("system")) {
+        appearance_ = mode;
+        apply_appearance();
+    } else {
+        // A file from before light mode shows exactly what it did; the mode
+        // is the visual view's kind until it is chosen.
+        appearance_ = showing_light ? QStringLiteral("light") : QStringLiteral("dark");
+    }
+}
+
+bool Config::visualThemeLight(const QString& name) {
+    return name.endsWith(QLatin1String("-light"));
+}
+
+bool Config::lightShown() const {
+    return appearance_ == QLatin1String("system") ? !system_dark_
+                                                  : appearance_ == QLatin1String("light");
+}
+
+void Config::apply_appearance() {
+    const bool light = lightShown();
+    visual_theme_ = light ? visual_light_theme_ : visual_dark_theme_;
+    theme_ = light ? window_light_theme_ : window_dark_theme_;
+}
+
+void Config::choose_kind(bool light) {
+    if (lightShown() != light)
+        appearance_ = light ? QStringLiteral("light") : QStringLiteral("dark");
+}
+
+bool Config::setAppearance(const QString& mode) {
+    if (mode != QLatin1String("dark") && mode != QLatin1String("light") &&
+        mode != QLatin1String("system"))
+        return false;
+    if (mode == appearance_)
+        return true;
+    appearance_ = mode;
+    apply_appearance();
+    qInfo().noquote() << "lapis appearance:" << appearance_;
+    emit changed();
+    return save();
+}
+
+void Config::setSystemDark(bool dark) {
+    if (system_dark_ == dark)
+        return;
+    system_dark_ = dark;
+    if (appearance_ != QLatin1String("system"))
+        return;
+    // Followed live and not saved: the file keeps "system".
+    apply_appearance();
+    emit changed();
+}
+
+void Config::follow_system_appearance() {
+    if (qobject_cast<QGuiApplication*>(QCoreApplication::instance()) == nullptr)
+        return;
+    auto* hints = QGuiApplication::styleHints();
+    system_dark_ = hints->colorScheme() != Qt::ColorScheme::Light;
+    connect(hints, &QStyleHints::colorSchemeChanged, this,
+            [this](Qt::ColorScheme scheme) { setSystemDark(scheme != Qt::ColorScheme::Light); });
 }
 
 QVariantMap Config::visual() const {
@@ -764,7 +868,14 @@ QVariantMap Config::visual() const {
             {QStringLiteral("codeFont"), visual_code_font_},
             {QStringLiteral("size"), visual_size_},
             {QStringLiteral("all"), visual_all_},
-            {QStringLiteral("editor"), visual_editor_}};
+            {QStringLiteral("factory"), visual_factory_},
+            {QStringLiteral("editor"), visual_editor_},
+            {QStringLiteral("appearance"), appearance_},
+            {QStringLiteral("light"), lightShown()},
+            {QStringLiteral("darkTheme"), visual_dark_theme_},
+            {QStringLiteral("lightTheme"), visual_light_theme_},
+            {QStringLiteral("darkWindowTheme"), window_dark_theme_},
+            {QStringLiteral("lightWindowTheme"), window_light_theme_}};
 }
 
 bool Config::setVisual(const QString& key, const QVariant& value) {
@@ -773,7 +884,19 @@ bool Config::setVisual(const QString& key, const QVariant& value) {
                     : key == QLatin1String("codeFont") ? &visual_code_font_
                     : key == QLatin1String("editor")   ? &visual_editor_
                                                        : nullptr;
-    if (name != nullptr) {
+    if (name == &visual_theme_) {
+        const auto text = value.toString();
+        if (!visual_name(text))
+            return false;
+        if (visual_theme_ == text)
+            return true;
+        // Remembered as its kind's theme; choosing one of the other kind
+        // switches light mode with it, window included.
+        const bool light = visualThemeLight(text);
+        (light ? visual_light_theme_ : visual_dark_theme_) = text;
+        choose_kind(light);
+        apply_appearance();
+    } else if (name != nullptr) {
         const auto text = value.toString();
         if (!visual_name(text))
             return false;
@@ -791,6 +914,10 @@ bool Config::setVisual(const QString& key, const QVariant& value) {
         if (visual_all_ == value.toBool())
             return true;
         visual_all_ = value.toBool();
+    } else if (key == QLatin1String("factory")) {
+        if (visual_factory_ == value.toBool())
+            return true;
+        visual_factory_ = value.toBool();
     } else {
         return false;
     }
@@ -828,6 +955,112 @@ void Config::load_agent_defaults(const QJsonValue& value) {
         }
         agent_defaults_.models.insert(it.key(), names);
     }
+}
+
+void Config::parse_sections() {
+    agent_defaults_ = {};
+    load_agent_defaults(sections_.value(QStringLiteral("newAgent")));
+    harness_updates_off_.clear();
+    load_harness_updates(sections_.value(QStringLiteral("harnessUpdates")));
+    next_prompt_ = parse_next_prompt(sections_.value(QStringLiteral("nextPrompt")));
+    interaction_log_ = parse_interaction_log(sections_.value(QStringLiteral("interactionLog")));
+    tab_away_ = parse_tab_away(sections_.value(QStringLiteral("tabAway")));
+}
+
+namespace {
+constexpr double kMaximumOverdueHours = 168;
+bool plain_text(const QVariant& value, qsizetype limit) {
+    const auto text = value.toString();
+    return value.canConvert<QString>() && text.size() <= limit && !text.contains(QChar::Null);
+}
+} // namespace
+
+bool Config::setSetting(const QString& path, const QVariant& value) {
+    const auto dot = path.indexOf(QLatin1Char('.'));
+    if (dot <= 0)
+        return false;
+    const auto section_name = path.left(dot);
+    const auto key = path.mid(dot + 1);
+    // What the file gets for the key: a value, or Undefined to remove it.
+    QJsonValue stored;
+    if (section_name == QLatin1String("newAgent") &&
+        (key == QLatin1String("harness") || key == QLatin1String("folder"))) {
+        if (!plain_text(value, key == QLatin1String("folder") ? 4096 : 64))
+            return false;
+        const auto text = value.toString().trimmed();
+        stored = text.isEmpty() ? QJsonValue(QJsonValue::Undefined) : QJsonValue(text);
+    } else if (section_name == QLatin1String("newAgent") && key == QLatin1String("mode")) {
+        const auto mode = value.toString();
+        if (!mode.isEmpty() && mode != QLatin1String("edits") && mode != QLatin1String("auto") &&
+            mode != QLatin1String("full"))
+            return false;
+        stored = mode.isEmpty() ? QJsonValue(QJsonValue::Undefined) : QJsonValue(mode);
+    } else if ((section_name == QLatin1String("nextPrompt") && key == QLatin1String("auto")) ||
+               (section_name == QLatin1String("interactionLog") &&
+                key == QLatin1String("enabled"))) {
+        if (value.typeId() != QMetaType::Bool)
+            return false;
+        stored = value.toBool();
+    } else if (section_name == QLatin1String("tabAway") && key == QLatin1String("overdueHours")) {
+        bool number = false;
+        const double hours = value.toDouble(&number);
+        if (!number || hours < 0 || hours > kMaximumOverdueHours)
+            return false;
+        stored = hours;
+    } else if (section_name == QLatin1String("harnessUpdates")) {
+        static const QRegularExpression cli(QStringLiteral("^[a-z][a-z0-9-]{0,31}$"));
+        if (!cli.match(key).hasMatch() || value.typeId() != QMetaType::Bool)
+            return false;
+        // Absent means updating, as true does; only false is written.
+        stored = value.toBool() ? QJsonValue(QJsonValue::Undefined) : QJsonValue(false);
+    } else {
+        return false;
+    }
+    auto section = sections_.value(section_name).toObject();
+    if (section.value(key) == stored)
+        return true;
+    if (stored.isUndefined())
+        section.remove(key);
+    else
+        section.insert(key, stored);
+    sections_.insert(section_name, section);
+    touched_.insert(section_name);
+    // Parsing the section again must not repeat its diagnostics.
+    const auto diagnostic = diagnostic_;
+    parse_sections();
+    diagnostic_ = diagnostic;
+    emit changed();
+    return save();
+}
+
+QVariantMap Config::settings() const {
+    QStringList updates_off(harness_updates_off_.begin(), harness_updates_off_.end());
+    updates_off.sort();
+    return {{QStringLiteral("newAgent.harness"), agent_defaults_.harness},
+            {QStringLiteral("newAgent.folder"), agent_defaults_.folder},
+            {QStringLiteral("newAgent.mode"), agent_defaults_.mode},
+            {QStringLiteral("nextPrompt.auto"), next_prompt_.automatic},
+            {QStringLiteral("interactionLog.enabled"), interaction_log_.enabled},
+            {QStringLiteral("tabAway.overdueHours"), tab_away_.overdueHours},
+            {QStringLiteral("harnessUpdatesOff"), updates_off}};
+}
+
+QVariantMap Config::defaults() {
+    const Config built_in(DefaultsOnly{});
+    QVariantMap values = built_in.settings();
+    const auto visual = built_in.visual();
+    for (auto it = visual.begin(); it != visual.end(); ++it)
+        values.insert(QStringLiteral("visual.") + it.key(), it.value());
+    values.insert(QStringLiteral("theme"), built_in.themeName());
+    values.insert(QStringLiteral("density"), built_in.densityName());
+    values.insert(QStringLiteral("sidebarVisible"), built_in.sidebarVisible());
+    values.insert(QStringLiteral("previewsVisible"), built_in.previewsVisible());
+    values.insert(QStringLiteral("terminalFont.family"), built_in.terminalFontFamily());
+    values.insert(QStringLiteral("terminalFont.size"), built_in.terminalFontSize());
+    values.insert(QStringLiteral("alerts.finished"), built_in.finishSound());
+    values.insert(QStringLiteral("keepAwake"), built_in.keepAwake());
+    values.insert(QStringLiteral("scrollToBottomOnTyping"), built_in.scrollToBottomOnTyping());
+    return values;
 }
 
 void Config::load_terminal_font(const QJsonValue& value) {
@@ -868,6 +1101,26 @@ QString Config::densityName() const { return density_name(density_); }
 QVariantList Config::themes() const {
     QVariantList list;
     for (const Theme& theme : kThemes) {
+        // The sidebar's category hues by name, for this theme's surfaces.
+        // "categoryQuietColors" holds the quieter names of the groups not shown.
+        QVariantMap category_colors;
+        QVariantMap category_quiet_colors;
+        const QColor muted(QString::fromLatin1(theme.muted_text));
+        for (const auto& color : kCategoryColors) {
+            const auto hex = theme.light ? color.light : color.dark;
+            const auto name =
+                QString::fromLatin1(color.name.data(), static_cast<qsizetype>(color.name.size()));
+            const QColor full(QString::fromLatin1(hex.data(), static_cast<qsizetype>(hex.size())));
+            const auto mix = [&](float hue, float ink) {
+                return (hue * static_cast<float>(1.0 - kCategoryQuietMix)) +
+                       (ink * static_cast<float>(kCategoryQuietMix));
+            };
+            const auto quiet =
+                QColor::fromRgbF(mix(full.redF(), muted.redF()), mix(full.greenF(), muted.greenF()),
+                                 mix(full.blueF(), muted.blueF()));
+            category_colors.insert(name, full.name());
+            category_quiet_colors.insert(name, quiet.name());
+        }
         list.append(QVariantMap{
             {QStringLiteral("name"), QString::fromLatin1(theme.name)},
             {QStringLiteral("label"), QString::fromLatin1(theme.label)},
@@ -889,6 +1142,9 @@ QVariantList Config::themes() const {
             {QStringLiteral("motionDuration"), theme.motion_ms},
             {QStringLiteral("monoChrome"), theme.mono_chrome},
             {QStringLiteral("headingTracking"), theme.heading_tracking},
+            {QStringLiteral("categoryColors"), category_colors},
+            {QStringLiteral("categoryQuietColors"), category_quiet_colors},
+            {QStringLiteral("light"), theme.light},
         });
     }
     return list;
@@ -922,7 +1178,12 @@ bool Config::setTheme(const QString& name) {
     }
     if (name == theme_)
         return true;
-    theme_ = name;
+    // As with the visual view's themes: remembered as its kind's, and a
+    // theme of the other kind switches light mode, the thread included.
+    const bool light = theme_for(name).light;
+    (light ? window_light_theme_ : window_dark_theme_) = name;
+    choose_kind(light);
+    apply_appearance();
     diagnostic_.clear();
     qInfo().noquote() << "lapis theme:" << theme_;
     emit changed();
@@ -1123,9 +1384,22 @@ bool Config::persist() {
     visual.insert(QStringLiteral("codeFont"), visual_code_font_);
     visual.insert(QStringLiteral("size"), visual_size_);
     visual.insert(QStringLiteral("all"), visual_all_);
+    // Written only while it is on, so files without it stay as they were.
+    if (visual_factory_)
+        visual.insert(QStringLiteral("factory"), true);
+    else
+        visual.remove(QStringLiteral("factory"));
     visual.insert(QStringLiteral("editor"), visual_editor_);
+    visual.insert(QStringLiteral("appearance"), appearance_);
+    visual.insert(QStringLiteral("darkTheme"), visual_dark_theme_);
+    visual.insert(QStringLiteral("lightTheme"), visual_light_theme_);
+    visual.insert(QStringLiteral("darkWindowTheme"), window_dark_theme_);
+    visual.insert(QStringLiteral("lightWindowTheme"), window_light_theme_);
     visual.remove(QStringLiteral("sendOnReturn")); // Return always sends now
     root.insert(QStringLiteral("visual"), visual);
+    // Sections Settings changed; the others stay exactly as on disk.
+    for (const auto& name : std::as_const(touched_))
+        root.insert(name, sections_.value(name));
     if (!root.contains(QStringLiteral("version")))
         root.insert(QStringLiteral("version"), 1);
     QByteArray contents = format_config(root) + '\n';
@@ -1139,6 +1413,7 @@ bool Config::persist() {
     if (file.write(contents) != contents.size() || !file.commit())
         return fail(file.errorString());
     known_contents_ = std::move(contents);
+    touched_.clear();
     watch();
     diagnostic_.clear();
     emit changed();

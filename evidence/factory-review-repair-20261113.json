@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-11-13T21:40:00-08:00",
+  "agent": "Codex",
+  "base": "6cb74a4c",
+  "review_head_before_repair": "31b67a04b9aecf7dcd695c0e0a9933c796d2ce40",
+  "scope": "Verify and repair PR #211 Factory state/model review findings without adding Factory behavior.",
+  "changes": [
+    "Bound judge agent keys by UTF-8 bytes and reject zero-time verdicts as current.",
+    "Treat an unknown finish time as idle unless a known status-change or restored need time is recent; keep clock ordering monotonic.",
+    "Publish a pin transition even when the effective orchestrator is unchanged, and cache an automatic agy choice only after activity evidence.",
+    "Hide stale verdict receipts and judgement times, preserve the first pending request's inbox ordering, compare judge entries by key rather than QHash order, and remove unused category-name state."
+  ],
+  "commands": [
+    {
+      "command": "clang-format --dry-run --Werror <five changed C++ files>",
+      "exit_code": 0
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -R '^(factory|factory-ui)$'",
+      "exit_code": 0,
+      "result": "2/2 passed"
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -E '^(terminal-input|ui-preview|window-state)$|omp-overlay'",
+      "exit_code": 0,
+      "result": "46/46 selected tests passed; 7 screen-labelled tests were disabled"
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen QT_QUICK_CONTROLS_STYLE=Basic build/desktop/apps/desktop/lapis_ui_preview_tests --background",
+      "exit_code": 0,
+      "result": "offscreen/software UI preview passed"
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen QT_QUICK_CONTROLS_STYLE=Basic build/desktop/apps/desktop/lapis_terminal_input_tests --background",
+      "exit_code": 0,
+      "result": "background Qt/software terminal-input ownership suite passed"
+    },
+    {
+      "command": "LAPIS_LLVM_BIN=<ignored build wrapper> python3 scripts/lapis.py build",
+      "exit_code": 1,
+      "result": "configure, build, and CTest passed; initial PR-owned factory_ui_test formatting failure was fixed, while older workspace/attention/code-highlight clang-tidy findings remained"
+    }
+  ],
+  "non_claims": [
+    "The unmodified desktop build failed before Factory changes on three pre-existing transcript.cpp missing-designated-field-initializer diagnostics under the current Clang 23.1.5 toolchain.",
+    "Compilation and CTest used an ignored build-only compiler wrapper appending -Wno-missing-designated-field-initializers after project options; this is not an unmodified full-build gate pass.",
+    "The canonical desktop runner did not complete static analysis because current clang-tidy reports older workspace.hpp enum-size, attention_view.cpp optional-access, and code_highlight.cpp complexity/branch-clone findings outside this repair.",
+    "Native macOS input, native GPU presentation, packaging, and a live Antigravity orchestrator/turn were not exercised.",
+    "Symlinking factory_state.json remains intentionally rejected, and save()/watcher synchronous-reload findings were classified as contract-compatible rather than repaired."
+  ]
+}
