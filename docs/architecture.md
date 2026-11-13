@@ -312,7 +312,10 @@ The service screen is authoritative; desktop snapshots are replaceable caches.
 Preserve Unicode, shaping, wide cells, escape-sequence behavior, resize, IME,
 selection, clipboard, and accessibility. Focused terminal glyphs render 1:1 on
 a whole-device-pixel cell grid. Only bounded previews may scale snapshots down,
-and scaled previews never resize PTYs.
+and scaled previews never resize PTYs. A category model reset releases visible
+preview delegates, while delegates already pooled by scrolling may be rebound.
+Pooling a preview must make its terminal surface invisible and stop viewer
+registration; off-screen cards are not retained as live render surfaces.
 
 An inline agent renderer can rebuild its scrollback on a PTY resize by erasing
 every kept row and replaying the transcript (OMP's default
