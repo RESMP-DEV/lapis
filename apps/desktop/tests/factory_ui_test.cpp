@@ -29,13 +29,13 @@
 #include <QGuiApplication>
 #include <QHash>
 #include <QInputMethodEvent>
-#include <QJsonDocument>
 #include <QJSEngine>
 #include <QJSValue>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
-#include <QQmlEngine>
 #include <QMouseEvent>
+#include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
@@ -344,23 +344,23 @@ int run(const QString& captures) {
                 !item(*window, "factoryHomeTitle")->property("truncated").toBool(),
             "the orchestrator's title is not elided: width " +
                 std::to_string(item(*window, "factoryHomeTitle")->width()) + " of " +
-                std::to_string(item(*window, "factoryHomeTitle")->implicitWidth()) +
-                ", header " + std::to_string(item(*window, "factoryHeader")->width()) +
-                ", selector " + std::to_string(item(*window, "factoryHomeSelector")->width()) +
-                ", summary " + std::to_string(item(*window, "factoryHeaderSummary")->width()) +
-                " of " + std::to_string(item(*window, "factoryHeaderSummary")->implicitWidth()) +
-                ", pin " + std::to_string(item(*window, "factoryHomePin")->implicitWidth()) +
-                ", exit " + std::to_string(item(*window, "exitFactory")->width()));
+                std::to_string(item(*window, "factoryHomeTitle")->implicitWidth()) + ", header " +
+                std::to_string(item(*window, "factoryHeader")->width()) + ", selector " +
+                std::to_string(item(*window, "factoryHomeSelector")->width()) + ", summary " +
+                std::to_string(item(*window, "factoryHeaderSummary")->width()) + " of " +
+                std::to_string(item(*window, "factoryHeaderSummary")->implicitWidth()) + ", pin " +
+                std::to_string(item(*window, "factoryHomePin")->implicitWidth()) + ", exit " +
+                std::to_string(item(*window, "exitFactory")->width()));
     require(item(*window, "factoryHeaderSummary")->property("text").toString() ==
                     "2 need you · 2 running · 2 landed · 2 idle" &&
                 !item(*window, "factoryHeaderSummary")->property("truncated").toBool(),
             "the header's counts are not elided");
     {
         auto* scroller = item(*window, "factoryScroller");
-        for (const char* name : {"factoryBadge_shell", "factoryInspect_shell", "factoryClose_shell"}) {
+        for (const char* name :
+             {"factoryBadge_shell", "factoryInspect_shell", "factoryClose_shell"}) {
             auto* control = item(*window, QString::fromLatin1(name));
-            const auto bottom =
-                control->mapToItem(scroller, QPointF(0, control->height())).y();
+            const auto bottom = control->mapToItem(scroller, QPointF(0, control->height())).y();
             require(control->isVisible() && bottom <= scroller->height(),
                     std::string(name) + " is clipped at the board's bottom");
         }
@@ -541,23 +541,25 @@ int run_new_session(const QString& captures) {
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
     Workspace workspace(WorkspaceMode::fixture);
-    require(workspace.addFixtureAgent("older", "Older thread", "general", "claude",
+    require(
+        workspace.addFixtureAgent("older", "Older thread", "general", "claude", claude_trust()) &&
+            workspace.addFixtureAgent("fresh", "New Claude Code", "general", "claude",
+                                      claude_ready()) &&
+            workspace.addFixtureAgent("booting", "New Codex", "general", "codex", "") &&
+            workspace.addFixtureAgent("trust", "Untrusted folder", "general", "claude",
                                       claude_trust()) &&
-                workspace.addFixtureAgent("fresh", "New Claude Code", "general", "claude",
-                                          claude_ready()) &&
-                workspace.addFixtureAgent("booting", "New Codex", "general", "codex", "") &&
-                workspace.addFixtureAgent("trust", "Untrusted folder", "general", "claude",
-                                          claude_trust()) &&
-                workspace.addFixtureAgent("plain", "Kept terminal", "general", "claude",
-                                          claude_ready()),
-            "sample agents");
+            workspace.addFixtureAgent("plain", "Kept terminal", "general", "claude",
+                                      claude_ready()),
+        "sample agents");
     for (const char* id : {"older", "fresh", "booting", "trust", "plain"})
         report(*workspace.agent(id), Activity::idle);
     const auto older = QDir(directory.path()).filePath("older.jsonl");
-    write(older, R"({"type":"user","uuid":"o-1","message":{"content":"An older question"}})"
-                 "\n"
-                 R"({"type":"assistant","uuid":"o-2","message":{"content":[{"type":"text","text":"An older answer."}]}})"
-                 "\n");
+    write(
+        older,
+        R"({"type":"user","uuid":"o-1","message":{"content":"An older question"}})"
+        "\n"
+        R"({"type":"assistant","uuid":"o-2","message":{"content":[{"type":"text","text":"An older answer."}]}})"
+        "\n");
     require(workspace.setFixtureConversation("older", older), "the older thread");
 
     const auto config_path = QDir(directory.path()).filePath("lapis.json");
@@ -600,8 +602,7 @@ int run_new_session(const QString& captures) {
     require(model->rowCount() == 0 && model->path().isEmpty() &&
                 model->formatName() == QStringLiteral("claude"),
             "the empty thread shows nothing of the older agent's");
-    require(text_of("visualBlankTitle") == QStringLiteral("Claude Code"),
-            "it names the CLI");
+    require(text_of("visualBlankTitle") == QStringLiteral("Claude Code"), "it names the CLI");
     until(
         [&] {
             return text_of("visualBlankStatus") == QStringLiteral("Ready for your first message");
@@ -741,9 +742,11 @@ class Guesses final : public QObject {
         QString text;
         QString key;
         bool seen{};
+        QString author;
     };
-    void offer(const QString& id, const QString& text, const QString& key) {
-        offers_.insert(id, {text, key, false});
+    void offer(const QString& id, const QString& text, const QString& key,
+               const QString& author = {}) {
+        offers_.insert(id, {text, key, false, author});
         ++revision_;
         emit changed();
     }
@@ -759,6 +762,9 @@ class Guesses final : public QObject {
     }
     Q_INVOKABLE [[nodiscard]] QString suggestion(const QString& id) const {
         return offers_.value(id).text;
+    }
+    Q_INVOKABLE [[nodiscard]] QString author(const QString& id) const {
+        return offers_.value(id).author;
     }
     Q_INVOKABLE [[nodiscard]] static double confidence(const QString&) { return 0.5; }
     Q_INVOKABLE [[nodiscard]] QString offerKey(const QString& id) const {
@@ -808,8 +814,8 @@ class Guesses final : public QObject {
 using namespace lapis::desktop;
 
 QByteArray claude_thread(const char* question, const char* answer) {
-    return QByteArray(R"({"type":"user","uuid":"u","message":{"content":")") + question +
-           R"("}})" + "\n" +
+    return QByteArray(R"({"type":"user","uuid":"u","message":{"content":")") + question + R"("}})" +
+           "\n" +
            R"({"type":"assistant","uuid":"a","message":{"content":[{"type":"text","text":")" +
            answer + R"("}]}})" + "\n";
 }
@@ -852,7 +858,8 @@ int run_tab_flow(const QString& captures) {
                 workspace.agent("gamma")->statusKind() == "waiting",
             "gamma's request");
     Guesses guesses;
-    guesses.offer("alpha", "Run the tests", "alpha:1");
+    // Alpha's guess says who wrote it; beta's author is unknown.
+    guesses.offer("alpha", "Run the tests", "alpha:1", QStringLiteral("Fable 5.2 · high"));
     guesses.offer("beta", "Ship it", "beta:1");
 
     const auto config_path = QDir(directory.path()).filePath("lapis.json");
@@ -922,8 +929,8 @@ int run_tab_flow(const QString& captures) {
     const auto state = [&] {
         return " (agent " + focused().toStdString() + ", text \"" + text().toStdString() +
                "\", suggestion \"" + view->property("suggestion").toString().toStdString() +
-               "\", notice \"" + view->property("notice").toString().toStdString() +
-               "\", sent [" + sent().join("|").toStdString() + "], events [" +
+               "\", notice \"" + view->property("notice").toString().toStdString() + "\", sent [" +
+               sent().join("|").toStdString() + "], events [" +
                guesses.events().join("|").toStdString() + "], bar focus " +
                std::to_string(input->hasActiveFocus()) + ")";
     };
@@ -936,6 +943,10 @@ int run_tab_flow(const QString& captures) {
     require(item(*window, "visualHint")->property("text").toString() ==
                 "Tab to use · again to send · then the next agent",
             "the hint names the round" + state());
+    const auto* author = item(*window, "visualSuggestionAuthor");
+    require(author->isVisible() &&
+                author->property("text").toString() == QStringLiteral("from Fable 5.2 · high"),
+            "the guess says who wrote it" + state());
     save("tab_flow_offer.png");
 
     // Tab 1: the guess, editable, in the bar.
@@ -971,6 +982,11 @@ int run_tab_flow(const QString& captures) {
     until([&] { return input->hasActiveFocus(); }, "beta's bar has the keyboard" + state());
     until([&] { return view->property("suggestion").toString() == "Ship it"; },
           "beta's guess is offered at once" + state());
+    require(item(*window, "visualHint")->property("text").toString() ==
+                    "Tab to use · again to send · then the next agent" &&
+                !item(*window, "visualSuggestionAuthor")->isVisible(),
+            "a guess whose author is unknown names none" + state());
+    save("tab_flow_offer_unsigned.png");
 
     // Edited after Tab, even back to the guess's words, the text waits for
     // Return.
@@ -994,8 +1010,7 @@ int run_tab_flow(const QString& captures) {
     key(Qt::Key_Return);
     require(sent().size() == 2 && sent().at(1) == "Ship it!" && text().isEmpty(),
             "Return sends the edited text" + state());
-    require(!guesses.events().contains("sent beta:1"),
-            "a Return send is not a Tab send" + state());
+    require(!guesses.events().contains("sent beta:1"), "a Return send is not a Tab send" + state());
 
     // An IME composition keeps Tab: no move.
     QInputMethodEvent compose(QStringLiteral("ni"), {});

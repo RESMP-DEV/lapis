@@ -52,6 +52,7 @@ FocusScope {
     // lapis's predicted next prompt (Tab), shown in the empty bar.
     property string suggestion: ""
     property string suggestionKey: ""   // the offer the suggestion belongs to
+    property string suggestionAuthor: "" // who wrote it ("Fable 5.2 · high"); empty when unknown
     property bool suggestionConfident: false
     // The agent the bar types into (its lapis id). The view is one for every
     // agent, so what Tab filled, and the check on a sent prompt, belong to
@@ -3496,10 +3497,27 @@ FocusScope {
                         font.features: { "tnum": 1 }
                     }
                 }
+                // Who wrote the offered guess, in the guess's own tint, before
+                // the keys that take it; nothing when that is not known.
                 Text {
-                    objectName: "visualHint"
+                    id: suggestionAuthorText
+                    objectName: "visualSuggestionAuthor"
                     anchors.left: controls.right
                     anchors.leftMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: visible ? Math.min(implicitWidth, parent.width / 3) : 0
+                    visible: root.suggestionAuthor.length > 0 && root.suggestion.length > 0
+                             && root.notice.length === 0 && !root.waiting && input.text.length === 0
+                    text: qsTr("from %1").arg(root.suggestionAuthor)
+                    elide: Text.ElideRight
+                    color: root.tint(root.textColor, 0.62)
+                    font.family: root.sansFamily
+                    font.pixelSize: Math.max(11, root.codeSize - 1)
+                }
+                Text {
+                    objectName: "visualHint"
+                    anchors.left: suggestionAuthorText.visible ? suggestionAuthorText.right : controls.right
+                    anchors.leftMargin: suggestionAuthorText.visible ? 14 : 8
                     anchors.right: contextMeter.left
                     anchors.rightMargin: 8
                     anchors.verticalCenter: parent.verticalCenter

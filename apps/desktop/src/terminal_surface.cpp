@@ -469,7 +469,8 @@ bool text_after_cursor(const session::TerminalSnapshot& snapshot) {
 }
 
 SuggestionLayout lay_out_suggestion(const session::TerminalSnapshot& snapshot,
-                                    const QFontMetricsF& metrics, const QString& suggestion) {
+                                    const QFontMetricsF& metrics, const QString& suggestion,
+                                    const QString& author) {
     SuggestionLayout layout;
     const qreal cell_width = metrics.horizontalAdvance(QLatin1Char('M'));
     const int first = snapshot.cursor.column + 1;
@@ -481,6 +482,10 @@ SuggestionLayout lay_out_suggestion(const session::TerminalSnapshot& snapshot,
     const QString text = suggestion.trimmed();
     const QString line = text.section(QLatin1Char('\n'), 0, 0);
     layout.keys = QStringLiteral("  ⇥");
+    // Who wrote the guess is the first thing left out of a narrow row.
+    if (const auto signed_keys = layout.keys + QStringLiteral("  ") + author;
+        !author.isEmpty() && room >= metrics.horizontalAdvance(signed_keys) + 16 * cell_width)
+        layout.keys = signed_keys;
     const qreal keys_width = metrics.horizontalAdvance(layout.keys);
     layout.whole =
         line.size() == text.size() && metrics.horizontalAdvance(line) <= room - keys_width;
@@ -500,9 +505,10 @@ namespace {
 // only under what is drawn.
 void add_suggestion(QSGNode& overlays, QQuickWindow& window,
                     const session::TerminalSnapshot& snapshot, const QFont& font,
-                    const QString& suggestion, bool confident, qreal cell_width, qreal row_height) {
+                    const QString& suggestion, const QString& author, bool confident,
+                    qreal cell_width, qreal row_height) {
     const QFontMetricsF metrics(font);
-    const auto layout = lay_out_suggestion(snapshot, metrics, suggestion);
+    const auto layout = lay_out_suggestion(snapshot, metrics, suggestion, author);
     if (layout.shown.isEmpty())
         return;
     const QPointF origin(layout.column * cell_width, snapshot.cursor.row * row_height);
@@ -777,6 +783,7 @@ struct TerminalSurface::RenderState {
     std::vector<TerminalMatch> link;
     QString suggestion;
     bool suggestion_confident{};
+    QString suggestion_author;
     QString agent_id;
     QString offer_key;
 };
@@ -800,6 +807,7 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
     if (document_ && !document_->attentionPending()) {
         frame->suggestion = suggestion_;
         frame->suggestion_confident = suggestion_confident_;
+        frame->suggestion_author = suggestion_author_;
         frame->agent_id = document_->agentId();
         frame->offer_key = suggestion_key_;
     }
@@ -1125,7 +1133,8 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
     }
     if (!frame->suggestion.isEmpty() && frame->preedit.isEmpty())
         add_suggestion(*root->overlays, *window(), snapshot, font, frame->suggestion,
-                       frame->suggestion_confident, cell_width, row_height);
+                       frame->suggestion_author, frame->suggestion_confident, cell_width,
+                       row_height);
     add_cursor(*root->overlays, *window(), snapshot, font, cell_width, row_height);
     if (frame->selection)
         add_selection(*root->overlays, snapshot, frame->selection->first, frame->selection->second,
@@ -1736,6 +1745,14 @@ void TerminalSurface::setSuggestionKey(const QString& key) {
     publishFrame(false);
 }
 
+void TerminalSurface::setSuggestionAuthor(const QString& author) {
+    if (suggestion_author_ == author)
+        return;
+    suggestion_author_ = author;
+    emit suggestionAuthorChanged();
+    publishFrame(false);
+}
+
 void TerminalSurface::setTabFlow(bool enabled) {
     if (tab_flow_ == enabled)
         return;
@@ -1835,7 +1852,8 @@ SuggestionLayout TerminalSurface::presentedSuggestion() const {
         frame->suggestion != suggestion_)
         return {};
     const QFontMetricsF metrics(terminal_font(frame->font_family, frame->font_pixel_size));
-    return lay_out_suggestion(*frame->snapshot, metrics, frame->suggestion);
+    return lay_out_suggestion(*frame->snapshot, metrics, frame->suggestion,
+                              frame->suggestion_author);
 }
 
 // With the Tab flow on (an agent lapis guesses for), Tab (or Option-Tab) types
