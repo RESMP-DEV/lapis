@@ -51,9 +51,12 @@ the CLI on this Mac on the plan that CLI is signed in to, with every metered
 key, endpoint and cloud-account variable removed, once, in an empty folder of
 its own:
 
-- Claude Code: the call above, `claude -p --model M --effort E --tools ""
+- Claude Code: the call above, `claude -p --model M --tools ""
   --setting-sources "" --strict-mcp-config --no-session-persistence
-  --system-prompt … --output-format json`.
+  --system-prompt … --output-format json --session-id <new id> --effort E`,
+  with a fresh session id for every call and Claude Code's own retries of a
+  refused request bounded to 2 (`CLAUDE_CODE_MAX_RETRIES`), so a service that
+  keeps refusing cannot spend the entry's whole time in backoff.
 - Codex: `codex exec --model M -c model_reasoning_effort=E --sandbox read-only
   --ephemeral --ignore-user-config --ignore-rules --skip-git-repo-check --cd
   <folder> --color never --json --output-last-message <file> -`, so neither
@@ -65,8 +68,40 @@ its own:
   chosen for that call only; `/model`, which changes your default, is never
   used. An Antigravity model id carries its thinking level
   (`gemini-4-carbon-high`), so `--effort` is passed only when the id does not
-  end in it. Antigravity has no per-call system prompt either, and saves the
-  conversation as it saves any other.
+  end in it. Antigravity has no per-call system prompt either, and saves
+  every call as a conversation, with no option not to. When its output names
+  that conversation, lapis removes the conversation's folder once the answer
+  is read: only a folder directly under Antigravity's own conversation store
+  whose name is that id. When it does not, guesses accumulate in
+  Antigravity's history.
+
+A Claude Code entry may also name `sessionHook`, a command your account setup
+needs before a headless call, for example to register the session with a
+routing proxy. `nextPrompt.sessionHook` sets it once for every Claude Code
+entry that names none and for the single Claude Code call; an entry's own
+replaces it, and `"sessionHook": []` turns it off for that entry:
+
+```json
+{"nextPrompt": {
+  "sessionHook": ["~/path/to/register-command", "hook"],
+  "random": [{"name": "fable", "cli": "claude", "model": "claude-fable-5-2"}]}}
+```
+
+It is a list of 1 to 8 arguments, each under 512 characters, run directly
+(no shell) with `~` expanded in the first. Before each call lapis runs it with
+Claude Code's `SessionStart` hook input on stdin, for the call's session id
+and the guessed agent's folder (the call's own empty folder when the agent is
+on another machine or its folder is unknown):
+
+```json
+{"hook_event_name": "SessionStart", "session_id": "<id>", "cwd": "<folder>", "source": "startup"}
+```
+
+It runs in that folder with the same environment as the call; its output is
+ignored. A non-zero exit, a command that cannot start or 10 seconds without
+finishing fails the entry (`kind: hook`) without making the call, and the guess
+moves on. A hook that is not a valid list is dropped and the entry kept
+without one.
 
 Each guess draws up to two entries from `random` at random (every order
 equally likely, entries cooling down left out), then tries `providers` in
@@ -106,8 +141,10 @@ CLI entries at 75 seconds and an endpoint at 30, the first draw has 75, the
 second 45 and the endpoint 30. The single Claude Code call keeps 150 seconds.
 
 An entry that failed sits out the next guesses: after a CLI's usage or rate
-limit, 15 minutes; after two failures in a row of any other kind (or two
-limits at an endpoint), 2 minutes. An answer from it clears that, as does
+limit (a limit, quota, 429 or exhausted resource), 15 minutes; after two
+failures in a row of any other kind, including an overloaded or unavailable
+service (overloaded, 529 or 503: `kind: overloaded`), a failed session hook
+or two limits at an endpoint, 2 minutes. An answer from it clears that, as does
 restarting lapis. A CLI that is not on this Mac sits out too. When every entry
 sits out, the guess is skipped (`reason: cooling`) without counting against
 `maxPerHour`.
@@ -316,8 +353,8 @@ quadratic edit distance. Every such bounded or fallback score is marked with
 `similarity_bounded`; `as_offered` still requires the complete prompt to be
 unchanged. A prediction
 that failed (with a stable reason category) or was skipped at the hourly cap
-is kept too. A model failure also keeps its `kind` (`limit`, `auth`,
-`timeout`, `network`, `malformed` or `other`) and the first line of its
+is kept too. A model failure also keeps its `kind` (`limit`, `overloaded`,
+`auth`, `timeout`, `network`, `malformed`, `hook`, `budget` or `other`) and the first line of its
 message, with long tokens, email addresses and home folders masked. Three
 failed guesses in a row show in the corner of the agent's terminal, with what
 they hit, until a guess succeeds. A use is recorded only after the service admits its input.

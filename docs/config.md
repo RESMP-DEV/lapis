@@ -273,7 +273,12 @@ longer read or written.
   `nextPrompt.random` (a pool drawn from first) replace it with coding-plan
   CLIs (`claude`, `codex`, `agy`) and OpenAI-compatible endpoints, each with
   its own `timeoutSeconds` and the `label` shown on its guesses; see
-  [several models](suggestions.md#several-models). `nextPrompt.separate` and `nextPrompt.off` (lists of folders, absolute or
+  [several models](suggestions.md#several-models). `nextPrompt.sessionHook`
+  (a list of 1 to 8 arguments, none by default) is a command your account
+  setup needs before a headless call, for example to register the session
+  with a routing proxy: it runs before every Claude Code call with Claude
+  Code's `SessionStart` input on stdin, and a Claude Code entry's own
+  `sessionHook` replaces it. `nextPrompt.separate` and `nextPrompt.off` (lists of folders, absolute or
   `~`, empty by default) keep agents in those folders out of other agents'
   guesses, and give `off` folders no guesses at all; see
   [keeping folders apart](suggestions.md#keeping-folders-apart).
