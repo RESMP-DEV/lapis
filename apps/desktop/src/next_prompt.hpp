@@ -34,11 +34,26 @@ struct NextPromptSettings {
     QString model{QStringLiteral("claude-opus-5-5")};
     QString effort; // empty: the CLI's own
     int maxPerHour{60};
-    // Ordered OpenAI-compatible endpoints (`providers`) that replace the CLI
-    // as one chain for the guess: {url, model}, optionally name, apiKeyEnv,
-    // timeoutSeconds, maxTokens and temperature. A transport, auth or HTTP
-    // failure moves to the next.
+    // Model entries that replace the single CLI call. Each is an
+    // OpenAI-compatible endpoint, {url, model} with optionally apiKeyEnv,
+    // maxTokens, temperature and allowInsecureHttp, or a coding-plan CLI,
+    // {cli: "claude"|"codex"|"agy", model} with optionally effort; either
+    // may name `name`, `label` (the author shown on the guess) and
+    // `timeoutSeconds`. `random` is a pool: up to two of its entries are
+    // drawn at random per guess, then `providers` are tried in order. Any
+    // failure moves to the next entry; see next_prompt.py's predict_providers.
+    // A Claude Code entry may also name `sessionHook`, an argument list run
+    // before each of its calls (see sessionHook below); an invalid one is
+    // dropped and the entry kept without a hook.
     QJsonArray providers;
+    QJsonArray random;
+    // The default session hook of Claude Code entries that name none, and of
+    // the single CLI call: a command the person's account setup needs before
+    // a headless call (1 to 8 non-empty strings, each under 512 characters,
+    // `~` expanded in the first, no shell). It gets Claude Code's
+    // SessionStart JSON for the call's session id on stdin; a failure or 10 s
+    // without finishing fails the entry (kind `hook`) without the call.
+    QStringList sessionHook;
     // The live comparison: the context the helper adds (`contextArms`, base
     // or wide; see next_prompt.py), picked at random and recorded on the
     // guess. wide is an opt-in five-candidate arm: the first is shown and all
@@ -64,6 +79,43 @@ struct NextPromptSettings {
     bool operator==(const NextPromptSettings&) const = default;
 };
 [[nodiscard]] NextPromptSettings parse_next_prompt(const QJsonValue& value);
+
+// Who wrote a guess, as shown beside it: "Fable 5.2 · high" for
+// claude-fable-5-2 at high effort, "GPT-6 Astra · high", "Gemini 4 Carbon ·
+// high" for gemini-4-carbon-high; other models as named.
+[[nodiscard]] QString model_label(const QString& model, const QString& effort);
+
+// A guess's model time in seconds: with entries configured, the timeouts of
+// the two slowest pool entries (as many as are drawn) and every ordered
+// entry, at most 150; without, the single CLI call's 150. The helper is
+// stopped (the watchdog) a margin after it, so it always gives up first.
+[[nodiscard]] int predict_budget_seconds(const QJsonArray& pool, const QJsonArray& providers);
+[[nodiscard]] int predict_watchdog_ms(int budget_seconds);
+
+// Entries that failed recently sit out the next guesses, so a guess does not
+// pay their timeout again: after a usage or rate limit a CLI entry sits out
+// 15 minutes; after two failures in a row of any other kind (an overloaded
+// service, a failed session hook, a timeout, or a limit at an endpoint) an
+// entry sits out 2 minutes. An answer from the entry clears it.
+// Kept in memory: a restart tries every entry again once.
+class EntryCooldown {
+  public:
+    static constexpr qint64 limit_ms = qint64{15} * 60 * 1000;
+    static constexpr qint64 repeat_ms = qint64{2} * 60 * 1000;
+    static constexpr int repeats = 2;
+    // `failures` as the helper reports them ({provider, kind}); `answered`
+    // the entry that answered, if any; `cli` the names of CLI entries.
+    void observe(const QJsonArray& failures, const QString& answered, const QSet<QString>& cli,
+                 qint64 now_ms);
+    [[nodiscard]] bool cooling(const QString& name, qint64 now_ms) const;
+
+  private:
+    struct State {
+        qint64 until{};
+        int failures{};
+    };
+    QHash<QString, State> states_;
+};
 
 // The zone a folder falls in under the settings' walls, named as next_prompt.py
 // names it: "" outside every listed folder, "s<i>" inside separate entry i (the
@@ -150,6 +202,9 @@ class NextPrompt final : public QObject {
     Q_INVOKABLE [[nodiscard]] bool guesses(const QString& cli) const;
     // The suggestion offered for the agent, or empty.
     Q_INVOKABLE [[nodiscard]] QString suggestion(const QString& id) const;
+    // Who wrote that suggestion ("Fable 5.2 · high"), or empty when it is not
+    // known, as for an offer saved by an older lapis.
+    Q_INVOKABLE [[nodiscard]] QString author(const QString& id) const;
     // The agents with a suggestion offered, each true once it was seen.
     Q_INVOKABLE [[nodiscard]] QVariantMap readyAgents() const;
     // The offer shown for the agent, for readers outside this window
@@ -203,6 +258,9 @@ class NextPrompt final : public QObject {
         Agent agent;
         QPointer<UpdaterProcess> process;
         bool verifying{}; // reading the conversation for a restored offer
+        // A guess's plan as logged: entries left out ({provider, why}) and
+        // the pool draw's seed.
+        QJsonObject plan;
     };
     struct Offer {
         QString key; // "<agent>:<launch>.<n>", on each of its log records
@@ -214,6 +272,7 @@ class NextPrompt final : public QObject {
         QString said;     // the agent's last reply, clipped to said_limit
         double p{};       // the model's probability for it
         qint64 made_ms{}; // when it was made; 0 for a restored offer
+        QString author;   // who wrote it (model_label or an entry's label)
     };
     // The last guess made for an agent, to tell a repeat (see turnFinished).
     struct Previous {
@@ -249,20 +308,30 @@ class NextPrompt final : public QObject {
     // Reading the conversation where the agent runs, then the model here;
     // or reading it to check a restored offer.
     enum class Stage : std::uint8_t { context, predict, verify };
+    // `watchdog_ms`: when the process is stopped; 0 for the context default.
     void start(const QString& id, quint64 generation, const QString& program,
                const QStringList& arguments, const QByteArray& input, Stage stage,
-               const std::function<void(const QJsonObject&)>& done);
+               const std::function<void(const QJsonObject&)>& done, int watchdog_ms = 0);
     // `kind` and the helper's cleaned message say what a failure was
     // ("limit", "auth", "timeout", "network", "malformed" or "other").
+    // `chain`: the helper's answer and the run's plan, whose entry failures,
+    // draw and left-out entries are logged.
     void failed(const QString& id, const Agent& agent, Stage stage, const QString& why,
-                const QString& kind = {});
+                const QString& kind = {}, const QJsonObject& chain = {});
+    // The configured entries a guess may use now: those whose CLI is on this
+    // Mac and which are not cooling down; the rest go to `excluded`.
+    [[nodiscard]] QJsonArray usable(const QJsonArray& entries, qint64 now_ms,
+                                    QJsonArray& excluded) const;
+    [[nodiscard]] QSet<QString> cliEntries() const;
     void succeeded();
     // The arms one guess was made under, recorded with it.
     struct Arms {
         QString model;
+        QString effort;   // the single CLI call's effort
         QString context;  // a contextArms entry
         QString prompt;   // a promptArms entry
         int returned{-1}; // see run()
+        QJsonObject plan; // see Run::plan
     };
     void predict(const QString& id, quint64 generation, const QJsonObject& context,
                  int returned = -1);
@@ -317,6 +386,7 @@ class NextPrompt final : public QObject {
         quint64 generation;
     };
     std::deque<Attempt> started_; // reserved prediction attempts for maxPerHour
+    EntryCooldown cooldown_;
     QElapsedTimer clock_;
     quint64 generation_{};
     QString run_; // this launch, in offer ids

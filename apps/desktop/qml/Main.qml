@@ -3897,6 +3897,7 @@ ApplicationWindow {
                     agent: liveTerminal.document !== null ? liveTerminal.document.agentId : ""
                     suggestion: liveTerminal.suggestion
                     suggestionKey: liveTerminal.suggestionKey
+                    suggestionAuthor: liveTerminal.suggestionAuthor
                     suggestionConfident: liveTerminal.suggestionConfident
                     working: liveTerminal.document !== null && liveTerminal.document.statusKind === "working"
                     waiting: liveTerminal.document !== null && liveTerminal.document.attentionPending
@@ -4105,6 +4106,9 @@ ApplicationWindow {
                     // Follows every offer, even one with the same words as the last.
                     suggestionKey: suggestion.length > 0 && nextPrompt.revision >= 0
                                    ? nextPrompt.offerKey(document.agentId) : ""
+                    // Who wrote the guess, shown beside it; empty when unknown.
+                    suggestionAuthor: suggestion.length > 0 && nextPrompt.revision >= 0
+                                      ? nextPrompt.author(document.agentId) : ""
                     tabAway: function() {
                         return predicting && workspace.nextPriorityAttention(nextPrompt.readyAgents())
                     }

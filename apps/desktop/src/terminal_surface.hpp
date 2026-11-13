@@ -66,7 +66,8 @@ terminal_link_at(const session::TerminalSnapshot& snapshot, int column, int row)
 // (elided to the room left before the row's last two cells), whether that is
 // the whole suggestion (else it ends in an ellipsis), the keys hint, the first column
 // and the width drawn. Empty `shown` when there is no room or text follows the
-// cursor, which the suggestion would cover.
+// cursor, which the suggestion would cover. `author`, when given, follows the
+// keys hint only where the row still leaves sixteen cells for the guess.
 struct SuggestionLayout {
     QString shown;
     QString keys;
@@ -76,7 +77,8 @@ struct SuggestionLayout {
 };
 [[nodiscard]] SuggestionLayout lay_out_suggestion(const session::TerminalSnapshot& snapshot,
                                                   const QFontMetricsF& metrics,
-                                                  const QString& suggestion);
+                                                  const QString& suggestion,
+                                                  const QString& author = {});
 
 class TerminalSurface : public QQuickItem {
     Q_OBJECT
@@ -126,6 +128,10 @@ class TerminalSurface : public QQuickItem {
     // two offers have the same words.
     Q_PROPERTY(
         QString suggestionKey READ suggestionKey WRITE setSuggestionKey NOTIFY suggestionKeyChanged)
+    // Who wrote the suggestion ("Fable 5.2 · high"), muted after the Tab key
+    // when the row has room; empty when not known.
+    Q_PROPERTY(QString suggestionAuthor READ suggestionAuthor WRITE setSuggestionAuthor NOTIFY
+                   suggestionAuthorChanged)
     Q_PROPERTY(bool tabFlow READ tabFlow WRITE setTabFlow NOTIFY tabFlowChanged)
     // Called by Tab with nothing offered and nothing typed: moves to the next
     // agent that needs you and returns true, or returns false and Tab goes to
@@ -197,6 +203,8 @@ class TerminalSurface : public QQuickItem {
     void setSuggestionConfident(bool confident);
     [[nodiscard]] const QString& suggestionKey() const { return suggestion_key_; }
     void setSuggestionKey(const QString& key);
+    [[nodiscard]] const QString& suggestionAuthor() const { return suggestion_author_; }
+    void setSuggestionAuthor(const QString& author);
     [[nodiscard]] bool tabFlow() const { return tab_flow_; }
     void setTabFlow(bool enabled);
     [[nodiscard]] QJSValue tabAway() const { return tab_away_; }
@@ -237,6 +245,7 @@ class TerminalSurface : public QQuickItem {
     // Separate from suggestionChanged: QML binds the key to the suggestion, so
     // a shared signal would re-run that binding from its own write.
     void suggestionKeyChanged();
+    void suggestionAuthorChanged();
     void tabFlowChanged();
     // The suggestion is on screen in the active window, once per suggestion.
     void suggestionSeen(const QString& agentId, const QString& offerKey);
@@ -355,6 +364,7 @@ class TerminalSurface : public QQuickItem {
     bool suggestion_confident_{};
     QString suggestion_;
     QString suggestion_key_;
+    QString suggestion_author_;
     QString seen_;
     QJSValue tab_away_;
     [[nodiscard]] SuggestionLayout presentedSuggestion() const;

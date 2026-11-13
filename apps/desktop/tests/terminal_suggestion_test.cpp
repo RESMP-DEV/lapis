@@ -67,6 +67,28 @@ void suggestion_never_covers_typed_text() {
     claude.feed("\x1b[1;40H|\x1b[1;1H> hi");
     require(shown(claude.snapshot()), "a border at the row's end does not hide it");
 }
+
+// Who wrote the guess follows the Tab key where the row has room, and is the
+// first thing left out of a narrow one.
+void the_author_follows_the_key_when_it_fits() {
+    const QFontMetricsF metrics(QFont(QStringLiteral("Menlo"), 14));
+    const auto author = QStringLiteral("Fable 5.2 · high");
+    lapis::session::Terminal wide({120, 3});
+    wide.feed("> ");
+    const auto signed_layout =
+        lay_out_suggestion(wide.snapshot(), metrics, QStringLiteral("run the tests"), author);
+    require(signed_layout.keys.endsWith(author) && signed_layout.shown == "run the tests",
+            "a wide row shows the guess, the key and its author");
+    lapis::session::Terminal narrow({40, 3});
+    narrow.feed("> ");
+    const auto plain =
+        lay_out_suggestion(narrow.snapshot(), metrics, QStringLiteral("run the tests"), author);
+    require(!plain.keys.contains(author) && !plain.shown.isEmpty(),
+            "a narrow row keeps the guess and drops the author");
+    require(!lay_out_suggestion(wide.snapshot(), metrics, QStringLiteral("run the tests"))
+                 .keys.contains(QStringLiteral("·")),
+            "no author, none shown");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -75,6 +97,7 @@ int main(int argc, char** argv) {
     const QGuiApplication app(argc, argv);
     try {
         suggestion_never_covers_typed_text();
+        the_author_follows_the_key_when_it_fits();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return 1;
