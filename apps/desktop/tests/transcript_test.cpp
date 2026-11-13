@@ -390,6 +390,28 @@ void composers_are_read() {
     require(!composer_holds({QStringLiteral("❯ say")}, long_prompt, Format::claude) &&
                 !composer_holds({}, prompt, Format::claude),
             "a few letters or no screen do not");
+    // A message ending in an attachment's mention, as Claude Code 2.1.323
+    // drew it under tmux (the path wraps in the box).
+    const auto mentioned = QStringLiteral("reply with the single word ok\n\n@/tmp/a/work/dot.png");
+    require(composer_holds({rule, QStringLiteral("❯ reply with the single word ok"), QString(),
+                            QStringLiteral("  @/tmp/a/work/"), QStringLiteral("  dot.png"), rule},
+                           mentioned, Format::claude) &&
+                composer_holds({rule, QStringLiteral("❯ @/tmp/a/work/dot.png"), rule},
+                               QStringLiteral("@/tmp/a/work/dot.png"), Format::claude),
+            "a box holding a mention-terminated message, or only the mention, counts");
+    // A long or many-line paste shows as one placeholder counting its line
+    // breaks (16 for 17 lines in Claude Code 2.1.323).
+    QString many = QStringLiteral("reply with the single word ok");
+    for (int line = 1; line <= 14; ++line)
+        many += QStringLiteral("\nline %1 of filler").arg(line);
+    many += QStringLiteral("\n\n@/tmp/a/work/dot.png");
+    const QStringList placeholder{rule, QStringLiteral("❯ [Pasted text #1 +16 lines]"), rule};
+    require(composer_holds(placeholder, many, Format::claude) &&
+                !composer_holds(placeholder, prompt, Format::claude) &&
+                composer_holds({rule, QStringLiteral("❯ [Pasted text #3]"), rule}, many,
+                               Format::claude) &&
+                !composer_holds(placeholder, many, Format::codex),
+            "Claude Code's pasted-text placeholder holds the paste with that many line breaks");
 }
 
 // Codex's waiting steer, which its send now waits for.

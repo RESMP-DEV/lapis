@@ -1097,6 +1097,20 @@ bool composer_holds(const QStringList& screen, const QString& text, Format forma
         return false;
     // The box's row: what follows the mark, as typed.
     const auto held = box.lines.first().simplified();
+    // Claude Code 2.1.323 shows a long or many-line paste as one
+    // "[Pasted text #1 +16 lines]", counting the paste's line breaks.
+    if (format == Format::claude) {
+        static const QRegularExpression pasted(
+            QStringLiteral(R"(^\[Pasted text #\d+(?: \+(\d+) lines?)?\])"));
+        const auto match = pasted.match(held);
+        if (match.hasMatch()) {
+            if (!match.hasCaptured(1))
+                return true;
+            const auto breaks = match.captured(1).toLongLong();
+            return breaks == text.count(QLatin1Char('\n')) ||
+                   breaks == text.trimmed().count(QLatin1Char('\n'));
+        }
+    }
     const auto n = std::min<qsizetype>({first_line.size(), held.size(), 40});
     return n > 0 && (n == first_line.size() || n >= 8) &&
            QStringView(held).left(n) == QStringView(first_line).left(n);
