@@ -62,6 +62,7 @@ FocusScope {
         filledKey = ""
         sendCheck.stop()
         checkingText = ""
+        checkingDraft = null
         retried = false
     }
     property bool working: false        // a turn is running: Send becomes Stop
@@ -166,17 +167,22 @@ FocusScope {
     onTurnEndedChanged: if (turnEnded) sentAt = 0
     // The prompt last sent, checked once it should have been taken: an
     // input box still holding it gets one more Return (only then, so a
-    // Return never lands in anything else); still there, its bubble says
-    // so. The note goes quietly once the box no longer holds it.
+    // Return never lands in anything else). Still there, it comes back to
+    // the bar (the box cleared, so the next send does not join it) with a
+    // note; when the box cannot be cleared, its bubble and the bar say it
+    // was not sent. The bubble's note goes once the box no longer holds it.
     property string checkingText: ""
     property bool retried: false
     property string unsentText: ""
+    // What the bar held for the prompt being checked: {text, attachments}.
+    property var checkingDraft: null
     function checkSent() {
         const holds = root.checkingText.length > 0 && root.screen && root.model && !root.waiting
                       && !root.model.dialogShowing(root.screen())
                       && root.model.composerHolds(root.screen(), root.checkingText)
         if (!holds) {
             root.checkingText = ""
+            root.checkingDraft = null
             return
         }
         if (!root.retried && root.pressReturn) {
@@ -185,10 +191,51 @@ FocusScope {
             sendCheck.restart()
             return
         }
-        root.unsentText = root.checkingText
+        const text = root.checkingText
+        const draft = root.checkingDraft
+        root.unsentText = text
         root.checkingText = ""
+        root.checkingDraft = null
         root.sentAt = 0
         unsentCheck.restart()
+        if (draft && root.sendKeys)
+            takeBackUnsent(text, draft, root.agent, 0)
+        else
+            say(qsTr("Not sent: %1 did not take it · it is in its input box, press Return in the terminal")
+                .arg(root.cliName()))
+    }
+    // Clears the agent's input box of a prompt it did not take (Control-U,
+    // never Control-C or -D) and, once the box reads clear, puts the prompt
+    // back in the bar ahead of anything typed since.
+    function takeBackUnsent(text, draft, agent, tries) {
+        const unsent = qsTr("Not sent: %1 did not take it · it is in its input box, press Return in the terminal")
+                       .arg(root.cliName())
+        if (root.agent !== agent || !root.screen || !root.model)
+            return
+        const lines = Math.max(text.split("\n").length,
+                               root.model.composerText(root.screen()).split("\n").length)
+        if (!root.sendKeys("\u0015".repeat(Math.max(1, Math.min(16, 2 * lines - 1))))) {
+            say(unsent)
+            return
+        }
+        after(400, () => root.agent === agent && root.screen && root.model
+                         && !root.model.composerHolds(root.screen(), text), () => {
+            const typed = input.text
+            input.text = typed.trim().length > 0 ? draft.text + "\n\n" + typed : draft.text
+            input.cursorPosition = input.text.length
+            root.attachments = draft.attachments.concat(
+                        root.attachments.filter(p => draft.attachments.indexOf(p) < 0))
+            root.model.forgetSent(text)
+            root.unsentText = ""
+            say(qsTr("Not sent: %1 did not take it · it is back in the bar").arg(root.cliName()))
+        }, () => {
+            if (root.agent !== agent)
+                return // another agent shows; its bubble keeps the note
+            if (tries + 1 < 3)
+                takeBackUnsent(text, draft, agent, tries + 1)
+            else
+                say(unsent)
+        })
     }
     property int sendCheckMs: 1500 // shorter in the scripted checks
     Timer { id: sendCheck; interval: root.sendCheckMs; onTriggered: root.checkSent() }
@@ -410,8 +457,11 @@ FocusScope {
         }
         markUrged([key], "now")
         const chord = cli === "claude" ? "\u0018\u0013" : "\u001bm"
-        // A moment after the paste, so the CLI has the text before the key.
-        after(300, null, () => {
+        // A moment after the paste, so the CLI has the text before the key;
+        // longer for a message with an @ mention, whose Return the terminal
+        // sends on its own a moment after the paste
+        // (TerminalSurface::composer_return_ms).
+        after(/(^|\s)@\S/.test(text) ? 900 : 300, null, () => {
             if (!sendKeys || !sendKeys(chord)) {
                 markUrged([key], "")
                 say(qsTr("Not sent now: the agent is not ready for input"))
@@ -3066,6 +3116,7 @@ FocusScope {
                 if (!working)
                     root.sentAt = Date.now()
                 root.checkingText = text
+                root.checkingDraft = { text: input.text, attachments: root.attachments.slice() }
                 root.retried = false
                 root.unsentText = ""
                 sendCheck.restart()

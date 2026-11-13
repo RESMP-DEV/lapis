@@ -1201,9 +1201,11 @@ int check_bubble(QQuickView& view, QQuickItem* root, TranscriptModel& model,
     // Return takes it; `swallow` Returns are lost first (as a TUI that
     // takes a Return arriving with a paste as part of the paste would).
     auto terminal = view.engine()->evaluate(QStringLiteral(R"((function(mark) {
-        var t = { mark: mark, held: "", swallow: 0, presses: 0, sends: 0 };
+        var t = { mark: mark, held: "", swallow: 0, presses: 0, sends: 0, cleared: 0 };
         t.submit = function(text) { t.sends++; if (t.swallow > 0) { t.swallow--; t.held = text } return true };
         t.press = function() { t.presses++; if (t.swallow > 0) t.swallow--; else t.held = ""; return true };
+        // Control-U presses clear the box; nothing else is expected.
+        t.keys = function(bytes) { if (!/^\u0015+$/.test(bytes)) return false; t.cleared++; t.held = ""; return true };
         // The box between rules, as Claude Code and agy draw it (agy's
         // needs the rule under it).
         t.screen = function() {
@@ -1341,6 +1343,34 @@ int check_bubble(QQuickView& view, QQuickItem* root, TranscriptModel& model,
         wait(check_ms + 120);
         expect(fake.property("presses").toInt() == 0,
                QStringLiteral("%1: a prompt taken at once gets no extra Return").arg(name));
+        // With Control-U to clear the agent's box, a prompt with an
+        // attachment that is still not taken comes back to the bar, chip and
+        // all, and leaves the box, so the next send cannot join it; the bar
+        // says so and the bubble goes.
+        const QStringList shot{QStringLiteral("/tmp/attachments/pasted-1.png")};
+        fake.setProperty("presses", 0);
+        fake.setProperty("swallow", 2);
+        root->setProperty("sendKeys", QVariant::fromValue(fake.property("keys")));
+        root->setProperty("attachments", shot);
+        (void)send(prompt);
+        wait(2 * check_ms + 900);
+        (void)view.grabWindow();
+        bool still_noted = false;
+        for (auto* item : shown_named(root, "pendingPrompt"))
+            still_noted = still_noted || item->property("unsent").toBool();
+        expect(fake.property("presses").toInt() == 1 && fake.property("cleared").toInt() >= 1 &&
+                   fake.property("held").toString().isEmpty(),
+               QStringLiteral("%1: one extra Return, then the box is cleared").arg(name));
+        expect(input->property("text").toString() == prompt &&
+                   root->property("attachments").toStringList() == shot &&
+                   root->property("unsentText").toString().isEmpty() && !still_noted &&
+                   root->property("notice").toString().contains(QLatin1String("back in the bar")),
+               QStringLiteral("%1: the unsent message is back in the bar with its attachment")
+                   .arg(name));
+        root->setProperty("sendKeys", QVariant());
+        root->setProperty("attachments", QStringList{});
+        input->setProperty("text", QString());
+        fake.setProperty("swallow", 0);
     }
     root->setProperty("working", false);
     root->setProperty("screen", QVariant());

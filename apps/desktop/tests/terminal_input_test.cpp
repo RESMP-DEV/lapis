@@ -27,6 +27,7 @@
 #include <QObject>
 #include <QPointingDevice>
 #include <QQuickWindow>
+#include <QRegularExpression>
 #include <QSGRendererInterface>
 #include <QTemporaryDir>
 #include <QThread>
@@ -1221,6 +1222,122 @@ void composer_keys() {
 // Typing returns a scrolled-back full-screen program to its bottom before the
 // key, whether it reports the mouse or scrolls with arrow keys, and the
 // setting can leave the view where it is.
+// A composer message with an @ mention (an attachment) against a stand-in for
+// Claude Code 2.1.323 as it behaved under tmux: a Return arriving with or just
+// after a paste that names a file is lost, and a mention at the cursor opens
+// the file completion, which takes the next Return. The message is submitted
+// exactly once: the paste with a space after the mention, then one Return of
+// its own once the paste has settled.
+void composer_mentions() {
+    Fixture f;
+    QQuickWindow window;
+    window.setGeometry(100, 100, 640, 360);
+    lapis::desktop::TerminalSurface surface(window.contentItem());
+    surface.setSize(QSizeF(640, 360));
+    surface.setHoldResize(true);
+    surface.setDocument(&f.document);
+    surface.setInteractive(true);
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer, 1, true);
+    f.screen(peer);
+    window.show();
+    until([&] { return window.isExposed(); });
+    lapis::desktop::test::activate_test_window(window);
+    until([&] { return window.isActive(); });
+    settle();
+    static_cast<void>(text_frames(peer));
+
+    struct StandIn {
+        QByteArray box;
+        bool menu{};
+        QElapsedTimer since_paste;
+        int submits{};
+        int returns{};
+    } cli;
+    static const QRegularExpression mention_at_cursor(QStringLiteral(R"((?:^|\s)@\S+$)"));
+    // Reads what reaches the agent, answers pastes as admitted (`admit`),
+    // and plays it on the stand-in until `done`.
+    const auto play = [&](const std::function<bool()>& done, bool admit, int ms) {
+        QElapsedTimer waited;
+        waited.start();
+        while (!done() && waited.elapsed() < ms) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            peer.bytes += peer.socket->readAll();
+            wire::Frame frame;
+            while (wire::take_frame(peer.bytes, frame)) {
+                if (frame.kind == wire::Kind::paste_request) {
+                    const auto request = wire::decode_paste_request(frame.payload);
+                    cli.box += request.text;
+                    cli.menu = mention_at_cursor.match(QString::fromUtf8(cli.box)).hasMatch();
+                    cli.since_paste.start();
+                    if (request.submit)
+                        ++cli.returns; // the Return in the paste's own write: lost
+                    peer.send(wire::Kind::paste_result,
+                              wire::encode_paste_result(
+                                  {request.attachment, request.request_id, admit, {}}));
+                } else if (frame.kind == wire::Kind::key) {
+                    const auto key = wire::decode_control(frame.payload).payload;
+                    require(static_cast<unsigned char>(key.at(0)) ==
+                                static_cast<unsigned char>(lapis::session::TerminalKey::enter),
+                            "Only a Return may follow a composer paste");
+                    ++cli.returns;
+                    if (cli.since_paste.isValid() && cli.since_paste.elapsed() < 50)
+                        continue; // too soon after the paste: lost
+                    if (cli.menu) {
+                        cli.menu = false; // the completion takes it
+                        continue;
+                    }
+                    if (!cli.box.trimmed().isEmpty()) {
+                        ++cli.submits;
+                        cli.box.clear();
+                    }
+                }
+            }
+        }
+    };
+
+    const auto message = QStringLiteral("look at this\n\n@/tmp/attachments/pasted-1.png");
+    require(lapis::desktop::TerminalSurface::composerWireText(message) == message + u' ' &&
+                lapis::desktop::TerminalSurface::composerWireText(QStringLiteral("a@b.c")) ==
+                    QStringLiteral("a@b.c") &&
+                lapis::desktop::TerminalSurface::composerReturnsLater(message) &&
+                !lapis::desktop::TerminalSurface::composerReturnsLater(
+                    QStringLiteral("mail me at a@b.c")),
+            "A space follows only a mention that ends the text; only a mention sends Return later");
+    QElapsedTimer clock;
+    clock.start();
+    require(surface.submitText(message), "submitText with a mention was refused");
+    play([&] { return cli.submits > 0; }, true, 3000);
+    const auto took = clock.elapsed();
+    play([] { return false; }, true, 600); // nothing more follows
+    require(cli.submits == 1 && cli.returns == 1 && cli.box.isEmpty(),
+            "A message with a mention must submit exactly once, with one Return");
+    require(took >= lapis::desktop::TerminalSurface::composer_return_ms - 20,
+            "The Return must wait for the paste to settle");
+
+    // A mention not at the end: the paste unchanged, the Return still later.
+    cli = {};
+    const auto first = QStringLiteral("@/tmp/attachments/a.png\n\nwhat is this");
+    require(surface.submitText(first), "submitText with a leading mention was refused");
+    play([&] { return cli.submits > 0; }, true, 3000);
+    require(cli.submits == 1 && cli.returns == 1, "A leading mention must submit once");
+
+    // A paste the service did not queue gets no Return.
+    cli = {};
+    require(surface.submitText(message), "submitText was refused");
+    play([] { return false; }, false, 900);
+    require(cli.returns == 0 && cli.submits == 0, "An unqueued paste must get no Return");
+
+    // typeText (agy's Alt-M path) gets the space but never a Return.
+    cli = {};
+    require(surface.typeText(message), "typeText with a mention was refused");
+    play([] { return false; }, true, 900);
+    require(cli.returns == 0 && cli.box == (message + u' ').toUtf8() && !cli.menu,
+            "typeText must paste the mention with a space and no Return");
+}
+
 void typing_returns_to_bottom() {
     Fixture f;
     QQuickWindow window;
@@ -1870,6 +1987,7 @@ int main(int argc, char** argv) {
         suggestions();
         long_pastes();
         composer_keys();
+        composer_mentions();
         selection_and_scroll();
         typing_returns_to_bottom();
         links_follow_wrapped_rows();
