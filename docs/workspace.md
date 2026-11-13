@@ -402,7 +402,22 @@ line it prints ("Model set to …", "Set effort level to …"), agy's saved
 default, or the next record. If the CLI refuses it (agy's "has no "xhigh"
 effort"), the toolbar goes back to what it showed and gives the CLI's reason
 beside it. Once the agent's records report a model or effort, they show
-again.
+again. A choice made before the CLI saved anything stays with that agent and
+carries into its file when the file appears.
+
+A new session names its model and effort from the start, before the CLI has
+answered anything: the model and level lapis started it with (`--model` and
+`--effort` for Claude Code, `-m` and `-c model_reasoning_effort=` for Codex,
+agy's `--model` id, whose level is its effort; the same words inside an ssh
+command for an agent on another machine). Started without a model, it shows
+what the CLI's own start screen names (Claude Code's welcome box, Codex's
+`model:` header), else agy's saved default, else the entry the CLI's list
+marks as its default (the one the new-agent form preselects). An agent on
+another machine is never given this Mac's default; with nothing known the
+toolbar says **Model**. Once the conversation file reports a model it wins; a
+report of the same model by its API id (`claude-opus-5-5` for `opus`, or
+without a `[1m]` suffix) keeps the name it started with, so the label and the
+menu's tick do not change.
 Files attach by **+**, by dropping them on the thread, or by pasting (Finder
 files, or a screenshot saved as a PNG); each shows as a chip and is sent as an
 `@path` mention, so the CLI reads images as images and any other file or folder
