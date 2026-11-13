@@ -3,6 +3,7 @@
 
 #include "config.hpp"
 #include "conversation_owner.hpp"
+#include "factory_state.hpp"
 #include "harness_catalog.hpp"
 #include "harness_models.hpp"
 #include "history_strip.hpp"
@@ -39,6 +40,7 @@
 #include <set>
 #include <vector>
 
+class QFileSystemWatcher;
 class QProcess;
 
 namespace lapis::desktop {
@@ -437,6 +439,14 @@ class Workspace final : public QObject {
     // The visual view's conversation: the stage sets its path to an agent's
     // conversationFile() while that agent shows as a thread.
     Q_PROPERTY(QObject* transcript READ transcript CONSTANT)
+    // Factory view (workspace_factory.cpp): one orchestrator conversation and
+    // every other agent in four pipeline stages.
+    Q_PROPERTY(QString homeAgentId READ homeAgentId NOTIFY homeAgentChanged)
+    Q_PROPERTY(
+        lapis::desktop::Agent* effectiveHomeAgent READ effectiveHomeAgent NOTIFY homeAgentChanged)
+    Q_PROPERTY(QVariantList attentionInbox READ attentionInbox NOTIFY attentionInboxChanged)
+    Q_PROPERTY(QVariantList factoryPipeline READ factoryPipeline NOTIFY factoryPipelineChanged)
+    Q_PROPERTY(QVariantMap factorySummary READ factorySummary NOTIFY factoryPipelineChanged)
   public:
     explicit Workspace(WorkspaceMode mode = WorkspaceMode::live, WorkspaceOptions options = {});
     ~Workspace() override;
@@ -649,7 +659,39 @@ class Workspace final : public QObject {
     void setHarnessUpdatesOff(QSet<QString> harnesses) {
         harness_updates_off_ = std::move(harnesses);
     }
+    // The orchestrator the person pinned (saved in the registry), or empty.
+    [[nodiscard]] const QString& homeAgentId() const { return home_agent_id_; }
+    // The pinned agent while it is open; else the agy agent chosen before
+    // while it stays open, else the most recently active agy agent on this
+    // Mac, else the stage agent. Once chosen, an automatic choice stays
+    // while it is open, so the orchestrator does not follow the stage.
+    [[nodiscard]] Agent* effectiveHomeAgent() const;
+    // Pins `agentId` as the orchestrator; empty unpins. False for an agent
+    // that is not open or a registry that cannot be saved.
+    Q_INVOKABLE bool setHomeAgent(const QString& agentId);
+    // The agent a citation names: lapis://agent/<id or unique prefix> or
+    // conversation://<conversation id or unique prefix>; empty for none.
+    Q_INVOKABLE [[nodiscard]] QString resolveAgentLink(const QString& link) const;
+    // Agents other than the orchestrator with a request pending, oldest first.
+    [[nodiscard]] QVariantList attentionInbox() const;
+    // Every agent but the orchestrator, by stage then sidebar order (see
+    // factory_state.hpp for the stage rules and the judge's file).
+    [[nodiscard]] QVariantList factoryPipeline() const;
+    [[nodiscard]] QVariantMap factorySummary() const;
+    // <registry folder>/factory_state.json; empty without a registry.
+    [[nodiscard]] const QString& factoryStatePath() const { return factory_state_path_; }
+    // Reads the judge's file again now (it is also watched).
+    Q_INVOKABLE void reloadFactoryState();
+    // Fixture workspaces only, for tests and captures: another sample agent,
+    // a conversation file to show for one, and where the judge's file is.
+    bool addFixtureAgent(const QString& id, const QString& title, const QString& category,
+                         const QString& harness, const QString& content);
+    bool setFixtureConversation(const QString& id, const QString& file);
+    void setFactoryStatePath(const QString& path);
   signals:
+    void homeAgentChanged();
+    void attentionInboxChanged();
+    void factoryPipelineChanged();
     void focusChanged();
     // A Codex or Claude turn ended; terminal agents' output pauses do not count.
     // A new request for you arrives here too, once its attention is applied.
@@ -928,6 +970,31 @@ class Workspace final : public QObject {
     void retryConnectionsNow();
     int focused_index_{-1};
     bool fixture_mode_{};
+    // Factory view state (workspace_factory.cpp).
+    QString home_agent_id_;
+    mutable QString auto_home_id_;  // the automatic orchestrator, once chosen
+    mutable qint64 auto_home_at_{}; // when that choice last showed activity
+    QString published_home_id_;
+    QString published_pin_id_;
+    QString factory_state_path_;
+    factory::State factory_state_;
+    QFileSystemWatcher* factory_watcher_{};
+    QTimer factory_publish_;
+    // When each agent's settled status or requests last changed in this run.
+    QHash<QString, qint64> factory_changed_at_;
+    QHash<QString, QString> factory_kind_;
+    QHash<QString, QString> fixture_files_;
+    mutable bool factory_dirty_{true};
+    mutable QVariantList factory_items_;
+    mutable QVariantMap factory_summary_;
+    mutable QVariantList attention_inbox_;
+    void setupFactory();
+    void watchFactory(Agent* item);
+    void scheduleFactory();
+    void publishFactory();
+    void rebuildFactory() const;
+    void watchFactoryFile();
+    [[nodiscard]] QString factoryAutoHome() const;
 };
 
 } // namespace lapis::desktop

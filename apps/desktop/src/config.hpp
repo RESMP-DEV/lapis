@@ -258,6 +258,9 @@ class Config final : public QObject {
     [[nodiscard]] int visualKeepMB() const { return visual_keep_mb_; }
     [[nodiscard]] int visualKeepThreads() const { return visual_keep_threads_; }
     [[nodiscard]] bool visualAll() const { return visual_all_; }
+    // visual.factory: the window shows the factory view (one orchestrator
+    // conversation and the pipeline board) instead of categories.
+    [[nodiscard]] bool visualFactory() const { return visual_factory_; }
     [[nodiscard]] const AgentDefaults& agentDefaults() const { return agent_defaults_; }
     // {"nextPrompt": {...}}: when and how lapis predicts the next prompt.
     [[nodiscard]] const NextPromptSettings& nextPrompt() const { return next_prompt_; }
@@ -318,6 +321,7 @@ class Config final : public QObject {
     QString visual_code_font_{QStringLiteral("system")};
     int visual_size_{};
     bool visual_all_{};
+    bool visual_factory_{};
     int visual_keep_mb_{1024};
     int visual_keep_threads_{32};
     // What Command-click on a file path in the visual view opens it with:

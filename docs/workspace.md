@@ -361,6 +361,53 @@ Codex, Claude, Graphite, Black, Claude light, Codex light), a reading font
 follows the terminal font unless set. Agents on other machines and other CLIs
 are not supported yet.
 
+## Factory view
+
+**Factory**, under This agent and All agents at the bottom of the sidebar (or
+Command-Shift-F, or Toggle Factory view in Commands), swaps categories for one
+orchestrator conversation beside a pipeline board. **Classic view** in the
+factory bar, the same button or the same key switches back. The choice is saved
+in lapis.json (`visual.factory`).
+
+The orchestrator is the agent you pinned (the picker in the factory bar, or Pin
+agent as Factory orchestrator in Commands); without a pin it is the most
+recently active Antigravity agent on this Mac, and once chosen it stays while
+it is open. Its thread fills the stage, and it is the one conversation to type
+into. Requests other agents wait on show in a strip above its composer; a chip
+opens that agent's terminal.
+
+The board puts every other agent in one of four stages: **Needs You** (a
+request waits), **In Progress** (at work), **Landed** (a turn finished recently,
+with its receipt) and **Idle · Do We Need It?**, marked **Safe to close** or
+**Keep parked**. The stages come from `factory_state.json` beside the
+workspace registry, written by a separate judge model:
+
+```json
+{"version": 1, "updatedAtMs": 1794466800000, "judgeModel": "claude-haiku-5-5",
+ "agents": {"<agent id>": {"stage": "idle_cull", "keepNeeded": false,
+   "headline": "Merged #81 on main", "reason": "Merged 2h ago, safe to close",
+   "receipt": "225b30d · 9/9 checks", "judgedAtMs": 1794466800000}}}
+```
+
+lapis watches the file. What lapis sees now comes first: an agent with a
+pending request or waiting on you is in Needs You and a running turn is In
+Progress, whatever the file says. A verdict places an agent whose turn is not
+running until its status changes after the verdict; an In Progress verdict on a
+turn that has ended is ignored. An agent the file does not name (or every
+agent, before any judge runs) is staged from what lapis sees: a request, work, a
+turn finished in the last six hours, else idle. Only an explicit
+`"keepNeeded": false` marks an agent safe to close. Close never happens on its
+own: on a **Safe to close** card it closes in one click, and on any other
+running agent it asks first, as Command-W does.
+
+Inspect or Open terminal on a card, a `lapis://agent/<id or prefix>` or
+`conversation://<id or prefix>` link in the orchestrator's thread, or choosing
+an agent in the sidebar shows that agent on the stage with **← Back to
+Factory** above it, its stage and receipt; one click returns. The board's ›
+collapses it to a column of counts. The phone and other local tools read the
+same board through the workspace request `factory` and pin with
+`setHomeAgent`.
+
 ## Resuming
 
 Command-O resumes a past Claude Code or Codex conversation from this Mac,
