@@ -257,6 +257,10 @@ class Config final : public QObject {
     // switching agents shows their threads at once. Hand-written only.
     [[nodiscard]] int visualKeepMB() const { return visual_keep_mb_; }
     [[nodiscard]] int visualKeepThreads() const { return visual_keep_threads_; }
+    // visual.remoteCacheMB: the disk the mirrors of remote agents'
+    // conversations may take (runtime/remote), least recently shown removed
+    // first. Hand-written only; 2048 by default.
+    [[nodiscard]] int visualRemoteCacheMB() const { return visual_remote_cache_mb_; }
     [[nodiscard]] bool visualAll() const { return visual_all_; }
     // visual.factory: the window shows the factory view (one orchestrator
     // conversation and the pipeline board) instead of categories.
@@ -324,6 +328,7 @@ class Config final : public QObject {
     bool visual_factory_{};
     int visual_keep_mb_{1024};
     int visual_keep_threads_{32};
+    int visual_remote_cache_mb_{2048};
     // What Command-click on a file path in the visual view opens it with:
     // vscode, cursor, zed, textedit, system, or auto (the first installed).
     QString visual_editor_{QStringLiteral("auto")};

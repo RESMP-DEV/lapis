@@ -109,6 +109,16 @@ Twenty conversations of 9 to 358 MB, all kept, measured 0.5 to 0.8 GB.
 "visual": {"keepMB": 1024, "keepThreads": 32}
 ```
 
+A third, `remoteCacheMB`, is the disk the copies of remote Claude Code agents'
+conversations may take under `runtime/remote` (default 2048; 0 keeps only the
+thread being followed). The least recently shown conversation goes first;
+the one followed now is never removed. See
+[agents on other machines](workspace.md#agents-on-other-machines).
+
+```json
+"visual": {"remoteCacheMB": 2048}
+```
+
 ## Alerts
 
 A completed turn or request you were not looking at plays one quiet cue when

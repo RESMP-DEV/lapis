@@ -445,6 +445,9 @@ FocusScope {
     property string folder: ""
     property string harness: ""
     property bool slashCommands: false
+    // The empty thread's line in place of Starting/Ready, when the host has
+    // a better one (a remote agent's conversation still loading).
+    property string blankStatus: ""
 
     // Slash commands: typing "/" and a few letters lists the three best
     // matches above the bar. The list is read once per CLI and agent folder.
@@ -630,9 +633,90 @@ FocusScope {
     function attach(path) {
         if (path.length === 0 || attachments.indexOf(path) >= 0)
             return
+        if (root.upload && !root.startUpload(path))
+            return
         attachments = attachments.concat([path])
     }
-    function detach(path) { attachments = attachments.filter(p => p !== path) }
+    function detach(path) {
+        attachments = attachments.filter(p => p !== path)
+        root.forgetUpload(path)
+    }
+
+    // An agent on another machine: each attachment is copied there first
+    // (Workspace.uploadAttachment) and its entry in `attachments` then
+    // becomes the copy's path there, so message() never names a path on this
+    // Mac. Until every copy is there the message stays in the bar.
+    // `upload(path)` returns {token} or {error}; the host calls
+    // uploadProgress and uploadFinished as the copy goes.
+    property var upload: null
+    property string uploadMachine: ""
+    property var uploads: ({}) // shown path -> {token, local, progress, error}
+    function startUpload(path) {
+        const started = root.upload(path)
+        if (!started || !started.token) {
+            root.say(qsTr("Not attached: %1").arg(started && started.error ? started.error : path))
+            return false
+        }
+        const next = Object.assign({}, uploads)
+        next[path] = { token: started.token, local: path, progress: 0, error: "" }
+        uploads = next
+        return true
+    }
+    function forgetUpload(path) {
+        if (!(path in uploads))
+            return
+        const next = Object.assign({}, uploads)
+        delete next[path]
+        uploads = next
+    }
+    function uploadEntry(token) {
+        for (const shown in uploads)
+            if (uploads[shown].token === token)
+                return shown
+        return ""
+    }
+    function uploadProgress(token, fraction) {
+        const shown = uploadEntry(token)
+        if (shown.length === 0)
+            return
+        const next = Object.assign({}, uploads)
+        next[shown] = Object.assign({}, next[shown], { progress: fraction })
+        uploads = next
+    }
+    function uploadFinished(token, remote, error) {
+        const shown = uploadEntry(token)
+        if (shown.length === 0)
+            return
+        const next = Object.assign({}, uploads)
+        if (error.length > 0) {
+            next[shown] = Object.assign({}, next[shown], { error: error })
+            uploads = next
+            root.say(qsTr("Not attached: %1 · remove it or attach it again").arg(error))
+            return
+        }
+        const entry = next[shown]
+        delete next[shown]
+        next[remote] = { token: "", local: entry.local, progress: 1, error: "" }
+        uploads = next
+        attachments = attachments.map(p => p === shown ? remote : p)
+    }
+    // False, with the reason said, while a copy is on its way or failed.
+    function attachmentsSendable() {
+        for (const shown of attachments) {
+            const entry = uploads[shown]
+            if (entry && entry.error.length > 0) {
+                root.say(qsTr("Not sent: %1 is not on %2 · remove it or attach it again")
+                         .arg(entry.local.split("/").pop()).arg(root.uploadMachine))
+                return false
+            }
+            if (entry && entry.token.length > 0) {
+                root.say(qsTr("Not sent yet: copying %1 to %2 · the message stays here")
+                         .arg(entry.local.split("/").pop()).arg(root.uploadMachine), true)
+                return false
+            }
+        }
+        return true
+    }
     // Short model names, as the apps show them: "Opus 5.5", "Fable 5.1". A
     // model the picker does not know shows as its CLI reported it.
     function modelLabel(id) {
@@ -1133,8 +1217,12 @@ FocusScope {
         }
         // The host may take a link first (the factory view's agent links).
         onLinkActivated: link => {
-            if (!(root.openLink && root.openLink(link)))
-                Qt.openUrlExternally(link)
+            if (root.openLink && root.openLink(link))
+                return
+            // A remote thread's links to files name that machine's: web only.
+            if (root.model && root.model.remote && !/^(https?|mailto):/i.test(link))
+                return
+            Qt.openUrlExternally(link)
         }
         // A link underlines while the pointer is on it.
         onHoveredLinkChanged: if (textFormat === TextEdit.RichText && root.model)
@@ -3027,6 +3115,7 @@ FocusScope {
     // ordinary send when the agent is idle or for a slash command. Returns
     // whether the message went to the agent.
     function sendMessage(now) {
+        if (!root.attachmentsSendable()) return false // remote copies (startUpload)
         const text = message()
         if (text.trim().length === 0 || !root.submit)
             return false
@@ -3196,6 +3285,10 @@ FocusScope {
                         id: chip
                         required property string modelData
                         readonly property bool image: root.model ? root.model.isImage(modelData) : false
+                        // A copy on a remote agent's machine: the file here
+                        // gives its picture and name.
+                        readonly property var copy: root.uploads[modelData] || null
+                        readonly property string local: copy ? copy.local : modelData
                         height: Math.round(root.codeSize * 2.2)
                         width: chipRow.implicitWidth + 16
                         radius: 8
@@ -3211,19 +3304,33 @@ FocusScope {
                                 width: visible ? chip.height - 8 : 0
                                 height: chip.height - 8
                                 anchors.verticalCenter: parent.verticalCenter
-                                source: chip.image ? "file://" + chip.modelData : ""
+                                source: chip.image ? "file://" + chip.local : ""
                                 sourceSize.height: 64
                                 fillMode: Image.PreserveAspectCrop
                                 asynchronous: true
                             }
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: chip.modelData.split("/").pop()
+                                text: chip.local.split("/").pop()
                                 width: Math.min(implicitWidth, 220)
                                 elide: Text.ElideMiddle
                                 color: root.textColor
                                 font.family: root.sansFamily
                                 font.pixelSize: root.codeSize
+                            }
+                            // Copying to the agent's machine: how far, or that it failed.
+                            Text {
+                                objectName: "attachmentCopy"
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: chip.copy !== null && (chip.copy.token.length > 0
+                                                                || chip.copy.error.length > 0)
+                                text: !chip.copy ? ""
+                                      : chip.copy.error.length > 0 ? qsTr("not copied")
+                                      : qsTr("copying %1%").arg(Math.round(chip.copy.progress * 100))
+                                color: chip.copy && chip.copy.error.length > 0 ? root.faultColor
+                                                                               : root.mutedTextColor
+                                font.family: root.sansFamily
+                                font.pixelSize: root.codeSize - 1
                             }
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
@@ -3665,7 +3772,8 @@ FocusScope {
             objectName: "visualBlankStatus"
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
-            text: root.starting ? qsTr("Starting…") : qsTr("Ready for your first message")
+            text: root.blankStatus.length > 0 ? root.blankStatus
+                  : root.starting ? qsTr("Starting…") : qsTr("Ready for your first message")
             color: root.tint(root.mutedTextColor, 0.75)
             font.family: root.sansFamily
             font.pixelSize: root.stepSize - 1

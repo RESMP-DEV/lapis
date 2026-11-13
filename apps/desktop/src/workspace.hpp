@@ -7,6 +7,7 @@
 #include "harness_catalog.hpp"
 #include "harness_models.hpp"
 #include "history_strip.hpp"
+#include "remote_threads.hpp"
 #include "tab_ranker.hpp"
 #include <lapis/session/terminal.hpp>
 
@@ -573,15 +574,36 @@ class Workspace final : public QObject {
     // Antigravity's transcript_full.jsonl. The conversation lapis knows
     // (observer, notify or hook record, the pinned one, or the resumed one)
     // names it. For Codex and Antigravity this first finds and pins the one
-    // the agent's own process is writing (conversation_owner.hpp). Empty for
-    // an agent on another machine, a CLI the view cannot read, or before the
-    // CLI saved anything.
+    // the agent's own process is writing (conversation_owner.hpp). For a
+    // Claude Code agent on another machine it is this Mac's mirror of the
+    // file there (RemoteThreads), once data arrived; asking starts or keeps
+    // its helper. Empty for another CLI over ssh, a CLI the view cannot read,
+    // or before the CLI saved anything.
     Q_INVOKABLE [[nodiscard]] QString conversationFile(const QString& id);
     // Whether the visual view can show this agent as a thread: a Claude
     // Code, Codex or Antigravity agent on this Mac, whose file
-    // conversationFile finds once its CLI saved something. Before that the
-    // view shows an empty thread.
+    // conversationFile finds once its CLI saved something, or a Claude Code
+    // agent on another machine unless its mirror failed with nothing cached.
+    // Before the file shows the view shows an empty thread.
     Q_INVOKABLE [[nodiscard]] bool visualSupported(const QString& id) const;
+    // Why an agent on another machine cannot show (or follow) its thread now:
+    // no python3 there, ssh needs a password, no conversation file there yet,
+    // the connection was lost. Empty when nothing is wrong or not known.
+    Q_INVOKABLE [[nodiscard]] QString visualUnavailable(const QString& id) const;
+    // A remote agent's mirror for the view (RemoteThreads::state); empty for
+    // an agent on this Mac.
+    Q_INVOKABLE [[nodiscard]] QVariantMap remoteThreadState(const QString& id) const;
+    // The folder the view names and resolves paths against: the launch
+    // folder on this Mac, or the folder on the agent's machine as its
+    // command names it ("~/proj"), never resolved here.
+    Q_INVOKABLE [[nodiscard]] QString visualFolder(const QString& id) const;
+    // Copies a file the composer attaches to the agent's machine (see
+    // RemoteThreads::upload): {token} while it goes, or {error}.
+    // attachmentUploaded reports where it landed.
+    Q_INVOKABLE QVariantMap uploadAttachment(const QString& id, const QString& local);
+    // visual.remoteCacheMB: the mirrors' disk budget.
+    void setRemoteCacheMB(int mb);
+    [[nodiscard]] RemoteThreads* remoteThreads() const { return remote_threads_; }
     // Copies an agent's conversation up to `record` (a saved record's uuid;
     // `before` stops just ahead of it) into a new conversation beside it and
     // returns the new id for resumeAgent, or empty.
@@ -738,8 +760,21 @@ class Workspace final : public QObject {
     void parkedChanged();
     // A turn that ended while no window watched (see restoreMarks).
     void finishedWhileAway(lapis::desktop::Agent* item);
+    // A remote agent's thread changed: its file, support or state.
+    void remoteThreadChanged(const QString& agentId);
+    // An attachment upload (uploadAttachment) moved on or ended: `remote`
+    // is its path on the agent's machine, or empty with `error`.
+    void attachmentProgress(const QString& token, double fraction);
+    void attachmentUploaded(const QString& token, const QString& remote, const QString& error);
 
   private:
+    RemoteThreads* remote_threads_{}; // child; null without a registry
+    [[nodiscard]] std::optional<RemoteThreads::Target> remoteTarget(const QString& id) const;
+    [[nodiscard]] bool remoteAgent(const QString& id) const;
+    // The mirrors live beside the registry (<runtime>/remote); the
+    // transcript learns which threads are remote, so it never resolves their
+    // paths on this Mac.
+    void setupRemoteThreads();
     [[nodiscard]] static QString rootDirectory();
     [[nodiscard]] static QString defaultEndpoint();
     std::vector<std::unique_ptr<Agent>> items_;

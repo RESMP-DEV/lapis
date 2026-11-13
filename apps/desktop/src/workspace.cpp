@@ -548,6 +548,19 @@ QString withRemoteHooks(const QString& words, const QString& harness,
     }
     return words;
 }
+// The folder a remote command starts in (`cd <folder> && ...`), as text on
+// that machine: ~ stays its home. Empty when the command does not start so.
+QString remoteCommandFolder(const QString& command) {
+    if (!command.startsWith(QStringLiteral("cd ")))
+        return {};
+    const bool home = command.mid(3, 2) == QStringLiteral("~/");
+    const auto start = home ? 5 : 3;
+    const auto end = shellWordEnd(command, start);
+    if (end < start || command.mid(end, 4) != QStringLiteral(" && "))
+        return {};
+    const auto word = unquotedWord(command.mid(start, end - start));
+    return home ? QStringLiteral("~/") + word : word;
+}
 // A saved remote Claude Code or Codex agent gains the hooks above when it
 // starts again, as it gains connection options: the login shell's command is
 // the shell word after `-lic `, single-quoted unless it is one plain word.
@@ -835,6 +848,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
         conversation_pins_.setInterval(5000);
         connect(&conversation_pins_, &QTimer::timeout, this, &Workspace::pinConversations);
         conversation_pins_.start();
+        setupRemoteThreads();
         return;
     }
     add("Codex", "lapis", "UI preview", "#87cbac", "~/lapis\r\n\r\n> Ready for the next step.\r\n");
@@ -1725,6 +1739,8 @@ void Workspace::forgetAgent(const QString& id, const Agent* item) {
     waiting_since_.remove(id);
     parked_at_.remove(id);
     turn_starts_.remove(id);
+    if (remote_threads_ != nullptr)
+        remote_threads_->forget(id);
     if (choice_)
         std::erase_if(choice_->candidates,
                       [&id](const TabCandidate& candidate) { return candidate.session == id; });
@@ -2316,12 +2332,89 @@ void Workspace::applyPins(const QHash<QString, QString>& pins) {
 }
 bool Workspace::visualSupported(const QString& id) const {
     const auto entry = agents_.constFind(id);
-    return entry != agents_.cend() && agentMachine(*entry).isEmpty() &&
-           (entry->harness == QLatin1String("claude") || pinnedHarness(entry->harness));
+    if (entry == agents_.cend())
+        return false;
+    if (!agentMachine(*entry).isEmpty())
+        return entry->harness == QLatin1String("claude") && remote_threads_ != nullptr &&
+               remote_threads_->supported(id);
+    return entry->harness == QLatin1String("claude") || pinnedHarness(entry->harness);
+}
+bool Workspace::remoteAgent(const QString& id) const {
+    const auto entry = agents_.constFind(id);
+    return entry != agents_.cend() && !agentMachine(*entry).isEmpty();
+}
+std::optional<RemoteThreads::Target> Workspace::remoteTarget(const QString& id) const {
+    const auto entry = agents_.constFind(id);
+    if (entry == agents_.cend() || entry->harness != QLatin1String("claude"))
+        return std::nullopt;
+    const auto remote = remoteCommand(entry->launch);
+    if (!remote)
+        return std::nullopt;
+    return RemoteThreads::Target{remote->first, remoteCommandFolder(remote->second),
+                                 agentConversation(id), entry->launch.program};
+}
+QString Workspace::visualUnavailable(const QString& id) const {
+    const auto entry = agents_.constFind(id);
+    if (entry == agents_.cend() || agentMachine(*entry).isEmpty())
+        return {};
+    if (entry->harness != QLatin1String("claude"))
+        return QStringLiteral("On another machine only Claude Code shows as a thread");
+    if (remote_threads_ == nullptr)
+        return QStringLiteral("This window keeps no remote threads");
+    return remote_threads_->unavailable(id);
+}
+QVariantMap Workspace::remoteThreadState(const QString& id) const {
+    return remote_threads_ != nullptr && remoteAgent(id) ? remote_threads_->state(id)
+                                                         : QVariantMap{};
+}
+QString Workspace::visualFolder(const QString& id) const {
+    const auto entry = agents_.constFind(id);
+    if (entry == agents_.cend())
+        return {};
+    if (const auto remote = remoteCommand(entry->launch))
+        return remoteCommandFolder(remote->second);
+    return entry->launch.directory;
+}
+QVariantMap Workspace::uploadAttachment(const QString& id, const QString& local) {
+    if (remote_threads_ == nullptr || !remoteAgent(id))
+        return {{QStringLiteral("error"), QStringLiteral("This agent is on this Mac.")}};
+    QString error;
+    const auto token = remote_threads_->upload(id, local, &error);
+    if (token.isEmpty())
+        return {{QStringLiteral("error"), error}};
+    return {{QStringLiteral("token"), token}};
+}
+void Workspace::setupRemoteThreads() {
+    if (fixture_mode_ || storage_path_.isEmpty())
+        return;
+    const auto runtime = QFileInfo(storage_path_).absolutePath();
+    remote_threads_ = new RemoteThreads(
+        runtime, [this](const QString& agent) { return remoteTarget(agent); }, this);
+    connect(remote_threads_, &RemoteThreads::changed, this, &Workspace::remoteThreadChanged);
+    connect(remote_threads_, &RemoteThreads::uploadProgress, this,
+            &Workspace::attachmentProgress);
+    connect(remote_threads_, &RemoteThreads::uploadFinished, this,
+            &Workspace::attachmentUploaded);
+    auto* transcript = qobject_cast<TranscriptModel*>(transcript_);
+    const auto mirrors = QDir(runtime).filePath(QStringLiteral("remote")) + QLatin1Char('/');
+    transcript->setRemoteCheck([this, mirrors](const QString& agent, const QString& path) {
+        return (!agent.isEmpty() && remoteAgent(agent)) || path.startsWith(mirrors);
+    });
+    connect(transcript, &TranscriptModel::pathChanged, this, [this, transcript] {
+        remote_threads_->setShown(transcript->shown().value(QStringLiteral("agent")).toString());
+    });
+}
+void Workspace::setRemoteCacheMB(int mb) {
+    if (remote_threads_ != nullptr)
+        remote_threads_->setCacheLimit(qint64{std::max(0, mb)} << 20);
 }
 QString Workspace::conversationFile(const QString& id) {
     if (fixture_mode_)
         return fixture_files_.value(id);
+    if (remoteAgent(id))
+        return remote_threads_ != nullptr && agents_.value(id).harness == QLatin1String("claude")
+                   ? remote_threads_->file(id)
+                   : QString();
     if (!visualSupported(id))
         return {};
     const auto& harness = agents_.constFind(id)->harness;
@@ -2341,7 +2434,8 @@ QString Workspace::conversationFile(const QString& id) {
     return knownConversationFile(id);
 }
 QString Workspace::knownConversationFile(const QString& id) {
-    if (!visualSupported(id))
+    // A remote agent's thread is mirrored only while shown (conversationFile).
+    if (remoteAgent(id) || !visualSupported(id))
         return {};
     const auto entry = agents_.constFind(id);
     const auto& harness = entry->harness;

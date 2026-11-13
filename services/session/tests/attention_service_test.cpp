@@ -458,8 +458,9 @@ void remote_claude_sessions_are_recorded_as_relayed() {
     saved = read_resume_record(endpoint);
     require(saved && saved->session_id == cleared && saved->source == ResumeSource::relayed);
     // A checkpoint printed into the terminal cannot replace it.
-    const QJsonObject printed{
-        {"version", 1}, {"agent", "claude"}, {"session_id", "5e550000-0000-4000-8000-0000000000ff"}};
+    const QJsonObject printed{{"version", 1},
+                              {"agent", "claude"},
+                              {"session_id", "5e550000-0000-4000-8000-0000000000ff"}};
     Access::receive(service, "\x1b]1337;SetUserVar=agent_checkpoint=" +
                                  QJsonDocument(printed).toJson(QJsonDocument::Compact).toBase64() +
                                  "\x07");
