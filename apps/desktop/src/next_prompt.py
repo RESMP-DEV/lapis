@@ -1548,7 +1548,9 @@ def run_session_hook(hook, session, folder, environment, timeout):
     except subprocess.TimeoutExpired:
         raise HookError("session hook timed out") from None
     except OSError as error:
-        raise HookError("session hook could not start: " + type(error).__name__) from None
+        raise HookError(
+            "session hook could not start: " + type(error).__name__
+        ) from None
     if run.returncode != 0:
         lines = [line for line in run.stderr.splitlines() if line.strip()]
         raise HookError(

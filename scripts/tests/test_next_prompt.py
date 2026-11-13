@@ -2353,7 +2353,9 @@ class ChainTests(unittest.TestCase):
         self.assertTrue((store / plain).is_file())
         self.assertTrue((store / sibling).is_dir())
         self.assertEqual(
-            forget({"conversation_id": sibling}, [str(self.folder / "absent"), *stores]),
+            forget(
+                {"conversation_id": sibling}, [str(self.folder / "absent"), *stores]
+            ),
             str(store / sibling),
         )
         self.assertFalse((store / sibling).exists())
