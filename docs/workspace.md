@@ -352,12 +352,21 @@ A prompt you send shows in the thread at once, in the same frame as Return,
 and the bar clears: at the thread's end with the turn shown starting
 (**Working**) when the agent was idle, or marked **Queued** under the box when
 it was working. When the CLI records the prompt, its own row takes the
-bubble's place. lapis sends the text and a Return together, then checks the
-agent's input box 1.5 seconds later: if the box still holds the text, it sends
-one more Return (never more, and only then, so a Return cannot land in a
-dialog); if that does not take it either, the bubble says **Not sent yet ·
-press Return in the terminal**. The note goes once the box no longer holds the
-text. Prompts sent from the bar are never written to disk by lapis.
+bubble's place. lapis sends the text and a Return together; a message with an
+`@` mention (an attachment) goes as the text, with a space after a mention that
+ends it, and then its own Return a third of a second later, because Claude Code
+loses a Return that arrives right behind a pasted file path and its file
+completion takes a Return while open. lapis then checks the agent's input box
+1.5 seconds after sending: if the box still holds the text (or Claude Code's
+**[Pasted text #1 +N lines]** for it), it sends one more Return (never more, and
+only then, so a Return cannot land in a dialog). If that does not take it
+either, lapis clears the box with Control-U and puts the message back in the
+bar with its attachments, saying **Not sent: Claude Code did not take it · it
+is back in the bar** (or the agent's CLI), so the
+next send cannot join it; when the box cannot be cleared, the bubble says
+**Not sent yet · press Return in the terminal**. That note goes once the box no
+longer holds the text. Prompts sent from the bar are never written to disk by
+lapis.
 
 The bar's toolbar is the same for every CLI: **+** attaches files or a folder,
 then the model and the effort, each a menu that changes it by typing that
