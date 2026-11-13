@@ -58,8 +58,8 @@ def rendered_block(kind: str) -> bool:
     return kind in RENDERED_BLOCKS
 
 
-def shaped_tool(name: str) -> bool:
-    return name in SHAPED_TOOLS or name.startswith("mcp__")
+def shaped_tool(name: object) -> bool:
+    return isinstance(name, str) and (name in SHAPED_TOOLS or name.startswith("mcp__"))
 
 
 def sessions(root: Path, limit: int) -> list[Path]:

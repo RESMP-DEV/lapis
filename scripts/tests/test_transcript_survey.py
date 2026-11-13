@@ -22,6 +22,7 @@ class TranscriptSurveyTest(unittest.TestCase):
         ):
             self.assertTrue(transcript_survey.shaped_tool(tool), tool)
         self.assertFalse(transcript_survey.shaped_tool("UnknownTool"))
+        self.assertFalse(transcript_survey.shaped_tool(None))
 
 
 if __name__ == "__main__":
