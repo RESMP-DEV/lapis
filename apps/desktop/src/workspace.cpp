@@ -1179,8 +1179,12 @@ void Workspace::watch(Agent* item) {
         for (const auto& id : ids)
             known.insert(id);
         // The inbox orders by the first request still pending, not each new one.
-        if (!had_pending)
-            waiting_since_.insert(item->agentId(), QDateTime::currentMSecsSinceEpoch());
+        if (!had_pending) {
+            const auto arrived = QDateTime::currentMSecsSinceEpoch();
+            const auto restored = item->neededAtMs();
+            waiting_since_.insert(item->agentId(),
+                                  restored > 0 ? std::min(restored, arrived) : arrived);
+        }
         emit needsYou(item, fresh ? markNeedsYou(item, Need::request) : QStringLiteral("repeat"));
         emit turnFinished(item);
     });

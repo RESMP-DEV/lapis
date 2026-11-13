@@ -201,6 +201,21 @@ void automatic_home_waits_for_activity() {
             "an automatic choice with activity stays sticky");
 }
 
+void attention_inbox_keeps_a_restored_wait_older() {
+    Workspace workspace(WorkspaceMode::fixture);
+    const auto now = QDateTime::currentMSecsSinceEpoch();
+    workspace.agent("renderer")->restoreUnseen(true, now - 5'000);
+    workspace.agent("notes")->restoreUnseen(true, now - 1);
+    QThread::msleep(2);
+    require(workspace.requestAttention({"renderer", "restore-1", "Choose rendering"}) &&
+                workspace.requestAttention({"notes", "restore-2", "Approve migration"}),
+            "requests after restored marks");
+    const auto inbox = workspace.attentionInbox();
+    require(inbox.size() == 2 && inbox.front().toMap().value("agentId").toString() == "renderer" &&
+                inbox.back().toMap().value("agentId").toString() == "notes",
+            "a re-reported restored wait keeps its older place");
+}
+
 // The exact object the factory judge writes, extra fields included.
 void parses_real_judge_output_schema() {
     const auto state = factory::parse(R"({
@@ -536,6 +551,7 @@ int main(int argc, char** argv) {
         parses_the_judge_file();
         merges_live_state();
         automatic_home_waits_for_activity();
+        attention_inbox_keeps_a_restored_wait_older();
         parses_real_judge_output_schema();
         pipeline_from_file_and_live_state(QDir(directory.path()).filePath("fixture"));
         // The registry's folder must be private, as QTemporaryDir makes it.
