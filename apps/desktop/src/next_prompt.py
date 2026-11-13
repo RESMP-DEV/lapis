@@ -86,7 +86,8 @@ NOTE_BRACKET = re.compile(
 CODEX_REQUEST = re.compile(r"^## My request for Codex:[ \t]*$", re.MULTILINE)
 CATEGORIES = ("approve", "status", "ship", "fix", "new", "question", "correct", "other")
 # Variables that would send a prediction to a metered key, another endpoint or
-# a cloud account instead of the plan the CLI is signed in to.
+# a cloud account instead of the plan a CLI is signed in to. Every CLI route
+# loses all of them: none needs another vendor's key.
 METERED = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
@@ -94,6 +95,15 @@ METERED = (
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_CODE_USE_FOUNDRY",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "CODEX_API_KEY",
+    "AZURE_OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_GENAI_USE_VERTEXAI",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_CLOUD_PROJECT",
 )
 # A conversation id as the CLIs name them: no paths.
 CONVERSATION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -121,18 +131,28 @@ INDEX_DAYS = 60
 INDEX_SECONDS = 3.0
 INDEX_NAME = "next_prompt_pairs.json"
 INDEX_VERSION = 3
-# Ordered OpenAI-compatible providers (`nextPrompt.providers`), tried in
-# order: a local or private endpoint first, then a hosted fallback. The chain
-# replaces the CLI for the guesses it is configured on; an unreachable host,
-# a missing key or an HTTP error moves to the next at once, an unreadable
-# answer is asked once more on the same provider.
+# Model entries (`nextPrompt.providers`, tried in order, and `nextPrompt.random`,
+# a pool drawn from): an OpenAI-compatible endpoint ({url, model}) or a
+# coding-plan CLI ({cli, model}). Configured entries replace the single CLI
+# call; a failure of any kind (timeout, error, limit, sign-in) moves to the
+# next entry at once, and only an unreadable answer is asked once more on
+# the same entry.
 PROVIDER_LIMIT = 8
 PROVIDER_MAX_TOKENS = 4096
-# One provider attempt, and the whole chain. Both stay inside the desktop's
-# predict budget (180 s), so a slow provider cannot be cut off mid-chain by
-# the watchdog that kills the helper.
+CLI_KINDS = ("claude", "codex", "agy")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# An endpoint attempt's default and upper bound, then a CLI entry's: a CLI at
+# high effort may think for tens of seconds.
+PROVIDER_TIMEOUT_DEFAULT = 30
 PROVIDER_TIMEOUT_SECONDS = 60
+CLI_TIMEOUT_DEFAULT = 75
+CLI_TIMEOUT_SECONDS = 120
+# The whole guess's model time: the sum of the planned entries' timeouts, at
+# most this. The desktop's watchdog is that budget plus a margin, so the
+# helper always gives up first (see predict_budget_seconds in next_prompt.cpp).
 PROVIDER_BUDGET_SECONDS = 150
+# Pool entries tried before the ordered entries take over.
+POOL_ATTEMPTS = 2
 ENV_FILE = os.path.expanduser("~/.env_vars")
 
 
@@ -1218,13 +1238,58 @@ def provider_name(provider):
     ).strip()[:40]
 
 
+def bounded_seconds(entry, default, high):
+    """`timeoutSeconds`, rounded (not truncated) and clamped, as the desktop
+    parses it."""
+    number = entry.get("timeoutSeconds")
+    if isinstance(number, (int, float)) and not isinstance(number, bool):
+        return max(1, min(high, int(number + 0.5)))
+    return default
+
+
+def clean_cli(entry):
+    """A CLI entry ({cli, model}, optionally name, label, effort and
+    timeoutSeconds), or None. It names no url and no key: the CLI runs on
+    the plan it is signed in to."""
+    cli = entry.get("cli")
+    model = str(entry.get("model", "")).strip()[:100]
+    effort = entry.get("effort", "")
+    if (
+        cli not in CLI_KINDS
+        or not model
+        or "url" in entry
+        or "apiKeyEnv" in entry
+        or (effort and effort not in EFFORTS)
+    ):
+        return None
+    provider = {
+        "cli": cli,
+        "model": model,
+        "name": str(entry.get("name") or model).strip()[:40],
+        "timeoutSeconds": bounded_seconds(
+            entry, CLI_TIMEOUT_DEFAULT, CLI_TIMEOUT_SECONDS
+        ),
+    }
+    if effort:
+        provider["effort"] = effort
+    label = str(entry.get("label") or "").strip()[:60]
+    if label:
+        provider["label"] = label
+    return provider
+
+
 def clean_providers(value):
-    """A validated, bounded provider list; invalid entries are dropped."""
+    """A validated, bounded entry list; invalid entries are dropped."""
     if not isinstance(value, list):
         return []
     cleaned = []
     for entry in value[:PROVIDER_LIMIT]:
         if not isinstance(entry, dict):
+            continue
+        if "cli" in entry:
+            provider = clean_cli(entry)
+            if provider:
+                cleaned.append(provider)
             continue
         url = str(entry.get("url", "")).strip()[:300]
         model = str(entry.get("model", "")).strip()[:100]
@@ -1234,10 +1299,13 @@ def clean_providers(value):
             "url": url,
             "model": model,
             "name": str(entry.get("name") or model).strip()[:40],
-            "timeoutSeconds": 30,
+            "timeoutSeconds": PROVIDER_TIMEOUT_DEFAULT,
             "maxTokens": PROVIDER_MAX_TOKENS,
             "temperature": 0.0,
         }
+        label = str(entry.get("label") or "").strip()[:60]
+        if label:
+            provider["label"] = label
         env = str(entry.get("apiKeyEnv", "")).strip()[:80]
         if env:
             provider["apiKeyEnv"] = env
@@ -1273,9 +1341,10 @@ def config_section():
     return section if isinstance(section, dict) else {}
 
 
-def config_providers():
-    """`nextPrompt.providers` from lapis.json, when no chain was passed."""
-    return clean_providers(config_section().get("providers"))
+def config_providers(key="providers"):
+    """`nextPrompt.providers` (or `random`) from lapis.json, when no chain
+    was passed."""
+    return clean_providers(config_section().get(key))
 
 
 def config_walls():
@@ -1364,15 +1433,18 @@ def ask_provider(provider, system, prompt, timeout=None):
     return content.strip(), cost
 
 
-def plan_environment():
+def plan_environment(cli="claude"):
     """The environment the person's own agents get: lapis's, without any
-    metered key, gateway or cloud account it inherited, plus the `env` of
-    the person's Claude Code settings (their plan route, which may be a
-    gateway in front of several accounts). Without those settings the CLI
-    falls back to the account in this Mac's keychain."""
+    metered key, gateway or cloud account it inherited. For Claude Code, plus
+    the `env` of the person's Claude Code settings (their plan route, which
+    may be a gateway in front of several accounts); without those settings
+    the CLI falls back to the account in this Mac's keychain. Codex and
+    Antigravity use the sign-in their own home folders keep."""
     environment = dict(os.environ)
     for name in METERED:
         environment.pop(name, None)
+    if cli != "claude":
+        return environment
     folder = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
     try:
         with open(os.path.join(folder, "settings.json"), encoding="utf-8") as file:
@@ -1389,7 +1461,13 @@ def plan_environment():
 # What a failure was, from its message: the log keeps this and a cleaned
 # first line, so a run of failures can be told apart afterwards.
 FAILURE_KINDS = (
-    ("limit", re.compile(r"limit|quota|rate.?limit|\b429\b|overloaded|\b529\b", re.I)),
+    (
+        "limit",
+        re.compile(
+            r"limit|quota|rate.?limit|\b429\b|overloaded|\b529\b|resource.?exhausted",
+            re.I,
+        ),
+    ),
     ("auth", re.compile(r"auth|log ?in|credential|\b40[13]\b|expired|forbidden", re.I)),
     ("timeout", re.compile(r"timed? ?out|timeout", re.I)),
     (
@@ -1441,15 +1519,17 @@ def ask(system, prompt, model, effort="", claude="claude", timeout=150):
     ]
     if effort:
         command += ["--effort", effort]
-    run = subprocess.run(
-        command,
-        input=prompt,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env=environment,
-        cwd=tempfile.gettempdir(),
-    )
+    # An empty folder of its own: nothing to read, nothing left behind.
+    with tempfile.TemporaryDirectory(prefix="lapis-guess-") as folder:
+        run = subprocess.run(
+            command,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=environment,
+            cwd=folder,
+        )
     try:
         envelope = json.loads(run.stdout)
     except ValueError:
@@ -1469,68 +1549,305 @@ def ask(system, prompt, model, effort="", claude="claude", timeout=150):
     return envelope.get("result", ""), envelope
 
 
-def predict_providers(
-    system, prompt, providers, arm, started, budget=PROVIDER_BUDGET_SECONDS
-):
-    """The first configured provider with a readable answer, in order.
+def one_message(system, prompt):
+    """The instructions and the request as one message, for a CLI with no
+    per-call system prompt option."""
+    return "<instructions>\n{}\n</instructions>\n\n{}".format(system, prompt)
 
-    The chain shares the desktop's predict budget: when the budget is spent
-    it stops asking providers, so a slow provider is cut short by the helper
-    instead of by the watchdog that kills it.
+
+def json_lines(text):
+    """The JSON objects among `text`'s lines, in order."""
+    objects = []
+    for line in (text or "").splitlines():
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            objects.append(value)
+    return objects
+
+
+def cost_of(value):
+    return (
+        float(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else 0
+    )
+
+
+def ask_codex(system, prompt, model, effort="", codex="codex", timeout=75):
+    """One answer from Codex's exec mode on the person's plan: a read-only
+    sandbox, no session saved, neither the person's config.toml (its MCP
+    servers, hooks and profiles) nor their rules loaded; the sign-in in
+    CODEX_HOME is used. Codex has no per-call system prompt option, so the
+    instructions lead the message."""
+    with tempfile.TemporaryDirectory(prefix="lapis-guess-") as folder:
+        last = os.path.join(folder, "answer.txt")
+        command = [codex, "exec", "--model", model]
+        if effort:
+            command += ["-c", "model_reasoning_effort=" + effort]
+        command += [
+            "--sandbox",
+            "read-only",
+            "--ephemeral",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--skip-git-repo-check",
+            "--cd",
+            folder,
+            "--color",
+            "never",
+            "--json",
+            "--output-last-message",
+            last,
+            "-",
+        ]
+        run = subprocess.run(
+            command,
+            input=one_message(system, prompt),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=plan_environment("codex"),
+            cwd=folder,
+        )
+        try:
+            with open(last, encoding="utf-8") as file:
+                text = file.read(1 << 20).strip()
+        except OSError:
+            text = ""
+    problem = ""
+    for event in json_lines(run.stdout):
+        kind = event.get("type")
+        if kind == "error":
+            problem = str(event.get("message") or problem)
+        elif kind == "turn.failed":
+            error = event.get("error")
+            problem = str(
+                error.get("message") if isinstance(error, dict) else error or problem
+            )
+        elif kind == "item.completed" and not text:
+            item = event.get("item")
+            if (
+                isinstance(item, dict)
+                and item.get("type") == "agent_message"
+                and isinstance(item.get("text"), str)
+            ):
+                text = item["text"].strip()
+    if run.returncode != 0 or (problem and not text):
+        raise RuntimeError(
+            (problem or run.stderr.strip() or "CLI request failed")[-300:]
+        )
+    if not text:
+        raise ValueError("no answer")
+    return text, 0
+
+
+def ask_agy(system, prompt, model, effort="", agy="agy", timeout=75):
+    """One answer from Antigravity's print mode on the person's plan: the
+    model chosen for this call only (never `/model`, which changes the
+    person's default), plan mode in its sandbox, slash commands off. An
+    Antigravity model id may carry its thinking level (`gemini-4-carbon-high`);
+    `--effort` is passed only when it does not. Antigravity has no per-call
+    system prompt option, so the instructions lead the message. Every flag
+    comes before `--print`, which takes the message whether it is a switch
+    or takes a value."""
+    command = [agy, "--model", model]
+    if effort and not model.endswith("-" + effort):
+        command += ["--effort", effort]
+    command += [
+        "--output-format",
+        "json",
+        "--mode",
+        "plan",
+        "--sandbox",
+        "--disable-slash-commands",
+        "--print-timeout",
+        "{}s".format(max(1, int(timeout) - 2)),
+        "--print",
+        one_message(system, prompt),
+    ]
+    with tempfile.TemporaryDirectory(prefix="lapis-guess-") as folder:
+        run = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=plan_environment("agy"),
+            cwd=folder,
+        )
+    try:
+        envelope = json.loads(run.stdout)
+    except ValueError:
+        lines = json_lines(run.stdout)
+        envelope = lines[-1] if lines else None
+    text = None
+    if isinstance(envelope, dict):
+        error = envelope.get("error")
+        if envelope.get("is_error") or error:
+            message = error.get("message") if isinstance(error, dict) else error
+            raise RuntimeError(str(message or envelope.get("result") or "error")[-300:])
+        text = next(
+            (
+                envelope[key]
+                for key in ("result", "response", "text")
+                if isinstance(envelope.get(key), str)
+            ),
+            None,
+        )
+        if text is None and "candidates" in envelope:
+            text = run.stdout  # the answer itself, without an envelope
+    if run.returncode != 0:
+        raise RuntimeError(
+            (run.stderr.strip() or (text or "").strip() or "CLI request failed")[-300:]
+        )
+    if not text or not text.strip():
+        raise ValueError("no answer")
+    cost = cost_of(envelope.get("total_cost_usd")) if isinstance(envelope, dict) else 0
+    return text.strip(), cost
+
+
+def ask_entry(entry, system, prompt, timeout, programs):
+    """(text, cost) from one configured entry: an endpoint or a CLI."""
+    cli = entry.get("cli")
+    if not cli:
+        return ask_provider(entry, system, prompt, timeout=timeout)
+    program = programs.get(cli) or cli
+    model = entry.get("model", "")
+    effort = entry.get("effort", "")
+    if cli == "claude":
+        text, envelope = ask(system, prompt, model, effort, program, timeout)
+        return text, cost_of(envelope.get("total_cost_usd"))
+    if cli == "codex":
+        return ask_codex(system, prompt, model, effort, program, timeout)
+    if cli == "agy":
+        return ask_agy(system, prompt, model, effort, program, timeout)
+    raise KeyError("unknown CLI")
+
+
+def entry_seconds(entry):
+    """An entry's own time: its timeoutSeconds, or its kind's default."""
+    default = CLI_TIMEOUT_DEFAULT if entry.get("cli") else PROVIDER_TIMEOUT_DEFAULT
+    try:
+        return max(0.0, float(entry.get("timeoutSeconds", default)))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def draw(pool, seed=None, count=POOL_ATTEMPTS):
+    """Up to `count` pool entries, each order equally likely."""
+    return random.Random(seed).sample(list(pool), min(count, len(pool)))
+
+
+def plan_seconds(entries, budget=PROVIDER_BUDGET_SECONDS):
+    """The plan's model time: its entries' timeouts together, within budget."""
+    return max(0.0, min(float(budget), sum(entry_seconds(e) for e in entries)))
+
+
+def predict_providers(
+    system,
+    prompt,
+    providers,
+    arm,
+    started,
+    budget=PROVIDER_BUDGET_SECONDS,
+    pool=(),
+    seed=None,
+    programs=None,
+):
+    """The first entry with a readable answer: up to POOL_ATTEMPTS drawn at
+    random from `pool`, then `providers` in order.
+
+    Each entry has its own time (its timeoutSeconds, a repair attempt
+    included), and the ordered entries after it keep theirs, so a slow entry
+    cannot starve the fallbacks. The whole plan stays within `budget`, which
+    the desktop's watchdog exceeds, so the helper gives up first.
     """
-    errors = []
-    deadline = started + budget
-    for provider in providers:
+    programs = programs or {}
+    drawn = draw(pool, seed) if pool else []
+    steps = [(entry, True) for entry in drawn] + [(entry, False) for entry in providers]
+    deadline = started + plan_seconds([entry for entry, _ in steps], budget)
+    errors = []  # (name, error, kind)
+    for index, (provider, _) in enumerate(steps):
         name = provider_name(provider)
+        if time.time() >= deadline:
+            errors.append((name, RuntimeError("the provider chain timed out"), None))
+            break
+        reserve = sum(
+            entry_seconds(e) for e, pooled in steps[index + 1 :] if not pooled
+        )
+        slot_end = min(time.time() + entry_seconds(provider), deadline - reserve)
+        if slot_end <= time.time():
+            errors.append((name, RuntimeError("no time left for it"), "budget"))
+            continue
+        last, kind = None, None
         for _ in range(2):
-            remaining = deadline - time.time()
+            remaining = slot_end - time.time()
             if remaining <= 0:
-                errors.append((name, RuntimeError("the provider chain timed out")))
+                if last is None:
+                    last, kind = RuntimeError("its time ran out"), "timeout"
                 break
-            timeout = provider.get("timeoutSeconds", PROVIDER_TIMEOUT_SECONDS)
             try:
-                try:
-                    timeout = min(float(timeout), remaining)
-                except (TypeError, ValueError):
-                    timeout = remaining
-                text, cost = ask_provider(provider, system, prompt, timeout=timeout)
+                text, cost = ask_entry(provider, system, prompt, remaining, programs)
             except ValueError as error:
                 # Malformed JSON or an empty completion: one repair attempt on
-                # this provider before the chain moves on.
-                errors.append((name, error))
+                # this entry before the plan moves on.
+                last, kind = error, "malformed"
                 continue
             except (
                 OSError,
                 KeyError,
                 RuntimeError,
                 http.client.HTTPException,
+                subprocess.SubprocessError,
             ) as error:
-                # Transport, auth and service failures move on at once.
-                errors.append((name, error))
+                # Timeouts, transport, sign-in, limit and service failures move
+                # on at once: a rate-limited call is never repeated at once.
+                last, kind = error, None
                 break
             try:
                 result = parse(text, limit=5 if arm == "wide" else 3)
                 if not result["candidates"]:
                     raise ValueError("no candidates in provider response")
             except (ValueError, KeyError, TypeError, AttributeError) as error:
-                errors.append((name, error))
+                last, kind = error, "malformed"
                 continue
             result["ms"] = int((time.time() - started) * 1000)
             result["cost"] = cost
             result["context_arm"] = arm
             result["provider"] = name
             result["model"] = provider.get("model", "")
+            for key in ("effort", "label"):
+                if provider.get(key):
+                    result[key] = provider[key]
+            result["failures"] = chain_failures(errors)
+            if pool:
+                result["drawn"] = [provider_name(entry) for entry in drawn]
             return result
-        if time.time() >= deadline:
-            break
+        errors.append((name, last, kind))
     if not errors:
         return {"error": "no providers", "kind": "other"}
     result = failure(errors[-1][1])
+    if errors[-1][2]:
+        result["kind"] = errors[-1][2]
     # Every entry is cleaned the way the CLI route cleans its own failure.
     result["error"] = " | ".join(
-        "{}: {}".format(name, failure(error)["error"]) for name, error in errors
+        "{}: {}".format(name, failure(error)["error"]) for name, error, _ in errors
     )[:160]
+    result["failures"] = chain_failures(errors)
+    if pool:
+        result["drawn"] = [provider_name(entry) for entry in drawn]
     return result
+
+
+def chain_failures(errors):
+    """What each failed entry hit, by kind only: no message, no prompt."""
+    return [
+        {"provider": name, "kind": kind or failure(error)["kind"]}
+        for name, error, kind in errors
+    ]
 
 
 def predict(
@@ -1542,7 +1859,13 @@ def predict(
     providers=None,
     budget=PROVIDER_BUDGET_SECONDS,
     prompt_arm="base",
+    pool=None,
+    seed=None,
+    programs=None,
 ):
+    """A guess from the configured entries (`pool` drawn from, then
+    `providers` in order), or without any, one Claude Code CLI call with
+    `model` and `effort`. `programs` maps a CLI kind to its executable."""
     system = SYSTEM.format(priors=priors(), categories=", ".join(CATEGORIES))
     if arm == "wide":
         system += WIDE
@@ -1550,8 +1873,18 @@ def predict(
         system += CHECKS
     started = time.time()
     prompt = render(bundle)
-    if providers:
-        result = predict_providers(system, prompt, providers, arm, started, budget)
+    if providers or pool:
+        result = predict_providers(
+            system,
+            prompt,
+            providers or [],
+            arm,
+            started,
+            budget,
+            pool or [],
+            seed,
+            dict({"claude": claude}, **(programs or {})),
+        )
         if "candidates" in result:
             result["prompt_arm"] = prompt_arm
         return result
@@ -1575,6 +1908,8 @@ def predict(
             result["cost"] = envelope.get("total_cost_usd", 0)
             result["context_arm"] = arm
             result["prompt_arm"] = prompt_arm
+            if effort:
+                result["effort"] = effort
             return result
         except (ValueError, KeyError, TypeError, AttributeError) as error:
             last = error
@@ -1583,13 +1918,19 @@ def predict(
 
 def command_predict(arguments):
     bundle = json.loads(sys.stdin.readline())
-    if arguments.providers is None:
-        providers = config_providers()
-    else:
+
+    def passed(text):
         try:
-            providers = clean_providers(json.loads(arguments.providers))
+            return clean_providers(json.loads(text))
         except (TypeError, ValueError):
-            providers = []
+            return []
+
+    if arguments.providers is None and arguments.pool is None:
+        providers = config_providers()
+        pool = config_providers("random")
+    else:
+        providers = passed(arguments.providers or "[]")
+        pool = passed(arguments.pool or "[]")
     return predict(
         bundle,
         arguments.model,
@@ -1599,6 +1940,9 @@ def command_predict(arguments):
         providers,
         arguments.budget_seconds,
         arguments.prompt_arm,
+        pool,
+        arguments.seed,
+        {"claude": arguments.claude, "codex": arguments.codex, "agy": arguments.agy},
     )
 
 
@@ -1628,12 +1972,19 @@ def main(argv=None):
     predict_mode.add_argument("--model", default="claude-opus-5-5")
     predict_mode.add_argument("--effort", default="")
     predict_mode.add_argument("--claude", default="claude")
+    predict_mode.add_argument("--codex", default="codex")
+    predict_mode.add_argument("--agy", default="agy")
     predict_mode.add_argument("--context-arm", choices=CONTEXT_ARMS, default="base")
     predict_mode.add_argument("--prompt-arm", choices=PROMPT_ARMS, default="base")
-    # A JSON array of OpenAI-compatible endpoints, tried in order. Absent:
-    # nextPrompt.providers from lapis.json; `[]`: the CLI.
+    # JSON arrays of entries (endpoints or CLIs): `--pool` drawn from at
+    # random, then `--providers` tried in order. Both absent:
+    # nextPrompt.random and nextPrompt.providers from lapis.json; both empty:
+    # the single CLI call.
     predict_mode.add_argument("--providers", default=None)
-    # The whole chain's share of the caller's time budget, in seconds.
+    predict_mode.add_argument("--pool", default=None)
+    # The pool draw's seed, recorded by the caller; absent: unseeded.
+    predict_mode.add_argument("--seed", type=int, default=None)
+    # The whole plan's share of the caller's time budget, in seconds.
     predict_mode.add_argument(
         "--budget-seconds", type=int, default=PROVIDER_BUDGET_SECONDS
     )

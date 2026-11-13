@@ -1717,6 +1717,378 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(next_prompt.config_providers(), [])
 
 
+FAKE_CLI = """#!{python}
+import json, os, sys, time
+folder = {folder!r}
+argv = sys.argv[1:]
+stdin = "" if "--print" in argv else sys.stdin.read()
+model = argv[argv.index("--model") + 1] if "--model" in argv else ""
+with open(os.path.join(folder, "calls.jsonl"), "a") as log:
+    log.write(json.dumps({{"cli": {cli!r}, "argv": argv, "stdin": stdin,
+        "cwd": os.getcwd(),
+        "metered": [n for n in {metered!r} if n in os.environ]}}) + "\\n")
+with open(os.path.join(folder, "behave.json")) as file:
+    mode = json.load(file).get(model, "answer")
+answer = {answer!r}
+if mode == "sleep":
+    time.sleep(10)
+if mode == "limit":
+    if {cli!r} == "claude":
+        print(json.dumps({{"type": "result", "is_error": True,
+            "result": "Claude AI usage limit reached|1760000000"}}))
+    elif {cli!r} == "codex":
+        print(json.dumps({{"type": "turn.failed",
+            "error": {{"message": "You've hit your usage limit."}}}}))
+    else:
+        print(json.dumps({{"is_error": True, "result": "RESOURCE_EXHAUSTED"}}))
+    sys.exit(1)
+if mode == "auth":
+    sys.stderr.write("Invalid API key - Please run /login\\n")
+    sys.exit(1)
+if mode == "empty":
+    answer = ""
+if {cli!r} == "codex":
+    last = argv[argv.index("--output-last-message") + 1]
+    with open(last, "w") as file:
+        file.write(answer)
+    print(json.dumps({{"type": "item.completed",
+        "item": {{"type": "agent_message", "text": answer}}}}))
+elif {cli!r} == "agy":
+    print(json.dumps({{"type": "result", "is_error": False, "result": answer}}))
+else:
+    print(json.dumps({{"type": "result", "result": answer, "total_cost_usd": 0.05}}))
+"""
+
+
+class ChainTests(unittest.TestCase):
+    """CLI entries (Claude Code, Codex, Antigravity) beside endpoints, the
+    random pool, and the time each entry keeps. Every CLI is a local fake."""
+
+    def setUp(self):
+        self.folder = Path(tempfile.mkdtemp(prefix="lapis-chain-"))
+        self.addCleanup(shutil.rmtree, self.folder)
+        self.behave({})
+        self.programs = {}
+        for cli in next_prompt.CLI_KINDS:
+            fake = self.folder / cli
+            fake.write_text(
+                FAKE_CLI.format(
+                    python=sys.executable,
+                    folder=str(self.folder),
+                    cli=cli,
+                    metered=list(next_prompt.METERED),
+                    answer=ANSWER,
+                )
+            )
+            fake.chmod(0o700)
+            self.programs[cli] = str(fake)
+        environment = {name: "placeholder" for name in next_prompt.METERED}
+        environment["CLAUDE_CONFIG_DIR"] = str(self.folder)  # no settings there
+        patcher = patch.dict(os.environ, environment)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        priors = patch.object(next_prompt, "priors", return_value="")
+        priors.start()
+        self.addCleanup(priors.stop)
+
+    def behave(self, modes):
+        (self.folder / "behave.json").write_text(json.dumps(modes))
+
+    def calls(self):
+        path = self.folder / "calls.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text().splitlines()]
+
+    def guess(self, providers=(), pool=(), seed=None, budget=None):
+        return next_prompt.predict(
+            {"context": {"turns": [{"role": "agent", "text": "Done."}]}},
+            "unused-model",
+            "",
+            self.programs["claude"],
+            providers=next_prompt.clean_providers(list(providers)),
+            budget=budget or next_prompt.PROVIDER_BUDGET_SECONDS,
+            pool=next_prompt.clean_providers(list(pool)),
+            seed=seed,
+            programs=self.programs,
+        )
+
+    def http(self, status=200):
+        seen = []
+        server, _ = endpoint_server(status, ANSWER, seen)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        entry = {
+            "name": "openrouter",
+            "url": "http://127.0.0.1:%d/v1" % server.server_port,
+            "model": "deepseek-test",
+            "timeoutSeconds": 5,
+        }
+        return entry, seen
+
+    fable = {
+        "name": "fable",
+        "cli": "claude",
+        "model": "claude-fable-5-2",
+        "effort": "high",
+        "label": "Fable 5.2 · high",
+    }
+    opus = {
+        "name": "opus",
+        "cli": "claude",
+        "model": "claude-opus-5-5",
+        "effort": "medium",
+    }
+
+    def test_the_first_cli_entry_answers_with_its_effort(self):
+        result = self.guess([self.fable, self.opus])
+        self.assertEqual(
+            (result["provider"], result["model"], result["effort"], result["label"]),
+            ("fable", "claude-fable-5-2", "high", "Fable 5.2 · high"),
+        )
+        self.assertEqual((result["cost"], result["failures"]), (0.05, []))
+        self.assertNotIn("drawn", result)
+        (call,) = self.calls()
+        argv = call["argv"]
+        self.assertEqual(argv[argv.index("--model") + 1], "claude-fable-5-2")
+        self.assertEqual(argv[argv.index("--effort") + 1], "high")
+        self.assertEqual(argv[argv.index("--tools") + 1], "")
+        self.assertIn("--no-session-persistence", argv)
+        self.assertEqual(call["metered"], [], "a metered key reached the CLI")
+        self.assertTrue(Path(call["cwd"]).name.startswith("lapis-guess-"))
+        self.assertFalse(Path(call["cwd"]).exists(), "its folder is removed")
+
+    def test_a_timeout_moves_to_the_next_entry(self):
+        self.behave({"claude-fable-5-2": "sleep"})
+        started = time.time()
+        result = self.guess([dict(self.fable, timeoutSeconds=1), self.opus])
+        self.assertLess(
+            time.time() - started, 5, "the slow entry was cut at its own time"
+        )
+        self.assertEqual(result["provider"], "opus")
+        self.assertEqual(result["failures"], [{"provider": "fable", "kind": "timeout"}])
+
+    def test_a_usage_limit_moves_on_without_repeating_the_call(self):
+        self.behave({"claude-fable-5-2": "limit"})
+        result = self.guess([self.fable, self.opus])
+        self.assertEqual(result["provider"], "opus")
+        self.assertEqual(result["failures"], [{"provider": "fable", "kind": "limit"}])
+        models = [c["argv"][c["argv"].index("--model") + 1] for c in self.calls()]
+        self.assertEqual(models, ["claude-fable-5-2", "claude-opus-5-5"])
+
+    def test_an_empty_answer_is_asked_once_more_then_moves_on(self):
+        self.behave({"claude-fable-5-2": "empty"})
+        result = self.guess([self.fable, self.opus])
+        self.assertEqual(result["provider"], "opus")
+        self.assertEqual(
+            result["failures"], [{"provider": "fable", "kind": "malformed"}]
+        )
+        self.assertEqual(len(self.calls()), 3)
+
+    def test_both_cli_entries_failing_fall_to_the_endpoint(self):
+        self.behave({"claude-fable-5-2": "limit", "claude-opus-5-5": "auth"})
+        endpoint, seen = self.http()
+        result = self.guess([self.fable, self.opus, endpoint])
+        self.assertEqual((result["provider"], result["cost"]), ("openrouter", 0.0125))
+        self.assertEqual(
+            result["failures"],
+            [
+                {"provider": "fable", "kind": "limit"},
+                {"provider": "opus", "kind": "auth"},
+            ],
+        )
+        self.assertEqual(len(seen), 1)
+
+    def test_every_entry_failing_reports_each_kind(self):
+        self.behave({"claude-fable-5-2": "limit", "claude-opus-5-5": "auth"})
+        endpoint, _ = self.http(status=500)
+        result = self.guess([self.fable, self.opus, endpoint])
+        self.assertIn("error", result)
+        self.assertEqual(
+            [f["kind"] for f in result["failures"]], ["limit", "auth", "other"]
+        )
+        self.assertNotIn("Done.", json.dumps(result["failures"]))
+
+    def test_the_budget_is_the_plans_timeouts_within_the_cap(self):
+        entries = next_prompt.clean_providers(
+            [
+                self.fable,
+                dict(self.opus, timeoutSeconds=60),
+                {"url": "https://a.test", "model": "m"},
+            ]
+        )
+        self.assertEqual([next_prompt.entry_seconds(e) for e in entries], [75, 60, 30])
+        self.assertEqual(next_prompt.plan_seconds(entries), 150)
+        self.assertEqual(next_prompt.plan_seconds(entries[:1] * 3), 150, "capped")
+        self.assertEqual(next_prompt.plan_seconds(entries[2:]), 30)
+
+    def test_a_slow_entry_leaves_the_fallback_its_time(self):
+        self.behave({"claude-fable-5-2": "sleep"})
+        endpoint, seen = self.http()
+        started = time.time()
+        # The fable entry may take 3 s, but the plan has 3 s and the endpoint
+        # after it keeps its 1 s: the fable call gets 2.
+        result = self.guess(
+            [dict(self.fable, timeoutSeconds=3), dict(endpoint, timeoutSeconds=1)],
+            budget=3,
+        )
+        self.assertLess(time.time() - started, 3.5)
+        self.assertEqual(result["provider"], "openrouter")
+        self.assertEqual(result["failures"], [{"provider": "fable", "kind": "timeout"}])
+
+    def test_codex_runs_once_read_only_on_the_plan(self):
+        astra = {
+            "name": "astra",
+            "cli": "codex",
+            "model": "gpt-6-astra",
+            "effort": "high",
+        }
+        result = self.guess([astra])
+        self.assertEqual((result["provider"], result["effort"]), ("astra", "high"))
+        (call,) = self.calls()
+        argv = call["argv"]
+        self.assertEqual(argv[0], "exec")
+        self.assertEqual(argv[argv.index("--model") + 1], "gpt-6-astra")
+        self.assertIn("model_reasoning_effort=high", argv)
+        self.assertEqual(argv[argv.index("--sandbox") + 1], "read-only")
+        for flag in ("--ephemeral", "--ignore-user-config", "--ignore-rules", "--json"):
+            self.assertIn(flag, argv)
+        self.assertEqual(argv[-1], "-", "the message comes on stdin")
+        self.assertEqual(os.path.realpath(argv[argv.index("--cd") + 1]), call["cwd"])
+        self.assertTrue(call["stdin"].startswith("<instructions>\n"))
+        self.assertIn("Done.", call["stdin"])
+        self.assertEqual(call["metered"], [])
+
+    def test_a_codex_usage_limit_is_a_limit(self):
+        self.behave({"gpt-6-astra": "limit"})
+        endpoint, _ = self.http()
+        result = self.guess([{"cli": "codex", "model": "gpt-6-astra"}, endpoint])
+        self.assertEqual(
+            result["failures"], [{"provider": "gpt-6-astra", "kind": "limit"}]
+        )
+
+    def test_antigravity_picks_the_model_for_the_call_only(self):
+        carbon = {
+            "name": "carbon",
+            "cli": "agy",
+            "model": "gemini-4-carbon-high",
+            "effort": "high",
+        }
+        result = self.guess([carbon])
+        self.assertEqual(result["provider"], "carbon")
+        argv = self.calls()[0]["argv"]
+        self.assertEqual(argv[argv.index("--model") + 1], "gemini-4-carbon-high")
+        self.assertNotIn("--effort", argv, "the level is already in the model id")
+        self.assertEqual(argv[argv.index("--mode") + 1], "plan")
+        self.assertEqual(argv[-2], "--print", "every flag comes before the message")
+        self.assertTrue(argv[-1].startswith("<instructions>\n"))
+        self.assertNotIn("/model", " ".join(argv[:-1]))
+        self.assertEqual(self.calls()[0]["metered"], [])
+        self.guess([{"cli": "agy", "model": "gemini-next", "effort": "high"}])
+        argv = self.calls()[1]["argv"]
+        self.assertEqual(argv[argv.index("--effort") + 1], "high")
+        self.behave({"gemini-4-carbon-high": "limit"})
+        failed = self.guess([carbon])
+        self.assertEqual(failed["failures"], [{"provider": "carbon", "kind": "limit"}])
+
+    def test_cli_entries_are_validated(self):
+        cleaned = next_prompt.clean_providers(
+            [
+                self.fable,
+                {"cli": "claude", "model": "m", "timeoutSeconds": 999},
+                {"cli": "grok", "model": "m"},
+                {"cli": "claude", "model": ""},
+                {"cli": "claude", "model": "m", "effort": "turbo"},
+                {"cli": "claude", "model": "m", "url": "https://a.test"},
+                {"cli": "codex", "model": "m", "apiKeyEnv": "K"},
+            ]
+        )
+        self.assertEqual(len(cleaned), 2)
+        self.assertEqual(
+            cleaned[0],
+            {
+                "cli": "claude",
+                "model": "claude-fable-5-2",
+                "name": "fable",
+                "timeoutSeconds": 75,
+                "effort": "high",
+                "label": "Fable 5.2 · high",
+            },
+        )
+        self.assertEqual((cleaned[1]["name"], cleaned[1]["timeoutSeconds"]), ("m", 120))
+
+    def test_the_draw_is_uniform_and_seeded(self):
+        pool = [{"name": str(n)} for n in range(5)]
+        counts = {}
+        for seed in range(5000):
+            first = next_prompt.draw(pool, seed)[0]["name"]
+            counts[first] = counts.get(first, 0) + 1
+        self.assertEqual(sorted(counts), ["0", "1", "2", "3", "4"])
+        for name, count in counts.items():
+            self.assertLess(abs(count - 1000), 120, (name, counts))
+        self.assertEqual(next_prompt.draw(pool, 7), next_prompt.draw(pool, 7))
+        self.assertEqual(len(next_prompt.draw(pool, 7)), next_prompt.POOL_ATTEMPTS)
+        self.assertEqual(len(next_prompt.draw(pool[:1], 7)), 1)
+
+    def test_the_pool_is_drawn_from_then_the_ordered_entries(self):
+        pool = [
+            {"name": "a", "cli": "claude", "model": "model-a"},
+            {"name": "b", "cli": "claude", "model": "model-b"},
+            {"name": "c", "cli": "claude", "model": "model-c"},
+        ]
+        self.behave({"model-a": "limit", "model-b": "limit", "model-c": "limit"})
+        endpoint, seen = self.http()
+        result = self.guess([endpoint], pool=pool, seed=3)
+        drawn = [
+            entry["name"]
+            for entry in next_prompt.draw(next_prompt.clean_providers(pool), 3)
+        ]
+        self.assertEqual(result["drawn"], drawn)
+        self.assertEqual(result["provider"], "openrouter")
+        self.assertEqual(
+            result["failures"], [{"provider": name, "kind": "limit"} for name in drawn]
+        )
+        self.assertEqual(len(self.calls()), next_prompt.POOL_ATTEMPTS)
+        self.behave({})
+        answered = self.guess([endpoint], pool=pool, seed=3)
+        self.assertEqual((answered["provider"], answered["drawn"]), (drawn[0], drawn))
+        self.assertEqual(
+            len(seen), 1, "a pool answer leaves the ordered entries unasked"
+        )
+
+    def test_the_command_line_passes_the_pool_seed_and_programs(self):
+        pool = json.dumps([{"name": "x", "cli": "codex", "model": "gpt-6-astra"}])
+        output = io_run(
+            [
+                "predict",
+                "--pool",
+                pool,
+                "--providers",
+                "[]",
+                "--seed",
+                "1",
+                "--codex",
+                self.programs["codex"],
+                "--budget-seconds",
+                "20",
+            ],
+            json.dumps({"context": {}}) + "\n",
+        )
+        self.assertEqual((output["provider"], output["drawn"]), ("x", ["x"]))
+
+
+def io_run(argv, stdin):
+    """next_prompt.main's printed answer for `argv`, with `stdin`."""
+    import contextlib
+    import io
+
+    printed = io.StringIO()
+    with patch.object(sys, "stdin", io.StringIO(stdin)):
+        with contextlib.redirect_stdout(printed):
+            next_prompt.main(argv)
+    return json.loads(printed.getvalue())
+
+
 class ManifestTests(unittest.TestCase):
     """A sampled replay is saved where a later run can name it."""
 
