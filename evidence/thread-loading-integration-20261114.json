@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-14T00:33:36Z",
+  "agent": "Codex",
+  "base_revision": "a44c6cb4576951eda03ddf8e7ae76107c8c5ff86",
+  "integration_revision": "ee73f8547c809d465f7b7dfedae2f63d2517a2d9",
+  "merge_revision": "a02b86b3cc77939923f90ffe3df606e4efae60bd",
+  "source_revision": "0939500b0adfd006d2abab9939bb3c67ae0a7dd1",
+  "changed_source_manifest": {
+    "algorithm": "sha256(git diff --binary base_revision..source_revision -- ':(exclude)evidence/*')",
+    "digest": "50dafa32b00ae1c890526d27e53876171fffa55eb446b5763e411824450c9d73",
+    "changed_paths": 76
+  },
+  "scope": "Merge the visual thread-loading, visual-view, sidebar/status, media/settings, and Factory stack into current main while preserving main's pooled preview decoding.",
+  "merge_resolution": [
+    "Took the integration branch's deliberate unseen-cue deletion and removed main's now-dangling pulseRunning alias; retained main's pooled, poolCount, ListView pooling handlers, and invisible pooled terminal surface.",
+    "Kept main's pooled-decode regression with assertions for unseen cue and pulse state removed, and combined the required transcript and local-protocol includes.",
+    "Combined the integration UI/attention status row with current main's unexercised runtime-tool wording, fixed the six-row count, sidebar wording, stale pulse comment, and runtime digest wording.",
+    "Replaced partial aggregate initializers, fixed no-op QVariant moves, moved dead owned/text values, bounded arithmetic, narrowed internal enum bases, added the transcript math include guard, and repaired Cppcheck initializer/value findings."
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "result": "passed at 0939500"
+    },
+    {
+      "command": "python3 scripts/lapis.py build",
+      "result": "configure, build, 49/49 enabled CTest, clang-format, and Cppcheck passed; clang-tidy remained failing with 98 unique findings"
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -LE screen",
+      "result": "49/49 enabled tests passed after the analyzer-defect repairs"
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -R '^(factory|factory-ui|transcript|transcript-clis|transcript-switch|workspace-visual-files)$'",
+      "result": "6/6 focused integration suites passed at the merge revision"
+    },
+    {
+      "command": "python3 scripts/lapis.py ui-review --json",
+      "result": "passed at 0939500; receipt build/reports/ui-review/20261114T003226Z-oi_r6llk/receipt.json"
+    },
+    {
+      "command": "python3 scripts/lapis.py asan",
+      "result": "default headless preset passed 18/18"
+    },
+    {
+      "command": "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-asan --output-on-failure --no-tests=error",
+      "result": "desktop-enabled ASan/UBSan passed 49/49 enabled tests"
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop-asan",
+      "result": "15/17 cases passed; backpressure and snapshot-limit timed out and reproduced identically on current main a44c6cb4"
+    },
+    {
+      "command": "python3 scripts/lapis.py tsan",
+      "result": "default headless preset passed 18/18"
+    },
+    {
+      "command": "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-tsan --output-on-failure --no-tests=error",
+      "result": "47/49 enabled tests passed; next-prompt timed out and terminal-input missed a deadline, and both reproduced identically on current main a44c6cb4"
+    },
+    {
+      "command": "LAPIS_SIGN_IDENTITY=- python3 scripts/package_macos.py app && python3 scripts/package_macos.py verify",
+      "result": "ad-hoc signed arm64 bundle, strict signature/linkage checks, MoltenVK GPU enumeration, and launchd headless host passed at 0939500"
+    }
+  ],
+  "static_analysis_state": {
+    "current_main_unique_findings": 41,
+    "integration_unique_findings": 98,
+    "shared": 30,
+    "integration_only": 68,
+    "resolved_from_current_main": 11,
+    "remaining_categories": {
+      "readability-function-cognitive-complexity": 55,
+      "bugprone-easily-swappable-parameters": 24,
+      "other": 19
+    },
+    "note": "Concrete move, arithmetic, enum, initializer, include-guard, optional-analysis, and value-parameter defects identified by three read-only audits were repaired; Cppcheck now passes. The remaining clang-tidy set is predominantly deferred complexity and positional-parameter advisories, including 41 already failing on current main."
+  },
+  "non_claims": [
+    "No Developer ID Application identity is installed; packaging used the documented ad-hoc LAPIS_SIGN_IDENTITY=- fallback and does not qualify distribution signing, notarization, DMG publication, or appcast release.",
+    "ui-review is offscreen/software and does not exercise native macOS input, system IME, system clipboard, or native GPU presentation.",
+    "The package verifier enumerated MoltenVK GPU hardware but did not present a native user-facing frame.",
+    "Both vision-review lanes failed provider-side (Grok max turns; Z.AI insufficient balance), so the saved UI captures were not independently visually inspected.",
+    "The four current-main sanitizer failures described above are baseline observations, not integration regressions; this receipt does not claim those baseline cases passed.",
+    "The remaining 98 clang-tidy findings are recorded as an explicit failing canonical gate, not a pass."
+  ]
+}
