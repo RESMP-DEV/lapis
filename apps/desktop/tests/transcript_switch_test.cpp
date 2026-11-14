@@ -368,17 +368,21 @@ void large_growth_moves_off_the_gui_thread() {
     model.setPath(a);
     const auto shown = records(model);
     const auto saved_place = model.view();
+    model.noteSent(QStringLiteral("still queued"), true);
     require(model.loading() &&
                 std::ranges::all_of(
                     shown, [](const QString& record) { return !record.startsWith("grown-"); }),
             "the large delta is not parsed while switching");
+    model.setBudget(1, 8);
+    require(model.kept(a), "a budget squeeze cannot evict the shown catch-up entry");
     wait_for([&] { return !model.loading(); }, 7000);
     const auto caught = records(model);
     require(!model.loading() &&
                 std::ranges::any_of(
                     caught, [](const QString& record) { return record.startsWith("grown-"); }),
             "the low-priority thread catches the delta up");
-    require(model.pendingPrompts().isEmpty(), "an appended record takes the queued prompt once");
+    require(model.pendingPrompts() == QStringList{QStringLiteral("still queued")},
+            "an appended record takes the old prompt and keeps one sent while catching up");
     require(model.data(model.index(work_row), TranscriptModel::ExpandedRole).toBool(),
             "append-only adoption keeps the opened work row");
     require(model.view().value(QStringLiteral("row")).toInt() ==

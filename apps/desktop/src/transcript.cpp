@@ -40,6 +40,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <algorithm>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -617,8 +618,8 @@ QStringList Reader::sent() const {
     return out;
 }
 
-void Reader::carry_sent(const Reader& from) {
-    if (from.sent_.empty())
+void Reader::carry_sent(const Reader& from, qsizetype first_sent) {
+    if (first_sent < 0 || std::cmp_greater_equal(first_sent, from.sent_.size()))
         return;
     // Where each was sent, found again by the record of the item before it
     // (the history above a tail moves every index); the end without one.
@@ -634,14 +635,16 @@ void Reader::carry_sent(const Reader& from) {
                 return i + 1;
         return size;
     };
-    int first = size;
-    for (auto sent : from.sent_) {
+    int first_item = size;
+    const auto first = std::next(from.sent_.cbegin(), static_cast<std::ptrdiff_t>(first_sent));
+    for (auto entry = first; entry != from.sent_.cend(); ++entry) {
+        auto sent = *entry;
         sent.at = place(sent.at);
-        first = std::min(first, sent.at);
+        first_item = std::min(first_item, sent.at);
         sent_.push_back(std::move(sent));
     }
     // A prompt this reading already holds is no longer waited for.
-    for (int i = first; i < size && !sent_.empty(); ++i)
+    for (int i = first_item; i < size && !sent_.empty(); ++i)
         if (items_[static_cast<size_t>(i)].kind == Kind::prompt)
             taken(items_[static_cast<size_t>(i)]);
 }
@@ -3407,6 +3410,8 @@ bool read_on(const QString& path, transcript::Reader& reader, qint64& offset, QB
 }
 } // namespace
 
+// One cohesive switch state machine; the reader/layout reset stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void TranscriptModel::setPath(const QString& path) {
     if (path == path_)
         return;
@@ -3416,6 +3421,12 @@ void TranscriptModel::setPath(const QString& path) {
     if (!path_.isEmpty())
         emit leaving();
     const auto format = format_for(path);
+    if (!path_.isEmpty() && loading_) {
+        const auto leaving =
+            std::ranges::find_if(kept_, [this](const Parsed& kept) { return kept.path == path_; });
+        if (leaving != kept_.end())
+            leaving->catch_up_shown = false;
+    }
     // Keep what was read whole; a tail is dropped, and the whole reading
     // still under way is kept when it arrives.
     if (!path_.isEmpty() && !tail_ && !loading_)
@@ -3426,6 +3437,7 @@ void TranscriptModel::setPath(const QString& path) {
     loading_ = false;
     offset_ = 0;
     pending_.clear();
+    warm_sent_base_ = 0;
     const auto hit = std::ranges::find_if(kept_, [&path, format](const Parsed& kept) {
         return kept.path == path && kept.reader->format() == format;
     });
@@ -3445,6 +3457,8 @@ void TranscriptModel::setPath(const QString& path) {
             expanded_ = hit->expanded;
             view_ = hit->view;
             loading_ = true;
+            warm_sent_base_ = static_cast<qsizetype>(next_reader->sent().size());
+            hit->catch_up_shown = true;
             warm = true;
         } else {
             next_reader = std::move(hit->reader);
@@ -3573,7 +3587,9 @@ void TranscriptModel::received(const QString& path, transcript::Read read, bool 
 
 void TranscriptModel::adopt(transcript::Read read, bool appended) {
     // A prompt sent while only the tail showed stays shown until recorded.
-    if (!appended)
+    if (appended)
+        read.reader->carry_sent(*reader_, warm_sent_base_);
+    else
         read.reader->carry_sent(*reader_);
     const auto& old_items = reader_->items();
     const auto& new_items = read.reader->items();
@@ -3608,6 +3624,8 @@ void TranscriptModel::adopt(transcript::Read read, bool appended) {
     offset_ = read.offset;
     pending_ = std::move(read.pending);
     tail_ = read.tail;
+    if (appended)
+        warm_sent_base_ = 0;
     live_tasks_.clear();
     endResetModel();
     emit reloaded();
@@ -3635,10 +3653,16 @@ void TranscriptModel::keep(Parsed parsed) {
 }
 
 void TranscriptModel::evict() {
-    // Least recently shown first; the shown conversation is not in kept_.
+    // Least recently shown first. The one shown while its large catch-up runs
+    // stays in kept_ for that delivery and therefore cannot be evicted.
     while (!kept_.empty() &&
-           (std::cmp_greater(kept_.size(), kept_limit_) || keptBytes() > kept_budget_))
-        kept_.pop_back();
+           (std::cmp_greater(kept_.size(), kept_limit_) || keptBytes() > kept_budget_)) {
+        const auto evictable = std::find_if(
+            kept_.rbegin(), kept_.rend(), [](const Parsed& kept) { return !kept.catch_up_shown; });
+        if (evictable == kept_.rend())
+            break;
+        kept_.erase(std::next(evictable).base());
+    }
 }
 
 // Positional contract; callers and tests pin the order.
@@ -3736,6 +3760,7 @@ void TranscriptModel::caughtUp(const QString& path, qint64 base, transcript::Rea
     const auto entry =
         std::ranges::find_if(kept_, [&path](const Parsed& kept) { return kept.path == path; });
     if (entry != kept_.end() && entry->offset == base) {
+        entry->catch_up_shown = false;
         entry->reader = std::move(read.reader);
         entry->offset = read.offset;
         entry->pending = std::move(read.pending);
